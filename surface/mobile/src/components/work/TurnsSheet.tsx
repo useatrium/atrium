@@ -1,4 +1,6 @@
+import { useRef } from 'react';
 import { Modal, Pressable, ScrollView, Text, View } from 'react-native';
+import { useModalAccessibilityFocus } from '../../lib/accessibility';
 import { font, radius, space, useTheme } from '../../lib/theme';
 import type { Turn } from './turns';
 
@@ -14,6 +16,9 @@ export function TurnsSheet({
   onClose: () => void;
 }) {
   const { colors } = useTheme();
+  const titleRef = useRef<Text>(null);
+
+  useModalAccessibilityFocus(titleRef, visible);
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
@@ -31,6 +36,7 @@ export function TurnsSheet({
           style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }}
         />
         <View
+          accessibilityViewIsModal
           style={{
             maxHeight: '70%',
             backgroundColor: colors.bg,
@@ -51,7 +57,11 @@ export function TurnsSheet({
               height: 48,
             }}
           >
-            <Text style={{ flex: 1, color: colors.text, fontSize: font.md, fontWeight: '800' }}>
+            <Text
+              ref={titleRef}
+              accessibilityRole="header"
+              style={{ flex: 1, color: colors.text, fontSize: font.md, fontWeight: '800' }}
+            >
               Turns
             </Text>
             <Pressable
@@ -75,6 +85,7 @@ export function TurnsSheet({
                   testID="turn-row"
                   accessibilityRole="button"
                   accessibilityLabel={turn.label}
+                  accessibilityHint="Jumps to this turn in the transcript"
                   onPress={() => {
                     onJump(turn.itemId);
                     onClose();

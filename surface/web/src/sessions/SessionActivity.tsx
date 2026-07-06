@@ -1,4 +1,5 @@
 import type { UserRef } from '@atrium/surface-client';
+import { Tooltip } from '../components/a11y';
 import { ArrowUpIcon } from '../components/icons';
 import type { SeatAuditEntry } from './types';
 
@@ -35,15 +36,15 @@ export function TurnRail({
       <div className="absolute right-0 top-1/2 hidden -translate-y-1/2 group-hover:block">
         <div className="max-h-[60vh] w-56 overflow-y-auto rounded-lg border border-edge bg-surface-raised py-1 shadow-lg">
           {shown.map((turn) => (
-            <button
-              key={turn.id}
-              type="button"
-              onClick={() => onJump(turn.id)}
-              className="block w-full truncate px-3 py-1.5 text-left text-xs text-fg-body hover:bg-surface-overlay"
-              title={turn.text}
-            >
-              {turn.text}
-            </button>
+            <Tooltip key={turn.id} content={turn.text}>
+              <button
+                type="button"
+                onClick={() => onJump(turn.id)}
+                className="block w-full truncate px-3 py-1.5 text-left text-xs text-fg-body hover:bg-surface-overlay"
+              >
+                {turn.text}
+              </button>
+            </Tooltip>
           ))}
         </div>
       </div>

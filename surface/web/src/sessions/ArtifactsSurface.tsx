@@ -4,7 +4,7 @@
 // route); others a monochrome type label. Manifest-only entries (bytes too large
 // / filtered) render disabled with a note. Newest capture first.
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { Artifact, ArtifactPresentation } from '@atrium/centaur-client';
 import { XIcon } from '../components/icons';
 import { EmptyState } from './EmptyState';
@@ -280,6 +280,17 @@ export function ArtifactsSurface({
   // newest activity first.
   const tiles = useMemo(() => latestArtifactsByPath(artifacts), [artifacts]);
 
+  useEffect(() => {
+    if (embedded) return;
+    const onDocumentKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.stopPropagation();
+      onClose();
+    };
+    document.addEventListener('keydown', onDocumentKeyDown, true);
+    return () => document.removeEventListener('keydown', onDocumentKeyDown, true);
+  }, [embedded, onClose]);
+
   const body = (
     <div className="min-h-0 flex-1 overflow-y-auto p-3">
       {tiles.length === 0 ? (
@@ -316,7 +327,6 @@ export function ArtifactsSurface({
       data-testid="artifacts-surface"
       role="dialog"
       aria-label="Artifacts"
-      onKeyDown={(e) => e.key === 'Escape' && onClose()}
       className="absolute inset-0 z-10 flex flex-col bg-surface/95 backdrop-blur-sm"
     >
       <header className="flex h-10 shrink-0 items-center justify-between border-b border-edge px-3">
@@ -324,6 +334,7 @@ export function ArtifactsSurface({
           Artifacts <span className="tabular-nums text-fg-muted">· {tiles.length}</span>
         </h3>
         <button
+          type="button"
           onClick={onClose}
           aria-label="Close artifacts"
           className="rounded-md px-1.5 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg"

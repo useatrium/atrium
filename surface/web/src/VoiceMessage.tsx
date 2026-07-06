@@ -93,9 +93,12 @@ export function VoiceMessage({ voice }: { voice: VoiceMeta }) {
           setCurrentTime(0);
         }}
         className="hidden"
-      />
+      >
+        <track kind="captions" />
+      </audio>
       <div className="flex items-center gap-2">
         <button
+          type="button"
           onClick={toggle}
           title={playing ? 'Pause voice message' : 'Play voice message'}
           aria-label={playing ? 'Pause voice message' : 'Play voice message'}

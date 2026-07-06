@@ -50,6 +50,7 @@ import {
 } from '../components/EntryReferencesChip';
 import { MarkupPane, splitMarkdownFrontmatter, type MarkupPaneSource } from '../components/MarkupPane';
 import { MarkupSteerCard } from '../components/MarkupSteerCard';
+import { Tooltip } from '../components/a11y';
 import {
   ChevronDownIcon,
   ChevronRightIcon,
@@ -77,7 +78,13 @@ import {
   type SessionStatus,
 } from './types';
 import { useSessionStream } from './useSessionStream';
-import { sessionPaneSizing, useSessionPaneWidth } from './useSessionPaneWidth';
+import {
+  SESSION_PANE_FALLBACK_WIDTH,
+  SESSION_PANE_MAX_VW,
+  SESSION_PANE_MIN_WIDTH,
+  sessionPaneSizing,
+  useSessionPaneWidth,
+} from './useSessionPaneWidth';
 import { Spinner, TurnStatusLine } from './TurnStatus';
 import { useArtifactPresentations } from './useArtifactPresentations';
 import { AppPresentationCards } from './AppPresentationCard';
@@ -922,6 +929,10 @@ export function SessionPane({
   const focused = layout === 'focus';
   const { width: paneWidth, resizing, startResize, resetWidth } = useSessionPaneWidth();
   const paneSizing = sessionPaneSizing(paneWidth);
+  const paneMaxWidth =
+    typeof window === 'undefined'
+      ? SESSION_PANE_FALLBACK_WIDTH
+      : Math.max(SESSION_PANE_MIN_WIDTH, Math.round((window.innerWidth * SESSION_PANE_MAX_VW) / 100));
   const canDetach = !isPendingSessionId(session.id);
   const closePane = useCallback(() => {
     if (!popout) {
@@ -991,10 +1002,15 @@ export function SessionPane({
       style={focused ? undefined : paneSizing.style}
     >
       {!focused && (
+        // biome-ignore lint/a11y/useSemanticElements: resizable pane separator uses a div for pointer capture and custom sizing.
         <div
           role="separator"
+          tabIndex={0}
           aria-orientation="vertical"
           aria-label="Resize session panel"
+          aria-valuemin={SESSION_PANE_MIN_WIDTH}
+          aria-valuemax={paneMaxWidth}
+          aria-valuenow={paneWidth ?? SESSION_PANE_FALLBACK_WIDTH}
           title="Drag to resize · double-click to reset"
           data-testid="pane-resize-handle"
           onPointerDown={startResize}
@@ -1070,43 +1086,46 @@ export function SessionPane({
           </div>
         </div>
         {(isSpawner || isDriver) && !displayTerminal && (
-          <button
-            onClick={onCancel}
-            title={canStopTurn ? 'Cancel the current turn' : 'Cancel this session'}
-            className={`rounded-md border px-2 py-1 text-2xs font-medium ${
-              displayCancelAsk === 'failed'
-                ? 'border-danger-border-strong bg-danger-tint/60 text-danger-text-strong hover:bg-danger-surface/60'
-                : canStopTurn
-                  ? 'border-warning-border bg-warning-tint/20 text-warning-text hover:bg-warning-tint/40'
-                  : displayCancelAsk === 'confirm'
-                    ? 'border-danger-border-strong bg-danger-tint/60 text-danger-text-strong hover:bg-danger-surface/60'
-                    : 'border-danger-border/60 text-danger hover:bg-danger-tint/40 hover:text-danger-text'
-            }`}
-          >
-            {canStopTurn
-              ? displayCancelAsk === 'failed'
-                ? 'Cancel turn failed — retry'
-                : 'Cancel turn'
-              : displayCancelAsk === 'confirm'
-                ? 'Confirm cancel'
-                : displayCancelAsk === 'failed'
-                  ? 'Cancel failed — retry'
-                  : 'Cancel'}
-          </button>
+          <Tooltip content={canStopTurn ? 'Cancel the current turn' : 'Cancel this session'}>
+            <button
+              type="button"
+              onClick={onCancel}
+              className={`rounded-md border px-2 py-1 text-2xs font-medium ${
+                displayCancelAsk === 'failed'
+                  ? 'border-danger-border-strong bg-danger-tint/60 text-danger-text-strong hover:bg-danger-surface/60'
+                  : canStopTurn
+                    ? 'border-warning-border bg-warning-tint/20 text-warning-text hover:bg-warning-tint/40'
+                    : displayCancelAsk === 'confirm'
+                      ? 'border-danger-border-strong bg-danger-tint/60 text-danger-text-strong hover:bg-danger-surface/60'
+                      : 'border-danger-border/60 text-danger hover:bg-danger-tint/40 hover:text-danger-text'
+              }`}
+            >
+              {canStopTurn
+                ? displayCancelAsk === 'failed'
+                  ? 'Cancel turn failed — retry'
+                  : 'Cancel turn'
+                : displayCancelAsk === 'confirm'
+                  ? 'Confirm cancel'
+                  : displayCancelAsk === 'failed'
+                    ? 'Cancel failed — retry'
+                    : 'Cancel'}
+            </button>
+          </Tooltip>
         )}
         <div className="relative">
-          <button
-            ref={capabilitiesButtonRef}
-            type="button"
-            onClick={() => setCapabilitiesOpen((value) => !value)}
-            title="Inspect session capabilities"
-            aria-label="Inspect session capabilities"
-            aria-expanded={capabilitiesOpen}
-            aria-haspopup="dialog"
-            className="rounded-md px-2 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg"
-          >
-            <SearchIcon size={15} />
-          </button>
+          <Tooltip content="Inspect session capabilities">
+            <button
+              ref={capabilitiesButtonRef}
+              type="button"
+              onClick={() => setCapabilitiesOpen((value) => !value)}
+              aria-label="Inspect session capabilities"
+              aria-expanded={capabilitiesOpen}
+              aria-haspopup="dialog"
+              className="rounded-md px-2 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg"
+            >
+              <SearchIcon size={15} />
+            </button>
+          </Tooltip>
           <SessionCapabilitiesPopover
             sessionId={session.id}
             open={capabilitiesOpen}
@@ -1115,36 +1134,41 @@ export function SessionPane({
           />
         </div>
         {canDetach && (
-          <a
-            href={popout ? `/s/${session.id}` : `/s/${session.id}/pane`}
-            target={popout ? undefined : '_blank'}
-            rel={popout ? undefined : 'noopener noreferrer'}
-            title={popout ? 'Open in full app' : 'Open in a new tab'}
-            aria-label={popout ? 'Open in full app' : 'Open session in a new tab'}
-            className="rounded-md px-2 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg"
-          >
-            <ExternalLinkIcon size={15} />
-          </a>
+          <Tooltip content={popout ? 'Open in full app' : 'Open session in a new tab'}>
+            <a
+              href={popout ? `/s/${session.id}` : `/s/${session.id}/pane`}
+              target={popout ? undefined : '_blank'}
+              rel={popout ? undefined : 'noopener noreferrer'}
+              aria-label={popout ? 'Open in full app' : 'Open session in a new tab'}
+              className="rounded-md px-2 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg"
+            >
+              <ExternalLinkIcon size={15} />
+            </a>
+          </Tooltip>
         )}
         {onToggleFocus && (
+          <Tooltip content={focused ? 'Collapse to split view' : 'Expand to focus view'}>
+            <button
+              type="button"
+              onClick={onToggleFocus}
+              aria-label={focused ? 'Collapse to split view' : 'Expand to focus view'}
+              aria-pressed={focused}
+              className="rounded-md px-2 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg"
+            >
+              {focused ? <ShrinkIcon size={15} /> : <ExpandIcon size={15} />}
+            </button>
+          </Tooltip>
+        )}
+        <Tooltip content="Close session pane">
           <button
-            onClick={onToggleFocus}
-            title={focused ? 'Collapse to split view' : 'Expand to focus view'}
-            aria-label={focused ? 'Collapse to split view' : 'Expand to focus view'}
-            aria-pressed={focused}
+            type="button"
+            onClick={closePane}
+            aria-label="Close session pane"
             className="rounded-md px-2 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg"
           >
-            {focused ? <ShrinkIcon size={15} /> : <ExpandIcon size={15} />}
+            <XIcon />
           </button>
-        )}
-        <button
-          onClick={closePane}
-          title="Close session pane"
-          aria-label="Close session pane"
-          className="rounded-md px-2 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg"
-        >
-          <XIcon />
-        </button>
+        </Tooltip>
       </header>
 
       {seatRequest && !displayTerminal && (
@@ -1156,6 +1180,7 @@ export function SessionPane({
             <span className="font-semibold">{seatRequest.displayName}</span> requests the seat
           </span>
           <button
+            type="button"
             onClick={() =>
               sessionsApi
                 .grantSeat(session.id, seatRequest.userId)
@@ -1166,6 +1191,7 @@ export function SessionPane({
             Grant
           </button>
           <button
+            type="button"
             onClick={() => setIgnoredRequests((prev) => new Set(prev).add(seatRequest.userId))}
             className="rounded-md px-2 py-0.5 text-2xs font-medium text-fg-tertiary hover:bg-surface-overlay hover:text-fg-body"
           >
@@ -1223,6 +1249,7 @@ export function SessionPane({
 
       {conflictsN > 0 && (
         <button
+          type="button"
           data-testid="conflicts-strip"
           onClick={() => onStrip('conflicts')}
           aria-expanded={workTab === 'conflicts'}
@@ -1237,6 +1264,7 @@ export function SessionPane({
       )}
       {changedFileCount > 0 && (
         <button
+          type="button"
           data-testid="changes-strip"
           onClick={() => onStrip('changes')}
           aria-expanded={workTab === 'changes'}
@@ -1249,6 +1277,7 @@ export function SessionPane({
       )}
       {sideEffectsN > 0 && (
         <button
+          type="button"
           data-testid="sideeffects-strip"
           onClick={() => onStrip('sideEffects')}
           aria-expanded={workTab === 'sideEffects'}
@@ -1261,6 +1290,7 @@ export function SessionPane({
       )}
       {artifactsN > 0 && (
         <button
+          type="button"
           data-testid="artifacts-strip"
           onClick={() => onStrip('artifacts')}
           aria-expanded={workTab === 'artifacts'}
@@ -1498,12 +1528,14 @@ export function SessionPane({
             >
               <span className="min-w-0 flex-1 truncate text-danger-text">Message didn't send: "{steerError}"</span>
               <button
+                type="button"
                 onClick={() => sendSteer(steerError)}
                 className="rounded-md bg-danger-surface/50 px-2 py-0.5 text-2xs font-medium text-danger-text-strong hover:bg-danger-surface/80"
               >
                 Retry
               </button>
               <button
+                type="button"
                 onClick={() => {
                   setLocalSteerError(null);
                   onClearFailedSteer();
@@ -1522,12 +1554,14 @@ export function SessionPane({
             >
               <span className="min-w-0 flex-1 truncate text-danger-text">Suggestion didn't send: "{suggestError}"</span>
               <button
+                type="button"
                 onClick={() => sendSuggestion(suggestError)}
                 className="rounded-md bg-danger-surface/50 px-2 py-0.5 text-2xs font-medium text-danger-text-strong hover:bg-danger-surface/80"
               >
                 Retry
               </button>
               <button
+                type="button"
                 onClick={() => setSuggestError(null)}
                 className="rounded-md px-2 py-0.5 text-2xs font-medium text-fg-tertiary hover:bg-surface-overlay hover:text-fg-body"
               >
@@ -1583,12 +1617,14 @@ export function SessionPane({
                     <>
                       <span className="text-fg-tertiary">take the seat from {driverName}?</span>
                       <button
+                        type="button"
                         onClick={takeSeat}
                         className="rounded border border-accent-border-muted/60 px-2 py-0.5 font-medium text-accent-text-strong hover:bg-accent-tint/40 hover:text-accent-text-strong"
                       >
                         Confirm
                       </button>
                       <button
+                        type="button"
                         onClick={() => setSeatAsk('idle')}
                         className="rounded px-2 py-0.5 font-medium text-fg-tertiary hover:bg-surface-overlay hover:text-fg-body"
                       >
@@ -1597,6 +1633,7 @@ export function SessionPane({
                     </>
                   ) : (
                     <button
+                      type="button"
                       onClick={driverPresent ? requestSeat : () => setSeatAsk('confirm-take')}
                       className="rounded border border-accent-border-muted/60 px-2 py-0.5 font-medium text-accent-text-strong hover:bg-accent-tint/40 hover:text-accent-text-strong"
                     >
@@ -1740,61 +1777,65 @@ export function AnnotatedTranscriptRow({
           <EntryReferencesChip summary={references} />
         </div>
         <div className="pointer-events-none flex gap-1 opacity-0 focus-within:pointer-events-auto focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100">
-          <button
-            type="button"
-            onClick={copyEntryLink}
-            title={linkCopied ? 'Copied entry link' : 'Copy entry link'}
-            aria-label={linkCopied ? 'Copied entry link' : 'Copy entry link'}
-            className={`inline-flex h-7 w-8 items-center justify-center rounded-md border border-edge-strong bg-surface-overlay text-xs shadow-sm transition-colors hover:bg-edge-strong hover:text-fg ${
-              linkCopied ? 'text-accent-text-strong' : 'text-fg-secondary'
-            }`}
-          >
-            {linkCopied ? <CheckIcon /> : <LinkIcon />}
-          </button>
-          {hasCopyableText && (
+          <Tooltip content={linkCopied ? 'Copied entry link' : 'Copy entry link'}>
             <button
               type="button"
-              onClick={copyBlockText}
-              title={textCopied ? 'Copied block text' : 'Copy block text'}
-              aria-label={textCopied ? 'Copied block text' : 'Copy block text'}
+              onClick={copyEntryLink}
+              aria-label={linkCopied ? 'Copied entry link' : 'Copy entry link'}
               className={`inline-flex h-7 w-8 items-center justify-center rounded-md border border-edge-strong bg-surface-overlay text-xs shadow-sm transition-colors hover:bg-edge-strong hover:text-fg ${
-                textCopied ? 'text-accent-text-strong' : 'text-fg-secondary'
+                linkCopied ? 'text-accent-text-strong' : 'text-fg-secondary'
               }`}
             >
-              {textCopied ? <CheckIcon /> : <CopyIcon />}
+              {linkCopied ? <CheckIcon /> : <LinkIcon />}
             </button>
+          </Tooltip>
+          {hasCopyableText && (
+            <Tooltip content={textCopied ? 'Copied block text' : 'Copy block text'}>
+              <button
+                type="button"
+                onClick={copyBlockText}
+                aria-label={textCopied ? 'Copied block text' : 'Copy block text'}
+                className={`inline-flex h-7 w-8 items-center justify-center rounded-md border border-edge-strong bg-surface-overlay text-xs shadow-sm transition-colors hover:bg-edge-strong hover:text-fg ${
+                  textCopied ? 'text-accent-text-strong' : 'text-fg-secondary'
+                }`}
+              >
+                {textCopied ? <CheckIcon /> : <CopyIcon />}
+              </button>
+            </Tooltip>
           )}
           {canDiscuss && (
-            <button
-              type="button"
-              onClick={() => {
-                onDiscussEntry({
-                  handle,
-                  channelId: discussContext.channelId,
-                  threadRootEventId: discussContext.threadRootEventId,
-                  draft: `/e/${handle} `,
-                });
-              }}
-              title="Discuss"
-              aria-label="Discuss in thread"
-              className="inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-edge-strong bg-surface-overlay px-2 py-1 text-xs text-fg-secondary shadow-sm hover:bg-edge-strong hover:text-fg"
-            >
-              <MessageSquarePlusIcon />
-              Discuss
-            </button>
+            <Tooltip content="Discuss in thread">
+              <button
+                type="button"
+                onClick={() => {
+                  onDiscussEntry({
+                    handle,
+                    channelId: discussContext.channelId,
+                    threadRootEventId: discussContext.threadRootEventId,
+                    draft: `/e/${handle} `,
+                  });
+                }}
+                aria-label="Discuss in thread"
+                className="inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-edge-strong bg-surface-overlay px-2 py-1 text-xs text-fg-secondary shadow-sm hover:bg-edge-strong hover:text-fg"
+              >
+                <MessageSquarePlusIcon />
+                Discuss
+              </button>
+            </Tooltip>
           )}
           {canMarkup && (
-            <button
-              type="button"
-              onClick={() => onMarkupEntry(handle)}
-              disabled={markupLoading}
-              title="Mark up & reply"
-              aria-label="Mark up & reply"
-              className="inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-edge-strong bg-surface-overlay px-2 py-1 text-xs text-fg-secondary shadow-sm hover:bg-edge-strong hover:text-fg disabled:cursor-default disabled:text-fg-faint"
-            >
-              <PenLineIcon />
-              {markupLoading ? 'Opening...' : 'Mark up'}
-            </button>
+            <Tooltip content="Mark up & reply">
+              <button
+                type="button"
+                onClick={() => onMarkupEntry(handle)}
+                disabled={markupLoading}
+                aria-label="Mark up & reply"
+                className="inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-edge-strong bg-surface-overlay px-2 py-1 text-xs text-fg-secondary shadow-sm hover:bg-edge-strong hover:text-fg disabled:cursor-default disabled:text-fg-faint"
+              >
+                <PenLineIcon />
+                {markupLoading ? 'Opening...' : 'Mark up'}
+              </button>
+            </Tooltip>
           )}
         </div>
       </div>
@@ -1974,6 +2015,7 @@ const ToolCard = memo(
         }`}
       >
         <button
+          type="button"
           onClick={onToggle}
           aria-expanded={expanded}
           className="flex w-full items-center gap-2 px-2 py-1.5 text-left hover:bg-surface-overlay"

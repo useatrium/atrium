@@ -2,7 +2,7 @@
 // edited, each with its synthesized diff. Opens over the transcript from the
 // "Changes·N" strip; dismissible. Grouped by path, newest edit per file on top.
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { FileChange } from '@atrium/centaur-client';
 import { XIcon } from '../components/icons';
 import { EmptyState } from './EmptyState';
@@ -29,6 +29,7 @@ export function ChangeFileRow({ path, changes }: { path: string; changes: FileCh
   return (
     <div className="border-b border-edge last:border-b-0">
       <button
+        type="button"
         onClick={() => setOpen((v) => !v)}
         className="flex w-full items-center gap-2 px-3 py-1.5 text-left hover:bg-surface-overlay/50"
       >
@@ -62,6 +63,17 @@ export function ChangesSurface({
   // Group by display path, preserving first-seen order.
   const groups = useMemo(() => groupFileChanges(changes), [changes]);
 
+  useEffect(() => {
+    if (embedded) return;
+    const onDocumentKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.stopPropagation();
+      onClose();
+    };
+    document.addEventListener('keydown', onDocumentKeyDown, true);
+    return () => document.removeEventListener('keydown', onDocumentKeyDown, true);
+  }, [embedded, onClose]);
+
   const body = (
     <div className="min-h-0 flex-1 overflow-y-auto">
       {groups.length === 0 ? (
@@ -81,7 +93,6 @@ export function ChangesSurface({
       data-testid="changes-surface"
       role="dialog"
       aria-label="Changes"
-      onKeyDown={(e) => e.key === 'Escape' && onClose()}
       className="absolute inset-0 z-10 flex flex-col bg-surface/95 backdrop-blur-sm"
     >
       <header className="flex h-10 shrink-0 items-center justify-between border-b border-edge px-3">
@@ -89,6 +100,7 @@ export function ChangesSurface({
           Changes <span className="tabular-nums text-fg-muted">· {groups.length}</span>
         </h3>
         <button
+          type="button"
           onClick={onClose}
           aria-label="Close changes"
           className="rounded-md px-1.5 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg"

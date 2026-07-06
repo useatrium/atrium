@@ -30,9 +30,8 @@ export function ProfileChangesBanner({
   const disabled = busyKey != null;
 
   return (
-    <div
+    <section
       data-testid="profile-changes-banner"
-      role="region"
       aria-label="Agent profile changes"
       className="shrink-0 border-b border-edge bg-surface-raised/80 px-3 py-2 text-xs"
     >
@@ -84,7 +83,7 @@ export function ProfileChangesBanner({
           </span>
         )}
       </div>
-    </div>
+    </section>
   );
 }
 
@@ -129,9 +128,8 @@ export function ProviderAuthBanner({
   onConnect: () => void;
 }) {
   return (
-    <div
+    <section
       data-testid="provider-auth-banner"
-      role="region"
       aria-label={`${providerLabel(required.provider)} authentication required`}
       className="shrink-0 border-b border-warning-border/50 bg-warning-tint/20 px-3 py-2 text-xs"
     >
@@ -156,7 +154,7 @@ export function ProviderAuthBanner({
           </button>
         )}
       </div>
-    </div>
+    </section>
   );
 }
 
@@ -252,9 +250,8 @@ export function QuestionBanner({
   };
 
   return (
-    <div
+    <section
       data-testid="question-banner"
-      role="region"
       aria-labelledby={titleId}
       aria-live="polite"
       className="shrink-0 border-b border-warning-border/50 bg-warning-tint/20 px-3 py-2 text-xs"
@@ -391,6 +388,7 @@ export function QuestionBanner({
       <div className="mt-2 flex items-center justify-between gap-2">
         {isDriver ? (
           <button
+            type="button"
             onClick={submit}
             disabled={!complete || submitting}
             className="rounded-md bg-warning px-2.5 py-1 text-2xs font-semibold text-surface hover:bg-warning-hover disabled:cursor-not-allowed disabled:opacity-50"
@@ -401,6 +399,7 @@ export function QuestionBanner({
           <span className="text-2xs text-fg-muted">proposal sent — {driverName} decides</span>
         ) : (
           <button
+            type="button"
             onClick={submit}
             disabled={!complete || submitting}
             className="rounded border border-accent-border-muted/60 px-2 py-0.5 text-2xs font-medium text-accent-text-strong hover:bg-accent-tint/40 hover:text-accent-text-strong disabled:cursor-not-allowed disabled:opacity-50"
@@ -409,7 +408,7 @@ export function QuestionBanner({
           </button>
         )}
       </div>
-    </div>
+    </section>
   );
 }
 
@@ -493,6 +492,7 @@ function AnswerProposalRow({
       </div>
       <div className="mt-1 flex items-center gap-2">
         <button
+          type="button"
           disabled={busy}
           onClick={() => resolve('submit')}
           className="rounded border border-edge-strong px-2 py-0.5 text-2xs font-medium text-fg-body hover:bg-surface-overlay disabled:cursor-not-allowed disabled:opacity-50"
@@ -500,6 +500,7 @@ function AnswerProposalRow({
           Submit
         </button>
         <button
+          type="button"
           disabled={busy}
           onClick={() => resolve('dismiss')}
           className="rounded px-2 py-0.5 text-2xs font-medium text-fg-tertiary hover:bg-surface-overlay hover:text-fg-body disabled:cursor-not-allowed disabled:opacity-50"

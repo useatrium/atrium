@@ -167,11 +167,13 @@ function ToggleChip({
   label,
   selected,
   icon,
+  hint,
   onPress,
 }: {
   label: string;
   selected: boolean;
   icon: ComponentProps<typeof Ionicons>['name'];
+  hint?: string;
   onPress: () => void;
 }) {
   const { colors } = useTheme();
@@ -180,6 +182,7 @@ function ToggleChip({
       accessibilityRole="switch"
       accessibilityState={{ checked: selected }}
       accessibilityLabel={label}
+      accessibilityHint={hint}
       onPress={onPress}
       style={{
         minHeight: 38,
@@ -401,6 +404,7 @@ function FileTile({
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={file.starred ? 'Unstar file' : 'Star file'}
+          accessibilityHint={file.starred ? 'Removes this file from starred files' : 'Adds this file to starred files'}
           onPress={onToggleStar}
           hitSlop={8}
           style={{
@@ -699,11 +703,18 @@ export default function FilesTab() {
           ))}
         </ScrollView>
         <View style={{ flexDirection: 'row', gap: space.sm }}>
-          <ToggleChip label="Starred" icon="star-outline" selected={starred} onPress={() => setStarred((value) => !value)} />
+          <ToggleChip
+            label="Starred"
+            icon="star-outline"
+            selected={starred}
+            hint="Filters the file list to starred files"
+            onPress={() => setStarred((value) => !value)}
+          />
           <ToggleChip
             label="Show removed"
             icon="trash-outline"
             selected={includeDeleted}
+            hint="Includes removed files in the list"
             onPress={() => setIncludeDeleted((value) => !value)}
           />
         </View>

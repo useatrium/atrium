@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
+import { useDialog } from '../useDialog';
 import { XIcon } from './icons';
 import {
   exchangeClaudeCodeOAuth,
@@ -19,12 +20,31 @@ export function ClaudeConnectDialog({
   onSave: (token: string) => Promise<void>;
   onDisconnect: () => Promise<void>;
 }) {
+  const containerRef = useRef<HTMLFormElement>(null);
+  const codeInputRef = useRef<HTMLInputElement>(null);
   const [flow, setFlow] = useState<ClaudeCodeOAuthStartResponse | null>(null);
   const [code, setCode] = useState('');
   const [starting, setStarting] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const connected = status?.connected === true;
+  const titleId = 'claude-connect-title';
+  const helpId = 'claude-connect-code-help';
+  const statusErrorId = 'claude-connect-status-error';
+  const errorId = 'claude-connect-error';
+  const codeDescription = [
+    helpId,
+    status?.lastError ? statusErrorId : null,
+    error ? errorId : null,
+  ].filter((id): id is string => Boolean(id)).join(' ');
+
+  useDialog({
+    open: true,
+    containerRef,
+    initialFocusRef: codeInputRef,
+    onClose: onCancel,
+    closeOnOutsidePointer: true,
+  });
 
   const start = useCallback(async () => {
     setStarting(true);
@@ -92,20 +112,19 @@ export function ClaudeConnectDialog({
   return (
     <div
       className="fixed inset-0 z-[60] flex items-start justify-center bg-surface/60 p-4"
-      onClick={onCancel}
-      onKeyDown={(e) => e.key === 'Escape' && onCancel()}
-      role="dialog"
-      aria-modal="true"
-      aria-label="Connect Claude Code"
     >
       <form
-        onClick={(e) => e.stopPropagation()}
+        ref={containerRef}
         onSubmit={submit}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Connect Claude Code"
+        aria-busy={busy || starting ? 'true' : undefined}
         className="mt-28 w-[min(440px,calc(100vw-2rem))] overflow-hidden rounded-lg border border-edge-strong bg-surface-raised shadow-2xl"
       >
         <header className="flex items-center justify-between border-b border-edge px-4 py-3">
           <div>
-            <h2 className="text-sm font-semibold text-fg">Claude Code</h2>
+            <h2 id={titleId} className="text-sm font-semibold text-fg">Claude Code</h2>
             <p className="text-2xs text-fg-muted">
               {connected ? 'Connected' : 'Not connected'}
             </p>
@@ -130,17 +149,21 @@ export function ClaudeConnectDialog({
             Open Claude sign-in
           </button>
           <div className="rounded-md border border-edge bg-surface px-3 py-2 text-xs leading-relaxed text-fg-muted">
-            Approve on claude.com, then paste the code it shows you.
+            <span id={helpId}>Approve on claude.com, then paste the code it shows you.</span>
           </div>
           <label className="block">
             <span className="mb-1 block text-2xs font-semibold uppercase tracking-wider text-fg-muted">
               Code
             </span>
             <input
+              ref={codeInputRef}
+              // biome-ignore lint/a11y/noAutofocus: dialog primary field is intentionally focused on open; useDialog manages focus containment and restore.
               autoFocus
               type="text"
               value={code}
               onChange={(e) => setCode(e.target.value)}
+              aria-invalid={error ? 'true' : undefined}
+              aria-describedby={codeDescription || undefined}
               placeholder="Paste Claude code"
               spellCheck={false}
               autoComplete="off"
@@ -148,12 +171,19 @@ export function ClaudeConnectDialog({
             />
           </label>
           {status?.lastError && (
-            <div className="rounded-md border border-warning-border/50 bg-warning-tint/20 px-3 py-2 text-xs text-warning-text">
+            <div
+              id={statusErrorId}
+              className="rounded-md border border-warning-border/50 bg-warning-tint/20 px-3 py-2 text-xs text-warning-text"
+            >
               {status.lastError}
             </div>
           )}
           {error && (
-            <div role="alert" className="space-y-2 rounded-md border border-danger-edge bg-danger-surface px-3 py-2 text-xs text-danger-text">
+            <div
+              id={errorId}
+              role="alert"
+              className="space-y-2 rounded-md border border-danger-edge bg-danger-surface px-3 py-2 text-xs text-danger-text"
+            >
               <div>{error}</div>
               {!busy && (
                 <button

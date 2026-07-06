@@ -29,6 +29,7 @@ import { CodexConnectDialog } from './components/CodexConnectDialog';
 import { Composer } from './components/Composer';
 import { GitHubConnectionDialog } from './components/GitHubConnectionDialog';
 import { EntryQuoteApplyContextProvider } from './components/EntryQuoteCard';
+import { ShortcutsHelp, Tooltip } from './components/a11y';
 import { FileIcon, GearIcon, LockIcon, PhoneIcon, PlayIcon, PlusIcon, SearchIcon, XIcon } from './components/icons';
 import { MarkupPane, splitMarkdownFrontmatter, type MarkupPaneMode, type MarkupPaneSource } from './components/MarkupPane';
 import { showErrorToast } from './components/Toasts';
@@ -77,6 +78,7 @@ import {
   stripEntryParamFromLocation,
   threadRootParamFromSearch,
 } from './EntryLinkRoute';
+import { SHORTCUTS, matchesChord } from './lib/shortcuts';
 
 const PAGE_SIZE = 50;
 const SYNC_LIMIT = 500;
@@ -130,6 +132,14 @@ function isMobileViewportNow(): boolean {
   return typeof window !== 'undefined' && typeof window.matchMedia === 'function'
     ? window.matchMedia(MOBILE_MEDIA_QUERY).matches
     : false;
+}
+
+function isEditableShortcutTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) return false;
+  if (target.closest('input, textarea, .ProseMirror')) return true;
+  if (target instanceof HTMLElement && target.isContentEditable) return true;
+  const editable = target.closest('[contenteditable]');
+  return editable instanceof HTMLElement && editable.isContentEditable;
 }
 
 function threadDraftKeyFor(channelId: string, rootEventId: number): string {
@@ -1074,14 +1084,21 @@ export function Chat({
 
   // ---- global keyboard: Esc closes the open pane, ⌘K jumps to a channel ----
   const [switcherOpen, setSwitcherOpen] = useState(false);
+  const [shortcutsHelpOpen, setShortcutsHelpOpen] = useState(false);
   useEffect(() => {
     const onKeyDown = (e: globalThis.KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+      if (matchesChord(e, SHORTCUTS.commandPalette.keys)) {
         e.preventDefault();
         setSwitcherOpen((v) => !v);
         return;
       }
-      if (e.key !== 'Escape' || switcherOpen) return;
+      if (matchesChord(e, SHORTCUTS.shortcutsHelp.keys)) {
+        if (isEditableShortcutTarget(e.target)) return;
+        e.preventDefault();
+        setShortcutsHelpOpen((v) => !v);
+        return;
+      }
+      if (e.key !== 'Escape' || switcherOpen || shortcutsHelpOpen) return;
       if (isSidebarOpen) {
         setIsSidebarOpen(false);
         return;
@@ -1097,7 +1114,7 @@ export function Chat({
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [isSidebarOpen, mainSurface, switcherOpen]);
+  }, [isSidebarOpen, mainSurface, shortcutsHelpOpen, switcherOpen]);
 
   // ---- unread badge in the tab title ----
   const unreadCount = Object.values(state.unread).filter(Boolean).length;
@@ -1376,7 +1393,7 @@ export function Chat({
       />
 
       {view !== 'focus' && (
-        <main className={`${state.openSessionId ? 'hidden md:flex' : 'flex'} min-w-0 flex-1 flex-col`}>
+        <main id="main-content" className={`${state.openSessionId ? 'hidden md:flex' : 'flex'} min-w-0 flex-1 flex-col`}>
           <header className="flex h-12 shrink-0 items-center gap-2 border-b border-edge px-2 md:gap-3 md:px-4">
             <button
               type="button"
@@ -1452,19 +1469,21 @@ export function Chat({
                 Chat
               </button>
             ) : (
-              <button
-                onClick={() => {
-                  setSpawnInitialTask('');
-                  setSpawnOpen(true);
-                }}
-                disabled={!active}
-                title="New agent"
-                aria-label="New agent"
-                className="inline-flex shrink-0 items-center gap-1 rounded-md bg-accent px-2 py-1 text-xs font-semibold text-on-accent hover:bg-accent-hover disabled:cursor-default disabled:bg-surface-overlay disabled:text-fg-muted md:ml-auto"
-              >
-                <PlusIcon size={14} />
-                <span className="hidden sm:inline">New agent</span>
-              </button>
+              <Tooltip content="New agent">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSpawnInitialTask('');
+                    setSpawnOpen(true);
+                  }}
+                  disabled={!active}
+                  aria-label="New agent"
+                  className="inline-flex shrink-0 items-center gap-1 rounded-md bg-accent px-2 py-1 text-xs font-semibold text-on-accent hover:bg-accent-hover disabled:cursor-default disabled:bg-surface-overlay disabled:text-fg-muted md:ml-auto"
+                >
+                  <PlusIcon size={14} />
+                  <span className="hidden sm:inline">New agent</span>
+                </button>
+              </Tooltip>
             )}
             {!showFilesSurface && !showActivitySurface && state.openSessionId && (
               <div className="hidden md:flex">
@@ -1475,11 +1494,8 @@ export function Chat({
               hint (tooltip + click), so the feature is discoverable instead of
               hidden — rather than a dead button that fails on click. */}
             {!showFilesSurface && !showActivitySurface && (
-              <button
-                onClick={startVoiceCallForActiveChannel}
-                disabled={callsAvailable && (!active || calls.starting || calls.activeCall != null)}
-                aria-disabled={!callsAvailable || undefined}
-                title={
+              <Tooltip
+                content={
                   !callsAvailable
                     ? 'Voice calls aren’t set up — configure LiveKit to enable'
                     : calls.activeCall
@@ -1488,27 +1504,37 @@ export function Chat({
                         ? 'Starting call…'
                         : 'Start voice call'
                 }
-                aria-label={!callsAvailable ? 'Voice calls not set up' : 'Start voice call'}
-                className={
-                  callsAvailable
-                    ? 'rounded-md border border-edge bg-surface-raised px-2 py-1 text-fg-muted hover:bg-surface-overlay hover:text-fg-body disabled:cursor-default disabled:text-fg-faint'
-                    : 'rounded-md border border-edge bg-surface-raised px-2 py-1 text-fg-faint cursor-help hover:text-fg-muted'
-                }
               >
-                <PhoneIcon size={15} />
-              </button>
+                <button
+                  type="button"
+                  onClick={startVoiceCallForActiveChannel}
+                  disabled={callsAvailable && (!active || calls.starting || calls.activeCall != null)}
+                  aria-disabled={!callsAvailable || undefined}
+                  aria-label={!callsAvailable ? 'Voice calls not set up' : 'Start voice call'}
+                  className={
+                    callsAvailable
+                      ? 'rounded-md border border-edge bg-surface-raised px-2 py-1 text-fg-muted hover:bg-surface-overlay hover:text-fg-body disabled:cursor-default disabled:text-fg-faint'
+                      : 'rounded-md border border-edge bg-surface-raised px-2 py-1 text-fg-faint cursor-help hover:text-fg-muted'
+                  }
+                >
+                  <PhoneIcon size={15} />
+                </button>
+              </Tooltip>
             )}
-            <button
-              onClick={() => setSwitcherOpen(true)}
-              aria-label="Open command center"
-              className="inline-flex items-center gap-1.5 rounded-md border border-edge bg-surface-raised px-2 py-1 text-xs text-fg-muted hover:bg-surface-overlay hover:text-fg-body"
-            >
-              <SearchIcon size={14} />
-              <span className="hidden sm:inline">Command</span>
-              <kbd className="hidden rounded border border-edge px-1 py-px text-3xs font-medium text-fg-muted lg:inline">
-                ⌘K
-              </kbd>
-            </button>
+            <Tooltip content="Open command center" shortcut={SHORTCUTS.commandPalette.keys}>
+              <button
+                type="button"
+                onClick={() => setSwitcherOpen(true)}
+                aria-label="Open command center"
+                className="inline-flex items-center gap-1.5 rounded-md border border-edge bg-surface-raised px-2 py-1 text-xs text-fg-muted hover:bg-surface-overlay hover:text-fg-body"
+              >
+                <SearchIcon size={14} />
+                <span className="hidden sm:inline">Command</span>
+                <kbd className="hidden rounded border border-edge px-1 py-px text-3xs font-medium text-fg-muted lg:inline">
+                  ⌘K
+                </kbd>
+              </button>
+            </Tooltip>
             {!showFilesSurface && presentUsers.length > 0 && (
               <div className="hidden items-center gap-2 md:flex" title="Viewing this channel right now">
                 <div className="flex -space-x-1.5">
@@ -1699,20 +1725,23 @@ export function Chat({
         >
           <header className="flex h-12 shrink-0 items-center justify-between border-b border-edge px-4">
             <h2 className="text-sm font-semibold text-fg">Session</h2>
-            <button
-              onClick={() => dispatch({ type: 'close-session' })}
-              title="Close session pane"
-              aria-label="Close session pane"
-              className="rounded-md px-2 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg"
-            >
-              <XIcon />
-            </button>
+            <Tooltip content="Close session pane">
+              <button
+                type="button"
+                onClick={() => dispatch({ type: 'close-session' })}
+                aria-label="Close session pane"
+                className="rounded-md px-2 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg"
+              >
+                <XIcon />
+              </button>
+            </Tooltip>
           </header>
           {state.openSessionError ? (
             <div className="flex flex-1 flex-col items-center justify-center gap-1.5 px-6 text-center">
               <div className="text-sm font-medium text-fg-secondary">Session not found</div>
               <div className="text-xs text-fg-muted">It may have been removed, or the link is wrong.</div>
               <button
+                type="button"
                 onClick={() => dispatch({ type: 'close-session' })}
                 className="mt-2 rounded-md border border-edge-strong px-3 py-1 text-xs text-fg-secondary hover:bg-surface-overlay hover:text-fg"
               >
@@ -1784,6 +1813,8 @@ export function Chat({
           onClose={() => setSwitcherOpen(false)}
         />
       )}
+
+      <ShortcutsHelp open={shortcutsHelpOpen} onClose={() => setShortcutsHelpOpen(false)} />
 
       {spawnOpen && active && (
         <SpawnDialog

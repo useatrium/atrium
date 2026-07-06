@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 export type SelectionPopoverMode = 'closed' | 'menu' | 'suggest' | 'comment';
 
@@ -33,13 +33,45 @@ export function SelectionPopover({
 }: SelectionPopoverProps) {
   const [replacement, setReplacement] = useState('');
   const [comment, setComment] = useState('');
+  const popoverRef = useRef<HTMLDivElement | null>(null);
+  const replacementInputRef = useRef<HTMLInputElement | null>(null);
+  const commentTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  useEffect(() => {
+    if (state.mode === 'closed') return;
+    const close = () => onModeChange('closed');
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.stopPropagation();
+        close();
+      }
+    };
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (popoverRef.current?.contains(target)) return;
+      close();
+    };
+    document.addEventListener('keydown', onKeyDown, true);
+    document.addEventListener('pointerdown', onPointerDown, true);
+    return () => {
+      document.removeEventListener('keydown', onKeyDown, true);
+      document.removeEventListener('pointerdown', onPointerDown, true);
+    };
+  }, [onModeChange, state.mode]);
+
+  useEffect(() => {
+    if (state.mode === 'suggest') replacementInputRef.current?.focus();
+    if (state.mode === 'comment') commentTextareaRef.current?.focus();
+  }, [state.mode]);
 
   if (state.mode === 'closed') {
     return null;
   }
 
   return (
+    // biome-ignore lint/a11y/noStaticElementInteractions: preserves text selection while focusable form controls handle keyboard input.
     <div
+      ref={popoverRef}
       className="atrium-markup-popover"
       style={{ top: state.top, left: state.left }}
       onMouseDown={(event) => {
@@ -75,7 +107,7 @@ export function SelectionPopover({
           <label>
             Replacement
             <input
-              autoFocus
+              ref={replacementInputRef}
               value={replacement}
               onChange={(event) => setReplacement(event.target.value)}
               data-testid="markup-replacement-input"
@@ -99,7 +131,7 @@ export function SelectionPopover({
           <label>
             Comment
             <textarea
-              autoFocus
+              ref={commentTextareaRef}
               value={comment}
               onChange={(event) => setComment(event.target.value)}
               data-testid="markup-comment-input"
@@ -113,4 +145,3 @@ export function SelectionPopover({
     </div>
   );
 }
-

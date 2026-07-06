@@ -89,7 +89,7 @@ describe('WorkDrawer', () => {
 
   it('clicking the What it ran tab calls onTab', () => {
     const props = renderDrawer();
-    fireEvent.click(screen.getByRole('tab', { name: /What it ran/ }));
+    fireEvent.mouseDown(screen.getByRole('tab', { name: /What it ran/ }), { button: 0, ctrlKey: false });
     expect(props.onTab).toHaveBeenCalledWith('sideEffects');
   });
 

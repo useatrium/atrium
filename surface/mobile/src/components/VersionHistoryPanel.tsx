@@ -18,6 +18,7 @@ import {
   type HubFile,
   type HubFileVersion,
 } from '@atrium/surface-client';
+import { useAccessibilityAnnouncement, useModalAccessibilityFocus } from '../lib/accessibility';
 import { font, radius, space, useTheme } from '../lib/theme';
 import { TimestampText } from './TimestampText';
 
@@ -144,6 +145,7 @@ function InlineNotice({ tone, message }: { tone: 'success' | 'error'; message: s
   return (
     <Text
       accessibilityRole={isError ? 'alert' : 'text'}
+      accessibilityLiveRegion="polite"
       style={{
         color: isError ? colors.danger : colors.online,
         fontSize: font.xs,
@@ -178,6 +180,8 @@ function DiffViewer({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lines, setLines] = useState<DiffLine[]>([]);
+
+  useAccessibilityAnnouncement(error);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -392,6 +396,7 @@ function VersionRow({
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={`Compare version ${version.seq} to latest`}
+            accessibilityHint="Shows a diff against the latest version"
             onPress={() => onCompare(version)}
             style={({ pressed }) => ({
               minHeight: 36,
@@ -412,6 +417,7 @@ function VersionRow({
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={`Restore version ${version.seq}`}
+            accessibilityHint="Restores this version as the current file"
             disabled={busySeq === version.seq}
             onPress={() => onRevert(version)}
             style={({ pressed }) => ({
@@ -448,6 +454,7 @@ export function VersionHistoryPanel(props: {
   const { colors, reduceMotion } = useTheme();
   const insets = useSafeAreaInsets();
   const mountedRef = useRef(true);
+  const titleRef = useRef<Text>(null);
   const [versions, setVersions] = useState<HubFileVersion[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -464,6 +471,9 @@ export function VersionHistoryPanel(props: {
     () => versions.find((version) => version.seq === compareSeq) ?? null,
     [compareSeq, versions],
   );
+
+  useModalAccessibilityFocus(titleRef, true);
+  useAccessibilityAnnouncement(notice ?? error);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -550,6 +560,7 @@ export function VersionHistoryPanel(props: {
       >
         <Pressable
           accessible={false}
+          accessibilityViewIsModal
           onPress={() => {}}
           style={{
             maxHeight: '88%',
@@ -572,7 +583,11 @@ export function VersionHistoryPanel(props: {
             }}
           >
             <View style={{ flex: 1, minWidth: 0 }}>
-              <Text style={{ color: colors.text, fontSize: font.md, fontWeight: '800' }}>
+              <Text
+                ref={titleRef}
+                accessibilityRole="header"
+                style={{ color: colors.text, fontSize: font.md, fontWeight: '800' }}
+              >
                 Version history
               </Text>
               <Text style={{ color: colors.textMuted, fontSize: font.xs, marginTop: 2 }} numberOfLines={1}>
@@ -613,6 +628,7 @@ export function VersionHistoryPanel(props: {
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel="Restore file"
+                  accessibilityHint="Restores this deleted file"
                   disabled={restoringFile}
                   onPress={() => {
                     void restoreFile();

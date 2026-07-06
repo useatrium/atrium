@@ -16,7 +16,9 @@ export function AudioRenderer({ file, variant }: { file: PreviewFile; variant: M
     <div className="flex h-full min-h-72 items-center justify-center bg-surface p-6">
       <div className="w-[min(560px,100%)] rounded-lg border border-edge bg-surface-raised/55 p-5">
         <div className="mb-3 truncate text-sm font-semibold text-fg">{file.name}</div>
-        <audio src={file.contentUrl} className="w-full" controls preload="metadata" />
+        <audio src={file.contentUrl} className="w-full" controls preload="metadata">
+          <track kind="captions" />
+        </audio>
       </div>
     </div>
   );

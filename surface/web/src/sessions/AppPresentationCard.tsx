@@ -46,6 +46,8 @@ export function AppPresentationCard({
   const timeline = surface === 'timeline';
 
   return (
+    // biome-ignore lint/a11y/noStaticElementInteractions: container only stops parent card activation; nested controls provide keyboard interaction.
+    // biome-ignore lint/a11y/useKeyWithClickEvents: container only stops parent card activation; nested controls provide keyboard interaction.
     <div
       data-testid="app-presentation-card"
       className={`overflow-hidden rounded-lg border border-edge bg-surface-raised/70 shadow-sm shadow-black/5 ${

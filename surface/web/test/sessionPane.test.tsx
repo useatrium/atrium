@@ -134,7 +134,7 @@ describe('session pane folds the B_tooltest stream', () => {
     expect(link.getAttribute('href')).toBe('/s/s-b');
     expect(link.getAttribute('target')).toBeNull();
     expect(link.getAttribute('rel')).toBeNull();
-    expect(link.getAttribute('title')).toBe('Open in full app');
+    expect(link.getAttribute('aria-label')).toBe('Open in full app');
   });
 
   it('opens a session capabilities popover from the header', async () => {

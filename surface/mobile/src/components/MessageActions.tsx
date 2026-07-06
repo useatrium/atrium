@@ -1,10 +1,11 @@
 // Long-press action sheet for a message: quick reactions + reply/edit/delete.
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type Ref } from 'react';
 import { Alert, Modal, Pressable, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Clipboard from 'expo-clipboard';
 import type { ChatMessage } from '@atrium/surface-client';
+import { useAccessibilityAnnouncement, useModalAccessibilityFocus } from '../lib/accessibility';
 import { font, radius, space, useTheme } from '../lib/theme';
 import { selectionHaptic } from '../lib/haptics';
 
@@ -30,18 +31,24 @@ export interface MessageActionsProps {
 
 function Action({
   label,
+  hint,
   destructive,
+  focusRef,
   onPress,
 }: {
   label: string;
+  hint?: string;
   destructive?: boolean;
+  focusRef?: Ref<View>;
   onPress: () => void;
 }) {
   const { colors } = useTheme();
   return (
     <Pressable
+      ref={focusRef}
       accessibilityRole="button"
       accessibilityLabel={label}
+      accessibilityHint={hint}
       onPress={onPress}
       style={({ pressed }) => ({
         minHeight: 44,
@@ -80,6 +87,7 @@ export function MessageActions({
   const insets = useSafeAreaInsets();
   const [copied, setCopied] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
+  const firstActionRef = useRef<View>(null);
   const closeAfterCopyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const m = message;
   const deleted = m?.deleted === true;
@@ -101,6 +109,30 @@ export function MessageActions({
   const canReplyAction = confirmed && canReply && !sessionBlock;
   const canMarkupReplyAction = confirmed && canMarkupReply && !sessionBlock && onMarkupReply != null;
   const canMutateMessage = confirmed && mine && !sessionBlock;
+  const focusReply = !canReact && canReplyAction;
+  const focusMarkupReply = !canReact && !canReplyAction && canMarkupReplyAction;
+  const focusCopyText = !canReact && !canReplyAction && !canMarkupReplyAction && copyText != null;
+  const focusCopyLink =
+    !canReact && !canReplyAction && !canMarkupReplyAction && copyText == null && copyLink != null;
+  const focusEdit =
+    !canReact &&
+    !canReplyAction &&
+    !canMarkupReplyAction &&
+    copyText == null &&
+    copyLink == null &&
+    canMutateMessage;
+  const focusCancel =
+    !canReact &&
+    !canReplyAction &&
+    !canMarkupReplyAction &&
+    copyText == null &&
+    copyLink == null &&
+    !canMutateMessage;
+
+  useModalAccessibilityFocus(firstActionRef, m != null);
+  useAccessibilityAnnouncement(
+    copied ? 'Message text copied.' : copiedLink ? 'Message link copied.' : null,
+  );
 
   useEffect(() => {
     setCopied(false);
@@ -145,6 +177,7 @@ export function MessageActions({
           // it collapses every action into one combined node instead of exposing the
           // individual reaction/action buttons.
           accessible={false}
+          accessibilityViewIsModal
           onPress={() => {}}
           style={{
             backgroundColor: colors.bgElevated,
@@ -164,11 +197,13 @@ export function MessageActions({
                 paddingBottom: space.md,
               }}
             >
-              {QUICK_EMOJI.map((e) => (
+              {QUICK_EMOJI.map((e, index) => (
                 <Pressable
+                  ref={index === 0 ? firstActionRef : undefined}
                   key={e}
                   accessibilityRole="button"
                   accessibilityLabel={`React with ${e}`}
+                  accessibilityHint="Adds this reaction to the message"
                   onPress={() => {
                     selectionHaptic();
                     onReact(m, e);
@@ -192,6 +227,8 @@ export function MessageActions({
           {m && canReplyAction && (
             <Action
               label="Reply in thread"
+              hint="Opens the thread for this message"
+              focusRef={focusReply ? firstActionRef : undefined}
               onPress={() => {
                 onReply(m);
                 onClose();
@@ -201,6 +238,8 @@ export function MessageActions({
           {m && canMarkupReplyAction && (
             <Action
               label="Mark up & reply"
+              hint="Starts a markup reply from this message"
+              focusRef={focusMarkupReply ? firstActionRef : undefined}
               onPress={() => {
                 onMarkupReply(m);
                 onClose();
@@ -210,6 +249,8 @@ export function MessageActions({
           {m && copyText && (
             <Action
               label={copied ? 'Copied' : 'Copy text'}
+              hint="Copies the message text to the clipboard"
+              focusRef={focusCopyText ? firstActionRef : undefined}
               onPress={() => {
                 selectionHaptic();
                 void Clipboard.setStringAsync(copyText)
@@ -224,6 +265,8 @@ export function MessageActions({
           {m && copyLink && (
             <Action
               label={copiedLink ? 'Copied link' : 'Copy link'}
+              hint="Copies a link to this message to the clipboard"
+              focusRef={focusCopyLink ? firstActionRef : undefined}
               onPress={() => {
                 selectionHaptic();
                 void Clipboard.setStringAsync(copyLink)
@@ -238,6 +281,8 @@ export function MessageActions({
           {m && canMutateMessage && (
             <Action
               label="Edit message"
+              hint="Opens this message for editing"
+              focusRef={focusEdit ? firstActionRef : undefined}
               onPress={() => {
                 onEdit(m);
                 onClose();
@@ -247,6 +292,7 @@ export function MessageActions({
           {m && canMutateMessage && (
             <Action
               label="Delete message"
+              hint="Opens a confirmation before deleting this message"
               destructive
               onPress={() => {
                 onClose();
@@ -257,7 +303,12 @@ export function MessageActions({
               }}
             />
           )}
-          <Action label="Cancel" onPress={onClose} />
+          <Action
+            label="Cancel"
+            hint="Closes the action menu"
+            focusRef={focusCancel ? firstActionRef : undefined}
+            onPress={onClose}
+          />
         </Pressable>
       </Pressable>
     </Modal>

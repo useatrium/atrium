@@ -1,6 +1,7 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ApiError, api } from '../api';
 import type { MarkupEditorHandle } from './markupPaneTypes';
+import { useDialog } from '../useDialog';
 import { MarkupDivergenceBanner } from './MarkupDivergenceBanner';
 import { MarkupVersionHistory } from './MarkupVersionHistory';
 
@@ -92,6 +93,7 @@ export function MarkupPane({
   onSendThreadReply?: (input: { channelId: string; threadRootEventId: number; text: string }) => void;
 }) {
   const editorRef = useRef<MarkupEditorHandle | null>(null);
+  const dialogRef = useRef<HTMLElement | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
   const [dirty, setDirty] = useState(false);
   const [note, setNote] = useState('');
@@ -119,6 +121,14 @@ export function MarkupPane({
     onClose();
   }, [hasUnsavedWork, onClose]);
 
+  useDialog({
+    open: true,
+    containerRef: dialogRef,
+    initialFocusRef: closeButtonRef,
+    onClose: requestClose,
+    closeOnOutsidePointer: true,
+  });
+
   const switchMarkdownSource = useCallback(
     (nextShowingSource: boolean) => {
       if (hasUnsavedWork() && !window.confirm('Discard your markup?')) return;
@@ -134,24 +144,12 @@ export function MarkupPane({
   }, [onClose]);
 
   useEffect(() => {
-    closeButtonRef.current?.focus();
-  }, []);
-
-  useEffect(() => {
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     return () => {
       document.body.style.overflow = previousOverflow;
     };
   }, []);
-
-  useEffect(() => {
-    function onKeyDown(event: KeyboardEvent) {
-      if (event.key === 'Escape') requestClose();
-    }
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [requestClose]);
 
   const send = async () => {
     if (!canSend || !editorRef.current) return;
@@ -195,16 +193,13 @@ export function MarkupPane({
     <div
       className="fixed inset-0 z-[80] flex bg-black/55 p-4 text-fg"
       role="presentation"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) requestClose();
-      }}
     >
       <section
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="markup-pane-title"
         className="mx-auto flex h-full w-full max-w-5xl flex-col overflow-hidden rounded-md border border-edge-strong bg-surface shadow-2xl"
-        onMouseDown={(event) => event.stopPropagation()}
       >
         <header className="flex h-12 shrink-0 items-center gap-3 border-b border-edge bg-surface-raised px-3">
           <div className="min-w-0 flex-1">

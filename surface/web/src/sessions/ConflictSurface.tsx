@@ -5,7 +5,7 @@
 // the caller fetches `GET .../artifacts/conflict` and wires `onResolve` to
 // `POST .../artifacts/:id/resolve`.
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { XIcon } from '../components/icons';
 import { DiffView } from './fileChangeView';
 
@@ -87,6 +87,17 @@ export function ConflictSurface({
   const [resolving, setResolving] = useState(false);
   const [merged, setMerged] = useState(conflict.markers);
 
+  useEffect(() => {
+    if (embedded) return;
+    const onDocumentKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.stopPropagation();
+      onClose();
+    };
+    document.addEventListener('keydown', onDocumentKeyDown, true);
+    return () => document.removeEventListener('keydown', onDocumentKeyDown, true);
+  }, [embedded, onClose]);
+
   async function resolve(choice: ResolveChoice) {
     if (resolving) return;
     setResolving(true);
@@ -134,6 +145,7 @@ export function ConflictSurface({
 
       <div className="flex flex-wrap items-center gap-2 px-3 py-2">
         <button
+          type="button"
           disabled={resolving}
           onClick={() => resolve({ kind: 'left' })}
           className="rounded-md border border-edge px-2 py-1 text-2xs font-semibold text-fg-body hover:bg-surface-overlay disabled:opacity-50"
@@ -141,6 +153,7 @@ export function ConflictSurface({
           Keep theirs
         </button>
         <button
+          type="button"
           disabled={resolving}
           onClick={() => resolve({ kind: 'right' })}
           className="rounded-md border border-edge px-2 py-1 text-2xs font-semibold text-fg-body hover:bg-surface-overlay disabled:opacity-50"
@@ -150,14 +163,18 @@ export function ConflictSurface({
       </div>
 
       <div className="px-3 pb-3">
-        <label className="text-2xs text-fg-muted">Edit a merged resolution</label>
+        <label htmlFor="conflict-merged-resolution" className="text-2xs text-fg-muted">
+          Edit a merged resolution
+        </label>
         <textarea
+          id="conflict-merged-resolution"
           aria-label="merged resolution"
           value={merged}
           onChange={(e) => setMerged(e.target.value)}
           className="mt-1 h-32 w-full resize-y rounded-md border border-edge bg-surface p-2 font-mono text-2xs text-fg-body outline-none focus:border-edge-focus"
         />
         <button
+          type="button"
           disabled={resolving}
           onClick={() => resolve({ kind: 'merged', text: merged })}
           className="mt-1 rounded-md bg-accent px-2 py-1 text-2xs font-semibold text-on-accent hover:opacity-90 disabled:opacity-50"
@@ -175,7 +192,6 @@ export function ConflictSurface({
       data-testid="conflict-surface"
       role="dialog"
       aria-label="Resolve conflict"
-      onKeyDown={(e) => e.key === 'Escape' && onClose()}
       className="absolute inset-0 z-10 flex flex-col bg-surface/95 backdrop-blur-sm"
     >
       <header className="flex h-10 shrink-0 items-center justify-between border-b border-edge px-3">
@@ -196,6 +212,7 @@ export function ConflictSurface({
           <span className="shrink-0 tabular-nums text-fg-muted">· v{conflict.conflictSeq}</span>
         </h3>
         <button
+          type="button"
           onClick={onClose}
           aria-label="Close conflict"
           className="rounded-md px-1.5 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg"
@@ -213,6 +230,7 @@ export function ConflictBanner({ count, onOpen }: { count: number; onOpen: () =>
   if (count <= 0) return null;
   return (
     <button
+      type="button"
       onClick={onOpen}
       className="flex w-full items-center gap-2 border-b border-danger-edge bg-danger-surface px-3 py-1.5 text-left text-2xs text-danger-text hover:opacity-90"
     >

@@ -73,6 +73,7 @@ import { SessionCard } from '../sessions/SessionCard';
 import type { Session } from '../sessions/types';
 import { formatBytes, formatGutterTime, formatTime } from '@atrium/surface-client';
 import { Avatar } from './Avatar';
+import { Tooltip } from './a11y';
 import { CornerUpLeftIcon, FileIcon, SmilePlusIcon } from './icons';
 import { Lightbox } from './media';
 import type { PreviewFile } from './media';
@@ -317,6 +318,7 @@ export const MessageRow = memo(function MessageRow({
   const [draft, setDraft] = useState('');
   const [saving, setSaving] = useState(false);
   const [editFailed, setEditFailed] = useState(false);
+  const editTextareaRef = useRef<HTMLTextAreaElement>(null);
 
   const startEdit = () => {
     setDraft(m.text);
@@ -347,6 +349,10 @@ export const MessageRow = memo(function MessageRow({
     }
   };
 
+  useEffect(() => {
+    if (editing) editTextareaRef.current?.focus();
+  }, [editing]);
+
   // Up-arrow in the composer targets this row for editing.
   useEffect(() => {
     if (!editRequested) return;
@@ -372,6 +378,7 @@ export const MessageRow = memo(function MessageRow({
   };
 
   return (
+    // biome-ignore lint/a11y/noStaticElementInteractions: pointer hover cleanup only closes a mouse-opened reaction picker; keyboard focus is unaffected.
     <div
       data-eid={m.id ?? undefined}
       data-entry-handle={entryHandle ?? undefined}
@@ -419,7 +426,7 @@ export const MessageRow = memo(function MessageRow({
         ) : editing ? (
           <div className="py-0.5">
             <textarea
-              autoFocus
+              ref={editTextareaRef}
               value={draft}
               rows={Math.min(8, draft.split('\n').length)}
               disabled={saving}
@@ -453,24 +460,24 @@ export const MessageRow = memo(function MessageRow({
               removedAttachmentIds.has(a.id) ? (
                 <RemovedAttachmentPlaceholder key={a.id} filename={a.filename} />
               ) : a.contentType.startsWith('image/') ? (
-                <button
-                  key={a.id}
-                  type="button"
-                  onClick={() => openAttachment(index)}
-                  title={a.filename}
-                  className="block text-left"
-                >
-                  <img
-                    src={`/api/files/${a.id}`}
-                    alt={a.filename}
-                    width={a.width}
-                    height={a.height}
-                    loading="lazy"
-                    onError={() => markAttachmentRemoved(a.id)}
-                    className="max-h-72 w-auto max-w-sm rounded-md border border-edge object-contain"
-                    style={a.width && a.height ? { aspectRatio: `${a.width} / ${a.height}` } : undefined}
-                  />
-                </button>
+                <Tooltip key={a.id} content={a.filename}>
+                  <button
+                    type="button"
+                    onClick={() => openAttachment(index)}
+                    className="block text-left"
+                  >
+                    <img
+                      src={`/api/files/${a.id}`}
+                      alt={a.filename}
+                      width={a.width}
+                      height={a.height}
+                      loading="lazy"
+                      onError={() => markAttachmentRemoved(a.id)}
+                      className="max-h-72 w-auto max-w-sm rounded-md border border-edge object-contain"
+                      style={a.width && a.height ? { aspectRatio: `${a.width} / ${a.height}` } : undefined}
+                    />
+                  </button>
+                </Tooltip>
               ) : (
                 <button
                   key={a.id}
@@ -510,6 +517,7 @@ export const MessageRow = memo(function MessageRow({
               const popoverOpen = hasUserPopover && openReactionEmoji === r.emoji;
               const popoverId = `${reactionPopoverBaseId}-reaction-${reactionIndex}`;
               return (
+                // biome-ignore lint/a11y/noStaticElementInteractions: hover reveals the reactor popover; keyboard users reach it via the inner button's onFocus/onBlur/Escape handlers.
                 <div
                   key={r.emoji}
                   onMouseEnter={() => {
@@ -554,12 +562,13 @@ export const MessageRow = memo(function MessageRow({
           </div>
         )}
         {failed && (
-          <button onClick={() => onRetry?.(m)} className="mt-0.5 text-xs font-medium text-danger hover:underline">
+          <button type="button" onClick={() => onRetry?.(m)} className="mt-0.5 text-xs font-medium text-danger hover:underline">
             {isSessionRow ? 'Failed to spawn — click to retry' : 'Failed to send — click to retry'}
           </button>
         )}
         {!inThread && m.replyCount > 0 && m.id != null && (
           <button
+            type="button"
             onClick={() => onOpenThread?.(m.id!)}
             className="mt-0.5 text-xs font-medium text-accent-text hover:underline"
           >
@@ -595,9 +604,11 @@ export const MessageRow = memo(function MessageRow({
             }}
             className="absolute bottom-full right-0 z-10 mb-1 grid max-h-40 w-64 grid-cols-8 gap-0.5 overflow-y-auto rounded-md border border-edge-strong bg-surface-overlay p-1 shadow-lg"
           >
+            {/* biome-ignore lint/a11y/useSemanticElements: emoji picker uses ARIA grid navigation over buttons; a table would misrepresent the control. */}
             <div role="grid" aria-label="Reaction choices" className="contents">
               {REACTION_EMOJI.map((e2, i) => (
                 <button
+                  type="button"
                   key={e2}
                   ref={(el) => {
                     emojiRefs.current[i] = el;
@@ -617,107 +628,118 @@ export const MessageRow = memo(function MessageRow({
         {(canThread || canEdit || canDelete || canReact || canAnnotate || canMarkupReply) && !editing && (
           <div className="pointer-events-none absolute -top-3 right-0 flex gap-1 opacity-0 focus-within:pointer-events-auto focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100">
             {canReact && (
-              <button
-                ref={reactionButtonRef}
-                onPointerDown={() => {
-                  mouseOpenedPickerRef.current = true;
-                }}
-                onKeyDown={() => {
-                  mouseOpenedPickerRef.current = false;
-                }}
-                onClick={() => {
-                  setPickerIndex(0);
-                  setPickerOpen((v) => !v);
-                }}
-                title="Add reaction"
-                aria-label="Add reaction"
-                aria-expanded={pickerOpen}
-                aria-haspopup="dialog"
-                className="rounded-md border border-edge-strong bg-surface-overlay px-2 py-1 text-xs text-fg-secondary shadow-sm hover:bg-edge-strong hover:text-fg"
-              >
-                <SmilePlusIcon />
-              </button>
+              <Tooltip content="Add reaction">
+                <button
+                  type="button"
+                  ref={reactionButtonRef}
+                  onPointerDown={() => {
+                    mouseOpenedPickerRef.current = true;
+                  }}
+                  onKeyDown={() => {
+                    mouseOpenedPickerRef.current = false;
+                  }}
+                  onClick={() => {
+                    setPickerIndex(0);
+                    setPickerOpen((v) => !v);
+                  }}
+                  aria-label="Add reaction"
+                  aria-expanded={pickerOpen}
+                  aria-haspopup="dialog"
+                  className="rounded-md border border-edge-strong bg-surface-overlay px-2 py-1 text-xs text-fg-secondary shadow-sm hover:bg-edge-strong hover:text-fg"
+                >
+                  <SmilePlusIcon />
+                </button>
+              </Tooltip>
             )}
             {canAnnotate && (
-              <button
-                type="button"
-                onClick={() => {
-                  setPickerOpen(false);
-                  copyEntryLink();
-                }}
-                title={linkCopied ? 'Copied entry link' : 'Copy entry link'}
-                aria-label={linkCopied ? 'Copied entry link' : 'Copy entry link'}
-                className={`inline-flex h-7 w-8 items-center justify-center rounded-md border border-edge-strong bg-surface-overlay text-xs shadow-sm transition-colors hover:bg-edge-strong hover:text-fg ${
-                  linkCopied ? 'text-accent-text-strong' : 'text-fg-secondary'
-                }`}
-              >
-                {linkCopied ? <CheckIcon /> : <LinkIcon />}
-              </button>
+              <Tooltip content={linkCopied ? 'Copied entry link' : 'Copy entry link'}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPickerOpen(false);
+                    copyEntryLink();
+                  }}
+                  aria-label={linkCopied ? 'Copied entry link' : 'Copy entry link'}
+                  className={`inline-flex h-7 w-8 items-center justify-center rounded-md border border-edge-strong bg-surface-overlay text-xs shadow-sm transition-colors hover:bg-edge-strong hover:text-fg ${
+                    linkCopied ? 'text-accent-text-strong' : 'text-fg-secondary'
+                  }`}
+                >
+                  {linkCopied ? <CheckIcon /> : <LinkIcon />}
+                </button>
+              </Tooltip>
             )}
             {canAnnotate && canCopyMessageText && (
-              <button
-                type="button"
-                onClick={() => {
-                  setPickerOpen(false);
-                  copyBlockText();
-                }}
-                title={textCopied ? 'Copied block text' : 'Copy block text'}
-                aria-label={textCopied ? 'Copied block text' : 'Copy block text'}
-                className={`inline-flex h-7 w-8 items-center justify-center rounded-md border border-edge-strong bg-surface-overlay text-xs shadow-sm transition-colors hover:bg-edge-strong hover:text-fg ${
-                  textCopied ? 'text-accent-text-strong' : 'text-fg-secondary'
-                }`}
-              >
-                {textCopied ? <CheckIcon /> : <CopyIcon />}
-              </button>
+              <Tooltip content={textCopied ? 'Copied block text' : 'Copy block text'}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPickerOpen(false);
+                    copyBlockText();
+                  }}
+                  aria-label={textCopied ? 'Copied block text' : 'Copy block text'}
+                  className={`inline-flex h-7 w-8 items-center justify-center rounded-md border border-edge-strong bg-surface-overlay text-xs shadow-sm transition-colors hover:bg-edge-strong hover:text-fg ${
+                    textCopied ? 'text-accent-text-strong' : 'text-fg-secondary'
+                  }`}
+                >
+                  {textCopied ? <CheckIcon /> : <CopyIcon />}
+                </button>
+              </Tooltip>
             )}
             {canMarkupReply && entryHandle && (
-              <button
-                type="button"
-                onClick={() => {
-                  setPickerOpen(false);
-                  onMarkupEntry(entryHandle, m);
-                }}
-                data-testid="markup-reply"
-                title="Mark up & reply"
-                aria-label="Mark up & reply"
-                className="inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-edge-strong bg-surface-overlay px-2 py-1 text-xs text-fg-secondary shadow-sm hover:bg-edge-strong hover:text-fg"
-              >
-                <PenLineIcon /> Mark up
-              </button>
+              <Tooltip content="Mark up & reply">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPickerOpen(false);
+                    onMarkupEntry(entryHandle, m);
+                  }}
+                  data-testid="markup-reply"
+                  aria-label="Mark up & reply"
+                  className="inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-edge-strong bg-surface-overlay px-2 py-1 text-xs text-fg-secondary shadow-sm hover:bg-edge-strong hover:text-fg"
+                >
+                  <PenLineIcon /> Mark up
+                </button>
+              </Tooltip>
             )}
             {canEdit && (
-              <button
-                onClick={startEdit}
-                title="Edit message"
-                aria-label="Edit message"
-                className="rounded-md border border-edge-strong bg-surface-overlay px-2 py-1 text-xs text-fg-secondary shadow-sm hover:bg-edge-strong hover:text-fg"
-              >
-                Edit
-              </button>
+              <Tooltip content="Edit message">
+                <button
+                  type="button"
+                  onClick={startEdit}
+                  aria-label="Edit message"
+                  className="rounded-md border border-edge-strong bg-surface-overlay px-2 py-1 text-xs text-fg-secondary shadow-sm hover:bg-edge-strong hover:text-fg"
+                >
+                  Edit
+                </button>
+              </Tooltip>
             )}
             {canDelete && (
-              <button
-                onClick={onDeleteClick}
-                title="Delete message"
-                aria-label={deleteAsk ? 'Confirm delete message' : 'Delete message'}
-                className={`rounded-md border px-2 py-1 text-xs shadow-sm ${
-                  deleteAsk
-                    ? 'border-danger-border-strong bg-danger-tint/70 font-medium text-danger-text-strong hover:bg-danger-surface/70'
-                    : 'border-edge-strong bg-surface-overlay text-fg-secondary hover:bg-edge-strong hover:text-danger-text'
-                }`}
-              >
-                {deleteAsk ? 'Confirm delete' : 'Delete'}
-              </button>
+              <Tooltip content={deleteAsk ? 'Confirm delete message' : 'Delete message'}>
+                <button
+                  type="button"
+                  onClick={onDeleteClick}
+                  aria-label={deleteAsk ? 'Confirm delete message' : 'Delete message'}
+                  className={`rounded-md border px-2 py-1 text-xs shadow-sm ${
+                    deleteAsk
+                      ? 'border-danger-border-strong bg-danger-tint/70 font-medium text-danger-text-strong hover:bg-danger-surface/70'
+                      : 'border-edge-strong bg-surface-overlay text-fg-secondary hover:bg-edge-strong hover:text-danger-text'
+                  }`}
+                >
+                  {deleteAsk ? 'Confirm delete' : 'Delete'}
+                </button>
+              </Tooltip>
             )}
             {canThread && (
-              <button
-                onClick={() => onOpenThread!(m.id!)}
-                title="Reply in thread"
-                aria-label="Reply in thread"
-                className="inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-edge-strong bg-surface-overlay px-2 py-1 text-xs text-fg-secondary shadow-sm hover:bg-edge-strong hover:text-fg"
-              >
-                <CornerUpLeftIcon /> Reply
-              </button>
+              <Tooltip content="Reply in thread">
+                <button
+                  type="button"
+                  onClick={() => onOpenThread!(m.id!)}
+                  aria-label="Reply in thread"
+                  className="inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-edge-strong bg-surface-overlay px-2 py-1 text-xs text-fg-secondary shadow-sm hover:bg-edge-strong hover:text-fg"
+                >
+                  <CornerUpLeftIcon /> Reply
+                </button>
+              </Tooltip>
             )}
           </div>
         )}
@@ -894,6 +916,7 @@ function SessionEventCard({
       )}
       {message.sessionId && (
         <button
+          type="button"
           onClick={() => onOpenSession?.(message.sessionId!)}
           aria-label={openLabel}
           className="mt-1 font-medium text-fg-tertiary hover:text-fg-body hover:underline"

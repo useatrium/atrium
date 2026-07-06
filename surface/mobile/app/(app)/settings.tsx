@@ -12,7 +12,7 @@ import {
 } from 'react-native';
 import Constants from 'expo-constants';
 import { Stack } from 'expo-router';
-import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   ACCENTS,
   FONT_SCALES,
@@ -27,6 +27,7 @@ import {
 } from '@atrium/surface-client';
 import { useChat } from '../../src/lib/chat';
 import { useSession } from '../../src/lib/session';
+import { useAccessibilityAnnouncement, useModalAccessibilityFocus } from '../../src/lib/accessibility';
 import {
   getRegisteredPushToken,
   getRegisteredVoipPushToken,
@@ -209,6 +210,9 @@ function ProviderConnectionRow({
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={`${actionLabel} ${config.title}`}
+          accessibilityHint={
+            connected ? 'Removes this provider connection' : 'Opens the provider connection sheet'
+          }
           accessibilityState={{ disabled: busy }}
           disabled={busy}
           onPress={() => (connected ? onDisconnect(provider) : onConnect(provider))}
@@ -268,6 +272,10 @@ function ConnectProviderSheet({
   onSubmit: () => void;
 }) {
   const { colors, reduceMotion } = useTheme();
+  const titleRef = useRef<Text>(null);
+  useModalAccessibilityFocus(titleRef, provider != null);
+  useAccessibilityAnnouncement(error);
+
   if (!provider) return null;
 
   const config = providerConfigs[provider];
@@ -295,6 +303,7 @@ function ConnectProviderSheet({
           <View
             accessibilityRole="summary"
             accessibilityLabel={`Connect ${config.title}`}
+            accessibilityViewIsModal
             style={{
               backgroundColor: colors.bgElevated,
               borderColor: colors.border,
@@ -317,6 +326,8 @@ function ConnectProviderSheet({
             >
               <View style={{ flex: 1 }}>
                 <Text
+                  ref={titleRef}
+                  accessibilityRole="header"
                   maxFontSizeMultiplier={2}
                   style={{ color: colors.text, fontSize: font.md, fontWeight: '800' }}
                 >
@@ -412,6 +423,7 @@ function ConnectProviderSheet({
               </View>
               {status?.lastError ? (
                 <Text
+                  accessibilityLiveRegion="polite"
                   maxFontSizeMultiplier={2}
                   style={{
                     backgroundColor: colors.warningSurface,
@@ -430,6 +442,7 @@ function ConnectProviderSheet({
               {error ? (
                 <Text
                   accessibilityRole="alert"
+                  accessibilityLiveRegion="polite"
                   maxFontSizeMultiplier={2}
                   style={{
                     backgroundColor: colors.dangerSurface,
@@ -460,6 +473,7 @@ function ConnectProviderSheet({
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel={`Disconnect ${config.title}`}
+                accessibilityHint="Removes this provider connection"
                 accessibilityState={{ disabled: !connected || busy }}
                 disabled={!connected || busy}
                 onPress={onDisconnect}
@@ -502,6 +516,9 @@ function ConnectProviderSheet({
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel={`${connected ? 'Reconnect' : 'Connect'} ${config.title}`}
+                  accessibilityHint={
+                    connected ? 'Replaces this provider credential' : 'Saves this provider credential'
+                  }
                   accessibilityState={{ disabled: !canSubmit }}
                   disabled={!canSubmit}
                   onPress={onSubmit}
@@ -618,6 +635,8 @@ export default function SettingsScreen() {
   const [pushPermission, setPushPermission] =
     useState<PushPermissionStatus>('undetermined');
   const [pushBusy, setPushBusy] = useState(false);
+
+  useAccessibilityAnnouncement(providerStatusError);
 
   useEffect(() => {
     let mounted = true;
@@ -910,6 +929,7 @@ export default function SettingsScreen() {
         {providerStatusError ? (
           <Text
             accessibilityRole="alert"
+            accessibilityLiveRegion="polite"
             maxFontSizeMultiplier={2}
             style={{
               color: colors.danger,
@@ -987,6 +1007,7 @@ export default function SettingsScreen() {
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Log out"
+          accessibilityHint="Signs out of this Atrium server"
           onPress={logOut}
           style={({ pressed }) => ({
             minHeight: 56,

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { Artifact, ArtifactPresentation, FileChange } from '@atrium/centaur-client';
 import { ChevronDownIcon, ChevronRightIcon, XIcon } from '../components/icons';
@@ -111,6 +111,17 @@ export function WhatChangedSurface({
   const showEdited = filter === 'all' || filter === 'edited';
   const showCreated = filter === 'all' || filter === 'created';
 
+  useEffect(() => {
+    if (embedded) return;
+    const onDocumentKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.stopPropagation();
+      onClose();
+    };
+    document.addEventListener('keydown', onDocumentKeyDown, true);
+    return () => document.removeEventListener('keydown', onDocumentKeyDown, true);
+  }, [embedded, onClose]);
+
   const body = (
     <div className="min-h-0 flex-1 overflow-y-auto">
       {totalCount === 0 ? (
@@ -203,7 +214,6 @@ export function WhatChangedSurface({
       data-testid="what-changed-surface"
       role="dialog"
       aria-label="What changed"
-      onKeyDown={(e) => e.key === 'Escape' && onClose()}
       className="absolute inset-0 z-10 flex flex-col bg-surface/95 backdrop-blur-sm"
     >
       <header className="flex h-10 shrink-0 items-center justify-between border-b border-edge px-3">

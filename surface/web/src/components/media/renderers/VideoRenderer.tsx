@@ -22,7 +22,9 @@ export function VideoRenderer({ file, variant }: { file: PreviewFile; variant: M
 
   return (
     <div className="flex h-full min-h-0 items-center justify-center bg-surface p-4">
-      <video src={file.contentUrl} className="max-h-full max-w-full rounded-md" controls preload="metadata" />
+      <video src={file.contentUrl} className="max-h-full max-w-full rounded-md" controls preload="metadata">
+        <track kind="captions" />
+      </video>
     </div>
   );
 }

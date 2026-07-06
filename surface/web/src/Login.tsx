@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { api, ApiError } from './api';
 import { captureDesktopLogin } from './desktop';
 import type { AuthMethods, UserRef } from '@atrium/surface-client';
@@ -19,7 +19,11 @@ export function Login({ onLogin }: { onLogin: (user: UserRef) => void }) {
   const [handle, setHandle] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [errorField, setErrorField] = useState<'handle' | 'email' | 'code' | null>(null);
   const [busy, setBusy] = useState(false);
+  const handleInputRef = useRef<HTMLInputElement>(null);
+  const emailInputRef = useRef<HTMLInputElement>(null);
+  const codeInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     api
@@ -33,6 +37,12 @@ export function Login({ onLogin }: { onLogin: (user: UserRef) => void }) {
     if ((path === 'email' || path === 'code') && !methods.email && methods.open) setPath('handle');
   }, [methods, path]);
 
+  useEffect(() => {
+    if (path === 'handle') handleInputRef.current?.focus();
+    if (path === 'email') emailInputRef.current?.focus();
+    if (path === 'code') codeInputRef.current?.focus();
+  }, [path]);
+
   const showHandle = methods.open && path === 'handle';
   const showEmail = methods.email && (path === 'email' || path === 'code' || !methods.open);
 
@@ -40,11 +50,13 @@ export function Login({ onLogin }: { onLogin: (user: UserRef) => void }) {
     e.preventDefault();
     setBusy(true);
     setError(null);
+    setErrorField(null);
     try {
       await api.requestEmailCode(email.trim());
       setPath('code');
     } catch (err) {
       setError(friendlyLoginError(err));
+      setErrorField('email');
     } finally {
       setBusy(false);
     }
@@ -54,12 +66,14 @@ export function Login({ onLogin }: { onLogin: (user: UserRef) => void }) {
     e.preventDefault();
     setBusy(true);
     setError(null);
+    setErrorField(null);
     try {
       const result = await api.verifyEmailCode(email.trim(), code.trim());
       await captureDesktopLogin(result);
       onLogin(result.user);
     } catch (err) {
       setError(friendlyLoginError(err));
+      setErrorField('code');
     } finally {
       setBusy(false);
     }
@@ -69,6 +83,7 @@ export function Login({ onLogin }: { onLogin: (user: UserRef) => void }) {
     e.preventDefault();
     setBusy(true);
     setError(null);
+    setErrorField(null);
     try {
       // Blank display name = server keeps the existing one (or defaults to
       // the handle for brand-new users) — re-logins don't rewrite history.
@@ -77,6 +92,7 @@ export function Login({ onLogin }: { onLogin: (user: UserRef) => void }) {
       onLogin(result.user);
     } catch (err) {
       setError(friendlyLoginError(err));
+      setErrorField('handle');
     } finally {
       setBusy(false);
     }
@@ -91,17 +107,18 @@ export function Login({ onLogin }: { onLogin: (user: UserRef) => void }) {
         </p>
 
         {showHandle && (
-          <form onSubmit={submitHandle}>
+          <form onSubmit={submitHandle} aria-busy={busy ? 'true' : undefined}>
             <label htmlFor="login-handle" className="mb-1 block text-2xs font-medium uppercase tracking-wide text-fg-muted">
               Handle
             </label>
             <input
+              ref={handleInputRef}
               id="login-handle"
               value={handle}
-              aria-describedby={error ? 'login-error' : undefined}
+              aria-invalid={errorField === 'handle' ? 'true' : undefined}
+              aria-describedby={errorField === 'handle' ? 'login-error' : undefined}
               onChange={(e) => setHandle(e.target.value)}
               placeholder="gary"
-              autoFocus
               autoCapitalize="off"
               autoCorrect="off"
               spellCheck={false}
@@ -135,6 +152,7 @@ export function Login({ onLogin }: { onLogin: (user: UserRef) => void }) {
             onClick={() => {
               setPath('email');
               setError(null);
+              setErrorField(null);
             }}
             className="mt-3 w-full text-xs font-medium text-fg-muted hover:text-fg-secondary"
           >
@@ -143,16 +161,17 @@ export function Login({ onLogin }: { onLogin: (user: UserRef) => void }) {
         )}
 
         {showEmail && (
-          <form onSubmit={path === 'email' ? requestCode : verifyCode}>
+          <form onSubmit={path === 'email' ? requestCode : verifyCode} aria-busy={busy ? 'true' : undefined}>
             <label htmlFor="login-email" className="mb-1 block text-2xs font-medium uppercase tracking-wide text-fg-muted">
               Email
             </label>
             <input
+              ref={emailInputRef}
               id="login-email"
               type="email"
-              autoFocus={path === 'email'}
               value={email}
-              aria-describedby={error && path === 'email' ? 'login-error' : undefined}
+              aria-invalid={errorField === 'email' ? 'true' : undefined}
+              aria-describedby={errorField === 'email' ? 'login-error' : undefined}
               onChange={(e) => setEmail(e.target.value)}
               placeholder="gary@example.com"
               autoComplete="email"
@@ -168,14 +187,15 @@ export function Login({ onLogin }: { onLogin: (user: UserRef) => void }) {
                   Code
                 </label>
                 <input
+                  ref={codeInputRef}
                   id="login-code"
                   value={code}
-                  aria-describedby={error ? 'login-error' : undefined}
+                  aria-invalid={errorField === 'code' ? 'true' : undefined}
+                  aria-describedby={errorField === 'code' ? 'login-error' : undefined}
                   onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
                   placeholder="123456"
                   inputMode="numeric"
                   autoComplete="one-time-code"
-                  autoFocus
                   className="mb-3 w-full rounded-md border border-edge-strong bg-surface px-3 py-2 text-sm text-fg placeholder-fg-faint outline-none focus:border-accent-hover"
                 />
               </>
@@ -207,6 +227,7 @@ export function Login({ onLogin }: { onLogin: (user: UserRef) => void }) {
                 setPath('email');
                 setCode('');
                 setError(null);
+                setErrorField(null);
               }}
               className="mt-3 w-full text-xs text-fg-muted hover:text-fg-secondary"
             >
@@ -219,6 +240,7 @@ export function Login({ onLogin }: { onLogin: (user: UserRef) => void }) {
                   setPath('handle');
                   setCode('');
                   setError(null);
+                  setErrorField(null);
                 }}
                 className="mt-2 w-full text-xs font-medium text-fg-muted hover:text-fg-secondary"
               >
@@ -234,6 +256,7 @@ export function Login({ onLogin }: { onLogin: (user: UserRef) => void }) {
             onClick={() => {
               setPath('handle');
               setError(null);
+              setErrorField(null);
             }}
             className="mt-3 w-full text-xs text-fg-muted hover:text-fg-secondary"
           >

@@ -71,6 +71,11 @@ export function useDialog({
       if (!closeOnOutsidePointer) return;
       const target = event.target as Node;
       if (containerRef.current?.contains(target) || invokerRef?.current?.contains(target)) return;
+      // Don't dismiss when the click lands inside another dialog stacked over
+      // this one (e.g. a nested connect dialog opened from within): that dialog
+      // is not a DOM descendant of this container, so a naive "outside" check
+      // would wrongly close the parent. The topmost dialog owns its own dismiss.
+      if (target instanceof Element && target.closest('[role="dialog"]')) return;
       onClose();
     };
 

@@ -1,5 +1,6 @@
-import { Fragment, useState } from 'react';
+import { Fragment, useRef, useState } from 'react';
 import type { ConnectionIdentity, ConnectionStatus } from '../api';
+import { useDialog } from '../useDialog';
 import { XIcon } from './icons';
 
 export function GitHubConnectionDialog({
@@ -17,8 +18,10 @@ export function GitHubConnectionDialog({
   onActivate: (identityId: string) => Promise<void>;
   onDisconnect: () => Promise<void>;
 }) {
+  const containerRef = useRef<HTMLDivElement>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [errorField, setErrorField] = useState<'installation' | 'token' | null>(null);
   const [token, setToken] = useState('');
   const [installationId, setInstallationId] = useState('');
   const connected = status?.connected === true;
@@ -26,10 +29,21 @@ export function GitHubConnectionDialog({
   const activeSummary = githubActiveSummary(status);
   const connectionDetails = githubConnectionDetails(status);
   const identities = status?.identities ?? [];
+  const titleId = 'github-connection-title';
+  const errorId = 'github-connection-error';
+  const installationHelpId = 'github-installation-help';
+  const patHelpId = 'github-pat-help';
+  const installationDescription = error && errorField === 'installation'
+    ? `${installationHelpId} ${errorId}`
+    : installationHelpId;
+  const patDescription = error && errorField === 'token' ? `${patHelpId} ${errorId}` : patHelpId;
 
-  async function run(action: () => Promise<void>) {
+  useDialog({ open: true, containerRef, onClose: onCancel, closeOnOutsidePointer: true });
+
+  async function run(action: () => Promise<void>, field: 'installation' | 'token' | null = null) {
     setBusy(true);
     setError(null);
+    setErrorField(field);
     try {
       await action();
       onCancel();
@@ -43,19 +57,18 @@ export function GitHubConnectionDialog({
   return (
     <div
       className="fixed inset-0 z-50 flex items-start justify-center bg-surface/60 p-4"
-      onClick={onCancel}
-      onKeyDown={(e) => e.key === 'Escape' && onCancel()}
-      role="dialog"
-      aria-modal="true"
-      aria-label="GitHub connection"
     >
       <div
-        onClick={(e) => e.stopPropagation()}
+        ref={containerRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="GitHub connection"
+        aria-busy={busy ? 'true' : undefined}
         className="mt-24 w-[min(420px,calc(100vw-2rem))] overflow-hidden rounded-lg border border-edge-strong bg-surface-raised shadow-2xl"
       >
         <header className="flex items-center justify-between border-b border-edge px-4 py-3">
           <div>
-            <h2 className="text-sm font-semibold text-fg">GitHub connection</h2>
+            <h2 id={titleId} className="text-sm font-semibold text-fg">GitHub connection</h2>
             <p className="text-2xs text-fg-muted">
               {connected || needsAuth ? activeSummary : 'Use your GitHub account for repository access.'}
             </p>
@@ -134,7 +147,11 @@ export function GitHubConnectionDialog({
           )}
 
           {error && (
-            <div role="alert" className="rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-xs text-danger">
+            <div
+              id={errorId}
+              role="alert"
+              className="rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-xs text-danger"
+            >
               {error}
             </div>
           )}
@@ -149,7 +166,7 @@ export function GitHubConnectionDialog({
               <div className="rounded-md border border-edge bg-surface px-3 py-2 text-xs">
                 <div className="font-medium text-fg-secondary">Connect an installed Atrium GitHub App</div>
                 <div className="mt-3 space-y-2">
-                  <p className="text-fg-muted">
+                  <p id={installationHelpId} className="text-fg-muted">
                     Use the installation owned by the org or user that should grant repository access.
                   </p>
                   <label className="block">
@@ -158,6 +175,8 @@ export function GitHubConnectionDialog({
                       value={installationId}
                       onChange={(e) => setInstallationId(e.target.value)}
                       inputMode="numeric"
+                      aria-invalid={errorField === 'installation' ? 'true' : undefined}
+                      aria-describedby={installationDescription}
                       placeholder="12345"
                       className="w-full rounded-md border border-edge bg-surface px-2.5 py-2 text-sm text-fg placeholder-fg-muted outline-none focus:border-edge-strong"
                     />
@@ -168,6 +187,7 @@ export function GitHubConnectionDialog({
                     onClick={() =>
                       void run(() =>
                         onConnect({ tokenKind: 'app_installation', installationId: installationId.trim() }),
+                        'installation',
                       )
                     }
                     className="rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-on-accent hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
@@ -179,20 +199,22 @@ export function GitHubConnectionDialog({
               <details className="rounded-md border border-edge bg-surface px-3 py-2 text-xs">
                 <summary className="cursor-pointer font-medium text-fg-secondary">Personal access token</summary>
                 <div className="mt-3 space-y-2">
-                  <p className="text-fg-muted">
+                  <p id={patHelpId} className="text-fg-muted">
                     Uses your pasted PAT. Private repo access is checked before sessions start.
                   </p>
                   <input
                     value={token}
                     onChange={(e) => setToken(e.target.value)}
                     type="password"
+                    aria-invalid={errorField === 'token' ? 'true' : undefined}
+                    aria-describedby={patDescription}
                     placeholder="github_pat_..."
                     className="w-full rounded-md border border-edge bg-surface px-2.5 py-2 text-sm text-fg placeholder-fg-muted outline-none focus:border-edge-strong"
                   />
                   <button
                     type="button"
                     disabled={busy || token.trim().length === 0}
-                    onClick={() => void run(() => onConnect({ tokenKind: 'pat', token: token.trim() }))}
+                    onClick={() => void run(() => onConnect({ tokenKind: 'pat', token: token.trim() }), 'token')}
                     className="rounded-md border border-edge px-3 py-1.5 text-xs font-medium text-fg-secondary hover:bg-surface-overlay hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     Connect PAT
