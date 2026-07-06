@@ -111,7 +111,7 @@ export function ClaudeConnectDialog({
 
   return (
     <div
-      className="fixed inset-0 z-[60] flex items-start justify-center bg-surface/60 p-4"
+      className="fixed inset-0 z-[60] flex items-start justify-center overflow-y-auto bg-surface/60 p-4"
     >
       <form
         ref={containerRef}
@@ -120,7 +120,7 @@ export function ClaudeConnectDialog({
         aria-modal="true"
         aria-label="Connect Claude Code"
         aria-busy={busy || starting ? 'true' : undefined}
-        className="mt-28 w-[min(440px,calc(100vw-2rem))] overflow-hidden rounded-lg border border-edge-strong bg-surface-raised shadow-2xl"
+        className="mt-28 w-[min(440px,calc(100vw-2rem))] overflow-hidden rounded-lg border border-edge-strong bg-surface-raised shadow-2xl max-md:my-4"
       >
         <header className="flex items-center justify-between border-b border-edge px-4 py-3">
           <div>
@@ -133,7 +133,7 @@ export function ClaudeConnectDialog({
             type="button"
             onClick={onCancel}
             aria-label="Close dialog"
-            className="rounded-md px-2 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg"
+            className="rounded-md px-2 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg max-md:min-h-11 max-md:min-w-11"
           >
             <XIcon />
           </button>
@@ -144,7 +144,7 @@ export function ClaudeConnectDialog({
             type="button"
             onClick={openSignIn}
             disabled={!flow?.authorizeUrl || starting}
-            className="w-full rounded-md bg-accent px-3 py-2 text-sm font-semibold text-on-accent hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
+            className="w-full rounded-md bg-accent px-3 py-2 text-sm font-semibold text-on-accent hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50 max-md:min-h-11"
           >
             Open Claude sign-in
           </button>
@@ -167,7 +167,7 @@ export function ClaudeConnectDialog({
               placeholder="Paste Claude code"
               spellCheck={false}
               autoComplete="off"
-              className="w-full rounded-md border border-edge bg-surface px-2.5 py-2 font-mono text-sm text-fg placeholder-fg-muted outline-none focus:border-edge-strong"
+              className="w-full rounded-md border border-edge bg-surface px-2.5 py-2 font-mono text-sm text-fg placeholder-fg-muted outline-none focus:border-edge-strong max-md:min-h-11"
             />
           </label>
           {status?.lastError && (
@@ -189,7 +189,7 @@ export function ClaudeConnectDialog({
                 <button
                   type="button"
                   onClick={start}
-                  className="rounded-md bg-surface-raised px-2.5 py-1 text-xs font-medium text-fg-secondary hover:bg-surface-overlay hover:text-fg"
+                  className="rounded-md bg-surface-raised px-2.5 py-1 text-xs font-medium text-fg-secondary hover:bg-surface-overlay hover:text-fg max-md:min-h-11"
                 >
                   Try again
                 </button>
@@ -198,12 +198,12 @@ export function ClaudeConnectDialog({
           )}
         </div>
 
-        <footer className="flex items-center justify-between gap-2 border-t border-edge px-4 py-3">
+        <footer className="flex items-center justify-between gap-2 border-t border-edge px-4 py-3 max-md:flex-wrap">
           <button
             type="button"
             onClick={disconnect}
             disabled={!connected || busy}
-            className="rounded-md px-3 py-1.5 text-xs font-medium text-fg-tertiary hover:bg-surface-overlay hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
+            className="rounded-md px-3 py-1.5 text-xs font-medium text-fg-tertiary hover:bg-surface-overlay hover:text-fg disabled:cursor-not-allowed disabled:opacity-40 max-md:min-h-11"
           >
             Disconnect
           </button>
@@ -211,14 +211,14 @@ export function ClaudeConnectDialog({
             <button
               type="button"
               onClick={onCancel}
-              className="rounded-md px-3 py-1.5 text-xs font-medium text-fg-secondary hover:bg-surface-overlay hover:text-fg"
+              className="rounded-md px-3 py-1.5 text-xs font-medium text-fg-secondary hover:bg-surface-overlay hover:text-fg max-md:min-h-11"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={!flow?.pendingId || !code.trim() || busy || starting}
-              className="rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-on-accent hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
+              className="rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-on-accent hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50 max-md:min-h-11"
             >
               {connected ? 'Reconnect' : 'Connect'}
             </button>

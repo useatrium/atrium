@@ -89,13 +89,13 @@ export function ApplyMarkupMenu({
         <MenuTrigger asChild>
           <button
             type="button"
-            className="inline-flex h-8 items-center gap-1.5 rounded-md border border-edge-strong bg-surface-overlay px-2.5 text-xs font-semibold text-fg-secondary shadow-sm hover:bg-edge-strong hover:text-fg"
+            className="inline-flex h-8 items-center gap-1.5 rounded-md border border-edge-strong bg-surface-overlay px-2.5 text-xs font-semibold text-fg-secondary shadow-sm hover:bg-edge-strong hover:text-fg max-md:h-11"
           >
             Apply with agent
             <ChevronDownIcon size={13} />
           </button>
         </MenuTrigger>
-        <MenuContent align="end" className="w-72 bg-surface-raised">
+        <MenuContent align="end" className="w-72 max-w-[calc(100vw-1rem)] bg-surface-raised">
           <MenuLabel className="px-2 py-1.5 text-3xs">Choose session</MenuLabel>
           {sessionList.length === 0 ? (
             <div className="px-2 py-2 text-xs text-fg-muted">No running or completed sessions in this channel</div>
@@ -108,7 +108,7 @@ export function ApplyMarkupMenu({
                   event.preventDefault();
                   void applyToSession(session);
                 }}
-                className="items-start gap-2 py-2 text-left"
+                className="items-start gap-2 py-2 text-left max-md:min-h-11"
               >
                 <StatusChip status={session.status} />
                 <span className="min-w-0 flex-1">
@@ -124,7 +124,7 @@ export function ApplyMarkupMenu({
           <MenuItem
             onSelect={spawnNewAgent}
             disabled={!onSpawnNewAgent}
-            className="text-xs font-medium text-fg-secondary data-[highlighted]:text-fg data-[disabled]:text-fg-faint"
+            className="text-xs font-medium text-fg-secondary data-[highlighted]:text-fg data-[disabled]:text-fg-faint max-md:min-h-11"
           >
             <PlusIcon size={14} />
             New agent...
