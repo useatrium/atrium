@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  BackHandler,
   FlatList,
   Linking,
   Pressable,
@@ -296,6 +297,22 @@ function FolderBreadcrumb({
         paddingBottom: space.sm,
       }}
     >
+      {currentDir ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Go up one folder"
+          onPress={() => onNavigate(joinDir(segments.slice(0, -1)))}
+          hitSlop={8}
+          style={{
+            minHeight: 28,
+            minWidth: 28,
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          <Ionicons name="arrow-up" size={15} color={colors.textMuted} />
+        </Pressable>
+      ) : null}
       <Pressable accessibilityRole="button" accessibilityLabel="Go to Files" onPress={() => onNavigate('')} hitSlop={6}>
         <Text
           style={{
@@ -595,6 +612,29 @@ export default function FilesTab() {
     setCurrentDir(dir);
     setLightboxIndex(null);
   }, []);
+
+  const popCurrentDir = useCallback(() => {
+    const segments = dirSegments(currentDir);
+    if (segments.length === 0) return false;
+    setCurrentDir(joinDir(segments.slice(0, -1)));
+    setLightboxIndex(null);
+    return true;
+  }, [currentDir]);
+
+  useFocusEffect(
+    useCallback(() => {
+      const handler = (BackHandler as unknown as {
+        addEventListener?: (
+          eventName: 'hardwareBackPress',
+          handler: () => boolean,
+        ) => { remove: () => void };
+      }).addEventListener?.('hardwareBackPress', () => {
+        if (popCurrentDir()) return true;
+        return false;
+      });
+      return () => handler?.remove();
+    }, [popCurrentDir]),
+  );
 
   const updateSearch = useCallback((value: string) => {
     setSearch(value);

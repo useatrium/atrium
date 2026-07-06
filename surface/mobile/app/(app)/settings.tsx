@@ -1,6 +1,7 @@
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
+  Linking,
   Modal,
   Platform,
   ScrollView,
@@ -15,7 +16,9 @@ import { Stack } from 'expo-router';
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   ACCENTS,
+  ApiError,
   FONT_SCALES,
+  type ConnectionStatus,
   type Accent,
   type FontScale,
   type MotionPref,
@@ -106,6 +109,25 @@ function errorMessage(err: unknown, fallback: string): string {
   return err instanceof Error && err.message ? err.message : fallback;
 }
 
+function isMissingConnectionsEndpoint(err: unknown): boolean {
+  return err instanceof ApiError && (err.status === 404 || err.status === 501);
+}
+
+function githubConnectionLabel(tokenKind: ConnectionStatus['tokenKind']): string {
+  switch (tokenKind) {
+    case 'app_installation':
+      return 'App installation';
+    case 'app_user':
+      return 'GitHub user';
+    case 'pat':
+      return 'PAT';
+    case 'public_read':
+      return 'Public';
+    default:
+      return 'GitHub';
+  }
+}
+
 function SectionLabel({ children }: { children: string }) {
   const { colors } = useTheme();
   return (
@@ -150,6 +172,116 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
       </Text>
       {children}
     </View>
+  );
+}
+
+function GitHubConnectionRow({
+  status,
+  loading,
+  available,
+  busy,
+  onConnect,
+  onDisconnect,
+}: {
+  status?: ConnectionStatus;
+  loading: boolean;
+  available: boolean;
+  busy: boolean;
+  onConnect: () => void;
+  onDisconnect: () => void;
+}) {
+  const { colors } = useTheme();
+  const connected = status?.connected === true;
+  const unavailable = !available || status?.status === 'unavailable';
+  const statusLabel = loading
+    ? 'Checking...'
+    : unavailable
+      ? 'Unavailable'
+      : connected
+        ? `${status.accountLabel ?? 'Connected'} · ${githubConnectionLabel(status.tokenKind)}`
+        : status?.status === 'needs_auth'
+          ? 'Needs auth'
+          : 'Public read';
+  const actionLabel = unavailable ? 'Unavailable' : connected ? 'Disconnect' : 'Connect';
+  const disabled = loading || busy || unavailable;
+
+  return (
+    <Row label="GitHub">
+      <View
+        style={{
+          alignItems: 'center',
+          flexDirection: 'row',
+          flexShrink: 1,
+          gap: space.sm,
+          justifyContent: 'flex-end',
+        }}
+      >
+        <View
+          accessible
+          accessibilityLabel={`GitHub ${statusLabel}`}
+          style={{ alignItems: 'center', flexDirection: 'row', gap: 6, maxWidth: 154 }}
+        >
+          <View
+            style={{
+              backgroundColor: connected ? colors.online : unavailable ? colors.textFaint : colors.warning,
+              borderRadius: 4,
+              height: 8,
+              opacity: connected ? 1 : 0.65,
+              width: 8,
+            }}
+          />
+          <Text
+            maxFontSizeMultiplier={2}
+            numberOfLines={1}
+            style={{ color: connected ? colors.textSecondary : colors.textMuted, fontSize: font.sm }}
+          >
+            {statusLabel}
+          </Text>
+        </View>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`${actionLabel} GitHub`}
+          accessibilityHint={
+            unavailable
+              ? 'GitHub connections are unavailable on this server'
+              : connected
+                ? 'Removes this GitHub connection'
+                : 'Starts the GitHub connection flow'
+          }
+          accessibilityState={{ disabled }}
+          disabled={disabled}
+          onPress={() => (connected ? onDisconnect() : onConnect())}
+          style={({ pressed }) => ({
+            alignItems: 'center',
+            backgroundColor: connected || unavailable ? 'transparent' : colors.accent,
+            borderColor: connected || unavailable ? colors.border : colors.accent,
+            borderRadius: radius.md,
+            borderWidth: 1,
+            justifyContent: 'center',
+            minHeight: 36,
+            minWidth: 88,
+            opacity: disabled ? 0.55 : pressed ? 0.85 : 1,
+            paddingHorizontal: space.md,
+          })}
+        >
+          {busy ? (
+            <ActivityIndicator color={connected ? colors.textMuted : colors.onAccent} />
+          ) : (
+            <Text
+              maxFontSizeMultiplier={2}
+              numberOfLines={1}
+              style={{
+                color: connected || unavailable ? colors.textSecondary : colors.onAccent,
+                fontSize: font.sm,
+                fontWeight: '800',
+              }}
+            >
+              {actionLabel}
+            </Text>
+          )}
+        </Pressable>
+      </View>
+    </Row>
   );
 }
 
@@ -631,12 +763,17 @@ export default function SettingsScreen() {
   const [credential, setCredential] = useState('');
   const [credentialError, setCredentialError] = useState<string | null>(null);
   const [pendingProvider, setPendingProvider] = useState<ProviderCredentialProvider | null>(null);
+  const [githubConnection, setGithubConnection] = useState<ConnectionStatus | undefined>();
+  const [connectionsAvailable, setConnectionsAvailable] = useState(true);
+  const [connectionsLoading, setConnectionsLoading] = useState(true);
+  const [connectionsError, setConnectionsError] = useState<string | null>(null);
+  const [githubBusy, setGithubBusy] = useState(false);
   const [devicePushEnabled, setDevicePushEnabledState] = useState<boolean | null>(null);
   const [pushPermission, setPushPermission] =
     useState<PushPermissionStatus>('undetermined');
   const [pushBusy, setPushBusy] = useState(false);
 
-  useAccessibilityAnnouncement(providerStatusError);
+  useAccessibilityAnnouncement(providerStatusError ?? connectionsError);
 
   useEffect(() => {
     let mounted = true;
@@ -720,6 +857,29 @@ export default function SettingsScreen() {
     void loadProviderCredentials();
   }, [loadProviderCredentials]);
 
+  const loadConnections = useCallback(async () => {
+    setConnectionsLoading(true);
+    setConnectionsError(null);
+    try {
+      const { connections } = await api.connections();
+      setGithubConnection(connections.find((connection) => connection.provider === 'github'));
+      setConnectionsAvailable(true);
+    } catch (err) {
+      if (isMissingConnectionsEndpoint(err)) {
+        setGithubConnection(undefined);
+        setConnectionsAvailable(false);
+      } else {
+        setConnectionsError(errorMessage(err, 'Could not load GitHub connection.'));
+      }
+    } finally {
+      setConnectionsLoading(false);
+    }
+  }, [api]);
+
+  useEffect(() => {
+    void loadConnections();
+  }, [loadConnections]);
+
   const openProviderSheet = useCallback((provider: ProviderCredentialProvider) => {
     setActiveProvider(provider);
     setCredential('');
@@ -789,6 +949,51 @@ export default function SettingsScreen() {
       setPendingProvider(null);
     }
   }, [activeProvider, api, credential, loadProviderCredentials, pendingProvider]);
+
+  const connectGitHub = useCallback(async () => {
+    if (githubBusy || !connectionsAvailable || githubConnection?.status === 'unavailable') return;
+    setGithubBusy(true);
+    setConnectionsError(null);
+    try {
+      const { connection, authorizeUrl } = await api.connectGitHub();
+      setConnectionsAvailable(true);
+      setGithubConnection(connection);
+      if (authorizeUrl) {
+        await Linking.openURL(authorizeUrl);
+        return;
+      }
+      await loadConnections();
+    } catch (err) {
+      if (isMissingConnectionsEndpoint(err)) {
+        setGithubConnection(undefined);
+        setConnectionsAvailable(false);
+        return;
+      }
+      setConnectionsError(errorMessage(err, 'Could not connect GitHub.'));
+    } finally {
+      setGithubBusy(false);
+    }
+  }, [api, connectionsAvailable, githubBusy, githubConnection?.status, loadConnections]);
+
+  const disconnectGitHub = useCallback(async () => {
+    if (githubBusy || !connectionsAvailable || githubConnection?.status === 'unavailable') return;
+    setGithubBusy(true);
+    setConnectionsError(null);
+    try {
+      const { connection } = await api.disconnectGitHub();
+      setGithubConnection(connection);
+      setConnectionsAvailable(true);
+    } catch (err) {
+      if (isMissingConnectionsEndpoint(err)) {
+        setGithubConnection(undefined);
+        setConnectionsAvailable(false);
+        return;
+      }
+      setConnectionsError(errorMessage(err, 'Could not disconnect GitHub.'));
+    } finally {
+      setGithubBusy(false);
+    }
+  }, [api, connectionsAvailable, githubBusy, githubConnection?.status]);
 
   const logOut = () => {
     void Promise.all([
@@ -915,6 +1120,14 @@ export default function SettingsScreen() {
         </Row>
 
         <SectionLabel>Connections</SectionLabel>
+        <GitHubConnectionRow
+          status={githubConnection}
+          loading={connectionsLoading}
+          available={connectionsAvailable}
+          busy={githubBusy}
+          onConnect={() => void connectGitHub()}
+          onDisconnect={() => void disconnectGitHub()}
+        />
         {providers.map((provider) => (
           <ProviderConnectionRow
             key={provider}
@@ -939,6 +1152,21 @@ export default function SettingsScreen() {
             }}
           >
             {providerStatusError}
+          </Text>
+        ) : null}
+        {connectionsError ? (
+          <Text
+            accessibilityRole="alert"
+            accessibilityLiveRegion="polite"
+            maxFontSizeMultiplier={2}
+            style={{
+              color: colors.danger,
+              fontSize: font.sm,
+              paddingHorizontal: space.lg,
+              paddingTop: space.sm,
+            }}
+          >
+            {connectionsError}
           </Text>
         ) : null}
 

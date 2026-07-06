@@ -87,7 +87,6 @@ export default function Search() {
 
   const open = (r: Result) => {
     if (!r.event.channelId) return;
-    router.dismiss();
     router.push(`/channel/${r.event.channelId}`);
     void jumpToMessage(r.event);
   };
