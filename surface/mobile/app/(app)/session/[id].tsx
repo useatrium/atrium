@@ -14,6 +14,7 @@ import {
   type NativeSyntheticEvent,
 } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
+import { Ionicons } from '@expo/vector-icons';
 import { Stack, router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useHeaderHeight } from 'expo-router/react-navigation';
 import {
@@ -95,6 +96,10 @@ function entryUrl(serverUrl: string, handle: string): string {
 
 function entryLink(serverUrl: string, handle: string): string {
   return `${serverUrl.replace(/\/+$/, '')}/e/${encodeURIComponent(handle)}`;
+}
+
+function sessionLink(serverUrl: string, sessionId: string): string {
+  return `${serverUrl.replace(/\/+$/, '')}/s/${encodeURIComponent(sessionId)}`;
 }
 
 function referenceLabel(ref: EntryReference): string {
@@ -840,8 +845,10 @@ export default function SessionScreen() {
   const [references, setReferences] = useState<EntryReferenceMap>({});
   const [referenceFocusSeq, setReferenceFocusSeq] = useState(0);
   const [transcriptActionTarget, setTranscriptActionTarget] = useState<TranscriptActionTarget | null>(null);
+  const [sessionLinkCopied, setSessionLinkCopied] = useState(false);
   const referenceCache = useRef<Record<string, EntryReferenceMap>>({});
   const referenceFetchKeys = useRef<Set<string>>(new Set());
+  const sessionLinkResetRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const focusedForReferences = useRef(false);
   const scrollRef = useRef<ScrollView>(null);
   const effortTitleRef = useRef<Text>(null);
@@ -1035,6 +1042,7 @@ export default function SessionScreen() {
         : 'Cancel failed. Tap retry cancel.'
       : null;
   useModalAccessibilityFocus(effortTitleRef, effortOpen && canPickEffort);
+  useAccessibilityAnnouncement(sessionLinkCopied ? 'Copied session link.' : null);
   useAccessibilityAnnouncement(cancelErrorMessage);
   useAccessibilityAnnouncement(visibleSteerError ? `Message did not send: ${visibleSteerError}` : null);
   // Folded from the durable terminal event (reducer `stoppedByUser`) — same for
@@ -1110,6 +1118,12 @@ export default function SessionScreen() {
   }, [cancelAsk]);
 
   useEffect(() => {
+    return () => {
+      if (sessionLinkResetRef.current) clearTimeout(sessionLinkResetRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
     if (!id || !focusedForReferences.current) return;
     if (entryHandles.length === 0) {
       setReferences({});
@@ -1171,6 +1185,21 @@ export default function SessionScreen() {
     },
     [invalidate],
   );
+
+  const copySessionLink = useCallback(() => {
+    const url = sessionLink(chat.serverUrl, id);
+    selectionHaptic();
+    void Clipboard.setStringAsync(url)
+      .then(() => {
+        setSessionLinkCopied(true);
+        if (sessionLinkResetRef.current) clearTimeout(sessionLinkResetRef.current);
+        sessionLinkResetRef.current = setTimeout(() => {
+          sessionLinkResetRef.current = null;
+          setSessionLinkCopied(false);
+        }, 1400);
+      })
+      .catch(() => {});
+  }, [chat.serverUrl, id]);
 
   const sendSteer = () => {
     if (!id) return;
@@ -1471,8 +1500,22 @@ export default function SessionScreen() {
               </Text>
             </View>
           ),
-          headerRight: canCancel
-            ? () => (
+          headerRight: () => (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.xs }}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={sessionLinkCopied ? 'Copied session link' : 'Copy link to this session'}
+                onPress={copySessionLink}
+                hitSlop={8}
+                style={{ minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center', padding: 6 }}
+              >
+                <Ionicons
+                  name={sessionLinkCopied ? 'checkmark' : 'link-outline'}
+                  size={18}
+                  color={sessionLinkCopied ? colors.accent : colors.textSecondary}
+                />
+              </Pressable>
+              {canCancel ? (
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel={
@@ -1512,8 +1555,9 @@ export default function SessionScreen() {
                           : 'CANCEL'}
                   </Text>
                 </Pressable>
-              )
-            : undefined,
+              ) : null}
+            </View>
+          ),
           headerBackButtonDisplayMode: 'minimal',
         }}
       />
