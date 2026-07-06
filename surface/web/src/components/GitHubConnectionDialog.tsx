@@ -202,15 +202,18 @@ export function GitHubConnectionDialog({
                   <p id={patHelpId} className="text-fg-muted">
                     Uses your pasted PAT. Private repo access is checked before sessions start.
                   </p>
-                  <input
-                    value={token}
-                    onChange={(e) => setToken(e.target.value)}
-                    type="password"
-                    aria-invalid={errorField === 'token' ? 'true' : undefined}
-                    aria-describedby={patDescription}
-                    placeholder="github_pat_..."
-                    className="w-full rounded-md border border-edge bg-surface px-2.5 py-2 text-sm text-fg placeholder-fg-muted outline-none focus:border-edge-strong"
-                  />
+                  <label className="block">
+                    <span className="sr-only">Personal access token</span>
+                    <input
+                      value={token}
+                      onChange={(e) => setToken(e.target.value)}
+                      type="password"
+                      aria-invalid={errorField === 'token' ? 'true' : undefined}
+                      aria-describedby={patDescription}
+                      placeholder="github_pat_..."
+                      className="w-full rounded-md border border-edge bg-surface px-2.5 py-2 text-sm text-fg placeholder-fg-muted outline-none focus:border-edge-strong"
+                    />
+                  </label>
                   <button
                     type="button"
                     disabled={busy || token.trim().length === 0}

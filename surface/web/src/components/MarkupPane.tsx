@@ -111,6 +111,7 @@ export function MarkupPane({
   const canSend = (dirty || noteFilled) && !sending;
   const diverged = source.sourceText != null && source.sourceText.trimEnd() !== source.body.trimEnd();
   const activeMarkdown = showingSource ? (source.sourceText ?? source.body) : source.body;
+  const errorId = 'markup-pane-error';
 
   const hasUnsavedWork = useCallback(() => {
     return dirty || note.trim().length > 0 || editorRef.current?.hasMarkup() === true;
@@ -199,6 +200,8 @@ export function MarkupPane({
         role="dialog"
         aria-modal="true"
         aria-labelledby="markup-pane-title"
+        aria-describedby={error ? errorId : undefined}
+        aria-busy={sending ? 'true' : undefined}
         className="mx-auto flex h-full w-full max-w-5xl flex-col overflow-hidden rounded-md border border-edge-strong bg-surface shadow-2xl"
       >
         <header className="flex h-12 shrink-0 items-center gap-3 border-b border-edge bg-surface-raised px-3">
@@ -236,7 +239,7 @@ export function MarkupPane({
           </button>
         </header>
         {error && (
-          <div role="alert" className="border-b border-danger-border bg-danger-tint px-3 py-2 text-xs text-danger-text">
+          <div id={errorId} role="alert" className="border-b border-danger-border bg-danger-tint px-3 py-2 text-xs text-danger-text">
             {error}
           </div>
         )}

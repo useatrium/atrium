@@ -115,6 +115,7 @@ export function Lightbox({
   const touchStartRef = useRef<number | null>(null);
   const canPrev = index > 0;
   const canNext = index < files.length - 1;
+  const renameInputId = 'lightbox-rename-input';
   const manageable = file ? canManage?.(file) === true : false;
   const mediaKind = file ? effectiveMediaKind(file) : 'opaque';
   const editAvailable =
@@ -344,12 +345,17 @@ export function Lightbox({
               </h2>
               <form
                 className="flex max-w-xl items-center gap-2"
+                aria-busy={busy ? 'true' : undefined}
                 onSubmit={(event) => {
                   event.preventDefault();
                   void submitRename();
                 }}
               >
+                <label htmlFor={renameInputId} className="sr-only">
+                  File name
+                </label>
                 <input
+                  id={renameInputId}
                   className="min-w-0 flex-1 rounded-md border border-edge-strong bg-surface px-2 py-1 text-sm text-fg outline-none focus:border-accent-hover"
                   value={draftName}
                   onChange={(event) => setDraftName(event.target.value)}

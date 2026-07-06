@@ -249,10 +249,14 @@ export function QuestionBanner({
     }
   };
 
+  const errorId = `${bannerId}-error`;
+
   return (
     <section
       data-testid="question-banner"
       aria-labelledby={titleId}
+      aria-describedby={error ? errorId : undefined}
+      aria-busy={submitting ? 'true' : undefined}
       aria-live="polite"
       className="shrink-0 border-b border-warning-border/50 bg-warning-tint/20 px-3 py-2 text-xs"
     >
@@ -359,6 +363,7 @@ export function QuestionBanner({
       </div>
       {error && (
         <div
+          id={errorId}
           role="alert"
           className="mt-2 rounded border border-danger-border/50 bg-danger-tint/20 px-2 py-1 text-2xs text-danger-text"
         >
