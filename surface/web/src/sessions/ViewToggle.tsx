@@ -32,13 +32,20 @@ export function ViewToggle({
       {SEGMENTS.map((seg) => {
         const active = view === seg.value;
         const disabled = seg.value !== 'channel' && !hasSession;
+        const tooltip = disabled ? 'Open a session to use this layout' : seg.title;
         return (
-          <Tooltip key={seg.value} content={seg.title}>
+          <Tooltip key={seg.value} content={tooltip}>
             <button
               type="button"
               aria-pressed={active}
-              disabled={disabled}
-              onClick={() => onSetView(seg.value)}
+              aria-disabled={disabled || undefined}
+              onClick={(e) => {
+                if (disabled) {
+                  e.preventDefault();
+                  return;
+                }
+                onSetView(seg.value);
+              }}
               className={`h-7 rounded px-2.5 text-2xs font-medium transition-colors ${
                 active
                   ? 'bg-surface-overlay text-fg shadow-sm'

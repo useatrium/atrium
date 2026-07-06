@@ -361,6 +361,9 @@ function SessionCard({
         : colors.warning;
   return (
     <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`Open session transcript: ${session?.title ?? message.text}`}
+      accessibilityState={{ disabled: !message.sessionId || !onOpen }}
       disabled={!message.sessionId || !onOpen}
       onPress={() => {
         if (message.sessionId) onOpen?.(message.sessionId);

@@ -1433,6 +1433,8 @@ export default function SessionScreen() {
           {loadError ?? 'This session could not be loaded.'}
         </Text>
         <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
           onPress={() => router.back()}
           style={{
             alignSelf: 'flex-start',
@@ -1618,6 +1620,10 @@ export default function SessionScreen() {
                   >
                     {item.type === 'text' ? (
                       <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel={
+                          item.text.trim() ? `Message actions: ${item.text}` : 'Message actions'
+                        }
                         onLongPress={() => openTranscriptActions(handle, item.text)}
                         delayLongPress={300}
                         disabled={!item.text.trim()}
@@ -1770,6 +1776,7 @@ export default function SessionScreen() {
               </Pressable>
             ) : null}
             <TextInput
+              accessibilityLabel="Session message"
               value={steerText}
               onChangeText={setSteerText}
               placeholder="Message this session"
@@ -1828,6 +1835,7 @@ export default function SessionScreen() {
               }}
             >
               <TextInput
+                accessibilityLabel={`Suggested message for ${driverName}`}
                 value={suggestText}
                 onChangeText={setSuggestText}
                 placeholder={`Suggest a message — ${driverName} decides`}

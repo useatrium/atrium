@@ -1160,6 +1160,18 @@ export function Chat({
     }
     if (active) void calls.startCall(active.id);
   }, [active, calls, callsAvailable]);
+  const newAgentDisabled = !active;
+  const voiceCallDisabled = callsAvailable && (!active || calls.starting || calls.activeCall != null);
+  const voiceCallAriaDisabled = !callsAvailable || voiceCallDisabled;
+  const voiceCallTooltip = !callsAvailable
+    ? 'Voice calls aren’t set up — configure LiveKit to enable'
+    : !active
+      ? 'Select a channel to start a voice call'
+      : calls.activeCall
+        ? 'Already in a call'
+        : calls.starting
+          ? 'Starting call…'
+          : 'Start voice call';
 
   const quickSwitcherCommands = useMemo<QuickSwitcherCommand[]>(() => {
     const list: QuickSwitcherCommand[] = [];
@@ -1469,16 +1481,20 @@ export function Chat({
                 Chat
               </button>
             ) : (
-              <Tooltip content="New agent">
+              <Tooltip content={newAgentDisabled ? 'Select a channel to start an agent' : 'New agent'}>
                 <button
                   type="button"
-                  onClick={() => {
+                  onClick={(e) => {
+                    if (newAgentDisabled) {
+                      e.preventDefault();
+                      return;
+                    }
                     setSpawnInitialTask('');
                     setSpawnOpen(true);
                   }}
-                  disabled={!active}
+                  aria-disabled={newAgentDisabled || undefined}
                   aria-label="New agent"
-                  className="inline-flex shrink-0 items-center gap-1 rounded-md bg-accent px-2 py-1 text-xs font-semibold text-on-accent hover:bg-accent-hover disabled:cursor-default disabled:bg-surface-overlay disabled:text-fg-muted md:ml-auto"
+                  className="inline-flex shrink-0 items-center gap-1 rounded-md bg-accent px-2 py-1 text-xs font-semibold text-on-accent hover:bg-accent-hover aria-disabled:cursor-default aria-disabled:bg-surface-overlay aria-disabled:text-fg-muted md:ml-auto"
                 >
                   <PlusIcon size={14} />
                   <span className="hidden sm:inline">New agent</span>
@@ -1494,26 +1510,21 @@ export function Chat({
               hint (tooltip + click), so the feature is discoverable instead of
               hidden — rather than a dead button that fails on click. */}
             {!showFilesSurface && !showActivitySurface && (
-              <Tooltip
-                content={
-                  !callsAvailable
-                    ? 'Voice calls aren’t set up — configure LiveKit to enable'
-                    : calls.activeCall
-                      ? 'Already in a call'
-                      : calls.starting
-                        ? 'Starting call…'
-                        : 'Start voice call'
-                }
-              >
+              <Tooltip content={voiceCallTooltip}>
                 <button
                   type="button"
-                  onClick={startVoiceCallForActiveChannel}
-                  disabled={callsAvailable && (!active || calls.starting || calls.activeCall != null)}
-                  aria-disabled={!callsAvailable || undefined}
+                  onClick={(e) => {
+                    if (voiceCallDisabled) {
+                      e.preventDefault();
+                      return;
+                    }
+                    startVoiceCallForActiveChannel();
+                  }}
+                  aria-disabled={voiceCallAriaDisabled || undefined}
                   aria-label={!callsAvailable ? 'Voice calls not set up' : 'Start voice call'}
                   className={
                     callsAvailable
-                      ? 'rounded-md border border-edge bg-surface-raised px-2 py-1 text-fg-muted hover:bg-surface-overlay hover:text-fg-body disabled:cursor-default disabled:text-fg-faint'
+                      ? 'rounded-md border border-edge bg-surface-raised px-2 py-1 text-fg-muted hover:bg-surface-overlay hover:text-fg-body aria-disabled:cursor-default aria-disabled:text-fg-faint'
                       : 'rounded-md border border-edge bg-surface-raised px-2 py-1 text-fg-faint cursor-help hover:text-fg-muted'
                   }
                 >

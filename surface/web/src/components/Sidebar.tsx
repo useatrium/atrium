@@ -637,6 +637,7 @@ function SettingsPopover({
     setPrefs({ notifications: { ...prefs.notifications, sessions } });
   const setNotificationCalls = (calls: boolean) =>
     setPrefs({ notifications: { ...prefs.notifications, calls } });
+  const notificationsDisabled = notify === 'denied' || notify === 'unsupported';
 
   return (
     <div
@@ -736,13 +737,17 @@ function SettingsPopover({
           <Tooltip content={BELL_TITLES[notify]}>
             <button
               type="button"
-              onClick={() => {
+              onClick={(e) => {
+                if (notificationsDisabled) {
+                  e.preventDefault();
+                  return;
+                }
                 void toggleNotifications().then(setNotify);
               }}
-              disabled={notify === 'denied' || notify === 'unsupported'}
+              aria-disabled={notificationsDisabled || undefined}
               aria-label={BELL_TITLES[notify]}
               aria-pressed={notify === 'on'}
-              className="flex h-8 items-center gap-2 rounded-md border border-edge px-2 text-xs text-fg-tertiary hover:bg-surface-overlay hover:text-fg-body disabled:opacity-40"
+              className="flex h-8 items-center gap-2 rounded-md border border-edge px-2 text-xs text-fg-tertiary hover:bg-surface-overlay hover:text-fg-body aria-disabled:opacity-40"
             >
               {notify === 'on' ? <BellIcon /> : <BellOffIcon />}
               <span>{notify === 'on' ? 'On' : notify === 'off' ? 'Off' : 'Blocked'}</span>

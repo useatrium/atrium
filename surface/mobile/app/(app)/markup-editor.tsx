@@ -249,6 +249,7 @@ export default function MarkupEditorScreen() {
           }}
         >
           <TextInput
+            accessibilityLabel={isReplyMode ? 'Reply note' : 'Change note'}
             value={note}
             onChangeText={setNote}
             placeholder={isReplyMode ? 'Say something about your changes...' : 'Add a note...'}

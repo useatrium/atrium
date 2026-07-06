@@ -674,6 +674,7 @@ export default function FilesTab() {
         >
           <Ionicons name="search" size={16} color={colors.textMuted} />
           <TextInput
+            accessibilityLabel="Search files"
             value={search}
             onChangeText={updateSearch}
             placeholder="Search files"

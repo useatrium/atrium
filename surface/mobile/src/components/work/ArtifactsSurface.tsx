@@ -51,9 +51,10 @@ function ArtifactTile({
     >
       <View style={{ height: 96, backgroundColor: colors.bgInput, alignItems: 'center', justifyContent: 'center' }}>
         {isImage ? (
-            <Image
-              accessibilityLabel={basename(artifact.path)}
-              source={{ uri: artifactUri(artifact), headers: imageHeaders }}
+          <Image
+            accessibilityIgnoresInvertColors
+            accessibilityLabel={basename(artifact.path)}
+            source={{ uri: artifactUri(artifact), headers: imageHeaders }}
             style={{ width: '100%', height: '100%' }}
             resizeMode="cover"
           />

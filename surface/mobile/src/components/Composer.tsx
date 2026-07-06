@@ -478,6 +478,8 @@ export function Composer({
         >
           {agentMatches && (
             <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Mention agent"
               onPress={() => insertMention('agent')}
               style={({ pressed }) => ({
                 flexDirection: 'row',
@@ -511,6 +513,8 @@ export function Composer({
           {matchedUsers.map((u) => (
             <Pressable
               key={u.id}
+              accessibilityRole="button"
+              accessibilityLabel={`Mention ${u.displayName}, @${u.handle}`}
               onPress={() => insertMention(u.handle)}
               style={({ pressed }) => ({
                 flexDirection: 'row',
@@ -736,6 +740,7 @@ export function Composer({
           </Pressable>
         )}
         <TextInput
+          accessibilityLabel={editing ? 'Edit message' : 'Message'}
           ref={inputRef}
           value={text}
           onChangeText={(v) => {

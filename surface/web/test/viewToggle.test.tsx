@@ -10,10 +10,14 @@ afterEach(cleanup);
 
 describe('ViewToggle', () => {
   it('disables Split/Focus without a session', () => {
-    render(<ViewToggle view="channel" hasSession={false} onSetView={() => {}} />);
-    expect((screen.getByRole('button', { name: 'Channel' }) as HTMLButtonElement).disabled).toBe(false);
-    expect((screen.getByRole('button', { name: 'Split' }) as HTMLButtonElement).disabled).toBe(true);
-    expect((screen.getByRole('button', { name: 'Focus' }) as HTMLButtonElement).disabled).toBe(true);
+    const onSetView = vi.fn();
+    render(<ViewToggle view="channel" hasSession={false} onSetView={onSetView} />);
+    expect(screen.getByRole('button', { name: 'Channel' }).getAttribute('aria-disabled')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Split' }).getAttribute('aria-disabled')).toBe('true');
+    expect(screen.getByRole('button', { name: 'Focus' }).getAttribute('aria-disabled')).toBe('true');
+    fireEvent.click(screen.getByRole('button', { name: 'Split' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Focus' }));
+    expect(onSetView).not.toHaveBeenCalled();
   });
 
   it('marks the active segment and routes selections', () => {

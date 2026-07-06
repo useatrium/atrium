@@ -1824,13 +1824,19 @@ export function AnnotatedTranscriptRow({
             </Tooltip>
           )}
           {canMarkup && (
-            <Tooltip content="Mark up & reply">
+            <Tooltip content={markupLoading ? 'Opening markup…' : 'Mark up & reply'}>
               <button
                 type="button"
-                onClick={() => onMarkupEntry(handle)}
-                disabled={markupLoading}
+                onClick={(e) => {
+                  if (markupLoading) {
+                    e.preventDefault();
+                    return;
+                  }
+                  onMarkupEntry(handle);
+                }}
+                aria-disabled={markupLoading || undefined}
                 aria-label="Mark up & reply"
-                className="inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-edge-strong bg-surface-overlay px-2 py-1 text-xs text-fg-secondary shadow-sm hover:bg-edge-strong hover:text-fg disabled:cursor-default disabled:text-fg-faint"
+                className="inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-edge-strong bg-surface-overlay px-2 py-1 text-xs text-fg-secondary shadow-sm hover:bg-edge-strong hover:text-fg aria-disabled:cursor-default aria-disabled:text-fg-faint"
               >
                 <PenLineIcon />
                 {markupLoading ? 'Opening...' : 'Mark up'}
