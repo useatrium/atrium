@@ -227,12 +227,24 @@ export function Chat({
   const [hydrated, setHydrated] = useState(false);
   const [queueNudgeSeq, setQueueNudgeSeq] = useState(0);
   const [unreadDividerAfterId, setUnreadDividerAfterId] = useState<number | null>(null);
+  // The channel whose divider decision is frozen. `dividerReady` is derived from
+  // this per-channel id (not a bare boolean) so a stale `true` from the previous
+  // channel can't leak into a freshly-opened one and cause a premature landing.
+  const [dividerReadyChannelId, setDividerReadyChannelId] = useState<string | null>(null);
+  const dividerFrozenForRef = useRef<string | null>(null);
   const locationState = useLocation();
   const selectChannel = useCallback((channelId: string) => {
-    const channel = stateRef.current.channels.find((c) => c.id === channelId);
-    const lastRead = channel?.lastReadEventId ?? 0;
-    const latest = channel?.latestEventId ?? 0;
-    setUnreadDividerAfterId(lastRead > 0 && latest > lastRead ? lastRead : null);
+    // Leaving a channel: read is now only marked at the bottom, so a channel
+    // opened but not read to the end still has a stale cursor. `select-channel`
+    // optimistically cleared its badge on open, so re-derive the outgoing
+    // channel's unread from the durable cold counters before switching — else
+    // it wrongly looks read until the next full channels-loaded. Re-deriving
+    // while it is still the active channel keeps the incoming channel (set
+    // read by the select-channel below) correct.
+    const prev = stateRef.current.activeChannelId;
+    if (prev && prev !== channelId) {
+      dispatch({ type: 'channels-loaded', channels: stateRef.current.channels });
+    }
     dispatch({ type: 'select-channel', channelId });
   }, []);
 
@@ -511,6 +523,38 @@ export function Chat({
   const activeDraftKey = active ? `channel:${active.id}` : '';
   const threadDraftKey = active && openThreadRoot?.id != null ? `channel:${active.id}:thread:${openThreadRoot.id}` : '';
   const activeChannelId = active?.id ?? null;
+
+  useEffect(() => {
+    const cid = state.activeChannelId;
+    if (!cid) {
+      setUnreadDividerAfterId(null);
+      setDividerReadyChannelId(null);
+      dividerFrozenForRef.current = null;
+      return;
+    }
+    if (dividerFrozenForRef.current === cid) return;
+
+    const channel = state.channels.find((c) => c.id === cid);
+    const timeline = state.timelines[cid];
+    const lastRead = channel?.lastReadEventId ?? 0;
+    // Prefer the loaded timeline's newest id (server truth from the history
+    // fetch) over the channel's cached counter so a cold reload still sees
+    // messages that arrived while away.
+    const latest = Math.max(channel?.latestEventId ?? 0, timeline?.lastEventId ?? 0);
+    setUnreadDividerAfterId(lastRead > 0 && latest > lastRead ? lastRead : null);
+
+    // Freeze once the timeline is loaded (from cache or the history fetch —
+    // both independent of the WebSocket). Do NOT gate on the WS sync: on a slow
+    // connection that would leave the transcript stuck at the top, never landed.
+    if (timeline?.loaded === true) {
+      dividerFrozenForRef.current = cid;
+      setDividerReadyChannelId(cid);
+    }
+  }, [state.activeChannelId, state.channels, state.timelines]);
+
+  // Ready only when the frozen decision belongs to the currently active channel.
+  const dividerReady = dividerReadyChannelId != null && dividerReadyChannelId === state.activeChannelId;
+
   useEffect(() => {
     if (!activeChannelId) return;
     const channelId = activeChannelId;
@@ -738,9 +782,12 @@ export function Chat({
   }
 
   // ---- channel selection & history ----
-  useEffect(() => {
-    if (active) markRead(active.id, timeline.lastEventId);
-  }, [active?.id, markRead, timeline.lastEventId]);
+  const handleReachBottom = useCallback(() => {
+    const current = stateRef.current;
+    const channel = current.channels.find((c) => c.id === current.activeChannelId);
+    const currentTimeline = channel ? current.timelines[channel.id] : null;
+    if (channel && currentTimeline) markRead(channel.id, currentTimeline.lastEventId);
+  }, [markRead]);
 
   useEffect(() => {
     if (!active) return;
@@ -1842,6 +1889,7 @@ export function Chat({
           ) : (
             <EntryQuoteApplyContextProvider value={active ? { channelId: active.id, sessions: state.sessions, onSpawnNewAgent: openSpawnWithInitialTask } : null}>
               <Timeline
+                key={active?.id ?? 'no-channel'}
                 messages={timeline.main}
                 loaded={timeline.loaded}
                 hasMoreBefore={timeline.hasMoreBefore}
@@ -1867,6 +1915,8 @@ export function Chat({
                 resolveUser={active ? resolveActiveUser : undefined}
                 onMarkupEntry={(handle, message) => void openMarkupReply(handle, message)}
                 unreadDividerAfterId={unreadDividerAfterId}
+                dividerReady={dividerReady}
+                onReachBottom={handleReachBottom}
               />
             </EntryQuoteApplyContextProvider>
           )}
