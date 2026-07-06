@@ -1579,6 +1579,20 @@ export class SessionRuns {
       if (!row) return;
       generation = row.assignment_generation ?? generation;
       if (task != null) {
+        // Inline any /e/<handle> references in the spawn task the same way steers do
+        // (postUserMessageOnce), so an agent can resolve an explicit reference to a
+        // channel message/artifact at spawn. Never let a resolver hiccup fail the spawn.
+        const baseTask = task;
+        task = await appendReferencedEntriesAppendix(this.pool, {
+          sessionId: id,
+          userId: row.spawned_by,
+          text: baseTask,
+        }).catch((err) => {
+          console.warn('spawn referenced-entries appendix failed', { id, err });
+          return baseTask;
+        });
+      }
+      if (task != null) {
         await this.centaur.postMessage(
           row.centaur_thread_key,
           generation,
