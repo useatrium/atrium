@@ -323,6 +323,22 @@ fn should_run_local_capture(
     always_scan || dirty || remounted || restored || reconcile_due || just_attached
 }
 
+#[cfg(any(target_os = "linux", test))]
+fn normalized_harness_home(
+    kind: centaur_node_sync::runtime::HarnessTranscriptKind,
+    configured_harness_home: &str,
+) -> std::path::PathBuf {
+    if configured_harness_home.is_empty() {
+        return std::path::PathBuf::from(kind.default_home_rel());
+    }
+    let configured = std::path::PathBuf::from(configured_harness_home);
+    if configured.is_absolute() {
+        std::path::PathBuf::from(kind.default_home_rel())
+    } else {
+        configured
+    }
+}
+
 #[cfg(target_os = "linux")]
 fn main() {
     linux_daemon::main();
@@ -331,8 +347,8 @@ fn main() {
 #[cfg(target_os = "linux")]
 mod linux_daemon {
     use super::{
-        SessionConfig, hydrate_state_if_needed, repo_worktrees, session_config_from_discovered,
-        warmcache_capture_if_needed,
+        SessionConfig, hydrate_state_if_needed, normalized_harness_home, repo_worktrees,
+        session_config_from_discovered, warmcache_capture_if_needed,
     };
     use centaur_node_sync::backpressure;
     use centaur_node_sync::backpressure::Budget;
@@ -2217,6 +2233,20 @@ mod linux_daemon {
                                 harness.atrium_harness()
                             );
                         }
+                    } else if out.skipped {
+                        let thread_id = session.harness_thread_id.trim();
+                        let thread_id = if thread_id.is_empty() {
+                            "<empty>"
+                        } else {
+                            thread_id
+                        };
+                        eprintln!(
+                            "session {}: harness transcript: skipped for {} (harness_home={}, entries={}, thread_id={thread_id})",
+                            session.session,
+                            harness.atrium_harness(),
+                            harness_home.display(),
+                            partitioned.harness_entries.len()
+                        );
                     }
                     if let Some(error) = out.error {
                         eprintln!("session {}: harness transcript: {error}", session.session);
@@ -2323,8 +2353,8 @@ mod linux_daemon {
             PathBuf::from(HarnessTranscriptKind::Claude.default_home_rel()),
             PathBuf::from(HarnessTranscriptKind::Codex.default_home_rel()),
         ];
-        if !configured_harness_home.is_empty() {
-            let configured = PathBuf::from(configured_harness_home);
+        for kind in [HarnessTranscriptKind::Claude, HarnessTranscriptKind::Codex] {
+            let configured = normalized_harness_home(kind, configured_harness_home);
             if !homes.iter().any(|home| home == &configured) {
                 homes.push(configured);
             }
@@ -2334,14 +2364,7 @@ mod linux_daemon {
 
     fn harnesses_to_capture(session: &SessionConfig) -> Vec<(HarnessTranscriptKind, PathBuf)> {
         match session.harness {
-            Some(kind) => vec![(
-                kind,
-                if session.harness_home.is_empty() {
-                    PathBuf::from(kind.default_home_rel())
-                } else {
-                    PathBuf::from(&session.harness_home)
-                },
-            )],
+            Some(kind) => vec![(kind, normalized_harness_home(kind, &session.harness_home))],
             None => [HarnessTranscriptKind::Claude, HarnessTranscriptKind::Codex]
                 .into_iter()
                 .map(|kind| (kind, PathBuf::from(kind.default_home_rel())))
@@ -2561,8 +2584,11 @@ mod tests {
     use super::*;
     use centaur_node_sync::adopt::{RemoteChange, RemoteStatus};
     use centaur_node_sync::cas::WarmcacheManifestEntry;
+    use centaur_node_sync::overlay::{RawEntry, RawFileType};
     use centaur_node_sync::overlay_mount::{LowerKind, LowerSource, plan_overlay_mount};
-    use centaur_node_sync::runtime::AtriumClient;
+    use centaur_node_sync::runtime::{
+        AtriumClient, HarnessTranscriptKind, locate_harness_transcript,
+    };
     use centaur_node_sync::session_manifest::{DiscoveredSession, RepoMount, SessionManifest};
     use centaur_node_sync::state::DaemonState;
     use centaur_node_sync::warmcache::{
@@ -2747,6 +2773,41 @@ mod tests {
                 flags[0], flags[1], flags[2], flags[3], flags[4], flags[5]
             ));
         }
+    }
+
+    #[test]
+    fn absolute_codex_harness_home_normalizes_before_transcript_lookup() {
+        let thread_id = "550e8400-e29b-41d4-a716-446655440000";
+        let mut session = warmcache_test_session();
+        session.harness = Some(HarnessTranscriptKind::Codex);
+        session.harness_thread_id = thread_id.to_string();
+        session.harness_home = "/home/agent/.codex".to_string();
+        session.flat_home = true;
+        let transcript_path = PathBuf::from(
+            ".codex/sessions/2026/07/06/rollout-2026-07-06T16-20-40-550e8400-e29b-41d4-a716-446655440000.jsonl",
+        );
+        let entries = vec![RawEntry {
+            rel_path: transcript_path.clone(),
+            file_type: RawFileType::Regular,
+            rdev: 0,
+            size: 4,
+            mtime_ns: 0,
+            xattrs: vec![],
+        }];
+        let harness = session.harness.unwrap();
+        let harness_home = normalized_harness_home(harness, &session.harness_home);
+
+        assert_eq!(harness_home, PathBuf::from(".codex"));
+        assert_eq!(
+            locate_harness_transcript(
+                &entries,
+                harness,
+                &harness_home,
+                &session.harness_thread_id,
+                session.flat_home,
+            ),
+            Some(transcript_path)
+        );
     }
 
     #[test]

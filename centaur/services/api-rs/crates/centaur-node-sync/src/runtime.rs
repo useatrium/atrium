@@ -623,16 +623,16 @@ pub fn locate_harness_transcript(
             .map(|entry| entry.rel_path.clone())
             .max(),
         HarnessTranscriptKind::Codex if !thread_id.is_empty() => {
-            let file_name = format!("rollout-{thread_id}.jsonl");
+            let file_suffix = format!("-{thread_id}.jsonl");
             entries
                 .iter()
                 .filter(|entry| entry.file_type == crate::overlay::RawFileType::Regular)
                 .filter(|entry| entry.rel_path.starts_with(harness_home.join("sessions")))
                 .filter(|entry| {
-                    entry
-                        .rel_path
-                        .file_name()
-                        .is_some_and(|name| name.to_string_lossy() == file_name)
+                    entry.rel_path.file_name().is_some_and(|name| {
+                        let name = name.to_string_lossy();
+                        name.starts_with("rollout-") && name.ends_with(&file_suffix)
+                    })
                 })
                 .map(|entry| entry.rel_path.clone())
                 .max()
@@ -1706,6 +1706,27 @@ mod tests {
             ),
             Some(PathBuf::from(
                 ".codex/sessions/2026/06/21/rollout-thread-1.jsonl"
+            ))
+        );
+    }
+
+    #[test]
+    fn locates_codex_rollout_transcript_by_thread_id_suffix() {
+        let thread_id = "550e8400-e29b-41d4-a716-446655440000";
+        let entries = vec![reg(
+            ".codex/sessions/2026/07/06/rollout-2026-07-06T16-20-40-550e8400-e29b-41d4-a716-446655440000.jsonl",
+        )];
+
+        assert_eq!(
+            locate_harness_transcript(
+                &entries,
+                HarnessTranscriptKind::Codex,
+                Path::new(".codex"),
+                thread_id,
+                true,
+            ),
+            Some(PathBuf::from(
+                ".codex/sessions/2026/07/06/rollout-2026-07-06T16-20-40-550e8400-e29b-41d4-a716-446655440000.jsonl",
             ))
         );
     }
