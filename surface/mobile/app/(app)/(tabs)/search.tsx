@@ -97,6 +97,7 @@ export default function Search() {
       <MobileHeader title="Search" />
       <View style={{ flex: 1, padding: space.lg, gap: space.md }}>
       <TextInput
+        accessibilityLabel="Search messages"
         value={q}
         onChangeText={setQ}
         placeholder="Search messages"

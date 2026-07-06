@@ -44,6 +44,7 @@ export default function NewChannel() {
       >
         <Text style={{ color: colors.textMuted, fontSize: font.md, marginRight: 4 }}>#</Text>
         <TextInput
+          accessibilityLabel="Channel name"
           value={name}
           onChangeText={setName}
           placeholder="channel-name"
@@ -69,6 +70,9 @@ export default function NewChannel() {
       </View>
       {error && <Text style={{ color: colors.danger, fontSize: font.sm }}>{error}</Text>}
       <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Create channel"
+        accessibilityState={{ disabled: !canCreate }}
         onPress={() => void create()}
         disabled={!canCreate}
         style={{

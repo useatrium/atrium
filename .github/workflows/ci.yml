@@ -93,6 +93,11 @@ jobs:
         timeout-minutes: 2
         run: pnpm lint
 
+      - name: Lint mobile accessibility
+        working-directory: surface
+        timeout-minutes: 2
+        run: pnpm --filter @atrium/mobile lint:a11y
+
       - name: Check surface migration filenames
         working-directory: surface
         timeout-minutes: 1
