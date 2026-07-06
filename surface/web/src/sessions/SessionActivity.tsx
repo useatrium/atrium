@@ -1,4 +1,5 @@
 import type { UserRef } from '@atrium/surface-client';
+import { useState } from 'react';
 import { Tooltip } from '../components/a11y';
 import { ArrowUpIcon } from '../components/icons';
 import type { SeatAuditEntry } from './types';
@@ -24,23 +25,34 @@ export function TurnRail({
   turns: { id: string; text: string }[];
   onJump: (id: string) => void;
 }) {
+  const [open, setOpen] = useState(false);
   if (turns.length === 0) return null;
   const shown = turns.slice(-14);
+  const jumpToTurn = (id: string) => {
+    setOpen(false);
+    onJump(id);
+  };
   return (
     <div data-testid="turn-rail" className="group absolute right-1.5 top-1/2 z-10 -translate-y-1/2">
-      <div className="flex flex-col items-end gap-1.5 py-1 transition-opacity group-hover:opacity-0">
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        aria-label="Open turn navigation"
+        aria-expanded={open}
+        className="flex flex-col items-end gap-1.5 rounded-md py-1 text-fg-faint transition-opacity group-hover:opacity-0 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-edge-focus max-md:min-h-11 max-md:min-w-11 max-md:justify-center [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11 [@media(pointer:coarse)]:justify-center"
+      >
         {shown.map((turn) => (
           <span key={turn.id} className="block h-0.5 w-4 rounded-full bg-fg-faint" />
         ))}
-      </div>
-      <div className="absolute right-0 top-1/2 hidden -translate-y-1/2 group-hover:block">
+      </button>
+      <div className={`absolute right-0 top-1/2 -translate-y-1/2 ${open ? 'block' : 'hidden'} group-hover:block`}>
         <div className="max-h-[60vh] w-56 overflow-y-auto rounded-lg border border-edge bg-surface-raised py-1 shadow-lg">
           {shown.map((turn) => (
             <Tooltip key={turn.id} content={turn.text}>
               <button
                 type="button"
-                onClick={() => onJump(turn.id)}
-                className="block w-full truncate px-3 py-1.5 text-left text-xs text-fg-body hover:bg-surface-overlay"
+                onClick={() => jumpToTurn(turn.id)}
+                className="block w-full truncate px-3 py-1.5 text-left text-xs text-fg-body hover:bg-surface-overlay max-md:min-h-11 [@media(pointer:coarse)]:min-h-11"
               >
                 {turn.text}
               </button>
