@@ -227,7 +227,10 @@ export function Chat({
   const [hydrated, setHydrated] = useState(false);
   const [queueNudgeSeq, setQueueNudgeSeq] = useState(0);
   const [unreadDividerAfterId, setUnreadDividerAfterId] = useState<number | null>(null);
-  const [dividerReady, setDividerReady] = useState(false);
+  // The channel whose divider decision is frozen. `dividerReady` is derived from
+  // this per-channel id (not a bare boolean) so a stale `true` from the previous
+  // channel can't leak into a freshly-opened one and cause a premature landing.
+  const [dividerReadyChannelId, setDividerReadyChannelId] = useState<string | null>(null);
   const dividerFrozenForRef = useRef<string | null>(null);
   const locationState = useLocation();
   const selectChannel = useCallback((channelId: string) => {
@@ -525,13 +528,12 @@ export function Chat({
     const cid = state.activeChannelId;
     if (!cid) {
       setUnreadDividerAfterId(null);
-      setDividerReady(false);
+      setDividerReadyChannelId(null);
       dividerFrozenForRef.current = null;
       return;
     }
     if (dividerFrozenForRef.current === cid) return;
 
-    setDividerReady(false);
     const channel = state.channels.find((c) => c.id === cid);
     const timeline = state.timelines[cid];
     const lastRead = channel?.lastReadEventId ?? 0;
@@ -546,9 +548,12 @@ export function Chat({
     // connection that would leave the transcript stuck at the top, never landed.
     if (timeline?.loaded === true) {
       dividerFrozenForRef.current = cid;
-      setDividerReady(true);
+      setDividerReadyChannelId(cid);
     }
   }, [state.activeChannelId, state.channels, state.timelines]);
+
+  // Ready only when the frozen decision belongs to the currently active channel.
+  const dividerReady = dividerReadyChannelId != null && dividerReadyChannelId === state.activeChannelId;
 
   useEffect(() => {
     if (!activeChannelId) return;

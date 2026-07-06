@@ -184,12 +184,22 @@ test('channel read position lands on first unread and marks read only at bottom'
 
     await openChannel(page, unreadRoom);
     const reopenedLog = page.getByRole('log', { name: 'Messages' });
-    await scrollToBottom(reopenedLog);
+    // Reopening lands on the divider again (still unread). Wait for that initial
+    // landing to settle first — otherwise a late landing (slow CI) would revert
+    // the scroll below and mark-read would never fire.
+    const reopenedDivider = page.locator('[data-unread-divider]');
+    await expect(reopenedDivider).toBeVisible({ timeout: 20_000 });
+    await expectDividerInTimelineViewport(reopenedDivider);
+    // Now scroll to the bottom → the read watermark advances to the newest
+    // message. Re-scroll on each poll so any stray re-render can't strand us.
     await expect
-      .poll(async () => readCursor({ handle: readerHandle, channelId: unreadRoomId }), {
-        intervals: [500, 1000, 1000],
-        timeout: 10_000,
-      })
+      .poll(
+        async () => {
+          await scrollToBottom(reopenedLog);
+          return readCursor({ handle: readerHandle, channelId: unreadRoomId });
+        },
+        { intervals: [500, 1000, 1000, 2000], timeout: 20_000 },
+      )
       .toBeGreaterThanOrEqual(unreadIds.at(-1)!);
 
     await openChannel(page, allReadRoom);
