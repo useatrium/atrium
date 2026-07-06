@@ -35,6 +35,19 @@ if [ -z "${SURFACE_HEALTH_URL:-}" ]; then
   fi
 fi
 
+# LiveKit (network_mode: host) must reach the server's call-reaping webhook at
+# the address the server is actually published on — which the tunnel override
+# rebinds to 10.42.0.1. Derive it from the same signal as the health URL so the
+# two never drift; prepare-livekit-config.sh substitutes it into livekit.yaml.
+if [ -z "${LIVEKIT_WEBHOOK_URL:-}" ]; then
+  if [ -f "$SURF/docker-compose.tunnel.yml" ]; then
+    LIVEKIT_WEBHOOK_URL="http://10.42.0.1:${SERVER_HOST_PORT:-3001}/api/calls/webhook"
+  else
+    LIVEKIT_WEBHOOK_URL="http://127.0.0.1:${SERVER_HOST_PORT:-3001}/api/calls/webhook"
+  fi
+fi
+export LIVEKIT_WEBHOOK_URL
+
 log(){ echo "[$(date +%H:%M:%S)] $*"; }
 die(){ echo "[$(date +%H:%M:%S)] FAILED: $*" >&2; exit 1; }
 health_surface(){ curl -fsS --max-time 8 "$SURFACE_HEALTH_URL" >/dev/null 2>&1; }
@@ -56,11 +69,21 @@ refresh_compose_cmd(){
 }
 
 prepare_surface_runtime(){
+  LIVEKIT_CONFIG_CHANGED=0
   if [ -x "$SURF/prepare-livekit-config.sh" ]; then
+    # Hash the previously-rendered config so we only bounce LiveKit when the
+    # rendered content actually changes (Compose won't recreate a container for
+    # a bind-mounted file's content change, and LiveKit only reads its config at
+    # startup — so without this a config change silently never reaches it).
+    local prev_sum="" new_sum=""
+    prev_sum="$(sha256sum "$STATE/surface/livekit.yaml" 2>/dev/null | awk '{print $1}')"
     LIVEKIT_CONFIG_FILE="$("$SURF/prepare-livekit-config.sh")" || die "livekit config render"
     export LIVEKIT_CONFIG_FILE
-    log "livekit: runtime config $LIVEKIT_CONFIG_FILE"
+    new_sum="$(sha256sum "$LIVEKIT_CONFIG_FILE" 2>/dev/null | awk '{print $1}')"
+    [ "$prev_sum" != "$new_sum" ] && LIVEKIT_CONFIG_CHANGED=1
+    log "livekit: runtime config $LIVEKIT_CONFIG_FILE (changed=$LIVEKIT_CONFIG_CHANGED)"
   fi
+  export LIVEKIT_CONFIG_CHANGED
   refresh_compose_cmd
   mkdir -p "$PNPM_STORE_DIR" || die "create pnpm store"
 }
@@ -104,8 +127,16 @@ refresh_livekit_runtime(){
     log "livekit: not running, skipping runtime config refresh"
     return
   fi
-  log "livekit: refreshing runtime config"
-  "${DC[@]}" --profile livekit up -d --no-build livekit || die "livekit refresh"
+  # Plain `up -d` will NOT recreate the container when only the mounted config's
+  # content changed, so force a recreate in that case to make LiveKit re-read it.
+  # Skip the bounce (and the call drop it causes) when the config is unchanged.
+  if [ "${LIVEKIT_CONFIG_CHANGED:-0}" = "1" ]; then
+    log "livekit: config changed — recreating to reload"
+    "${DC[@]}" --profile livekit up -d --force-recreate --no-build livekit || die "livekit refresh"
+  else
+    log "livekit: config unchanged — ensuring running, no recreate"
+    "${DC[@]}" --profile livekit up -d --no-build livekit || die "livekit refresh"
+  fi
 }
 
 # ---- content-aware change detection (last-deployed SHA -> HEAD) ----

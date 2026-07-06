@@ -45,11 +45,20 @@ if [[ -z "$apikey" && -f "$SCRIPT_DIR/.env" ]]; then
   apikey="$(read_env_value LIVEKIT_API_KEY "$SCRIPT_DIR/.env" || true)"
 fi
 
+# The webhook target is the address the server is actually published on, which
+# the tunnel topology rebinds off loopback (redeploy.sh derives it and exports
+# LIVEKIT_WEBHOOK_URL). Default to loopback:3001 for plain/manual runs.
+weburl="${LIVEKIT_WEBHOOK_URL:-}"
+if [[ -z "$weburl" && -f "$SCRIPT_DIR/.env" ]]; then
+  weburl="$(read_env_value LIVEKIT_WEBHOOK_URL "$SCRIPT_DIR/.env" || true)"
+fi
+weburl="${weburl:-http://127.0.0.1:3001/api/calls/webhook}"
+
 mkdir -p "$OUT_DIR"
 tmp="$(mktemp "$OUT_DIR/livekit.yaml.XXXXXX")"
 
-awk -v domain="$domain" -v apikey="$apikey" '
-  { gsub(/__LIVEKIT_API_KEY__/, apikey) }
+awk -v domain="$domain" -v apikey="$apikey" -v weburl="$weburl" '
+  { gsub(/__LIVEKIT_API_KEY__/, apikey); gsub(/__LIVEKIT_WEBHOOK_URL__/, weburl) }
   /^turn:[[:space:]]*$/ {
     in_turn = 1
     print

@@ -29,16 +29,18 @@ rtc:
 # Webhooks let LiveKit tell the server when a room finishes or a participant
 # leaves, so calls abandoned without a clean hang-up get reaped server-side
 # (POST /api/calls/webhook — the server verifies the signature with the same
-# LIVEKIT_API_KEY/SECRET). LiveKit runs on the host network and the server is
-# published on the host at 127.0.0.1:3001, so this stays loopback: no Caddy hop,
-# no extra firewall port. `api_key` MUST be an entry in `keys`; it is injected
-# from LIVEKIT_API_KEY by prepare-livekit-config.sh (the __LIVEKIT_API_KEY__
-# placeholder below is substituted at deploy time). If you change the server's
-# published port from the default 3001 (SERVER_HOST_PORT), update the URL too.
+# LIVEKIT_API_KEY/SECRET). LiveKit runs on the host network, so the URL must be
+# whatever host address the server is published on: loopback for a plain
+# deploy, but the tunnel topology rebinds it to 10.42.0.1. Both placeholders are
+# substituted at deploy time by prepare-livekit-config.sh — `api_key` from
+# LIVEKIT_API_KEY (must be an entry in `keys`) and the URL from
+# LIVEKIT_WEBHOOK_URL (redeploy.sh derives it from the same tunnel detection as
+# the health check; default http://127.0.0.1:3001/api/calls/webhook). Either
+# way it stays host-local: no Caddy hop, no extra firewall port.
 webhook:
   api_key: __LIVEKIT_API_KEY__
   urls:
-    - http://127.0.0.1:3001/api/calls/webhook
+    - __LIVEKIT_WEBHOOK_URL__
 
 turn:
   enabled: true
