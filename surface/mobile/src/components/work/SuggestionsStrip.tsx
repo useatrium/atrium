@@ -4,6 +4,18 @@ import type { SessionSuggestion } from '@atrium/surface-client';
 import { font, radius, space, useTheme } from '../../lib/theme';
 
 type RowMode = 'idle' | 'editing' | 'dismissing';
+type MaybePromise = void | Promise<void>;
+
+export type OptimisticSuggestionSend = {
+  suggestion: SessionSuggestion;
+  text: string;
+  edited: boolean;
+};
+
+function watchOptimisticFailure(result: MaybePromise, optimisticId: string | undefined, onFailed?: (id: string) => void) {
+  if (!optimisticId || !result || typeof result.then !== 'function') return;
+  void result.catch(() => onFailed?.(optimisticId));
+}
 
 function ActionButton({
   label,
@@ -93,12 +105,16 @@ function SuggestionRow({
   onSend,
   onEditSend,
   onDismiss,
+  onOptimisticSend,
+  onOptimisticSendFailed,
 }: {
   suggestion: SessionSuggestion;
   isDriver: boolean;
-  onSend: (suggestionId: string) => void;
-  onEditSend: (suggestionId: string, text: string) => void;
-  onDismiss: (suggestionId: string, note?: string) => void;
+  onSend: (suggestionId: string) => MaybePromise;
+  onEditSend: (suggestionId: string, text: string) => MaybePromise;
+  onDismiss: (suggestionId: string, note?: string) => MaybePromise;
+  onOptimisticSend?: (input: OptimisticSuggestionSend) => string | undefined;
+  onOptimisticSendFailed?: (pendingId: string) => void;
 }) {
   const { colors } = useTheme();
   const [mode, setMode] = useState<RowMode>('idle');
@@ -116,11 +132,27 @@ function SuggestionRow({
   };
   const sendEdited = () => {
     if (draft.trim().length === 0) return;
-    onEditSend(suggestion.id, draft);
+    const optimisticId = onOptimisticSend?.({
+      suggestion,
+      text: draft,
+      edited: draft !== suggestion.text,
+    });
+    watchOptimisticFailure(onEditSend(suggestion.id, draft), optimisticId, onOptimisticSendFailed);
   };
   const dismiss = () => {
     const trimmed = note.trim();
-    onDismiss(suggestion.id, trimmed.length > 0 ? trimmed : undefined);
+    // resolveSuggestionAction reports then rethrows; dismiss has no optimistic
+    // bubble to roll back, so swallow the rejection to avoid an unhandled promise.
+    const result = onDismiss(suggestion.id, trimmed.length > 0 ? trimmed : undefined);
+    if (result && typeof result.then === 'function') void result.catch(() => {});
+  };
+  const send = () => {
+    const optimisticId = onOptimisticSend?.({
+      suggestion,
+      text: suggestion.text,
+      edited: false,
+    });
+    watchOptimisticFailure(onSend(suggestion.id), optimisticId, onOptimisticSendFailed);
   };
 
   return (
@@ -171,7 +203,7 @@ function SuggestionRow({
         </View>
       ) : isDriver ? (
         <View style={{ flexDirection: 'row', gap: space.sm }}>
-          <ActionButton label="Send" onPress={() => onSend(suggestion.id)} variant="outline" />
+          <ActionButton label="Send" onPress={send} variant="outline" />
           <ActionButton label="Edit" onPress={startEdit} />
           <ActionButton label="Dismiss" onPress={startDismiss} />
         </View>
@@ -186,12 +218,16 @@ export function SuggestionsStrip({
   onSend,
   onEditSend,
   onDismiss,
+  onOptimisticSend,
+  onOptimisticSendFailed,
 }: {
   suggestions: SessionSuggestion[];
   isDriver: boolean;
-  onSend: (suggestionId: string) => void;
-  onEditSend: (suggestionId: string, text: string) => void;
-  onDismiss: (suggestionId: string, note?: string) => void;
+  onSend: (suggestionId: string) => MaybePromise;
+  onEditSend: (suggestionId: string, text: string) => MaybePromise;
+  onDismiss: (suggestionId: string, note?: string) => MaybePromise;
+  onOptimisticSend?: (input: OptimisticSuggestionSend) => string | undefined;
+  onOptimisticSendFailed?: (pendingId: string) => void;
 }) {
   const { colors } = useTheme();
   const pendingSuggestions = suggestions.filter((suggestion) => suggestion.status === 'pending');
@@ -228,6 +264,8 @@ export function SuggestionsStrip({
           onSend={onSend}
           onEditSend={onEditSend}
           onDismiss={onDismiss}
+          onOptimisticSend={onOptimisticSend}
+          onOptimisticSendFailed={onOptimisticSendFailed}
         />
       ))}
     </View>

@@ -33,4 +33,44 @@ describe('SteerRow (mobile)', () => {
     expect(screen.getByText('old turn')).toBeTruthy();
     expect(screen.queryByTestId('steer-time')).toBeNull();
   });
+
+  it('shows an always-visible provenance byline for accepted suggestions', () => {
+    renderWithTheme(
+      <SteerRow
+        text="try a smaller patch"
+        provenance={{
+          provenance: {
+            proposerName: 'Allan',
+            resolvedByName: 'Jules',
+            edited: false,
+            resolvedAt: '2026-07-02T10:15:00.000Z',
+          },
+          acceptedByMe: true,
+        }}
+      />,
+    );
+
+    const label = 'Proposed by Allan · sent by you';
+    expect(screen.getByText(label)).toBeTruthy();
+    expect(screen.getByLabelText(label)).toBeTruthy();
+  });
+
+  it('marks edited accepted suggestions in the provenance byline', () => {
+    renderWithTheme(
+      <SteerRow
+        text="try a focused patch"
+        provenance={{
+          provenance: {
+            proposerName: 'Allan',
+            resolvedByName: 'Dana',
+            edited: true,
+            resolvedAt: '2026-07-02T10:15:00.000Z',
+          },
+          acceptedByMe: false,
+        }}
+      />,
+    );
+
+    expect(screen.getByText('Proposed by Allan · sent by Dana · edited')).toBeTruthy();
+  });
 });

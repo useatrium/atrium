@@ -1,9 +1,55 @@
 import { Text, View } from 'react-native';
-import { containsCriticMarkup, formatTurnTime, parseMarkupSteer } from '@atrium/surface-client';
+import {
+  containsCriticMarkup,
+  formatTurnTime,
+  parseMarkupSteer,
+  type SteerProvenance,
+} from '@atrium/surface-client';
 import { font, space, useTheme } from '../../lib/theme';
 import { CriticMarkupText } from '../CriticMarkupText';
 import { TimestampText } from '../TimestampText';
 import { MarkupSteerCard } from './MarkupSteerCard';
+
+export type SteerRowProvenance = {
+  provenance: SteerProvenance;
+  acceptedByMe: boolean;
+};
+
+function steerProvenanceText({ provenance, acceptedByMe }: SteerRowProvenance): string {
+  const sentBy = acceptedByMe ? 'you' : provenance.resolvedByName;
+  const parts = [`Proposed by ${provenance.proposerName}`, `sent by ${sentBy}`];
+  if (provenance.edited) parts.push('edited');
+  return parts.join(' · ');
+}
+
+function SteerProvenanceByline({ provenance }: { provenance?: SteerRowProvenance | null }) {
+  const { colors } = useTheme();
+  if (!provenance) return null;
+  const label = steerProvenanceText(provenance);
+  return (
+    <View
+      testID="steer-provenance"
+      style={{
+        marginTop: space.xs,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+        flexWrap: 'wrap',
+      }}
+    >
+      <Text
+        accessibilityRole="image"
+        accessibilityLabel={label}
+        style={{ color: colors.textMuted, fontSize: font.xs, lineHeight: 16 }}
+      >
+        ↩
+      </Text>
+      <Text style={{ color: colors.textMuted, fontSize: font.xs, lineHeight: 16 }}>
+        {label}
+      </Text>
+    </View>
+  );
+}
 
 /**
  * A user steer in the session transcript — a turn boundary. Mobile has no
@@ -11,7 +57,15 @@ import { MarkupSteerCard } from './MarkupSteerCard';
  * like iMessage's conversation-break timestamps. `ts` is absent on history
  * captured before the server stamped frames; the row then shows text only.
  */
-export function SteerRow({ text, ts }: { text: string; ts?: string }) {
+export function SteerRow({
+  text,
+  ts,
+  provenance,
+}: {
+  text: string;
+  ts?: string;
+  provenance?: SteerRowProvenance | null;
+}) {
   const { colors } = useTheme();
   const time = ts ? formatTurnTime(ts) : '';
   const markupSteer = parseMarkupSteer(text);
@@ -31,6 +85,7 @@ export function SteerRow({ text, ts }: { text: string; ts?: string }) {
           />
         ) : null}
         {markupSteer ? <MarkupSteerCard steer={markupSteer} /> : <CriticMarkupText text={text} />}
+        <SteerProvenanceByline provenance={provenance} />
       </View>
     );
   }
@@ -49,6 +104,7 @@ export function SteerRow({ text, ts }: { text: string; ts?: string }) {
         />
       ) : null}
       <Text style={{ color: colors.text, fontSize: font.sm }}>{text}</Text>
+      <SteerProvenanceByline provenance={provenance} />
     </View>
   );
 }

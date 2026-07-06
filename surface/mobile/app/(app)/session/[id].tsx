@@ -25,7 +25,9 @@ import {
   formatTime,
   isStalledSessionStatus,
   isTerminalSessionStatus,
+  matchSteerProvenance,
   mergeSpawnResponse,
+  randomId,
   sessionDriverId,
   sessionFromWire,
   type QuestionPrompt,
@@ -33,9 +35,10 @@ import {
   type SessionQuestionAnswerSummary,
   type SessionQuestionEvent,
   type SessionStatus,
+  type SteerProvenance,
 } from '@atrium/surface-client';
 import { HARNESS_EFFORT_PICKER_OPTIONS } from '@atrium/surface-client/effort';
-import type { QuestionItem, SessionItem, TextItem, ToolCallItem } from '@atrium/centaur-client';
+import type { QuestionItem, SessionItem, TextItem, ToolCallItem, UserMessageItem } from '@atrium/centaur-client';
 import { useChat } from '../../../src/lib/chat';
 import { useAccessibilityAnnouncement, useModalAccessibilityFocus } from '../../../src/lib/accessibility';
 import { font, radius, space, useTheme, type Colors } from '../../../src/lib/theme';
@@ -62,10 +65,13 @@ import { MobileWorkSheet, type WorkSurfaceTab } from '../../../src/components/wo
 import { WorkStrips, type WorkStripItem } from '../../../src/components/work/WorkStrips';
 import { TurnsSheet } from '../../../src/components/work/TurnsSheet';
 import { TurnCard } from '../../../src/components/work/TurnCard';
-import { SteerRow } from '../../../src/components/work/SteerRow';
+import { SteerRow, type SteerRowProvenance } from '../../../src/components/work/SteerRow';
 import { deriveTurns } from '../../../src/components/work/turns';
 import { SeatRequestBanner, SeatFooter } from '../../../src/components/work/SeatControls';
-import { SuggestionsStrip } from '../../../src/components/work/SuggestionsStrip';
+import {
+  SuggestionsStrip,
+  type OptimisticSuggestionSend,
+} from '../../../src/components/work/SuggestionsStrip';
 import { AnswerProposals } from '../../../src/components/work/AnswerProposals';
 import { SessionMarkdown } from '../../../src/components/Markdown';
 import { PlanPanel } from '../../../src/components/PlanPanel';
@@ -101,6 +107,27 @@ function entryLink(serverUrl: string, handle: string): string {
 function sessionLink(serverUrl: string, sessionId: string): string {
   return `${serverUrl.replace(/\/+$/, '')}/s/${encodeURIComponent(sessionId)}`;
 }
+
+function normalizeSteerEchoText(text: string): string {
+  return text.trim().replace(/\s+/g, ' ');
+}
+
+function steerProvenanceKey(provenance: SteerProvenance): string {
+  return [
+    String(provenance.resolvedAt),
+    provenance.proposerName,
+    provenance.resolvedByName,
+    provenance.edited ? 'edited' : 'sent',
+  ].join('\u0000');
+}
+
+type PendingSteer = {
+  id: string;
+  text: string;
+  ts: string;
+  provenance: SteerProvenance;
+  acceptedByMe: boolean;
+};
 
 function referenceLabel(ref: EntryReference): string {
   const actor = ref.actorLabel?.trim() || 'Someone';
@@ -842,6 +869,10 @@ export default function SessionScreen() {
   const [seatAsk, setSeatAsk] = useState<'idle' | 'confirm-take'>('idle');
   const [ignoredSeatRequests, setIgnoredSeatRequests] = useState<ReadonlySet<string>>(() => new Set());
   const [suggestText, setSuggestText] = useState('');
+  const [pendingSteers, setPendingSteers] = useState<PendingSteer[]>([]);
+  const [optimisticProvenanceByMessageId, setOptimisticProvenanceByMessageId] = useState<
+    Map<string, SteerRowProvenance>
+  >(new Map());
   const [references, setReferences] = useState<EntryReferenceMap>({});
   const [referenceFocusSeq, setReferenceFocusSeq] = useState(0);
   const [transcriptActionTarget, setTranscriptActionTarget] = useState<TranscriptActionTarget | null>(null);
@@ -948,6 +979,135 @@ export default function SessionScreen() {
   const effortOptions = session ? HARNESS_EFFORT_PICKER_OPTIONS[session.harness] : undefined;
   const effortSelection = effortChoice ?? modelEffort ?? '';
   const canPickEffort = !!session && isDriver && !isEnded && effortOptions !== undefined;
+  const nameFor = useCallback(
+    (userId: string | null | undefined): string => {
+      if (!userId) return 'someone';
+      if (userId === me.id) return me.displayName;
+      const member = state.channels
+        .find((channel) => channel.id === session?.channelId)
+        ?.members?.find((user) => user.id === userId);
+      if (member) return member.displayName;
+      if (userId === session?.driverId && session.driverName) return session.driverName;
+      if (userId === session?.spawnedBy && session.spawnerName) return session.spawnerName;
+      const req = session?.pendingSeatRequests.find((request) => request.userId === userId);
+      if (req) return req.displayName;
+      return userId;
+    },
+    [
+      me.displayName,
+      me.id,
+      session?.channelId,
+      session?.driverId,
+      session?.driverName,
+      session?.pendingSeatRequests,
+      session?.spawnedBy,
+      session?.spawnerName,
+      state.channels,
+    ],
+  );
+  const confirmedUserMessages = useMemo(
+    () => stream.items.filter((item): item is UserMessageItem => item.type === 'user_message'),
+    [stream.items],
+  );
+  const steerProvenanceByMessageId = useMemo(
+    () => matchSteerProvenance(confirmedUserMessages, session?.suggestions ?? []),
+    [confirmedUserMessages, session?.suggestions],
+  );
+  const acceptedByMeProvenanceKeys = useMemo(() => {
+    const keys = new Set<string>();
+    for (const suggestion of session?.suggestions ?? []) {
+      if (suggestion.status !== 'sent' || suggestion.resolvedBy !== me.id) continue;
+      keys.add(
+        steerProvenanceKey({
+          proposerName: suggestion.authorName ?? suggestion.authorId,
+          resolvedByName: suggestion.resolvedByName ?? suggestion.resolvedBy ?? 'someone',
+          edited: suggestion.sentText != null,
+          resolvedAt: suggestion.resolvedAt ?? suggestion.createdAt,
+        }),
+      );
+    }
+    return keys;
+  }, [session?.suggestions, me.id]);
+  const steerProvenanceForMessage = useCallback(
+    (messageId: string): SteerRowProvenance | null => {
+      const matched = steerProvenanceByMessageId.get(messageId);
+      const optimistic = optimisticProvenanceByMessageId.get(messageId);
+      const provenance = matched ?? optimistic?.provenance;
+      if (!provenance) return null;
+      return {
+        provenance,
+        acceptedByMe:
+          optimistic?.acceptedByMe === true || acceptedByMeProvenanceKeys.has(steerProvenanceKey(provenance)),
+      };
+    },
+    [acceptedByMeProvenanceKeys, optimisticProvenanceByMessageId, steerProvenanceByMessageId],
+  );
+  const addOptimisticSuggestionSteer = useCallback(
+    ({ suggestion, text, edited }: OptimisticSuggestionSend): string => {
+      const ts = new Date().toISOString();
+      const pendingId = randomId();
+      setPendingSteers((prev) => [
+        ...prev,
+        {
+          id: pendingId,
+          text,
+          ts,
+          provenance: {
+            proposerName: suggestion.authorName ?? nameFor(suggestion.authorId),
+            resolvedByName: me.displayName,
+            edited,
+            resolvedAt: ts,
+          },
+          acceptedByMe: true,
+        },
+      ]);
+      return pendingId;
+    },
+    [me.displayName, nameFor],
+  );
+  const removeOptimisticSteer = useCallback((pendingId: string) => {
+    setPendingSteers((prev) => prev.filter((pending) => pending.id !== pendingId));
+  }, []);
+
+  useEffect(() => {
+    setPendingSteers([]);
+    setOptimisticProvenanceByMessageId(new Map());
+  }, [session?.id]);
+
+  useEffect(() => {
+    if (pendingSteers.length === 0) return;
+    const echoed = new Map<string, UserMessageItem[]>();
+    for (const item of stream.items) {
+      if (item.type !== 'user_message') continue;
+      const text = normalizeSteerEchoText(item.text);
+      const matches = echoed.get(text);
+      if (matches) matches.push(item);
+      else echoed.set(text, [item]);
+    }
+
+    const consumedEchoes = new Set<string>();
+    const carriedProvenance = new Map<string, SteerRowProvenance>();
+    const keep = pendingSteers.filter((pending) => {
+      const text = normalizeSteerEchoText(pending.text);
+      const match = echoed.get(text)?.find((item) => !consumedEchoes.has(item.id));
+      if (!match) return true;
+      consumedEchoes.add(match.id);
+      carriedProvenance.set(match.id, {
+        provenance: pending.provenance,
+        acceptedByMe: pending.acceptedByMe,
+      });
+      return false;
+    });
+
+    if (keep.length !== pendingSteers.length) setPendingSteers(keep);
+    if (carriedProvenance.size > 0) {
+      setOptimisticProvenanceByMessageId((prev) => {
+        const next = new Map(prev);
+        for (const [messageId, provenance] of carriedProvenance) next.set(messageId, provenance);
+        return next;
+      });
+    }
+  }, [pendingSteers, stream.items]);
 
   // Work surfaces (Phase 4 parity): derive from the shared stream exactly like
   // web — Changes · Side-effects · Artifacts. Each non-empty surface gets a strip
@@ -1157,7 +1317,7 @@ export default function SessionScreen() {
 
   useEffect(() => {
     if (stickRef.current) scrollRef.current?.scrollToEnd({ animated: !reduceMotion });
-  }, [reduceMotion, stream.lastEventId, resultText]);
+  }, [pendingSteers.length, reduceMotion, stream.lastEventId, resultText]);
 
   const onScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
     const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
@@ -1302,19 +1462,22 @@ export default function SessionScreen() {
     suggestionId: string,
     action: 'send' | 'dismiss',
     opts?: { text?: string; note?: string },
-  ) => {
-    if (id) {
-      api.resolveSuggestion(id, suggestionId, action, opts ?? {}).catch((err: unknown) => {
+  ): Promise<void> => {
+    if (!id) return Promise.resolve();
+    return api
+      .resolveSuggestion(id, suggestionId, action, opts ?? {}, { opId: randomId() })
+      .then(() => undefined)
+      .catch((err: unknown) => {
         const message = action === 'send' ? "Couldn't send the suggestion." : "Couldn't dismiss the suggestion.";
         reportSessionActionError(err, message);
+        throw err;
       });
-    }
   };
   const sendSuggestion = () => {
     const text = suggestText.trim();
     if (!id || !text) return;
     setSuggestText('');
-    api.createSuggestion(id, text).catch((err: unknown) => {
+    api.createSuggestion(id, text, { opId: randomId() }).catch((err: unknown) => {
       setSuggestText((current) => (current === '' ? text : current));
       reportSessionActionError(err, "Couldn't send the suggestion.");
     });
@@ -1675,7 +1838,7 @@ export default function SessionScreen() {
                         <TextBlock item={item} />
                       </Pressable>
                     ) : item.type === 'user_message' ? (
-                      <SteerRow text={item.text} ts={item.ts} />
+                      <SteerRow text={item.text} ts={item.ts} provenance={steerProvenanceForMessage(item.id)} />
                     ) : item.type === 'question' ? (
                       <MobileQuestionTranscriptCard
                         item={item}
@@ -1693,6 +1856,14 @@ export default function SessionScreen() {
           })}
           {codexChangesAt(stream.items.length).map((anchored) => (
             <InlineFileChange key={anchored.change.id} change={anchored.change} />
+          ))}
+          {pendingSteers.map((pending) => (
+            <SteerRow
+              key={pending.id}
+              text={pending.text}
+              ts={pending.ts}
+              provenance={{ provenance: pending.provenance, acceptedByMe: pending.acceptedByMe }}
+            />
           ))}
         </ScrollView>
 
@@ -1777,6 +1948,8 @@ export default function SessionScreen() {
           onSend={(sid) => resolveSuggestionAction(sid, 'send')}
           onEditSend={(sid, text) => resolveSuggestionAction(sid, 'send', { text })}
           onDismiss={(sid, note) => resolveSuggestionAction(sid, 'dismiss', note ? { note } : undefined)}
+          onOptimisticSend={addOptimisticSuggestionSteer}
+          onOptimisticSendFailed={removeOptimisticSteer}
         />
 
         {isEnded ? (
