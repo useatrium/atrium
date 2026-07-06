@@ -25,6 +25,8 @@ export interface WireEvent {
   replyCount?: number;
   /** Highest reply event id counted in replyCount (0 if none). */
   lastReplyId?: number;
+  /** Thread reply should also be shown in the channel timeline. */
+  broadcast?: boolean;
 }
 
 export class DomainError extends Error {
@@ -50,6 +52,7 @@ interface EventDbRow {
   author_display_name?: string | null;
   reply_count?: number;
   last_reply_id?: number;
+  broadcast?: boolean | null;
   transcript_status?: string | null;
   transcript_text?: string | null;
   transcript_lang?: string | null;
@@ -77,6 +80,7 @@ function toWireEvent(row: EventDbRow): WireEvent {
   };
   if (row.reply_count !== undefined) ev.replyCount = Number(row.reply_count);
   if (row.last_reply_id !== undefined) ev.lastReplyId = Number(row.last_reply_id);
+  if (row.broadcast === true || row.payload?.broadcast === true) ev.broadcast = true;
   return ev;
 }
 
@@ -271,6 +275,7 @@ export async function postMessage(
     text: string;
     clientMsgId?: string | null;
     threadRootEventId?: number | null;
+    broadcast?: boolean;
     attachments?: AttachmentMeta[];
     voice?: VoicePostMeta;
   },
@@ -319,6 +324,7 @@ export async function postMessage(
       const entryRefs = extractEntryRefs(args.text);
       if (entryRefs.length > 0) payload.entry_refs = entryRefs;
       if (args.clientMsgId) payload.client_msg_id = args.clientMsgId;
+      if (args.threadRootEventId != null && args.broadcast === true) payload.broadcast = true;
       if (args.attachments && args.attachments.length > 0) payload.attachments = args.attachments;
       if (args.voice) {
         if (!Number.isFinite(args.voice.durationMs)) {
@@ -742,6 +748,7 @@ const MESSAGE_SELECT = `
          u.display_name AS author_display_name,
          coalesce(r.reply_count, 0)::int AS reply_count,
          coalesce(r.last_reply_id, 0)::bigint AS last_reply_id,
+         (e.payload->>'broadcast')::boolean AS broadcast,
          edit.text AS edited_text,
          (del.id IS NOT NULL) AS is_deleted,
          rx.reactions AS reactions,
@@ -877,7 +884,7 @@ export async function listChannelMessages(
     `${MESSAGE_SELECT}
      WHERE e.channel_id = $1
        AND e.type IN ('message.posted', 'session.spawned')
-       AND e.thread_root_event_id IS NULL
+       AND (e.thread_root_event_id IS NULL OR (e.payload->>'broadcast')::boolean IS TRUE)
        ${args.beforeId !== undefined ? 'AND e.id < $3' : ''}
      ORDER BY e.id DESC
      LIMIT $2`,

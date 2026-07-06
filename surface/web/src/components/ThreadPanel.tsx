@@ -12,6 +12,13 @@ import { buildTimelineItems } from '@atrium/surface-client';
 import { Composer } from './Composer';
 import { XIcon } from './icons';
 import { MessageRow } from './MessageRow';
+import {
+  THREAD_PANE_FALLBACK_WIDTH,
+  THREAD_PANE_MAX_VW,
+  THREAD_PANE_MIN_WIDTH,
+  threadPaneSizing,
+  useThreadPaneWidth,
+} from '../sessions/useSessionPaneWidth';
 
 export function ThreadPanel({
   root,
@@ -66,6 +73,12 @@ export function ThreadPanel({
   onDraftPersisted?: (key: string, text: string) => void | Promise<void>;
   onDraftTouched?: (key: string) => void;
 }) {
+  const { width: paneWidth, resizing, startResize, resetWidth } = useThreadPaneWidth();
+  const paneSizing = threadPaneSizing(paneWidth);
+  const paneMaxWidth =
+    typeof window === 'undefined'
+      ? THREAD_PANE_FALLBACK_WIDTH
+      : Math.max(THREAD_PANE_MIN_WIDTH, Math.round((window.innerWidth * THREAD_PANE_MAX_VW) / 100));
   const sessionFor = (m: ChatMessage) =>
     m.sessionId != null ? sessions[m.sessionId] : undefined;
   const spectatorsFor = (m: ChatMessage) =>
@@ -80,7 +93,27 @@ export function ThreadPanel({
   const items = useMemo(() => buildTimelineItems(replies), [replies]);
 
   return (
-    <aside className="flex w-[min(380px,38vw)] shrink-0 flex-col border-l border-edge bg-surface">
+    <aside
+      className={`relative flex shrink-0 flex-col border-l border-edge bg-surface ${paneSizing.className}`}
+      style={paneSizing.style}
+    >
+      {/* biome-ignore lint/a11y/useSemanticElements: resizable pane separator uses a div for pointer capture and custom sizing. */}
+      <div
+        role="separator"
+        tabIndex={0}
+        aria-orientation="vertical"
+        aria-label="Resize thread panel"
+        aria-valuemin={THREAD_PANE_MIN_WIDTH}
+        aria-valuemax={paneMaxWidth}
+        aria-valuenow={paneWidth ?? THREAD_PANE_FALLBACK_WIDTH}
+        title="Drag to resize · double-click to reset"
+        data-testid="thread-resize-handle"
+        onPointerDown={startResize}
+        onDoubleClick={resetWidth}
+        className={`absolute inset-y-0 -left-0.5 z-20 w-1.5 cursor-col-resize touch-none transition-colors hover:bg-accent/50 ${
+          resizing ? 'bg-accent/50' : ''
+        }`}
+      />
       <header className="flex h-12 shrink-0 items-center justify-between border-b border-edge px-4">
         <h2 className="text-sm font-semibold text-fg">
           Thread

@@ -52,6 +52,8 @@ export interface MsgSendPayload {
   text: string;
   clientMsgId: string;
   threadRootEventId?: number;
+  // === foundation additions: thread broadcast ===
+  broadcast?: boolean;
   attachments?: AttachmentMeta[];
   attachmentRefs?: AttachmentRef[];
   createdAt?: string;
@@ -771,6 +773,7 @@ export function createDefaultOpRegistry(): OpRegistry {
           text: payload.text,
           clientMsgId: payload.clientMsgId,
           ...optionalProp('threadRootEventId', payload.threadRootEventId),
+          ...optionalProp('broadcast', payload.broadcast),
           ...optionalProp('attachments', attachments),
           opId: op.opId,
         });

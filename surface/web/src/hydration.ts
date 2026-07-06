@@ -35,7 +35,7 @@ function isRowEvent(type: string): boolean {
 export function cachedTimelineNeedsStructuralRepair(timeline: CachedTimeline): boolean {
   const rowIds = new Set(
     timeline.events
-      .filter((event) => event.threadRootEventId == null && isRowEvent(event.type))
+      .filter((event) => (event.threadRootEventId == null || event.broadcast === true) && isRowEvent(event.type))
       .map((event) => event.id),
   );
   return timeline.events.some((event) => {

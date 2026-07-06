@@ -26,6 +26,7 @@ export function pendingMessageFromSendPayload(msg: MsgSendPayload, me: UserRef):
     threadRootEventId: msg.threadRootEventId ?? null,
     text: msg.text,
     edited: false,
+    ...(msg.broadcast === true ? { broadcast: true } : {}),
     author: me,
     createdAt: msg.createdAt ?? new Date().toISOString(),
     replyCount: 0,
