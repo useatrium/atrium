@@ -400,3 +400,17 @@ body {
     transition-duration: 0s;
   }
 }
+
+/* iOS/Safari zooms the whole page when a focused form control's font-size is
+   < 16px. Many controls here use Tailwind's text-sm (14px) or smaller, so on
+   phone widths we floor form-control text at 16px to stop the jarring
+   zoom-on-focus (from the login screen onward). This rule is unlayered, so it
+   wins over Tailwind's layered utilities without !important; a control that
+   deliberately needs a larger mobile size should set one explicitly (>=16px). */
+@media (max-width: 767px) {
+  input:not([type='checkbox']):not([type='radio']):not([type='range']),
+  textarea,
+  select {
+    font-size: 16px;
+  }
+}
