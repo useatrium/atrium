@@ -3393,7 +3393,7 @@ printf '%s\n' '{"type":"system","subtype":"wrapper_heartbeat","phase":"startup"}
 sleep 0.2
 printf '%s\n' '{"type":"system","subtype":"wrapper_heartbeat","phase":"app_server_started"}'
 sleep 0.2
-printf '%s\n' '{"type":"thread.started","thread_id":"mock-codex-thread"}'
+printf '%s\n' '{"method":"thread/started","params":{"thread":{"id":"mock-codex-thread"}}}'
 sleep 0.2
 turn_index=1
 while [ "$turn_index" -le 3 ]; do
@@ -5902,12 +5902,18 @@ fn is_transient_steering_startup_error(error: &SessionRuntimeError) -> bool {
 
 fn harness_thread_id_from_output_line(line: &str) -> Option<String> {
     let value: Value = serde_json::from_str(line).ok()?;
-    let event_type = value.get("type").and_then(Value::as_str);
-    if event_type != Some("thread.started") {
+    let event_type = value
+        .get("method")
+        .and_then(Value::as_str)
+        .or_else(|| value.get("type").and_then(Value::as_str));
+    if event_type != Some("thread/started") && event_type != Some("thread.started") {
         return None;
     }
     value
-        .get("thread_id")
+        .get("params")
+        .and_then(|params| params.get("thread"))
+        .and_then(|thread| thread.get("id"))
+        .or_else(|| value.get("thread_id"))
         .or_else(|| value.get("threadId"))
         .and_then(Value::as_str)
         .map(str::trim)
@@ -7148,6 +7154,12 @@ mod tests {
 
     #[test]
     fn harness_thread_id_is_extracted_from_thread_started_output() {
+        assert_eq!(
+            harness_thread_id_from_output_line(
+                r#"{"method":"thread/started","params":{"thread":{"id":"codex-thread-real"}}}"#
+            ),
+            Some("codex-thread-real".to_owned())
+        );
         assert_eq!(
             harness_thread_id_from_output_line(
                 r#"{"type":"thread.started","thread_id":"codex-thread-1"}"#
