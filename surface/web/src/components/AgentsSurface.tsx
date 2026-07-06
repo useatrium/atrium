@@ -122,7 +122,7 @@ export function AgentsSurface({
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           placeholder="Search sessions"
-          className="h-9 w-full max-w-xl rounded-md border border-edge-strong bg-surface-raised px-3 text-sm text-fg placeholder-fg-faint outline-none focus:border-accent-hover"
+          className="h-9 w-full max-w-xl rounded-md border border-edge-strong bg-surface-raised px-3 text-sm text-fg placeholder-fg-faint outline-none focus:border-accent-hover max-md:h-11 max-md:text-base"
         />
       </div>
 
@@ -134,7 +134,7 @@ export function AgentsSurface({
             <button
               type="button"
               onClick={() => void load()}
-              className="mb-3 rounded-md border border-danger/30 bg-danger/10 px-3 py-2 text-left text-sm text-danger hover:bg-danger/15"
+              className="mb-3 rounded-md border border-danger/30 bg-danger/10 px-3 py-2 text-left text-sm text-danger hover:bg-danger/15 max-md:min-h-11"
             >
               Agent sessions failed. Click to retry.
             </button>
@@ -190,7 +190,7 @@ export function AgentSessionListButton({
     <button
       type="button"
       onClick={() => onOpenSession(session.id)}
-      className="flex w-full min-w-0 items-center gap-3 border-b border-edge px-3 py-2 text-left last:border-b-0 hover:bg-accent/20"
+      className="flex w-full min-w-0 items-center gap-3 border-b border-edge px-3 py-2 text-left last:border-b-0 hover:bg-accent/20 max-md:min-h-11"
     >
       <StatusChip status={session.status} />
       <span className="min-w-0 flex-1">

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { JSX, KeyboardEvent } from 'react';
 import { containsCriticMarkup, type FileOrigin, type HubFile, type HubFileListResult, type HubFileVersionsResponse } from '@atrium/surface-client';
 import { MarkupPane, splitMarkdownFrontmatter, type MarkupPaneSource } from '../components/MarkupPane';
@@ -367,114 +367,152 @@ function FilterBar({
   setSearch: (value: string) => void;
   scopedChannel: boolean;
 }) {
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const filtersId = useId();
+  const activeFilterCount = [
+    search.trim().length > 0,
+    filters.origin !== 'all',
+    filters.mediaKind !== 'all',
+    !scopedChannel && filters.channelId.trim().length > 0,
+    filters.sessionId.trim().length > 0,
+    filters.label.trim().length > 0,
+    filters.starred,
+    filters.includeDeleted,
+    !filters.includeScratch,
+    filters.sort !== 'recent',
+  ].filter(Boolean).length;
   const fieldClass =
-    'h-7 rounded-md border border-edge bg-surface px-2 text-2xs text-fg-body outline-none focus:border-edge-focus';
-  const labelClass = 'flex min-w-0 items-center gap-1.5 text-2xs text-fg-muted';
+    'h-7 rounded-md border border-edge bg-surface px-2 text-2xs text-fg-body outline-none focus:border-edge-focus max-md:h-11 max-md:w-auto max-md:min-w-0 max-md:flex-1 max-md:text-sm';
+  const labelClass =
+    'flex min-w-0 items-center gap-1.5 text-2xs text-fg-muted max-md:min-h-11 max-md:w-full max-md:gap-2 max-md:text-xs';
 
   return (
-    <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-edge bg-surface-raised/30 px-3 py-2">
-      <label className={`${labelClass} min-w-[13rem] flex-1`}>
-        <SearchIcon size={13} />
-        <input
-          value={search}
-          onChange={(event) => setSearch(event.target.value)}
-          placeholder="Search filename"
-          className={`${fieldClass} min-w-0 flex-1`}
-        />
-      </label>
-      <label className={labelClass}>
-        Source
-        <select
-          value={filters.origin}
-          onChange={(event) => setFilters((value) => ({ ...value, origin: event.target.value as OriginFilter }))}
-          className={fieldClass}
-        >
-          {ORIGIN_FILTERS.map((origin) => (
-            <option key={origin} value={origin}>
-              {origin}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label className={labelClass}>
-        Type
-        <select
-          value={filters.mediaKind}
-          onChange={(event) => setFilters((value) => ({ ...value, mediaKind: event.target.value as MediaFilter }))}
-          className={fieldClass}
-        >
-          {MEDIA_FILTERS.map((kind) => (
-            <option key={kind} value={kind}>
-              {kind}
-            </option>
-          ))}
-        </select>
-      </label>
-      {!scopedChannel && (
-        <label className={labelClass}>
-          Channel
+    <div className="shrink-0 border-b border-edge bg-surface-raised/30 px-3 py-2">
+      <button
+        type="button"
+        aria-expanded={filtersOpen}
+        aria-controls={filtersId}
+        onClick={() => setFiltersOpen((value) => !value)}
+        className="flex min-h-11 w-full items-center justify-between gap-3 rounded-md border border-edge bg-surface px-3 text-left text-xs font-semibold text-fg hover:bg-surface-overlay md:hidden"
+      >
+        <span className="flex min-w-0 items-center gap-2">
+          <SearchIcon size={14} className="shrink-0 text-fg-muted" />
+          <span>Filters</span>
+          {activeFilterCount > 0 && (
+            <span className="rounded-full bg-surface-overlay px-1.5 py-0.5 text-3xs tabular-nums text-fg-muted">
+              {activeFilterCount}
+            </span>
+          )}
+        </span>
+        <span className="shrink-0 text-2xs text-fg-muted">{filtersOpen ? 'Hide' : 'Show'}</span>
+      </button>
+      <div
+        id={filtersId}
+        className={`${filtersOpen ? 'grid' : 'hidden'} mt-2 grid-cols-1 gap-2 md:mt-0 md:flex md:flex-wrap md:items-center`}
+      >
+        <label className={`${labelClass} min-w-[13rem] flex-1 max-md:min-w-0`}>
+          <SearchIcon size={13} />
           <input
-            value={filters.channelId}
-            onChange={(event) => setFilters((value) => ({ ...value, channelId: event.target.value }))}
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Search filename"
+            className={`${fieldClass} min-w-0 flex-1`}
+          />
+        </label>
+        <label className={labelClass}>
+          Source
+          <select
+            value={filters.origin}
+            onChange={(event) => setFilters((value) => ({ ...value, origin: event.target.value as OriginFilter }))}
+            className={fieldClass}
+          >
+            {ORIGIN_FILTERS.map((origin) => (
+              <option key={origin} value={origin}>
+                {origin}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className={labelClass}>
+          Type
+          <select
+            value={filters.mediaKind}
+            onChange={(event) => setFilters((value) => ({ ...value, mediaKind: event.target.value as MediaFilter }))}
+            className={fieldClass}
+          >
+            {MEDIA_FILTERS.map((kind) => (
+              <option key={kind} value={kind}>
+                {kind}
+              </option>
+            ))}
+          </select>
+        </label>
+        {!scopedChannel && (
+          <label className={labelClass}>
+            Channel
+            <input
+              value={filters.channelId}
+              onChange={(event) => setFilters((value) => ({ ...value, channelId: event.target.value }))}
+              placeholder="id"
+              className={`${fieldClass} w-28 font-mono`}
+            />
+          </label>
+        )}
+        <label className={labelClass}>
+          Session
+          <input
+            value={filters.sessionId}
+            onChange={(event) => setFilters((value) => ({ ...value, sessionId: event.target.value }))}
             placeholder="id"
             className={`${fieldClass} w-28 font-mono`}
           />
         </label>
-      )}
-      <label className={labelClass}>
-        Session
-        <input
-          value={filters.sessionId}
-          onChange={(event) => setFilters((value) => ({ ...value, sessionId: event.target.value }))}
-          placeholder="id"
-          className={`${fieldClass} w-28 font-mono`}
-        />
-      </label>
-      <label className={labelClass}>
-        Label
-        <input
-          value={filters.label}
-          onChange={(event) => setFilters((value) => ({ ...value, label: event.target.value }))}
-          placeholder="tag"
-          className={`${fieldClass} w-24`}
-        />
-      </label>
-      <label className={labelClass}>
-        Sort
-        <select
-          value={filters.sort}
-          onChange={(event) => setFilters((value) => ({ ...value, sort: event.target.value as SortMode }))}
-          className={fieldClass}
-        >
-          <option value="recent">recent</option>
-          <option value="name">name</option>
-          <option value="size">size</option>
-        </select>
-      </label>
-      <label className={labelClass}>
-        <input
-          type="checkbox"
-          checked={filters.starred}
-          onChange={(event) => setFilters((value) => ({ ...value, starred: event.target.checked }))}
-        />
-        starred
-      </label>
-      <label className={labelClass}>
-        <input
-          type="checkbox"
-          checked={filters.includeDeleted}
-          onChange={(event) => setFilters((value) => ({ ...value, includeDeleted: event.target.checked }))}
-        />
-        show removed
-      </label>
-      <label className={labelClass}>
-        <input
-          type="checkbox"
-          checked={filters.includeScratch}
-          onChange={(event) => setFilters((value) => ({ ...value, includeScratch: event.target.checked }))}
-        />
-        scratch
-      </label>
+        <label className={labelClass}>
+          Label
+          <input
+            value={filters.label}
+            onChange={(event) => setFilters((value) => ({ ...value, label: event.target.value }))}
+            placeholder="tag"
+            className={`${fieldClass} w-24`}
+          />
+        </label>
+        <label className={labelClass}>
+          Sort
+          <select
+            value={filters.sort}
+            onChange={(event) => setFilters((value) => ({ ...value, sort: event.target.value as SortMode }))}
+            className={fieldClass}
+          >
+            <option value="recent">recent</option>
+            <option value="name">name</option>
+            <option value="size">size</option>
+          </select>
+        </label>
+        <label className={labelClass}>
+          <input
+            type="checkbox"
+            checked={filters.starred}
+            onChange={(event) => setFilters((value) => ({ ...value, starred: event.target.checked }))}
+          />
+          starred
+        </label>
+        <label className={labelClass}>
+          <input
+            type="checkbox"
+            checked={filters.includeDeleted}
+            onChange={(event) => setFilters((value) => ({ ...value, includeDeleted: event.target.checked }))}
+          />
+          show removed
+        </label>
+        <label className={labelClass}>
+          <input
+            type="checkbox"
+            checked={filters.includeScratch}
+            onChange={(event) => setFilters((value) => ({ ...value, includeScratch: event.target.checked }))}
+          />
+          scratch
+        </label>
+      </div>
     </div>
   );
 }
@@ -1296,8 +1334,8 @@ export function FilesHub({
 
   return (
     <div data-testid="files-hub" className="relative flex min-h-0 flex-1 flex-col bg-surface">
-      <div className="flex h-10 shrink-0 items-center gap-2 border-b border-edge px-3">
-        <h3 className="min-w-0 flex-1 truncate text-xs font-semibold text-fg">
+      <div className="flex min-h-10 shrink-0 flex-wrap items-center gap-2 border-b border-edge px-3 py-2 md:h-10 md:flex-nowrap md:py-0">
+        <h3 className="min-w-0 flex-1 truncate text-xs font-semibold text-fg max-md:basis-full">
           Files <span className="tabular-nums text-fg-muted">/ {visibleItemCount}</span>
         </h3>
         {sessionScope && (
@@ -1305,7 +1343,7 @@ export function FilesHub({
           <div
             role="group"
             aria-label="Session file scope"
-            className="flex shrink-0 rounded-md border border-edge bg-surface p-0.5"
+            className="flex rounded-md border border-edge bg-surface p-0.5 max-md:min-w-0 max-md:flex-1 md:shrink-0"
           >
             {(['session', 'channel'] as const).map((nextScope) => {
               const active = nextScope === 'session' ? scope === 'session' : scope !== 'session';
@@ -1315,7 +1353,7 @@ export function FilesHub({
                   type="button"
                   aria-pressed={active}
                   onClick={() => setScope(nextScope === 'session' ? 'session' : lastBrowseScope)}
-                  className={`h-6 rounded px-2 text-3xs font-semibold ${
+                  className={`h-6 rounded px-2 text-3xs font-semibold max-md:min-h-11 max-md:min-w-0 max-md:flex-1 max-md:truncate ${
                     active
                       ? 'bg-surface-overlay text-fg'
                       : 'text-fg-tertiary hover:bg-surface-overlay/60 hover:text-fg-body'
@@ -1332,7 +1370,7 @@ export function FilesHub({
           <div
             role="group"
             aria-label="File scope"
-            className="flex shrink-0 rounded-md border border-edge bg-surface p-0.5"
+            className="flex rounded-md border border-edge bg-surface p-0.5 max-md:min-w-0 max-md:flex-1 md:shrink-0"
           >
             {(['channel', 'workspace'] as const).map((nextScope) => {
               const active = scope === nextScope;
@@ -1342,7 +1380,7 @@ export function FilesHub({
                   type="button"
                   aria-pressed={active}
                   onClick={() => setScope(nextScope)}
-                  className={`h-6 rounded px-2 text-3xs font-semibold ${
+                  className={`h-6 rounded px-2 text-3xs font-semibold max-md:min-h-11 max-md:min-w-0 max-md:flex-1 max-md:truncate ${
                     active
                       ? 'bg-surface-overlay text-fg'
                       : 'text-fg-tertiary hover:bg-surface-overlay/60 hover:text-fg-body'
@@ -1354,7 +1392,7 @@ export function FilesHub({
             })}
           </div>
         )}
-        <span className="shrink-0 text-2xs text-fg-muted">
+        <span className="text-2xs text-fg-muted max-md:ml-auto md:shrink-0">
           {scope === 'session' ? 'Session files' : scopedChannel ? 'Channel files' : 'Workspace files'}
         </span>
       </div>
