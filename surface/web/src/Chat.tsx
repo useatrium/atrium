@@ -225,7 +225,6 @@ export function Chat({
   stateRef.current = state;
   const authInvalidatedRef = useRef(false);
   const [hydrated, setHydrated] = useState(false);
-  const [initialSyncSettled, setInitialSyncSettled] = useState(false);
   const [queueNudgeSeq, setQueueNudgeSeq] = useState(0);
   const [unreadDividerAfterId, setUnreadDividerAfterId] = useState<number | null>(null);
   const [dividerReady, setDividerReady] = useState(false);
@@ -534,15 +533,22 @@ export function Chat({
 
     setDividerReady(false);
     const channel = state.channels.find((c) => c.id === cid);
+    const timeline = state.timelines[cid];
     const lastRead = channel?.lastReadEventId ?? 0;
-    const latest = channel?.latestEventId ?? 0;
+    // Prefer the loaded timeline's newest id (server truth from the history
+    // fetch) over the channel's cached counter so a cold reload still sees
+    // messages that arrived while away.
+    const latest = Math.max(channel?.latestEventId ?? 0, timeline?.lastEventId ?? 0);
     setUnreadDividerAfterId(lastRead > 0 && latest > lastRead ? lastRead : null);
 
-    if (state.timelines[cid]?.loaded === true && initialSyncSettled) {
+    // Freeze once the timeline is loaded (from cache or the history fetch —
+    // both independent of the WebSocket). Do NOT gate on the WS sync: on a slow
+    // connection that would leave the transcript stuck at the top, never landed.
+    if (timeline?.loaded === true) {
       dividerFrozenForRef.current = cid;
       setDividerReady(true);
     }
-  }, [initialSyncSettled, state.activeChannelId, state.channels, state.timelines]);
+  }, [state.activeChannelId, state.channels, state.timelines]);
 
   useEffect(() => {
     if (!activeChannelId) return;
@@ -672,18 +678,15 @@ export function Chat({
     return syncInFlightRef.current;
   }, [syncFromCursor]);
 
-  const syncThenFlushQueuedOps = useCallback((options?: { markInitialSettled?: boolean }) => {
+  const syncThenFlushQueuedOps = useCallback(() => {
     void runReconnectSync()
       .then(() => calls.refreshActiveCalls())
       .then(flushQueuedOps)
-      .catch(onApiError)
-      .finally(() => {
-        if (options?.markInitialSettled) setInitialSyncSettled(true);
-      });
+      .catch(onApiError);
   }, [calls.refreshActiveCalls, flushQueuedOps, onApiError, runReconnectSync]);
 
   useEffect(() => {
-    if (hydrated) syncThenFlushQueuedOps({ markInitialSettled: true });
+    if (hydrated) syncThenFlushQueuedOps();
   }, [hydrated, syncThenFlushQueuedOps]);
 
   const { clearTypingUser, onSessionTyping, onTyping, sessionTyping, typing } = useTypingIndicators({
