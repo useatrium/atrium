@@ -18,3 +18,11 @@ trustPolicyExclude:
   - react-native-worklets@0.8.3
   # Expo SDK 56 Babel preset (pinned direct dep for babel.config.js); this patch lacks provenance
   - babel-preset-expo@56.0.14
+
+# Only enforce the trust-downgrade policy on recently-published versions (where a
+# supply-chain compromise would actually live — see minimumReleaseAge). Packages
+# published longer ago than this are established/canonical, so exempt them: this
+# stops pnpm's provenance heuristic from *intermittently* flagging old deps like
+# semver@5.7.2 as "high-risk (possible takeover)" and blocking dependency adds,
+# without weakening protection against fresh malicious releases. 30 days.
+trustPolicyIgnoreAfter: 43200
