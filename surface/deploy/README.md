@@ -200,11 +200,19 @@ template carries a `webhook:` block that points LiveKit at the server's
 `participant_left` and verifies each request's signature with
 `LIVEKIT_API_KEY`/`LIVEKIT_API_SECRET`. `prepare-livekit-config.sh` substitutes
 the `webhook.api_key` from `LIVEKIT_API_KEY` at render time (the same env the
-`livekit` profile signs with), so signer and verifier stay in lockstep — no
-extra `.env` value is needed. Because LiveKit runs on the host network and the
-server is published on `127.0.0.1:3001`, the webhook is loopback-only: no Caddy
-hop and no additional firewall port. If you move the server off port 3001
-(`SERVER_HOST_PORT`), update the URL in `livekit.yaml` to match.
+`livekit` profile signs with), so signer and verifier stay in lockstep.
+
+Because LiveKit runs on the host network, the webhook URL must point at whatever
+host address the server is actually published on — and the tunnel topology
+`!override`s that off loopback to `10.42.0.1:3001` (see `docker-compose.tunnel.yml`).
+`redeploy.sh` derives `LIVEKIT_WEBHOOK_URL` from the same tunnel detection it
+uses for the health-check URL (loopback for a plain deploy, `10.42.0.1` under
+the tunnel) and `prepare-livekit-config.sh` substitutes it in, so no `.env`
+value is normally needed; set `LIVEKIT_WEBHOOK_URL` in `.env` only to override
+(e.g. a non-default `SERVER_HOST_PORT` or a bespoke topology). Either way it
+stays host-local: no Caddy hop and no additional firewall port. Note LiveKit
+reads its config only at startup, so `redeploy.sh` force-recreates the `livekit`
+container whenever the rendered config changes.
 
 The TURN renewal helper is `surface/deploy/renew-turn-cert.sh` on the box
 (`~/atrium/surface/deploy/renew-turn-cert.sh` in the standard checkout). It runs
