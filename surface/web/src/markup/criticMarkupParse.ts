@@ -17,9 +17,16 @@ type CodeBlockComment = {
   author: string | null;
 };
 
+type CommentPin = {
+  marker: string;
+  comment: string;
+  author: string | null;
+};
+
 type ScannedCriticMarkup = {
   markdown: string;
   annotations: InlineAnnotation[];
+  commentPins: CommentPin[];
   codeBlockComments: CodeBlockComment[];
   changed: boolean;
 };
@@ -31,6 +38,11 @@ type PositionedAnnotation = InlineAnnotation & {
   contentTo: number;
   endFrom: number;
   endTo: number;
+};
+
+type PositionedCommentPin = CommentPin & {
+  from: number;
+  to: number;
 };
 
 const MARKER_PREFIX = '\uE000CM';
@@ -49,13 +61,15 @@ export function parseCriticMarkupToDoc(source: string): ProseMirrorNode {
   });
 
   const positioned = positionAnnotations(state.doc, scanned.annotations);
-  if (positioned.length > 0) {
+  const positionedPins = positionCommentPins(state.doc, scanned.commentPins);
+  if (positioned.length > 0 || positionedPins.length > 0) {
     let transaction = state.tr;
     const markerRanges = positioned
       .flatMap((annotation) => [
         { from: annotation.startFrom, to: annotation.startTo },
         { from: annotation.endFrom, to: annotation.endTo },
       ])
+      .concat(positionedPins.map((pin) => ({ from: pin.from, to: pin.to })))
       .sort((left, right) => right.from - left.from);
 
     for (const range of markerRanges) {
@@ -71,6 +85,26 @@ export function parseCriticMarkupToDoc(source: string): ProseMirrorNode {
       const mark = markForAnnotation(annotation);
       if (mark) {
         transaction = transaction.addMark(from, to, mark.create(markAttrsForAnnotation(annotation)));
+      }
+    }
+
+    const commentPinType = markupSchema.nodes.comment_pin;
+    if (commentPinType) {
+      const insertions = positionedPins.map((pin, index) => ({
+        pin,
+        index,
+        pos: transaction.mapping.map(pin.from, -1),
+      }));
+      insertions.sort((left, right) => right.pos - left.pos || right.index - left.index);
+
+      for (const insertion of insertions) {
+        transaction = transaction.insert(
+          insertion.pos,
+          commentPinType.create({
+            comment: insertion.pin.comment,
+            author: insertion.pin.author,
+          }),
+        );
       }
     }
 
@@ -105,6 +139,7 @@ export function parseCriticMarkupToDoc(source: string): ProseMirrorNode {
 function scanCriticMarkup(source: string): ScannedCriticMarkup {
   const chunks: string[] = [];
   const annotations: InlineAnnotation[] = [];
+  const commentPins: CommentPin[] = [];
   const codeBlockComments: CodeBlockComment[] = [];
   let textStart = 0;
   let index = 0;
@@ -140,6 +175,13 @@ function scanCriticMarkup(source: string): ScannedCriticMarkup {
     append(startMarker);
     append(markdownForAnnotatedText(text));
     append(endMarker);
+  };
+
+  const appendCommentPin = (comment: string, author: string | null): void => {
+    const marker = makeMarker(markerIndex, 'P');
+    markerIndex += 1;
+    commentPins.push({ marker, comment, author });
+    append(marker);
   };
 
   while (index < source.length) {
@@ -202,8 +244,8 @@ function scanCriticMarkup(source: string): ScannedCriticMarkup {
       appendAnnotated('insertion', token.insertion);
     } else if (token.kind === 'comment') {
       appendAnnotated('comment', token.text, { comment: token.comment, author: token.author });
-    } else {
-      append(source.slice(index, token.end));
+    } else if (token.kind === 'comment-pin') {
+      appendCommentPin(token.comment, token.author);
     }
     index = token.end;
     textStart = index;
@@ -211,10 +253,10 @@ function scanCriticMarkup(source: string): ScannedCriticMarkup {
   }
 
   flushText(source.length);
-  return { markdown: chunks.join(''), annotations, codeBlockComments, changed };
+  return { markdown: chunks.join(''), annotations, commentPins, codeBlockComments, changed };
 }
 
-function makeMarker(index: number, side: 'S' | 'E'): string {
+function makeMarker(index: number, side: 'S' | 'E' | 'P'): string {
   return `${MARKER_PREFIX}${index}${MARKER_MIDDLE}${side}${MARKER_SUFFIX}`;
 }
 
@@ -253,6 +295,30 @@ function positionAnnotations(doc: ProseMirrorNode, annotations: InlineAnnotation
       endTo,
     });
     searchStart = endIndex + annotation.endMarker.length;
+  }
+
+  return positioned;
+}
+
+function positionCommentPins(doc: ProseMirrorNode, pins: CommentPin[]): PositionedCommentPin[] {
+  const flattened = flattenTextPositions(doc);
+  const positioned: PositionedCommentPin[] = [];
+  let searchStart = 0;
+
+  for (const pin of pins) {
+    const markerIndex = flattened.text.indexOf(pin.marker, searchStart);
+    if (markerIndex < 0) {
+      continue;
+    }
+
+    const from = flattened.positions[markerIndex];
+    const to = positionAfter(flattened.positions, markerIndex + pin.marker.length - 1);
+    if (from === undefined || to === undefined) {
+      continue;
+    }
+
+    positioned.push({ ...pin, from, to });
+    searchStart = markerIndex + pin.marker.length;
   }
 
   return positioned;
@@ -306,7 +372,7 @@ type InlineToken =
   | { kind: 'insertion'; text: string; end: number }
   | { kind: 'substitution'; deletion: string; insertion: string; end: number }
   | { kind: 'comment'; text: string; comment: string; author: string | null; end: number }
-  | { kind: 'literal-comment'; end: number };
+  | { kind: 'comment-pin'; comment: string; author: string | null; end: number };
 
 function readInlineTokenAt(source: string, index: number): InlineToken | null {
   if (source.startsWith('{--', index)) {
@@ -363,7 +429,8 @@ function readInlineTokenAt(source: string, index: number): InlineToken | null {
 
   const comment = readCommentAt(source, index);
   if (comment) {
-    return { kind: 'literal-comment', end: comment.end };
+    const payload = parseCommentPayload(unescapeCriticText(comment.comment));
+    return { kind: 'comment-pin', comment: payload.text, author: payload.author, end: comment.end };
   }
 
   return null;
