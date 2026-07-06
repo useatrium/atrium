@@ -107,7 +107,7 @@ export function AgentsSurface({
   const total = visibleSessions.length;
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col bg-surface">
+    <div data-testid="agents-surface" className="flex min-h-0 flex-1 flex-col bg-surface">
       <div className="border-b border-edge px-4 py-3">
         <h2 className="text-sm font-bold text-fg">Agents</h2>
       </div>
