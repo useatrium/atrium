@@ -49,27 +49,62 @@ function PushBridge() {
     configureNotificationHandler(() => stateRef.current.activeChannelId);
     void registerForPush(api);
 
-    const channelFrom = (resp: Notifications.NotificationResponse): string | null => {
+    type NotificationDestination =
+      | { kind: 'session'; id: string }
+      | { kind: 'thread'; rootId: string; channelId: string | null }
+      | { kind: 'channel'; id: string };
+
+    const routeIdFrom = (value: unknown): string | null => {
+      if (typeof value === 'string' && value.trim()) return value;
+      if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+      return null;
+    };
+
+    const destinationFrom = (resp: Notifications.NotificationResponse): NotificationDestination | null => {
       const data = resp.notification.request.content.data as
-        | { channelId?: string }
+        | Record<string, unknown>
         | undefined;
-      return typeof data?.channelId === 'string' ? data.channelId : null;
+      const sessionId = routeIdFrom(data?.sessionId);
+      const threadRootId = routeIdFrom(data?.threadRootId) ?? routeIdFrom(data?.rootId);
+      const channelId = routeIdFrom(data?.channelId);
+      if (sessionId) return { kind: 'session', id: sessionId };
+      if (threadRootId) return { kind: 'thread', rootId: threadRootId, channelId };
+      if (channelId) return { kind: 'channel', id: channelId };
+      return null;
+    };
+
+    const pushDestination = (destination: NotificationDestination): void => {
+      if (destination.kind === 'session') {
+        router.push(`/session/${destination.id}`);
+        return;
+      }
+      if (destination.kind === 'thread') {
+        router.push({
+          pathname: '/thread/[rootId]',
+          params: {
+            rootId: destination.rootId,
+            ...(destination.channelId ? { channelId: destination.channelId } : {}),
+          },
+        });
+        return;
+      }
+      router.push(`/channel/${destination.id}`);
     };
 
     // Tap while running/backgrounded.
     const sub = Notifications.addNotificationResponseReceivedListener((resp) => {
-      const channelId = channelFrom(resp);
-      if (channelId) router.push(`/channel/${channelId}`);
+      const destination = destinationFrom(resp);
+      if (destination) pushDestination(destination);
     });
 
     // Tap that launched the app (cold start) — the listener above never sees it.
     const last = Notifications.getLastNotificationResponse();
     if (last) {
       const key = last.notification.request.identifier;
-      const channelId = channelFrom(last);
-      if (channelId && handledColdStartTap !== key) {
+      const destination = destinationFrom(last);
+      if (destination && handledColdStartTap !== key) {
         handledColdStartTap = key;
-        router.push(`/channel/${channelId}`);
+        pushDestination(destination);
       }
     }
 
