@@ -129,13 +129,13 @@ export function SettingsControls({
 }) {
   const { prefs, setPrefs } = useTheme();
   const segmentButton = (active: boolean) =>
-    `h-8 flex-1 rounded px-2 text-xs font-medium ${
+    `h-8 flex-1 rounded px-2 text-xs font-medium max-md:h-11 max-md:px-3 max-md:text-sm ${
       active
         ? 'bg-accent text-on-accent'
         : 'text-fg-tertiary hover:bg-surface-overlay hover:text-fg-body'
     }`;
   const toggleButton = (active: boolean) =>
-    `flex h-8 w-16 items-center rounded-full border px-1 ${
+    `flex h-8 w-16 items-center rounded-full border px-1 max-md:h-11 max-md:w-20 ${
       active
         ? 'justify-end border-accent bg-accent text-on-accent'
         : 'justify-start border-edge-strong bg-surface text-fg-muted'
@@ -175,11 +175,11 @@ export function SettingsControls({
                 aria-label={`${ACCENT_LABELS[accent]} accent`}
                 aria-pressed={prefs.accent === accent}
                 onClick={() => setPrefs({ accent })}
-                className={`flex size-8 items-center justify-center rounded-md border border-edge ${
+                className={`flex size-8 items-center justify-center rounded-md border border-edge max-md:size-11 ${
                   prefs.accent === accent ? 'ring-2 ring-accent-text ring-offset-1 ring-offset-surface-raised' : ''
                 }`}
               >
-                <span className={`size-4 rounded-full ${SWATCH_CLASSES[accent]}`} />
+                <span className={`size-4 rounded-full max-md:size-5 ${SWATCH_CLASSES[accent]}`} />
               </button>
             </Tooltip>
           ))}
@@ -209,11 +209,7 @@ export function SettingsControls({
           aria-label="High contrast"
           aria-pressed={prefs.highContrast}
           onClick={() => setPrefs({ highContrast: !prefs.highContrast })}
-          className={`flex h-8 w-16 items-center rounded-full border px-1 ${
-            prefs.highContrast
-              ? 'justify-end border-accent bg-accent text-on-accent'
-              : 'justify-start border-edge-strong bg-surface text-fg-muted'
-          }`}
+          className={toggleButton(prefs.highContrast)}
         >
           <span className="size-5 rounded-full bg-current" />
         </button>
@@ -249,7 +245,7 @@ export function SettingsControls({
             aria-disabled={notificationsDisabled || undefined}
             aria-label={BELL_TITLES[notify]}
             aria-pressed={notify === 'on'}
-            className="flex h-8 items-center gap-2 rounded-md border border-edge px-2 text-xs text-fg-tertiary hover:bg-surface-overlay hover:text-fg-body aria-disabled:opacity-40"
+            className="flex h-8 items-center gap-2 rounded-md border border-edge px-2 text-xs text-fg-tertiary hover:bg-surface-overlay hover:text-fg-body aria-disabled:opacity-40 max-md:min-h-11 max-md:w-full max-md:px-3 max-md:text-sm"
           >
             {notify === 'on' ? <BellIcon /> : <BellOffIcon />}
             <span>{notify === 'on' ? 'On' : notify === 'off' ? 'Off' : 'Blocked'}</span>
@@ -264,7 +260,7 @@ export function SettingsControls({
           onChange={(event) =>
             setNotificationMessages(event.target.value as NotificationMessagePref)
           }
-          className="h-8 w-full rounded-md border border-edge bg-surface px-2 text-xs text-fg-secondary"
+          className="h-8 w-full rounded-md border border-edge bg-surface px-2 text-xs text-fg-secondary max-md:h-11 max-md:px-3 max-md:text-sm"
         >
           {MESSAGE_NOTIFICATION_OPTIONS.map((option) => (
             <option key={option.value} value={option.value}>
@@ -303,14 +299,14 @@ export function SettingsControls({
           <button
             type="button"
             onClick={onConnectGitHub}
-            className="flex h-8 items-center gap-2 rounded-md border border-edge px-2 text-xs text-fg-tertiary hover:bg-surface-overlay hover:text-fg-body"
+            className="flex h-8 items-center gap-2 rounded-md border border-edge px-2 text-xs text-fg-tertiary hover:bg-surface-overlay hover:text-fg-body max-md:min-h-11 max-md:w-full max-md:px-3 max-md:text-sm"
           >
             <span
               className={`size-2 rounded-full ${
                 githubConnection?.connected ? 'bg-success' : connectionsAvailable ? 'bg-warning' : 'bg-fg-muted/60'
               }`}
             />
-            <span>
+            <span className="min-w-0 truncate">
               {githubConnection?.connected
                 ? `${githubConnection.accountLabel ?? 'Connected'} · ${githubConnectionLabel(githubConnection.tokenKind)}`
                 : connectionsAvailable
@@ -327,7 +323,7 @@ export function SettingsControls({
         <button
           type="button"
           onClick={onConnectClaude}
-          className="flex h-8 items-center gap-2 rounded-md border border-edge px-2 text-xs text-fg-tertiary hover:bg-surface-overlay hover:text-fg-body"
+          className="flex h-8 items-center gap-2 rounded-md border border-edge px-2 text-xs text-fg-tertiary hover:bg-surface-overlay hover:text-fg-body max-md:min-h-11 max-md:w-full max-md:px-3 max-md:text-sm"
         >
           <span
             className={`size-2 rounded-full ${
@@ -342,7 +338,7 @@ export function SettingsControls({
         <button
           type="button"
           onClick={onConnectCodex}
-          className="flex h-8 items-center gap-2 rounded-md border border-edge px-2 text-xs text-fg-tertiary hover:bg-surface-overlay hover:text-fg-body"
+          className="flex h-8 items-center gap-2 rounded-md border border-edge px-2 text-xs text-fg-tertiary hover:bg-surface-overlay hover:text-fg-body max-md:min-h-11 max-md:w-full max-md:px-3 max-md:text-sm"
         >
           <span
             className={`size-2 rounded-full ${
@@ -379,7 +375,7 @@ export function SettingsControls({
 
 function SettingRow({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div className="grid grid-cols-[5.75rem_minmax(0,1fr)] items-center gap-2">
+    <div className="grid grid-cols-[5.75rem_minmax(0,1fr)] items-center gap-2 max-md:grid-cols-1 max-md:items-stretch max-md:gap-1.5">
       <div className="text-2xs font-semibold uppercase tracking-wider text-fg-muted">{label}</div>
       <div className="min-w-0">{children}</div>
     </div>

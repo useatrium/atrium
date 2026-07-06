@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { EnqueueOpInput, UserRef } from '@atrium/surface-client';
 import type { Channel } from '../api';
 import { api } from '../api';
@@ -8,6 +8,10 @@ import { Avatar } from './Avatar';
 import { showErrorToast } from './Toasts';
 
 type MemberOp = EnqueueOpInput<'channel.join'> | EnqueueOpInput<'channel.leave'>;
+
+const MEMBERS_POPOVER_WIDTH = 256;
+const VIEWPORT_GUTTER = 8;
+const MOBILE_POPOVER_QUERY = '(max-width: 767px)';
 
 export function ChannelMembersMenu({
   channel,
@@ -26,6 +30,13 @@ export function ChannelMembersMenu({
   const popoverRef = useRef<HTMLDivElement | null>(null);
   const addButtonRef = useRef<HTMLButtonElement | null>(null);
   const [leaveAsk, setLeaveAsk] = useState(false);
+  const [mobilePopover, setMobilePopover] = useState(false);
+  const [popoverPosition, setPopoverPosition] = useState({
+    top: VIEWPORT_GUTTER,
+    left: VIEWPORT_GUTTER,
+    width: MEMBERS_POPOVER_WIDTH,
+    maxHeight: 480,
+  });
 
   const loadMembers = useCallback(() => {
     api
@@ -55,6 +66,39 @@ export function ChannelMembersMenu({
     closeOnOutsidePointer: true,
     onClose: close,
   });
+
+  const updatePopoverPosition = useCallback(() => {
+    const shouldUseMobilePosition =
+      typeof window.matchMedia === 'function' && window.matchMedia(MOBILE_POPOVER_QUERY).matches;
+    setMobilePopover(shouldUseMobilePosition);
+    if (!shouldUseMobilePosition) return;
+
+    const trigger = buttonRef.current;
+    if (!trigger) return;
+    const rect = trigger.getBoundingClientRect();
+    const width = Math.min(MEMBERS_POPOVER_WIDTH, Math.max(0, window.innerWidth - VIEWPORT_GUTTER * 2));
+    const maxLeft = Math.max(VIEWPORT_GUTTER, window.innerWidth - VIEWPORT_GUTTER - width);
+    const rightAnchoredLeft = rect.right - width;
+    const top = rect.bottom + 4;
+
+    setPopoverPosition({
+      top,
+      left: Math.min(Math.max(rightAnchoredLeft, VIEWPORT_GUTTER), maxLeft),
+      width,
+      maxHeight: Math.max(180, window.innerHeight - top - VIEWPORT_GUTTER),
+    });
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!open) return undefined;
+    updatePopoverPosition();
+    window.addEventListener('resize', updatePopoverPosition);
+    window.addEventListener('scroll', updatePopoverPosition, true);
+    return () => {
+      window.removeEventListener('resize', updatePopoverPosition);
+      window.removeEventListener('scroll', updatePopoverPosition, true);
+    };
+  }, [open, updatePopoverPosition]);
 
   useEffect(() => {
     if (!leaveAsk) return;
@@ -119,7 +163,12 @@ export function ChannelMembersMenu({
           id="members-popover"
           role="dialog"
           aria-label="Channel members"
-          className="absolute left-0 top-8 z-20 w-64 rounded-md border border-edge-strong bg-surface-raised p-2 shadow-xl"
+          className={
+            mobilePopover
+              ? 'fixed z-20 overflow-y-auto rounded-md border border-edge-strong bg-surface-raised p-2 shadow-xl'
+              : 'absolute left-0 top-8 z-20 w-64 rounded-md border border-edge-strong bg-surface-raised p-2 shadow-xl'
+          }
+          style={mobilePopover ? popoverPosition : undefined}
         >
           <div className="mb-2 flex items-center justify-between">
             <h2 className="text-xs font-semibold text-fg-secondary">Members</h2>
@@ -130,7 +179,7 @@ export function ChannelMembersMenu({
                 setPickerOpen((v) => !v);
                 loadPeople();
               }}
-              className="rounded px-2 py-0.5 text-xs text-fg-tertiary hover:bg-surface-overlay"
+              className="rounded px-2 py-0.5 text-xs text-fg-tertiary hover:bg-surface-overlay max-md:min-h-11 max-md:px-3"
             >
               Add
             </button>
@@ -144,7 +193,7 @@ export function ChannelMembersMenu({
                     type="button"
                     key={u.id}
                     onClick={() => inviteMember(u.id)}
-                    className="flex w-full items-center gap-2 rounded px-2 py-1 text-left text-xs text-fg-secondary hover:bg-surface-overlay"
+                    className="flex w-full items-center gap-2 rounded px-2 py-1 text-left text-xs text-fg-secondary hover:bg-surface-overlay max-md:min-h-11"
                   >
                     <Avatar name={u.displayName} seed={u.id} size={16} />
                     <span className="truncate">{u.displayName}</span>
@@ -168,7 +217,7 @@ export function ChannelMembersMenu({
               leaveAsk
                 ? 'border-danger-border-strong bg-danger-tint/60 font-medium text-danger-text-strong hover:bg-danger-surface/60'
                 : 'border-danger-border/60 text-danger-text hover:bg-danger-tint/40'
-            }`}
+            } max-md:min-h-11`}
           >
             {leaveAsk ? 'Confirm leave' : 'Leave'}
           </button>

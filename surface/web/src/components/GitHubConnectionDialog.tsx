@@ -56,7 +56,7 @@ export function GitHubConnectionDialog({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center bg-surface/60 p-4"
+      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-surface/60 p-4"
     >
       <div
         ref={containerRef}
@@ -64,7 +64,7 @@ export function GitHubConnectionDialog({
         aria-modal="true"
         aria-label="GitHub connection"
         aria-busy={busy ? 'true' : undefined}
-        className="mt-24 w-[min(420px,calc(100vw-2rem))] overflow-hidden rounded-lg border border-edge-strong bg-surface-raised shadow-2xl"
+        className="mt-24 w-[min(420px,calc(100vw-2rem))] overflow-hidden rounded-lg border border-edge-strong bg-surface-raised shadow-2xl max-md:my-4"
       >
         <header className="flex items-center justify-between border-b border-edge px-4 py-3">
           <div>
@@ -77,7 +77,7 @@ export function GitHubConnectionDialog({
             type="button"
             onClick={onCancel}
             aria-label="Close dialog"
-            className="rounded-md px-2 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg"
+            className="rounded-md px-2 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg max-md:min-h-11 max-md:min-w-11"
           >
             <XIcon />
           </button>
@@ -129,7 +129,7 @@ export function GitHubConnectionDialog({
                             type="button"
                             disabled={busy}
                             onClick={() => void run(() => onActivate(identity.id))}
-                            className="shrink-0 rounded border border-edge px-1.5 py-0.5 text-2xs font-medium text-fg-muted hover:bg-surface-overlay hover:text-fg disabled:opacity-50"
+                            className="shrink-0 rounded border border-edge px-1.5 py-0.5 text-2xs font-medium text-fg-muted hover:bg-surface-overlay hover:text-fg disabled:opacity-50 max-md:min-h-11 max-md:px-2.5"
                           >
                             Make active
                           </button>
@@ -178,7 +178,7 @@ export function GitHubConnectionDialog({
                       aria-invalid={errorField === 'installation' ? 'true' : undefined}
                       aria-describedby={installationDescription}
                       placeholder="12345"
-                      className="w-full rounded-md border border-edge bg-surface px-2.5 py-2 text-sm text-fg placeholder-fg-muted outline-none focus:border-edge-strong"
+                      className="w-full rounded-md border border-edge bg-surface px-2.5 py-2 text-sm text-fg placeholder-fg-muted outline-none focus:border-edge-strong max-md:min-h-11"
                     />
                   </label>
                   <button
@@ -190,7 +190,7 @@ export function GitHubConnectionDialog({
                         'installation',
                       )
                     }
-                    className="rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-on-accent hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
+                    className="rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-on-accent hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50 max-md:min-h-11"
                   >
                     Connect GitHub App
                   </button>
@@ -211,14 +211,14 @@ export function GitHubConnectionDialog({
                       aria-invalid={errorField === 'token' ? 'true' : undefined}
                       aria-describedby={patDescription}
                       placeholder="github_pat_..."
-                      className="w-full rounded-md border border-edge bg-surface px-2.5 py-2 text-sm text-fg placeholder-fg-muted outline-none focus:border-edge-strong"
+                      className="w-full rounded-md border border-edge bg-surface px-2.5 py-2 text-sm text-fg placeholder-fg-muted outline-none focus:border-edge-strong max-md:min-h-11"
                     />
                   </label>
                   <button
                     type="button"
                     disabled={busy || token.trim().length === 0}
                     onClick={() => void run(() => onConnect({ tokenKind: 'pat', token: token.trim() }), 'token')}
-                    className="rounded-md border border-edge px-3 py-1.5 text-xs font-medium text-fg-secondary hover:bg-surface-overlay hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
+                    className="rounded-md border border-edge px-3 py-1.5 text-xs font-medium text-fg-secondary hover:bg-surface-overlay hover:text-fg disabled:cursor-not-allowed disabled:opacity-50 max-md:min-h-11"
                   >
                     Connect PAT
                   </button>
@@ -228,13 +228,13 @@ export function GitHubConnectionDialog({
           )}
         </div>
 
-        <footer className="flex items-center justify-end gap-2 border-t border-edge px-4 py-3">
+        <footer className="flex items-center justify-end gap-2 border-t border-edge px-4 py-3 max-md:flex-wrap">
           {(connected || needsAuth) && (
             <button
               type="button"
               disabled={busy}
               onClick={() => void run(onDisconnect)}
-              className="rounded-md px-3 py-1.5 text-xs font-medium text-danger hover:bg-danger/10 disabled:opacity-50"
+              className="rounded-md px-3 py-1.5 text-xs font-medium text-danger hover:bg-danger/10 disabled:opacity-50 max-md:min-h-11"
             >
               Disconnect
             </button>
@@ -242,7 +242,7 @@ export function GitHubConnectionDialog({
           <button
             type="button"
             onClick={onCancel}
-            className="rounded-md px-3 py-1.5 text-xs font-medium text-fg-secondary hover:bg-surface-overlay hover:text-fg"
+            className="rounded-md px-3 py-1.5 text-xs font-medium text-fg-secondary hover:bg-surface-overlay hover:text-fg max-md:min-h-11"
           >
             Cancel
           </button>
@@ -250,7 +250,7 @@ export function GitHubConnectionDialog({
             type="button"
             disabled={busy || !available}
             onClick={() => void run(() => onConnect({ tokenKind: 'app_user' }))}
-            className="rounded-md border border-edge px-3 py-1.5 text-xs font-medium text-fg-secondary hover:bg-surface-overlay hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
+            className="rounded-md border border-edge px-3 py-1.5 text-xs font-medium text-fg-secondary hover:bg-surface-overlay hover:text-fg disabled:cursor-not-allowed disabled:opacity-50 max-md:min-h-11"
           >
             {connected || needsAuth ? 'Reconnect GitHub user' : 'Connect GitHub user'}
           </button>

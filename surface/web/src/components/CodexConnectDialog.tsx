@@ -130,7 +130,7 @@ export function CodexConnectDialog({
 
   return (
     <div
-      className="fixed inset-0 z-[60] flex items-start justify-center bg-surface/60 p-4"
+      className="fixed inset-0 z-[60] flex items-start justify-center overflow-y-auto bg-surface/60 p-4"
     >
       <form
         ref={containerRef}
@@ -140,7 +140,7 @@ export function CodexConnectDialog({
         aria-label="Connect Codex"
         aria-describedby={descriptionIds || undefined}
         aria-busy={busy || phase === 'starting' || phase === 'waiting' ? 'true' : undefined}
-        className="mt-28 w-[min(520px,calc(100vw-2rem))] overflow-hidden rounded-lg border border-edge-strong bg-surface-raised shadow-2xl"
+        className="mt-28 w-[min(520px,calc(100vw-2rem))] overflow-hidden rounded-lg border border-edge-strong bg-surface-raised shadow-2xl max-md:my-4"
       >
         <header className="flex items-center justify-between border-b border-edge px-4 py-3">
           <div>
@@ -153,7 +153,7 @@ export function CodexConnectDialog({
             type="button"
             onClick={onCancel}
             aria-label="Close dialog"
-            className="rounded-md px-2 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg"
+            className="rounded-md px-2 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg max-md:min-h-11 max-md:min-w-11"
           >
             <XIcon />
           </button>
@@ -164,7 +164,7 @@ export function CodexConnectDialog({
             type="button"
             onClick={openSignIn}
             disabled={!flow?.verificationUri || phase === 'starting'}
-            className="w-full rounded-md bg-accent px-3 py-2 text-sm font-semibold text-on-accent hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
+            className="w-full rounded-md bg-accent px-3 py-2 text-sm font-semibold text-on-accent hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50 max-md:min-h-11"
           >
             Open OpenAI sign-in
           </button>
@@ -181,7 +181,7 @@ export function CodexConnectDialog({
                 onClick={copyCode}
                 disabled={!flow?.userCode}
                 aria-live="polite"
-                className={`rounded-md border px-3 py-2 text-xs font-medium transition-colors active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-40 ${
+                className={`rounded-md border px-3 py-2 text-xs font-medium transition-colors active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-40 max-md:min-h-11 ${
                   copied
                     ? 'border-success bg-success/15 text-success'
                     : 'border-edge-strong text-fg-secondary hover:bg-surface-overlay hover:text-fg active:bg-surface-overlay'
@@ -219,7 +219,7 @@ export function CodexConnectDialog({
                 <button
                   type="button"
                   onClick={start}
-                  className="rounded-md bg-surface-raised px-2.5 py-1 text-xs font-medium text-fg-secondary hover:bg-surface-overlay hover:text-fg"
+                  className="rounded-md bg-surface-raised px-2.5 py-1 text-xs font-medium text-fg-secondary hover:bg-surface-overlay hover:text-fg max-md:min-h-11"
                 >
                   Try again
                 </button>
@@ -228,12 +228,12 @@ export function CodexConnectDialog({
           )}
         </div>
 
-        <footer className="flex items-center justify-between gap-2 border-t border-edge px-4 py-3">
+        <footer className="flex items-center justify-between gap-2 border-t border-edge px-4 py-3 max-md:flex-wrap">
           <button
             type="button"
             onClick={disconnect}
             disabled={!connected || busy}
-            className="rounded-md px-3 py-1.5 text-xs font-medium text-fg-tertiary hover:bg-surface-overlay hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
+            className="rounded-md px-3 py-1.5 text-xs font-medium text-fg-tertiary hover:bg-surface-overlay hover:text-fg disabled:cursor-not-allowed disabled:opacity-40 max-md:min-h-11"
           >
             Disconnect
           </button>
@@ -241,7 +241,7 @@ export function CodexConnectDialog({
             <button
               type="button"
               onClick={onCancel}
-              className="rounded-md px-3 py-1.5 text-xs font-medium text-fg-secondary hover:bg-surface-overlay hover:text-fg"
+              className="rounded-md px-3 py-1.5 text-xs font-medium text-fg-secondary hover:bg-surface-overlay hover:text-fg max-md:min-h-11"
             >
               Cancel
             </button>
@@ -249,7 +249,7 @@ export function CodexConnectDialog({
               type="submit"
               onClick={start}
               disabled={busy || phase === 'starting' || phase === 'waiting'}
-              className="rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-on-accent hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
+              className="rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-on-accent hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50 max-md:min-h-11"
             >
               {connected ? 'Reconnect' : 'Connect'}
             </button>

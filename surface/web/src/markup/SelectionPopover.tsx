@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 export type SelectionPopoverMode = 'closed' | 'menu' | 'suggest' | 'comment';
 
@@ -15,6 +15,9 @@ export const closedSelectionPopover: SelectionPopoverState = {
   left: 0,
   codeBlock: false,
 };
+
+const VIEWPORT_GUTTER = 8;
+const MOBILE_POPOVER_QUERY = '(max-width: 767px)';
 
 export interface SelectionPopoverProps {
   state: SelectionPopoverState;
@@ -36,6 +39,7 @@ export function SelectionPopover({
   const popoverRef = useRef<HTMLDivElement | null>(null);
   const replacementInputRef = useRef<HTMLInputElement | null>(null);
   const commentTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const [clampedLeft, setClampedLeft] = useState(state.left);
 
   useEffect(() => {
     if (state.mode === 'closed') return;
@@ -64,6 +68,46 @@ export function SelectionPopover({
     if (state.mode === 'comment') commentTextareaRef.current?.focus();
   }, [state.mode]);
 
+  const clampPopoverToViewport = useCallback(() => {
+    if (state.mode === 'closed') return;
+    const popover = popoverRef.current;
+    if (!popover) return;
+
+    if (typeof window.matchMedia !== 'function' || !window.matchMedia(MOBILE_POPOVER_QUERY).matches) {
+      setClampedLeft(state.left);
+      return;
+    }
+
+    popover.style.left = `${state.left}px`;
+    popover.style.top = `${state.top}px`;
+
+    const rect = popover.getBoundingClientRect();
+    const minLeft = VIEWPORT_GUTTER;
+    const maxRight = Math.max(minLeft, window.innerWidth - VIEWPORT_GUTTER);
+    let nextLeft = state.left;
+
+    if (rect.left < minLeft) {
+      nextLeft += minLeft - rect.left;
+    }
+    if (rect.right > maxRight) {
+      nextLeft -= rect.right - maxRight;
+    }
+
+    setClampedLeft((current) => (Math.abs(current - nextLeft) > 0.5 ? nextLeft : current));
+  }, [state.left, state.mode, state.top]);
+
+  useLayoutEffect(() => {
+    if (state.mode === 'closed') {
+      setClampedLeft(state.left);
+      return undefined;
+    }
+    clampPopoverToViewport();
+    window.addEventListener('resize', clampPopoverToViewport);
+    return () => {
+      window.removeEventListener('resize', clampPopoverToViewport);
+    };
+  }, [clampPopoverToViewport, state.left, state.mode]);
+
   if (state.mode === 'closed') {
     return null;
   }
@@ -73,7 +117,7 @@ export function SelectionPopover({
     <div
       ref={popoverRef}
       className="atrium-markup-popover"
-      style={{ top: state.top, left: state.left }}
+      style={{ top: state.top, left: clampedLeft }}
       onMouseDown={(event) => {
         if ((event.target as HTMLElement).closest('input, textarea')) {
           return;

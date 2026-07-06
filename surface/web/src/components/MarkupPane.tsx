@@ -192,7 +192,7 @@ export function MarkupPane({
 
   return (
     <div
-      className="fixed inset-0 z-[80] flex bg-black/55 p-4 text-fg"
+      className="fixed inset-0 z-[80] flex bg-black/55 p-4 text-fg max-md:p-2"
       role="presentation"
     >
       <section
@@ -217,7 +217,7 @@ export function MarkupPane({
             type="button"
             onClick={() => setShowHistory((showing) => !showing)}
             aria-pressed={showHistory}
-            className="rounded-md border border-edge-strong px-2.5 py-1 text-xs text-fg-secondary hover:bg-surface-overlay hover:text-fg"
+            className="rounded-md border border-edge-strong px-2.5 py-1 text-xs text-fg-secondary hover:bg-surface-overlay hover:text-fg max-md:min-h-11"
           >
             History
           </button>
@@ -225,7 +225,7 @@ export function MarkupPane({
             ref={closeButtonRef}
             type="button"
             onClick={requestClose}
-            className="rounded-md border border-edge-strong px-2.5 py-1 text-xs text-fg-secondary hover:bg-surface-overlay hover:text-fg"
+            className="rounded-md border border-edge-strong px-2.5 py-1 text-xs text-fg-secondary hover:bg-surface-overlay hover:text-fg max-md:min-h-11"
           >
             Cancel
           </button>
@@ -233,7 +233,7 @@ export function MarkupPane({
             type="button"
             disabled={!canSend}
             onClick={() => void send()}
-            className="rounded-md bg-accent px-3 py-1 text-xs font-semibold text-on-accent hover:bg-accent-hover disabled:cursor-default disabled:bg-surface-overlay disabled:text-fg-muted"
+            className="rounded-md bg-accent px-3 py-1 text-xs font-semibold text-on-accent hover:bg-accent-hover disabled:cursor-default disabled:bg-surface-overlay disabled:text-fg-muted max-md:min-h-11"
           >
             {sending ? 'Sending...' : isReplyMode ? 'Reply in thread' : 'Send to agent'}
           </button>
@@ -269,7 +269,7 @@ export function MarkupPane({
             onChange={(event) => setNote(event.target.value)}
             placeholder={isReplyMode ? 'Say something about your changes…' : 'Add a note...'}
             aria-label={isReplyMode ? 'Say something about your changes' : 'Add a note'}
-            className="h-9 shrink-0 rounded-md border border-edge-strong bg-surface-raised px-3 text-sm text-fg outline-none placeholder:text-fg-faint focus:border-accent-hover"
+            className="h-9 shrink-0 rounded-md border border-edge-strong bg-surface-raised px-3 text-sm text-fg outline-none placeholder:text-fg-faint focus:border-accent-hover max-md:h-11"
           />
           {showHistory && (
             <div className="absolute inset-3 z-10 min-h-0 overflow-hidden rounded-md border border-edge-strong bg-surface shadow-2xl">
