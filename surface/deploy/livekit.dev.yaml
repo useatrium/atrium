@@ -17,3 +17,9 @@ keys:
 
 logging:
   level: info
+
+# Prod must set its own webhook URL and an api_key matching LIVEKIT_API_KEY.
+webhook:
+  api_key: devkey
+  urls:
+    - http://host.docker.internal:3001/api/calls/webhook

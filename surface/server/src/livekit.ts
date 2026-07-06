@@ -1,4 +1,4 @@
-import { AccessToken } from 'livekit-server-sdk';
+import { AccessToken, WebhookReceiver } from 'livekit-server-sdk';
 
 export interface LiveKitConfig {
   livekitUrl: string;
@@ -20,6 +20,15 @@ export function createLiveKitTokenService(config: LiveKitConfig): CallTokenServi
     url,
     mintToken: (room, identity, name) => mintToken({ apiKey, apiSecret }, room, identity, name),
   };
+}
+
+export function createLiveKitWebhookReceiver(
+  config: Pick<LiveKitConfig, 'livekitApiKey' | 'livekitApiSecret'>,
+): WebhookReceiver | null {
+  const apiKey = config.livekitApiKey.trim();
+  const apiSecret = config.livekitApiSecret.trim();
+  if (!apiKey || !apiSecret) return null;
+  return new WebhookReceiver(apiKey, apiSecret);
 }
 
 export async function mintToken(

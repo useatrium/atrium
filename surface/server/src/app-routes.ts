@@ -116,7 +116,17 @@ export async function registerAppRoutes(deps: AppRouteDeps): Promise<void> {
 
   registerSyncRoutes(app, { pool, requireUser });
 
-  registerCallRoutes(app, { pool, hub, calls, voip, requireUser, optionalOpId, runMutation });
+  registerCallRoutes(app, {
+    pool,
+    hub,
+    calls,
+    livekitApiKey: config.livekitApiKey,
+    livekitApiSecret: config.livekitApiSecret,
+    voip,
+    requireUser,
+    optionalOpId,
+    runMutation,
+  });
   registerMessageRoutes(app, { pool, hub, stt, requireUser, optionalOpId, runMutation });
   // === mentions-activity additions ===
   registerActivityRoutes(app, { pool, requireUser });

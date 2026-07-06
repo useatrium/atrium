@@ -55,6 +55,7 @@ const AUDIO_CAPTURE_OPTIONS = {
   noiseSuppression: true,
   autoGainControl: true,
 };
+const RING_TIMEOUT_MS = 45_000;
 
 function fallbackUser(id: string): UserRef {
   return { id, handle: id, displayName: id };
@@ -293,11 +294,13 @@ export function useCall({
             if (NATIVE_CALL_UI) restoreAudioSession();
           });
         if (intentionalDisconnectRef.current) return;
-        updateActiveCall((current) => ({
-          ...current,
-          phase: 'ended',
-          error: 'Call disconnected.',
-        }));
+        const current = activeCallRef.current;
+        if (!current) return;
+        const callId = current.call.id;
+        setActiveCall(null);
+        setNotice('Call disconnected.');
+        reportNativeEnded(callId, 'failed');
+        void api.leaveCall(callId).catch(() => {});
       };
 
       room.on(RoomEvent.ParticipantConnected, onParticipantConnected);
@@ -312,7 +315,7 @@ export function useCall({
         room.off(RoomEvent.Disconnected, onDisconnected);
       };
     },
-    [updateActiveCall],
+    [api, reportNativeEnded, updateActiveCall],
   );
 
   const applyNativeMute = useCallback(
@@ -740,6 +743,34 @@ export function useCall({
       setNotice("Couldn't leave the call cleanly.");
     }
   }, [api, clearNativeMapping, clearRoom, me.id]);
+
+  const activeCallId = activeCall?.call.id ?? null;
+  const activeCallStatus = activeCall?.call.status ?? null;
+  const activeRemoteCount = activeCall
+    ? activeCall.participants.filter((participant) => participant.id !== me.id).length
+    : 0;
+
+  useEffect(() => {
+    if (!activeCallId || activeCallStatus !== 'ringing' || activeRemoteCount !== 0) return;
+
+    const timeout = setTimeout(() => {
+      const current = activeCallRef.current;
+      const remoteCount = current
+        ? current.participants.filter((participant) => participant.id !== me.id).length
+        : 0;
+      if (
+        current?.call.id !== activeCallId ||
+        current.call.status !== 'ringing' ||
+        remoteCount !== 0
+      ) {
+        return;
+      }
+      setNotice('No answer.');
+      void leaveActiveCall();
+    }, RING_TIMEOUT_MS);
+
+    return () => clearTimeout(timeout);
+  }, [activeCallId, activeCallStatus, activeRemoteCount, leaveActiveCall, me.id]);
 
   const joinRecoverableCall = useCallback(
     async (callId?: string) => {
