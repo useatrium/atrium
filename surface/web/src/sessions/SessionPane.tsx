@@ -103,6 +103,26 @@ import { entryShareUrl } from '../lib/publicUrl';
 // Skip offscreen rendering work so 500+ item transcripts scroll smoothly.
 const ITEM_VIS: CSSProperties = { contentVisibility: 'auto', containIntrinsicSize: 'auto 32px' };
 const ENTRY_REFERENCES_REFETCH_MS = 60_000;
+const MOBILE_MEDIA_QUERY = '(max-width: 767px)';
+
+function isMobileViewportNow(): boolean {
+  return typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+    ? window.matchMedia(MOBILE_MEDIA_QUERY).matches
+    : false;
+}
+
+function useIsMobileViewport(): boolean {
+  const [isMobileViewport, setIsMobileViewport] = useState(isMobileViewportNow);
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
+    const query = window.matchMedia(MOBILE_MEDIA_QUERY);
+    const sync = () => setIsMobileViewport(query.matches);
+    sync();
+    query.addEventListener('change', sync);
+    return () => query.removeEventListener('change', sync);
+  }, []);
+  return isMobileViewport;
+}
 
 export function isTranscriptEntryHandle(handle: string | null): handle is string {
   return typeof handle === 'string' && handle.startsWith('rec_');
@@ -311,6 +331,7 @@ export function SessionPane({
     enabled: import.meta.env.MODE !== 'test',
   });
   const conflictsN = conflicts.length;
+  const isMobileViewport = useIsMobileViewport();
 
   // Work drawer (Phase 4): one tabbed surface over Changes + Side-effects, with
   // a peek→pin ladder. `workTab` null = closed; `workPinned` docks it beside the
@@ -318,6 +339,8 @@ export function SessionPane({
   // ratified pane-cap rule); we restore split on unpin only if pin caused it.
   const [workTab, setWorkTab] = useState<WorkTab | null>(null);
   const [workPinned, setWorkPinned] = useState(false);
+  const canPinWork = !isMobileViewport;
+  const workPinnedEffective = workPinned && canPinWork;
   const workAutoFocusedRef = useRef(false);
   const restoreSplitIfAuto = () => {
     if (workAutoFocusedRef.current && onToggleFocus) {
@@ -331,10 +354,14 @@ export function SessionPane({
     restoreSplitIfAuto();
   };
   const onStrip = (tab: WorkTab) => {
-    if (workTab === tab && !workPinned) closeWork();
+    if (workTab === tab && !workPinnedEffective) closeWork();
     else setWorkTab(tab);
   };
   const togglePin = () => {
+    if (!canPinWork) {
+      setWorkPinned(false);
+      return;
+    }
     if (workPinned) {
       setWorkPinned(false);
       restoreSplitIfAuto();
@@ -1020,19 +1047,19 @@ export function SessionPane({
           }`}
         />
       )}
-      <header className="flex h-12 shrink-0 items-center gap-2 border-b border-edge px-3">
+      <header className="flex h-12 shrink-0 items-center gap-2 border-b border-edge px-3 max-md:h-auto max-md:min-h-12 max-md:flex-wrap max-md:gap-1 max-md:px-2 max-md:py-1.5">
         <StatusChip status={displayStatus} stalled={stalled} />
         <div className="min-w-0 flex-1">
           <h2 className="truncate text-sm font-semibold text-fg" title={session.title}>
             {session.title}
           </h2>
-          <div className="flex items-center gap-1.5 text-3xs text-fg-muted">
+          <div className="flex items-center gap-1.5 text-3xs text-fg-muted max-md:min-w-0 max-md:flex-wrap max-md:gap-y-0.5">
             {driverId !== session.spawnedBy && (
-              <span className="truncate">{session.spawnerName ?? session.spawnedBy}</span>
+              <span className="truncate max-md:min-w-0">{session.spawnerName ?? session.spawnedBy}</span>
             )}
             <span
               data-testid="driver-chip"
-              className={`shrink-0 truncate rounded-full px-1.5 py-px font-medium ${
+              className={`shrink-0 truncate rounded-full px-1.5 py-px font-medium max-md:min-w-0 max-md:shrink ${
                 isDriver ? 'bg-accent-hover/15 text-accent-text-strong' : 'bg-surface-overlay/80 text-fg-secondary'
               }`}
             >
@@ -1053,7 +1080,7 @@ export function SessionPane({
             {session.repo && (
               <>
                 <span className="text-fg-faint">·</span>
-                <span className="truncate" title={repoBranchTitle(session.repo, session.branch)}>
+                <span className="truncate max-md:min-w-0" title={repoBranchTitle(session.repo, session.branch)}>
                   {repoBranchLabel(session.repo, session.branch)}
                 </span>
               </>
@@ -1061,7 +1088,10 @@ export function SessionPane({
             {githubIdentityLabel && (
               <>
                 <span className="text-fg-faint">·</span>
-                <span className="shrink-0 truncate" title={`GitHub identity: ${githubIdentityLabel}`}>
+                <span
+                  className="shrink-0 truncate max-md:min-w-0 max-md:shrink"
+                  title={`GitHub identity: ${githubIdentityLabel}`}
+                >
                   GitHub: {githubIdentityLabel}
                 </span>
               </>
@@ -1090,7 +1120,7 @@ export function SessionPane({
             <button
               type="button"
               onClick={onCancel}
-              className={`rounded-md border px-2 py-1 text-2xs font-medium ${
+              className={`rounded-md border px-2 py-1 text-2xs font-medium max-md:max-w-[8rem] max-md:truncate [@media(pointer:coarse)]:min-h-11 ${
                 displayCancelAsk === 'failed'
                   ? 'border-danger-border-strong bg-danger-tint/60 text-danger-text-strong hover:bg-danger-surface/60'
                   : canStopTurn
@@ -1112,7 +1142,7 @@ export function SessionPane({
             </button>
           </Tooltip>
         )}
-        <div className="relative">
+        <div className="relative max-md:shrink-0">
           <Tooltip content="Inspect session capabilities">
             <button
               ref={capabilitiesButtonRef}
@@ -1121,7 +1151,7 @@ export function SessionPane({
               aria-label="Inspect session capabilities"
               aria-expanded={capabilitiesOpen}
               aria-haspopup="dialog"
-              className="rounded-md px-2 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg"
+              className="rounded-md px-2 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg max-md:inline-flex max-md:size-11 max-md:items-center max-md:justify-center max-md:p-0 [@media(pointer:coarse)]:inline-flex [@media(pointer:coarse)]:size-11 [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center [@media(pointer:coarse)]:p-0"
             >
               <SearchIcon size={15} />
             </button>
@@ -1140,7 +1170,7 @@ export function SessionPane({
               target={popout ? undefined : '_blank'}
               rel={popout ? undefined : 'noopener noreferrer'}
               aria-label={popout ? 'Open in full app' : 'Open session in a new tab'}
-              className="rounded-md px-2 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg"
+              className="rounded-md px-2 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg max-md:inline-flex max-md:size-11 max-md:items-center max-md:justify-center max-md:p-0 [@media(pointer:coarse)]:inline-flex [@media(pointer:coarse)]:size-11 [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center [@media(pointer:coarse)]:p-0"
             >
               <ExternalLinkIcon size={15} />
             </a>
@@ -1153,7 +1183,7 @@ export function SessionPane({
               onClick={onToggleFocus}
               aria-label={focused ? 'Collapse to split view' : 'Expand to focus view'}
               aria-pressed={focused}
-              className="rounded-md px-2 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg"
+              className="rounded-md px-2 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg max-md:inline-flex max-md:size-11 max-md:items-center max-md:justify-center max-md:p-0 [@media(pointer:coarse)]:inline-flex [@media(pointer:coarse)]:size-11 [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center [@media(pointer:coarse)]:p-0"
             >
               {focused ? <ShrinkIcon size={15} /> : <ExpandIcon size={15} />}
             </button>
@@ -1164,7 +1194,7 @@ export function SessionPane({
             type="button"
             onClick={closePane}
             aria-label="Close session pane"
-            className="rounded-md px-2 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg"
+            className="rounded-md px-2 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg max-md:inline-flex max-md:size-11 max-md:items-center max-md:justify-center max-md:p-0 [@media(pointer:coarse)]:inline-flex [@media(pointer:coarse)]:size-11 [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center [@media(pointer:coarse)]:p-0"
           >
             <XIcon />
           </button>
@@ -1302,9 +1332,9 @@ export function SessionPane({
         </button>
       )}
 
-      <div className={`flex min-h-0 flex-1 ${workTab && workPinned ? 'flex-row' : 'flex-col'}`}>
+      <div className={`flex min-h-0 flex-1 ${workTab && workPinnedEffective ? 'flex-row' : 'flex-col'}`}>
         <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
-          {workTab && !workPinned && (
+          {workTab && !workPinnedEffective && (
             <WorkDrawer
               changes={fileChanges}
               changedFileCount={changedFileCount}
@@ -1326,6 +1356,7 @@ export function SessionPane({
               onTab={setWorkTab}
               pinned={false}
               onTogglePin={togglePin}
+              canPin={canPinWork}
               canDetach={canDetach}
               onClose={closeWork}
             />
@@ -1445,7 +1476,7 @@ export function SessionPane({
             }
           />
         </div>
-        {workTab && workPinned && (
+        {workTab && workPinnedEffective && (
           <div className="flex min-h-0 w-[min(440px,46%)] shrink-0 flex-col border-l border-edge">
             <WorkDrawer
               changes={fileChanges}
@@ -1468,6 +1499,7 @@ export function SessionPane({
               onTab={setWorkTab}
               pinned
               onTogglePin={togglePin}
+              canPin={canPinWork}
               canDetach={canDetach}
               onClose={closeWork}
             />
@@ -1772,17 +1804,17 @@ export function AnnotatedTranscriptRow({
       <div ref={contentRef} className="contents">
         {children}
       </div>
-      <div className="pointer-events-none absolute -top-1 right-0 z-10 flex items-start gap-1">
+      <div className="pointer-events-none absolute -top-1 right-0 z-10 flex items-start gap-1 max-md:static max-md:mt-1 max-md:justify-end [@media(hover:none)]:static [@media(hover:none)]:mt-1 [@media(hover:none)]:justify-end">
         <div className="pointer-events-auto">
           <EntryReferencesChip summary={references} />
         </div>
-        <div className="pointer-events-none flex gap-1 opacity-0 focus-within:pointer-events-auto focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100">
+        <div className="pointer-events-none flex gap-1 opacity-0 focus-within:pointer-events-auto focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100 max-md:pointer-events-auto max-md:flex-wrap max-md:justify-end max-md:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:flex-wrap [@media(hover:none)]:justify-end [@media(hover:none)]:opacity-100">
           <Tooltip content={linkCopied ? 'Copied entry link' : 'Copy entry link'}>
             <button
               type="button"
               onClick={copyEntryLink}
               aria-label={linkCopied ? 'Copied entry link' : 'Copy entry link'}
-              className={`inline-flex h-7 w-8 items-center justify-center rounded-md border border-edge-strong bg-surface-overlay text-xs shadow-sm transition-colors hover:bg-edge-strong hover:text-fg ${
+              className={`inline-flex h-7 w-8 items-center justify-center rounded-md border border-edge-strong bg-surface-overlay text-xs shadow-sm transition-colors hover:bg-edge-strong hover:text-fg max-md:size-11 [@media(pointer:coarse)]:size-11 ${
                 linkCopied ? 'text-accent-text-strong' : 'text-fg-secondary'
               }`}
             >
@@ -1795,7 +1827,7 @@ export function AnnotatedTranscriptRow({
                 type="button"
                 onClick={copyBlockText}
                 aria-label={textCopied ? 'Copied block text' : 'Copy block text'}
-                className={`inline-flex h-7 w-8 items-center justify-center rounded-md border border-edge-strong bg-surface-overlay text-xs shadow-sm transition-colors hover:bg-edge-strong hover:text-fg ${
+                className={`inline-flex h-7 w-8 items-center justify-center rounded-md border border-edge-strong bg-surface-overlay text-xs shadow-sm transition-colors hover:bg-edge-strong hover:text-fg max-md:size-11 [@media(pointer:coarse)]:size-11 ${
                   textCopied ? 'text-accent-text-strong' : 'text-fg-secondary'
                 }`}
               >
@@ -1816,7 +1848,7 @@ export function AnnotatedTranscriptRow({
                   });
                 }}
                 aria-label="Discuss in thread"
-                className="inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-edge-strong bg-surface-overlay px-2 py-1 text-xs text-fg-secondary shadow-sm hover:bg-edge-strong hover:text-fg"
+                className="inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-edge-strong bg-surface-overlay px-2 py-1 text-xs text-fg-secondary shadow-sm hover:bg-edge-strong hover:text-fg max-md:min-h-11 max-md:px-2.5 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:px-2.5"
               >
                 <MessageSquarePlusIcon />
                 Discuss
@@ -1836,7 +1868,7 @@ export function AnnotatedTranscriptRow({
                 }}
                 aria-disabled={markupLoading || undefined}
                 aria-label="Mark up & reply"
-                className="inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-edge-strong bg-surface-overlay px-2 py-1 text-xs text-fg-secondary shadow-sm hover:bg-edge-strong hover:text-fg aria-disabled:cursor-default aria-disabled:text-fg-faint"
+                className="inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-edge-strong bg-surface-overlay px-2 py-1 text-xs text-fg-secondary shadow-sm hover:bg-edge-strong hover:text-fg aria-disabled:cursor-default aria-disabled:text-fg-faint max-md:min-h-11 max-md:px-2.5 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:px-2.5"
               >
                 <PenLineIcon />
                 {markupLoading ? 'Opening...' : 'Mark up'}

@@ -746,8 +746,13 @@ describe('session transcript rendering', () => {
 
     await waitFor(() => {
       const rail = screen.getByTestId('turn-rail');
-      // one navigable entry per steer (agent turns are not indexed)
-      expect(within(rail).getAllByRole('button')).toHaveLength(2);
+      // The rail has a tap-to-open toggle (for touch) plus one navigable entry
+      // per steer (agent turns are not indexed).
+      const toggle = within(rail).getByRole('button', { name: 'Open turn navigation' });
+      const navEntries = within(rail)
+        .getAllByRole('button')
+        .filter((button) => button !== toggle);
+      expect(navEntries).toHaveLength(2);
       expect(rail.textContent).toContain('first turn ask');
       expect(rail.textContent).toContain('second turn ask');
     });

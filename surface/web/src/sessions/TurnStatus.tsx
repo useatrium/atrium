@@ -104,12 +104,12 @@ export function TurnStatusLine({
     <div
       data-testid="turn-status"
       data-liveness={active ? liveness : undefined}
-      className="flex shrink-0 items-center gap-2 border-t border-edge px-3.5 py-1.5 text-2xs text-fg-muted"
+      className="flex min-w-0 shrink-0 items-center gap-2 border-t border-edge px-3.5 py-1.5 text-2xs text-fg-muted"
     >
       {!active ? (
         phase === 'waiting' ? (
           <>
-            <span className="font-medium">{label}</span>
+            <span className="min-w-0 truncate font-medium">{label}</span>
             {/* How long the agent has been blocked on a human — quietMs works
                 because the question is the stream's last frame before silence. */}
             {quietMs >= 1000 && (
@@ -118,14 +118,14 @@ export function TurnStatusLine({
           </>
         ) : (
           <>
-            <span className="font-medium text-fg-secondary">✓ {label}</span>
+            <span className="min-w-0 truncate font-medium text-fg-secondary">✓ {label}</span>
             {clock}
           </>
         )
       ) : liveness === 'reconnecting' || liveness === 'reattaching' ? (
         <>
           <Spinner className="text-warning-text" />
-          <span className="font-medium text-warning-text">
+          <span className="min-w-0 truncate font-medium text-warning-text">
             {liveness === 'reconnecting' ? 'Reconnecting…' : 'Reattaching to sandbox…'}
           </span>
           {clock}
@@ -133,7 +133,7 @@ export function TurnStatusLine({
       ) : liveness === 'stuck' ? (
         <>
           <HeartbeatDot pulse={pulse} parked />
-          <span className="font-medium">
+          <span className="min-w-0 truncate font-medium">
             Still working? No output for {formatElapsed(quietMs)}
           </span>
           {onCancel && (
@@ -150,8 +150,8 @@ export function TurnStatusLine({
       ) : liveness === 'quiet' ? (
         <>
           <HeartbeatDot pulse={pulse} parked />
-          <span className="font-medium">{label}</span>
-          <span className="text-fg-faint">— quiet for {formatElapsed(quietMs)}</span>
+          <span className="min-w-0 truncate font-medium">{label}</span>
+          <span className="shrink-0 text-fg-faint">— quiet for {formatElapsed(quietMs)}</span>
           {clock}
         </>
       ) : (
@@ -162,7 +162,7 @@ export function TurnStatusLine({
         </>
       )}
       {showMeta && (
-        <span className="ml-auto flex shrink-0 items-center gap-1.5 tabular-nums text-fg-faint">
+        <span className="ml-auto flex shrink-0 items-center gap-1.5 tabular-nums text-fg-faint max-md:min-w-0 max-md:max-w-[55%] max-md:shrink max-md:overflow-hidden">
           {tokens && (
             <span data-testid="token-count">
               {tokens.estimated ? '≈' : ''}
@@ -173,7 +173,7 @@ export function TurnStatusLine({
           {costUsd > 0 && <span>{formatCost(costUsd)}</span>}
           {costUsd > 0 && models.length > 0 && <span>·</span>}
           {models.length > 0 && (
-            <span>
+            <span className="max-md:min-w-0 max-md:truncate">
               {models.join(', ')}
               {effort ? ` ${effort}` : ''}
             </span>

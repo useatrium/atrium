@@ -118,6 +118,13 @@ for (const width of WIDTHS) {
       await expect(page.getByRole('heading', { name: '# general' })).toBeVisible();
       await expectNoHScroll(page, 'shell/general');
 
+      // Top-level routed surfaces (settings/agents are new in #299).
+      for (const path of ['/settings', '/agents', '/files', '/activity']) {
+        await page.goto(path);
+        await page.waitForTimeout(500);
+        await expectNoHScroll(page, `route ${path}`);
+      }
+
       // Session pane + detached work surfaces. Stub the stream so the pane renders.
       const stamp = new Date().toISOString();
       await page.route('**/api/sessions/*/stream*', async (route) => {
@@ -133,6 +140,12 @@ for (const width of WIDTHS) {
       await page.waitForTimeout(1200);
       await expectNoHScroll(page, 'session-pane');
 
+      // The lean standalone pane — its header metadata strip used to force a
+      // ~490px horizontal scroll before the session lane wrapped it.
+      await page.goto(`/s/${sid}/pane`);
+      await page.waitForTimeout(1000);
+      await expectNoHScroll(page, 'lean-pane');
+
       for (const [slug, name] of [
         ['changes', 'work-changes'],
         ['hub-files', 'work-files'],
@@ -141,11 +154,6 @@ for (const width of WIDTHS) {
         await page.waitForTimeout(800);
         await expectNoHScroll(page, name);
       }
-
-      // NOTE for lane owners: once your surface is fixed, add its route here.
-      // Pending (broken today, will be added by their lane):
-      //   /s/:id/pane            (Lane 1 — session-pane header strip)
-      //   WorkDrawer tab reachability (Lane 1)
     });
   });
 }

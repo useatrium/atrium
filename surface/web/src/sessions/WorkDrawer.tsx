@@ -66,7 +66,7 @@ function Tab({
   return (
     <TabsTrigger
       value={value}
-      className="flex items-center gap-1.5 rounded-none border-b-2 border-transparent bg-transparent px-2.5 py-2 text-xs font-semibold text-fg-muted hover:text-fg-secondary data-[state=active]:border-accent-border-strong data-[state=active]:bg-transparent data-[state=active]:text-fg"
+      className="flex items-center gap-1.5 rounded-none border-b-2 border-transparent bg-transparent px-2.5 py-2 text-xs font-semibold text-fg-muted hover:text-fg-secondary data-[state=active]:border-accent-border-strong data-[state=active]:bg-transparent data-[state=active]:text-fg max-md:min-h-11 max-md:shrink-0 max-md:whitespace-nowrap [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:whitespace-nowrap"
     >
       <span>{label}</span>
       {count != null && (
@@ -180,18 +180,20 @@ export function WorkDrawer({
           : 'absolute inset-0 z-10 flex flex-col bg-surface/95 backdrop-blur-sm'
       }
     >
-      <header className="flex h-10 shrink-0 items-center border-b border-edge pr-2">
-        <TabsList aria-label="Work surfaces" className="min-w-0 flex-1 gap-0 px-1">
-          {available.map((t) => (
-            <Tab
-              key={t.key}
-              value={t.key}
-              label={t.label}
-              count={t.count}
-              danger={t.danger}
-            />
-          ))}
-        </TabsList>
+      <header className="flex h-10 min-w-0 shrink-0 items-center border-b border-edge pr-2 max-md:h-11 [@media(pointer:coarse)]:h-11">
+        <div className="min-w-0 flex-1 max-md:overflow-x-auto max-md:[scrollbar-width:none] max-md:[&::-webkit-scrollbar]:hidden [@media(pointer:coarse)]:overflow-x-auto">
+          <TabsList aria-label="Work surfaces" className="w-max min-w-full flex-nowrap gap-0 px-1">
+            {available.map((t) => (
+              <Tab
+                key={t.key}
+                value={t.key}
+                label={t.label}
+                count={t.count}
+                danger={t.danger}
+              />
+            ))}
+          </TabsList>
+        </div>
         {canPin && (
           <Tooltip content={pinLabel}>
             <button
@@ -199,7 +201,7 @@ export function WorkDrawer({
               onClick={onTogglePin}
               aria-pressed={pinned}
               aria-label={pinAriaLabel}
-              className={`rounded-md px-1.5 py-1 ${
+              className={`rounded-md px-1.5 py-1 max-md:inline-flex max-md:size-11 max-md:shrink-0 max-md:items-center max-md:justify-center max-md:p-0 [@media(pointer:coarse)]:inline-flex [@media(pointer:coarse)]:size-11 [@media(pointer:coarse)]:shrink-0 [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center [@media(pointer:coarse)]:p-0 ${
                 pinned
                   ? 'text-accent-text-strong hover:bg-surface-overlay'
                   : 'text-fg-tertiary hover:bg-surface-overlay hover:text-fg'
@@ -216,7 +218,7 @@ export function WorkDrawer({
               target="_blank"
               rel="noopener noreferrer"
               aria-label={detachLabel}
-              className="rounded-md px-1.5 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg"
+              className="rounded-md px-1.5 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg max-md:inline-flex max-md:size-11 max-md:shrink-0 max-md:items-center max-md:justify-center max-md:p-0 [@media(pointer:coarse)]:inline-flex [@media(pointer:coarse)]:size-11 [@media(pointer:coarse)]:shrink-0 [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center [@media(pointer:coarse)]:p-0"
             >
               <ExternalLinkIcon size={15} />
             </a>
@@ -226,7 +228,7 @@ export function WorkDrawer({
           type="button"
           onClick={onClose}
           aria-label="Close work drawer"
-          className="rounded-md px-1.5 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg"
+          className="rounded-md px-1.5 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg max-md:inline-flex max-md:size-11 max-md:shrink-0 max-md:items-center max-md:justify-center max-md:p-0 [@media(pointer:coarse)]:inline-flex [@media(pointer:coarse)]:size-11 [@media(pointer:coarse)]:shrink-0 [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center [@media(pointer:coarse)]:p-0"
         >
           <XIcon size={15} />
         </button>
