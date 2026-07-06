@@ -10,6 +10,10 @@ export function entryShareUrl(handle: string): string {
   return `${publicBaseUrl()}/e/${handle}`;
 }
 
+export function sessionShareUrl(sessionId: string): string {
+  return `${publicBaseUrl()}/s/${sessionId}`;
+}
+
 export function fileShareUrl(fileId: string): string {
   return `${publicBaseUrl()}/api/files/${fileId}`;
 }

@@ -106,7 +106,7 @@ import { SuggestionStrip } from './SessionSuggestions';
 import { showErrorToast } from '../components/Toasts';
 import { TimestampDisclosure } from '../components/TimestampDisclosure';
 import { entryParamFromSearch, stripEntryParamFromLocation } from '../EntryLinkRoute';
-import { entryShareUrl } from '../lib/publicUrl';
+import { entryShareUrl, sessionShareUrl } from '../lib/publicUrl';
 
 // Skip offscreen rendering work so 500+ item transcripts scroll smoothly.
 const ITEM_VIS: CSSProperties = { contentVisibility: 'auto', containIntrinsicSize: 'auto 32px' };
@@ -1078,6 +1078,26 @@ export function SessionPane({
       ? SESSION_PANE_FALLBACK_WIDTH
       : Math.max(SESSION_PANE_MIN_WIDTH, Math.round((window.innerWidth * SESSION_PANE_MAX_VW) / 100));
   const canDetach = !isPendingSessionId(session.id);
+  const [sessionLinkCopied, setSessionLinkCopied] = useState(false);
+  const sessionLinkResetRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const copySessionLink = useCallback(() => {
+    if (typeof navigator === 'undefined') return;
+    const clipboard = navigator.clipboard;
+    if (!clipboard?.writeText) return;
+    void clipboard
+      .writeText(sessionShareUrl(session.id))
+      .then(() => {
+        setSessionLinkCopied(true);
+        if (sessionLinkResetRef.current) clearTimeout(sessionLinkResetRef.current);
+        sessionLinkResetRef.current = setTimeout(() => setSessionLinkCopied(false), 1400);
+      })
+      .catch(() => {});
+  }, [session.id]);
+  useEffect(() => {
+    return () => {
+      if (sessionLinkResetRef.current) clearTimeout(sessionLinkResetRef.current);
+    };
+  }, []);
   const closePane = useCallback(() => {
     if (!popout) {
       onClose();
@@ -1283,6 +1303,20 @@ export function SessionPane({
             onClose={() => setCapabilitiesOpen(false)}
           />
         </div>
+        {canDetach && (
+          <Tooltip content={sessionLinkCopied ? 'Copied session link' : 'Copy link to this session'}>
+            <button
+              type="button"
+              onClick={copySessionLink}
+              aria-label={sessionLinkCopied ? 'Copied session link' : 'Copy link to this session'}
+              className={`rounded-md px-2 py-1 hover:bg-surface-overlay hover:text-fg max-md:inline-flex max-md:size-11 max-md:items-center max-md:justify-center max-md:p-0 [@media(pointer:coarse)]:inline-flex [@media(pointer:coarse)]:size-11 [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center [@media(pointer:coarse)]:p-0 ${
+                sessionLinkCopied ? 'text-accent-text-strong' : 'text-fg-tertiary'
+              }`}
+            >
+              {sessionLinkCopied ? <CheckIcon /> : <LinkIcon />}
+            </button>
+          </Tooltip>
+        )}
         {canDetach && (
           <Tooltip content={popout ? 'Open in full app' : 'Open session in a new tab'}>
             <a
