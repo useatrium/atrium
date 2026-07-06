@@ -88,6 +88,12 @@ export function SpawnDialog({
   const canSpawn = task.trim().length > 0 && !privateRepoBlocked;
   const providerProfiles = profiles.filter((profile) => profile.provider === harness && profile.currentVersionId);
   const selectedProfile = providerProfiles.find((profile) => profile.id === agentProfileId);
+  const spawnDisabled = !canSpawn;
+  const spawnTooltip = spawnDisabled
+    ? privateRepoBlocked
+      ? 'Connect GitHub before starting a private repo session'
+      : 'Add a task before starting a session'
+    : 'Spawn session';
   const activeReferenceCount = referenceRepos.filter((item) => item.repo.trim().length > 0).length;
   const repoScoped = repo.trim().length > 0 || activeReferenceCount > 0;
   const activeGitHubIdentityMode = githubConnection?.connected
@@ -124,7 +130,7 @@ export function SpawnDialog({
 
   function submit(e: FormEvent) {
     e.preventDefault();
-    if (!canSpawn) return;
+    if (spawnDisabled) return;
     const trimmedRepo = repo.trim();
     const trimmedBranch = branch.trim();
     const repos = [
@@ -477,11 +483,11 @@ export function SpawnDialog({
           >
             Cancel
           </button>
-          <Tooltip content="Spawn session" shortcut={SHORTCUTS.spawnSession.keys}>
+          <Tooltip content={spawnTooltip} shortcut={SHORTCUTS.spawnSession.keys}>
             <button
               type="submit"
-              disabled={!canSpawn}
-              className="rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-on-accent hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
+              aria-disabled={spawnDisabled || undefined}
+              className="rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-on-accent hover:bg-accent-hover aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
             >
               Start session
             </button>

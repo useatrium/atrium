@@ -92,6 +92,14 @@ export function Composer({
   const agentHint = !!agentAware && !disabled && looksLikeAgentCommand(text);
   const uploading = files.some((f) => f.status === 'uploading');
   const readyFiles = files.filter((f): f is PendingFile & { fileId: string } => f.status === 'ready' && !!f.fileId);
+  const sendDisabled = (!text.trim() && readyFiles.length === 0) || !!disabled || uploading;
+  const sendTooltip = disabled
+    ? (disabledHint ?? 'Message composer unavailable')
+    : uploading
+      ? 'Waiting for uploads…'
+      : !text.trim() && readyFiles.length === 0
+        ? 'Enter a message or attach a file'
+        : 'Send message';
 
   useEffect(() => () => draftWriter.cancel(), [draftWriter]);
 
@@ -405,15 +413,18 @@ export function Composer({
                 }}
                 className="max-h-40 flex-1 resize-none bg-transparent text-sm leading-relaxed text-fg placeholder-fg-muted outline-none disabled:cursor-not-allowed disabled:placeholder-fg-faint"
               />
-              <Tooltip
-                content={disabled ? disabledHint : uploading ? 'Waiting for uploads…' : 'Send message'}
-                shortcut={SHORTCUTS.sendMessage.keys}
-              >
+              <Tooltip content={sendTooltip} shortcut={SHORTCUTS.sendMessage.keys}>
                 <button
                   type="button"
-                  onClick={send}
-                  disabled={(!text.trim() && readyFiles.length === 0) || disabled || uploading}
-                  className="rounded-md bg-accent px-3 py-1 text-sm font-medium text-on-accent transition-colors hover:bg-accent-hover disabled:cursor-default disabled:bg-surface-overlay disabled:text-fg-muted"
+                  onClick={(e) => {
+                    if (sendDisabled) {
+                      e.preventDefault();
+                      return;
+                    }
+                    send();
+                  }}
+                  aria-disabled={sendDisabled || undefined}
+                  className="rounded-md bg-accent px-3 py-1 text-sm font-medium text-on-accent transition-colors hover:bg-accent-hover aria-disabled:cursor-default aria-disabled:bg-surface-overlay aria-disabled:text-fg-muted"
                 >
                   Send
                 </button>

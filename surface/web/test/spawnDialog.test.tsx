@@ -46,20 +46,23 @@ const codexProfile = {
 
 describe('SpawnDialog', () => {
   it('disables submit until a task is entered', () => {
+    const onSpawn = vi.fn();
     render(
       <SpawnDialog
         channelName="#general"
         onCancel={() => {}}
-        onSpawn={() => {}}
+        onSpawn={onSpawn}
         providerStatuses={{ codex: connectedCodex }}
       />,
     );
-    const submit = screen.getByRole('button', { name: 'Start session' }) as HTMLButtonElement;
-    expect(submit.disabled).toBe(true);
+    const submit = screen.getByRole('button', { name: 'Start session' });
+    expect(submit.getAttribute('aria-disabled')).toBe('true');
+    fireEvent.click(submit);
+    expect(onSpawn).not.toHaveBeenCalled();
     fireEvent.change(screen.getByPlaceholderText('What should the agent do?'), {
       target: { value: 'fix the bug' },
     });
-    expect(submit.disabled).toBe(false);
+    expect(submit.getAttribute('aria-disabled')).toBeNull();
   });
 
   it('emits task + harness + trimmed repo/branch', () => {
@@ -417,7 +420,9 @@ describe('SpawnDialog', () => {
     });
     fireEvent.click(screen.getByLabelText('Private repo'));
 
-    expect((screen.getByRole('button', { name: 'Start session' }) as HTMLButtonElement).disabled).toBe(true);
+    const submit = screen.getByRole('button', { name: 'Start session' });
+    expect(submit.getAttribute('aria-disabled')).toBe('true');
+    fireEvent.click(submit);
     expect(screen.getByText('Connect GitHub before starting a session with private repositories.')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Connect GitHub' }));
     expect(onConnectGitHub).toHaveBeenCalled();
@@ -452,7 +457,7 @@ describe('SpawnDialog', () => {
     });
     fireEvent.click(screen.getByLabelText('Private'));
 
-    expect((screen.getByRole('button', { name: 'Start session' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByRole('button', { name: 'Start session' }).getAttribute('aria-disabled')).toBe('true');
     expect(screen.getByText('Connect GitHub before starting a session with private repositories.')).toBeTruthy();
   });
 });
