@@ -142,6 +142,7 @@ export function Sidebar({
   const lastStartDmRequestSeq = useRef(startDmRequestSeq);
   const createChannelInputRef = useRef<HTMLInputElement | null>(null);
   const dmPickerInputRef = useRef<HTMLInputElement | null>(null);
+  const createChannelErrorId = 'sidebar-create-channel-error';
 
   const publicChannels = channels.filter((c) => c.kind !== 'dm' && c.kind !== 'gdm');
   const dms = channels.filter((c) => c.kind === 'dm' || c.kind === 'gdm');
@@ -346,6 +347,8 @@ export function Sidebar({
                   ref={createChannelInputRef}
                   value={name}
                   aria-label="Channel name"
+                  aria-invalid={error ? 'true' : undefined}
+                  aria-describedby={error ? createChannelErrorId : undefined}
                   onChange={(e) => setName(e.target.value)}
                   onKeyDown={(e) => {
                     if (e.key !== 'Escape') return;
@@ -364,7 +367,7 @@ export function Sidebar({
                   />
                   Private
                 </label>
-                {error && <div role="alert" className="pt-1 text-2xs text-danger">{error}</div>}
+                {error && <div id={createChannelErrorId} role="alert" className="pt-1 text-2xs text-danger">{error}</div>}
               </form>
             )}
 
