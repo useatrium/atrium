@@ -51,7 +51,7 @@ function lineDiff(base: string, side: string): string {
 
 function SideColumn({ side, base }: { side: ConflictSide; base: string }) {
   return (
-    <div className="min-w-0 flex-1">
+    <div className="min-w-0 md:flex-1">
       <div className="flex items-center gap-1.5 px-3 py-1.5 text-2xs">
         <span className="font-semibold text-fg-body">{side.label}</span>
         <span className="truncate font-mono text-fg-muted" title={side.author}>
@@ -130,9 +130,9 @@ export function ConflictSurface({
           <span className="shrink-0 tabular-nums text-2xs text-fg-muted">· v{conflict.conflictSeq}</span>
         </div>
       )}
-      <div className="flex border-b border-edge">
+      <div className="flex flex-col border-b border-edge md:flex-row">
         <SideColumn side={conflict.left} base={conflict.base.text} />
-        <div className="w-px shrink-0 bg-edge" />
+        <div className="h-px w-full shrink-0 bg-edge md:h-auto md:w-px" />
         <SideColumn side={conflict.right} base={conflict.base.text} />
       </div>
 

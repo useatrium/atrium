@@ -317,8 +317,8 @@ export function SpawnDialog({
                 </Tooltip>
               </span>
             </div>
-            <div className="flex gap-3">
-              <label className="block flex-1">
+            <div className="flex flex-col gap-2 md:flex-row md:gap-3">
+              <label className="block md:flex-1">
                 <span className="sr-only">Working repo</span>
                 <input
                   value={repo}
@@ -329,7 +329,7 @@ export function SpawnDialog({
                   className="w-full rounded-md border border-edge bg-surface px-2.5 py-2 text-sm text-fg placeholder-fg-muted outline-none focus:border-edge-strong"
                 />
               </label>
-              <label className="block flex-1">
+              <label className="block md:flex-1">
                 <span className="sr-only">Working ref</span>
                 <input
                   value={branch}
@@ -373,7 +373,7 @@ export function SpawnDialog({
                 {referenceRepos.map((item) => (
                   <div
                     key={item.id}
-                    className="grid grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_auto_2rem] gap-2"
+                    className="grid grid-cols-1 gap-2 md:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_auto_2rem]"
                   >
                     <label>
                       <span className="sr-only">Reference repo</span>
