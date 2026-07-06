@@ -1,9 +1,12 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import type { SessionSuggestion } from '@atrium/surface-client';
-import { SuggestionsStrip } from '../src/components/work/SuggestionsStrip';
+import {
+  SuggestionsStrip,
+  type OptimisticSuggestionSend,
+} from '../src/components/work/SuggestionsStrip';
 import { renderWithTheme as renderUI } from './rnTestUtils';
 
 afterEach(cleanup);
@@ -24,9 +27,11 @@ function renderStrip(
   overrides: {
     suggestions?: SessionSuggestion[];
     isDriver?: boolean;
-    onSend?: (suggestionId: string) => void;
-    onEditSend?: (suggestionId: string, text: string) => void;
-    onDismiss?: (suggestionId: string, note?: string) => void;
+    onSend?: (suggestionId: string) => void | Promise<void>;
+    onEditSend?: (suggestionId: string, text: string) => void | Promise<void>;
+    onDismiss?: (suggestionId: string, note?: string) => void | Promise<void>;
+    onOptimisticSend?: (input: OptimisticSuggestionSend) => string | undefined;
+    onOptimisticSendFailed?: (pendingId: string) => void;
   } = {},
 ) {
   const props = {
@@ -35,6 +40,8 @@ function renderStrip(
     onSend: overrides.onSend ?? vi.fn(),
     onEditSend: overrides.onEditSend ?? vi.fn(),
     onDismiss: overrides.onDismiss ?? vi.fn(),
+    onOptimisticSend: overrides.onOptimisticSend,
+    onOptimisticSendFailed: overrides.onOptimisticSendFailed,
   };
 
   return {
@@ -64,6 +71,19 @@ describe('SuggestionsStrip (mobile)', () => {
     expect(onSend).toHaveBeenCalledWith('sug-1');
   });
 
+  it('fires optimistic send when the driver sends a suggestion', () => {
+    const onOptimisticSend = vi.fn(() => 'pending-1');
+    renderStrip({ onOptimisticSend });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    expect(onOptimisticSend).toHaveBeenCalledWith({
+      suggestion: expect.objectContaining({ id: 'sug-1', authorName: 'Ada' }),
+      text: 'Try asking for a smaller patch.',
+      edited: false,
+    });
+  });
+
   it('sends an edited suggestion with the new text', () => {
     const onEditSend = vi.fn();
     renderStrip({ onEditSend });
@@ -75,6 +95,34 @@ describe('SuggestionsStrip (mobile)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Send edited' }));
 
     expect(onEditSend).toHaveBeenCalledWith('sug-1', 'Try asking for a focused patch and tests.');
+  });
+
+  it('fires optimistic edited send with the edited text', () => {
+    const onOptimisticSend = vi.fn(() => 'pending-1');
+    renderStrip({ onOptimisticSend });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    fireEvent.change(screen.getByLabelText('Edit suggestion'), {
+      target: { value: 'Try asking for a focused patch and tests.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send edited' }));
+
+    expect(onOptimisticSend).toHaveBeenCalledWith({
+      suggestion: expect.objectContaining({ id: 'sug-1', authorName: 'Ada' }),
+      text: 'Try asking for a focused patch and tests.',
+      edited: true,
+    });
+  });
+
+  it('removes the optimistic steer when accepting a suggestion fails', async () => {
+    const onSend = vi.fn(() => Promise.reject(new Error('network')));
+    const onOptimisticSend = vi.fn(() => 'pending-1');
+    const onOptimisticSendFailed = vi.fn();
+    renderStrip({ onSend, onOptimisticSend, onOptimisticSendFailed });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    await waitFor(() => expect(onOptimisticSendFailed).toHaveBeenCalledWith('pending-1'));
   });
 
   it('dismisses a suggestion with an optional note', () => {
