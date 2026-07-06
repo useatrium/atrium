@@ -158,7 +158,10 @@ test('channel read position lands on first unread and marks read only at bottom'
     const divider = page.locator('[data-unread-divider]');
     await expect(divider).toBeVisible();
     await expectDividerInTimelineViewport(divider);
-    await expect.poll(async () => distanceFromBottom(log)).toBeGreaterThan(80);
+    // Landed on the divider, not the bottom — there is unread content below it.
+    // Generous timeout: cold-load landing waits for the initial sync to settle
+    // and the divider to freeze, which is slow on a loaded CI runner.
+    await expect.poll(async () => distanceFromBottom(log), { timeout: 20_000 }).toBeGreaterThan(80);
 
     // Leave the partially-read channel WITHOUT scrolling to the bottom. Its
     // sidebar badge must stay unread in-session (no reload) — select-channel
@@ -171,10 +174,13 @@ test('channel read position lands on first unread and marks read only at bottom'
     await expectUnread(page, unreadRoom);
 
     const allReadLog = page.getByRole('log', { name: 'Messages' });
-    await expect.poll(async () => distanceFromBottom(allReadLog)).toBeLessThan(80);
+    // Wait for the transcript to actually render before measuring scroll — a
+    // reload re-hydrates, re-syncs, and only then lands at the bottom.
+    await expect(allReadLog.locator('[data-eid]').last()).toBeVisible({ timeout: 20_000 });
+    await expect.poll(async () => distanceFromBottom(allReadLog), { timeout: 20_000 }).toBeLessThan(80);
 
     await scrollToTop(allReadLog);
-    await expect(page.getByTestId('jump-to-latest')).toBeVisible();
+    await expect(page.getByTestId('jump-to-latest')).toBeVisible({ timeout: 10_000 });
 
     await openChannel(page, unreadRoom);
     const reopenedLog = page.getByRole('log', { name: 'Messages' });
