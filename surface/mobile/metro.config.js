@@ -16,6 +16,16 @@ config.resolver.nodeModulesPaths = [
   path.resolve(workspaceRoot, 'node_modules'),
 ];
 
+// expo-sqlite's web worker imports the wa-sqlite .wasm binary as a module
+// (web/worker.ts: `import wasmModule from './wa-sqlite/wa-sqlite.wasm'`).
+// Metro only treats known assetExts as importable assets, and ".wasm" is not
+// in the default list, so the web bundle fails to resolve it. Register it.
+// (Native builds never take the web SQLite path, so only `expo export
+// --platform web` / `expo start --web` hit this — CI's typecheck can't.)
+if (!config.resolver.assetExts.includes('wasm')) {
+  config.resolver.assetExts.push('wasm');
+}
+
 // Workspace TS packages consumed as source (e.g. @atrium/centaur-client) use
 // ESM ".js" specifiers in relative imports (export * from "./client.js"). tsc
 // and Vite map those to the ".ts" source; Metro does not, so resolution fails.
