@@ -71,12 +71,15 @@ export function SessionCapabilitiesPopover({
   }, [sessionId]);
 
   if (!open) return null;
+  const errorId = 'session-capabilities-error';
 
   return (
     <div
       ref={popoverRef}
       role="dialog"
       aria-label="Session capabilities"
+      aria-describedby={error ? errorId : undefined}
+      aria-busy={loading ? 'true' : undefined}
       className="absolute right-0 top-8 z-30 flex max-h-[min(74vh,44rem)] w-[44rem] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-md border border-edge-strong bg-surface-raised shadow-xl"
     >
       <header className="flex h-10 shrink-0 items-center gap-2 border-b border-edge px-3">
@@ -107,7 +110,7 @@ export function SessionCapabilitiesPopover({
       </header>
       <div className="min-h-0 overflow-y-auto p-3 text-xs">
         {error && (
-          <div className="mb-3 rounded-md border border-danger-border bg-danger-tint/30 px-3 py-2 text-danger-text">
+          <div id={errorId} role="alert" className="mb-3 rounded-md border border-danger-border bg-danger-tint/30 px-3 py-2 text-danger-text">
             {error}
           </div>
         )}

@@ -119,6 +119,12 @@ export function SpawnDialog({
         ? `${activeReferenceCount} reference ${activeReferenceCount === 1 ? 'repo' : 'repos'}`
         : 'No repo selected';
   const titleId = 'spawn-dialog-title';
+  const taskErrorId = 'spawn-task-error';
+  const privateRepoBlockedId = 'spawn-private-repo-error';
+  const taskMissing = task.trim().length === 0;
+  const workingRepoBlocked = repo.trim().length > 0 && repoPrivate && !githubReadyForPrivateRepos;
+  const referenceRepoBlocked = (item: ReferenceRepoInput) =>
+    item.repo.trim().length > 0 && item.private && !githubReadyForPrivateRepos;
 
   useDialog({
     open: true,
@@ -226,12 +232,17 @@ export function SpawnDialog({
               // biome-ignore lint/a11y/noAutofocus: dialog primary task field is intentionally focused on open; useDialog manages focus containment and restore.
               autoFocus
               value={task}
+              aria-invalid={taskMissing ? 'true' : undefined}
+              aria-describedby={taskMissing ? taskErrorId : undefined}
               onChange={(e) => setTask(e.target.value)}
               onKeyDown={onTaskKeyDown}
               rows={3}
               placeholder="What should the agent do?"
               className="w-full resize-y rounded-md border border-edge bg-surface px-2.5 py-2 text-sm text-fg placeholder-fg-muted outline-none focus:border-edge-strong"
             />
+            <span id={taskErrorId} className="sr-only">
+              Add a task before starting a session.
+            </span>
           </label>
 
           <label className="block">
@@ -312,6 +323,8 @@ export function SpawnDialog({
                 <input
                   value={repo}
                   onChange={(e) => setRepo(e.target.value)}
+                  aria-invalid={workingRepoBlocked ? 'true' : undefined}
+                  aria-describedby={workingRepoBlocked ? privateRepoBlockedId : undefined}
                   placeholder="owner/name"
                   className="w-full rounded-md border border-edge bg-surface px-2.5 py-2 text-sm text-fg placeholder-fg-muted outline-none focus:border-edge-strong"
                 />
@@ -331,6 +344,8 @@ export function SpawnDialog({
                 type="checkbox"
                 checked={repoPrivate}
                 onChange={(e) => setRepoPrivate(e.target.checked)}
+                aria-invalid={workingRepoBlocked ? 'true' : undefined}
+                aria-describedby={workingRepoBlocked ? privateRepoBlockedId : undefined}
                 className="h-3.5 w-3.5 rounded border-edge bg-surface"
               />
               Private repo
@@ -365,6 +380,8 @@ export function SpawnDialog({
                       <input
                         value={item.repo}
                         onChange={(e) => updateReferenceRepo(item.id, { repo: e.target.value })}
+                        aria-invalid={referenceRepoBlocked(item) ? 'true' : undefined}
+                        aria-describedby={referenceRepoBlocked(item) ? privateRepoBlockedId : undefined}
                         placeholder="owner/name"
                         className="w-full rounded-md border border-edge bg-surface px-2.5 py-2 text-sm text-fg placeholder-fg-muted outline-none focus:border-edge-strong"
                       />
@@ -392,6 +409,8 @@ export function SpawnDialog({
                         type="checkbox"
                         checked={item.private}
                         onChange={(e) => updateReferenceRepo(item.id, { private: e.target.checked })}
+                        aria-invalid={referenceRepoBlocked(item) ? 'true' : undefined}
+                        aria-describedby={referenceRepoBlocked(item) ? privateRepoBlockedId : undefined}
                         className="h-3.5 w-3.5 rounded border-edge bg-surface"
                       />
                       Private
@@ -442,7 +461,11 @@ export function SpawnDialog({
           )}
 
           {privateRepoBlocked && (
-            <div className="flex items-center justify-between gap-3 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-2xs text-fg-secondary">
+            <div
+              id={privateRepoBlockedId}
+              role="alert"
+              className="flex items-center justify-between gap-3 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-2xs text-fg-secondary"
+            >
               <span>Connect GitHub before starting a session with private repositories.</span>
               <button
                 type="button"
