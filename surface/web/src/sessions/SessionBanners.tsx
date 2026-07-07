@@ -120,12 +120,14 @@ export function ProviderAuthBanner({
   ownerName,
   connected,
   onConnect,
+  onResume,
 }: {
   required: SessionProviderAuthRequired;
   isOwner: boolean;
   ownerName: string;
   connected: boolean;
   onConnect: () => void;
+  onResume?: () => void;
 }) {
   return (
     <section
@@ -145,13 +147,24 @@ export function ProviderAuthBanner({
             : `Waiting for ${ownerName} to reconnect ${providerLabel(required.provider)}.`}
         </span>
         {isOwner && (
-          <button
-            type="button"
-            onClick={onConnect}
-            className="rounded-md border border-edge-strong px-2 py-1 text-2xs font-semibold text-fg-secondary hover:bg-surface-overlay hover:text-fg"
-          >
-            {connected ? 'Reconnect' : providerAuthActionLabel(required.provider)}
-          </button>
+          <div className="flex shrink-0 items-center gap-1.5">
+            {connected && onResume && (
+              <button
+                type="button"
+                onClick={onResume}
+                className="rounded-md bg-accent px-2 py-1 text-2xs font-semibold text-on-accent hover:bg-accent-hover"
+              >
+                Continue session
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onConnect}
+              className="rounded-md border border-edge-strong px-2 py-1 text-2xs font-semibold text-fg-secondary hover:bg-surface-overlay hover:text-fg"
+            >
+              {connected ? 'Reconnect' : providerAuthActionLabel(required.provider)}
+            </button>
+          </div>
         )}
       </div>
     </section>

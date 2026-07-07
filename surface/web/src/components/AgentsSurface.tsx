@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { formatCost, formatTime, isTerminalSessionStatus, type SessionListItem } from '@atrium/surface-client';
+import { navigate } from '../router';
 import { sessionsApi } from '../sessions/api';
 import type { Session } from '../sessions/types';
 import { StatusChip } from '../sessions/SessionCard';
@@ -150,6 +151,15 @@ export function AgentsSurface({
                   ? 'Try a different title, channel, spawner, or harness.'
                   : 'Start one by typing @agent and a task in a channel.'}
               </div>
+              {!query.trim() && (
+                <button
+                  type="button"
+                  onClick={() => navigate('/')}
+                  className="mt-2 inline-flex h-9 items-center justify-center rounded-md bg-accent px-4 text-sm font-semibold text-on-accent hover:bg-accent-hover max-md:h-11"
+                >
+                  Start an agent
+                </button>
+              )}
             </div>
           ) : (
             <div className="max-w-3xl">

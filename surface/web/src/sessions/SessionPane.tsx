@@ -57,7 +57,6 @@ import {
   CornerUpLeftIcon,
   ExpandIcon,
   ExternalLinkIcon,
-  SearchIcon,
   ShrinkIcon,
   XIcon,
 } from '../components/icons';
@@ -385,6 +384,11 @@ export function SessionPane({
     setWorkTab(null);
     setWorkPinned(false);
     restoreSplitIfAuto();
+  };
+  const outputHubOpen = workTab === 'hubFiles' || workTab === 'apps';
+  const onOutputHubStrip = () => {
+    if (outputHubOpen && !workPinnedEffective) closeWork();
+    else setWorkTab('hubFiles');
   };
   const onStrip = (tab: WorkTab) => {
     if (workTab === tab && !workPinnedEffective) closeWork();
@@ -1109,8 +1113,18 @@ export function SessionPane({
     }, 100);
   }, [onClose, popout, session.id]);
   const githubIdentityLabel = session.githubIdentityMode ? githubIdentityModeLabel(session.githubIdentityMode) : null;
+  const capabilitiesLabel = 'Inspect session capabilities';
   const [capabilitiesOpen, setCapabilitiesOpen] = useState(false);
   const capabilitiesButtonRef = useRef<HTMLButtonElement | null>(null);
+  const composerAreaRef = useRef<HTMLDivElement | null>(null);
+  const focusSteerComposer = useCallback(() => {
+    const composerArea = composerAreaRef.current;
+    if (!composerArea) return;
+    if (typeof composerArea.scrollIntoView === 'function') {
+      composerArea.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+    composerArea.querySelector<HTMLTextAreaElement>('textarea')?.focus();
+  }, []);
   const [markupSource, setMarkupSource] = useState<MarkupPaneSource | null>(null);
   const [markupLoadingHandle, setMarkupLoadingHandle] = useState<string | null>(null);
   const [markupNotice, setMarkupNotice] = useState<string | null>(null);
@@ -1283,17 +1297,17 @@ export function SessionPane({
           </Tooltip>
         )}
         <div className="relative max-md:shrink-0">
-          <Tooltip content="Inspect session capabilities">
+          <Tooltip content={capabilitiesLabel}>
             <button
               ref={capabilitiesButtonRef}
               type="button"
               onClick={() => setCapabilitiesOpen((value) => !value)}
-              aria-label="Inspect session capabilities"
+              aria-label={capabilitiesLabel}
               aria-expanded={capabilitiesOpen}
               aria-haspopup="dialog"
               className="rounded-md px-2 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg max-md:inline-flex max-md:size-11 max-md:items-center max-md:justify-center max-md:p-0 [@media(pointer:coarse)]:inline-flex [@media(pointer:coarse)]:size-11 [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center [@media(pointer:coarse)]:p-0"
             >
-              <SearchIcon size={15} />
+              <SessionDetailsIcon width={15} height={15} />
             </button>
           </Tooltip>
           <SessionCapabilitiesPopover
@@ -1399,6 +1413,7 @@ export function SessionPane({
             if (provider === 'github') onConnectGitHub?.();
             else onConnectProvider?.(provider);
           }}
+          onResume={displayStatus === 'completed' ? focusSteerComposer : undefined}
         />
       )}
 
@@ -1431,6 +1446,16 @@ export function SessionPane({
         </div>
       )}
 
+      <button
+        type="button"
+        data-testid="output-strip"
+        onClick={onOutputHubStrip}
+        aria-expanded={outputHubOpen}
+        className={outputStripClass({})}
+      >
+        <OutputLabel unseen={false}>Files & apps</OutputLabel>
+        <span className="ml-auto text-fg-tertiary">{outputHubOpen ? 'Hide' : 'Open'}</span>
+      </button>
       {conflictsN > 0 && (
         <button
           type="button"
@@ -1767,78 +1792,80 @@ export function SessionPane({
           <div className="shrink-0 border-t border-edge bg-surface-overlay px-4 py-1.5 text-2xs font-medium text-fg-muted">
             {composerStatusText}
           </div>
-          <Composer
-            placeholder={composerPlaceholder}
-            onSend={isDriver ? sendSteer : (text) => sendSuggestion(text)}
-            queueUpload={isDriver ? queueUpload : undefined}
-            onTyping={onComposerTyping}
-            allowAttachments={isDriver}
-            allowVoice={false}
-            previewEntryLinks
-            footer={
-              isDriver ? (
-                canPickEffort ? (
-                  <label
-                    data-testid="effort-picker"
-                    className="flex items-center gap-1.5 text-fg-faint"
-                    title="Reasoning effort for the next turn"
-                  >
-                    <span>effort</span>
-                    <select
-                      value={effortSelection}
-                      onChange={(e) => setEffortChoice(e.target.value)}
-                      className="rounded border border-edge bg-surface-raised px-1 py-0.5 text-2xs text-fg-secondary focus:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+          <div ref={composerAreaRef} className="shrink-0">
+            <Composer
+              placeholder={composerPlaceholder}
+              onSend={isDriver ? sendSteer : (text) => sendSuggestion(text)}
+              queueUpload={isDriver ? queueUpload : undefined}
+              onTyping={onComposerTyping}
+              allowAttachments={isDriver}
+              allowVoice={false}
+              previewEntryLinks
+              footer={
+                isDriver ? (
+                  canPickEffort ? (
+                    <label
+                      data-testid="effort-picker"
+                      className="flex items-center gap-1.5 text-fg-faint"
+                      title="Reasoning effort for the next turn"
                     >
-                      {/* Once an effort is recorded there's no way back to
-                          "default" (per-turn semantics would silently revert
-                          while the chip kept the old value) — only levels. */}
-                      {modelEffort == null && <option value="">default</option>}
-                      {(effortOptions ?? []).map((level) => (
-                        <option key={level} value={level}>
-                          {level}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                ) : undefined
-              ) : (
-                <span data-testid="seat-footer" className="flex items-center gap-2">
-                  {seatRequested ? (
-                    <span>
-                      {seatAsk === 'seat-held' && <span className="text-warning/80">seat held · </span>}
-                      requested — waiting for {driverName}
-                    </span>
-                  ) : seatAsk === 'confirm-take' ? (
-                    <>
-                      <span className="text-fg-tertiary">take the seat from {driverName}?</span>
+                      <span>effort</span>
+                      <select
+                        value={effortSelection}
+                        onChange={(e) => setEffortChoice(e.target.value)}
+                        className="rounded border border-edge bg-surface-raised px-1 py-0.5 text-2xs text-fg-secondary focus:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+                      >
+                        {/* Once an effort is recorded there's no way back to
+                            "default" (per-turn semantics would silently revert
+                            while the chip kept the old value) — only levels. */}
+                        {modelEffort == null && <option value="">default</option>}
+                        {(effortOptions ?? []).map((level) => (
+                          <option key={level} value={level}>
+                            {level}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  ) : undefined
+                ) : (
+                  <span data-testid="seat-footer" className="flex items-center gap-2">
+                    {seatRequested ? (
+                      <span>
+                        {seatAsk === 'seat-held' && <span className="text-warning/80">seat held · </span>}
+                        requested — waiting for {driverName}
+                      </span>
+                    ) : seatAsk === 'confirm-take' ? (
+                      <>
+                        <span className="text-fg-tertiary">take the seat from {driverName}?</span>
+                        <button
+                          type="button"
+                          onClick={takeSeat}
+                          className="rounded border border-accent-border-muted/60 px-2 py-0.5 font-medium text-accent-text-strong hover:bg-accent-tint/40 hover:text-accent-text-strong"
+                        >
+                          Confirm
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setSeatAsk('idle')}
+                          className="rounded px-2 py-0.5 font-medium text-fg-tertiary hover:bg-surface-overlay hover:text-fg-body"
+                        >
+                          Keep watching
+                        </button>
+                      </>
+                    ) : (
                       <button
                         type="button"
-                        onClick={takeSeat}
+                        onClick={driverPresent ? requestSeat : () => setSeatAsk('confirm-take')}
                         className="rounded border border-accent-border-muted/60 px-2 py-0.5 font-medium text-accent-text-strong hover:bg-accent-tint/40 hover:text-accent-text-strong"
                       >
-                        Confirm
+                        {driverPresent ? 'Request seat' : 'Take seat'}
                       </button>
-                      <button
-                        type="button"
-                        onClick={() => setSeatAsk('idle')}
-                        className="rounded px-2 py-0.5 font-medium text-fg-tertiary hover:bg-surface-overlay hover:text-fg-body"
-                      >
-                        Keep watching
-                      </button>
-                    </>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={driverPresent ? requestSeat : () => setSeatAsk('confirm-take')}
-                      className="rounded border border-accent-border-muted/60 px-2 py-0.5 font-medium text-accent-text-strong hover:bg-accent-tint/40 hover:text-accent-text-strong"
-                    >
-                      {driverPresent ? 'Request seat' : 'Take seat'}
-                    </button>
-                  )}
-                </span>
-              )
-            }
-          />
+                    )}
+                  </span>
+                )
+              }
+            />
+          </div>
         </>
       )}
     </aside>
@@ -2101,6 +2128,27 @@ export function AnnotatedTranscriptRow({
         </div>
       </div>
     </div>
+  );
+}
+
+function SessionDetailsIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      width={16}
+      height={16}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      {...props}
+    >
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 11v5" />
+      <path d="M12 8h.01" />
+    </svg>
   );
 }
 
