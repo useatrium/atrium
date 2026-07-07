@@ -8,6 +8,12 @@ import ActivityScreen from '../app/(app)/(tabs)/activity';
 import { renderWithTheme } from './rnTestUtils';
 import { Text } from 'react-native';
 
+// MobileHeader (rendered by ActivityScreen) imports Ionicons; @expo/vector-icons
+// doesn't resolve under vitest, so mock it like the other component tests do.
+vi.mock('@expo/vector-icons', () => ({
+  Ionicons: () => null,
+}));
+
 const routerMock = vi.hoisted(() => ({
   push: vi.fn(),
 }));
