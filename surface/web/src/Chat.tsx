@@ -1428,10 +1428,10 @@ export function Chat({
       },
       {
         id: 'open-activity',
-        label: 'Open Activity',
+        label: 'Open Inbox',
         subtitle: 'Review mentions and updates',
         group: 'Navigate',
-        keywords: ['activity', 'mentions', 'notifications', 'updates'],
+        keywords: ['inbox', 'activity', 'mentions', 'notifications', 'updates'],
         icon: <span className="text-xs font-bold leading-none">@</span>,
         run: openActivitySurface,
       },
@@ -1641,7 +1641,7 @@ export function Chat({
                   : showAgentsSurface
                     ? 'Agents'
                     : showActivitySurface
-                      ? 'Activity'
+                      ? 'Inbox'
                       : showFilesSurface
                         ? `Files for ${active ? channelLabel(active, me.id) : workspace.name}`
                         : undefined
@@ -1665,7 +1665,7 @@ export function Chat({
                   <span className="grid size-4 shrink-0 place-items-center rounded bg-surface-raised text-2xs font-bold text-fg-muted">
                     @
                   </span>
-                  <span className="truncate">Activity</span>
+                  <span className="truncate">Inbox</span>
                 </>
               ) : showFilesSurface ? (
                 <>

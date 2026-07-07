@@ -267,7 +267,7 @@ export function Sidebar({
               <span className="grid w-[15px] shrink-0 place-items-center text-xs font-bold text-fg-muted">
                 @
               </span>
-              <span className="truncate">Activity</span>
+              <span className="truncate">Inbox</span>
             </button>
           </div>
         </section>

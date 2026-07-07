@@ -431,7 +431,7 @@ test('command center: empty query shows suggested commands', async ({ page }) =>
   await login(page, unique('commander'), 'Commander');
 
   const dialog = await openCommandCenter(page);
-  for (const label of ['New agent in #general', 'Open Files', 'Open Agents', 'Open Activity', 'Open settings']) {
+  for (const label of ['New agent in #general', 'Open Files', 'Open Agents', 'Open Inbox', 'Open settings']) {
     await expect(dialog.getByText(label, { exact: true })).toBeVisible();
   }
 });
@@ -452,10 +452,10 @@ test('command center: opens Activity from query', async ({ page }) => {
   await login(page, unique('act-cmd'), 'Activity Commander');
 
   const dialog = await runCommandQuery(page, 'activity');
-  await expect(dialog.getByText('Open Activity', { exact: true })).toBeVisible();
+  await expect(dialog.getByText('Open Inbox', { exact: true })).toBeVisible();
   await page.keyboard.press('Enter');
   await expect(commandDialog(page)).toBeHidden();
-  await expect(page.getByRole('heading', { name: /^Activity$/ }).first()).toBeVisible();
+  await expect(page.getByRole('heading', { name: /^Inbox$/ }).first()).toBeVisible();
 });
 
 test('command center: opens New agent dialog from query', async ({ page }) => {

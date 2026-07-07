@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, screen } from '@testing-library/react';
+import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
 import { Text } from 'react-native';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { formatExactTimestamp, formatTurnTime } from '@atrium/surface-client';
@@ -163,7 +163,10 @@ describe('SteerRow (mobile)', () => {
     expect(await screen.findByText('Riley: "Referenced entry excerpt"')).toBeTruthy();
     expect(resolveEntry).toHaveBeenCalledWith('evt_12');
 
-    fireEvent.click(screen.getByLabelText('Open Riley: "Referenced entry excerpt"'));
-    expect(onOpenChannel).toHaveBeenCalledWith('ch-1');
+    // Await the clickable chip (its press handler commits a tick after the text
+    // node appears) and let the handler settle — fireEvent.click otherwise races
+    // the commit under CI scheduling (flaked: onOpenChannel 0 calls).
+    fireEvent.click(await screen.findByLabelText('Open Riley: "Referenced entry excerpt"'));
+    await waitFor(() => expect(onOpenChannel).toHaveBeenCalledWith('ch-1'));
   });
 });

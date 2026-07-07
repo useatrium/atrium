@@ -86,7 +86,7 @@ export function buildAppMenu({
         { label: 'Home', accelerator: 'CommandOrControl+1', click: () => navigate('/') },
         { label: 'Files', click: () => navigate('/files') },
         { label: 'Agents', click: () => navigate('/agents') },
-        { label: 'Activity', click: () => navigate('/activity') },
+        { label: 'Inbox', click: () => navigate('/activity') },
         {
           label: 'Settings',
           accelerator: 'CommandOrControl+,',
