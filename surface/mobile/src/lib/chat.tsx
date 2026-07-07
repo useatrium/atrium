@@ -77,6 +77,18 @@ export interface TypingEntry {
   until: number;
 }
 
+type SpawnSessionOptions = Pick<
+  SessionSpawnPayload,
+  | 'harness'
+  | 'repo'
+  | 'branch'
+  | 'repos'
+  | 'githubIdentityMode'
+  | 'githubIdentityId'
+  | 'agentProfileId'
+  | 'agentProfileVersionId'
+>;
+
 interface ChatContextValue {
   state: AppState;
   me: UserRef;
@@ -107,6 +119,12 @@ interface ChatContextValue {
     attachmentRefs?: AttachmentRef[],
     voice?: VoiceSendMeta,
     broadcast?: boolean,
+  ) => void;
+  spawnSession: (
+    channelId: string,
+    task: string,
+    threadRootEventId?: number,
+    opts?: SpawnSessionOptions,
   ) => void;
   /** Spawn the zero-setup scripted demo agent into a channel (harness "demo"). */
   startDemoSession: (channelId: string) => void;
@@ -634,6 +652,11 @@ export function ChatProvider({ session, children }: { session: Session; children
           title: payload.task.slice(0, 80),
           status: 'spawning',
           harness: payload.harness ?? 'codex',
+          repo: payload.repo ?? payload.repos?.[0]?.repo ?? null,
+          branch: payload.branch ?? payload.repos?.[0]?.ref ?? null,
+          repos: payload.repos ?? null,
+          githubIdentityMode: payload.githubIdentityMode ?? null,
+          agentProfileVersionId: payload.agentProfileVersionId ?? null,
           spawnedBy: me.id,
           spawnerName: me.displayName,
           driverId: null,
@@ -1128,15 +1151,30 @@ export function ChatProvider({ session, children }: { session: Session; children
 
   // ---- sending ----
   const spawnSession = useCallback(
-    (channelId: string, task: string, threadRootEventId?: number, opts?: { harness?: string }) => {
+    (channelId: string, task: string, threadRootEventId?: number, opts?: SpawnSessionOptions) => {
       const tempId = `${PENDING_SESSION_PREFIX}${randomId()}`;
       const now = new Date().toISOString();
+      const harness = opts?.harness?.trim() || 'codex';
+      const repo = opts?.repo?.trim();
+      const branch = opts?.branch?.trim();
+      const repos = opts?.repos?.length
+        ? opts.repos
+        : repo
+          ? [{ repo, ...(branch ? { ref: branch } : {}) }]
+          : [];
       const payload: SessionSpawnPayload = {
         channelId,
         task,
         clientSpawnId: tempId,
         threadRootEventId,
-        harness: opts?.harness ?? 'codex',
+        harness,
+        ...(repo ? { repo } : {}),
+        ...(branch ? { branch } : {}),
+        ...(repos.length ? { repos } : {}),
+        ...(opts?.githubIdentityMode ? { githubIdentityMode: opts.githubIdentityMode } : {}),
+        ...(opts?.githubIdentityId ? { githubIdentityId: opts.githubIdentityId } : {}),
+        ...(opts?.agentProfileId ? { agentProfileId: opts.agentProfileId } : {}),
+        ...(opts?.agentProfileVersionId ? { agentProfileVersionId: opts.agentProfileVersionId } : {}),
         createdAt: now,
       };
       const pending = pendingSpawnFromPayload(payload);
@@ -1640,6 +1678,7 @@ export function ChatProvider({ session, children }: { session: Session; children
       retryThread,
       threadErrors,
       send,
+      spawnSession,
       startDemoSession,
       retry,
       editMessage,
@@ -1699,6 +1738,7 @@ export function ChatProvider({ session, children }: { session: Session; children
       retryThread,
       threadErrors,
       send,
+      spawnSession,
       startDemoSession,
       retry,
       editMessage,

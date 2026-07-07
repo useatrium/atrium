@@ -1,10 +1,11 @@
 // Inline header for the (tabs) screens. The headless Tabs <TabSlot/> renders no
-// header of its own, so each tab supplies one. Left = the "You/More" avatar
-// (opens settings); center = title; right = optional per-tab actions.
+// header of its own, so each tab supplies one. Left = settings avatar; center =
+// title; right = optional per-tab actions.
 import type { ReactNode } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 import { useChat } from '../lib/chat';
 import { font, space, useTheme } from '../lib/theme';
 import { Avatar } from './Avatar';
@@ -27,11 +28,36 @@ export function MobileHeader({ title, right }: { title: string; right?: ReactNod
       >
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="You — profile, connections, settings"
+          accessibilityLabel="Settings"
           onPress={() => router.push('/settings')}
-          hitSlop={8}
+          hitSlop={4}
+          style={({ pressed }) => ({
+            width: 44,
+            height: 44,
+            alignItems: 'center',
+            justifyContent: 'center',
+            opacity: pressed ? 0.75 : 1,
+          })}
         >
-          <Avatar name={me.displayName} seed={me.id} size={28} />
+          <Avatar name={me.displayName} seed={me.id} size={30} />
+          <View
+            pointerEvents="none"
+            style={{
+              position: 'absolute',
+              right: 4,
+              bottom: 4,
+              width: 18,
+              height: 18,
+              borderRadius: 9,
+              borderWidth: 1,
+              borderColor: colors.bg,
+              backgroundColor: colors.accent,
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            <Ionicons name="settings" size={11} color={colors.onAccent} />
+          </View>
         </Pressable>
         <Text style={{ flex: 1, color: colors.text, fontSize: font.lg, fontWeight: '800' }} numberOfLines={1}>
           {title}
