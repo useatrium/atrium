@@ -11,7 +11,7 @@
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test src/main/windowOpenPolicy.test.ts",
+    "test": "tsx --test src/main/*.test.ts",
     "e2e": "playwright test",
     "prepackage": "pnpm --filter @atrium/web build && electron-vite build",
     "package:mac": "pnpm run prepackage && electron-builder --mac --config electron-builder.yml"

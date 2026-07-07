@@ -22,6 +22,7 @@ interface DesktopBridge {
   setSession(value: DesktopSessionData): Promise<void>;
   clearSession(): Promise<void>;
   setBadge(count: number): Promise<void>;
+  onNavigate?(cb: (path: string) => void): () => void;
 }
 
 const bridge: DesktopBridge | null =
@@ -69,4 +70,9 @@ export async function clearDesktopSession(): Promise<void> {
 /** Dock/taskbar unread badge (desktop only; no-op in the browser). */
 export function setDesktopBadge(count: number): void {
   void bridge?.setBadge(count);
+}
+
+/** Native shell navigation events (desktop only; inert in the browser). */
+export function onDesktopNavigate(cb: (path: string) => void): () => void {
+  return bridge?.onNavigate?.(cb) ?? (() => {});
 }

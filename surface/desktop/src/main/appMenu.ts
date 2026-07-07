@@ -2,13 +2,19 @@ import { app, Menu, type MenuItemConstructorOptions } from 'electron';
 
 export interface AppMenuDeps {
   createMainWindow: () => void;
+  navigate: (path: string) => void;
+  openDocs: () => void;
   quit: () => void;
+  reopenClosedPopout: () => void;
   platform?: typeof process.platform;
 }
 
 export function buildAppMenu({
   createMainWindow,
+  navigate,
+  openDocs,
   quit,
+  reopenClosedPopout,
   platform = process.platform,
 }: AppMenuDeps): Menu {
   const isMac = platform === 'darwin';
@@ -75,8 +81,28 @@ export function buildAppMenu({
       ],
     },
     {
+      label: 'Go',
+      submenu: [
+        { label: 'Home', accelerator: 'CommandOrControl+1', click: () => navigate('/') },
+        { label: 'Files', click: () => navigate('/files') },
+        { label: 'Agents', click: () => navigate('/agents') },
+        { label: 'Activity', click: () => navigate('/activity') },
+        {
+          label: 'Settings',
+          accelerator: 'CommandOrControl+,',
+          click: () => navigate('/settings'),
+        },
+      ],
+    },
+    {
       label: 'Window',
       submenu: [
+        {
+          label: 'Reopen Closed Window',
+          accelerator: 'Shift+CommandOrControl+T',
+          click: reopenClosedPopout,
+        },
+        { type: 'separator' },
         { role: 'minimize' },
         { role: 'zoom' },
         { type: 'separator' },
@@ -85,7 +111,15 @@ export function buildAppMenu({
     },
     {
       label: 'Help',
-      submenu: [],
+      submenu: [
+        { label: 'Atrium Documentation', click: openDocs },
+        ...(isMac
+          ? []
+          : ([
+              { type: 'separator' },
+              { label: 'Learn More', click: openDocs },
+            ] satisfies MenuItemConstructorOptions[])),
+      ],
     },
   );
 

@@ -30,6 +30,16 @@ contextBridge.exposeInMainWorld('atrium', {
   clearSession: (): Promise<void> => ipcRenderer.invoke('atrium:session:clear'),
   /** Set the dock/taskbar unread badge (0 clears it). */
   setBadge: (count: number): Promise<void> => ipcRenderer.invoke('atrium:badge', count),
+  /** Subscribe to native shell navigation requests. */
+  onNavigate: (cb: (path: string) => void): (() => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, path: unknown) => {
+      if (typeof path === 'string') cb(path);
+    };
+    ipcRenderer.on('atrium:navigate', listener);
+    return () => {
+      ipcRenderer.removeListener('atrium:navigate', listener);
+    };
+  },
   /** Open or focus the detached pane window for a session. */
   openSessionPopout: (sessionId: string): Promise<void> =>
     ipcRenderer.invoke('atrium:open-session-popout', sessionId).then(() => undefined),

@@ -1,4 +1,4 @@
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import {
   app,
@@ -24,6 +24,7 @@ import {
 } from './config.js';
 import { buildAppMenu } from './appMenu.js';
 import { clearSession, loadSession, saveSession, type DesktopSession } from './session.js';
+import { DEEP_LINK_SCHEME, deepLinkToRoute } from './deepLink.js';
 import { setupAutoUpdate } from './updater.js';
 import {
   resolveSessionPopoutOpen,
@@ -45,6 +46,10 @@ const mainWindows = new Set<BrowserWindow>();
 let tray: Tray | null = null;
 let isQuitting = false;
 const popoutWindows = new Map<string, BrowserWindow>();
+const closedPopoutUrls: string[] = [];
+const pendingDeepLinkPaths: string[] = [];
+const CLOSED_POPOUT_LIMIT = 10;
+const DOCS_URL = 'https://github.com/gbasin/atrium';
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
 
 if (!hasSingleInstanceLock) {
@@ -87,6 +92,22 @@ function rendererTarget(): string {
 
 function devOrigin(): string | null {
   return RENDERER_DEV_URL ? new URL(RENDERER_DEV_URL).origin : null;
+}
+
+function registerDeepLinkProtocol(): void {
+  const scriptPath = process.argv[1];
+  const didRegister =
+    !app.isPackaged && scriptPath && !scriptPath.startsWith('-')
+      ? app.setAsDefaultProtocolClient(DEEP_LINK_SCHEME, process.execPath, [resolve(scriptPath)])
+      : app.setAsDefaultProtocolClient(DEEP_LINK_SCHEME);
+
+  if (!didRegister) {
+    console.warn(`[atrium] failed to register ${DEEP_LINK_SCHEME}:// protocol handler`);
+  }
+}
+
+function findDeepLinkArg(argv: string[]): string | null {
+  return argv.find((arg) => deepLinkToRoute(arg) !== null) ?? null;
 }
 
 function mainWindowOptions(preload: string): BrowserWindowConstructorOptions {
@@ -199,6 +220,13 @@ function focusBrowserWindow(window: BrowserWindow): void {
   window.focus();
 }
 
+function rememberClosedPopoutUrl(url: string): void {
+  closedPopoutUrls.push(url);
+  if (closedPopoutUrls.length > CLOSED_POPOUT_LIMIT) {
+    closedPopoutUrls.shift();
+  }
+}
+
 function focusRegisteredPopout(sessionId: string): BrowserWindow | null {
   const existing = popoutWindows.get(sessionId);
   if (!existing) return null;
@@ -217,10 +245,12 @@ function registerPopoutWindow(
   devOrigin: string | null,
 ): void {
   popoutWindows.set(sessionId, popoutWindow);
+  const popoutUrl = sessionPopoutUrl(sessionId);
   popoutWindow.once('closed', () => {
     if (popoutWindows.get(sessionId) === popoutWindow) {
       popoutWindows.delete(sessionId);
     }
+    rememberClosedPopoutUrl(popoutUrl);
   });
   attachWindowOpenPolicy(popoutWindow.webContents, preload, devOrigin);
 }
@@ -243,10 +273,69 @@ function openOrFocusSessionPopout(sessionId: string): BrowserWindow | null {
   return createSessionPopout(decision.sessionId);
 }
 
+function reopenClosedPopout(): void {
+  while (closedPopoutUrls.length > 0) {
+    const url = closedPopoutUrls.pop();
+    const sessionId = url ? sessionIdFromWindowOpenUrl(url) : null;
+    if (sessionId) {
+      openOrFocusSessionPopout(sessionId);
+      return;
+    }
+  }
+}
+
 function getCurrentMainWindow(): BrowserWindow | null {
   if (mainWindow && !mainWindow.isDestroyed()) return mainWindow;
   mainWindow = Array.from(mainWindows).find((window) => !window.isDestroyed()) ?? null;
   return mainWindow;
+}
+
+function getFocusedMainWindow(): BrowserWindow | null {
+  const focusedWindow = BrowserWindow.getFocusedWindow();
+  if (focusedWindow && !focusedWindow.isDestroyed() && mainWindows.has(focusedWindow)) {
+    return focusedWindow;
+  }
+  return getCurrentMainWindow();
+}
+
+function sendNavigate(window: BrowserWindow, path: string): void {
+  const send = () => {
+    setTimeout(() => {
+      if (!window.isDestroyed()) {
+        window.webContents.send('atrium:navigate', path);
+      }
+    }, 0);
+  };
+
+  if (window.webContents.isLoadingMainFrame() || !window.webContents.getURL()) {
+    window.webContents.once('did-finish-load', send);
+  } else {
+    send();
+  }
+}
+
+function navigateMainWindow(path: string): void {
+  const target = getFocusedMainWindow() ?? createWindow();
+  focusBrowserWindow(target);
+  sendNavigate(target, path);
+}
+
+function handleDeepLink(url: string): boolean {
+  const path = deepLinkToRoute(url);
+  if (!path) return false;
+
+  if (!app.isReady()) {
+    pendingDeepLinkPaths.push(path);
+    return true;
+  }
+
+  navigateMainWindow(path);
+  return true;
+}
+
+function flushPendingDeepLinks(): void {
+  const paths = pendingDeepLinkPaths.splice(0);
+  for (const path of paths) navigateMainWindow(path);
 }
 
 /** Popout windows are real BrowserWindows and can open links of their own, so
@@ -266,7 +355,21 @@ function attachWindowOpenPolicy(
     }
   });
 
+  // In-shell interception is scoped to our own `atrium:` scheme only. The
+  // parser also recognizes https share-links (for OS-delivered / argv links),
+  // but capturing those here would hijack any external `…/s|/e|/c/*` link a
+  // user clicks inside a message and route it to a broken in-app view.
+  contents.on('will-navigate', (event, url) => {
+    if (url.startsWith(`${DEEP_LINK_SCHEME}:`) && handleDeepLink(url)) {
+      event.preventDefault();
+    }
+  });
+
   contents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith(`${DEEP_LINK_SCHEME}:`) && handleDeepLink(url)) {
+      return { action: 'deny' };
+    }
+
     const decision = resolveWindowOpen(url, { appOrigin: APP_ORIGIN, devOrigin });
     switch (decision.kind) {
       case 'popout': {
@@ -322,6 +425,8 @@ function createTray(): void {
   tray.setToolTip('Atrium');
   tray.setContextMenu(
     Menu.buildFromTemplate([
+      { label: 'New Window', click: () => createWindow() },
+      { type: 'separator' },
       { label: 'Show Atrium', click: () => showWindow() },
       { type: 'separator' },
       {
@@ -338,6 +443,11 @@ function createTray(): void {
     Notification.isSupported(),
     ')',
   );
+}
+
+function createDockMenu(): void {
+  if (process.platform !== 'darwin') return;
+  app.dock?.setMenu(Menu.buildFromTemplate([{ label: 'New Window', click: () => createWindow() }]));
 }
 
 function wireIpc(): void {
@@ -368,15 +478,32 @@ function wireIpc(): void {
 }
 
 if (hasSingleInstanceLock) {
-  app.on('second-instance', () => {
-    if (app.isReady()) {
+  registerDeepLinkProtocol();
+
+  app.on('open-url', (event, url) => {
+    event.preventDefault();
+    if (!handleDeepLink(url)) {
+      console.warn('[atrium] ignored unsupported deep link:', url);
+    }
+  });
+
+  app.on('second-instance', (_event, argv) => {
+    const deepLinkUrl = findDeepLinkArg(argv);
+    const openRequestedTarget = () => {
+      if (deepLinkUrl && handleDeepLink(deepLinkUrl)) return;
       showWindow();
+    };
+
+    if (app.isReady()) {
+      openRequestedTarget();
     } else {
-      void app.whenReady().then(() => showWindow());
+      void app.whenReady().then(openRequestedTarget);
     }
   });
 
   app.whenReady().then(() => {
+    const coldStartDeepLinkUrl = findDeepLinkArg(process.argv);
+
     // Grant mic/camera (LiveKit voice/calls) + notifications to our origins.
     const allowed = new Set(['media', 'mediaKeySystem', 'notifications']);
     session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
@@ -392,12 +519,22 @@ if (hasSingleInstanceLock) {
         createMainWindow: () => {
           createWindow();
         },
+        navigate: navigateMainWindow,
+        openDocs: () => {
+          void shell.openExternal(DOCS_URL);
+        },
         quit: quitApp,
+        reopenClosedPopout,
       }),
     );
-    createWindow();
+    if (!getCurrentMainWindow()) createWindow();
     createTray();
+    createDockMenu();
     setupAutoUpdate();
+    if (coldStartDeepLinkUrl) {
+      handleDeepLink(coldStartDeepLinkUrl);
+    }
+    flushPendingDeepLinks();
 
     app.on('activate', () => {
       if (!getCurrentMainWindow()) createWindow();
