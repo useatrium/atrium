@@ -41,7 +41,7 @@ import { ThreadPanel } from './components/ThreadPanel';
 import { Timeline } from './components/Timeline';
 import { sessionsApi } from './sessions/api';
 import { sessionsMockBus } from './sessions/devMock';
-import { FilesHub } from './sessions/FilesHub';
+import { Gallery } from './sessions/Gallery';
 import { SessionPane, type TranscriptDiscussPayload } from './sessions/SessionPane';
 import { loadSessionPaneWidth, sessionPaneSizing } from './sessions/useSessionPaneWidth';
 import { SessionsRail } from './sessions/SessionsRail';
@@ -1964,19 +1964,16 @@ export function Chat({
               }}
             />
           ) : showFilesSurface ? (
-            <FilesHub
+            <Gallery
               key={`main-files:${active?.id ?? 'workspace'}`}
               workspaceId={workspace.id}
               channelId={active?.id ?? null}
-              defaultScope={active ? 'channel' : 'workspace'}
               filesEventSeq={filesEventSeq}
-              sessions={state.sessions}
               initialOpenArtifactId={pendingFileArtifactId}
               onInitialOpenArtifactHandled={(artifactId) => {
                 if (pendingFileArtifactId === artifactId) setPendingFileArtifactId(null);
               }}
               onSeedChannelComposer={active ? seedActiveChannelComposer : undefined}
-              onStartAgentWithTask={active ? openSpawnWithInitialTask : undefined}
             />
           ) : (
             <EntryQuoteApplyContextProvider

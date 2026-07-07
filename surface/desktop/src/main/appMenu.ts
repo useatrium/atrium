@@ -84,9 +84,9 @@ export function buildAppMenu({
       label: 'Go',
       submenu: [
         { label: 'Home', accelerator: 'CommandOrControl+1', click: () => navigate('/') },
-        { label: 'Files', click: () => navigate('/files') },
-        { label: 'Agents', click: () => navigate('/agents') },
-        { label: 'Inbox', click: () => navigate('/activity') },
+        { label: 'Files', accelerator: 'CommandOrControl+2', click: () => navigate('/files') },
+        { label: 'Agents', accelerator: 'CommandOrControl+3', click: () => navigate('/agents') },
+        { label: 'Inbox', accelerator: 'CommandOrControl+4', click: () => navigate('/activity') },
         {
           label: 'Settings',
           accelerator: 'CommandOrControl+,',
