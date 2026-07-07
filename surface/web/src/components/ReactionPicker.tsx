@@ -114,9 +114,17 @@ export function ReactionPicker({
   };
 
   const onSearchKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
-    if (event.key !== 'ArrowDown' || visibleEmojis.length === 0) return;
-    event.preventDefault();
-    focusEmoji(activeIndex);
+    if (visibleEmojis.length === 0) return;
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      focusEmoji(activeIndex);
+    } else if (event.key === 'Enter') {
+      // Enter from the search box selects the active (first, when unfiltered)
+      // emoji — preserves the "open picker → Enter reacts with 👍" keyboard flow.
+      event.preventDefault();
+      const emoji = visibleEmojis[activeIndex] ?? visibleEmojis[0];
+      if (emoji) selectEmoji(emoji);
+    }
   };
 
   let emojiIndex = 0;
