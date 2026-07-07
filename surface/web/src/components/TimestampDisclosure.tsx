@@ -40,7 +40,7 @@ export function TimestampDisclosure({
   const tooltipSide = align === 'right' ? 'right-0' : 'left-0';
   const tooltipVisibility = pinned
     ? 'opacity-100'
-    : 'opacity-0 group-hover/timestamp:opacity-100 group-focus-visible/timestamp:opacity-100';
+    : 'opacity-0 group-hover/timestamp:opacity-100 group-focus-visible/timestamp:opacity-100 [@media(hover:none)]:opacity-100';
   const accessibleLabel = label ? `${label}. Exact timestamp: ${exact}` : `Exact timestamp: ${exact}`;
 
   return (

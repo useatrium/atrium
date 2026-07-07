@@ -343,7 +343,7 @@ export function Sidebar({
                         className={`shrink-0 px-2 py-1 text-xs hover:text-fg-body ${
                           c.muted
                             ? 'text-fg-muted'
-                            : 'text-fg-faint opacity-0 group-hover:opacity-100 focus-visible:opacity-100'
+                            : 'text-fg-faint opacity-0 group-hover:opacity-100 focus-visible:opacity-100 max-md:opacity-100 [@media(hover:none)]:opacity-100'
                         }`}
                       >
                         {c.muted ? <BellOffIcon /> : <BellIcon />}
@@ -445,7 +445,7 @@ export function Sidebar({
                         className={`shrink-0 px-2 py-1 text-xs hover:text-fg-body ${
                           c.muted
                             ? 'text-fg-muted'
-                            : 'text-fg-faint opacity-0 group-hover:opacity-100 focus-visible:opacity-100'
+                            : 'text-fg-faint opacity-0 group-hover:opacity-100 focus-visible:opacity-100 max-md:opacity-100 [@media(hover:none)]:opacity-100'
                         }`}
                       >
                         {c.muted ? <BellOffIcon /> : <BellIcon />}

@@ -1552,6 +1552,7 @@ export function Chat({
   const showAgentsSurface = mainSurface === 'agents';
   const showSettingsSurface = mainSurface === 'settings';
   const showNonChatSurface = mainSurface !== 'chat';
+  const hideMainOnMobile = state.openSessionId != null || openThreadRoot != null;
   const activeChannelLiveCall =
     !showNonChatSurface && active ? calls.liveCallForChannel(active.id) : null;
   const activeChannelLiveCaller = activeChannelLiveCall
@@ -1618,7 +1619,7 @@ export function Chat({
       />
 
       {view !== 'focus' && (
-        <main id="main-content" className={`${state.openSessionId ? 'hidden md:flex' : 'flex'} min-w-0 flex-1 flex-col`}>
+        <main id="main-content" className={`${hideMainOnMobile ? 'hidden md:flex' : 'flex'} min-w-0 flex-1 flex-col`}>
           <header className="flex h-12 shrink-0 items-center gap-2 border-b border-edge px-2 md:gap-3 md:px-4">
             <button
               type="button"
@@ -1760,18 +1761,30 @@ export function Chat({
                 </button>
               </Tooltip>
             )}
-            <Tooltip content="Open command center" shortcut={SHORTCUTS.commandPalette.keys}>
+            <Tooltip content="Search messages, channels, sessions, and commands" shortcut={SHORTCUTS.commandPalette.keys}>
               <button
                 type="button"
                 onClick={() => setSwitcherOpen(true)}
-                aria-label="Open command center"
+                aria-label="Search and commands"
                 className="inline-flex items-center gap-1.5 rounded-md border border-edge bg-surface-raised px-2 py-1 text-xs text-fg-muted hover:bg-surface-overlay hover:text-fg-body"
               >
                 <SearchIcon size={14} />
-                <span className="hidden sm:inline">Command</span>
+                <span className="hidden sm:inline">Search</span>
                 <kbd className="hidden rounded border border-edge px-1 py-px text-3xs font-medium text-fg-muted lg:inline">
                   ⌘K
                 </kbd>
+              </button>
+            </Tooltip>
+            <Tooltip content="Keyboard shortcuts">
+              <button
+                type="button"
+                onClick={() => setShortcutsHelpOpen(true)}
+                aria-label="Keyboard shortcuts"
+                className="inline-flex items-center justify-center rounded-md border border-edge bg-surface-raised px-2 py-1 text-xs font-semibold text-fg-muted hover:bg-surface-overlay hover:text-fg-body"
+              >
+                <span aria-hidden="true" className="leading-none">
+                  ?
+                </span>
               </button>
             </Tooltip>
             {!showNonChatSurface && presentUsers.length > 0 && (
@@ -2021,7 +2034,7 @@ export function Chat({
           )}
         </aside>
       ) : openThreadRoot && active ? (
-        <div className="hidden md:contents">
+        <div className="contents">
           <EntryQuoteApplyContextProvider value={{ channelId: active.id, sessions: state.sessions, onSpawnNewAgent: openSpawnWithInitialTask }}>
             <ThreadPanel
               root={openThreadRoot}

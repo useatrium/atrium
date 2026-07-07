@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { Artifact, ArtifactPresentation } from '@atrium/centaur-client';
 import { ApiError } from '../api';
+import { Tooltip } from '../components/a11y';
 import { EmptyState } from './EmptyState';
 import { ArtifactPreviewModal } from './ArtifactsSurface';
 import { sessionsApi, type AppListRow } from './api';
@@ -157,32 +158,37 @@ export function AppsSurface({
             Generated apps
           </div>
           <div className="divide-y divide-edge">
-            {unpublishedPresented.map(({ presentation, root }) => (
-              <div key={presentation.path} className="flex items-center gap-3 px-3 py-2">
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-xs font-semibold text-fg">{presentation.title ?? root.name}</div>
-                  <div className="truncate font-mono text-3xs text-fg-muted">{presentation.path}</div>
-                  {presentation.description && (
-                    <div className="mt-0.5 truncate text-3xs text-fg-muted">{presentation.description}</div>
-                  )}
+            {unpublishedPresented.map(({ presentation, root }) => {
+              const publishLabel = `Publish ${root.name}`;
+              return (
+                <div key={presentation.path} className="flex items-center gap-3 px-3 py-2">
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-xs font-semibold text-fg">{presentation.title ?? root.name}</div>
+                    <div className="truncate font-mono text-3xs text-fg-muted">{presentation.path}</div>
+                    {presentation.description && (
+                      <div className="mt-0.5 truncate text-3xs text-fg-muted">{presentation.description}</div>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setPreview(presentation)}
+                    className="rounded border border-edge px-2 py-1 text-3xs font-semibold uppercase tracking-wide text-fg-muted hover:bg-surface-overlay hover:text-fg"
+                  >
+                    Preview
+                  </button>
+                  <Tooltip content={publishLabel}>
+                    <button
+                      type="button"
+                      onClick={() => publish(root)}
+                      disabled={busy != null}
+                      className="rounded border border-accent-border px-2 py-1 text-3xs font-semibold uppercase tracking-wide text-accent-text hover:bg-accent-soft disabled:cursor-wait disabled:opacity-60"
+                    >
+                      {busy === `publish:${root.name}` ? 'Publishing' : 'Publish'}
+                    </button>
+                  </Tooltip>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setPreview(presentation)}
-                  className="rounded border border-edge px-2 py-1 text-3xs font-semibold uppercase tracking-wide text-fg-muted hover:bg-surface-overlay hover:text-fg"
-                >
-                  Preview
-                </button>
-                <button
-                  type="button"
-                  onClick={() => publish(root)}
-                  disabled={busy != null}
-                  className="rounded border border-accent-border px-2 py-1 text-3xs font-semibold uppercase tracking-wide text-accent-text hover:bg-accent-soft disabled:cursor-wait disabled:opacity-60"
-                >
-                  {busy === `publish:${root.name}` ? 'Publishing' : 'Publish'}
-                </button>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </section>
       )}
@@ -192,22 +198,27 @@ export function AppsSurface({
             Detected app directories
           </div>
           <div className="divide-y divide-edge">
-            {unpublishedDetected.map((root) => (
-              <div key={root.rootPath} className="flex items-center gap-3 px-3 py-2">
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-xs font-semibold text-fg">{root.name}</div>
-                  <div className="truncate font-mono text-3xs text-fg-muted">{root.rootPath}</div>
+            {unpublishedDetected.map((root) => {
+              const publishLabel = `Publish ${root.name}`;
+              return (
+                <div key={root.rootPath} className="flex items-center gap-3 px-3 py-2">
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-xs font-semibold text-fg">{root.name}</div>
+                    <div className="truncate font-mono text-3xs text-fg-muted">{root.rootPath}</div>
+                  </div>
+                  <Tooltip content={publishLabel}>
+                    <button
+                      type="button"
+                      onClick={() => publish(root)}
+                      disabled={busy != null}
+                      className="rounded border border-accent-border px-2 py-1 text-3xs font-semibold uppercase tracking-wide text-accent-text hover:bg-accent-soft disabled:cursor-wait disabled:opacity-60"
+                    >
+                      {busy === `publish:${root.name}` ? 'Publishing' : 'Publish'}
+                    </button>
+                  </Tooltip>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => publish(root)}
-                  disabled={busy != null}
-                  className="rounded border border-accent-border px-2 py-1 text-3xs font-semibold uppercase tracking-wide text-accent-text hover:bg-accent-soft disabled:cursor-wait disabled:opacity-60"
-                >
-                  {busy === `publish:${root.name}` ? 'Publishing' : 'Publish'}
-                </button>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </section>
       )}
