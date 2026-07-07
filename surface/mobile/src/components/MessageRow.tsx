@@ -1,4 +1,4 @@
-import { memo, useMemo, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useState, type ComponentType, type ReactNode } from 'react';
 import {
   Modal,
   Pressable,
@@ -7,6 +7,8 @@ import {
   View,
   type AccessibilityActionEvent,
   type GestureResponderEvent,
+  type StyleProp,
+  type ViewStyle,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
@@ -35,6 +37,98 @@ import { VoiceMessage } from './VoiceMessage';
 import type { ArtifactContentResolver, EntryResolver } from '../lib/entryResolve';
 
 const IMAGE_MAX_W = 240;
+const SWIPE_REPLY_THRESHOLD = 64;
+const SWIPE_REPLY_MAX = 96;
+const SWIPE_REPLY_SPRING = { damping: 18, stiffness: 260 };
+
+type SwipePanEvent = { translationX: number };
+type PanGestureBuilder = {
+  enabled: (value: boolean) => PanGestureBuilder;
+  activeOffsetX: (value: number | [number, number]) => PanGestureBuilder;
+  failOffsetY: (value: [number, number]) => PanGestureBuilder;
+  onUpdate: (handler: (event: SwipePanEvent) => void) => PanGestureBuilder;
+  onEnd: (handler: (event: SwipePanEvent) => void) => PanGestureBuilder;
+  onFinalize: (handler: () => void) => PanGestureBuilder;
+};
+type GestureRuntime = {
+  Gesture: { Pan: () => PanGestureBuilder };
+  GestureDetector: ComponentType<{ gesture: PanGestureBuilder; children: ReactNode }>;
+};
+type SharedValue<T> = { value: T };
+type AnimatedViewComponent = ComponentType<{
+  children?: ReactNode;
+  pointerEvents?: 'box-none' | 'none' | 'box-only' | 'auto';
+  style?: StyleProp<ViewStyle>;
+}>;
+type ReanimatedRuntime = {
+  default: { View: AnimatedViewComponent };
+  Extrapolation: { CLAMP: string | number };
+  interpolate: (value: number, input: readonly number[], output: readonly number[], extrapolate?: string | number) => number;
+  runOnJS: <T extends () => void>(fn: T) => T;
+  useAnimatedStyle: <T>(updater: () => T) => T;
+  useSharedValue: <T>(initialValue: T) => SharedValue<T>;
+  withSpring: <T>(toValue: T, config?: Record<string, number>) => T;
+};
+
+declare const require: (id: string) => unknown;
+
+function createNoopPanGesture(): PanGestureBuilder {
+  const chain: PanGestureBuilder = {
+    enabled: () => chain,
+    activeOffsetX: () => chain,
+    failOffsetY: () => chain,
+    onUpdate: () => chain,
+    onEnd: () => chain,
+    onFinalize: () => chain,
+  };
+  return chain;
+}
+
+function interpolateForTest(value: number, input: readonly number[], output: readonly number[]) {
+  const inputStart = input[0] ?? 0;
+  const inputEnd = input[1] ?? inputStart;
+  const outputStart = output[0] ?? 0;
+  const outputEnd = output[1] ?? outputStart;
+  if (inputEnd === inputStart) return outputEnd;
+  const progress = Math.max(0, Math.min(1, (value - inputStart) / (inputEnd - inputStart)));
+  return outputStart + (outputEnd - outputStart) * progress;
+}
+
+function loadGestureRuntime(): GestureRuntime {
+  if (process.env.NODE_ENV === 'test') {
+    return {
+      Gesture: { Pan: createNoopPanGesture },
+      GestureDetector: ({ children }) => <>{children}</>,
+    };
+  }
+  return require('react-native-gesture-handler') as GestureRuntime;
+}
+
+function loadReanimatedRuntime(): ReanimatedRuntime {
+  if (process.env.NODE_ENV === 'test') {
+    return {
+      default: { View },
+      Extrapolation: { CLAMP: 'clamp' },
+      interpolate: interpolateForTest,
+      runOnJS: (fn) => fn,
+      useAnimatedStyle: (updater) => updater(),
+      useSharedValue: (initialValue) => ({ value: initialValue }),
+      withSpring: (toValue) => toValue,
+    };
+  }
+  return require('react-native-reanimated') as ReanimatedRuntime;
+}
+
+const { Gesture, GestureDetector } = loadGestureRuntime();
+const {
+  default: Animated,
+  Extrapolation,
+  interpolate,
+  runOnJS,
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+} = loadReanimatedRuntime();
 
 type MessageActionTarget = ChatMessage & {
   actionCopyText?: string;
@@ -581,7 +675,8 @@ export const MessageRow = memo(function MessageRow({
   onOpenChannel,
   onOpenSession,
 }: MessageRowProps) {
-  const { colors } = useTheme();
+  const { colors, reduceMotion } = useTheme();
+  const swipeTranslateX = useSharedValue(0);
   const pending = m.status === 'pending';
   const failed = m.status === 'failed';
   useAccessibilityAnnouncement(failed ? 'Message failed to send. Tap to retry.' : null);
@@ -610,7 +705,66 @@ export const MessageRow = memo(function MessageRow({
     [resolveEntry, onOpenChannel, onOpenSession],
   );
   const canOpenActionMenu = !tombstone && (!sessionBlock || copyText != null || copyLink != null);
+  const canSwipeReply = !inThread && onOpenThread != null && !tombstone && !sessionBlock;
   const showThreadReplyAffordance = !inThread && m.threadRootEventId != null && onOpenThread != null;
+  const openSwipeReply = useCallback(() => {
+    if (!canSwipeReply || !onOpenThread) return;
+    lightImpactHaptic();
+    onOpenThread(m);
+  }, [canSwipeReply, m, onOpenThread]);
+  const resetSwipe = useCallback(() => {
+    swipeTranslateX.value = 0;
+  }, [swipeTranslateX]);
+  const swipeReplyGesture = useMemo(
+    () =>
+      Gesture.Pan()
+        .enabled(canSwipeReply)
+        .activeOffsetX(15)
+        .failOffsetY([-14, 14])
+        .onUpdate((event) => {
+          'worklet';
+          swipeTranslateX.value = Math.max(0, Math.min(event.translationX, SWIPE_REPLY_MAX));
+        })
+        .onEnd((event) => {
+          'worklet';
+          if (event.translationX > SWIPE_REPLY_THRESHOLD) runOnJS(openSwipeReply)();
+        })
+        .onFinalize(() => {
+          'worklet';
+          swipeTranslateX.value = reduceMotion ? 0 : withSpring(0, SWIPE_REPLY_SPRING);
+        }),
+    [canSwipeReply, openSwipeReply, reduceMotion, swipeTranslateX],
+  );
+  const swipeRowStyle = useAnimatedStyle(() => {
+    'worklet';
+    return { transform: [{ translateX: swipeTranslateX.value }] };
+  });
+  const replyRevealStyle = useAnimatedStyle(() => {
+    'worklet';
+    const progress = interpolate(
+      swipeTranslateX.value,
+      [0, SWIPE_REPLY_THRESHOLD],
+      [0, 1],
+      Extrapolation.CLAMP,
+    );
+    return {
+      opacity: progress,
+      transform: [
+        {
+          translateX: reduceMotion
+            ? 0
+            : interpolate(swipeTranslateX.value, [0, SWIPE_REPLY_THRESHOLD], [-8, 0], Extrapolation.CLAMP),
+        },
+        {
+          scale: reduceMotion ? 1 : interpolate(progress, [0, 1], [0.92, 1], Extrapolation.CLAMP),
+        },
+      ],
+    };
+  });
+
+  useEffect(() => {
+    if (!canSwipeReply) resetSwipe();
+  }, [canSwipeReply, resetSwipe]);
   const accessibilityActions = [
     ...(failed ? [{ name: 'retry', label: 'Retry sending' }] : []),
     ...(!tombstone && !sessionBlock && onOpenThread && !inThread
@@ -735,95 +889,132 @@ export const MessageRow = memo(function MessageRow({
   // UI test drivers). The message body keeps the label and the full action menu
   // (the long-press sheet: react / reply / copy / edit / delete) for VoiceOver.
   return (
-    <View
-      style={{
-        ...containerStyle,
-        backgroundColor: highlighted ? colors.accentBg : 'transparent',
-      }}
-    >
-      {avatar}
-      <View style={{ flex: 1, minWidth: 0 }}>
-        <Pressable
-          accessibilityRole="text"
-          accessibilityLabel={rowLabel}
-          accessibilityActions={accessibilityActions}
-          onAccessibilityAction={onAccessibilityAction}
-          onLongPress={() => {
-            lightImpactHaptic();
-            onLongPress(actionTargetForMessage(m, copyText, copyLink));
-          }}
-          delayLongPress={250}
-          style={({ pressed }) => ({
-            backgroundColor: pressed ? colors.borderSoft : 'transparent',
-          })}
-        >
-          {header}
-          {body}
-          {editedNote}
-        </Pressable>
-        {partitionedEntryLinks.standaloneHandles.length > 0 ? (
-          <EntryQuoteCards
-            text={m.text}
-            serverUrl={serverUrl}
-            handles={partitionedEntryLinks.standaloneHandles}
-            resolveEntry={resolveEntry}
-            resolveArtifactContent={resolveArtifactContent}
-            onOpenChannel={onOpenChannel}
-            onOpenSession={onOpenSession}
-          />
+    <GestureDetector gesture={swipeReplyGesture}>
+      <View
+        style={{
+          position: 'relative',
+          overflow: 'hidden',
+          backgroundColor: highlighted ? colors.accentBg : 'transparent',
+        }}
+      >
+        {canSwipeReply ? (
+          <Animated.View
+            pointerEvents="none"
+            style={[
+              {
+                position: 'absolute',
+                top: 0,
+                bottom: 0,
+                left: space.lg + 5,
+                justifyContent: 'center',
+              },
+              replyRevealStyle,
+            ]}
+          >
+            <View
+              style={{
+                width: 34,
+                height: 34,
+                borderRadius: 17,
+                alignItems: 'center',
+                justifyContent: 'center',
+                backgroundColor: colors.accentBg,
+                borderWidth: 1,
+                borderColor: colors.accent,
+              }}
+            >
+              <Ionicons name="arrow-undo-outline" size={19} color={colors.accent} />
+            </View>
+          </Animated.View>
         ) : null}
-        {showThreadReplyAffordance ? (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Replied to a thread"
-            accessibilityHint="Opens the parent thread"
-            onPress={() => onOpenThread(m)}
-            hitSlop={10}
-            style={{ marginTop: 4, minHeight: 44, justifyContent: 'center', alignSelf: 'flex-start' }}
-          >
-            <Text style={{ color: colors.textMuted, fontSize: font.sm, fontWeight: '600' }}>
-              {'↳ replied to a thread'}
-            </Text>
-          </Pressable>
-        ) : null}
-        {failed && (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Failed to send. Tap to retry."
-            accessibilityHint="Attempts to send this message again"
-            accessibilityLiveRegion="polite"
-            onPress={() => onRetry(m)}
-            hitSlop={10}
-            style={{ minHeight: 44, justifyContent: 'center', alignSelf: 'flex-start' }}
-          >
-            <Text style={{ color: colors.danger, fontSize: font.xs, marginTop: 2 }}>Failed to send — tap to retry</Text>
-          </Pressable>
-        )}
-        {m.reactions && m.reactions.length > 0 && (
-          <ReactionChips
-            reactions={m.reactions}
-            meId={meId}
-            resolveUser={resolveUser}
-            onToggle={(emoji) => {
-              selectionHaptic();
-              onToggleReaction(m, emoji);
-            }}
-          />
-        )}
-        {!inThread && m.replyCount > 0 && onOpenThread && (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={`${m.replyCount} ${m.replyCount === 1 ? 'reply' : 'replies'}`}
-            onPress={() => onOpenThread(m)}
-            hitSlop={10}
-            style={{ marginTop: 4, minHeight: 44, justifyContent: 'center', alignSelf: 'flex-start' }}
-          >
-            <Text style={{ color: colors.accent, fontSize: font.sm, fontWeight: '600' }}>
-              {m.replyCount} {m.replyCount === 1 ? 'reply' : 'replies'} →
-            </Text>
-          </Pressable>
-        )}
+        <Animated.View style={[containerStyle, swipeRowStyle]}>
+          {avatar}
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Pressable
+              accessibilityRole="text"
+              accessibilityLabel={rowLabel}
+              accessibilityActions={accessibilityActions}
+              onAccessibilityAction={onAccessibilityAction}
+              onLongPress={() => {
+                lightImpactHaptic();
+                onLongPress(actionTargetForMessage(m, copyText, copyLink));
+              }}
+              delayLongPress={250}
+              style={({ pressed }) => ({
+                backgroundColor: pressed ? colors.borderSoft : 'transparent',
+              })}
+            >
+              {header}
+              {body}
+              {editedNote}
+            </Pressable>
+            {partitionedEntryLinks.standaloneHandles.length > 0 ? (
+              <EntryQuoteCards
+                text={m.text}
+                serverUrl={serverUrl}
+                handles={partitionedEntryLinks.standaloneHandles}
+                resolveEntry={resolveEntry}
+                resolveArtifactContent={resolveArtifactContent}
+                onOpenChannel={onOpenChannel}
+                onOpenSession={onOpenSession}
+              />
+            ) : null}
+            {showThreadReplyAffordance ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Replied to a thread"
+                accessibilityHint="Opens the parent thread"
+                onPress={() => onOpenThread(m)}
+                hitSlop={10}
+                style={{ marginTop: 4, minHeight: 44, justifyContent: 'center', alignSelf: 'flex-start' }}
+              >
+                <Text style={{ color: colors.textMuted, fontSize: font.sm, fontWeight: '600' }}>
+                  {'↳ replied to a thread'}
+                </Text>
+              </Pressable>
+            ) : null}
+            {failed && (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Failed to send. Tap to retry."
+                accessibilityHint="Attempts to send this message again"
+                accessibilityLiveRegion="polite"
+                onPress={() => onRetry(m)}
+                hitSlop={10}
+                style={{ minHeight: 44, justifyContent: 'center', alignSelf: 'flex-start' }}
+              >
+                <Text style={{ color: colors.danger, fontSize: font.xs, marginTop: 2 }}>
+                  Failed to send — tap to retry
+                </Text>
+              </Pressable>
+            )}
+            {m.reactions && m.reactions.length > 0 && (
+              <ReactionChips
+                reactions={m.reactions}
+                meId={meId}
+                resolveUser={resolveUser}
+                onToggle={(emoji) => {
+                  selectionHaptic();
+                  onToggleReaction(m, emoji);
+                }}
+              />
+            )}
+            {!inThread && m.replyCount > 0 && onOpenThread && (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`${m.replyCount} ${m.replyCount === 1 ? 'reply' : 'replies'}`}
+                onPress={() => onOpenThread(m)}
+                hitSlop={10}
+                style={{ marginTop: 4, minHeight: 44, justifyContent: 'center', alignSelf: 'flex-start' }}
+              >
+                <Text style={{ color: colors.accent, fontSize: font.sm, fontWeight: '600' }}>
+                  {m.replyCount} {m.replyCount === 1 ? 'reply' : 'replies'} →
+                </Text>
+              </Pressable>
+            )}
+          </View>
+        </Animated.View>
       </View>
-    </View>
+    </GestureDetector>
   );
 });
