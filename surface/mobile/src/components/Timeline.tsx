@@ -174,6 +174,11 @@ export function Timeline({
   const initialPositionedRef = useRef(false);
   const latestRenderedMessageKeyRef = useRef(latestRenderedMessageKey);
   const viewabilityConfigRef = useRef({ itemVisiblePercentThreshold: 10 });
+  // FlashList renders anchored at the bottom (startRenderingFromBottom) and the
+  // initial scroll-to-divider is programmatic, so a scroll reaching the bottom
+  // only counts as "read" once the user has actually dragged the list. Without
+  // this, opening an unread channel marks it read before landing on the divider.
+  const userDraggedRef = useRef(false);
 
   const setAtBottomValue = useCallback((next: boolean) => {
     if (atBottomRef.current === next) return;
@@ -262,12 +267,18 @@ export function Timeline({
     });
   }, [hasMoreBefore, onLoadEarlier]);
 
+  const handleScrollBeginDrag = useCallback(() => {
+    userDraggedRef.current = true;
+  }, []);
+
   const handleScroll = useCallback(
     (event: NativeSyntheticEvent<NativeScrollEvent>) => {
       const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
       const nearBottom = contentSize.height - contentOffset.y - layoutMeasurement.height < 80;
       setAtBottomValue(nearBottom);
-      if (nearBottom) onReachBottom?.();
+      // Only a user-driven scroll to the bottom advances the read cursor; the
+      // initial bottom-anchored render + programmatic divider scroll must not.
+      if (nearBottom && userDraggedRef.current) onReachBottom?.();
     },
     [onReachBottom, setAtBottomValue],
   );
@@ -399,6 +410,7 @@ export function Timeline({
           autoscrollToBottomThreshold: 0.2,
         }}
         onScroll={handleScroll}
+        onScrollBeginDrag={handleScrollBeginDrag}
         scrollEventThrottle={16}
         onViewableItemsChanged={handleViewableItemsChanged}
         viewabilityConfig={viewabilityConfigRef.current}
