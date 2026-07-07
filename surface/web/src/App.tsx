@@ -9,8 +9,8 @@ import { TooltipProvider } from './components/a11y';
 import { adoptPrefs } from './theme';
 import type { UserRef } from '@atrium/surface-client';
 import { clearCache, loadBootSnapshot, saveBootSnapshot } from './cacheIdb';
-import { clearDesktopSession } from './desktop';
-import { initialInAppRoute } from './router';
+import { clearDesktopSession, onDesktopNavigate } from './desktop';
+import { initialInAppRoute, navigate } from './router';
 import { SessionPanePage } from './sessions/SessionPanePage';
 import { SessionWorkPage } from './sessions/SessionWorkPage';
 import { SLUG_TAB, type ActiveWorkTab } from './sessions/WorkDrawer';
@@ -39,6 +39,8 @@ export function App() {
   const [me, setMe] = useState<UserRef | null>(null);
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [checked, setChecked] = useState(false);
+
+  useEffect(() => onDesktopNavigate((path) => navigate(path)), []);
 
   useEffect(() => {
     if (markupShellRoute) {

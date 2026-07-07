@@ -17,6 +17,10 @@ extraResources:
     to: web-dist
   - from: resources
     to: resources
+protocols:
+  - name: Atrium
+    schemes:
+      - atrium
 
 mac:
   category: public.app-category.productivity
@@ -37,6 +41,10 @@ mac:
   extendInfo:
     NSMicrophoneUsageDescription: Atrium uses your microphone for voice messages and calls.
     NSCameraUsageDescription: Atrium uses your camera for video calls.
+    CFBundleURLTypes:
+      - CFBundleURLName: Atrium
+        CFBundleURLSchemes:
+          - atrium
 
 # The .app is signed + notarized by electron-builder when APPLE_API_KEY /
 # APPLE_API_KEY_ID / APPLE_API_ISSUER are set (App Store Connect key). The
