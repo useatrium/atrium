@@ -82,12 +82,15 @@ describe('turn timestamps', () => {
       steerFrame,
     ]);
 
-    const time = await screen.findByTestId('turn-time');
-    expect(time.textContent).toBe(formatTurnTime(STAMP));
-    // The row's wrapper carries a native tooltip with the exact stamp.
-    expect(screen.getByTestId('user-steer').closest('[title]')?.getAttribute('title')).toBe(
-      formatExactTimestamp(STAMP),
-    );
+    await screen.findByTestId('turn-time');
+    // The stamp text + native-title tooltip populate a tick after the row
+    // mounts; assert under waitFor so full-suite scheduling can't race it.
+    await waitFor(() => {
+      expect(screen.getByTestId('turn-time').textContent).toBe(formatTurnTime(STAMP));
+      expect(screen.getByTestId('user-steer').closest('[title]')?.getAttribute('title')).toBe(
+        formatExactTimestamp(STAMP),
+      );
+    });
   });
 
   it('renders no timestamp affordance for unstamped frames (older servers)', async () => {

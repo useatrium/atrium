@@ -1,7 +1,7 @@
 // Message composer: multiline input, image/file attachments (uploaded on
 // pick, presigned PUT), optimistic send, and an inline edit mode.
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import {
   ActionSheetIOS,
   ActivityIndicator,
@@ -29,6 +29,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
+  looksLikeAgentCommand,
   matchMentionPrefix,
   type AttachmentMeta,
   type AttachmentRef,
@@ -92,6 +93,12 @@ export interface ComposerProps {
     width?: number;
     height?: number;
   }) => Promise<AttachmentMeta & { uploadKey: string; localUri: string }>;
+  onConfigureAgent?: (fullText: string) => void;
+}
+
+export interface ComposerHandle {
+  captureForConfigure: () => string;
+  restore: (value: string) => void;
 }
 
 const VOICE_RECORDING_OPTIONS: RecordingOptions = {
@@ -110,7 +117,7 @@ type PickedAttachment = {
   height?: number;
 };
 
-export function Composer({
+export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Composer({
   placeholder,
   onSend,
   onTyping,
@@ -132,7 +139,8 @@ export function Composer({
   onOpenChannel,
   onOpenSession,
   uploadFile,
-}: ComposerProps) {
+  onConfigureAgent,
+}: ComposerProps, ref) {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const [text, setText] = useState('');
@@ -185,6 +193,33 @@ export function Composer({
       inputRef.current?.focus();
     }
   }, [editingText]);
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      captureForConfigure() {
+        const captured = text;
+        if (!editing) {
+          setText('');
+          if (draftKey) {
+            onDraftTouched?.(draftKey);
+            draftWriter.saveNow(draftKey, '');
+          }
+        }
+        return captured;
+      },
+      restore(value: string) {
+        if (editing) return;
+        setText(value);
+        if (draftKey) {
+          onDraftTouched?.(draftKey);
+          draftWriter.saveNow(draftKey, value);
+        }
+        setTimeout(() => inputRef.current?.focus(), 0);
+      },
+    }),
+    [draftKey, draftWriter, editing, onDraftTouched, text],
+  );
 
   const startUpload = async (file: PickedAttachment) => {
     if (!uploadFile) return;
@@ -310,6 +345,8 @@ export function Composer({
   }));
   const readyRefs = ready.map(({ meta }) => ({ uploadKey: meta.uploadKey }));
   const canSend = !uploading && (text.trim().length > 0 || readyMeta.length > 0);
+  const showConfigureAgentChip =
+    !editing && onConfigureAgent != null && looksLikeAgentCommand(text);
   const mentionMatch = !editing ? matchMentionPrefix(text) : null;
   const mentionPrefix = mentionMatch?.prefix.toLowerCase() ?? '';
   // @agent only spawns when the whole message starts with it — don't offer
@@ -752,6 +789,35 @@ export function Composer({
         </View>
       ) : null}
 
+      {showConfigureAgentChip ? (
+        <View style={{ alignItems: 'flex-start' }}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Configure and start an agent"
+            onPress={() => onConfigureAgent?.(text)}
+            hitSlop={8}
+            style={({ pressed }) => ({
+              alignItems: 'center',
+              backgroundColor: pressed ? colors.bgPressed : colors.accentBg,
+              borderColor: colors.accent,
+              borderRadius: radius.lg,
+              borderWidth: 1,
+              flexDirection: 'row',
+              minHeight: 34,
+              paddingHorizontal: space.md,
+              paddingVertical: space.xs,
+            })}
+          >
+            <Text
+              maxFontSizeMultiplier={2}
+              style={{ color: colors.accent, fontSize: font.sm, fontWeight: '800' }}
+            >
+              ✦ Start an agent · Configure ▸
+            </Text>
+          </Pressable>
+        </View>
+      ) : null}
+
       <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: space.sm }}>
         {allowAttachments && !editing && (
           <Pressable
@@ -872,4 +938,4 @@ export function Composer({
       </View>
     </View>
   );
-}
+});

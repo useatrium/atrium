@@ -1,4 +1,15 @@
-import { useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+  type DragEvent,
+  type KeyboardEvent,
+  type ReactNode,
+} from 'react';
 import { looksLikeAgentCommand, parseAgentTask } from '../sessions/spawn';
 import type { AttachmentMeta, AttachmentRef, UploadPayload, VoiceMeta } from '@atrium/surface-client';
 import { createDraftChangeDebouncer, formatBytes, randomId } from '@atrium/surface-client';
@@ -23,26 +34,12 @@ interface PendingFile {
   height?: number;
 }
 
-export function Composer({
-  placeholder,
-  onSend,
-  queueUpload,
-  onTyping,
-  onArrowUpOnEmpty,
-  autoFocus,
-  agentAware,
-  allowAttachments,
-  allowVoice = allowAttachments,
-  disabled,
-  disabledHint,
-  footer,
-  draftKey,
-  initialDraft,
-  onDraftChange,
-  onDraftPersisted,
-  onDraftTouched,
-  previewEntryLinks,
-}: {
+export interface ComposerHandle {
+  captureForConfigure: () => string;
+  restoreDraft: (text: string) => void;
+}
+
+type ComposerProps = {
   placeholder: string;
   onSend: (
     text: string,
@@ -58,6 +55,8 @@ export function Composer({
   autoFocus?: boolean;
   /** Show the "@agent spawns a session" hint chip while the grammar matches. */
   agentAware?: boolean;
+  /** Open the configured spawn dialog from the current @agent draft. */
+  onConfigureAgent?: (fullText: string) => void;
   /** Enable paste / drag-drop / file uploads. */
   allowAttachments?: boolean;
   /** Enable the voice recorder. Defaults to the attachment setting. */
@@ -72,7 +71,32 @@ export function Composer({
   onDraftPersisted?: (key: string, text: string) => void | Promise<void>;
   onDraftTouched?: (key: string) => void;
   previewEntryLinks?: boolean;
-}) {
+};
+
+export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Composer(
+  {
+    placeholder,
+    onSend,
+    queueUpload,
+    onTyping,
+    onArrowUpOnEmpty,
+    autoFocus,
+    agentAware,
+    onConfigureAgent,
+    allowAttachments,
+    allowVoice = allowAttachments,
+    disabled,
+    disabledHint,
+    footer,
+    draftKey,
+    initialDraft,
+    onDraftChange,
+    onDraftPersisted,
+    onDraftTouched,
+    previewEntryLinks,
+  },
+  imperativeRef,
+) {
   const [text, setText] = useState('');
   // "@agent" with no task: refuse to post the literal string — show what's
   // missing instead (cleared as soon as the text changes).
@@ -94,6 +118,9 @@ export function Composer({
     [onDraftChange, onDraftPersisted],
   );
   const agentHint = !!agentAware && !disabled && looksLikeAgentCommand(text);
+  const agentTask = agentHint ? parseAgentTask(text) : null;
+  const configureAgentHint = !!onConfigureAgent && agentHint && agentTask != null;
+  const agentNeedsTaskHint = agentNeedsTask || (!!onConfigureAgent && agentHint && agentTask == null);
   const entryLinkHandles = useMemo(
     () => (previewEntryLinks ? extractEntryHandles(text) : []),
     [previewEntryLinks, text],
@@ -145,6 +172,43 @@ export function Composer({
   useEffect(() => {
     if (autoFocus) ref.current?.focus();
   }, [autoFocus]);
+
+  const persistDraftValue = useCallback(
+    (value: string) => {
+      if (!draftKey) return;
+      onDraftTouched?.(draftKey);
+      draftWriter.saveNow(draftKey, value);
+    },
+    [draftKey, draftWriter, onDraftTouched],
+  );
+
+  useImperativeHandle(
+    imperativeRef,
+    () => ({
+      captureForConfigure() {
+        const captured = text;
+        setText('');
+        setAgentNeedsTask(false);
+        persistDraftValue('');
+        if (ref.current) ref.current.style.height = 'auto';
+        return captured;
+      },
+      restoreDraft(value: string) {
+        setText(value);
+        setAgentNeedsTask(false);
+        persistDraftValue(value);
+        requestAnimationFrame(() => {
+          const el = ref.current;
+          if (!el) return;
+          el.style.height = 'auto';
+          if (value) el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
+          el.focus();
+          el.setSelectionRange(value.length, value.length);
+        });
+      },
+    }),
+    [imperativeRef, persistDraftValue, text],
+  );
 
   const contentHashFor = async (file: File): Promise<string | undefined> => {
     try {
@@ -450,10 +514,21 @@ export function Composer({
         </div>
       )}
       <div className="mt-1 flex items-center gap-2 px-1 text-3xs text-fg-muted">
-        {agentNeedsTask ? (
+        {agentNeedsTaskHint ? (
           <span className="rounded-full bg-warning/15 px-2 py-0.5 font-medium text-warning-text">
             Add a task: @agent &lt;task&gt;
           </span>
+        ) : configureAgentHint ? (
+          <Tooltip content="Configure and start an agent">
+            <button
+              type="button"
+              onClick={() => onConfigureAgent(text)}
+              aria-label="Configure and start an agent"
+              className="rounded-full bg-accent-hover/15 px-2 py-0.5 font-medium text-accent-text-strong transition-colors hover:bg-accent-hover/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+            >
+              <span aria-hidden>✦</span> Start an agent · Configure ▸
+            </button>
+          </Tooltip>
         ) : agentHint ? (
           <span className="rounded-full bg-accent-hover/15 px-2 py-0.5 font-medium text-accent-text-strong">
             @agent — spawns an agent session
@@ -472,4 +547,4 @@ export function Composer({
       </div>
     </div>
   );
-}
+});
