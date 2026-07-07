@@ -5,15 +5,18 @@
 // reflows beside (single swappable slot — the DevTools dock model); detach =
 // the surface in its own browser tab (/s/:id/work/:tab), the top rung.
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import type { Artifact, ArtifactPresentation, FileChange, SideEffect } from '@atrium/centaur-client';
+import { fileTypeLabel, type HubFile, type HubFileListResult } from '@atrium/surface-client';
 import { Tabs, TabsContent, TabsList, TabsTrigger, Tooltip } from '../components/a11y';
 import { ExternalLinkIcon, PanelRightCloseIcon, PanelRightIcon, XIcon } from '../components/icons';
 import { isDesktop } from '../desktop';
+import { navigate } from '../router';
 import { SideEffectsSurface } from './SideEffectsSurface';
 import { ConflictSurface, type ArtifactConflict, type ResolveChoice } from './ConflictSurface';
 import { EmptyState } from './EmptyState';
-import { FilesHub, type FilesHubDefaultScope, type FilesHubSessionScope } from './FilesHub';
+import type { FilesHubDefaultScope, FilesHubSessionScope } from './FilesHub';
+import { formatGalleryBytes, galleryPathForScope, relativeFileTime } from './Gallery';
 import { WhatChangedSurface } from './WhatChangedSurface';
 import { AppsSurface } from './AppsSurface';
 
@@ -78,6 +81,120 @@ function Tab({
   );
 }
 
+function sessionFilesPeekQuery(sessionId: string): URLSearchParams {
+  const params = new URLSearchParams();
+  params.set('sessionId', sessionId);
+  params.set('sort', 'recent');
+  params.set('includeScratch', 'false');
+  params.set('includeDeleted', 'false');
+  params.set('limit', '5');
+  return params;
+}
+
+function SessionFilesPeekCard({ file, href, onOpen }: { file: HubFile; href: string; onOpen: () => void }) {
+  const imageThumbnail = file.mediaKind === 'image' && file.thumbnailUrl ? file.thumbnailUrl : null;
+  return (
+    <a
+      href={href}
+      onClick={(event) => {
+        event.preventDefault();
+        onOpen();
+      }}
+      className="flex min-w-0 items-center gap-2 rounded-md border border-edge bg-surface-raised/45 px-2 py-2 text-left transition-colors hover:border-edge-strong hover:bg-surface-raised"
+    >
+      <span className="grid size-10 shrink-0 place-items-center overflow-hidden rounded-md border border-edge bg-surface text-3xs font-semibold text-fg-muted">
+        {imageThumbnail ? <img src={imageThumbnail} alt="" className="size-full object-cover" loading="lazy" /> : fileTypeLabel(file)}
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-2xs font-semibold text-fg-body" title={file.path}>
+          {file.name}
+        </span>
+        <span className="block truncate text-3xs text-fg-muted">
+          {formatGalleryBytes(file.sizeBytes)} · {relativeFileTime(file.createdAt)}
+        </span>
+      </span>
+    </a>
+  );
+}
+
+function SessionFilesPeek({ workspaceId, sessionId }: { workspaceId: string; sessionId: string }) {
+  const [files, setFiles] = useState<HubFile[]>([]);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const href = galleryPathForScope({ sessionId });
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setLoading(true);
+    setError(null);
+    fetch(`/api/workspaces/${encodeURIComponent(workspaceId)}/files?${sessionFilesPeekQuery(sessionId).toString()}`, {
+      credentials: 'same-origin',
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        if (!response.ok) throw new Error('Could not load session files');
+        return (await response.json()) as HubFileListResult;
+      })
+      .then((body) => {
+        setFiles(body.files);
+        setNextCursor(body.nextCursor ?? null);
+      })
+      .catch((err: unknown) => {
+        if (err instanceof DOMException && err.name === 'AbortError') return;
+        setFiles([]);
+        setNextCursor(null);
+        setError(err instanceof Error ? err.message : 'Could not load session files');
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+    return () => controller.abort();
+  }, [sessionId, workspaceId]);
+
+  const openGallery = () => navigate(href);
+  const count = `${files.length}${nextCursor ? '+' : ''}`;
+  const countLabel = loading ? 'Loading files...' : `${count} ${files.length === 1 && !nextCursor ? 'file' : 'files'} in this session`;
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col bg-surface">
+      <div className="flex shrink-0 items-center gap-3 border-b border-edge px-3 py-3">
+        <div className="min-w-0 flex-1">
+          <h3 className="truncate text-sm font-semibold text-fg">{countLabel}</h3>
+          <p className="mt-0.5 truncate text-2xs text-fg-muted">Files you upload and files agents create appear in Gallery.</p>
+        </div>
+        <a
+          href={href}
+          onClick={(event) => {
+            event.preventDefault();
+            openGallery();
+          }}
+          className="shrink-0 rounded-md border border-accent-border bg-accent-tint px-2.5 py-1.5 text-2xs font-semibold text-accent-text-strong hover:bg-accent-soft"
+        >
+          Open in Gallery →
+        </a>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto p-3">
+        {error && (
+          <div role="alert" className="text-2xs text-danger-text">
+            {error}
+          </div>
+        )}
+        {!error && !loading && files.length === 0 && (
+          <EmptyState title="No session files" hint="Files touched by this session will appear here." />
+        )}
+        {!error && files.length > 0 && (
+          <div className="grid gap-2">
+            {files.map((file) => (
+              <SessionFilesPeekCard key={file.artifactId} file={file} href={href} onOpen={openGallery} />
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function WorkDrawer({
   changes,
   changedFileCount,
@@ -92,9 +209,6 @@ export function WorkDrawer({
   onResolveConflict,
   sessionId,
   workspaceId,
-  channelId,
-  filesSessionScope,
-  filesDefaultScope,
   tab,
   onTab,
   pinned,
@@ -258,13 +372,7 @@ export function WorkDrawer({
       </TabsContent>
       <TabsContent value="hubFiles" className="min-h-0 flex-1">
         {workspaceId ? (
-          <FilesHub
-            workspaceId={workspaceId}
-            channelId={channelId}
-            sessionId={sessionId}
-            sessionScope={filesSessionScope}
-            defaultScope={filesDefaultScope}
-          />
+          <SessionFilesPeek workspaceId={workspaceId} sessionId={sessionId} />
         ) : (
           <EmptyState title="Files unavailable" hint="This session is missing workspace metadata." />
         )}
