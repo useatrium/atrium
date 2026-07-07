@@ -7,21 +7,27 @@ import {
 
 type ReadMarkEnqueue = (input: EnqueueOpInput<'read.mark'>) => Promise<unknown>;
 type DispatchAppAction = (action: AppAction) => void;
+type PendingReadMark = {
+  timer: ReturnType<typeof setTimeout>;
+  fire: () => void;
+};
 
 export function useReadMarks({
   dispatch,
   enqueueOp,
   onApiError,
+  onAdvance,
   throttleMs = 2000,
 }: {
   dispatch: DispatchAppAction;
   enqueueOp: ReadMarkEnqueue;
   onApiError: (err: unknown) => void;
+  onAdvance?: (channelId: string, lastReadEventId: number) => void;
   throttleMs?: number;
 }) {
   const lastReadSentRef = useRef<Record<string, number>>({});
   const lastReadAtRef = useRef<Record<string, number>>({});
-  const readTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const readTimersRef = useRef<Record<string, PendingReadMark>>({});
 
   const noteReadCursor = useCallback((channelId: string, lastReadEventId: number) => {
     lastReadSentRef.current[channelId] = Math.max(
@@ -39,6 +45,7 @@ export function useReadMarks({
         lastReadAtRef.current[channelId] = Date.now();
         lastReadSentRef.current[channelId] = lastEventId;
         dispatch({ type: 'read-cursor', channelId, lastReadEventId: lastEventId });
+        onAdvance?.(channelId, lastEventId);
         void enqueueOp({
           opId: randomId(),
           opType: 'read.mark',
@@ -51,22 +58,40 @@ export function useReadMarks({
         });
       };
       const elapsed = Date.now() - (lastReadAtRef.current[channelId] ?? 0);
+      const pending = readTimersRef.current[channelId];
       if (elapsed >= throttleMs) {
+        if (pending) {
+          clearTimeout(pending.timer);
+          delete readTimersRef.current[channelId];
+        }
         fire();
         return;
       }
-      if (readTimersRef.current[channelId]) clearTimeout(readTimersRef.current[channelId]);
-      readTimersRef.current[channelId] = setTimeout(fire, throttleMs - elapsed);
+      if (pending) clearTimeout(pending.timer);
+      const timer = setTimeout(() => {
+        delete readTimersRef.current[channelId];
+        fire();
+      }, throttleMs - elapsed);
+      readTimersRef.current[channelId] = { timer, fire };
     },
-    [dispatch, enqueueOp, onApiError, throttleMs],
+    [dispatch, enqueueOp, onAdvance, onApiError, throttleMs],
   );
+
+  const flush = useCallback(() => {
+    const pending = Object.entries(readTimersRef.current);
+    readTimersRef.current = {};
+    for (const [, mark] of pending) {
+      clearTimeout(mark.timer);
+      mark.fire();
+    }
+  }, []);
 
   useEffect(
     () => () => {
-      for (const timer of Object.values(readTimersRef.current)) clearTimeout(timer);
+      flush();
     },
-    [],
+    [flush],
   );
 
-  return { markRead, noteReadCursor };
+  return { markRead, noteReadCursor, flush };
 }

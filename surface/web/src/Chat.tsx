@@ -16,7 +16,7 @@ import {
   useQueuedChangesCount,
 } from '@atrium/surface-client';
 import { showNotification } from './notify';
-import { emptyTimeline, type UserRef, type WireEvent } from '@atrium/surface-client';
+import { emptyTimeline, type Channel, type UserRef, type WireEvent } from '@atrium/surface-client';
 import { useWs } from '@atrium/surface-client';
 import { Avatar } from './components/Avatar';
 import { AgentsSurface } from './components/AgentsSurface';
@@ -141,6 +141,20 @@ type EnqueueOpOptions = {
   onStored?: () => void;
 };
 
+function channelsWithAdvancedReadCursor(
+  channels: Channel[],
+  channelId: string,
+  lastReadEventId: number,
+): { channels: Channel[]; advanced: boolean } {
+  let advanced = false;
+  const next = channels.map((channel) => {
+    if (channel.id !== channelId || (channel.lastReadEventId ?? 0) >= lastReadEventId) return channel;
+    advanced = true;
+    return { ...channel, lastReadEventId };
+  });
+  return { channels: advanced ? next : channels, advanced };
+}
+
 function isMobileViewportNow(): boolean {
   return typeof window !== 'undefined' && typeof window.matchMedia === 'function'
     ? window.matchMedia(MOBILE_MEDIA_QUERY).matches
@@ -222,6 +236,7 @@ export function Chat({
   const callsAvailable = useCallsAvailable();
   const stateRef = useRef(state);
   stateRef.current = state;
+  const readCursorCacheWriteRef = useRef<Promise<void>>(Promise.resolve());
   const authInvalidatedRef = useRef(false);
   const [hydrated, setHydrated] = useState(false);
   const [queueNudgeSeq, setQueueNudgeSeq] = useState(0);
@@ -258,6 +273,21 @@ export function Chat({
     void eventCache.saveSyncCursor(cursor).catch((err: unknown) => {
       console.warn('failed to cache sync cursor', err);
     });
+  }, []);
+
+  const cacheReadCursorAdvance = useCallback((channelId: string, lastReadEventId: number) => {
+    const { channels, advanced } = channelsWithAdvancedReadCursor(
+      stateRef.current.channels,
+      channelId,
+      lastReadEventId,
+    );
+    if (!advanced) return;
+    readCursorCacheWriteRef.current = readCursorCacheWriteRef.current
+      .catch(() => {})
+      .then(() => eventCache.saveChannels(channels))
+      .catch((err: unknown) => {
+        console.warn('failed to cache read cursor advance', err);
+      });
   }, []);
 
   const invalidateAuth = useCallback(() => {
@@ -302,8 +332,9 @@ export function Chat({
       }
       if (action.type === 'sync-cursor') cacheSyncCursor(action.cursor);
       if (action.type === 'mute-changed') cacheMute(action.channelId, action.muted);
+      if (action.type === 'read-cursor') cacheReadCursorAdvance(action.channelId, action.lastReadEventId);
     },
-    [cacheMute, cacheSyncCursor, handleFilesChangedEvent],
+    [cacheMute, cacheReadCursorAdvance, cacheSyncCursor, handleFilesChangedEvent],
   );
 
   const opRegistry = useMemo(() => createChatOpRegistry(), []);
@@ -353,7 +384,23 @@ export function Chat({
     [markQueueNudged, opQueue],
   );
 
-  const { markRead, noteReadCursor } = useReadMarks({ dispatch, enqueueOp, onApiError });
+  const dispatchWithReadCache = useCallback(
+    (action: Parameters<typeof dispatch>[0]) => {
+      dispatch(action);
+      if (action.type === 'read-cursor') cacheReadCursorAdvance(action.channelId, action.lastReadEventId);
+    },
+    [cacheReadCursorAdvance],
+  );
+
+  const {
+    markRead,
+    noteReadCursor,
+    flush: flushReadMarks,
+  } = useReadMarks({
+    dispatch: dispatchWithReadCache,
+    enqueueOp,
+    onApiError,
+  });
 
   const { answerSessionQuestion, cancelSession, steerSession, stopTurn } = useSessionActions({
     clearFailedCancel,
@@ -375,15 +422,25 @@ export function Chat({
   const queuedChangesCount = useQueuedChangesCount(eventCache, state.wsStatus, queueNudgeSeq);
 
   useEffect(() => {
+    const flushCache = () => {
+      flushReadMarks();
+      void readCursorCacheWriteRef.current
+        .then(() => eventCache.flushAll())
+        .catch((err: unknown) => {
+          console.warn('failed to flush event cache on hide', err);
+        });
+    };
     const flushHiddenCache = () => {
       if (document.visibilityState !== 'hidden') return;
-      void eventCache.flushAll().catch((err: unknown) => {
-        console.warn('failed to flush event cache on hide', err);
-      });
+      flushCache();
     };
     document.addEventListener('visibilitychange', flushHiddenCache);
-    return () => document.removeEventListener('visibilitychange', flushHiddenCache);
-  }, []);
+    window.addEventListener('pagehide', flushCache);
+    return () => {
+      document.removeEventListener('visibilitychange', flushHiddenCache);
+      window.removeEventListener('pagehide', flushCache);
+    };
+  }, [flushReadMarks]);
 
   const { queueUpload } = useUploadQueue({ enqueueOp, storage: eventCache });
 
@@ -394,9 +451,9 @@ export function Chat({
       if (overlay.readCursor) {
         noteReadCursor(overlay.readCursor.channelId, overlay.readCursor.lastReadEventId);
       }
-      dispatch(overlay.action);
+      dispatchWithReadCache(overlay.action);
     },
-    [me, noteReadCursor],
+    [dispatchWithReadCache, me, noteReadCursor],
   );
 
   // ---- initial data ----
@@ -722,7 +779,7 @@ export function Chat({
       onCall: calls.handleCallEvent,
       onRead: (channelId, lastReadEventId) => {
         noteReadCursor(channelId, lastReadEventId);
-        dispatch({ type: 'read-cursor', channelId, lastReadEventId });
+        dispatchWithReadCache({ type: 'read-cursor', channelId, lastReadEventId });
       },
       onMuted: (channelId, muted) => {
         dispatch({ type: 'mute-changed', channelId, muted });

@@ -53,6 +53,8 @@ export interface TimelineProps {
   onOpenSession?: (sessionId: string) => void;
   unreadDividerAfterId?: number | null;
   dividerReady?: boolean;
+  latestLandingSignal?: number;
+  onUserEngaged?: () => void;
   onReachBottom?: () => void;
 }
 
@@ -96,6 +98,28 @@ function lastRenderedMessageKey(items: TimelineItem[]): string {
   return '';
 }
 
+export function latestRealMessageId(items: TimelineItem[]): number | null {
+  for (let i = items.length - 1; i >= 0; i -= 1) {
+    const item = items[i];
+    if (item?.kind === 'message') return item.message?.id ?? null;
+  }
+  return null;
+}
+
+export function shouldMarkReadForVisibleLatest(
+  viewableItems: Array<Pick<ViewToken<TimelineItem>, 'isViewable' | 'item'>>,
+  latestMessageId: number | null,
+  userDragged: boolean,
+): boolean {
+  if (!userDragged || latestMessageId == null) return false;
+  return viewableItems.some(
+    (token) =>
+      token.isViewable &&
+      token.item.kind === 'message' &&
+      token.item.message?.id === latestMessageId,
+  );
+}
+
 function UnreadDivider() {
   const { colors } = useTheme();
   return (
@@ -105,11 +129,12 @@ function UnreadDivider() {
       style={{
         flexDirection: 'row',
         alignItems: 'center',
-        gap: space.md,
+        gap: space.sm,
         paddingHorizontal: space.lg,
-        paddingVertical: space.sm,
+        paddingVertical: space.md,
       }}
     >
+      <View style={{ flex: 1, height: 1, backgroundColor: colors.accent }} />
       <Text
         style={{
           color: colors.accent,
@@ -118,9 +143,9 @@ function UnreadDivider() {
           textTransform: 'uppercase',
         }}
       >
-        New
+        New messages
       </Text>
-      <View style={{ flex: 1, height: 1, backgroundColor: colors.borderSoft }} />
+      <View style={{ flex: 1, height: 1, backgroundColor: colors.accent }} />
     </View>
   );
 }
@@ -152,6 +177,8 @@ export function Timeline({
   onOpenSession,
   unreadDividerAfterId,
   dividerReady,
+  latestLandingSignal,
+  onUserEngaged,
   onReachBottom,
 }: TimelineProps) {
   const { colors, reduceMotion } = useTheme();
@@ -166,13 +193,13 @@ export function Timeline({
     [items, unreadDividerAfterId],
   );
   const latestRenderedMessageKey = useMemo(() => lastRenderedMessageKey(items), [items]);
+  const latestMessageId = useMemo(() => latestRealMessageId(items), [items]);
   const readyForDivider = dividerReady ?? true;
   const [atBottom, setAtBottom] = useState(firstUnreadId == null);
   const atBottomRef = useRef(firstUnreadId == null);
-  const [firstUnreadVisible, setFirstUnreadVisible] = useState(false);
-  const firstUnreadIdRef = useRef<number | null>(firstUnreadId);
   const initialPositionedRef = useRef(false);
   const latestRenderedMessageKeyRef = useRef(latestRenderedMessageKey);
+  const latestMessageIdRef = useRef(latestMessageId);
   const viewabilityConfigRef = useRef({ itemVisiblePercentThreshold: 10 });
   // FlashList renders anchored at the bottom (startRenderingFromBottom) and the
   // initial scroll-to-divider is programmatic, so a scroll reaching the bottom
@@ -213,9 +240,8 @@ export function Timeline({
   );
 
   useEffect(() => {
-    firstUnreadIdRef.current = firstUnreadId;
-    if (firstUnreadId == null) setFirstUnreadVisible(false);
-  }, [firstUnreadId]);
+    latestMessageIdRef.current = latestMessageId;
+  }, [latestMessageId]);
 
   // Jump-to-message (search): scroll the highlighted row into view.
   useEffect(() => {
@@ -233,7 +259,6 @@ export function Timeline({
     initialPositionedRef.current = true;
     if (firstUnreadId != null && firstUnreadIndex != null) {
       setAtBottomValue(false);
-      setFirstUnreadVisible(true);
       return startScrollToIndexRetry(firstUnreadIndex, 0, false);
     }
     setAtBottomValue(true);
@@ -248,6 +273,12 @@ export function Timeline({
     setAtBottomValue,
     startScrollToIndexRetry,
   ]);
+
+  useEffect(() => {
+    if (!latestLandingSignal || !loaded) return;
+    listRef.current?.scrollToEnd({ animated: false });
+    setAtBottomValue(true);
+  }, [latestLandingSignal, loaded, setAtBottomValue]);
 
   // FlashList keeps new messages pinned when already near the bottom; mirror
   // that by advancing the read cursor when the rendered tail changes there.
@@ -269,7 +300,8 @@ export function Timeline({
 
   const handleScrollBeginDrag = useCallback(() => {
     userDraggedRef.current = true;
-  }, []);
+    onUserEngaged?.();
+  }, [onUserEngaged]);
 
   const handleScroll = useCallback(
     (event: NativeSyntheticEvent<NativeScrollEvent>) => {
@@ -285,26 +317,23 @@ export function Timeline({
 
   const handleViewableItemsChanged = useCallback(
     ({ viewableItems }: { viewableItems: ViewToken<TimelineItem>[] }) => {
-      const id = firstUnreadIdRef.current;
-      if (id == null) {
-        setFirstUnreadVisible(false);
-        return;
+      if (
+        shouldMarkReadForVisibleLatest(
+          viewableItems,
+          latestMessageIdRef.current,
+          userDraggedRef.current,
+        )
+      ) {
+        setAtBottomValue(true);
+        onReachBottom?.();
       }
-      const visible = viewableItems.some(
-        (token) =>
-          token.isViewable &&
-          token.item.kind === 'message' &&
-          token.item.message?.id === id,
-      );
-      setFirstUnreadVisible((prev) => (prev === visible ? prev : visible));
     },
-    [],
+    [onReachBottom, setAtBottomValue],
   );
 
   const scrollToUnreadDivider = useCallback(() => {
     if (firstUnreadIndex == null) return;
     setAtBottomValue(false);
-    setFirstUnreadVisible(true);
     startScrollToIndexRetry(firstUnreadIndex, 0, !reduceMotion);
   }, [firstUnreadIndex, reduceMotion, setAtBottomValue, startScrollToIndexRetry]);
 
@@ -376,8 +405,14 @@ export function Timeline({
     ],
   );
 
-  const showNewMessagesPill =
-    firstUnreadId != null && unreadCount > 0 && !firstUnreadVisible && !atBottom;
+  const jumpControlLabel =
+    unreadCount > 0
+      ? `Jump to latest · ${unreadCount} new`
+      : 'Jump to latest';
+  const jumpControlAccessibilityLabel =
+    unreadCount > 0
+      ? `Jump to latest messages, ${unreadCount} new`
+      : 'Jump to latest messages';
 
   if (!loaded) {
     return (
@@ -427,55 +462,36 @@ export function Timeline({
           ) : null
         }
       />
-      {showNewMessagesPill ? (
-        <View
-          pointerEvents="box-none"
-          style={{ position: 'absolute', top: space.sm, left: 0, right: 0, alignItems: 'center' }}
-        >
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={`Jump to ${unreadCount} new messages`}
-            onPress={scrollToUnreadDivider}
-            hitSlop={8}
-            style={({ pressed }) => ({
-              minHeight: 34,
-              paddingHorizontal: space.md,
-              borderRadius: 17,
-              alignItems: 'center',
-              justifyContent: 'center',
-              backgroundColor: colors.accent,
-              opacity: pressed ? 0.86 : 1,
-              shadowColor: '#000',
-              shadowOpacity: 0.18,
-              shadowRadius: 10,
-              shadowOffset: { width: 0, height: 4 },
-              elevation: 4,
-            })}
-          >
-            <Text style={{ color: colors.onAccent, fontSize: font.sm, fontWeight: '800' }}>
-              {unreadCount} new
-            </Text>
-          </Pressable>
-        </View>
-      ) : null}
       {!atBottom ? (
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Jump to latest messages"
+          accessibilityLabel={jumpControlAccessibilityLabel}
+          accessibilityHint={
+            unreadCount > 0 ? 'Jumps to the latest message. Use actions to jump to new messages.' : undefined
+          }
+          accessibilityActions={
+            unreadCount > 0 ? [{ name: 'jumpToUnread', label: 'Jump to new messages' }] : undefined
+          }
+          onAccessibilityAction={(event) => {
+            if (event.nativeEvent.actionName === 'jumpToUnread') scrollToUnreadDivider();
+          }}
           onPress={jumpToLatest}
           hitSlop={8}
           style={({ pressed }) => ({
             position: 'absolute',
             right: space.lg,
             bottom: space.lg,
-            width: 44,
-            height: 44,
+            minHeight: 44,
+            maxWidth: 260,
+            paddingHorizontal: space.md,
             borderRadius: radius.lg,
+            flexDirection: 'row',
+            gap: space.xs,
             alignItems: 'center',
             justifyContent: 'center',
             backgroundColor: colors.bgElevated,
             borderWidth: 1,
-            borderColor: colors.border,
+            borderColor: unreadCount > 0 ? colors.accent : colors.border,
             opacity: pressed ? 0.82 : 1,
             shadowColor: '#000',
             shadowOpacity: 0.2,
@@ -484,7 +500,18 @@ export function Timeline({
             elevation: 5,
           })}
         >
-          <Ionicons name="chevron-down" size={23} color={colors.text} />
+          <Ionicons name="arrow-down" size={18} color={unreadCount > 0 ? colors.accent : colors.text} />
+          <Text
+            numberOfLines={1}
+            adjustsFontSizeToFit
+            style={{
+              color: unreadCount > 0 ? colors.accent : colors.text,
+              fontSize: font.sm,
+              fontWeight: '800',
+            }}
+          >
+            {jumpControlLabel}
+          </Text>
         </Pressable>
       ) : null}
     </View>

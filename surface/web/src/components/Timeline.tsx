@@ -6,7 +6,8 @@ import { ChevronDownIcon } from './icons';
 import { MessageRow } from './MessageRow';
 
 const UNREAD_DIVIDER_SELECTOR = '[data-unread-divider]';
-const BOTTOM_SLOP_PX = 80;
+const AT_BOTTOM_EPSILON_PX = 4;
+const PINNED_BOTTOM_SLOP_PX = 80;
 
 export function Timeline({
   messages,
@@ -76,10 +77,10 @@ export function Timeline({
   const unreadLandingScrollTopRef = useRef<number | null>(null);
   const [loadingEarlier, setLoadingEarlier] = useState(false);
   const [atBottom, setAtBottom] = useState(true);
-  const [dividerInView, setDividerInView] = useState(true);
 
   const items = useMemo(() => buildTimelineItems(messages), [messages]);
   const lastKey = items.at(-1)?.key ?? '';
+  const lastMessageId = messages.at(-1)?.id ?? null;
   const firstUnreadId = useMemo(() => {
     if (unreadDividerAfterId == null || unreadDividerAfterId <= 0) return null;
     return messages.find((m) => (m.id ?? 0) > unreadDividerAfterId)?.id ?? null;
@@ -89,36 +90,37 @@ export function Timeline({
     return messages.filter((m) => (m.id ?? 0) > unreadDividerAfterId).length;
   }, [messages, unreadDividerAfterId]);
 
-  const updateDividerInView = useCallback(() => {
+  const isAtBottom = useCallback((el: HTMLElement) => {
+    return el.scrollHeight - el.scrollTop - el.clientHeight <= AT_BOTTOM_EPSILON_PX;
+  }, []);
+
+  const isPinnedToBottom = useCallback((el: HTMLElement) => {
+    return el.scrollHeight - el.scrollTop - el.clientHeight < PINNED_BOTTOM_SLOP_PX;
+  }, []);
+
+  const isNewestMessageVisible = useCallback(() => {
     const el = containerRef.current;
-    if (!el || firstUnreadId == null) {
-      setDividerInView(true);
-      return;
-    }
-    const divider = el.querySelector<HTMLElement>(UNREAD_DIVIDER_SELECTOR);
-    if (!divider) {
-      setDividerInView(false);
-      return;
-    }
-    const top = divider.offsetTop;
-    setDividerInView(top >= el.scrollTop && top <= el.scrollTop + el.clientHeight);
-  }, [firstUnreadId]);
+    if (!el || lastMessageId == null) return false;
+    const latest = el.querySelector<HTMLElement>(`[data-eid="${lastMessageId}"]`);
+    if (!latest) return false;
+    const latestRect = latest.getBoundingClientRect();
+    const containerRect = el.getBoundingClientRect();
+    return latestRect.bottom >= containerRect.top && latestRect.top <= containerRect.bottom;
+  }, [lastMessageId]);
+
+  const markReadIfNewestVisible = useCallback(() => {
+    if (!isNewestMessageVisible()) return;
+    unreadLandingScrollTopRef.current = null;
+    onReachBottom?.();
+  }, [isNewestMessageVisible, onReachBottom]);
 
   const onScroll = () => {
     const el = containerRef.current;
     if (!el) return;
-    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < BOTTOM_SLOP_PX;
-    stickRef.current = nearBottom;
-    setAtBottom(nearBottom);
-    if (
-      nearBottom &&
-      (unreadLandingScrollTopRef.current == null ||
-        el.scrollTop > unreadLandingScrollTopRef.current + 4)
-    ) {
-      unreadLandingScrollTopRef.current = null;
-      onReachBottom?.();
-    }
-    updateDividerInView();
+    const bottom = isAtBottom(el);
+    stickRef.current = isPinnedToBottom(el);
+    setAtBottom(bottom);
+    markReadIfNewestVisible();
   };
 
   // Keep pinned to bottom for new messages; preserve position when older
@@ -131,18 +133,16 @@ export function Timeline({
     if (prevHeightRef.current != null) {
       el.scrollTop += el.scrollHeight - prevHeightRef.current;
       prevHeightRef.current = null;
-      updateDividerInView();
       return;
     }
     if (stickRef.current && lastKey !== lastKeyRef.current) {
       el.scrollTop = el.scrollHeight;
       unreadLandingScrollTopRef.current = null;
       setAtBottom(true);
-      updateDividerInView();
-      onReachBottom?.();
+      markReadIfNewestVisible();
     }
     lastKeyRef.current = lastKey;
-  }, [lastKey, items, onReachBottom, updateDividerInView]);
+  }, [lastKey, items, markReadIfNewestVisible]);
 
   useLayoutEffect(() => {
     const el = containerRef.current;
@@ -151,15 +151,11 @@ export function Timeline({
     if (firstUnreadId != null) {
       const divider = el.querySelector<HTMLElement>(UNREAD_DIVIDER_SELECTOR);
       divider?.scrollIntoView?.({ block: 'start' });
-      setDividerInView(true);
-      // Short channel: the whole unread run fits on screen, so landing on the
-      // divider also leaves us at the bottom. There's nothing to scroll to, so
-      // treat it as read rather than leaving it perpetually unread.
-      if (el.scrollHeight - el.scrollTop - el.clientHeight < BOTTOM_SLOP_PX) {
+      if (isNewestMessageVisible()) {
         unreadLandingScrollTopRef.current = null;
-        stickRef.current = true;
-        setAtBottom(true);
-        onReachBottom?.();
+        stickRef.current = isPinnedToBottom(el);
+        setAtBottom(isAtBottom(el));
+        markReadIfNewestVisible();
       } else {
         unreadLandingScrollTopRef.current = el.scrollTop;
         stickRef.current = false;
@@ -170,13 +166,21 @@ export function Timeline({
       unreadLandingScrollTopRef.current = null;
       stickRef.current = true;
       setAtBottom(true);
-      setDividerInView(true);
-      onReachBottom?.();
+      markReadIfNewestVisible();
     }
 
     didInitialScrollRef.current = true;
     lastKeyRef.current = lastKey;
-  }, [dividerReady, firstUnreadId, items.length, lastKey, onReachBottom]);
+  }, [
+    dividerReady,
+    firstUnreadId,
+    isAtBottom,
+    isNewestMessageVisible,
+    isPinnedToBottom,
+    items.length,
+    lastKey,
+    markReadIfNewestVisible,
+  ]);
 
   const loadEarlier = () => {
     if (loadingEarlier) return;
@@ -194,9 +198,8 @@ export function Timeline({
       stickRef.current = false;
       setAtBottom(false);
       el.scrollIntoView?.({ block: 'center' });
-      updateDividerInView();
     }
-  }, [highlightId, updateDividerInView]);
+  }, [highlightId]);
 
   const jumpToLatest = useCallback(() => {
     const el = containerRef.current;
@@ -205,9 +208,8 @@ export function Timeline({
     unreadLandingScrollTopRef.current = null;
     stickRef.current = true;
     setAtBottom(true);
-    updateDividerInView();
-    onReachBottom?.();
-  }, [onReachBottom, updateDividerInView]);
+    markReadIfNewestVisible();
+  }, [markReadIfNewestVisible]);
 
   const jumpToUnread = useCallback(() => {
     const el = containerRef.current;
@@ -218,7 +220,6 @@ export function Timeline({
     unreadLandingScrollTopRef.current = el.scrollTop;
     stickRef.current = false;
     setAtBottom(false);
-    setDividerInView(true);
   }, []);
 
   return (
@@ -314,12 +315,15 @@ export function Timeline({
             <div key={item.key}>
               {showUnreadDivider && (
                 <section
-                  className="my-2 flex items-center gap-3 px-4"
+                  className="my-3 flex items-center gap-3 px-4"
                   aria-label="New messages"
                   data-unread-divider
                 >
-                  <span className="text-3xs font-semibold uppercase tracking-wide text-accent-text">New</span>
-                  <div className="h-px flex-1 bg-edge" />
+                  <div className="h-px flex-1 bg-accent-border-muted/70" />
+                  <span className="rounded-full border border-accent-border-muted/60 bg-accent-tint/30 px-2.5 py-0.5 text-2xs font-semibold uppercase tracking-wide text-accent-text-strong">
+                    New messages
+                  </span>
+                  <div className="h-px flex-1 bg-accent-border-muted/70" />
                 </section>
               )}
               <MessageRow
@@ -349,28 +353,35 @@ export function Timeline({
           );
         })}
       </div>
-      {firstUnreadId != null && !dividerInView && !atBottom && (
-        <button
-          type="button"
-          data-testid="jump-to-unread"
-          aria-label={`Jump to ${unreadCount} new ${unreadCount === 1 ? 'message' : 'messages'}`}
-          onClick={jumpToUnread}
-          className="absolute left-1/2 top-2 z-10 -translate-x-1/2 rounded-full bg-accent px-3 py-1 text-xs font-semibold text-on-accent shadow-lg shadow-black/15 transition-colors hover:bg-accent-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
-        >
-          {unreadCount} new
-        </button>
-      )}
       {!atBottom && (
-        <button
-          type="button"
-          data-testid="jump-to-latest"
-          aria-label="Jump to latest messages"
-          title="Jump to latest messages"
-          onClick={jumpToLatest}
-          className="absolute bottom-4 right-4 z-10 inline-flex size-9 items-center justify-center rounded-full border border-edge-strong bg-surface-raised text-fg-secondary shadow-lg shadow-black/15 transition-colors hover:bg-surface-overlay hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
-        >
-          <ChevronDownIcon size={16} aria-hidden />
-        </button>
+        <div className="absolute bottom-4 right-4 z-10 inline-flex max-w-[calc(100%-2rem)] overflow-hidden rounded-full border border-edge-strong bg-surface-raised text-xs font-semibold text-fg-secondary shadow-lg shadow-black/15">
+          {firstUnreadId != null && unreadCount > 0 && (
+            <button
+              type="button"
+              data-testid="jump-to-unread"
+              aria-label={`Jump to ${unreadCount} new ${unreadCount === 1 ? 'message' : 'messages'}`}
+              onClick={jumpToUnread}
+              className="inline-flex h-9 items-center whitespace-nowrap border-r border-edge px-3 text-accent-text-strong transition-colors hover:bg-accent-tint/35 focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
+            >
+              {unreadCount} new
+            </button>
+          )}
+          <button
+            type="button"
+            data-testid="jump-to-latest"
+            aria-label={
+              unreadCount > 0
+                ? `Jump to latest messages, ${unreadCount} new ${unreadCount === 1 ? 'message' : 'messages'}`
+                : 'Jump to latest messages'
+            }
+            title="Jump to latest messages"
+            onClick={jumpToLatest}
+            className="inline-flex h-9 min-w-0 items-center gap-1.5 whitespace-nowrap px-3 transition-colors hover:bg-surface-overlay hover:text-fg focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
+          >
+            <ChevronDownIcon size={15} aria-hidden className="shrink-0" />
+            <span className="truncate">Jump to latest</span>
+          </button>
+        </div>
       )}
     </div>
   );

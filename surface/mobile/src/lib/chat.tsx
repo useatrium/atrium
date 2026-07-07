@@ -72,6 +72,16 @@ import type { VoiceSendMeta } from './voice';
 const PAGE_SIZE = 50;
 const SYNC_LIMIT = 500;
 
+export function channelsAfterReadCursorAdvance(
+  state: AppState,
+  channelId: string,
+  lastReadEventId: number,
+): Channel[] | null {
+  const current = state.channels.find((channel) => channel.id === channelId);
+  if (!current || (current.lastReadEventId ?? 0) >= lastReadEventId) return null;
+  return appReducer(state, { type: 'read-cursor', channelId, lastReadEventId }).channels;
+}
+
 export interface TypingEntry {
   user: UserRef;
   until: number;
@@ -246,6 +256,7 @@ export function ChatProvider({ session, children }: { session: Session; children
   const lastReadSentRef = useRef<Record<string, number>>({});
   const lastReadAtRef = useRef<Record<string, number>>({});
   const readTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const pendingReadMarksRef = useRef<Record<string, () => void>>({});
   const [hydrated, setHydrated] = useState(false);
   const [channelsLoaded, setChannelsLoaded] = useState(false);
   const [channelsError, setChannelsError] = useState<string | null>(null);
@@ -276,6 +287,22 @@ export function ChatProvider({ session, children }: { session: Session; children
       console.warn('failed to cache sync cursor', err);
     });
   }, []);
+
+  const cacheReadCursorAdvance = useCallback(
+    (channelId: string, lastReadEventId: number, reason: string) => {
+      const channels = channelsAfterReadCursorAdvance(
+        stateRef.current,
+        channelId,
+        lastReadEventId,
+      );
+      if (!channels) return false;
+      void eventCache.saveChannels(channels).catch((err: unknown) => {
+        console.warn(`failed to cache ${reason} read cursor`, err);
+      });
+      return true;
+    },
+    [],
+  );
 
   // A dead token can't recover — kick back to login instead of error-looping.
   const onApiError = useCallback(
@@ -762,9 +789,14 @@ export function ChatProvider({ session, children }: { session: Session; children
           channelId: payload.channelId,
           lastReadEventId: payload.lastReadEventId,
         });
+        cacheReadCursorAdvance(
+          payload.channelId,
+          payload.lastReadEventId,
+          'queued read.mark',
+        );
       }
     },
-    [pendingMessageFromSendPayload, pendingSpawnFromPayload],
+    [cacheReadCursorAdvance, pendingMessageFromSendPayload, pendingSpawnFromPayload],
   );
 
   useEffect(() => {
@@ -954,15 +986,33 @@ export function ChatProvider({ session, children }: { session: Session; children
 
   // iOS suspends timers in the background and kills idle sockets silently —
   // tell the WS layer the instant the app is foregrounded again.
-  const bindWake = useCallback((cb: () => void) => {
-    const sub = RNAppState.addEventListener('change', (s) => {
-      if (s === 'active') {
-        cb();
-        flushOnWakeRef.current();
+  const flushPendingReadMarks = useCallback(() => {
+    const pending = pendingReadMarksRef.current;
+    pendingReadMarksRef.current = {};
+    for (const [channelId, fire] of Object.entries(pending)) {
+      const timer = readTimersRef.current[channelId];
+      if (timer) {
+        clearTimeout(timer);
+        delete readTimersRef.current[channelId];
       }
-    });
-    return () => sub.remove();
+      fire();
+    }
   }, []);
+
+  const bindWake = useCallback(
+    (cb: () => void) => {
+      const sub = RNAppState.addEventListener('change', (s) => {
+        if (s === 'active') {
+          cb();
+          flushOnWakeRef.current();
+          return;
+        }
+        if (s === 'background' || s === 'inactive') flushPendingReadMarks();
+      });
+      return () => sub.remove();
+    },
+    [flushPendingReadMarks],
+  );
 
   const ws = useWs(
     hydrated,
@@ -997,6 +1047,7 @@ export function ChatProvider({ session, children }: { session: Session; children
           lastReadEventId,
         );
         dispatch({ type: 'read-cursor', channelId, lastReadEventId });
+        cacheReadCursorAdvance(channelId, lastReadEventId, 'remote');
       },
       onMuted: (channelId, muted) => {
         dispatch({ type: 'mute-changed', channelId, muted });
@@ -1028,11 +1079,14 @@ export function ChatProvider({ session, children }: { session: Session; children
     (channelId: string, lastEventId: number) => {
       if (lastEventId <= 0 || (lastReadSentRef.current[channelId] ?? 0) >= lastEventId) return;
       const fire = () => {
+        delete pendingReadMarksRef.current[channelId];
+        delete readTimersRef.current[channelId];
         const previous = lastReadSentRef.current[channelId] ?? 0;
         if (previous >= lastEventId) return;
         lastReadAtRef.current[channelId] = Date.now();
         lastReadSentRef.current[channelId] = lastEventId;
         dispatch({ type: 'read-cursor', channelId, lastReadEventId: lastEventId });
+        cacheReadCursorAdvance(channelId, lastEventId, 'local');
         void enqueueOp({
           opId: randomId(),
           opType: 'read.mark',
@@ -1050,14 +1104,16 @@ export function ChatProvider({ session, children }: { session: Session; children
         return;
       }
       if (readTimersRef.current[channelId]) clearTimeout(readTimersRef.current[channelId]);
+      pendingReadMarksRef.current[channelId] = fire;
       readTimersRef.current[channelId] = setTimeout(fire, 2000 - elapsed);
     },
-    [enqueueOp, onApiError],
+    [cacheReadCursorAdvance, enqueueOp, onApiError],
   );
 
   useEffect(
     () => () => {
       for (const timer of Object.values(readTimersRef.current)) clearTimeout(timer);
+      pendingReadMarksRef.current = {};
     },
     [],
   );

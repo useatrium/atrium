@@ -2,7 +2,11 @@
 
 import { buildTimelineItems, type ChatMessage } from '@atrium/surface-client';
 import { describe, expect, it, vi } from 'vitest';
-import { getUnreadDividerPlacement } from '../src/components/Timeline';
+import {
+  getUnreadDividerPlacement,
+  latestRealMessageId,
+  shouldMarkReadForVisibleLatest,
+} from '../src/components/Timeline';
 
 vi.mock('@shopify/flash-list', () => ({
   FlashList: () => null,
@@ -71,5 +75,56 @@ describe('getUnreadDividerPlacement', () => {
       firstUnreadIndex: null,
       unreadCount: 0,
     });
+  });
+});
+
+describe('latest visible mark-read gate', () => {
+  it('finds the latest real message after non-message rows', () => {
+    const items = buildTimelineItems([
+      message(10, '2026-07-02T12:00:00.000Z'),
+      message(11, '2026-07-03T12:00:00.000Z'),
+    ]);
+
+    expect(latestRealMessageId(items)).toBe(11);
+  });
+
+  it('requires user drag before visible latest marks read', () => {
+    const items = buildTimelineItems([
+      message(10, '2026-07-02T12:00:00.000Z'),
+      message(11, '2026-07-02T12:01:00.000Z'),
+    ]);
+    const latest = latestRealMessageId(items);
+    const latestItem = items.find((item) => item.message?.id === latest)!;
+
+    expect(
+      shouldMarkReadForVisibleLatest(
+        [{ isViewable: true, item: latestItem }],
+        latest,
+        false,
+      ),
+    ).toBe(false);
+    expect(
+      shouldMarkReadForVisibleLatest(
+        [{ isViewable: true, item: latestItem }],
+        latest,
+        true,
+      ),
+    ).toBe(true);
+  });
+
+  it('does not mark read for visible older messages', () => {
+    const items = buildTimelineItems([
+      message(10, '2026-07-02T12:00:00.000Z'),
+      message(11, '2026-07-02T12:01:00.000Z'),
+    ]);
+    const olderItem = items.find((item) => item.message?.id === 10)!;
+
+    expect(
+      shouldMarkReadForVisibleLatest(
+        [{ isViewable: true, item: olderItem }],
+        11,
+        true,
+      ),
+    ).toBe(false);
   });
 });
