@@ -2,7 +2,7 @@
 // dialog captures the harness and optional repo specs Centaur mounts into the
 // sandbox for the run.
 
-import { useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
+import { useCallback, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 import type {
   AgentProfile,
   ConnectionIdentity,
@@ -126,11 +126,19 @@ export function SpawnDialog({
   const referenceRepoBlocked = (item: ReferenceRepoInput) =>
     item.repo.trim().length > 0 && item.private && !githubReadyForPrivateRepos;
 
+  // Keep a stable onClose so useDialog's focus-trap effect runs once per open.
+  // Callers pass an inline onCancel (new identity each parent render), and an
+  // unstable dep would re-run the effect on every background re-render — its
+  // setTimeout would then yank focus back to the autofocused task field
+  // mid-edit, so a keystroke in a repo field can land in the task box.
+  const onCancelRef = useRef(onCancel);
+  onCancelRef.current = onCancel;
+  const handleClose = useCallback(() => onCancelRef.current(), []);
   useDialog({
     open: true,
     containerRef,
     initialFocusRef: taskInputRef,
-    onClose: onCancel,
+    onClose: handleClose,
     closeOnOutsidePointer: true,
   });
 

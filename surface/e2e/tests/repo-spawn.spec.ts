@@ -1,5 +1,15 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Locator } from '@playwright/test';
 import { login, unique } from './helpers.js';
+
+// Fill a controlled input and confirm the value committed before the next action.
+// (The dialog's focus stability is fixed in SpawnDialog; the toPass retry is
+// cheap insurance against an occasional dropped fill under heavy CI load.)
+async function fillField(locator: Locator, value: string): Promise<void> {
+  await expect(async () => {
+    await locator.fill(value);
+    await expect(locator).toHaveValue(value, { timeout: 1_000 });
+  }).toPass({ timeout: 10_000, intervals: [200, 400, 800] });
+}
 
 test('configured spawn posts working and reference repo specs', async ({ page }) => {
   await login(page, unique('repoer'), 'Repo Tester');
@@ -47,14 +57,21 @@ test('configured spawn posts working and reference repo specs', async ({ page })
   });
 
   await page.getByRole('button', { name: 'New agent' }).click();
-  await expect(page.getByRole('dialog', { name: 'Start an agent session' })).toBeVisible();
-  await page.getByPlaceholder('What should the agent do?').fill('inspect repo wiring');
-  await page.getByPlaceholder('owner/name').fill(' acme/app ');
-  await page.getByPlaceholder('main').fill(' dev ');
-  await page.getByRole('button', { name: 'Add reference repo' }).click();
-  await page.getByPlaceholder('owner/name').nth(1).fill(' acme/docs ');
-  await page.getByPlaceholder('ref').fill(' docs-main ');
-  await page.getByPlaceholder('subdir').fill(' docs ');
+  const dialog = page.getByRole('dialog', { name: 'Start an agent session' });
+  await expect(dialog).toBeVisible();
+
+  await fillField(dialog.getByPlaceholder('What should the agent do?'), 'inspect repo wiring');
+  await fillField(dialog.getByPlaceholder('owner/name').first(), ' acme/app ');
+  await fillField(dialog.getByPlaceholder('main'), ' dev ');
+
+  await dialog.getByRole('button', { name: 'Add reference repo' }).click();
+  // Wait for the new reference-repo row before filling it, so its fields exist
+  // and are attached to their onChange handlers.
+  const referenceRepo = dialog.getByPlaceholder('owner/name').nth(1);
+  await expect(referenceRepo).toBeVisible();
+  await fillField(referenceRepo, ' acme/docs ');
+  await fillField(dialog.getByPlaceholder('ref'), ' docs-main ');
+  await fillField(dialog.getByPlaceholder('subdir'), ' docs ');
 
   await expect(page.getByText('Working repo + 1 reference repo')).toBeVisible();
   await expect(page.getByText('mounts under ~/repos')).toBeVisible();
@@ -170,11 +187,13 @@ test('configured spawn posts private repo flags and GitHub identity override', a
   });
 
   await page.getByRole('button', { name: 'New agent' }).click();
-  await page.getByPlaceholder('What should the agent do?').fill('inspect private repo wiring');
-  await page.getByPlaceholder('owner/name').fill(' acme/private ');
+  await fillField(page.getByPlaceholder('What should the agent do?'), 'inspect private repo wiring');
+  await fillField(page.getByPlaceholder('owner/name').first(), ' acme/private ');
   await page.getByRole('checkbox', { name: 'Private repo' }).check();
   await page.getByRole('button', { name: 'Add reference repo' }).click();
-  await page.getByPlaceholder('owner/name').nth(1).fill(' acme/private-docs ');
+  const privateReferenceRepo = page.getByPlaceholder('owner/name').nth(1);
+  await expect(privateReferenceRepo).toBeVisible();
+  await fillField(privateReferenceRepo, ' acme/private-docs ');
   await page.getByRole('checkbox', { name: 'Private', exact: true }).check();
   await page.getByLabel(/GitHub identity/).selectOption('github:app_installation:12345');
 
@@ -209,8 +228,8 @@ test('configured spawn blocks private repos until GitHub is connected', async ({
   await login(page, unique('repoer-blocked'), 'Repo Blocked Tester');
 
   await page.getByRole('button', { name: 'New agent' }).click();
-  await page.getByPlaceholder('What should the agent do?').fill('inspect private repo');
-  await page.getByPlaceholder('owner/name').fill(' acme/private ');
+  await fillField(page.getByPlaceholder('What should the agent do?'), 'inspect private repo');
+  await fillField(page.getByPlaceholder('owner/name').first(), ' acme/private ');
   await page.getByRole('checkbox', { name: 'Private repo' }).check();
 
   await expect(page.getByText('Connect GitHub before starting a session with private repositories.')).toBeVisible();
