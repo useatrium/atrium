@@ -42,9 +42,12 @@ interface HubFile {
   tombstoned: boolean;
 }
 
+type FileCategory = 'image' | 'doc' | 'data' | 'app' | 'upload';
+
 interface HubFileListQuery {
   origin?: FileOrigin[];
   mediaKind?: string[];
+  category?: FileCategory;
   channelId?: string;
   sessionId?: string;
   label?: string;
@@ -901,6 +904,19 @@ export class ArtifactLedger {
     if (query.mediaKind && query.mediaKind.length > 0) {
       values.push(query.mediaKind);
       conditions.push(`l.media_kind = ANY($${++index}::text[])`);
+    }
+    // Gallery category chip → SQL predicate. Mirrors shared/matchesCategory so
+    // client chips and server pagination agree. Predicates are static (no params),
+    // so they don't consume a positional index.
+    if (query.category) {
+      const categoryPredicate: Record<FileCategory, string> = {
+        image: `l.media_kind = 'image'`,
+        doc: `(l.media_kind IN ('document', 'pdf') OR l.path ~* '\\.(md|markdown|mdown|txt|rtf|pdf|docx?|odt|pages)$' OR (l.media_kind = 'text' AND l.path !~* '\\.(csv|tsv|json|ndjson|ya?ml|xlsx?|xls|parquet|arrow)$'))`,
+        data: `(l.media_kind IN ('json', 'data') OR l.path ~* '\\.(csv|tsv|json|ndjson|ya?ml|xlsx?|xls|parquet|arrow)$')`,
+        app: `(a.path LIKE 'shared/apps/%' OR a.path LIKE 'shared/channels/%/apps/%')`,
+        upload: `l.origin = 'upload'`,
+      };
+      conditions.push(categoryPredicate[query.category]);
     }
     if (query.sessionId) {
       values.push(query.sessionId);
