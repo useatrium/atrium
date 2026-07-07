@@ -38,9 +38,11 @@ function renderTimeline({
     message({ id: 3, text: 'Message 3' }),
   ],
   unreadDividerAfterId = 1,
+  onReachBottom,
 }: {
   messages?: ChatMessage[];
   unreadDividerAfterId?: number | null;
+  onReachBottom?: () => void;
 } = {}) {
   render(
     <ThemeProvider>
@@ -58,6 +60,7 @@ function renderTimeline({
         onRetry={vi.fn()}
         unreadDividerAfterId={unreadDividerAfterId}
         dividerReady
+        onReachBottom={onReachBottom}
       />
     </ThemeProvider>,
   );
@@ -105,5 +108,53 @@ describe('Timeline unread divider', () => {
     const pill = screen.getByTestId('jump-to-unread');
     expect(pill.textContent).toBe('2 new');
     expect(pill.getAttribute('aria-label')).toBe('Jump to 2 new messages');
+  });
+
+  it('does not mark read when landing on the divider leaves the newest message off-screen', () => {
+    const onReachBottom = vi.fn();
+    const rect = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      if (this.getAttribute('role') === 'log') {
+        return { top: 0, bottom: 200, left: 0, right: 300, width: 300, height: 200, x: 0, y: 0, toJSON: vi.fn() };
+      }
+      if (this.getAttribute('data-eid') === '3') {
+        return { top: 420, bottom: 460, left: 0, right: 300, width: 300, height: 40, x: 0, y: 420, toJSON: vi.fn() };
+      }
+      return { top: 0, bottom: 20, left: 0, right: 300, width: 300, height: 20, x: 0, y: 0, toJSON: vi.fn() };
+    });
+
+    renderTimeline({ onReachBottom });
+
+    expect(onReachBottom).not.toHaveBeenCalled();
+    rect.mockRestore();
+  });
+
+  it('marks read when the newest message row is visible', () => {
+    const onReachBottom = vi.fn();
+    let latestVisible = false;
+    const rect = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      if (this.getAttribute('role') === 'log') {
+        return { top: 0, bottom: 200, left: 0, right: 300, width: 300, height: 200, x: 0, y: 0, toJSON: vi.fn() };
+      }
+      if (this.getAttribute('data-eid') === '3') {
+        return latestVisible
+          ? { top: 150, bottom: 190, left: 0, right: 300, width: 300, height: 40, x: 0, y: 150, toJSON: vi.fn() }
+          : { top: 420, bottom: 460, left: 0, right: 300, width: 300, height: 40, x: 0, y: 420, toJSON: vi.fn() };
+      }
+      return { top: 0, bottom: 20, left: 0, right: 300, width: 300, height: 20, x: 0, y: 0, toJSON: vi.fn() };
+    });
+
+    renderTimeline({ onReachBottom });
+    const log = screen.getByRole('log', { name: 'Messages' });
+    expect(onReachBottom).not.toHaveBeenCalled();
+
+    latestVisible = true;
+    fireEvent.scroll(log);
+
+    expect(onReachBottom).toHaveBeenCalled();
+    rect.mockRestore();
   });
 });
