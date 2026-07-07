@@ -4,6 +4,7 @@ import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useRef, useState } from 'react';
 import { View } from 'react-native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { registerGlobals } from '@livekit/react-native';
 import { registerVoIPPush, setRTCAudioSessionConfiguration } from 'expo-callkit-telecom';
 import {
@@ -165,14 +166,16 @@ export default function RootLayout() {
     };
   }, []);
 
-  if (!initialPrefs) return null;
-
   return (
-    <ThemeProvider initialPrefs={initialPrefs}>
-      <SessionProvider>
-        <PrefsSessionBridge />
-        <RootNavigator />
-      </SessionProvider>
-    </ThemeProvider>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      {initialPrefs ? (
+        <ThemeProvider initialPrefs={initialPrefs}>
+          <SessionProvider>
+            <PrefsSessionBridge />
+            <RootNavigator />
+          </SessionProvider>
+        </ThemeProvider>
+      ) : null}
+    </GestureHandlerRootView>
   );
 }

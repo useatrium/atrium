@@ -1,74 +1,17 @@
-import { memo, useCallback, useEffect, useId, useRef, useState, type KeyboardEvent, type SVGProps } from 'react';
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
+  type SVGProps,
+} from 'react';
 import type { ChatMessage, UserRef } from '@atrium/surface-client';
 import { encodeEventHandle } from '@atrium/surface-client/handle';
-
-/** Mirrors the server's REACTION_EMOJI allowlist (server/src/events.ts). */
-export const REACTION_EMOJI = [
-  '👍',
-  '👎',
-  '✅',
-  '❌',
-  '👀',
-  '🎉',
-  '❤️',
-  '😂',
-  '😄',
-  '😅',
-  '😊',
-  '😍',
-  '🤔',
-  '🤯',
-  '😱',
-  '😢',
-  '😭',
-  '😡',
-  '🙏',
-  '👏',
-  '🙌',
-  '💪',
-  '🤝',
-  '👋',
-  '🫡',
-  '🤷',
-  '🤦',
-  '💀',
-  '🔥',
-  '✨',
-  '⭐',
-  '💯',
-  '🚀',
-  '🐛',
-  '🔧',
-  '🛠️',
-  '⚙️',
-  '💡',
-  '📌',
-  '📎',
-  '📝',
-  '✏️',
-  '🔍',
-  '⏳',
-  '⏰',
-  '📅',
-  '☕',
-  '🍕',
-  '🎯',
-  '🏁',
-  '🚧',
-  '⚠️',
-  '🚨',
-  '❓',
-  '❗',
-  '➕',
-  '💬',
-  '🧵',
-  '🤖',
-  '🧠',
-  '💸',
-  '📈',
-  '📉',
-  '🎂',
-];
 import { SessionCard } from '../sessions/SessionCard';
 import type { Session } from '../sessions/types';
 import { formatBytes, formatGutterTime, formatTime } from '@atrium/surface-client';
@@ -77,17 +20,33 @@ import { Tooltip } from './a11y';
 import { CornerUpLeftIcon, FileIcon, SmilePlusIcon } from './icons';
 import { Lightbox } from './media';
 import type { PreviewFile } from './media';
+import { MessageActionMenu, type MessageActionMenuState } from './MessageActionMenu';
 import { CompactMarkdownText, MessageText } from './MessageText';
+import { ReactionPicker } from './ReactionPicker';
 import { TimestampDisclosure } from './TimestampDisclosure';
-import { useDialog } from '../useDialog';
+import { useLongPress } from './useLongPress';
 import { VoiceMessage } from '../VoiceMessage';
 import { entryShareUrl, fileShareUrl } from '../lib/publicUrl';
+
+export { REACTION_EMOJI } from '@atrium/surface-client/reactions';
 
 type MessageWithHandle = ChatMessage & { handle?: string | null };
 type ReactionDisplayUser = {
   id: string;
   name: string;
 };
+
+type SwipeState = {
+  pointerId: number;
+  startX: number;
+  startY: number;
+  offset: number;
+  dragging: boolean;
+  cancelled: boolean;
+};
+
+const SWIPE_REPLY_THRESHOLD_PX = 64;
+const SWIPE_REPLY_MAX_OFFSET_PX = 96;
 
 function reactionUserName(user: UserRef | undefined): string {
   const displayName = user?.displayName.trim();
@@ -213,13 +172,15 @@ export const MessageRow = memo(function MessageRow({
     isStructuredTextForMarkup(m.text) &&
     !!onMarkupEntry;
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [pickerIndex, setPickerIndex] = useState(0);
   const [openReactionEmoji, setOpenReactionEmoji] = useState<string | null>(null);
   const reactionPopoverBaseId = useId();
-  const pickerRef = useRef<HTMLDivElement | null>(null);
+  const rowRef = useRef<HTMLDivElement | null>(null);
   const reactionButtonRef = useRef<HTMLButtonElement | null>(null);
-  const emojiRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const mouseOpenedPickerRef = useRef(false);
+  const [actionMenu, setActionMenu] = useState<MessageActionMenuState | null>(null);
+  const swipeRef = useRef<SwipeState | null>(null);
+  const [swipeOffset, setSwipeOffset] = useState(0);
+  const [swiping, setSwiping] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
   const [textCopied, setTextCopied] = useState(false);
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
@@ -231,24 +192,6 @@ export const MessageRow = memo(function MessageRow({
   const react = (emoji: string) => {
     setPickerOpen(false);
     onReact?.(m, emoji).catch(() => {});
-  };
-
-  const closePicker = useCallback(() => setPickerOpen(false), []);
-  useDialog({
-    open: pickerOpen,
-    containerRef: pickerRef,
-    invokerRef: reactionButtonRef,
-    closeOnOutsidePointer: true,
-    onClose: closePicker,
-  });
-  useEffect(() => {
-    if (!pickerOpen) return;
-    emojiRefs.current[pickerIndex]?.focus();
-  }, [pickerOpen, pickerIndex]);
-  const movePicker = (next: number) => {
-    const clamped = Math.max(0, Math.min(REACTION_EMOJI.length - 1, next));
-    setPickerIndex(clamped);
-    window.setTimeout(() => emojiRefs.current[clamped]?.focus());
   };
   const copyEntryLink = useCallback(() => {
     if (!entryHandle || typeof navigator === 'undefined') return;
@@ -379,11 +322,131 @@ export const MessageRow = memo(function MessageRow({
     onDelete!(m).catch(() => {});
   };
 
+  const actionMenuAllowed = (canThread || canEdit || canDelete || canReact || canAnnotate || canMarkupReply) && !editing;
+  const closeActionMenu = useCallback(() => setActionMenu(null), []);
+  const openSheetMenu = useCallback(() => {
+    if (!actionMenuAllowed) return;
+    setPickerOpen(false);
+    setActionMenu({ mode: 'sheet' });
+  }, [actionMenuAllowed]);
+  const onRowContextMenu = useCallback(
+    (event: ReactMouseEvent<HTMLDivElement>) => {
+      if (event.defaultPrevented) return;
+      if (!actionMenuAllowed) return;
+      if (isTouchContextMenu(event.nativeEvent)) {
+        event.preventDefault();
+        return;
+      }
+      event.preventDefault();
+      setPickerOpen(false);
+      setActionMenu({ mode: 'popover', anchor: { x: event.clientX, y: event.clientY } });
+    },
+    [actionMenuAllowed],
+  );
+  const longPress = useLongPress({
+    disabled: !actionMenuAllowed,
+    onLongPress: openSheetMenu,
+  });
+  const resetSwipe = useCallback(() => {
+    swipeRef.current = null;
+    setSwiping(false);
+    setSwipeOffset(0);
+  }, []);
+  const onSwipePointerDown = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (!canThread || event.pointerType !== 'touch' || isInteractiveTarget(event.target)) return;
+      swipeRef.current = {
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startY: event.clientY,
+        offset: 0,
+        dragging: false,
+        cancelled: false,
+      };
+      setSwiping(false);
+      setSwipeOffset(0);
+    },
+    [canThread],
+  );
+  const onSwipePointerMove = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    const swipe = swipeRef.current;
+    if (!swipe || swipe.pointerId !== event.pointerId || swipe.cancelled) return;
+    const dx = event.clientX - swipe.startX;
+    const dy = event.clientY - swipe.startY;
+    const absDx = Math.abs(dx);
+    const absDy = Math.abs(dy);
+
+    if (!swipe.dragging) {
+      if (absDy > 10 && absDy > absDx) {
+        swipe.cancelled = true;
+        setSwipeOffset(0);
+        return;
+      }
+      if (dx < -8) {
+        swipe.cancelled = true;
+        return;
+      }
+      if (dx < 8 || dx < absDy * 1.2) return;
+      swipe.dragging = true;
+      setSwiping(true);
+      event.currentTarget.setPointerCapture(event.pointerId);
+    }
+
+    event.preventDefault();
+    const nextOffset = Math.min(SWIPE_REPLY_MAX_OFFSET_PX, Math.max(0, dx));
+    swipe.offset = nextOffset;
+    setSwipeOffset(nextOffset);
+  }, []);
+  const finishSwipe = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>, openThread: boolean) => {
+      const swipe = swipeRef.current;
+      if (!swipe || swipe.pointerId !== event.pointerId) return;
+      const shouldReply = openThread && swipe.dragging && swipe.offset >= SWIPE_REPLY_THRESHOLD_PX && !!canThread;
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }
+      resetSwipe();
+      if (shouldReply) onOpenThread!(threadTargetEventId!);
+    },
+    [canThread, onOpenThread, resetSwipe, threadTargetEventId],
+  );
+  const onMessagePointerDown = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      longPress.onPointerDown(event);
+      onSwipePointerDown(event);
+    },
+    [longPress.onPointerDown, onSwipePointerDown],
+  );
+  const onMessagePointerMove = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      longPress.onPointerMove(event);
+      onSwipePointerMove(event);
+    },
+    [longPress.onPointerMove, onSwipePointerMove],
+  );
+  const onMessagePointerUp = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      longPress.onPointerUp();
+      finishSwipe(event, true);
+    },
+    [finishSwipe, longPress.onPointerUp],
+  );
+  const onMessagePointerCancel = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      longPress.onPointerCancel();
+      finishSwipe(event, false);
+    },
+    [finishSwipe, longPress.onPointerCancel],
+  );
+
   return (
-    // biome-ignore lint/a11y/noStaticElementInteractions: pointer hover cleanup only closes a mouse-opened reaction picker; keyboard focus is unaffected.
+    // biome-ignore lint/a11y/noStaticElementInteractions: pointer/context handlers expose existing message actions without changing keyboard access.
     <div
+      ref={rowRef}
       data-eid={m.id ?? undefined}
       data-entry-handle={entryHandle ?? undefined}
+      tabIndex={-1}
+      onContextMenu={onRowContextMenu}
       onMouseLeave={() => {
         if (mouseOpenedPickerRef.current) setPickerOpen(false);
       }}
@@ -403,7 +466,31 @@ export const MessageRow = memo(function MessageRow({
           </TimestampDisclosure>
         )}
       </div>
-      <div className="relative min-w-0 max-w-3xl flex-1">
+      {canThread && (swiping || swipeOffset > 0) && (
+        <div
+          aria-hidden="true"
+          style={{
+            opacity: Math.min(1, swipeOffset / SWIPE_REPLY_THRESHOLD_PX),
+            transform: `translateY(-50%) scale(${0.85 + Math.min(0.25, swipeOffset / 256)})`,
+          }}
+          className="pointer-events-none absolute left-14 top-1/2 flex h-7 w-7 items-center justify-center rounded-full border border-accent-border/60 bg-accent-hover/15 text-accent-text"
+        >
+          <CornerUpLeftIcon size={15} />
+        </div>
+      )}
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: touch handlers expose the same message actions on phones; keyboard users keep the toolbar path. */}
+      <div
+        onPointerDown={onMessagePointerDown}
+        onPointerMove={onMessagePointerMove}
+        onPointerUp={onMessagePointerUp}
+        onPointerCancel={onMessagePointerCancel}
+        onLostPointerCapture={onMessagePointerCancel}
+        onContextMenu={longPress.onContextMenu}
+        style={swipeOffset > 0 ? { transform: `translateX(${swipeOffset}px)` } : undefined}
+        className={`relative min-w-0 max-w-3xl flex-1 ${
+          longPress.pressing ? '[-webkit-touch-callout:none] select-none' : ''
+        } ${swiping ? 'transition-none' : 'transition-transform duration-150 ease-out'}`}
+      >
         {!grouped && (
           <div className="flex items-baseline gap-2">
             <span className="text-sm font-semibold text-fg">{m.author.displayName}</span>
@@ -586,56 +673,13 @@ export const MessageRow = memo(function MessageRow({
             {m.replyCount} {m.replyCount === 1 ? 'reply' : 'replies'} →
           </button>
         )}
-        {pickerOpen && (
-          <div
-            ref={pickerRef}
-            role="dialog"
-            aria-label="Add reaction"
-            onKeyDown={(e) => {
-              const colCount = 8;
-              if (e.key === 'ArrowRight') {
-                e.preventDefault();
-                movePicker(pickerIndex + 1);
-              } else if (e.key === 'ArrowLeft') {
-                e.preventDefault();
-                movePicker(pickerIndex - 1);
-              } else if (e.key === 'ArrowDown') {
-                e.preventDefault();
-                movePicker(pickerIndex + colCount);
-              } else if (e.key === 'ArrowUp') {
-                e.preventDefault();
-                movePicker(pickerIndex - colCount);
-              } else if (e.key === 'Home') {
-                e.preventDefault();
-                movePicker(0);
-              } else if (e.key === 'End') {
-                e.preventDefault();
-                movePicker(REACTION_EMOJI.length - 1);
-              }
-            }}
-            className="absolute bottom-full right-0 z-10 mb-1 grid max-h-40 w-64 grid-cols-8 gap-0.5 overflow-y-auto rounded-md border border-edge-strong bg-surface-overlay p-1 shadow-lg"
-          >
-            {/* biome-ignore lint/a11y/useSemanticElements: emoji picker uses ARIA grid navigation over buttons; a table would misrepresent the control. */}
-            <div role="grid" aria-label="Reaction choices" className="contents">
-              {REACTION_EMOJI.map((e2, i) => (
-                <button
-                  type="button"
-                  key={e2}
-                  ref={(el) => {
-                    emojiRefs.current[i] = el;
-                  }}
-                  tabIndex={i === pickerIndex ? 0 : -1}
-                  onFocus={() => setPickerIndex(i)}
-                  onClick={() => react(e2)}
-                  aria-label={`React with ${e2}`}
-                  className="rounded px-1 py-1 text-base leading-none hover:bg-edge-strong focus:bg-edge-strong"
-                >
-                  {e2}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
+        <ReactionPicker
+          open={pickerOpen}
+          onClose={() => setPickerOpen(false)}
+          onSelect={react}
+          invokerRef={reactionButtonRef}
+          className="absolute bottom-full right-0 z-10 mb-1 w-72"
+        />
         {(canThread || canEdit || canDelete || canReact || canAnnotate || canMarkupReply) && !editing && (
           <div className="pointer-events-none absolute -top-3 right-0 flex gap-1 opacity-0 focus-within:pointer-events-auto focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100">
             {canReact && (
@@ -650,7 +694,6 @@ export const MessageRow = memo(function MessageRow({
                     mouseOpenedPickerRef.current = false;
                   }}
                   onClick={() => {
-                    setPickerIndex(0);
                     setPickerOpen((v) => !v);
                   }}
                   aria-label="Add reaction"
@@ -755,6 +798,34 @@ export const MessageRow = memo(function MessageRow({
           </div>
         )}
       </div>
+      <MessageActionMenu
+        state={actionMenu}
+        onClose={closeActionMenu}
+        restoreFocusRef={rowRef}
+        canThread={!!canThread}
+        canEdit={canEdit}
+        canDelete={canDelete}
+        canReact={canReact}
+        canAnnotate={canAnnotate}
+        canCopyMessageText={canCopyMessageText}
+        canMarkupReply={canMarkupReply && entryHandle != null}
+        deleteConfirming={deleteAsk}
+        onReact={react}
+        onReplyThread={() => onOpenThread!(threadTargetEventId!)}
+        onMarkupReply={() => {
+          if (entryHandle) onMarkupEntry?.(entryHandle, m);
+        }}
+        onCopyLink={() => {
+          setPickerOpen(false);
+          copyEntryLink();
+        }}
+        onCopyText={() => {
+          setPickerOpen(false);
+          copyBlockText();
+        }}
+        onEdit={startEdit}
+        onDelete={onDeleteClick}
+      />
     </div>
   );
 });
@@ -776,6 +847,14 @@ function mediaKindForContentType(contentType: string): PreviewFile['mediaKind'] 
   if (contentType === 'application/pdf') return 'document';
   if (contentType.startsWith('text/')) return 'text';
   return 'opaque';
+}
+
+function isTouchContextMenu(event: MouseEvent): boolean {
+  return 'pointerType' in event && event.pointerType === 'touch';
+}
+
+function isInteractiveTarget(target: EventTarget): boolean {
+  return target instanceof Element && target.closest('button,a,input,textarea,select,[role="button"],[contenteditable="true"]') != null;
 }
 
 function RemovedAttachmentPlaceholder({ filename }: { filename: string }) {
