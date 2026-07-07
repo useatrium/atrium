@@ -163,6 +163,11 @@ export default function ThreadScreen() {
           onCancelEdit={() => setEditing(null)}
           allowAttachments
           showBroadcastToggle
+          previewEntryLinks
+          serverUrl={chat.serverUrl}
+          resolveEntry={chat.resolveEntry}
+          onOpenChannel={(channelId) => router.push(`/channel/${channelId}`)}
+          onOpenSession={(sessionId) => router.push(`/session/${sessionId}`)}
           uploadFile={chat.uploadFile}
         />
       </KeyboardAvoidingView>

@@ -73,6 +73,7 @@ import {
   type OptimisticSuggestionSend,
 } from '../../../src/components/work/SuggestionsStrip';
 import { AnswerProposals } from '../../../src/components/work/AnswerProposals';
+import { EntryInlineChip } from '../../../src/components/EntryQuoteCards';
 import { SessionMarkdown } from '../../../src/components/Markdown';
 import { PlanPanel } from '../../../src/components/PlanPanel';
 import { ReasoningBlock } from '../../../src/components/ReasoningBlock';
@@ -84,7 +85,7 @@ import {
   type EntryReferenceSummary,
 } from '../../../src/lib/entryReferences';
 import { useRequiredSession, useSession } from '../../../src/lib/session';
-import { isEntryHandle } from '../../../src/lib/entryLinks';
+import { extractEntryLinkHandles, isEntryHandle } from '../../../src/lib/entryLinks';
 import { selectionHaptic } from '../../../src/lib/haptics';
 import {
   loadMarkupDraftFromEntry,
@@ -1192,9 +1193,19 @@ export default function SessionScreen() {
     const y = itemOffsets.current[itemId];
     if (typeof y === 'number') scrollRef.current?.scrollTo({ y: Math.max(y - 8, 0), animated: true });
   }, []);
+  const openEntryChannel = useCallback((channelId: string) => {
+    router.push(`/channel/${channelId}`);
+  }, []);
+  const openEntrySession = useCallback((sessionId: string) => {
+    router.push(`/session/${sessionId}`);
+  }, []);
 
   const displayCancelAsk = id && chat.failedSessionCancels[id] ? 'failed' : cancelAsk;
   const visibleSteerError = id ? (steerError ?? chat.failedSessionSteers[id] ?? null) : steerError;
+  const steerEntryLinkHandles = useMemo(
+    () => extractEntryLinkHandles(steerText, chat.serverUrl),
+    [chat.serverUrl, steerText],
+  );
   const cancelErrorMessage =
     displayCancelAsk === 'failed'
       ? canStopTurn
@@ -1838,7 +1849,15 @@ export default function SessionScreen() {
                         <TextBlock item={item} />
                       </Pressable>
                     ) : item.type === 'user_message' ? (
-                      <SteerRow text={item.text} ts={item.ts} provenance={steerProvenanceForMessage(item.id)} />
+                      <SteerRow
+                        text={item.text}
+                        ts={item.ts}
+                        provenance={steerProvenanceForMessage(item.id)}
+                        serverUrl={chat.serverUrl}
+                        resolveEntry={chat.resolveEntry}
+                        onOpenChannel={openEntryChannel}
+                        onOpenSession={openEntrySession}
+                      />
                     ) : item.type === 'question' ? (
                       <MobileQuestionTranscriptCard
                         item={item}
@@ -1863,6 +1882,10 @@ export default function SessionScreen() {
               text={pending.text}
               ts={pending.ts}
               provenance={{ provenance: pending.provenance, acceptedByMe: pending.acceptedByMe }}
+              serverUrl={chat.serverUrl}
+              resolveEntry={chat.resolveEntry}
+              onOpenChannel={openEntryChannel}
+              onOpenSession={openEntrySession}
             />
           ))}
         </ScrollView>
@@ -1992,25 +2015,52 @@ export default function SessionScreen() {
                 </Text>
               </Pressable>
             ) : null}
-            <TextInput
-              accessibilityLabel="Session message"
-              value={steerText}
-              onChangeText={setSteerText}
-              placeholder="Message this session"
-              placeholderTextColor={colors.textFaint}
-              multiline
-              style={{
-                flex: 1,
-                minHeight: 38,
-                maxHeight: 110,
-                borderRadius: radius.md,
-                backgroundColor: colors.bgInput,
-                color: colors.text,
-                paddingHorizontal: space.md,
-                paddingVertical: space.sm,
-                fontSize: font.md,
-              }}
-            />
+            <View style={{ flex: 1, gap: 6 }}>
+              {steerEntryLinkHandles.length > 0 ? (
+                <View
+                  testID="session-steer-entry-link-preview"
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    flexWrap: 'wrap',
+                    gap: 6,
+                    paddingHorizontal: space.xs,
+                  }}
+                >
+                  <Text style={{ color: colors.textMuted, fontSize: font.xs, fontWeight: '700' }}>
+                    referencing:
+                  </Text>
+                  {steerEntryLinkHandles.map((handle) => (
+                    <EntryInlineChip
+                      key={handle}
+                      handle={handle}
+                      resolveEntry={chat.resolveEntry}
+                      onOpenChannel={openEntryChannel}
+                      onOpenSession={openEntrySession}
+                    />
+                  ))}
+                </View>
+              ) : null}
+              <TextInput
+                accessibilityLabel="Session message"
+                value={steerText}
+                onChangeText={setSteerText}
+                placeholder="Message this session"
+                placeholderTextColor={colors.textFaint}
+                multiline
+                style={{
+                  alignSelf: 'stretch',
+                  minHeight: 38,
+                  maxHeight: 110,
+                  borderRadius: radius.md,
+                  backgroundColor: colors.bgInput,
+                  color: colors.text,
+                  paddingHorizontal: space.md,
+                  paddingVertical: space.sm,
+                  fontSize: font.md,
+                }}
+              />
+            </View>
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Send session message"

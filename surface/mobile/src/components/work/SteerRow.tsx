@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { Text, View } from 'react-native';
 import {
   containsCriticMarkup,
@@ -5,8 +6,11 @@ import {
   parseMarkupSteer,
   type SteerProvenance,
 } from '@atrium/surface-client';
+import type { EntryResolver } from '../../lib/entryResolve';
 import { font, space, useTheme } from '../../lib/theme';
 import { CriticMarkupText } from '../CriticMarkupText';
+import { EntryReferenceMarkdownProvider } from '../Markdown';
+import { MessageText } from '../MessageText';
 import { TimestampText } from '../TimestampText';
 import { MarkupSteerCard } from './MarkupSteerCard';
 
@@ -61,14 +65,26 @@ export function SteerRow({
   text,
   ts,
   provenance,
+  serverUrl,
+  resolveEntry,
+  onOpenChannel,
+  onOpenSession,
 }: {
   text: string;
   ts?: string;
   provenance?: SteerRowProvenance | null;
+  serverUrl?: string;
+  resolveEntry?: EntryResolver;
+  onOpenChannel?: (channelId: string) => void;
+  onOpenSession?: (sessionId: string) => void;
 }) {
   const { colors } = useTheme();
   const time = ts ? formatTurnTime(ts) : '';
   const markupSteer = parseMarkupSteer(text);
+  const entryReferenceMarkdown = useMemo(
+    () => (serverUrl ? { resolveEntry, onOpenChannel, onOpenSession } : {}),
+    [onOpenChannel, onOpenSession, resolveEntry, serverUrl],
+  );
 
   if (markupSteer || containsCriticMarkup(text)) {
     return (
@@ -103,7 +119,9 @@ export function SteerRow({
           style={{ color: colors.textMuted, fontSize: font.xs, fontVariant: ['tabular-nums'] }}
         />
       ) : null}
-      <Text style={{ color: colors.text, fontSize: font.sm }}>{text}</Text>
+      <EntryReferenceMarkdownProvider value={entryReferenceMarkdown}>
+        <MessageText text={text} meHandle={null} />
+      </EntryReferenceMarkdownProvider>
       <SteerProvenanceByline provenance={provenance} />
     </View>
   );
