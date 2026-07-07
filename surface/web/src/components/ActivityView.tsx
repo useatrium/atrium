@@ -86,7 +86,7 @@ export function ActivityView({
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-surface">
       <div className="border-b border-edge px-4 py-3">
-        <h2 className="text-sm font-bold text-fg">Activity</h2>
+        <h2 className="text-sm font-bold text-fg">Inbox</h2>
       </div>
       {error && (
         <button
