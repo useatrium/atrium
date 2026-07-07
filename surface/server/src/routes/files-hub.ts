@@ -14,9 +14,13 @@ import { getObjectBytes, getObjectStream, headObject, presignGet, uploadObject }
 import { sanitizeFilename } from '../safe-filename.js';
 import { writeBackArtifactById, writeBackDeleteById } from '../artifact-writeback.js';
 
+type FileCategory = 'image' | 'doc' | 'data' | 'app' | 'upload';
+const FILE_CATEGORY_VALUES: readonly FileCategory[] = ['image', 'doc', 'data', 'app', 'upload'];
+
 type HubFileListQuery = {
   origin?: Array<'upload' | 'agent' | 'workspace'>;
   mediaKind?: string[];
+  category?: FileCategory;
   channelId?: string;
   sessionId?: string;
   label?: string;
@@ -57,6 +61,9 @@ function parseListQuery(raw: Record<string, unknown>): HubFileListQuery {
   return {
     ...(stringArray(raw.origin) ? { origin: stringArray(raw.origin) as HubFileListQuery['origin'] } : {}),
     ...(stringArray(raw.mediaKind) ? { mediaKind: stringArray(raw.mediaKind) } : {}),
+    ...(typeof raw.category === 'string' && FILE_CATEGORY_VALUES.includes(raw.category as FileCategory)
+      ? { category: raw.category as FileCategory }
+      : {}),
     ...(typeof raw.channelId === 'string' ? { channelId: raw.channelId } : {}),
     ...(typeof raw.sessionId === 'string' ? { sessionId: raw.sessionId } : {}),
     ...(typeof raw.label === 'string' && raw.label.trim() ? { label: raw.label.trim() } : {}),

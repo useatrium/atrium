@@ -244,6 +244,7 @@ export function createApi(opts: ApiOptions = {}) {
     const params = new URLSearchParams();
     if (query.origin && query.origin.length > 0) params.set('origin', query.origin.join(','));
     if (query.mediaKind && query.mediaKind.length > 0) params.set('mediaKind', query.mediaKind.join(','));
+    if (query.category) params.set('category', query.category);
     if (query.channelId) params.set('channelId', query.channelId);
     if (query.sessionId) params.set('sessionId', query.sessionId);
     if (query.label) params.set('label', query.label);

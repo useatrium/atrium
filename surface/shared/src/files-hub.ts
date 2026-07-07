@@ -33,6 +33,8 @@ export interface HubFile {
 export interface HubFileListQuery {
   origin?: FileOrigin[];
   mediaKind?: string[];
+  /** Human-facing category chip (Gallery). Server-side so pagination stays correct. */
+  category?: FileCategory;
   channelId?: string;
   sessionId?: string;
   label?: string;
@@ -43,6 +45,72 @@ export interface HubFileListQuery {
   sort?: 'recent' | 'name' | 'size';
   cursor?: string;
   limit?: number;
+}
+
+// === Gallery categories (shared by web + mobile) ===
+// Human categories that replace the ledger-internal Source/media_kind vocabulary
+// on the Gallery surface. Chips are non-exclusive filters (a file can match more
+// than one); `matchesCategory` is the single source of truth, mirrored by the
+// server's SQL predicate so client filtering and server filtering agree.
+
+export type FileCategory = 'image' | 'doc' | 'data' | 'app' | 'upload';
+
+export interface FileCategoryChip {
+  key: FileCategory;
+  /** Plural label for the chip, e.g. "Images". */
+  label: string;
+}
+
+/** Chip order for the Gallery toolbar (an "All" chip precedes these in the UI). */
+export const FILE_CATEGORIES: FileCategoryChip[] = [
+  { key: 'image', label: 'Images' },
+  { key: 'doc', label: 'Docs' },
+  { key: 'data', label: 'Data' },
+  { key: 'app', label: 'Apps' },
+  { key: 'upload', label: 'Uploads' },
+];
+
+const APP_PATH_RE = /^shared\/apps\/|^shared\/channels\/[^/]+\/apps\//;
+const DOC_EXT_RE = /\.(md|markdown|mdown|txt|rtf|pdf|docx?|odt|pages)$/i;
+const DATA_EXT_RE = /\.(csv|tsv|json|ndjson|ya?ml|xlsx?|xls|parquet|arrow)$/i;
+
+/** True when a path is agent-app source (`shared/apps/…` or channel-scoped apps). */
+export function isAppPath(path: string): boolean {
+  return APP_PATH_RE.test(path);
+}
+
+/** Whether a file belongs under a given Gallery category chip. Non-exclusive. */
+export function matchesCategory(
+  file: Pick<HubFile, 'mediaKind' | 'path' | 'origin'>,
+  category: FileCategory,
+): boolean {
+  switch (category) {
+    case 'image':
+      return file.mediaKind === 'image';
+    case 'doc':
+      return (
+        file.mediaKind === 'document' ||
+        file.mediaKind === 'pdf' ||
+        DOC_EXT_RE.test(file.path) ||
+        (file.mediaKind === 'text' && !DATA_EXT_RE.test(file.path))
+      );
+    case 'data':
+      return file.mediaKind === 'json' || file.mediaKind === 'data' || DATA_EXT_RE.test(file.path);
+    case 'app':
+      return isAppPath(file.path);
+    case 'upload':
+      return file.origin === 'upload';
+  }
+}
+
+/** Short uppercase type badge for a card, e.g. PNG · CSV · PDF · MD · APP. */
+export function fileTypeLabel(file: Pick<HubFile, 'path' | 'mime' | 'mediaKind'>): string {
+  if (isAppPath(file.path)) return 'APP';
+  const base = file.path.split('/').pop() ?? file.path;
+  const ext = base.includes('.') ? base.split('.').pop()!.toLowerCase() : '';
+  if (ext && ext.length <= 5 && /^[a-z0-9]+$/.test(ext)) return ext.toUpperCase();
+  if (file.mediaKind) return file.mediaKind.toUpperCase().slice(0, 4);
+  return 'FILE';
 }
 
 export interface HubFileListResult {
