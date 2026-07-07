@@ -1774,6 +1774,7 @@ export function SessionPane({
             onTyping={onComposerTyping}
             allowAttachments={isDriver}
             allowVoice={false}
+            previewEntryLinks
             footer={
               isDriver ? (
                 canPickEffort ? (

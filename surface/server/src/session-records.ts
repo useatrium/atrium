@@ -1300,7 +1300,12 @@ function codexToolName(item: CodexItem): string {
 }
 
 function stripInjectedContext(raw: string): string {
-  return raw.split('\n# Session Context', 1)[0]?.trim() ?? '';
+  let end = raw.length;
+  for (const marker of ['\n# Session Context', '\n\n---\nReferenced entries:']) {
+    const index = raw.indexOf(marker);
+    if (index !== -1 && index < end) end = index;
+  }
+  return raw.slice(0, end).trim();
 }
 
 function commandFromInput(input: JsonObject): string | null {

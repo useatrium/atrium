@@ -1947,6 +1947,7 @@ export function Chat({
                 onDraftTouched={markDraftTouched}
                 autoFocus={!state.openSessionId}
                 agentAware
+                previewEntryLinks
                 allowAttachments
               />
             </>
@@ -2047,6 +2048,7 @@ export function Chat({
               onDraftChange={saveDraft}
               onDraftPersisted={enqueueDraft}
               onDraftTouched={markDraftTouched}
+              previewEntryLinks
             />
           </EntryQuoteApplyContextProvider>
         </div>

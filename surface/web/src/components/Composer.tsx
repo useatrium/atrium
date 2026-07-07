@@ -6,6 +6,8 @@ import { FileIcon, PaperclipIcon, XIcon } from './icons';
 import { Tooltip } from './a11y';
 import { VoiceRecorder, type RecordedVoice } from '../VoiceRecorder';
 import { SHORTCUTS } from '../lib/shortcuts';
+import { extractEntryHandles } from '../lib/entryLinks';
+import { EntryInlineChip } from './EntryQuoteCard';
 
 const MAX_ATTACHMENTS = 10;
 const MAX_ATTACHMENT_BYTES = 100 * 1024 * 1024;
@@ -39,6 +41,7 @@ export function Composer({
   onDraftChange,
   onDraftPersisted,
   onDraftTouched,
+  previewEntryLinks,
 }: {
   placeholder: string;
   onSend: (
@@ -68,6 +71,7 @@ export function Composer({
   onDraftChange?: (key: string, text: string) => void | Promise<void>;
   onDraftPersisted?: (key: string, text: string) => void | Promise<void>;
   onDraftTouched?: (key: string) => void;
+  previewEntryLinks?: boolean;
 }) {
   const [text, setText] = useState('');
   // "@agent" with no task: refuse to post the literal string — show what's
@@ -90,6 +94,10 @@ export function Composer({
     [onDraftChange, onDraftPersisted],
   );
   const agentHint = !!agentAware && !disabled && looksLikeAgentCommand(text);
+  const entryLinkHandles = useMemo(
+    () => (previewEntryLinks ? extractEntryHandles(text) : []),
+    [previewEntryLinks, text],
+  );
   const uploading = files.some((f) => f.status === 'uploading');
   const readyFiles = files.filter((f): f is PendingFile & { fileId: string } => f.status === 'ready' && !!f.fileId);
   const sendDisabled = (!text.trim() && readyFiles.length === 0) || !!disabled || uploading;
@@ -433,6 +441,14 @@ export function Composer({
           )}
         </div>
       </div>
+      {entryLinkHandles.length > 0 && (
+        <div className="mt-1 flex flex-wrap items-center gap-1.5 px-1 text-3xs text-fg-muted">
+          <span className="font-medium">referencing:</span>
+          {entryLinkHandles.map((handle) => (
+            <EntryInlineChip key={handle} handle={handle} />
+          ))}
+        </div>
+      )}
       <div className="mt-1 flex items-center gap-2 px-1 text-3xs text-fg-muted">
         {agentNeedsTask ? (
           <span className="rounded-full bg-warning/15 px-2 py-0.5 font-medium text-warning-text">

@@ -1,8 +1,17 @@
 // @vitest-environment jsdom
 
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { clearEntryResolveCacheForTests, type ResolvedEntryQuote } from '../lib/entryLinks';
 import { MarkupSteerCard } from './MarkupSteerCard';
+
+const resolveEntryMock = vi.hoisted(() => vi.fn());
+
+vi.mock('../api', () => ({
+  api: {
+    resolveEntry: resolveEntryMock,
+  },
+}));
 
 const responsePreamble =
   'I marked up your message ("Draft answer", entry @agent:42) instead of replying in prose. The markup uses CriticMarkup: {--deletion--}, {++insertion++}, {~~old~>new~~}, {>>comment<<}, {==highlight==} (a highlight binds the following comment to that span). Treat edits as requested changes and comments as my reactions/questions. This is my response to what you wrote - not a request to edit a file.';
@@ -17,6 +26,32 @@ function reviseSteer(doc: string, suffix = '') {
     `\`\`\`\`markdown\n${doc}\n\`\`\`\`${suffix}`
   );
 }
+
+function entry(overrides: Partial<ResolvedEntryQuote> = {}): ResolvedEntryQuote {
+  return {
+    handle: 'art_00000000-0000-0000-0000-000000000001',
+    kind: 'artifact',
+    actor: 'Ada',
+    actorLabel: 'Ada',
+    text: 'artifact body',
+    meta: { path: 'docs/memo.md' },
+    targetType: 'artifact',
+    tombstoned: false,
+    location: {
+      workspaceId: 'workspace-1',
+      channelId: 'channel-1',
+      channelName: 'general',
+      sessionId: 'session-1',
+      sessionTitle: 'Planning session',
+    },
+    ...overrides,
+  };
+}
+
+beforeEach(() => {
+  clearEntryResolveCacheForTests();
+  resolveEntryMock.mockReset();
+});
 
 afterEach(() => cleanup());
 
@@ -61,6 +96,18 @@ describe('MarkupSteerCard', () => {
     expect(screen.queryByRole('button', { name: 'view raw' })).toBeNull();
     expect(container.firstElementChild?.className).toBe('whitespace-pre-wrap text-sm leading-relaxed text-fg-body');
     expect(container.textContent).toBe('Just a normal steer.');
+  });
+
+  it('renders entry links in a plain steer as inline chips', async () => {
+    resolveEntryMock.mockResolvedValue(entry());
+
+    render(
+      <MarkupSteerCard text="Please inspect /e/art_00000000-0000-0000-0000-000000000001 before continuing." />,
+    );
+
+    expect(screen.getByText('entry')).toBeTruthy();
+    expect(await screen.findByText('memo.md')).toBeTruthy();
+    expect(screen.getByRole('link').getAttribute('href')).toBe('/e/art_00000000-0000-0000-0000-000000000001');
   });
 
   it('shows the truncated footer for hunk-mode steers', () => {
