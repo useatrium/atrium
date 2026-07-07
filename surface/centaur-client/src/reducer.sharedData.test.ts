@@ -6,6 +6,53 @@ const reduceAll = (frames: CentaurEventFrame[]): SessionState =>
   frames.reduce((state, frame) => reduceSession(state, frame), initialSessionState());
 
 describe("reduceSession shared data layer", () => {
+  it("strips injected context appendices from displayed user messages", () => {
+    const state = reduceAll([
+      {
+        event: "amp_raw_event",
+        event_id: 1,
+        data: {
+          type: "item.completed",
+          item: {
+            id: "user-ref",
+            type: "userMessage",
+            text: "Use this entry\n\n---\nReferenced entries:\n- /e/evt_1\n# Session Context\nchannel notes",
+          },
+        },
+      },
+      {
+        event: "amp_raw_event",
+        event_id: 2,
+        data: {
+          type: "item.completed",
+          item: {
+            id: "user-session",
+            type: "userMessage",
+            text: "Use this session\n# Session Context\nchannel notes\n\n---\nReferenced entries:\n- /e/evt_1",
+          },
+        },
+      },
+      {
+        event: "amp_raw_event",
+        event_id: 3,
+        data: {
+          type: "item.completed",
+          item: {
+            id: "user-plain",
+            type: "userMessage",
+            text: "Leave this alone.",
+          },
+        },
+      },
+    ]);
+
+    expect(state.items).toEqual([
+      expect.objectContaining({ type: "user_message", id: "user-ref", text: "Use this entry" }),
+      expect.objectContaining({ type: "user_message", id: "user-session", text: "Use this session" }),
+      expect.objectContaining({ type: "user_message", id: "user-plain", text: "Leave this alone." }),
+    ]);
+  });
+
   it("accumulates reasoning text and summary deltas by itemId", () => {
     const state = reduceAll([
       {

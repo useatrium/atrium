@@ -43,6 +43,7 @@ export function ThreadPanel({
   onDraftChange,
   onDraftPersisted,
   onDraftTouched,
+  previewEntryLinks,
 }: {
   root: ChatMessage;
   replies: ChatMessage[];
@@ -73,6 +74,7 @@ export function ThreadPanel({
   onDraftChange?: (key: string, text: string) => void | Promise<void>;
   onDraftPersisted?: (key: string, text: string) => void | Promise<void>;
   onDraftTouched?: (key: string) => void;
+  previewEntryLinks?: boolean;
 }) {
   const { width: paneWidth, resizing, startResize, resetWidth } = useThreadPaneWidth();
   const alsoSendToChannelId = useId();
@@ -211,6 +213,7 @@ export function ThreadPanel({
         onDraftChange={onDraftChange}
         onDraftPersisted={onDraftPersisted}
         onDraftTouched={onDraftTouched}
+        previewEntryLinks={previewEntryLinks}
       />
     </aside>
   );

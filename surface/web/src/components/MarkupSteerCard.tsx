@@ -6,6 +6,7 @@ import {
   type ParsedMarkupSteer,
 } from '@atrium/surface-client';
 import { CriticMarkupView } from './CriticMarkupView';
+import { MessageText } from './MessageText';
 
 function RawToggle({ text }: { text: string }) {
   const [showRaw, setShowRaw] = useState(false);
@@ -97,5 +98,9 @@ export function MarkupSteerCard({ text }: { text: string }) {
     );
   }
 
-  return <div className="whitespace-pre-wrap text-sm leading-relaxed text-fg-body">{text}</div>;
+  return (
+    <div className="whitespace-pre-wrap text-sm leading-relaxed text-fg-body">
+      <MessageText text={text} />
+    </div>
+  );
 }
