@@ -9,7 +9,7 @@ import { QUICK_REACTIONS } from '@atrium/surface-client/reactions';
 import { useAccessibilityAnnouncement, useModalAccessibilityFocus } from '../lib/accessibility';
 import { font, radius, space, useTheme } from '../lib/theme';
 import { selectionHaptic } from '../lib/haptics';
-import { ReactionPickerSheet } from './ReactionPickerSheet';
+import { ReactionPickerBody } from './ReactionPickerSheet';
 
 type MessageActionMetadata = {
   actionCopyText?: unknown;
@@ -168,7 +168,6 @@ export function MessageActions({
   };
 
   return (
-    <>
       <Modal visible={m != null} transparent animationType={reduceMotion ? 'none' : 'fade'} onRequestClose={closeAll}>
         <Pressable
           // Scrim: tap-to-dismiss for sighted users. It must NOT be an accessibility
@@ -197,6 +196,17 @@ export function MessageActions({
               paddingTop: space.md,
             }}
           >
+            {pickerVisible && m && canReact ? (
+              <ReactionPickerBody
+                onBack={() => setPickerVisible(false)}
+                onSelect={(emoji) => {
+                  selectionHaptic();
+                  onReact(m, emoji);
+                  closeAll();
+                }}
+              />
+            ) : (
+              <>
             {m && canReact && (
               <View
                 style={{
@@ -339,19 +349,10 @@ export function MessageActions({
               focusRef={focusCancel ? firstActionRef : undefined}
               onPress={closeAll}
             />
+              </>
+            )}
           </Pressable>
         </Pressable>
       </Modal>
-      <ReactionPickerSheet
-        visible={pickerVisible && m != null && canReact}
-        onClose={() => setPickerVisible(false)}
-        onSelect={(emoji) => {
-          if (!m) return;
-          selectionHaptic();
-          onReact(m, emoji);
-          closeAll();
-        }}
-      />
-    </>
   );
 }
