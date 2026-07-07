@@ -70,7 +70,6 @@ vi.mock('../src/lib/session', () => ({
 
 vi.mock('../src/components/MediaLightbox', () => ({
   mediaIconName: () => 'document-outline',
-  mediaKindLabel: (file: HubFile) => file.mediaKind ?? 'opaque',
   thumbnailSource: () => null,
   MediaLightbox: ({
     visible,
@@ -201,10 +200,34 @@ describe('FilesTab entry references', () => {
     expect(screen.getByText('raw.csv')).toBeInTheDocument();
     expect(await screen.findByText('↗ 2')).toBeInTheDocument();
     expect(screen.queryByText('↗ 1')).toBeNull();
+    await waitFor(() =>
+      expect(chatMock.api.listWorkspaceFiles).toHaveBeenCalledWith(
+        'ws-1',
+        expect.objectContaining({ includeScratch: false, sort: 'recent' }),
+      ),
+    );
+    const query = chatMock.api.listWorkspaceFiles.mock.calls[0]?.[1] as Record<string, unknown>;
+    expect(query).not.toHaveProperty('origin');
+    expect(query).not.toHaveProperty('mediaKind');
 
-    fireEvent.click(screen.getByLabelText('report.pdf, document'));
+    fireEvent.click(screen.getByLabelText('report.pdf, PDF'));
     expect(await screen.findByText('Preview report.pdf')).toBeInTheDocument();
     expect(screen.getAllByText('↗ 2')).toHaveLength(2);
+  });
+
+  it('sends gallery categories instead of ledger filters', async () => {
+    chatMock.api.listWorkspaceFiles.mockResolvedValue({ files: [], nextCursor: null });
+
+    await renderFilesTab();
+    await waitFor(() => expect(chatMock.api.listWorkspaceFiles).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByLabelText('Docs'));
+
+    await waitFor(() => expect(chatMock.api.listWorkspaceFiles).toHaveBeenCalledTimes(2));
+    const query = chatMock.api.listWorkspaceFiles.mock.calls[1]?.[1] as Record<string, unknown>;
+    expect(query).toEqual(expect.objectContaining({ category: 'doc', includeScratch: false, sort: 'recent' }));
+    expect(query).not.toHaveProperty('origin');
+    expect(query).not.toHaveProperty('mediaKind');
   });
 
   it('navigates directly for a single reference', async () => {
