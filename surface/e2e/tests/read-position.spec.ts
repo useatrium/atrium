@@ -124,6 +124,12 @@ async function expectDividerInTimelineViewport(divider: Locator): Promise<void> 
 test('channel read position lands on first unread and marks read only at bottom', async ({
   page,
 }) => {
+  // Heavy scenario: two channels, 78 seeded messages, two reloads, and a
+  // scroll-to-bottom-marks-read round-trip. On a saturated CI runner sharing
+  // one server, the full flow can brush the 60s test budget — the mark-read
+  // propagation poll (below) or the trailing reload then dies mid-flight
+  // ("browser has been closed"). Triple the budget; no assertion is relaxed.
+  test.slow();
   const unreadRoom = await createTestChannel('readpos');
   const allReadRoom = await createTestChannel('readpos-read');
   const readerHandle = unique('reader');
@@ -198,7 +204,10 @@ test('channel read position lands on first unread and marks read only at bottom'
           await scrollToBottom(reopenedLog);
           return readCursor({ handle: readerHandle, channelId: unreadRoomId });
         },
-        { intervals: [500, 1000, 1000, 2000], timeout: 20_000 },
+        // Mark-read is a client→server round-trip after the scroll lands; under
+        // heavy parallel CI load its propagation is the slowest step here, so
+        // give it more patience than the other polls.
+        { intervals: [500, 1000, 1000, 2000, 3000], timeout: 30_000 },
       )
       .toBeGreaterThanOrEqual(unreadIds.at(-1)!);
 
