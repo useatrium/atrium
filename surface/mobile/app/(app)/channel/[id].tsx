@@ -8,13 +8,14 @@ import {
   emptyTimeline,
   type ChatMessage,
   type HubFile,
+  parseAgentTask,
 } from '@atrium/surface-client';
 import { Ionicons } from '@expo/vector-icons';
 import { useChat } from '../../../src/lib/chat';
 import { font, useTheme } from '../../../src/lib/theme';
 import { attachmentToHubFile } from '../../../src/components/attachmentPreview';
 import { ConnectionBanner, TypingLine } from '../../../src/components/bits';
-import { Composer } from '../../../src/components/Composer';
+import { Composer, type ComposerHandle } from '../../../src/components/Composer';
 import { MediaLightbox } from '../../../src/components/MediaLightbox';
 import { MessageActions } from '../../../src/components/MessageActions';
 import { SpawnSheet, type SpawnSheetConfig } from '../../../src/components/SpawnSheet';
@@ -119,6 +120,10 @@ export default function ChannelScreen() {
   const [editing, setEditing] = useState<ChatMessage | null>(null);
   const [initialDraft, setInitialDraft] = useState('');
   const [spawnSheetVisible, setSpawnSheetVisible] = useState(false);
+  const [spawnSheetInitialTask, setSpawnSheetInitialTask] = useState('');
+  const composerRef = useRef<ComposerHandle>(null);
+  const composerRestoreTextRef = useRef<string | null>(null);
+  const spawnSubmittedRef = useRef(false);
 
   const title = channel ? channelLabel(channel, me.id) : '';
   const isDm = channel?.kind === 'dm';
@@ -269,10 +274,50 @@ export default function ChannelScreen() {
     ]);
   }, [addPerson, leave, showMembers, title]);
 
+  const loadAgentProfiles = useCallback(
+    () => chat.api.agentProfiles().then(({ profiles }) => profiles),
+    [chat.api],
+  );
+
+  const openNewAgentSheet = useCallback(() => {
+    composerRestoreTextRef.current = null;
+    spawnSubmittedRef.current = false;
+    setSpawnSheetInitialTask('');
+    setSpawnSheetVisible(true);
+  }, []);
+
+  const handleConfigureAgent = useCallback((fullText: string) => {
+    const capturedText = composerRef.current?.captureForConfigure() ?? fullText;
+    composerRestoreTextRef.current = capturedText;
+    spawnSubmittedRef.current = false;
+    setSpawnSheetInitialTask(parseAgentTask(capturedText) ?? capturedText.replace(/^\s*@agent\b\s*/i, ''));
+    setSpawnSheetVisible(true);
+  }, []);
+
+  const handleCloseSpawnSheet = useCallback(() => {
+    setSpawnSheetVisible(false);
+    setSpawnSheetInitialTask('');
+    if (!spawnSubmittedRef.current && composerRestoreTextRef.current != null) {
+      composerRef.current?.restore(composerRestoreTextRef.current);
+    }
+    composerRestoreTextRef.current = null;
+    spawnSubmittedRef.current = false;
+  }, []);
+
   const handleSpawnAgent = useCallback(
-    ({ task, harness, repo }: SpawnSheetConfig) => {
+    ({ task, harness, repo, agentProfileId, agentProfileVersionId }: SpawnSheetConfig) => {
       if (!id) return;
-      spawnSession(id, task, undefined, repo ? { harness, repo } : { harness });
+      spawnSubmittedRef.current = true;
+      composerRestoreTextRef.current = null;
+      spawnSession(id, task, undefined, {
+        harness,
+        ...(repo ? { repo } : {}),
+        ...(agentProfileId && agentProfileVersionId
+          ? { agentProfileId, agentProfileVersionId }
+          : {}),
+      });
+      setSpawnSheetInitialTask('');
+      setSpawnSheetVisible(false);
     },
     [id, spawnSession],
   );
@@ -302,7 +347,7 @@ export default function ChannelScreen() {
                 accessibilityLabel="New agent"
                 accessibilityHint="Configure and start an agent in this channel"
                 disabled={!channel}
-                onPress={() => setSpawnSheetVisible(true)}
+                onPress={openNewAgentSheet}
                 hitSlop={8}
                 style={{
                   minWidth: 44,
@@ -393,6 +438,7 @@ export default function ChannelScreen() {
         />
         <TypingLine typing={chat.typing} />
         <Composer
+          ref={composerRef}
           placeholder={isDm || channel?.kind === 'gdm' ? `Message ${title}` : `Message ${channel?.kind === 'private' ? '🔒' : '#'}${title}`}
           onSend={(text, attachments, attachmentRefs, voice) =>
             chat.send(id, text, undefined, attachments, attachmentRefs, voice)
@@ -418,6 +464,7 @@ export default function ChannelScreen() {
           onOpenChannel={(channelId) => router.push(`/channel/${channelId}`)}
           onOpenSession={(sessionId) => router.push(`/session/${sessionId}`)}
           uploadFile={chat.uploadFile}
+          onConfigureAgent={handleConfigureAgent}
         />
       </KeyboardAvoidingView>
 
@@ -425,7 +472,9 @@ export default function ChannelScreen() {
         visible={spawnSheetVisible}
         channelId={id}
         channelName={title || 'this channel'}
-        onClose={() => setSpawnSheetVisible(false)}
+        initialTask={spawnSheetInitialTask}
+        loadProfiles={loadAgentProfiles}
+        onClose={handleCloseSpawnSheet}
         onSpawn={handleSpawnAgent}
       />
       <MessageActions

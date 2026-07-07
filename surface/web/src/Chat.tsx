@@ -27,7 +27,7 @@ import { ChannelMembersMenu } from './components/ChannelMembersMenu';
 import { CallNotice, ChannelCallStrip, InCallPanel, IncomingCallBanner } from './components/CallUI';
 import { ClaudeConnectDialog } from './components/ClaudeConnectDialog';
 import { CodexConnectDialog } from './components/CodexConnectDialog';
-import { Composer } from './components/Composer';
+import { Composer, type ComposerHandle } from './components/Composer';
 import { GitHubConnectionDialog } from './components/GitHubConnectionDialog';
 import { EntryQuoteApplyContextProvider } from './components/EntryQuoteCard';
 import { ShortcutsHelp, Tooltip } from './components/a11y';
@@ -46,6 +46,7 @@ import { SessionPane, type TranscriptDiscussPayload } from './sessions/SessionPa
 import { loadSessionPaneWidth, sessionPaneSizing } from './sessions/useSessionPaneWidth';
 import { SessionsRail } from './sessions/SessionsRail';
 import { SpawnDialog } from './sessions/SpawnDialog';
+import { parseAgentTask } from './sessions/spawn';
 import { ViewToggle } from './sessions/ViewToggle';
 import { isPendingSessionId, isTerminalSessionStatus, sessionFromWire } from './sessions/types';
 import { adoptPrefs, useTheme } from './theme';
@@ -109,9 +110,7 @@ function notificationClickTarget(input: unknown): NotificationClickTarget | null
   const sessionId = typeof raw.sessionId === 'string' ? raw.sessionId : undefined;
   const eventId = typeof raw.eventId === 'string' || typeof raw.eventId === 'number' ? raw.eventId : undefined;
   const threadRootId =
-    typeof raw.threadRootId === 'string' || typeof raw.threadRootId === 'number'
-      ? raw.threadRootId
-      : undefined;
+    typeof raw.threadRootId === 'string' || typeof raw.threadRootId === 'number' ? raw.threadRootId : undefined;
   if (!channelId && !sessionId && eventId === undefined && threadRootId === undefined) return null;
   return {
     ...(channelId ? { channelId } : {}),
@@ -462,6 +461,8 @@ export function Chat({
   // Configured-spawn dialog (the @agent composer grammar is the quick path).
   const [spawnOpen, setSpawnOpen] = useState(false);
   const [spawnInitialTask, setSpawnInitialTask] = useState('');
+  const [configureRestore, setConfigureRestore] = useState<{ draftKey: string; text: string } | null>(null);
+  const channelComposerRef = useRef<ComposerHandle>(null);
   const [demoStarting, setDemoStarting] = useState(false);
   const agentProfiles = useAgentProfiles();
   const {
@@ -983,6 +984,29 @@ export function Chat({
     setSpawnInitialTask(task);
     setSpawnOpen(true);
   }, []);
+
+  const configureAgentFromComposer = useCallback(
+    (fullText: string) => {
+      const captured = channelComposerRef.current?.captureForConfigure() ?? fullText;
+      const task = parseAgentTask(captured) ?? captured.replace(/^\s*@agent\b\s*/i, '');
+      setConfigureRestore({ draftKey: activeDraftKey, text: captured });
+      openSpawnWithInitialTask(task);
+    },
+    [activeDraftKey, openSpawnWithInitialTask],
+  );
+
+  const cancelSpawnDialog = useCallback(() => {
+    setSpawnOpen(false);
+    setSpawnInitialTask('');
+    if (!configureRestore) return;
+    if (configureRestore.draftKey === activeDraftKey && channelComposerRef.current) {
+      channelComposerRef.current.restoreDraft(configureRestore.text);
+    } else {
+      markDraftTouched(configureRestore.draftKey);
+      void saveDraft(configureRestore.draftKey, configureRestore.text);
+    }
+    setConfigureRestore(null);
+  }, [activeDraftKey, configureRestore, markDraftTouched, saveDraft]);
 
   const {
     hasChannelSessions,
@@ -1553,8 +1577,7 @@ export function Chat({
   const showSettingsSurface = mainSurface === 'settings';
   const showNonChatSurface = mainSurface !== 'chat';
   const hideMainOnMobile = state.openSessionId != null || openThreadRoot != null;
-  const activeChannelLiveCall =
-    !showNonChatSurface && active ? calls.liveCallForChannel(active.id) : null;
+  const activeChannelLiveCall = !showNonChatSurface && active ? calls.liveCallForChannel(active.id) : null;
   const activeChannelLiveCaller = activeChannelLiveCall
     ? userForCall(activeChannelLiveCall, state.channels, activeChannelLiveCall.initiatorId)
     : null;
@@ -1566,9 +1589,7 @@ export function Chat({
     : null;
   const incomingChannelName = calls.incomingCall ? labelForCallChannel(calls.incomingCall, state.channels, me.id) : '';
   const showIncomingCallBanner =
-    calls.incomingCall != null &&
-    incomingCaller != null &&
-    calls.incomingCall.id !== activeChannelLiveCall?.id;
+    calls.incomingCall != null && incomingCaller != null && calls.incomingCall.id !== activeChannelLiveCall?.id;
   const activeCallChannelName = calls.activeCall
     ? labelForCallChannel(calls.activeCall.call, state.channels, me.id)
     : '';
@@ -1696,11 +1717,9 @@ export function Chat({
                 </>
               )}
             </h1>
-            {!showNonChatSurface &&
-              active &&
-              (active.kind === 'private' || active.kind === 'gdm') && (
-                <ChannelMembersMenu channel={active} meId={me.id} enqueueOp={enqueueOp} />
-              )}
+            {!showNonChatSurface && active && (active.kind === 'private' || active.kind === 'gdm') && (
+              <ChannelMembersMenu channel={active} meId={me.id} enqueueOp={enqueueOp} />
+            )}
             {showNonChatSurface ? (
               <button
                 type="button"
@@ -1761,7 +1780,10 @@ export function Chat({
                 </button>
               </Tooltip>
             )}
-            <Tooltip content="Search messages, channels, sessions, and commands" shortcut={SHORTCUTS.commandPalette.keys}>
+            <Tooltip
+              content="Search messages, channels, sessions, and commands"
+              shortcut={SHORTCUTS.commandPalette.keys}
+            >
               <button
                 type="button"
                 onClick={() => setSwitcherOpen(true)}
@@ -1900,7 +1922,13 @@ export function Chat({
               onStartAgentWithTask={active ? openSpawnWithInitialTask : undefined}
             />
           ) : (
-            <EntryQuoteApplyContextProvider value={active ? { channelId: active.id, sessions: state.sessions, onSpawnNewAgent: openSpawnWithInitialTask } : null}>
+            <EntryQuoteApplyContextProvider
+              value={
+                active
+                  ? { channelId: active.id, sessions: state.sessions, onSpawnNewAgent: openSpawnWithInitialTask }
+                  : null
+              }
+            >
               <Timeline
                 key={active?.id ?? 'no-channel'}
                 messages={timeline.main}
@@ -1942,6 +1970,7 @@ export function Chat({
             <>
               <TypingLine typing={typing} />
               <Composer
+                ref={channelComposerRef}
                 placeholder={
                   active.kind === 'dm' || active.kind === 'gdm'
                     ? `Message ${channelLabel(active, me.id)}`
@@ -1960,6 +1989,7 @@ export function Chat({
                 onDraftTouched={markDraftTouched}
                 autoFocus={!state.openSessionId}
                 agentAware
+                onConfigureAgent={configureAgentFromComposer}
                 previewEntryLinks
                 allowAttachments
               />
@@ -2035,7 +2065,9 @@ export function Chat({
         </aside>
       ) : openThreadRoot && active ? (
         <div className="contents">
-          <EntryQuoteApplyContextProvider value={{ channelId: active.id, sessions: state.sessions, onSpawnNewAgent: openSpawnWithInitialTask }}>
+          <EntryQuoteApplyContextProvider
+            value={{ channelId: active.id, sessions: state.sessions, onSpawnNewAgent: openSpawnWithInitialTask }}
+          >
             <ThreadPanel
               root={openThreadRoot}
               replies={threadReplies}
@@ -2107,11 +2139,11 @@ export function Chat({
               : `${active.kind === 'private' ? '' : '#'}${active.name}`
           }
           initialTask={spawnInitialTask}
-          onCancel={() => {
-            setSpawnOpen(false);
-            setSpawnInitialTask('');
+          onCancel={cancelSpawnDialog}
+          onSpawn={(config) => {
+            setConfigureRestore(null);
+            startConfiguredSession(config);
           }}
-          onSpawn={startConfiguredSession}
           providerStatuses={providerCredentials}
           githubConnection={githubConnection}
           connectionsAvailable={connectionsAvailable}
