@@ -1,8 +1,38 @@
 // @vitest-environment jsdom
 import { cleanup, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { Text } from 'react-native';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { SteerRow } from '../src/components/work/SteerRow';
 import { renderWithTheme } from './rnTestUtils';
+
+vi.mock('@expo/vector-icons', () => ({
+  Ionicons: ({ name }: { name: string }) => <Text>{name}</Text>,
+}));
+
+vi.mock('expo-clipboard', () => ({
+  setStringAsync: vi.fn(async () => {}),
+}));
+
+vi.mock('expo-haptics', () => ({
+  selectionAsync: vi.fn(async () => {}),
+}));
+
+vi.mock('react-native-syntax-highlighter', () => ({
+  default: ({ children }: { children: string }) => <Text>{children}</Text>,
+}));
+
+vi.mock('react-native-markdown-display', () => {
+  const MarkdownDisplay = ({ children }: { children: string }) => <Text>{children}</Text>;
+  const MarkdownIt = () => {
+    const md = { use: () => md };
+    return md;
+  };
+  return {
+    default: MarkdownDisplay,
+    MarkdownIt,
+    renderRules: {},
+  };
+});
 
 afterEach(cleanup);
 

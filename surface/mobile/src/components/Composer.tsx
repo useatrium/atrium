@@ -34,10 +34,13 @@ import {
   type AttachmentRef,
   type UserRef,
 } from '@atrium/surface-client';
+import { extractEntryLinkHandles } from '../lib/entryLinks';
+import type { EntryResolver } from '../lib/entryResolve';
 import { font, radius, space, useTheme } from '../lib/theme';
 import { useAccessibilityAnnouncement } from '../lib/accessibility';
 import { createDraftChangeDebouncer } from '../lib/outbox';
 import { Avatar } from './Avatar';
+import { EntryInlineChip } from './EntryQuoteCards';
 import { lightImpactHaptic } from '../lib/haptics';
 import {
   downsamplePeaks,
@@ -76,6 +79,11 @@ export interface ComposerProps {
   onMentionTrigger?: () => void;
   allowAttachments?: boolean;
   showBroadcastToggle?: boolean;
+  previewEntryLinks?: boolean;
+  serverUrl?: string;
+  resolveEntry?: EntryResolver;
+  onOpenChannel?: (channelId: string) => void;
+  onOpenSession?: (sessionId: string) => void;
   uploadFile?: (file: {
     uri: string;
     name: string;
@@ -118,6 +126,11 @@ export function Composer({
   onMentionTrigger,
   allowAttachments,
   showBroadcastToggle,
+  previewEntryLinks,
+  serverUrl,
+  resolveEntry,
+  onOpenChannel,
+  onOpenSession,
   uploadFile,
 }: ComposerProps) {
   const { colors } = useTheme();
@@ -314,6 +327,10 @@ export function Composer({
       .slice(0, agentMatches ? 4 : 5);
   }, [agentMatches, mentionMatch, mentionPrefix, mentionUsers]);
   const showMentionSuggestions = mentionMatch != null && (agentMatches || matchedUsers.length > 0);
+  const entryLinkHandles = useMemo(
+    () => (previewEntryLinks && serverUrl ? extractEntryLinkHandles(text, serverUrl) : []),
+    [previewEntryLinks, serverUrl, text],
+  );
 
   useEffect(() => {
     if (mentionMatch) onMentionTrigger?.();
@@ -708,6 +725,32 @@ export function Composer({
           )}
         </View>
       )}
+
+      {entryLinkHandles.length > 0 ? (
+        <View
+          testID="composer-entry-link-preview"
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            flexWrap: 'wrap',
+            gap: 6,
+            paddingHorizontal: space.xs,
+          }}
+        >
+          <Text style={{ color: colors.textMuted, fontSize: font.xs, fontWeight: '700' }}>
+            referencing:
+          </Text>
+          {entryLinkHandles.map((handle) => (
+            <EntryInlineChip
+              key={handle}
+              handle={handle}
+              resolveEntry={resolveEntry}
+              onOpenChannel={onOpenChannel}
+              onOpenSession={onOpenSession}
+            />
+          ))}
+        </View>
+      ) : null}
 
       <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: space.sm }}>
         {allowAttachments && !editing && (

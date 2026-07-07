@@ -385,6 +385,11 @@ export default function ChannelScreen() {
           }}
           onCancelEdit={() => setEditing(null)}
           allowAttachments
+          previewEntryLinks
+          serverUrl={chat.serverUrl}
+          resolveEntry={chat.resolveEntry}
+          onOpenChannel={(channelId) => router.push(`/channel/${channelId}`)}
+          onOpenSession={(sessionId) => router.push(`/session/${sessionId}`)}
           uploadFile={chat.uploadFile}
         />
       </KeyboardAvoidingView>
