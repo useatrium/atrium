@@ -1,7 +1,7 @@
 // Bottom tab navigator (expo-router/ui headless Tabs) with a custom Liquid-Glass
-// bar. Chat · Files · Agents · Activity · Search — Search bottom-right for thumb reach.
+// bar. Chat · Files · Agents · Inbox · Search. Search is bottom-right for thumb reach.
 // Real tabs: per-tab state preservation, no Stack back-arrow. Each tab screen
-// renders its own header (TabSlot has none); "You/More" is the header avatar.
+// renders its own header (TabSlot has none); settings is the header avatar.
 import { useMemo } from 'react';
 import { Tabs, TabList, TabSlot, TabTrigger } from 'expo-router/ui';
 import { isTerminalSessionStatus } from '@atrium/surface-client';
@@ -10,7 +10,7 @@ import { GlassBar, GlassTabButton } from '../../../src/components/GlassTabBar';
 
 export default function TabsLayout() {
   const { state } = useChat();
-  const attention = useMemo(
+  const activeAgents = useMemo(
     () =>
       Object.values(state.sessions ?? {}).filter(
         (s) => s && s.status && !isTerminalSessionStatus(s.status),
@@ -30,10 +30,10 @@ export default function TabsLayout() {
             <GlassTabButton icon="folder-open" label="Files" />
           </TabTrigger>
           <TabTrigger name="sessions" href="/sessions" asChild>
-            <GlassTabButton icon="sparkles" label="Agents" pulse={attention > 0} />
+            <GlassTabButton icon="terminal" label="Agents" pulse={activeAgents > 0} />
           </TabTrigger>
           <TabTrigger name="activity" href="/activity" asChild>
-            <GlassTabButton icon="notifications" label="Activity" badge={attention} />
+            <GlassTabButton icon="notifications" label="Inbox" badge={activeAgents} />
           </TabTrigger>
           <TabTrigger name="search" href="/search" asChild>
             <GlassTabButton icon="search" label="Search" />

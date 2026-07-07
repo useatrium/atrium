@@ -17,6 +17,7 @@ import { ConnectionBanner, TypingLine } from '../../../src/components/bits';
 import { Composer } from '../../../src/components/Composer';
 import { MediaLightbox } from '../../../src/components/MediaLightbox';
 import { MessageActions } from '../../../src/components/MessageActions';
+import { SpawnSheet, type SpawnSheetConfig } from '../../../src/components/SpawnSheet';
 import { Timeline } from '../../../src/components/Timeline';
 import {
   loadMarkupDraftFromEntry,
@@ -47,7 +48,7 @@ export default function ChannelScreen() {
   const { colors } = useTheme();
   const { state, me } = chat;
   const { calls } = chat;
-  const { getDraft, setDraft } = chat;
+  const { getDraft, setDraft, spawnSession } = chat;
 
   const channel = state.channels.find((c) => c.id === id) ?? null;
   const timeline = (id && state.timelines[id]) || emptyTimeline;
@@ -117,6 +118,7 @@ export default function ChannelScreen() {
   const [attachmentLightbox, setAttachmentLightbox] = useState<AttachmentLightboxState | null>(null);
   const [editing, setEditing] = useState<ChatMessage | null>(null);
   const [initialDraft, setInitialDraft] = useState('');
+  const [spawnSheetVisible, setSpawnSheetVisible] = useState(false);
 
   const title = channel ? channelLabel(channel, me.id) : '';
   const isDm = channel?.kind === 'dm';
@@ -267,6 +269,14 @@ export default function ChannelScreen() {
     ]);
   }, [addPerson, leave, showMembers, title]);
 
+  const handleSpawnAgent = useCallback(
+    ({ task, harness, repo }: SpawnSheetConfig) => {
+      if (!id) return;
+      spawnSession(id, task, undefined, repo ? { harness, repo } : { harness });
+    },
+    [id, spawnSession],
+  );
+
   if (!id) return null;
 
   return (
@@ -287,6 +297,23 @@ export default function ChannelScreen() {
           ),
           headerRight: () => (
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="New agent"
+                accessibilityHint="Configure and start an agent in this channel"
+                disabled={!channel}
+                onPress={() => setSpawnSheetVisible(true)}
+                hitSlop={8}
+                style={{
+                  minWidth: 44,
+                  minHeight: 44,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  opacity: channel ? 1 : 0.45,
+                }}
+              >
+                <Ionicons name="sparkles-outline" size={21} color={colors.textSecondary} />
+              </Pressable>
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel={channelCallAction}
@@ -394,6 +421,13 @@ export default function ChannelScreen() {
         />
       </KeyboardAvoidingView>
 
+      <SpawnSheet
+        visible={spawnSheetVisible}
+        channelId={id}
+        channelName={title || 'this channel'}
+        onClose={() => setSpawnSheetVisible(false)}
+        onSpawn={handleSpawnAgent}
+      />
       <MessageActions
         message={actionsTarget}
         mine={actionsTarget?.author.id === me.id}

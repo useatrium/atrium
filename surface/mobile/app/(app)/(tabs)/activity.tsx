@@ -217,7 +217,7 @@ export default function ActivityScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg }}>
-      <MobileHeader title="Activity" />
+      <MobileHeader title="Inbox" />
       <ConnectionBanner status={state.wsStatus} queuedChangesCount={queuedChangesCount} />
       {loading ? (
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
@@ -232,6 +232,33 @@ export default function ActivityScreen() {
               : `activity:${item.activity.kind}:${item.activity.eventId}`
           }
           renderItem={renderItem}
+          ListHeaderComponent={
+            rows.length > 0 ? (
+              <View
+                style={{
+                  paddingHorizontal: space.lg,
+                  paddingTop: space.lg,
+                  paddingBottom: space.md,
+                  borderBottomWidth: 1,
+                  borderBottomColor: colors.borderSoft,
+                }}
+              >
+                <Text
+                  style={{
+                    color: colors.text,
+                    fontSize: font.md,
+                    fontWeight: '800',
+                    marginBottom: 4,
+                  }}
+                >
+                  Needs your attention
+                </Text>
+                <Text style={{ color: colors.textMuted, fontSize: font.sm, lineHeight: 20 }}>
+                  Mentions, DMs, agent questions, and live agent work that may need you.
+                </Text>
+              </View>
+            ) : null
+          }
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={() => void load()} tintColor={colors.textMuted} />
           }
@@ -250,10 +277,10 @@ export default function ActivityScreen() {
                 style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: space.xl, gap: space.sm }}
               >
                 <Text style={{ color: colors.text, fontSize: font.md, fontWeight: '700' }}>
-                  You&rsquo;re all caught up
+                  You're all caught up
                 </Text>
                 <Text style={{ color: colors.textMuted, fontSize: font.sm, textAlign: 'center', lineHeight: 20 }}>
-                  Agents you start show up here while they&rsquo;re working. Mentions and DMs land here too.
+                  Mentions, DMs, agent questions, and live agent work will appear here when they need you.
                 </Text>
               </View>
             )

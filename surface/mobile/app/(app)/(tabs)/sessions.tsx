@@ -102,6 +102,7 @@ export default function SessionsScreen() {
     () => sessions.map((session) => ({ ...session, live: state.sessions[session.id] })),
     [sessions, state.sessions],
   );
+  const hasChannels = state.channels.length > 0;
 
   const renderItem = ({ item }: { item: DisplaySession }) => {
     const fields = displayFields(item);
@@ -244,37 +245,57 @@ export default function SessionsScreen() {
                       lineHeight: 20,
                     }}
                   >
-                    A session is an agent taking a task — running tools, making changes, and streaming
-                    it back to you live. Start a 30-second demo to watch one work.
+                    A session is an agent taking a task, running tools, making changes, and streaming
+                    it back to you live. Start one from Chat, or run a 30-second demo.
                   </Text>
-                  {state.channels.length > 0 && (
-                    <Pressable
-                      accessibilityRole="button"
-                      accessibilityLabel="Run a demo agent"
-                      onPress={() => {
-                        const channelId = state.channels[0]?.id;
-                        if (!channelId) return;
-                        startDemoSession(channelId);
-                        router.push(`/channel/${channelId}`);
-                      }}
-                      style={({ pressed }) => ({
-                        marginTop: space.xs,
-                        backgroundColor: colors.accent,
-                        opacity: pressed ? 0.85 : 1,
-                        borderRadius: radius.md,
-                        paddingVertical: 10,
-                        paddingHorizontal: 18,
-                        minHeight: 44,
-                        justifyContent: 'center',
-                      })}
-                    >
-                      <Text style={{ color: '#fff', fontSize: font.sm, fontWeight: '700' }}>
-                        Run a demo agent
-                      </Text>
-                    </Pressable>
+                  {hasChannels && (
+                    <View style={{ width: '100%', alignItems: 'center', gap: space.sm, marginTop: space.xs }}>
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="Start an agent"
+                        onPress={() => router.push('/')}
+                        style={({ pressed }) => ({
+                          backgroundColor: colors.accent,
+                          opacity: pressed ? 0.85 : 1,
+                          borderRadius: radius.md,
+                          paddingVertical: 10,
+                          paddingHorizontal: 18,
+                          minHeight: 44,
+                          justifyContent: 'center',
+                        })}
+                      >
+                        <Text style={{ color: colors.onAccent, fontSize: font.sm, fontWeight: '700' }}>
+                          Start an agent
+                        </Text>
+                      </Pressable>
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="Run a demo agent"
+                        onPress={() => {
+                          const channelId = state.channels[0]?.id;
+                          if (!channelId) return;
+                          startDemoSession(channelId);
+                          router.push(`/channel/${channelId}`);
+                        }}
+                        style={({ pressed }) => ({
+                          borderWidth: 1,
+                          borderColor: colors.border,
+                          backgroundColor: pressed ? colors.bgPressed : colors.bgElevated,
+                          borderRadius: radius.md,
+                          paddingVertical: 10,
+                          paddingHorizontal: 18,
+                          minHeight: 44,
+                          justifyContent: 'center',
+                        })}
+                      >
+                        <Text style={{ color: colors.textSecondary, fontSize: font.sm, fontWeight: '700' }}>
+                          Run a demo agent
+                        </Text>
+                      </Pressable>
+                    </View>
                   )}
                   <Text style={{ color: colors.textMuted, fontSize: font.xs }}>
-                    or type @agent &lt;task&gt; in any channel
+                    You can also type @agent &lt;task&gt; in any channel
                   </Text>
                 </View>
               </View>

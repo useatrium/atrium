@@ -10,7 +10,7 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { createApi, type AuthMethods } from '@atrium/surface-client';
+import { ApiError, createApi, type AuthMethods } from '@atrium/surface-client';
 import { normalizeServerUrl, useSession } from '../src/lib/session';
 import { font, radius, space, useTheme } from '../src/lib/theme';
 
@@ -35,6 +35,21 @@ function Label({ children }: { children: string }) {
 // Dev convenience: EXPO_PUBLIC_AUTO_LOGIN="http://host:3001|handle|Display Name"
 // prefills and submits the form once (dev builds only).
 const AUTO_LOGIN = __DEV__ ? process.env.EXPO_PUBLIC_AUTO_LOGIN : undefined;
+const SERVER_ADDRESS_EXAMPLE = 'http://192.168.1.20:3001';
+const SERVER_CONNECTION_ERROR =
+  "Could not reach your Atrium server. Check the server address above and use your computer's LAN IP on a real device.";
+
+function isNetworkFailure(err: unknown): boolean {
+  if (err instanceof TypeError) return true;
+  const message = err instanceof Error ? err.message : String(err);
+  return /Network request failed|Failed to fetch|fetch failed|NetworkError|Load failed/i.test(message);
+}
+
+function connectionAwareError(err: unknown, fallback: string): string {
+  if (err instanceof ApiError) return err.message || fallback;
+  if (isNetworkFailure(err)) return SERVER_CONNECTION_ERROR;
+  return err instanceof Error ? err.message : fallback;
+}
 
 export default function Login() {
   const { login, loginWithEmailCode } = useSession();
@@ -58,6 +73,7 @@ export default function Login() {
   const [error, setError] = useState<string | null>(null);
   const serverInputRef = useRef<TextInput>(null);
   const autoTried = useRef(false);
+  const showInlineServerField = !autoServer;
 
   useEffect(() => {
     if (!autoServer || !autoHandle || autoTried.current) return;
@@ -103,6 +119,11 @@ export default function Login() {
     paddingVertical: 12,
   } as const;
 
+  const revealServerField = () => {
+    setAdvancedOpen(true);
+    setTimeout(() => serverInputRef.current?.focus(), 0);
+  };
+
   const requestCode = async () => {
     if (!canRequestCode) return;
     setBusy(true);
@@ -112,15 +133,11 @@ export default function Login() {
       await api.requestEmailCode(email.trim());
       setEmailStep('code');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not request a code.');
+      if (isNetworkFailure(err)) revealServerField();
+      setError(connectionAwareError(err, 'Could not request a code.'));
     } finally {
       setBusy(false);
     }
-  };
-
-  const revealServerField = () => {
-    setAdvancedOpen(true);
-    setTimeout(() => serverInputRef.current?.focus(), 0);
   };
 
   const verifyCode = async () => {
@@ -130,7 +147,8 @@ export default function Login() {
     try {
       await loginWithEmailCode(serverUrl, email.trim(), code.trim());
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not sign in.');
+      if (isNetworkFailure(err)) revealServerField();
+      setError(connectionAwareError(err, 'Could not sign in.'));
     } finally {
       setBusy(false);
     }
@@ -138,7 +156,7 @@ export default function Login() {
 
   const submitHandle = async () => {
     if (!serverUrl.trim()) {
-      setError('Enter your Atrium server origin to continue.');
+      setError('Enter the server address above to continue.');
       revealServerField();
       return;
     }
@@ -148,11 +166,33 @@ export default function Login() {
     try {
       await login(serverUrl, handle.trim().toLowerCase(), displayName.trim());
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not reach the server.');
+      if (isNetworkFailure(err)) revealServerField();
+      setError(connectionAwareError(err, 'Could not reach the server.'));
     } finally {
       setBusy(false);
     }
   };
+
+  const serverField = (
+    <View>
+      <Label>Server address</Label>
+      <TextInput
+        accessibilityLabel="Server address"
+        ref={serverInputRef}
+        style={inputStyle}
+        value={serverUrl}
+        onChangeText={setServerUrl}
+        placeholder={SERVER_ADDRESS_EXAMPLE}
+        placeholderTextColor={colors.textFaint}
+        autoCapitalize="none"
+        autoCorrect={false}
+        keyboardType="url"
+      />
+      <Text style={{ color: colors.textMuted, fontSize: font.xs, marginTop: 4 }}>
+        Server address, e.g. {SERVER_ADDRESS_EXAMPLE}. On a real device, use your computer's LAN IP.
+      </Text>
+    </View>
+  );
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg }}>
@@ -187,6 +227,8 @@ export default function Login() {
             </Text>
 
             <View style={{ gap: space.lg }}>
+              {showInlineServerField && serverField}
+
               {methods.open && (
                 <View style={{ gap: space.lg }}>
                   <View>
@@ -246,45 +288,28 @@ export default function Login() {
                 </View>
               )}
 
-              <View>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel={
-                    advancedOpen ? 'Hide advanced server settings' : 'Show advanced server settings'
-                  }
-                  accessibilityState={{ expanded: advancedOpen }}
-                  onPress={() => setAdvancedOpen((open) => !open)}
-                  style={({ pressed }) => ({
-                    opacity: pressed ? 0.75 : 1,
-                    paddingVertical: space.sm,
-                  })}
-                >
-                  <Text style={{ color: colors.textSecondary, fontSize: font.sm, fontWeight: '700' }}>
-                    {advancedOpen ? 'Hide advanced' : 'Advanced'}
-                  </Text>
-                </Pressable>
-
-                {advancedOpen && (
-                  <View style={{ marginTop: space.sm }}>
-                    <Label>Server</Label>
-                    <TextInput
-                      accessibilityLabel="Server"
-                      ref={serverInputRef}
-                      style={inputStyle}
-                      value={serverUrl}
-                      onChangeText={setServerUrl}
-                      placeholder="http://192.168.1.20:3001"
-                      placeholderTextColor={colors.textFaint}
-                      autoCapitalize="none"
-                      autoCorrect={false}
-                      keyboardType="url"
-                    />
-                    <Text style={{ color: colors.textMuted, fontSize: font.xs, marginTop: 4 }}>
-                      Your Atrium server origin. On a real device, use your computer's LAN IP.
+              {!showInlineServerField && (
+                <View>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={
+                      advancedOpen ? 'Hide advanced server settings' : 'Show advanced server settings'
+                    }
+                    accessibilityState={{ expanded: advancedOpen }}
+                    onPress={() => setAdvancedOpen((open) => !open)}
+                    style={({ pressed }) => ({
+                      opacity: pressed ? 0.75 : 1,
+                      paddingVertical: space.sm,
+                    })}
+                  >
+                    <Text style={{ color: colors.textSecondary, fontSize: font.sm, fontWeight: '700' }}>
+                      {advancedOpen ? 'Hide advanced' : 'Advanced'}
                     </Text>
-                  </View>
-                )}
-              </View>
+                  </Pressable>
+
+                  {advancedOpen && <View style={{ marginTop: space.sm }}>{serverField}</View>}
+                </View>
+              )}
 
               {methods.email && !emailVisible && (
                 <Pressable
