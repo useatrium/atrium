@@ -82,6 +82,7 @@ describe('generateThumbnail', () => {
     expect(query).toHaveBeenCalledWith(expect.stringContaining("media_kind IN ('image', 'pdf', 'video')"), [7]);
     expect(query.mock.calls[0]?.[0]).toContain('thumbnail_sha IS NULL');
     expect(query.mock.calls[0]?.[0]).toContain('s3_key IS NOT NULL');
+    expect(query.mock.calls[0]?.[0]).toContain('NOT IN (SELECT thumbnail_sha FROM cas_blobs');
     expect(query.mock.calls[0]?.[0]).toContain('ORDER BY created_at DESC');
     expect(enqueue).toHaveBeenCalledTimes(2);
     expect(enqueue).toHaveBeenCalledWith(expect.objectContaining({ sourceSha: 'image-sha', s3Key: 'cas/image-sha' }));
