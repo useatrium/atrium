@@ -166,3 +166,44 @@ export async function postMessage(
   const body = (await res.json()) as { event: { id: number } };
   return body.event.id;
 }
+
+// === mw78-overflow additions ===
+export async function uploadViaApi(
+  ctx: APIRequestContext,
+  filename: string,
+  contentType: string,
+  bytes: Buffer,
+): Promise<string> {
+  const { createHash } = await import('node:crypto');
+  const contentHash = createHash('sha256').update(bytes).digest('hex');
+  const created = await ctx.post('/api/uploads', {
+    data: { filename, contentType, size: bytes.byteLength, contentHash },
+  });
+  expect(created.ok(), `POST /api/uploads (${created.status()})`).toBeTruthy();
+  const { fileId, uploadUrl } = (await created.json()) as { fileId: string; uploadUrl: string };
+  const put = await ctx.put(uploadUrl, {
+    headers: { 'content-type': contentType },
+    data: bytes,
+  });
+  expect(put.ok(), `presigned PUT to storage (${put.status()})`).toBeTruthy();
+  return fileId;
+}
+
+export async function postWithAttachment(
+  ctx: APIRequestContext,
+  channelIdValue: string,
+  text: string,
+  fileId: string,
+): Promise<number> {
+  const res = await ctx.post('/api/messages', {
+    data: {
+      channelId: channelIdValue,
+      text,
+      attachments: [fileId],
+      clientMsgId: unique('api-att'),
+    },
+  });
+  expect(res.ok(), `POST /api/messages with attachment (${res.status()})`).toBeTruthy();
+  const body = (await res.json()) as { event: { id: number } };
+  return body.event.id;
+}

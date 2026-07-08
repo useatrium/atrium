@@ -486,10 +486,14 @@ export const MessageRow = memo(function MessageRow({
         onPointerCancel={onMessagePointerCancel}
         onLostPointerCapture={onMessagePointerCancel}
         onContextMenu={longPress.onContextMenu}
-        style={swipeOffset > 0 ? { transform: `translateX(${swipeOffset}px)` } : undefined}
-        className={`relative min-w-0 max-w-3xl flex-1 ${
-          longPress.pressing ? '[-webkit-touch-callout:none] select-none' : ''
-        } ${swiping ? 'transition-none' : 'transition-transform duration-150 ease-out'}`}
+        style={{
+          // pan-y keeps vertical scroll native while pointermove still sees the
+          // horizontal swipe-to-reply drag; pinch-zoom stays available (the
+          // viewport meta allows scaling and messages cover most of the screen).
+          touchAction: 'pan-y pinch-zoom',
+          ...(swipeOffset > 0 ? { transform: `translateX(${swipeOffset}px)` } : {}),
+        }}
+        className={`relative min-w-0 max-w-3xl flex-1 ${swiping ? 'transition-none' : 'transition-transform duration-150 ease-out'}`}
       >
         {!grouped && (
           <div className="flex items-baseline gap-2">
@@ -562,7 +566,7 @@ export const MessageRow = memo(function MessageRow({
                   <button
                     type="button"
                     onClick={() => openAttachment(index)}
-                    className="block text-left"
+                    className="block max-w-full min-w-0 text-left"
                   >
                     <img
                       src={`/api/files/${a.id}`}
@@ -571,7 +575,7 @@ export const MessageRow = memo(function MessageRow({
                       height={a.height}
                       loading="lazy"
                       onError={() => markAttachmentRemoved(a.id)}
-                      className="max-h-72 w-auto max-w-sm rounded-md border border-edge object-contain"
+                      className="max-h-72 w-auto max-w-[min(24rem,100%)] rounded-md border border-edge object-contain"
                       style={a.width && a.height ? { aspectRatio: `${a.width} / ${a.height}` } : undefined}
                     />
                   </button>
@@ -581,7 +585,7 @@ export const MessageRow = memo(function MessageRow({
                   key={a.id}
                   type="button"
                   onClick={() => openAttachment(index)}
-                  className="flex items-center gap-2 rounded-md border border-edge bg-surface-raised/70 px-3 py-2 text-sm text-fg-body hover:border-edge-strong"
+                  className="flex max-w-full min-w-0 items-center gap-2 rounded-md border border-edge bg-surface-raised/70 px-3 py-2 text-sm text-fg-body hover:border-edge-strong"
                 >
                   <FileIcon />
                   <span className="max-w-56 truncate">{a.filename}</span>
@@ -862,7 +866,7 @@ function RemovedAttachmentPlaceholder({ filename }: { filename: string }) {
     <div
       role="status"
       aria-label={`${filename} file removed`}
-      className="flex min-h-12 items-center gap-2 rounded-md border border-dashed border-edge bg-surface-raised/35 px-3 py-2 text-sm text-fg-muted"
+      className="flex min-h-12 max-w-full min-w-0 items-center gap-2 rounded-md border border-dashed border-edge bg-surface-raised/35 px-3 py-2 text-sm text-fg-muted"
     >
       <FileIcon />
       <span className="max-w-56 truncate">File removed</span>

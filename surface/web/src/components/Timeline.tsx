@@ -230,7 +230,7 @@ export function Timeline({
         role="log"
         aria-label="Messages"
         aria-live="polite"
-        className="relative flex-1 overflow-y-auto pb-4 pt-2"
+        className="relative flex-1 overflow-x-clip overflow-y-auto pb-4 pt-2"
       >
         {hasMoreBefore && (
           <div className="flex justify-center py-2">
