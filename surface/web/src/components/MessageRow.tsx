@@ -25,6 +25,7 @@ import { MessageActionMenu, type MessageActionMenuAction, type MessageActionMenu
 import { CompactMarkdownText, MessageText } from './MessageText';
 import { ReactionPicker } from './ReactionPicker';
 import { TimestampDisclosure } from './TimestampDisclosure';
+import { TimelineImage } from './TimelineImage';
 import { useLongPress } from './useLongPress';
 import { VoiceMessage } from '../VoiceMessage';
 import { entryShareUrl, fileShareUrl } from '../lib/publicUrl';
@@ -640,15 +641,14 @@ export const MessageRow = memo(function MessageRow({
                     onClick={() => openAttachment(index)}
                     className="block max-w-full min-w-0 text-left"
                   >
-                    <img
+                    <TimelineImage
                       src={`/api/files/${a.id}`}
                       alt={a.filename}
                       width={a.width}
                       height={a.height}
                       loading="lazy"
                       onError={() => markAttachmentRemoved(a.id)}
-                      className="max-h-72 w-auto max-w-[min(24rem,100%)] rounded-md border border-edge object-contain"
-                      style={a.width && a.height ? { aspectRatio: `${a.width} / ${a.height}` } : undefined}
+                      className="max-h-72 rounded-md border border-edge object-contain"
                     />
                   </button>
                 </Tooltip>

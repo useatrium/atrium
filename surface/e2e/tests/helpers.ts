@@ -173,11 +173,19 @@ export async function uploadViaApi(
   filename: string,
   contentType: string,
   bytes: Buffer,
+  dimensions?: { width?: number; height?: number },
 ): Promise<string> {
   const { createHash } = await import('node:crypto');
   const contentHash = createHash('sha256').update(bytes).digest('hex');
   const created = await ctx.post('/api/uploads', {
-    data: { filename, contentType, size: bytes.byteLength, contentHash },
+    data: {
+      filename,
+      contentType,
+      size: bytes.byteLength,
+      contentHash,
+      ...(dimensions?.width != null ? { width: dimensions.width } : {}),
+      ...(dimensions?.height != null ? { height: dimensions.height } : {}),
+    },
   });
   expect(created.ok(), `POST /api/uploads (${created.status()})`).toBeTruthy();
   const { fileId, uploadUrl } = (await created.json()) as { fileId: string; uploadUrl: string };
