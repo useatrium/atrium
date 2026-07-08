@@ -14,7 +14,7 @@ import {
 } from 'react-native';
 import type { ComponentProps } from 'react';
 import { Image } from 'expo-image';
-import { useFocusEffect, useLocalSearchParams } from 'expo-router';
+import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import {
   channelLabel,
@@ -45,19 +45,33 @@ const CATEGORY_CHIPS: Array<{ key: 'all' | FileCategory; label: string }> = [
   { key: 'all', label: 'All' },
   ...FILE_CATEGORIES,
 ];
+const FILE_PARAM_KEYS = ['q', 'category', 'channelId', 'file', 'starred', 'includeDeleted'] as const;
+
+type FilesRouteParamKey = (typeof FILE_PARAM_KEYS)[number];
+type FilesRouteParams = Partial<Record<FilesRouteParamKey, string | string[]>>;
+type FilesRouteParamPatch = Partial<Record<FilesRouteParamKey, string | undefined>>;
 
 function firstParam(value: string | string[] | undefined): string | null {
   if (Array.isArray(value)) return value[0] ?? null;
   return value ?? null;
 }
 
-function useDebounced(value: string, delayMs: number): string {
-  const [debounced, setDebounced] = useState(value);
-  useEffect(() => {
-    const timer = setTimeout(() => setDebounced(value), delayMs);
-    return () => clearTimeout(timer);
-  }, [delayMs, value]);
-  return debounced;
+function cleanRouteParam(value: string | string[] | undefined): string | null {
+  const first = firstParam(value)?.trim();
+  return first ? first : null;
+}
+
+function boolParam(value: string | string[] | undefined): boolean {
+  return firstParam(value) === 'true';
+}
+
+function isFileCategory(value: string | null): value is FileCategory {
+  return value != null && FILE_CATEGORIES.some((category) => category.key === value);
+}
+
+function categoryParam(value: string | string[] | undefined): 'all' | FileCategory {
+  const first = firstParam(value);
+  return isFileCategory(first) ? first : 'all';
 }
 
 function Chip({
@@ -281,23 +295,29 @@ export default function FilesTab() {
   const authSession = useRequiredSession();
   const { colors } = useTheme();
   const { width } = useWindowDimensions();
-  const params = useLocalSearchParams<{ channelId?: string | string[] }>();
-  const channelId = firstParam(params.channelId);
+  const params = useLocalSearchParams<FilesRouteParams>();
+  const routeQ = firstParam(params.q) ?? '';
+  const routeCategory = categoryParam(params.category);
+  const routeChannelId = cleanRouteParam(params.channelId);
+  const routeFileId = cleanRouteParam(params.file);
+  const routeStarred = boolParam(params.starred);
+  const routeIncludeDeleted = boolParam(params.includeDeleted);
+  const channelId = routeChannelId;
   const workspaceId = chat.state.channels[0]?.workspaceId ?? null;
   const channel = channelId ? chat.state.channels.find((item) => item.id === channelId) : null;
   const title = channel ? `${channelLabel(channel, chat.me.id)} gallery` : 'Gallery';
-  const [category, setCategory] = useState<'all' | FileCategory>('all');
-  const [starred, setStarred] = useState(false);
-  const [includeDeleted, setIncludeDeleted] = useState(false);
+  const [category, setCategory] = useState<'all' | FileCategory>(routeCategory);
+  const [starred, setStarred] = useState(routeStarred);
+  const [includeDeleted, setIncludeDeleted] = useState(routeIncludeDeleted);
   const [filtersExpanded, setFiltersExpanded] = useState(false);
-  const [search, setSearch] = useState('');
-  const debouncedSearch = useDebounced(search, 250);
+  const [search, setSearch] = useState(routeQ);
+  const [openFileId, setOpenFileId] = useState<string | null>(routeFileId);
   const [files, setFiles] = useState<HubFile[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [loadedOnce, setLoadedOnce] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const [references, setReferences] = useState<EntryReferenceMap>({});
   const [referenceFocusSeq, setReferenceFocusSeq] = useState(0);
   const loadSeq = useRef(0);
@@ -308,17 +328,64 @@ export default function FilesTab() {
   const tileWidth = Math.floor((width - space.lg * 2 - tileGap) / 2);
   const queryEntryReferences = useMemo(() => createEntryReferenceQuery(authSession), [authSession]);
 
+  const setRouteParams = useCallback(
+    (patch: FilesRouteParamPatch) => {
+      const next: FilesRouteParamPatch = {};
+      let changed = false;
+      for (const key of FILE_PARAM_KEYS) {
+        if (!Object.prototype.hasOwnProperty.call(patch, key)) continue;
+        const nextValue = patch[key];
+        const currentValue = firstParam(params[key]) ?? undefined;
+        if (nextValue !== currentValue) {
+          next[key] = nextValue;
+          changed = true;
+        }
+      }
+      if (changed) router.setParams?.(next);
+    },
+    [params.category, params.channelId, params.file, params.includeDeleted, params.q, params.starred],
+  );
+
+  useEffect(() => {
+    setOpenFileId((current) => (current === routeFileId ? current : routeFileId));
+  }, [routeFileId]);
+
+  useEffect(() => {
+    setSearch((current) => (current === routeQ ? current : routeQ));
+  }, [routeQ]);
+
+  useEffect(() => {
+    setCategory((current) => (current === routeCategory ? current : routeCategory));
+  }, [routeCategory]);
+
+  useEffect(() => {
+    setStarred((current) => (current === routeStarred ? current : routeStarred));
+  }, [routeStarred]);
+
+  useEffect(() => {
+    setIncludeDeleted((current) => (current === routeIncludeDeleted ? current : routeIncludeDeleted));
+  }, [routeIncludeDeleted]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      const nextQ = search.trim();
+      const currentQ = routeQ.trim();
+      if (nextQ !== currentQ) setRouteParams({ q: nextQ || undefined });
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [routeQ, search, setRouteParams]);
+
   const queryBase = useMemo<HubFileListQuery>(
     () => ({
       ...(category !== 'all' ? { category } : {}),
       ...(starred ? { starred: true } : {}),
-      ...(debouncedSearch.trim() ? { q: debouncedSearch.trim() } : {}),
+      ...(routeQ.trim() ? { q: routeQ.trim() } : {}),
       includeDeleted,
       includeScratch: false,
       sort: 'recent',
       limit: PAGE_SIZE,
     }),
-    [category, debouncedSearch, includeDeleted, starred],
+    [category, includeDeleted, routeQ, starred],
   );
 
   const updateFile = useCallback((artifactId: string, patch: Partial<HubFile>) => {
@@ -331,6 +398,7 @@ export default function FilesTab() {
       const seq = ++loadSeq.current;
       if (reset) {
         setRefreshing(true);
+        setLoadedOnce(false);
       } else {
         setLoading(true);
       }
@@ -343,6 +411,7 @@ export default function FilesTab() {
         if (seq !== loadSeq.current) return;
         setFiles((current) => (reset ? result.files : [...current, ...result.files]));
         setNextCursor(result.nextCursor ?? null);
+        setLoadedOnce(true);
       } catch (err) {
         if (seq !== loadSeq.current) return;
         setError(err instanceof Error ? err.message : 'Could not load files');
@@ -363,6 +432,10 @@ export default function FilesTab() {
   const searchActive = search.trim().length > 0;
   const visibleFiles = files;
   const visibleItemCount = visibleFiles.length;
+  const routedLightboxIndex = openFileId
+    ? visibleFiles.findIndex((file) => file.artifactId === openFileId)
+    : -1;
+  const lightboxVisible = routedLightboxIndex >= 0;
   const visibleEntryHandles = useMemo(() => {
     const seen = new Set<string>();
     for (const file of visibleFiles) {
@@ -414,10 +487,57 @@ export default function FilesTab() {
     };
   }, [channelId, queryEntryReferences, referenceFocusSeq, visibleEntryHandles, visibleEntryHandlesKey, workspaceId]);
 
+  useEffect(() => {
+    if (!openFileId || !loadedOnce || loading || refreshing) return;
+    if (visibleFiles.some((file) => file.artifactId === openFileId)) return;
+    if (nextCursor) {
+      void loadFiles({ reset: false, cursor: nextCursor });
+      return;
+    }
+    setOpenFileId(null);
+    setRouteParams({ file: undefined });
+  }, [loadedOnce, loadFiles, loading, nextCursor, openFileId, refreshing, setRouteParams, visibleFiles]);
+
   const updateSearch = useCallback((value: string) => {
     setSearch(value);
-    setLightboxIndex(null);
-  }, []);
+    if (openFileId) {
+      setOpenFileId(null);
+      setRouteParams({ file: undefined });
+    }
+  }, [openFileId, setRouteParams]);
+
+  const updateCategory = useCallback(
+    (value: 'all' | FileCategory) => {
+      setCategory(value);
+      setRouteParams({ category: value === 'all' ? undefined : value });
+    },
+    [setRouteParams],
+  );
+
+  const updateStarred = useCallback(() => {
+    const next = !starred;
+    setStarred(next);
+    setRouteParams({ starred: next ? 'true' : undefined });
+  }, [setRouteParams, starred]);
+
+  const updateIncludeDeleted = useCallback(() => {
+    const next = !includeDeleted;
+    setIncludeDeleted(next);
+    setRouteParams({ includeDeleted: next ? 'true' : undefined });
+  }, [includeDeleted, setRouteParams]);
+
+  const openLightbox = useCallback(
+    (file: HubFile) => {
+      setOpenFileId(file.artifactId);
+      setRouteParams({ file: file.artifactId });
+    },
+    [setRouteParams],
+  );
+
+  const closeLightbox = useCallback(() => {
+    setOpenFileId(null);
+    setRouteParams({ file: undefined });
+  }, [setRouteParams]);
 
   const toggleStar = useCallback(
     async (file: HubFile) => {
@@ -543,7 +663,7 @@ export default function FilesTab() {
               key={item.key}
               label={item.label}
               selected={category === item.key}
-              onPress={() => setCategory(item.key)}
+              onPress={() => updateCategory(item.key)}
             />
           ))}
         </ScrollView>
@@ -554,14 +674,14 @@ export default function FilesTab() {
               icon="star-outline"
               selected={starred}
               hint="Filters the file list to starred files"
-              onPress={() => setStarred((value) => !value)}
+              onPress={updateStarred}
             />
             <ToggleChip
               label="Show removed"
               icon="trash-outline"
               selected={includeDeleted}
               hint="Includes removed files in the list"
-              onPress={() => setIncludeDeleted((value) => !value)}
+              onPress={updateIncludeDeleted}
             />
           </View>
         ) : null}
@@ -585,7 +705,7 @@ export default function FilesTab() {
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={() => void loadFiles({ reset: true })} tintColor={colors.textMuted} />
         }
-        renderItem={({ item, index }) => (
+        renderItem={({ item }) => (
           <FileTile
             file={item}
             width={tileWidth}
@@ -593,7 +713,7 @@ export default function FilesTab() {
             fileHeaders={chat.fileHeaders}
             reference={references[artifactEntryHandle(item.artifactId)] ?? null}
             onOpenReference={() => openEntryReferenceSummary(references[artifactEntryHandle(item.artifactId)] ?? null)}
-            onPress={() => setLightboxIndex(index)}
+            onPress={() => openLightbox(item)}
             onToggleStar={() => void toggleStar(item)}
           />
         )}
@@ -615,14 +735,14 @@ export default function FilesTab() {
         ListFooterComponent={footer}
       />
       <MediaLightbox
-        visible={lightboxIndex != null}
+        visible={lightboxVisible}
         files={visibleFiles}
-        initialIndex={Math.min(lightboxIndex ?? 0, Math.max(visibleFiles.length - 1, 0))}
+        initialIndex={Math.min(Math.max(routedLightboxIndex, 0), Math.max(visibleFiles.length - 1, 0))}
         fileContentUrl={chat.api.fileContentUrl}
         fileHeaders={chat.fileHeaders}
         references={references}
         onOpenReferences={openEntryReferenceSummary}
-        onClose={() => setLightboxIndex(null)}
+        onClose={closeLightbox}
         onOpenExternal={openExternal}
         api={chat.api}
         onFileChanged={() => void loadFiles({ reset: true })}

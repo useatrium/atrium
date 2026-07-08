@@ -11,6 +11,9 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "chat.atrium.app",
+      "associatedDomains": [
+        "applinks:atrium.garybasin.com"
+      ],
       "infoPlist": {
         "NSPhotoLibraryUsageDescription": "Attach photos to messages.",
         "NSCameraUsageDescription": "Take a photo to attach to a message.",
@@ -31,6 +34,53 @@
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            {
+              "scheme": "https",
+              "host": "atrium.garybasin.com",
+              "pathPrefix": "/c"
+            },
+            {
+              "scheme": "https",
+              "host": "atrium.garybasin.com",
+              "pathPrefix": "/s"
+            },
+            {
+              "scheme": "https",
+              "host": "atrium.garybasin.com",
+              "pathPrefix": "/t"
+            },
+            {
+              "scheme": "https",
+              "host": "atrium.garybasin.com",
+              "pathPrefix": "/e"
+            },
+            {
+              "scheme": "https",
+              "host": "atrium.garybasin.com",
+              "pathPrefix": "/files"
+            },
+            {
+              "scheme": "https",
+              "host": "atrium.garybasin.com",
+              "pathPrefix": "/activity"
+            },
+            {
+              "scheme": "https",
+              "host": "atrium.garybasin.com",
+              "pathPrefix": "/settings"
+            }
+          ],
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
+        }
+      ],
       "predictiveBackGestureEnabled": false,
       "permissions": [
         "android.permission.RECORD_AUDIO",

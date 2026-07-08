@@ -77,12 +77,11 @@ import { useTypingIndicators } from './useTypingIndicators';
 import { useUploadQueue } from './useUploadQueue';
 import {
   entryParamFromSearch,
-  fileParamFromSearch,
   stripEntryParamFromLocation,
   threadRootParamFromSearch,
 } from './EntryLinkRoute';
 import { SHORTCUTS, matchesChord } from './lib/shortcuts';
-import { navigate, parseInAppRoute, routePath, useLocation, type InAppRoute, type MainSurface } from './router';
+import { URL_PARAMS, navigate, parseInAppRoute, routePath, useLocation, type InAppRoute, type MainSurface } from './router';
 
 const PAGE_SIZE = 50;
 const SYNC_LIMIT = 500;
@@ -198,6 +197,56 @@ function putTextInLastComposer(text: string): void {
       el.setSelectionRange(text.length, text.length);
     });
   });
+}
+
+function pathWithSearch(pathname: string, searchParams: URLSearchParams, hash = ''): string {
+  const search = searchParams.toString();
+  return `${pathname}${search ? `?${search}` : ''}${hash}`;
+}
+
+// View-modifier params are scoped to the surface that renders them; carrying
+// them across surfaces would make e.g. a channel URL claim a lightbox file.
+const GALLERY_SCOPED_PARAMS = [
+  'q',
+  'category',
+  'channelId',
+  'sessionId',
+  'sort',
+  'includeDeleted',
+  'includeScratch',
+  'starred',
+  'label',
+] as const;
+const FILE_VIEW_PARAMS = [URL_PARAMS.file, URL_PARAMS.panel] as const;
+const SESSION_VIEW_PARAMS = [
+  URL_PARAMS.work,
+  URL_PARAMS.view,
+  URL_PARAMS.dir,
+  URL_PARAMS.preview,
+  URL_PARAMS.file,
+  URL_PARAMS.panel,
+] as const;
+const MANAGED_VIEW_PARAMS: readonly string[] = [...new Set([...GALLERY_SCOPED_PARAMS, ...SESSION_VIEW_PARAMS])];
+
+function scopedSearchForRoute(route: InAppRoute, search: string): URLSearchParams {
+  const params = new URLSearchParams(search);
+  // Transient inbound deep-link params never survive an in-app navigation.
+  for (const key of [URL_PARAMS.entry, URL_PARAMS.threadRoot, 'channel', 'session']) params.delete(key);
+  const keep = new Set<string>(
+    route.surface === 'files'
+      ? [...GALLERY_SCOPED_PARAMS, ...FILE_VIEW_PARAMS]
+      : route.surface === 'chat' && route.sessionId
+        ? SESSION_VIEW_PARAMS
+        : [],
+  );
+  for (const key of MANAGED_VIEW_PARAMS) {
+    if (!keep.has(key)) params.delete(key);
+  }
+  return params;
+}
+
+function routePathWithSearch(route: InAppRoute, search: string, hash = ''): string {
+  return pathWithSearch(routePath(route), scopedSearchForRoute(route, search), hash);
 }
 
 export function Chat({
@@ -837,14 +886,26 @@ export function Chat({
     if (notification.kind === 'message') {
       showNotification(notification.title, notification.body, notification.tag, () => {
         if (notification.channelId) {
-          navigate(routePath({ surface: 'chat', channelId: notification.channelId, sessionId: null, focusSession: false }));
+          navigate(
+            routePathWithSearch(
+              { surface: 'chat', channelId: notification.channelId, sessionId: null, focusSession: false },
+              locationState.search,
+              locationState.hash,
+            ),
+          );
         }
       });
       return;
     }
     showNotification(notification.title, notification.body, notification.tag, () => {
       const channelId = stateRef.current.sessions[notification.sessionId]?.channelId ?? null;
-      navigate(routePath({ surface: 'chat', channelId, sessionId: notification.sessionId, focusSession: false }));
+      navigate(
+        routePathWithSearch(
+          { surface: 'chat', channelId, sessionId: notification.sessionId, focusSession: false },
+          locationState.search,
+          locationState.hash,
+        ),
+      );
     });
   }
 
@@ -942,29 +1003,37 @@ export function Chat({
   // ---- thread panel ----
   const openThread = (rootEventId: number) => {
     if (!active) return;
-    void openThreadInChannel(active.id, rootEventId).catch(onApiError);
+    navigate(
+      routePathWithSearch(
+        { surface: 'chat', channelId: active.id, sessionId: null, threadRootId: String(rootEventId), focusSession: false },
+        locationState.search,
+        locationState.hash,
+      ),
+    );
   };
 
   // === web-client additions ===
   const openNotificationTarget = useCallback(
-    (target: NotificationClickTarget) => {
+    (target: NotificationClickTarget, options?: { replace?: boolean }) => {
       const threadRootEventId = notificationThreadRootId(target.threadRootId);
       const channelId = target.channelId ?? null;
       if (!channelId && !target.sessionId) return;
       navigate(
-        routePath({
-          surface: 'chat',
-          channelId,
-          sessionId: target.sessionId ?? null,
-          focusSession: false,
-        }),
+        routePathWithSearch(
+          {
+            surface: 'chat',
+            channelId,
+            sessionId: threadRootEventId == null ? (target.sessionId ?? null) : null,
+            threadRootId: channelId && threadRootEventId != null ? String(threadRootEventId) : null,
+            focusSession: false,
+          },
+          locationState.search,
+          locationState.hash,
+        ),
+        options,
       );
-      if (channelId && threadRootEventId != null) {
-        selectChannel(channelId);
-        void openThreadInChannel(channelId, threadRootEventId).catch(onApiError);
-      }
     },
-    [onApiError, openThreadInChannel, selectChannel],
+    [locationState.hash, locationState.search],
   );
 
   useEffect(() => {
@@ -978,7 +1047,7 @@ export function Chat({
       ...(channelId ? { channelId } : {}),
       ...(sessionId ? { sessionId } : {}),
       ...(threadRootId != null ? { threadRootId } : {}),
-    });
+    }, { replace: true });
   }, [openNotificationTarget]);
 
   useEffect(() => {
@@ -991,6 +1060,31 @@ export function Chat({
     return () => window.removeEventListener('atrium:notification-click', onNotificationClick);
   }, [openNotificationTarget]);
   // === web-client additions ===
+
+  useEffect(() => {
+    const params = new URLSearchParams(locationState.search);
+    if (params.has('channel') || params.has('session')) return;
+    const threadRootId = threadRootParamFromSearch(locationState.search);
+    if (threadRootId == null) return;
+    const parsed = parseInAppRoute(locationState.pathname);
+    const channelId = parsed?.channelId ?? stateRef.current.activeChannelId;
+    if (!channelId) return;
+    params.delete(URL_PARAMS.threadRoot);
+    navigate(
+      pathWithSearch(
+        routePath({
+          surface: 'chat',
+          channelId,
+          sessionId: null,
+          threadRootId: String(threadRootId),
+          focusSession: false,
+        }),
+        params,
+        locationState.hash,
+      ),
+      { replace: true },
+    );
+  }, [locationState.hash, locationState.pathname, locationState.search, activeChannelId]);
 
   const openMarkupReply = useCallback(
     async (handle: string, message: { channelId: string; id: number | null; threadRootEventId: number | null }) => {
@@ -1024,7 +1118,19 @@ export function Chat({
 
   const openDiscussThread = useCallback(
     (payload: TranscriptDiscussPayload) => {
-      navigate(routePath({ surface: 'chat', channelId: payload.channelId, sessionId: null, focusSession: false }));
+      navigate(
+        routePathWithSearch(
+          {
+            surface: 'chat',
+            channelId: payload.channelId,
+            sessionId: null,
+            threadRootId: String(payload.threadRootEventId),
+            focusSession: false,
+          },
+          locationState.search,
+          locationState.hash,
+        ),
+      );
       const draftKey = threadDraftKeyFor(payload.channelId, payload.threadRootEventId);
       markDraftTouched(draftKey);
       void saveDraft(draftKey, payload.draft);
@@ -1034,16 +1140,22 @@ export function Chat({
         })
         .catch(onApiError);
     },
-    [markDraftTouched, onApiError, openThreadInChannel, saveDraft],
+    [locationState.hash, locationState.search, markDraftTouched, onApiError, openThreadInChannel, saveDraft],
   );
 
   const seedActiveChannelComposer = useCallback(
     (draft: string) => {
-      navigate(routePath({ surface: 'chat', channelId: stateRef.current.activeChannelId, sessionId: null, focusSession: false }));
+      navigate(
+        routePathWithSearch(
+          { surface: 'chat', channelId: stateRef.current.activeChannelId, sessionId: null, focusSession: false },
+          locationState.search,
+          locationState.hash,
+        ),
+      );
       dispatch({ type: 'close-thread' });
       putTextInComposer(draft);
     },
-    [putTextInComposer],
+    [locationState.hash, locationState.search, putTextInComposer],
   );
 
   const openSpawnWithInitialTask = useCallback((task: string) => {
@@ -1073,20 +1185,26 @@ export function Chat({
     }
     setConfigureRestore(null);
   }, [activeDraftKey, configureRestore, markDraftTouched, saveDraft]);
+  const sessionFocusFromUrl = useMemo(
+    () => new URLSearchParams(locationState.search).get(URL_PARAMS.view) === 'focus',
+    [locationState.search],
+  );
 
   const {
     hasChannelSessions,
+    focused,
     paneSession,
     paneWatchers,
     sessionPaneLayout,
     setFocused,
     setView: setPaneView,
     spectators,
-    toggleFocus,
+    toggleFocus: togglePaneFocus,
     view,
   } = useSessionPaneState({
     activeChannel: active,
     dispatch,
+    focusedFromUrl: sessionFocusFromUrl,
     isMobileViewport,
     openSessionId: state.openSessionId,
     presence: state.presence,
@@ -1105,6 +1223,7 @@ export function Chat({
         if (route.channelId && current.activeChannelId !== route.channelId) selectChannel(route.channelId);
         legacyFocusedSessionIdRef.current = null;
         if (current.openSessionId) dispatch({ type: 'close-session' });
+        if (current.openThreadRootId != null) dispatch({ type: 'close-thread' });
         if (mainSurfaceRef.current !== route.surface) setMainSurface(route.surface);
         return;
       }
@@ -1113,16 +1232,36 @@ export function Chat({
       const nextChannelId = route.channelId ?? defaultChannelId();
       if (nextChannelId && current.activeChannelId !== nextChannelId) selectChannel(nextChannelId);
 
+      if (route.threadRootId) {
+        legacyFocusedSessionIdRef.current = null;
+        if (current.openSessionId) dispatch({ type: 'close-session' });
+        setFocused(false);
+        const rootEventId = Number(route.threadRootId);
+        if (nextChannelId && Number.isSafeInteger(rootEventId)) {
+          void openThreadInChannel(nextChannelId, rootEventId).catch(onApiError);
+        }
+        return;
+      }
+
+      if (route.membersOpen) {
+        legacyFocusedSessionIdRef.current = null;
+        if (current.openSessionId) dispatch({ type: 'close-session' });
+        if (current.openThreadRootId != null) dispatch({ type: 'close-thread' });
+        setFocused(false);
+        return;
+      }
+
       if (!route.sessionId) {
         legacyFocusedSessionIdRef.current = null;
         if (current.openSessionId) dispatch({ type: 'close-session' });
+        if (current.openThreadRootId != null) dispatch({ type: 'close-thread' });
         setFocused(false);
         return;
       }
 
       if (route.focusSession) legacyFocusedSessionIdRef.current = route.sessionId;
       const keepLegacyFocus = legacyFocusedSessionIdRef.current === route.sessionId;
-      setFocused(route.focusSession || keepLegacyFocus);
+      setFocused(route.focusSession || keepLegacyFocus || sessionFocusFromUrl);
       if (current.openSessionId !== route.sessionId) dispatch({ type: 'open-session', sessionId: route.sessionId });
 
       sessionsApi
@@ -1138,18 +1277,19 @@ export function Chat({
               sessionId: session.id,
               focusSession: false,
             });
+            const canonicalWithSearch = `${canonical}${window.location.search}${window.location.hash}`;
             if (
               (route.focusSession || !route.channelId || route.channelId !== sessionChannelId) &&
-              `${window.location.pathname}${window.location.search}${window.location.hash}` !== canonical
+              `${window.location.pathname}${window.location.search}${window.location.hash}` !== canonicalWithSearch
             ) {
-              navigate(canonical, { replace: true });
+              navigate(canonicalWithSearch, { replace: true });
             }
           }
           if (stateRef.current.openSessionId !== session.id) dispatch({ type: 'open-session', sessionId: session.id });
         })
         .catch(() => dispatch({ type: 'session-load-failed', sessionId: route.sessionId! }));
     },
-    [defaultChannelId, selectChannel, setFocused],
+    [defaultChannelId, onApiError, openThreadInChannel, selectChannel, sessionFocusFromUrl, setFocused],
   );
 
   useEffect(() => {
@@ -1170,9 +1310,12 @@ export function Chat({
     applyInAppRoute(route);
   }, [applyInAppRoute, initialChannelId, initialMainSurface, initialSessionFocus, initialSessionId]);
 
-  const goToRoute = useCallback((route: InAppRoute, options?: { replace?: boolean }) => {
-    navigate(routePath(route), options);
-  }, []);
+  const goToRoute = useCallback(
+    (route: InAppRoute, options?: { replace?: boolean }) => {
+      navigate(routePathWithSearch(route, locationState.search, locationState.hash), options);
+    },
+    [locationState.hash, locationState.search],
+  );
 
   const goToChannel = useCallback(
     (channelId: string) => {
@@ -1225,12 +1368,31 @@ export function Chat({
     });
   }, [goToRoute]);
 
+  const writeFocusViewParam = useCallback((nextFocused: boolean) => {
+    // Read the LIVE location, not the render-captured one: pinning the work
+    // drawer writes ?work= and toggles focus in the same tick, and a stale
+    // search here would clobber that first write.
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    if (nextFocused) params.set(URL_PARAMS.view, 'focus');
+    else params.delete(URL_PARAMS.view);
+    navigate(pathWithSearch(window.location.pathname, params, window.location.hash), { replace: true });
+  }, []);
+
+  const toggleFocus = useCallback(() => {
+    writeFocusViewParam(!focused);
+    togglePaneFocus();
+  }, [focused, togglePaneFocus, writeFocusViewParam]);
+
   const setView = useCallback(
     (next: Parameters<typeof setPaneView>[0]) => {
       if (next === 'channel') closeSession();
-      else setPaneView(next);
+      else {
+        writeFocusViewParam(next === 'focus');
+        setPaneView(next);
+      }
     },
-    [closeSession, setPaneView],
+    [closeSession, setPaneView, writeFocusViewParam],
   );
   // Match SessionPane's persisted width so the pane doesn't jump when it
   // replaces the loading placeholder; read storage once per opened session,
@@ -1258,20 +1420,11 @@ export function Chat({
     if (initialThreadRootEventId != null) return initialThreadRootEventId;
     return typeof window === 'undefined' ? null : threadRootParamFromSearch(window.location.search);
   });
-  const [pendingFileArtifactId, setPendingFileArtifactId] = useState<string | null>(() => {
-    return typeof window === 'undefined' ? null : fileParamFromSearch(window.location.search);
-  });
   useEffect(() => {
     if (highlightId == null) return;
     const t = setTimeout(() => setHighlightId(null), 2500);
     return () => clearTimeout(t);
   }, [highlightId]);
-
-  useEffect(() => {
-    if (!pendingFileArtifactId || !active) return;
-    openFilesSurface();
-    stripEntryParamFromLocation();
-  }, [active, openFilesSurface, pendingFileArtifactId]);
 
   useEffect(() => {
     if (!pendingEntryHandle || pendingEntryHandle.startsWith('rec_') || pendingEntryThreadRootId != null) return;
@@ -1399,7 +1552,9 @@ export function Chat({
       }
       const s = stateRef.current;
       if (s.openSessionId) closeSession();
-      else if (s.openThreadRootId != null) dispatch({ type: 'close-thread' });
+      else if (s.openThreadRootId != null) {
+        goToRoute({ surface: 'chat', channelId: s.activeChannelId, sessionId: null, focusSession: false });
+      }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
@@ -1636,6 +1791,12 @@ export function Chat({
   ]);
 
   const queueStatusText = queuedChangesLabel(state.wsStatus, queuedChangesCount);
+  const currentRoute = useMemo(() => parseInAppRoute(locationState.pathname), [locationState.pathname]);
+  const membersRouteOpen =
+    currentRoute?.surface === 'chat' &&
+    currentRoute.membersOpen === true &&
+    currentRoute.channelId != null &&
+    currentRoute.channelId === active?.id;
   const showFilesSurface = mainSurface === 'files';
   // === mentions-activity additions ===
   const showActivitySurface = mainSurface === 'activity';
@@ -1783,8 +1944,22 @@ export function Chat({
                 </>
               )}
             </h1>
-            {!showNonChatSurface && active && (active.kind === 'private' || active.kind === 'gdm') && (
-              <ChannelMembersMenu channel={active} meId={me.id} enqueueOp={enqueueOp} />
+            {!showNonChatSurface && active && (membersRouteOpen || active.kind === 'private' || active.kind === 'gdm') && (
+              <ChannelMembersMenu
+                channel={active}
+                meId={me.id}
+                enqueueOp={enqueueOp}
+                open={membersRouteOpen}
+                onOpenChange={(open) => {
+                  goToRoute({
+                    surface: 'chat',
+                    channelId: active.id,
+                    sessionId: null,
+                    membersOpen: open,
+                    focusSession: false,
+                  });
+                }}
+              />
             )}
             {showNonChatSurface ? (
               <button
@@ -1978,10 +2153,6 @@ export function Chat({
               workspaceId={workspace.id}
               channelId={active?.id ?? null}
               filesEventSeq={filesEventSeq}
-              initialOpenArtifactId={pendingFileArtifactId}
-              onInitialOpenArtifactHandled={(artifactId) => {
-                if (pendingFileArtifactId === artifactId) setPendingFileArtifactId(null);
-              }}
               onSeedChannelComposer={active ? seedActiveChannelComposer : undefined}
             />
           ) : (
@@ -2139,7 +2310,9 @@ export function Chat({
               spectators={spectators}
               meId={me.id}
               meHandle={me.handle}
-              onClose={() => dispatch({ type: 'close-thread' })}
+              onClose={() =>
+                goToRoute({ surface: 'chat', channelId: active.id, sessionId: null, focusSession: false })
+              }
               onSend={(text, attachments, attachmentRefs, voice, broadcast) =>
                 send(active.id, text, openThreadRoot.id!, attachments, attachmentRefs, voice, broadcast)
               }
@@ -2226,8 +2399,13 @@ export function Chat({
           }}
           onSendThreadReply={({ channelId, threadRootEventId, text }) => {
             send(channelId, text, threadRootEventId);
-            goToChannel(channelId);
-            void openThreadInChannel(channelId, threadRootEventId).catch(onApiError);
+            goToRoute({
+              surface: 'chat',
+              channelId,
+              sessionId: null,
+              threadRootId: String(threadRootEventId),
+              focusSession: false,
+            });
           }}
         />
       )}

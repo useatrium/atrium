@@ -20,6 +20,7 @@ export function useSessionPaneState({
   activeChannel,
   client = sessionsApi,
   dispatch,
+  focusedFromUrl = false,
   isMobileViewport,
   openSessionId,
   presence,
@@ -28,6 +29,7 @@ export function useSessionPaneState({
   activeChannel: Channel | null;
   client?: Pick<SessionApi, 'get'>;
   dispatch: DispatchAppAction;
+  focusedFromUrl?: boolean;
   isMobileViewport: boolean;
   openSessionId: string | null;
   presence: AppState['presence'];
@@ -37,8 +39,8 @@ export function useSessionPaneState({
   const [focused, setFocused] = useState(false);
 
   useEffect(() => {
-    if (!openSessionId) setFocused(false);
-  }, [openSessionId]);
+    setFocused(Boolean(openSessionId && focusedFromUrl));
+  }, [focusedFromUrl, openSessionId]);
 
   const view: SessionView = openSessionId ? (focused ? 'focus' : 'split') : 'channel';
   const sessionPaneLayout: SessionView = isMobileViewport ? 'focus' : focused ? 'focus' : 'split';

@@ -28,16 +28,13 @@ export function destinationForEntry(entry: NormalizedEntry): EntryLinkDestinatio
   const threadRootEventId = threadRootEventIdForEntry(entry);
   const entrySearch = new URLSearchParams();
   const artifactId = artifactIdForEntry(entry);
-  if (artifactId) entrySearch.set('file', artifactId);
-  else entrySearch.set('entry', entry.handle);
-  if (threadRootEventId != null) entrySearch.set('threadRoot', String(threadRootEventId));
-  const search = entrySearch.toString();
   if (entry.targetType === 'record') {
     const sessionId = entry.location.sessionId;
     if (!sessionId) return null;
+    entrySearch.set('entry', entry.handle);
     return {
       pathname: `/s/${encodeURIComponent(sessionId)}`,
-      search,
+      search: entrySearch.toString(),
       initialChannelId: null,
       initialSessionId: sessionId,
       initialEntryHandle: entry.handle,
@@ -47,11 +44,29 @@ export function destinationForEntry(entry: NormalizedEntry): EntryLinkDestinatio
     };
   }
 
+  if (artifactId) {
+    entrySearch.set('file', artifactId);
+    return {
+      pathname: '/files',
+      search: entrySearch.toString(),
+      initialChannelId: null,
+      initialSessionId: null,
+      initialEntryHandle: entry.handle,
+      initialThreadRootEventId: null,
+      initialFileArtifactId: artifactId,
+      targetType: entry.targetType,
+    };
+  }
+
   const channelId = entry.location.channelId;
   if (!channelId) return null;
+  entrySearch.set('entry', entry.handle);
   return {
-    pathname: '/',
-    search,
+    pathname:
+      threadRootEventId != null
+        ? `/c/${encodeURIComponent(channelId)}/t/${encodeURIComponent(String(threadRootEventId))}`
+        : `/c/${encodeURIComponent(channelId)}`,
+    search: entrySearch.toString(),
     initialChannelId: channelId,
     initialSessionId: null,
     initialEntryHandle: entry.handle,
@@ -90,10 +105,9 @@ export function threadRootParamFromSearch(search: string): number | null {
 export function stripEntryParamFromLocation(): void {
   if (typeof window === 'undefined') return;
   const url = new URL(window.location.href);
-  if (!url.searchParams.has('entry') && !url.searchParams.has('threadRoot') && !url.searchParams.has('file')) return;
+  if (!url.searchParams.has('entry') && !url.searchParams.has('threadRoot')) return;
   url.searchParams.delete('entry');
   url.searchParams.delete('threadRoot');
-  url.searchParams.delete('file');
   const next = `${url.pathname}${url.search}${url.hash}`;
   window.history.replaceState(null, '', next);
 }
@@ -123,7 +137,7 @@ export function EntryLinkRoute({
           setState({ kind: 'not-found' });
           return;
         }
-        const nextUrl = `${destination.pathname}?${destination.search}`;
+        const nextUrl = `${destination.pathname}${destination.search ? `?${destination.search}` : ''}`;
         if (window.location.pathname + window.location.search !== nextUrl) {
           window.history.replaceState(null, '', nextUrl);
         }

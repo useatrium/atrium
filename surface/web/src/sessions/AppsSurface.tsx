@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { Artifact, ArtifactPresentation } from '@atrium/centaur-client';
 import { ApiError } from '../api';
 import { Tooltip } from '../components/a11y';
+import { navigate, URL_PARAMS, useLocation } from '../router';
 import { EmptyState } from './EmptyState';
 import { ArtifactPreviewModal } from './ArtifactsSurface';
 import { sessionsApi, type AppListRow } from './api';
@@ -10,6 +11,11 @@ interface DetectedAppRoot {
   name: string;
   rootPath: string;
   entry: string;
+}
+
+function pathWithSearch(path: string, params: URLSearchParams): string {
+  const query = params.toString();
+  return query ? `${path}?${query}` : path;
 }
 
 function detectAppRoots(artifacts: Artifact[]): DetectedAppRoot[] {
@@ -73,6 +79,8 @@ export function AppsSurface({
   presentations?: ArtifactPresentation[];
   embedded?: boolean;
 }) {
+  const location = useLocation();
+  const previewParam = useMemo(() => new URLSearchParams(location.search).get(URL_PARAMS.preview)?.trim() ?? '', [location.search]);
   const [apps, setApps] = useState<AppListRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
@@ -98,6 +106,23 @@ export function AppsSurface({
   const unpublishedDetected = detected.filter((root) => !publishedNames.has(root.name) && !presentedNames.has(root.name));
   const unpublishedPresented = presented.filter(({ root }) => !publishedNames.has(root.name));
 
+  const updatePreviewUrl = (value: string | null, options: { replace?: boolean } = {}) => {
+    const params = new URLSearchParams(location.search);
+    if (value) params.set(URL_PARAMS.preview, value);
+    else params.delete(URL_PARAMS.preview);
+    navigate(pathWithSearch(location.pathname, params), options);
+  };
+
+  const openPreview = (presentation: ArtifactPresentation) => {
+    setPreview(presentation);
+    updatePreviewUrl(presentation.id);
+  };
+
+  const closePreview = () => {
+    setPreview(null);
+    updatePreviewUrl(null);
+  };
+
   async function refresh() {
     setLoading(true);
     setError(null);
@@ -114,6 +139,15 @@ export function AppsSurface({
   useEffect(() => {
     void refresh();
   }, [sessionId]);
+
+  useEffect(() => {
+    if (!previewParam) {
+      setPreview(null);
+      return;
+    }
+    const match = presentations.find((presentation) => presentation.id === previewParam || presentation.path === previewParam) ?? null;
+    setPreview(match);
+  }, [presentations, previewParam]);
 
   async function publish(root: DetectedAppRoot) {
     setBusy(`publish:${root.name}`);
@@ -171,7 +205,7 @@ export function AppsSurface({
                   </div>
                   <button
                     type="button"
-                    onClick={() => setPreview(presentation)}
+                    onClick={() => openPreview(presentation)}
                     className="rounded border border-edge px-2 py-1 text-3xs font-semibold uppercase tracking-wide text-fg-muted hover:bg-surface-overlay hover:text-fg"
                   >
                     Preview
@@ -251,7 +285,7 @@ export function AppsSurface({
                     {appPresentation && (
                       <button
                         type="button"
-                        onClick={() => setPreview(appPresentation)}
+                        onClick={() => openPreview(appPresentation)}
                         className="rounded border border-edge px-2 py-1 text-3xs font-semibold uppercase tracking-wide text-fg-muted hover:bg-surface-overlay hover:text-fg"
                       >
                         Preview
@@ -278,7 +312,7 @@ export function AppsSurface({
           sessionId={sessionId}
           artifact={presentationArtifact(preview)}
           presentation={preview}
-          onClose={() => setPreview(null)}
+          onClose={closePreview}
         />
       )}
     </div>

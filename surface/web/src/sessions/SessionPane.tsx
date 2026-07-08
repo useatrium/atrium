@@ -38,7 +38,7 @@ import {
   type ProviderCredentialProvider,
   type ProviderCredentialStatus,
 } from '../api';
-import { WorkDrawer, type WorkTab } from './WorkDrawer';
+import { SLUG_TAB, TAB_SLUG, WorkDrawer, type ActiveWorkTab, type WorkTab } from './WorkDrawer';
 import type { FilesHubDefaultScope, FilesHubSessionScope } from './FilesHub';
 import { useConflicts } from './useConflicts';
 import { InlineFileChange } from './fileChangeView';
@@ -113,6 +113,7 @@ import {
 import { useLongPress } from '../components/useLongPress';
 import { entryParamFromSearch, stripEntryParamFromLocation } from '../EntryLinkRoute';
 import { entryShareUrl, sessionShareUrl } from '../lib/publicUrl';
+import { navigate, URL_PARAMS, useLocation } from '../router';
 
 // Skip offscreen rendering work so 500+ item transcripts scroll smoothly.
 const ITEM_VIS: CSSProperties = { contentVisibility: 'auto', containIntrinsicSize: 'auto 32px' };
@@ -250,6 +251,16 @@ export function notifyUnseenOutputsChange(
   return next;
 }
 
+function pathWithSearch(pathname: string, searchParams: URLSearchParams, hash = ''): string {
+  const search = searchParams.toString();
+  return `${pathname}${search ? `?${search}` : ''}${hash}`;
+}
+
+function isInPaneSessionRoute(pathname: string, sessionId: string): boolean {
+  const encoded = encodeURIComponent(sessionId);
+  return pathname === `/s/${encoded}` || new RegExp(`^/c/[^/]+/s/${encoded}$`).test(pathname);
+}
+
 export interface TranscriptDiscussPayload {
   handle: string;
   channelId: string;
@@ -374,6 +385,7 @@ export function SessionPane({
   /** Shared API error hook; invalidates auth on 401 in the app shell. */
   onApiError?: (err: unknown) => void;
 }) {
+  const locationState = useLocation();
   // `active` re-opens the SSE the server closes after a terminal session's
   // replay, so a follow-up steer (which flips the session back to running over
   // WS) streams live instead of appearing only on the next pane mount.
@@ -436,25 +448,67 @@ export function SessionPane({
   const canPinWork = !isMobileViewport;
   const workPinnedEffective = workPinned && canPinWork;
   const workAutoFocusedRef = useRef(false);
+  const workUrlSyncedRef = useRef(false);
   const restoreSplitIfAuto = () => {
     if (workAutoFocusedRef.current && onToggleFocus) {
       workAutoFocusedRef.current = false;
       onToggleFocus();
     }
   };
-  const closeWork = () => {
+  const writeWorkParam = useCallback(
+    (tab: ActiveWorkTab | null, options: { replace?: boolean } = {}) => {
+      // Read the LIVE location: pin/focus flows write the URL twice in one
+      // tick, and the render-captured search would clobber the earlier write.
+      if (typeof window === 'undefined') return;
+      if (popout || !isInPaneSessionRoute(window.location.pathname, session.id)) return;
+      const params = new URLSearchParams(window.location.search);
+      if (tab) params.set(URL_PARAMS.work, TAB_SLUG[tab]);
+      else params.delete(URL_PARAMS.work);
+      workUrlSyncedRef.current = tab != null;
+      navigate(pathWithSearch(window.location.pathname, params, window.location.hash), options);
+    },
+    [popout, session.id],
+  );
+  const closeWork = useCallback(() => {
+    const wasPinned = workPinned;
     setWorkTab(null);
     setWorkPinned(false);
+    workUrlSyncedRef.current = false;
+    if (wasPinned) writeWorkParam(null);
     restoreSplitIfAuto();
-  };
+  }, [workPinned, writeWorkParam]);
+  const urlWorkTab = useMemo(() => {
+    if (popout || !isInPaneSessionRoute(locationState.pathname, session.id)) return null;
+    const raw = new URLSearchParams(locationState.search).get(URL_PARAMS.work);
+    return raw ? SLUG_TAB[raw] ?? null : null;
+  }, [locationState.pathname, locationState.search, popout, session.id]);
+  useEffect(() => {
+    if (urlWorkTab) {
+      workUrlSyncedRef.current = true;
+      setWorkTab(urlWorkTab);
+      setWorkPinned(true);
+      return;
+    }
+    if (!workUrlSyncedRef.current) return;
+    workUrlSyncedRef.current = false;
+    setWorkPinned(false);
+    setWorkTab(null);
+    restoreSplitIfAuto();
+  }, [urlWorkTab]);
   const outputHubOpen = workTab === 'hubFiles' || workTab === 'apps';
   const onOutputHubStrip = () => {
     if (outputHubOpen && !workPinnedEffective) closeWork();
-    else setWorkTab('hubFiles');
+    else {
+      setWorkTab('hubFiles');
+      if (workPinned) writeWorkParam('hubFiles', { replace: true });
+    }
   };
   const onStrip = (tab: WorkTab) => {
     if (workTab === tab && !workPinnedEffective) closeWork();
-    else setWorkTab(tab);
+    else {
+      setWorkTab(tab);
+      if (workPinned) writeWorkParam(tab === 'artifacts' ? 'changes' : tab, { replace: true });
+    }
   };
   const togglePin = () => {
     if (!canPinWork) {
@@ -463,15 +517,27 @@ export function SessionPane({
     }
     if (workPinned) {
       setWorkPinned(false);
+      workUrlSyncedRef.current = false;
+      writeWorkParam(null);
       restoreSplitIfAuto();
     } else {
+      const nextTab = workTab === 'artifacts' ? 'changes' : workTab;
+      if (!nextTab) return;
       setWorkPinned(true);
+      writeWorkParam(nextTab);
       if (layout === 'split' && onToggleFocus) {
         workAutoFocusedRef.current = true;
         onToggleFocus();
       }
     }
   };
+  const setPinnedWorkTab = useCallback(
+    (tab: ActiveWorkTab) => {
+      setWorkTab(tab);
+      if (workPinned) writeWorkParam(tab, { replace: true });
+    },
+    [workPinned, writeWorkParam],
+  );
 
   const outputCounts = useMemo<OutputCounts>(
     () => ({
@@ -1595,7 +1661,7 @@ export function SessionPane({
               filesSessionScope={filesSessionScope}
               filesDefaultScope={filesDefaultScope}
               tab={workTab}
-              onTab={setWorkTab}
+              onTab={setPinnedWorkTab}
               pinned={false}
               onTogglePin={togglePin}
               canPin={canPinWork}
@@ -1747,7 +1813,7 @@ export function SessionPane({
               filesSessionScope={filesSessionScope}
               filesDefaultScope={filesDefaultScope}
               tab={workTab}
-              onTab={setWorkTab}
+              onTab={setPinnedWorkTab}
               pinned
               onTogglePin={togglePin}
               canPin={canPinWork}

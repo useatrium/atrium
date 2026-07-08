@@ -24,6 +24,9 @@ describe('router', () => {
       surface: 'chat',
       channelId: null,
       sessionId: null,
+      threadRootId: null,
+      membersOpen: false,
+      settingsSection: null,
       focusSession: false,
     });
     expect(parseInAppRoute('/c/ch_1')).toMatchObject({ surface: 'chat', channelId: 'ch_1', sessionId: null });
@@ -44,8 +47,25 @@ describe('router', () => {
     expect(parseInAppRoute('/files')).toMatchObject({ surface: 'files' });
     expect(parseInAppRoute('/activity')).toMatchObject({ surface: 'activity' });
     expect(parseInAppRoute('/agents')).toMatchObject({ surface: 'agents' });
-    expect(parseInAppRoute('/settings')).toMatchObject({ surface: 'settings' });
+    expect(parseInAppRoute('/settings')).toMatchObject({ surface: 'settings', settingsSection: null });
+    expect(parseInAppRoute('/settings/connections')).toMatchObject({
+      surface: 'settings',
+      settingsSection: 'connections',
+    });
+    expect(parseInAppRoute('/c/ch_1/t/evt_9')).toMatchObject({
+      surface: 'chat',
+      channelId: 'ch_1',
+      threadRootId: 'evt_9',
+      sessionId: null,
+    });
+    expect(parseInAppRoute('/c/ch_1/members')).toMatchObject({
+      surface: 'chat',
+      channelId: 'ch_1',
+      membersOpen: true,
+    });
     expect(parseInAppRoute('/s/sess_1/pane')).toBeNull();
+    expect(parseInAppRoute('/settings/a/b')).toBeNull();
+    expect(parseInAppRoute('/c/ch_1/t/')).toBeNull();
   });
 
   it('builds canonical in-app paths', () => {
@@ -60,6 +80,31 @@ describe('router', () => {
     );
     expect(routePath({ surface: 'agents', channelId: null, sessionId: null, focusSession: false })).toBe('/agents');
     expect(routePath({ surface: 'settings', channelId: null, sessionId: null, focusSession: false })).toBe('/settings');
+    expect(
+      routePath({
+        surface: 'settings',
+        channelId: null,
+        sessionId: null,
+        settingsSection: 'connections',
+        focusSession: false,
+      }),
+    ).toBe('/settings/connections');
+    expect(
+      routePath({ surface: 'chat', channelId: 'ch_1', sessionId: null, threadRootId: 'evt_9', focusSession: false }),
+    ).toBe('/c/ch_1/t/evt_9');
+    expect(
+      routePath({ surface: 'chat', channelId: 'ch_1', sessionId: null, membersOpen: true, focusSession: false }),
+    ).toBe('/c/ch_1/members');
+    // A session pane takes precedence over thread/members segments.
+    expect(
+      routePath({
+        surface: 'chat',
+        channelId: 'ch_1',
+        sessionId: 'sess_1',
+        threadRootId: 'evt_9',
+        focusSession: false,
+      }),
+    ).toBe('/c/ch_1/s/sess_1');
   });
 
   it('notifies useLocation for navigate and popstate changes', async () => {
