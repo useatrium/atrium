@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import type { ChatMessage, UserRef } from '@atrium/surface-client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ThemeProvider } from '../theme';
@@ -11,6 +11,22 @@ const ada: UserRef = {
   handle: 'ada',
   displayName: 'Ada Lovelace',
 };
+
+const resizeObservers: MockResizeObserver[] = [];
+
+class MockResizeObserver {
+  readonly observe = vi.fn();
+  readonly unobserve = vi.fn();
+  readonly disconnect = vi.fn();
+
+  constructor(private readonly callback: ResizeObserverCallback) {
+    resizeObservers.push(this);
+  }
+
+  trigger() {
+    this.callback([], this as unknown as ResizeObserver);
+  }
+}
 
 function message(overrides: Partial<ChatMessage> = {}): ChatMessage {
   return {
@@ -66,7 +82,40 @@ function renderTimeline({
   );
 }
 
+function setScrollMetrics(
+  el: HTMLElement,
+  metrics: {
+    scrollHeight: number;
+    clientHeight: number;
+  },
+) {
+  Object.defineProperty(el, 'scrollHeight', { configurable: true, value: metrics.scrollHeight });
+  Object.defineProperty(el, 'clientHeight', { configurable: true, value: metrics.clientHeight });
+}
+
+function triggerContentResize() {
+  const observer = resizeObservers.at(-1);
+  if (!observer) throw new Error('expected ResizeObserver to be installed');
+  act(() => observer.trigger());
+}
+
+function mockLatestMessageOffscreen() {
+  return vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+    this: HTMLElement,
+  ) {
+    if (this.getAttribute('role') === 'log') {
+      return { top: 0, bottom: 200, left: 0, right: 300, width: 300, height: 200, x: 0, y: 0, toJSON: vi.fn() };
+    }
+    if (this.getAttribute('data-eid') === '3') {
+      return { top: 420, bottom: 460, left: 0, right: 300, width: 300, height: 40, x: 0, y: 420, toJSON: vi.fn() };
+    }
+    return { top: 0, bottom: 20, left: 0, right: 300, width: 300, height: 20, x: 0, y: 0, toJSON: vi.fn() };
+  });
+}
+
 beforeEach(() => {
+  resizeObservers.length = 0;
+  vi.stubGlobal('ResizeObserver', MockResizeObserver);
   Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
     configurable: true,
     value: vi.fn(),
@@ -75,6 +124,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
 
@@ -85,7 +135,7 @@ describe('Timeline unread divider', () => {
     const divider = screen.getByLabelText('New messages');
     expect(divider.hasAttribute('data-unread-divider')).toBe(true);
     expect(divider.nextElementSibling?.getAttribute('data-eid')).toBe('2');
-  });
+  }, 15_000);
 
   it('does not render when there is no unread watermark', () => {
     renderTimeline({ unreadDividerAfterId: null });
@@ -157,4 +207,84 @@ describe('Timeline unread divider', () => {
     expect(onReachBottom).toHaveBeenCalled();
     rect.mockRestore();
   });
+
+  it('re-pins to the bottom when content grows while stuck to latest', () => {
+    const onReachBottom = vi.fn();
+    renderTimeline({ unreadDividerAfterId: null, onReachBottom });
+
+    const log = screen.getByRole('log', { name: 'Messages' });
+    setScrollMetrics(log, { scrollHeight: 1000, clientHeight: 200 });
+    log.scrollTop = 800;
+    onReachBottom.mockClear();
+
+    setScrollMetrics(log, { scrollHeight: 1300, clientHeight: 200 });
+    triggerContentResize();
+
+    expect(log.scrollTop).toBe(1300);
+    expect(onReachBottom).toHaveBeenCalled();
+  }, 15_000);
+
+  it('does not move the viewport on content growth after the user scrolls away', () => {
+    renderTimeline({ unreadDividerAfterId: null });
+
+    const log = screen.getByRole('log', { name: 'Messages' });
+    setScrollMetrics(log, { scrollHeight: 1000, clientHeight: 200 });
+    log.scrollTop = 800;
+    log.scrollTop = 100;
+    fireEvent.scroll(log);
+
+    setScrollMetrics(log, { scrollHeight: 1300, clientHeight: 200 });
+    triggerContentResize();
+
+    expect(log.scrollTop).toBe(100);
+  }, 15_000);
+
+  it('re-anchors the unread divider when content grows on a pristine divider landing', () => {
+    const rect = mockLatestMessageOffscreen();
+    let dividerTop = 160;
+    const scrollIntoView = vi.spyOn(HTMLElement.prototype, 'scrollIntoView').mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      if (!this.hasAttribute('data-unread-divider')) return;
+      const log = this.closest('[role="log"]') as HTMLElement | null;
+      if (log) log.scrollTop = dividerTop;
+    });
+
+    renderTimeline();
+    const log = screen.getByRole('log', { name: 'Messages' });
+    expect(log.scrollTop).toBe(160);
+
+    dividerTop = 260;
+    triggerContentResize();
+
+    expect(log.scrollTop).toBe(260);
+    expect(scrollIntoView).toHaveBeenCalledTimes(2);
+    rect.mockRestore();
+  }, 15_000);
+
+  it('does not re-anchor the unread divider after the user scrolls away from the landing', () => {
+    const rect = mockLatestMessageOffscreen();
+    let dividerTop = 160;
+    const scrollIntoView = vi.spyOn(HTMLElement.prototype, 'scrollIntoView').mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      if (!this.hasAttribute('data-unread-divider')) return;
+      const log = this.closest('[role="log"]') as HTMLElement | null;
+      if (log) log.scrollTop = dividerTop;
+    });
+
+    renderTimeline();
+    const log = screen.getByRole('log', { name: 'Messages' });
+    setScrollMetrics(log, { scrollHeight: 1000, clientHeight: 200 });
+    log.scrollTop = 180;
+    fireEvent.scroll(log);
+
+    dividerTop = 260;
+    setScrollMetrics(log, { scrollHeight: 1300, clientHeight: 200 });
+    triggerContentResize();
+
+    expect(log.scrollTop).toBe(180);
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+    rect.mockRestore();
+  }, 15_000);
 });

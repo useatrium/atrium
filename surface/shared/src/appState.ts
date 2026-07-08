@@ -177,6 +177,10 @@ function coldUnreadLevel(ch: Channel): UnreadLevel {
   return ch.mentionedSinceRead || isDm ? 'mention' : true;
 }
 
+function isMainTimelineVisibleEvent(ev: WireEvent): boolean {
+  return ev.threadRootEventId == null || ev.broadcast === true || ev.payload?.broadcast === true;
+}
+
 export function appReducer(state: AppState, action: AppAction): AppState {
   switch (action.type) {
     case 'init-me':
@@ -370,7 +374,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       }
       const isNewMessage =
         (ev.type === 'message.posted' || ev.type === 'session.spawned') && !alreadySeen;
-      if (isNewMessage && !ev.mock && typeof ev.id === 'number') {
+      if (isNewMessage && isMainTimelineVisibleEvent(ev) && !ev.mock && typeof ev.id === 'number') {
         // Live events must advance the cold counter — the unread divider and
         // unmute re-derivation compare latestEventId against lastReadEventId.
         next = {
