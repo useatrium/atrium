@@ -50,3 +50,41 @@ test('message-action sheet opens on touch long-press without release click-throu
     await cdp.detach();
   }
 });
+
+// Regression: the swipe handler used to setPointerCapture on the container,
+// which transferred the touch pointer's implicit capture and fired a bubbling
+// lostpointercapture that the row's own cancel handler consumed — the swipe
+// self-destructed one move after engaging, so swipe-to-reply never fired.
+test('touch swipe right on a message opens the reply thread', async ({ context, page }) => {
+  await login(page, unique('swipe'), 'Swipe Tester');
+  const text = unique('swipe-reply-target');
+  await sendMessage(page, text);
+
+  const row = messageRow(page, text);
+  const box = await row.boundingBox();
+  if (!box) throw new Error('message row did not lay out');
+
+  const startX = box.x + 60;
+  const y = box.y + box.height / 2;
+  const cdp = await context.newCDPSession(page);
+  try {
+    await cdp.send('Input.dispatchTouchEvent', {
+      type: 'touchStart',
+      touchPoints: [{ x: startX, y, id: 1 }],
+    });
+    // Drag well past SWIPE_REPLY_THRESHOLD_PX (64) with a mostly-horizontal path.
+    for (let step = 1; step <= 8; step += 1) {
+      await cdp.send('Input.dispatchTouchEvent', {
+        type: 'touchMove',
+        touchPoints: [{ x: startX + step * 18, y: y + 1, id: 1 }],
+      });
+      await page.waitForTimeout(30);
+    }
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+
+    await expect(page.getByPlaceholder('Reply…')).toBeVisible();
+  } finally {
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] }).catch(() => {});
+    await cdp.detach();
+  }
+});
