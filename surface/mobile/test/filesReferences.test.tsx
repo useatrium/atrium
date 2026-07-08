@@ -5,6 +5,7 @@ import { Alert, Pressable, Text, View } from 'react-native';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { HubFile } from '@atrium/surface-client';
 import type { EntryReferenceMap } from '../src/lib/entryReferences';
+import { clearArtifactTextSnippetCache } from '../src/lib/artifactTextSnippets';
 import { renderWithTheme } from './rnTestUtils';
 
 const routerMock = vi.hoisted(() => ({
@@ -144,6 +145,7 @@ async function renderFilesTab() {
 afterEach(cleanup);
 
 beforeEach(() => {
+  clearArtifactTextSnippetCache();
   routerMock.push.mockReset();
   chatMock.api.listWorkspaceFiles.mockReset();
   chatMock.api.listChannelFiles.mockReset();
@@ -318,5 +320,36 @@ describe('FilesTab entry references', () => {
     expect(await screen.findByText('No files')).toBeInTheDocument();
     await waitFor(() => expect(chatMock.api.listWorkspaceFiles).toHaveBeenCalled());
     expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it('renders fetched snippets for small text gallery tiles', async () => {
+    const textFile = file({
+      artifactId: '55555555-5555-5555-5555-555555555555',
+      path: 'notes.md',
+      name: 'notes.md',
+      mime: 'text/markdown',
+      mediaKind: 'text',
+      isText: true,
+      sizeBytes: 120,
+      versionSeq: 3,
+    });
+    chatMock.api.listWorkspaceFiles.mockResolvedValue({ files: [textFile], nextCursor: null });
+    vi.mocked(global.fetch).mockImplementation((input) => {
+      const url = String(input);
+      if (url.includes('/api/entries/references/query')) return references({});
+      if (url.includes(textFile.artifactId)) {
+        return Promise.resolve({
+          ok: true,
+          text: () => Promise.resolve('# Notes\nconst answer = 42;\nmore text'),
+        } as Response);
+      }
+      return Promise.reject(new Error(`unexpected fetch ${url}`));
+    });
+
+    await renderFilesTab();
+
+    expect(await screen.findByText('notes.md')).toBeInTheDocument();
+    expect(await screen.findByText(/const answer = 42/)).toBeInTheDocument();
+    expect(chatMock.api.fileContentUrl).toHaveBeenCalledWith(textFile.artifactId);
   });
 });

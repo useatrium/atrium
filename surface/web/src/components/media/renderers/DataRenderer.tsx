@@ -131,7 +131,9 @@ export function DataRenderer({ file, variant }: { file: PreviewFile; variant: Me
 
   if (state.status !== 'ready') {
     return (
-      <div className="flex h-full min-h-32 items-center justify-center bg-surface-raised/35 p-3 text-sm text-fg-muted">
+      <div
+        className={`flex h-full ${variant === 'tile' ? 'min-h-0' : 'min-h-32'} items-center justify-center bg-surface-raised/35 p-3 text-sm text-fg-muted`}
+      >
         {state.status === 'loading' ? 'Loading data...' : state.text}
       </div>
     );

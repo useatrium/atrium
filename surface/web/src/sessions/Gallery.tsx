@@ -10,8 +10,9 @@ import {
 } from '@atrium/surface-client';
 import { Menu, MenuContent, MenuLabel, MenuSeparator, MenuTrigger, Tooltip } from '../components/a11y';
 import { SearchIcon } from '../components/icons';
-import { Lightbox } from '../components/media';
-import type { LightboxCallbacks } from '../components/media';
+import { Lightbox, MediaPreview } from '../components/media';
+import type { LightboxCallbacks, PreviewFile } from '../components/media';
+import { effectiveMediaKind, isAppFile } from '../components/media/utils';
 import { showErrorToast } from '../components/Toasts';
 import { entryShareUrl } from '../lib/publicUrl';
 import { navigate, useLocation } from '../router';
@@ -42,6 +43,7 @@ export interface GalleryQueryState {
 }
 
 const PAGE_SIZE = 60;
+const TEXT_TILE_PREVIEW_SIZE_LIMIT_BYTES = 512 * 1024;
 const SORT_VALUES = new Set<GallerySort>(['recent', 'name', 'size']);
 
 function isFileCategory(value: string | null): value is FileCategory {
@@ -200,6 +202,34 @@ function fileMeta(file: HubFile): string {
   return `${formatGalleryBytes(file.sizeBytes)} · ${relativeFileTime(file.createdAt)} · ${uploaderLabel(file)}`;
 }
 
+function shouldFetchTextForTilePreview(file: PreviewFile): boolean {
+  if (isAppFile(file)) return false;
+  const kind = effectiveMediaKind(file);
+  return kind === 'text' || kind === 'code' || kind === 'data';
+}
+
+function hasSafeTextTilePreviewSize(file: PreviewFile): boolean {
+  return typeof file.sizeBytes === 'number' && Number.isFinite(file.sizeBytes) && file.sizeBytes <= TEXT_TILE_PREVIEW_SIZE_LIMIT_BYTES;
+}
+
+function shouldUseTypeChipPreview(file: PreviewFile): boolean {
+  return shouldFetchTextForTilePreview(file) && !hasSafeTextTilePreviewSize(file);
+}
+
+function TypeChipPreview({ label }: { label: string }) {
+  return (
+    <div className="flex size-full items-center justify-center px-3">
+      <span className="max-w-full truncate rounded-md border border-edge-strong bg-surface-overlay px-2.5 py-1.5 text-xs font-semibold uppercase tracking-wide text-fg-secondary">
+        {label}
+      </span>
+    </div>
+  );
+}
+
+function GalleryCardPreview({ file, preview }: { file: HubFile; preview: PreviewFile }) {
+  return shouldUseTypeChipPreview(preview) ? <TypeChipPreview label={fileTypeLabel(file)} /> : <MediaPreview file={preview} variant="tile" />;
+}
+
 function mergeFile(files: HubFile[], next: HubFile): HubFile[] {
   return files.map((file) => (file.artifactId === next.artifactId ? next : file));
 }
@@ -215,8 +245,8 @@ function resolvedTextForChoice(conflict: ArtifactConflict, choice: ResolveChoice
 }
 
 function GalleryCard({ file, onOpen }: { file: HubFile; onOpen: () => void }) {
-  const imageThumbnail = file.mediaKind === 'image' && file.thumbnailUrl ? file.thumbnailUrl : null;
-  const type = fileTypeLabel(file);
+  const preview = hubFileToPreview(file);
+  const showPath = effectiveMediaKind(preview) !== 'image';
   return (
     <button
       type="button"
@@ -228,20 +258,9 @@ function GalleryCard({ file, onOpen }: { file: HubFile; onOpen: () => void }) {
       }`}
     >
       <div className="aspect-[4/3] w-full overflow-hidden border-b border-edge bg-surface">
-        {imageThumbnail ? (
-          <img
-            src={imageThumbnail}
-            alt=""
-            className="size-full object-cover transition-transform duration-200 ease-out group-hover:scale-[1.02]"
-            loading="lazy"
-          />
-        ) : (
-          <div className="flex size-full items-center justify-center px-3">
-            <span className="max-w-full truncate rounded-md border border-edge-strong bg-surface-overlay px-2.5 py-1.5 text-xs font-semibold uppercase tracking-wide text-fg-secondary">
-              {type}
-            </span>
-          </div>
-        )}
+        <div className="size-full transition-transform duration-200 ease-out group-hover:scale-[1.02] motion-reduce:transition-none motion-reduce:group-hover:scale-100">
+          <GalleryCardPreview file={file} preview={preview} />
+        </div>
       </div>
       <div className="flex min-h-20 min-w-0 flex-1 flex-col justify-between gap-2 px-2.5 py-2">
         <div className="min-w-0">
@@ -249,10 +268,10 @@ function GalleryCard({ file, onOpen }: { file: HubFile; onOpen: () => void }) {
             {file.name}
           </div>
           <div className="mt-1 truncate text-3xs text-fg-muted" title={fileMeta(file)}>
-            {imageThumbnail ? relativeFileTime(file.createdAt) : fileMeta(file)}
+            {fileMeta(file)}
           </div>
         </div>
-        {!imageThumbnail && (
+        {showPath && (
           <div className="truncate text-3xs text-fg-faint" title={file.path}>
             {file.path}
           </div>

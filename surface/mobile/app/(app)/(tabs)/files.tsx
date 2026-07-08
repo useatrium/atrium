@@ -28,6 +28,7 @@ import {
 } from '@atrium/surface-client';
 import { useChat } from '../../../src/lib/chat';
 import { mediaIconName, MediaLightbox, thumbnailSource } from '../../../src/components/MediaLightbox';
+import { TextSnippetTile } from '../../../src/components/TextSnippetTile';
 import {
   artifactEntryHandle,
   EntryReferencesChip,
@@ -176,6 +177,7 @@ function FileTile({
   const thumb = thumbnailSource(file, fileContentUrl, fileHeaders);
   const icon = mediaIconName(file);
   const typeLabel = fileTypeLabel(file);
+  const iconFallback = <Ionicons name={icon} size={34} color={colors.textMuted} />;
   return (
     <Pressable
       accessibilityRole="button"
@@ -201,7 +203,7 @@ function FileTile({
         {thumb ? (
           <Image source={thumb} style={{ width: '100%', height: '100%' }} contentFit="cover" transition={120} />
         ) : (
-          <Ionicons name={icon} size={34} color={colors.textMuted} />
+          <TextSnippetTile file={file} fileContentUrl={fileContentUrl} fileHeaders={fileHeaders} fallback={iconFallback} />
         )}
         {file.tombstoned ? (
           <View
