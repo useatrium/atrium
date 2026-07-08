@@ -204,8 +204,49 @@ function pathWithSearch(pathname: string, searchParams: URLSearchParams, hash = 
   return `${pathname}${search ? `?${search}` : ''}${hash}`;
 }
 
+// View-modifier params are scoped to the surface that renders them; carrying
+// them across surfaces would make e.g. a channel URL claim a lightbox file.
+const GALLERY_SCOPED_PARAMS = [
+  'q',
+  'category',
+  'channelId',
+  'sessionId',
+  'sort',
+  'includeDeleted',
+  'includeScratch',
+  'starred',
+  'label',
+] as const;
+const FILE_VIEW_PARAMS = [URL_PARAMS.file, URL_PARAMS.panel] as const;
+const SESSION_VIEW_PARAMS = [
+  URL_PARAMS.work,
+  URL_PARAMS.view,
+  URL_PARAMS.dir,
+  URL_PARAMS.preview,
+  URL_PARAMS.file,
+  URL_PARAMS.panel,
+] as const;
+const MANAGED_VIEW_PARAMS: readonly string[] = [...new Set([...GALLERY_SCOPED_PARAMS, ...SESSION_VIEW_PARAMS])];
+
+function scopedSearchForRoute(route: InAppRoute, search: string): URLSearchParams {
+  const params = new URLSearchParams(search);
+  // Transient inbound deep-link params never survive an in-app navigation.
+  for (const key of [URL_PARAMS.entry, URL_PARAMS.threadRoot, 'channel', 'session']) params.delete(key);
+  const keep = new Set<string>(
+    route.surface === 'files'
+      ? [...GALLERY_SCOPED_PARAMS, ...FILE_VIEW_PARAMS]
+      : route.surface === 'chat' && route.sessionId
+        ? SESSION_VIEW_PARAMS
+        : [],
+  );
+  for (const key of MANAGED_VIEW_PARAMS) {
+    if (!keep.has(key)) params.delete(key);
+  }
+  return params;
+}
+
 function routePathWithSearch(route: InAppRoute, search: string, hash = ''): string {
-  return pathWithSearch(routePath(route), new URLSearchParams(search), hash);
+  return pathWithSearch(routePath(route), scopedSearchForRoute(route, search), hash);
 }
 
 export function Chat({
@@ -977,20 +1018,16 @@ export function Chat({
       const threadRootEventId = notificationThreadRootId(target.threadRootId);
       const channelId = target.channelId ?? null;
       if (!channelId && !target.sessionId) return;
-      const params = new URLSearchParams(locationState.search);
-      params.delete('channel');
-      params.delete('session');
-      params.delete(URL_PARAMS.threadRoot);
       navigate(
-        pathWithSearch(
-          routePath({
+        routePathWithSearch(
+          {
             surface: 'chat',
             channelId,
             sessionId: threadRootEventId == null ? (target.sessionId ?? null) : null,
             threadRootId: channelId && threadRootEventId != null ? String(threadRootEventId) : null,
             focusSession: false,
-          }),
-          params,
+          },
+          locationState.search,
           locationState.hash,
         ),
         options,

@@ -10,7 +10,7 @@ import {
 } from '@atrium/surface-client';
 import { Menu, MenuContent, MenuLabel, MenuSeparator, MenuTrigger, Tooltip } from '../components/a11y';
 import { SearchIcon } from '../components/icons';
-import { Lightbox, MediaPreview } from '../components/media';
+import { Lightbox, MediaPreview, defaultLightboxPanel } from '../components/media';
 import type { LightboxCallbacks, PreviewFile } from '../components/media';
 import { effectiveMediaKind, isAppFile } from '../components/media/utils';
 import { showErrorToast } from '../components/Toasts';
@@ -569,7 +569,7 @@ export function Gallery({
       const file = previews[index];
       if (!file) return;
       setLightboxIndex(index);
-      updateLightboxSearch({ file: file.id }, { replace: false });
+      updateLightboxSearch({ file: file.id, panel: defaultLightboxPanel() }, { replace: false });
     },
     [previews, updateLightboxSearch],
   );

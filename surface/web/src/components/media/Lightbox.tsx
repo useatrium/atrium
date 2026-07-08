@@ -39,10 +39,17 @@ export type LightboxPanel = 'info' | 'history';
 const iconButtonClass =
   'grid size-8 max-md:size-11 place-items-center rounded-md border border-edge-strong bg-surface-overlay text-fg-secondary shadow-sm hover:bg-edge-strong hover:text-fg disabled:cursor-default disabled:text-fg-faint';
 
-function defaultOpenPanel(): LightboxPanel | null {
+/** Viewport default for the side panel: info on desktop, closed on narrow
+ * screens. URL-controlled hosts write this into the URL on open so the
+ * address stays the source of truth for what's on screen. */
+export function defaultLightboxPanel(): LightboxPanel | null {
   if (typeof window === 'undefined') return 'info';
   if (typeof window.matchMedia !== 'function') return 'info';
   return window.matchMedia('(min-width: 768px)').matches ? 'info' : null;
+}
+
+function defaultOpenPanel(): LightboxPanel | null {
+  return defaultLightboxPanel();
 }
 
 function MessagePlusIcon({ size = 16, ...props }: SVGProps<SVGSVGElement> & { size?: number }) {

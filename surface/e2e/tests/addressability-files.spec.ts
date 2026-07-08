@@ -87,6 +87,10 @@ test('/files lightbox file and info panel are URL-addressable', async ({ page })
   await page.getByRole('button').filter({ hasText: secondName }).first().click();
   await expect(page.getByRole('dialog')).toBeVisible();
   await expect.poll(() => searchParam(page.url(), 'file')).toBe(openArtifactId);
+  // Desktop default: the info panel opens with the lightbox and is written to
+  // the URL, so the address fully describes what's on screen.
+  await expect.poll(() => searchParam(page.url(), 'panel')).toBe('info');
+  await expect(page.getByRole('dialog').getByText('MIME')).toBeVisible();
 
   const openTitle = await page.locator('#lightbox-title').textContent();
   expect(openTitle?.trim()).toBe(secondName);
@@ -95,17 +99,19 @@ test('/files lightbox file and info panel are URL-addressable', async ({ page })
   await expect(page.getByRole('dialog')).toBeVisible();
   await expect.poll(() => page.locator('#lightbox-title').textContent()).toBe(secondName);
   await expect.poll(() => searchParam(page.url(), 'file')).toBe(openArtifactId);
+  await expect(page.getByRole('dialog').getByText('MIME')).toBeVisible();
+  await expect.poll(() => searchParam(page.url(), 'panel')).toBe('info');
 
   await page.getByRole('button', { name: 'Next file' }).click();
   await expect.poll(() => searchParam(page.url(), 'file')).not.toBe(openArtifactId);
 
+  // Closing the panel removes the param; reload restores the closed state.
   await page.getByRole('button', { name: 'Toggle info panel' }).click();
-  await expect.poll(() => searchParam(page.url(), 'panel')).toBe('info');
-  await expect(page.getByRole('dialog').getByText('MIME')).toBeVisible();
+  await expect.poll(() => searchParam(page.url(), 'panel')).toBe(null);
+  await expect(page.getByRole('dialog').getByText('MIME')).not.toBeVisible();
 
   await page.reload();
-  const dialog = page.getByRole('dialog');
-  await expect(dialog).toBeVisible();
-  await expect(dialog.getByText('MIME')).toBeVisible();
-  await expect.poll(() => searchParam(page.url(), 'panel')).toBe('info');
+  await expect(page.getByRole('dialog')).toBeVisible();
+  await expect(page.getByRole('dialog').getByText('MIME')).not.toBeVisible();
+  await expect.poll(() => searchParam(page.url(), 'panel')).toBe(null);
 });

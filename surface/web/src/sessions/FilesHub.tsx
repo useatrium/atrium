@@ -5,7 +5,7 @@ import { MarkupPane, splitMarkdownFrontmatter, type MarkupPaneSource } from '../
 import { showErrorToast } from '../components/Toasts';
 import { Tooltip } from '../components/a11y';
 import { FileIcon, SearchIcon } from '../components/icons';
-import { Lightbox, MediaPreview } from '../components/media';
+import { Lightbox, MediaPreview, defaultLightboxPanel } from '../components/media';
 import type { LightboxCallbacks, MediaKind, PreviewFile } from '../components/media';
 import {
   EntryReferencesChip,
@@ -1281,7 +1281,7 @@ export function FilesHub({
       const file = visiblePreviews[index];
       if (!file) return;
       setLightboxIndex(index);
-      updateUrlParams({ file: file.id }, { replace: false });
+      updateUrlParams({ file: file.id, panel: defaultLightboxPanel() }, { replace: false });
     },
     [updateUrlParams, visiblePreviews],
   );
