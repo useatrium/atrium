@@ -28,14 +28,18 @@ interface LightboxProps extends LightboxCallbacks {
   index: number;
   onIndexChange: (index: number) => void;
   onClose: () => void;
+  panel?: LightboxPanel | null;
+  onPanelChange?: (panel: LightboxPanel | null) => void;
   sessionId?: string;
   entryReferencesByFileId?: Record<string, EntryReferenceSummary | null>;
 }
 
+export type LightboxPanel = 'info' | 'history';
+
 const iconButtonClass =
   'grid size-8 max-md:size-11 place-items-center rounded-md border border-edge-strong bg-surface-overlay text-fg-secondary shadow-sm hover:bg-edge-strong hover:text-fg disabled:cursor-default disabled:text-fg-faint';
 
-function defaultOpenPanel(): 'info' | null {
+function defaultOpenPanel(): LightboxPanel | null {
   if (typeof window === 'undefined') return 'info';
   if (typeof window.matchMedia !== 'function') return 'info';
   return window.matchMedia('(min-width: 768px)').matches ? 'info' : null;
@@ -84,6 +88,8 @@ export function Lightbox({
   index,
   onIndexChange,
   onClose,
+  panel,
+  onPanelChange,
   onDownload,
   onCopyLink,
   onRename,
@@ -103,7 +109,16 @@ export function Lightbox({
   entryReferencesByFileId,
 }: LightboxProps) {
   const file = files[index];
-  const [openPanel, setOpenPanel] = useState<'info' | 'history' | null>(() => defaultOpenPanel());
+  const [localOpenPanel, setLocalOpenPanel] = useState<LightboxPanel | null>(() => defaultOpenPanel());
+  const openPanel = panel !== undefined ? panel : localOpenPanel;
+  const setOpenPanel = useCallback(
+    (next: LightboxPanel | null | ((panel: LightboxPanel | null) => LightboxPanel | null)) => {
+      const resolved = typeof next === 'function' ? next(openPanel) : next;
+      if (panel === undefined) setLocalOpenPanel(resolved);
+      onPanelChange?.(resolved);
+    },
+    [onPanelChange, openPanel, panel],
+  );
   const [renaming, setRenaming] = useState(false);
   const [draftName, setDraftName] = useState(file?.name ?? '');
   const [busy, setBusy] = useState(false);
