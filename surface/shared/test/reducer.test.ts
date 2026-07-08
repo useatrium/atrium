@@ -820,6 +820,31 @@ describe('live cold-counter advancement (unread divider depends on it)', () => {
     expect(state.unread[CH]).toBe(true);
   });
 
+  it('a live non-broadcast thread reply does not bump latestEventId but still mentions', () => {
+    let state = appReducer(loadedWith(), { type: 'init-me', handle: alice.handle, id: alice.id });
+    state = appReducer(state, { type: 'select-channel', channelId: 'ch-active' });
+    state = appReducer(state, {
+      type: 'server-event',
+      event: wire(9, '@alice from a thread', { threadRoot: 2, author: bob }),
+    });
+    const ch = state.channels.find((c) => c.id === CH)!;
+    expect(ch.latestEventId).toBe(5);
+    expect(state.unread[CH]).toBe('mention');
+    expect(state.syncCursor).toBe(9);
+  });
+
+  it('broadcast thread replies and plain messages bump channels[].latestEventId', () => {
+    let state = appReducer(loadedWith(), { type: 'select-channel', channelId: 'ch-active' });
+    state = appReducer(state, {
+      type: 'server-event',
+      event: wire(8, 'broadcast reply', { threadRoot: 2, broadcast: true }),
+    });
+    expect(state.channels.find((c) => c.id === CH)!.latestEventId).toBe(8);
+
+    state = appReducer(state, { type: 'server-event', event: wire(9, 'fresh') });
+    expect(state.channels.find((c) => c.id === CH)!.latestEventId).toBe(9);
+  });
+
   it('mock events never advance the counter', () => {
     let state = appReducer(loadedWith(), { type: 'select-channel', channelId: 'ch-active' });
     state = appReducer(state, {

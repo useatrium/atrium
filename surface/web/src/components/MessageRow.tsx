@@ -461,7 +461,10 @@ export const MessageRow = memo(function MessageRow({
       if (dx < 8 || dx < absDy * 1.2) return;
       swipe.dragging = true;
       setSwiping(true);
-      event.currentTarget.setPointerCapture(event.pointerId);
+      // No setPointerCapture here: touch pointers are already implicitly
+      // captured to their pointerdown target, and transferring the capture to
+      // this container fires a bubbling lostpointercapture that our own
+      // onLostPointerCapture handler treats as a cancel — killing the swipe.
     }
 
     event.preventDefault();
@@ -474,9 +477,6 @@ export const MessageRow = memo(function MessageRow({
       const swipe = swipeRef.current;
       if (!swipe || swipe.pointerId !== event.pointerId) return;
       const shouldReply = openThread && swipe.dragging && swipe.offset >= SWIPE_REPLY_THRESHOLD_PX && !!canThread;
-      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-        event.currentTarget.releasePointerCapture(event.pointerId);
-      }
       resetSwipe();
       if (shouldReply) onOpenThread!(threadTargetEventId!);
     },

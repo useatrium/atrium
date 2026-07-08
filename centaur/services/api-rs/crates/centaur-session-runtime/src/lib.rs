@@ -9139,6 +9139,118 @@ mod adoption_tests {
         );
     }
 
+    /// The Atrium steer flow always posts the durable message and then issues a
+    /// fresh execute. Mid-turn, the message must be steered into the RUNNING
+    /// execution from its durable parts (context part included) exactly once,
+    /// and the follow-up execute must conflict on the one-active-execution
+    /// index instead of double-delivering the same text.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn mid_turn_message_steers_running_turn_once_and_second_execute_conflicts() {
+        let Some(store) = test_store().await else {
+            return;
+        };
+        let _serial = lock_clean_slate().await;
+        let thread_key =
+            ThreadKey::parse(format!("test:midturn-steer-{}", uuid::Uuid::new_v4())).unwrap();
+        let execution_id = orphaned_execution(&store, &thread_key, Some("mock-sbx"), true).await;
+
+        let backend = Arc::new(MockBackend::new(SandboxStatus::Running, Vec::new()));
+        let (io, _stdout_far, stdin_far) = mock_io();
+        backend.push_io(io).await;
+        let runtime = runtime_with(&store, backend.clone());
+
+        let message = SessionMessageInput {
+            client_message_id: None,
+            role: MessageRole::User,
+            parts: vec![
+                json!({
+                    "type": "context",
+                    "text": "[atrium context]\nfrom: Alice Basin (human · driver)"
+                }),
+                json!({"type": "text", "text": "PROBE-STEER-42 focus on mobile"}),
+            ],
+            metadata: json!({"user_id": "user-1"}),
+        };
+        runtime
+            .append_messages(&thread_key, &[message])
+            .await
+            .expect("append message");
+
+        // Exactly one steering line reaches the sandbox stdin, carrying both
+        // the context part and the user text from the durable parts.
+        let mut reader = BufReader::new(stdin_far);
+        let mut line = String::new();
+        tokio::time::timeout(Duration::from_secs(5), reader.read_line(&mut line))
+            .await
+            .expect("read steer line within timeout")
+            .expect("read steer line");
+        assert!(
+            line.contains("PROBE-STEER-42"),
+            "steer text missing: {line}"
+        );
+        assert!(
+            line.contains("\"type\":\"context\""),
+            "context part missing from steer line: {line}"
+        );
+        assert!(
+            line.contains("steer_active_execution"),
+            "steer provenance missing: {line}"
+        );
+
+        let error = runtime
+            .execute_session(
+                &thread_key,
+                ExecuteSessionInput {
+                    idempotency_key: None,
+                    metadata: None,
+                    environment: BTreeMap::new(),
+                    input_lines: vec![
+                        json!({
+                            "type": "user",
+                            "message": {
+                                "content": [
+                                    {"type": "text", "text": "PROBE-STEER-42 focus on mobile"}
+                                ]
+                            }
+                        })
+                        .to_string(),
+                    ],
+                    idle_timeout_ms: None,
+                    max_duration_ms: None,
+                },
+            )
+            .await
+            .expect_err("second active execution must conflict");
+        assert!(
+            matches!(
+                &error,
+                SessionRuntimeError::Store(SessionStoreError::ExecutionAlreadyActive {
+                    thread_key: key
+                }) if key == thread_key.as_str()
+            ),
+            "unexpected execute error: {error:?}"
+        );
+
+        // No second delivery: the model saw the steer text exactly once.
+        let mut extra = String::new();
+        let second =
+            tokio::time::timeout(Duration::from_millis(500), reader.read_line(&mut extra)).await;
+        assert!(
+            second.is_err(),
+            "unexpected extra sandbox stdin line: {extra}"
+        );
+
+        // Delivery was recorded against the running execution.
+        let all = events(&store, &thread_key).await;
+        assert!(
+            all.iter().any(|event| {
+                event.event_type == "session.steering_delivered"
+                    && event.execution_id.as_deref() == Some(execution_id.as_str())
+            }),
+            "expected steering_delivered for the running execution"
+        );
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn cancel_during_sandbox_setup_stops_created_sandbox_and_keeps_execution_cancelled() {
         let Some(store) = test_store().await else {

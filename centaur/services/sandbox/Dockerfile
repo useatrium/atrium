@@ -296,6 +296,14 @@ COPY --link --chown=1001:1001 .agents/skills/ /opt/centaur/agents/skills/
 COPY --link --chown=1001:1001 harness/ /opt/centaur/harness/
 COPY --link --chown=1001:1001 workflows/ /opt/centaur/workflows/
 COPY --link --chown=1001:1001 services/sandbox/SYSTEM_PROMPT.md /opt/centaur/AGENTS.md
+# Atrium fork: bake the org prompt overlay into the image. The chart's
+# overlay.systemPrompt ConfigMap only reaches the api-rs pod — sandbox pods are
+# created dynamically and never mount it — so the entrypoint's
+# ${CENTAUR_OVERLAY_DIR}/services/sandbox/SYSTEM_PROMPT.md append is satisfied
+# from a baked path instead. A pod-level CENTAUR_OVERLAY_DIR env still wins
+# over this image default (external overlay-repo deployments keep working).
+COPY --link --chown=1001:1001 services/sandbox/ATRIUM_OVERLAY_PROMPT.md /opt/centaur-overlay/services/sandbox/SYSTEM_PROMPT.md
+ENV CENTAUR_OVERLAY_DIR=/opt/centaur-overlay
 
 ENTRYPOINT ["/entrypoint.sh"]
 # Default CMD uses Rust blocks mode; pass --mode=jsonrpc for raw App Server JSON-RPC.

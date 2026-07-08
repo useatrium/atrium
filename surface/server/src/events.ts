@@ -1121,6 +1121,7 @@ export async function listChannelsFor(pool: Db | DbClient, userId: string): Prom
        FROM events e
        WHERE e.channel_id = c.id
          AND e.type IN ('message.posted', 'session.spawned')
+         AND (e.thread_root_event_id IS NULL OR (e.payload->>'broadcast')::boolean IS TRUE)
      ) latest ON true
      -- === mentions-activity additions ===
      LEFT JOIN LATERAL (
