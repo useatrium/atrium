@@ -55,8 +55,8 @@ describe('atrium channel projection', () => {
       }),
     ]);
 
-    expect(md).toContain("**Alice Basin** · 2026-07-07 14:32 ⟨/e/evt_1⟩\nLet's use cursor-based pagination...");
-    expect(md).toContain('  ↳ **Bob Jones** · 14:35 ⟨/e/evt_2⟩\n  Agreed, but cap page size.');
+    expect(md).toContain("**Alice Basin** (@alice) · 2026-07-07 14:32 ⟨/e/evt_1⟩\nLet's use cursor-based pagination...");
+    expect(md).toContain('  ↳ **Bob Jones** (@bob) · 14:35 ⟨/e/evt_2⟩\n  Agreed, but cap page size.');
   });
 
   it('tails oversized chat output with an elision note', () => {

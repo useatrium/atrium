@@ -343,6 +343,7 @@ interface SessionListRow extends SessionRow {
 
 interface SteerContextRow {
   display_name: string;
+  handle: string;
   channel_name: string;
   sent_at: Date;
 }
@@ -1128,6 +1129,7 @@ export class SessionRuns {
   ): Promise<string> {
     const res = await client.query<SteerContextRow>(
       `SELECT u.display_name,
+              u.handle,
               c.name AS channel_name,
               now() AS sent_at
          FROM users u
@@ -1140,14 +1142,14 @@ export class SessionRuns {
       throw new DomainError(404, 'user_not_found', 'user not found');
     }
     return buildSteerContextBlock({
-      from: { name: context.display_name, kind: 'human', seat },
+      from: { name: context.display_name, handle: context.handle, kind: 'human', seat },
       channel: context.channel_name,
       sent: context.sent_at,
       ...(suggestion
         ? {
             suggestion: {
               suggestedBy: suggestion.suggestedBy,
-              acceptedBy: { name: context.display_name, seat },
+              acceptedBy: { name: context.display_name, handle: context.handle, seat },
             },
           }
         : {}),
@@ -1397,11 +1399,13 @@ export class SessionRuns {
       text: string;
       author_id: string;
       author_name: string;
+      author_handle: string;
     }>(
       `SELECT s.status,
               s.text,
               s.author_id,
-              author.display_name AS author_name
+              author.display_name AS author_name,
+              author.handle AS author_handle
          FROM session_suggestions s
          JOIN users author ON author.id = s.author_id
         WHERE s.id = $1
@@ -1424,7 +1428,7 @@ export class SessionRuns {
       const sendText = (opts.text ?? '').trim() || sug.text;
       const edited = sendText !== sug.text;
       const contextBlock = await this.buildUserTurnContextBlock(client, row, driverUserId, 'driver', {
-        suggestedBy: { name: sug.author_name, kind: 'human' },
+        suggestedBy: { name: sug.author_name, handle: sug.author_handle, kind: 'human' },
       });
       await this.postUserMessageOnce(row, driverUserId, sendText, true, client, undefined, [], contextBlock);
       await client.query(

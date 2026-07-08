@@ -32,8 +32,10 @@ export interface SessionMeta {
   branch: string | null;
   spawnedBy: string;
   spawnerName: string | null;
+  spawnerHandle: string | null;
   driverId: string | null;
   driverName: string | null;
+  driverHandle: string | null;
   currentExecutionId: string | null;
   assignmentGeneration: number | null;
   lastEventId: number;
@@ -75,8 +77,10 @@ interface SessionMetaRow {
   branch: string | null;
   spawned_by: string;
   spawner_name: string | null;
+  spawner_handle: string | null;
   driver_id: string | null;
   driver_name: string | null;
+  driver_handle: string | null;
   current_execution_id: string | null;
   assignment_generation: number | null;
   last_event_id: number;
@@ -141,8 +145,10 @@ export async function buildSessionMeta(pool: Db, sessionId: string): Promise<Ses
             s.branch,
             s.spawned_by,
             spawner.display_name AS spawner_name,
+            spawner.handle AS spawner_handle,
             s.driver_id,
             driver.display_name AS driver_name,
+            driver.handle AS driver_handle,
             s.current_execution_id,
             s.assignment_generation,
             s.last_event_id,
@@ -209,8 +215,10 @@ export async function buildSessionMeta(pool: Db, sessionId: string): Promise<Ses
     branch: row.branch,
     spawnedBy: row.spawned_by,
     spawnerName: row.spawner_name,
+    spawnerHandle: row.spawner_handle,
     driverId: row.driver_id,
     driverName: row.driver_name,
+    driverHandle: row.driver_handle,
     currentExecutionId: row.current_execution_id,
     assignmentGeneration: row.assignment_generation,
     lastEventId: row.last_event_id,
@@ -339,11 +347,22 @@ function appendSessionHeader(lines: string[], meta: SessionMeta | Record<string,
   lines.push('');
 }
 
+function namedWithHandle(
+  meta: SessionMeta | Record<string, unknown> | null,
+  nameKey: string,
+  handleKey: string,
+): string | null {
+  const name = stringFrom(meta, nameKey);
+  if (!name) return null;
+  const handle = stringFrom(meta, handleKey);
+  return handle ? `${name} (@${handle})` : name;
+}
+
 function sessionHeaderLine(meta: SessionMeta | Record<string, unknown> | null): string | null {
   if (!meta) return null;
   const title = stringFrom(meta, 'title') ?? 'Session';
-  const spawner = stringFrom(meta, 'spawnerName') ?? stringFrom(meta, 'spawnedBy') ?? 'unknown';
-  const driver = stringFrom(meta, 'driverName') ?? stringFrom(meta, 'driver') ?? 'unknown';
+  const spawner = namedWithHandle(meta, 'spawnerName', 'spawnerHandle') ?? stringFrom(meta, 'spawnedBy') ?? 'unknown';
+  const driver = namedWithHandle(meta, 'driverName', 'driverHandle') ?? stringFrom(meta, 'driver') ?? 'unknown';
   const channel = stringFrom(meta, 'channelName') ?? 'unknown';
   return `Session "${title}" — spawned by ${spawner}, driver ${driver}, in #${channel}`;
 }
@@ -561,8 +580,11 @@ function labelActor(actor: SessionRecordActor): string {
 
 function labelRecordActor(record: SessionRecord): string {
   if (record.actor === 'user') {
-    const name = stringFrom(objectFrom(record.meta.author), 'name');
-    if (name) return name;
+    const author = objectFrom(record.meta.author);
+    const name = stringFrom(author, 'name');
+    const handle = stringFrom(author, 'handle');
+    if (name) return handle ? `${name} (@${handle})` : name;
+    if (handle) return `@${handle}`;
   }
   return labelActor(record.actor);
 }

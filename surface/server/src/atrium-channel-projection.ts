@@ -292,7 +292,8 @@ function renderMessageGroup(group: ChannelChatMessage[]): string {
 }
 
 function authorLine(message: ChannelChatMessage, timestamp: string): string {
-  return `**${message.authorName}** · ${timestamp} ⟨/e/${message.handle}⟩`;
+  const handle = message.authorHandle ? ` (@${message.authorHandle})` : '';
+  return `**${message.authorName}**${handle} · ${timestamp} ⟨/e/${message.handle}⟩`;
 }
 
 function formatBody(text: string, indent: string): string[] {

@@ -245,7 +245,7 @@ describe('artifact scope route enforcement', () => {
     expect(listBody.readableRoots.map((root) => root.prefix)).toContain(`shared/channels/${fx.otherChannelId}`);
     expect(
       listBody.readableRoots.find((root) => root.prefix === `shared/channels/${fx.otherChannelId}`)?.writable,
-    ).toBe(false);
+    ).toBe(true);
     expect(listBody.rows.map((row) => row.path)).toContain(`shared/channels/${fx.otherChannelId}`);
 
     const res = await app.inject({
@@ -259,27 +259,34 @@ describe('artifact scope route enforcement', () => {
     expect(res.headers['x-artifact-display-path']).toBe(otherPath);
   });
 
-  it('rejects writes into readable non-active public channels', async () => {
+  it('allows writes into readable non-active public channels (writes follow reads)', async () => {
+    await ensureBucket();
     const cookie = await loginCookie();
     const sid = await session();
-    const otherPath = `shared/channels/${fx.otherChannelId}/other.md`;
-
     const userWrite = await app.inject({
       method: 'PUT',
-      url: `/api/sessions/${sid}/files?path=${encodeURIComponent(otherPath)}`,
+      url: `/api/sessions/${sid}/files?path=${encodeURIComponent(`shared/channels/${fx.otherChannelId}/user-write.md`)}`,
       headers: { cookie, 'content-type': 'text/markdown' },
-      payload: 'should not land',
+      payload: 'lands in the other channel',
     });
-
-    expect(userWrite.statusCode).toBe(403);
-    expect(userWrite.json()).toMatchObject({
-      error: 'artifact_read_only',
-      message: 'artifact path is not writable',
-    });
+    expect(userWrite.statusCode).toBe(200);
 
     const agentCapture = await app.inject({
       method: 'POST',
-      url: `/api/internal/sessions/${sid}/artifacts/capture?path=${encodeURIComponent(otherPath)}`,
+      url: `/api/internal/sessions/${sid}/artifacts/capture?path=${encodeURIComponent(`shared/channels/${fx.otherChannelId}/agent-capture.md`)}`,
+      headers: { 'x-api-key': KEY, 'content-type': 'text/markdown' },
+      payload: 'agent capture lands too',
+    });
+    expect(agentCapture.statusCode).toBe(200);
+  });
+
+  it('still rejects writes outside every readable root', async () => {
+    const sid = await session();
+    const strayPath = 'shared/channels/00000000-0000-4000-8000-000000000000/stray.md';
+
+    const agentCapture = await app.inject({
+      method: 'POST',
+      url: `/api/internal/sessions/${sid}/artifacts/capture?path=${encodeURIComponent(strayPath)}`,
       headers: { 'x-api-key': KEY, 'content-type': 'text/markdown' },
       payload: 'should not land',
     });
