@@ -122,6 +122,9 @@ function FilesHubWsHarness() {
 }
 
 beforeEach(() => {
+  // FilesHub syncs lightbox/folder state to the URL; jsdom keeps the location
+  // across tests, so reset it or a prior test's ?file= reopens the lightbox.
+  window.history.replaceState(null, '', '/');
   fetchMock = vi.fn(async () => filesResponse());
   vi.stubGlobal('fetch', fetchMock);
   queryEntryReferencesMock.mockResolvedValue({});

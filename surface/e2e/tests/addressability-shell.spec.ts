@@ -128,7 +128,10 @@ test('pinned work drawer Changes tab is URL-driven and reload-restored', async (
   await expect(page.getByTestId('work-drawer')).toBeVisible();
   await page.getByRole('button', { name: 'Pin work drawer' }).click();
 
-  await expect(page).toHaveURL(new RegExp(`/c/${roomId}/s/${sessionId}\\?work=changes$`));
+  // Pinning writes ?work= and (in split layout) auto-focuses, which is also
+  // URL-explicit — assert params individually rather than the exact string.
+  await expect.poll(() => new URL(page.url()).searchParams.get('work')).toBe('changes');
+  await expect(page).toHaveURL(new RegExp(`/c/${roomId}/s/${sessionId}\\?`));
   await page.reload();
   await expect(page.getByTestId('work-drawer')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Unpin work drawer' })).toBeVisible();

@@ -73,8 +73,8 @@ test('/files lightbox file and info panel are URL-addressable', async ({ page })
     const secondFileId = await uploadViaApi(ctx, secondName, 'text/plain', Buffer.from(`second ${secondName}`, 'utf8'));
     await postWithAttachment(ctx, general, `second ${secondName}`, secondFileId);
     const files = await channelFiles(ctx, general);
-    openArtifactId = files.find((file) => file.name === secondName)?.artifactId ?? '';
-    expect(openArtifactId, 'second upload should land as an artifact').not.toBe('');
+    openArtifactId = files.find((file) => file.name === firstName)?.artifactId ?? '';
+    expect(openArtifactId, 'first upload should land as an artifact').not.toBe('');
   } finally {
     await ctx.dispose();
   }
@@ -84,7 +84,8 @@ test('/files lightbox file and info panel are URL-addressable', async ({ page })
   await expect(page.getByRole('button').filter({ hasText: firstName }).first()).toBeVisible();
   await expect(page.getByRole('button').filter({ hasText: secondName }).first()).toBeVisible();
 
-  await page.getByRole('button').filter({ hasText: secondName }).first().click();
+  // Open the first file in name order so "Next file" has somewhere to go.
+  await page.getByRole('button').filter({ hasText: firstName }).first().click();
   await expect(page.getByRole('dialog')).toBeVisible();
   await expect.poll(() => searchParam(page.url(), 'file')).toBe(openArtifactId);
   // Desktop default: the info panel opens with the lightbox and is written to
@@ -93,11 +94,11 @@ test('/files lightbox file and info panel are URL-addressable', async ({ page })
   await expect(page.getByRole('dialog').getByText('MIME')).toBeVisible();
 
   const openTitle = await page.locator('#lightbox-title').textContent();
-  expect(openTitle?.trim()).toBe(secondName);
+  expect(openTitle?.trim()).toBe(firstName);
 
   await page.reload();
   await expect(page.getByRole('dialog')).toBeVisible();
-  await expect.poll(() => page.locator('#lightbox-title').textContent()).toBe(secondName);
+  await expect.poll(() => page.locator('#lightbox-title').textContent()).toBe(firstName);
   await expect.poll(() => searchParam(page.url(), 'file')).toBe(openArtifactId);
   await expect(page.getByRole('dialog').getByText('MIME')).toBeVisible();
   await expect.poll(() => searchParam(page.url(), 'panel')).toBe('info');

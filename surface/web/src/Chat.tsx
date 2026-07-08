@@ -1368,15 +1368,16 @@ export function Chat({
     });
   }, [goToRoute]);
 
-  const writeFocusViewParam = useCallback(
-    (nextFocused: boolean) => {
-      const params = new URLSearchParams(locationState.search);
-      if (nextFocused) params.set(URL_PARAMS.view, 'focus');
-      else params.delete(URL_PARAMS.view);
-      navigate(pathWithSearch(locationState.pathname, params, locationState.hash), { replace: true });
-    },
-    [locationState.hash, locationState.pathname, locationState.search],
-  );
+  const writeFocusViewParam = useCallback((nextFocused: boolean) => {
+    // Read the LIVE location, not the render-captured one: pinning the work
+    // drawer writes ?work= and toggles focus in the same tick, and a stale
+    // search here would clobber that first write.
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    if (nextFocused) params.set(URL_PARAMS.view, 'focus');
+    else params.delete(URL_PARAMS.view);
+    navigate(pathWithSearch(window.location.pathname, params, window.location.hash), { replace: true });
+  }, []);
 
   const toggleFocus = useCallback(() => {
     writeFocusViewParam(!focused);

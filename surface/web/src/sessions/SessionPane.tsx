@@ -457,14 +457,17 @@ export function SessionPane({
   };
   const writeWorkParam = useCallback(
     (tab: ActiveWorkTab | null, options: { replace?: boolean } = {}) => {
-      if (popout || !isInPaneSessionRoute(locationState.pathname, session.id)) return;
-      const params = new URLSearchParams(locationState.search);
+      // Read the LIVE location: pin/focus flows write the URL twice in one
+      // tick, and the render-captured search would clobber the earlier write.
+      if (typeof window === 'undefined') return;
+      if (popout || !isInPaneSessionRoute(window.location.pathname, session.id)) return;
+      const params = new URLSearchParams(window.location.search);
       if (tab) params.set(URL_PARAMS.work, TAB_SLUG[tab]);
       else params.delete(URL_PARAMS.work);
       workUrlSyncedRef.current = tab != null;
-      navigate(pathWithSearch(locationState.pathname, params, locationState.hash), options);
+      navigate(pathWithSearch(window.location.pathname, params, window.location.hash), options);
     },
-    [locationState.hash, locationState.pathname, locationState.search, popout, session.id],
+    [popout, session.id],
   );
   const closeWork = useCallback(() => {
     const wasPinned = workPinned;
