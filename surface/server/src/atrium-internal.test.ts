@@ -386,9 +386,9 @@ describe('internal /atrium node-facing routes', () => {
       headers: { 'x-api-key': KEY },
     });
     expect(chat.statusCode).toBe(200);
-    expect(chat.body).toContain(`**Alice Basin** · 2026-07-07 14:32 ⟨/e/evt_${root.id}⟩`);
+    expect(chat.body).toContain(`**Alice Basin** (@alice) · 2026-07-07 14:32 ⟨/e/evt_${root.id}⟩`);
     expect(chat.body).toContain("Let's use cursor-based pagination...");
-    expect(chat.body).toContain(`  ↳ **Bob Jones** · 14:35 ⟨/e/evt_${reply.id}⟩`);
+    expect(chat.body).toContain(`  ↳ **Bob Jones** (@bob) · 14:35 ⟨/e/evt_${reply.id}⟩`);
     expect(chat.body).not.toContain('original pagination text');
     expect(chat.body).not.toContain('deleted secret text');
   });

@@ -27,13 +27,44 @@ describe('steer context block', () => {
     );
     expect(parseSteerContextBlock(block)).toEqual({
       name: 'Alice Basin',
+      handle: null,
       kind: 'human',
       seat: 'driver',
       channel: 'design',
       sent: '2026-07-08T14:32:05Z',
-      suggestedBy: { name: 'Bob Jones', kind: 'human' },
-      acceptedBy: { name: 'Alice Basin', seat: 'driver' },
+      suggestedBy: { name: 'Bob Jones', handle: null, kind: 'human' },
+      acceptedBy: { name: 'Alice Basin', handle: null, seat: 'driver' },
     });
+  });
+
+
+  it('round-trips handles as the canonical identifier when provided', () => {
+    const block = buildSteerContextBlock({
+      from: { name: 'Alice Basin', handle: 'alice', kind: 'human', seat: 'driver' },
+      channel: 'design',
+      sent: '2026-07-08T14:32:05Z',
+      suggestion: {
+        suggestedBy: { name: 'Bob Jones', handle: 'bob', kind: 'human' },
+        acceptedBy: { name: 'Alice Basin', handle: 'alice', seat: 'driver' },
+      },
+    });
+
+    expect(block).toContain('from: Alice Basin (@alice · human · driver)');
+    expect(block).toContain(
+      'suggested by: Bob Jones (@bob · human) — accepted and sent by: Alice Basin (@alice · driver)',
+    );
+    expect(parseSteerContextBlock(block)).toMatchObject({
+      name: 'Alice Basin',
+      handle: 'alice',
+      kind: 'human',
+      seat: 'driver',
+      suggestedBy: { name: 'Bob Jones', handle: 'bob', kind: 'human' },
+      acceptedBy: { name: 'Alice Basin', handle: 'alice', seat: 'driver' },
+    });
+    // Blocks written before handles shipped still parse (handle: null).
+    expect(
+      parseSteerContextBlock('[atrium context]\nfrom: Old Timer (human · driver)\nsent: 2026-07-01T00:00:00Z'),
+    ).toMatchObject({ name: 'Old Timer', handle: null, kind: 'human' });
   });
 
   it('strips a merged context prefix without changing the user text remainder', () => {

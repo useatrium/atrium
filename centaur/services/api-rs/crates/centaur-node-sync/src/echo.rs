@@ -15,6 +15,11 @@ use std::path::PathBuf;
 pub struct EchoGuard {
     /// path -> the sha the node last wrote through `merged` (its own bytes).
     intended: HashMap<PathBuf, String>,
+    /// path -> a sha the server PERMANENTLY refused (e.g. capture 403 for an
+    /// unwritable root). Sticky, unlike intents: the same bytes are skipped on
+    /// every subsequent sweep instead of retried forever; a genuine new edit
+    /// (different sha) clears the entry and captures normally.
+    denied: HashMap<PathBuf, String>,
 }
 
 impl EchoGuard {
@@ -38,6 +43,25 @@ impl EchoGuard {
                 true
             }
             _ => false,
+        }
+    }
+
+    /// Record that the server permanently refused `(path, sha)` (4xx verdict).
+    pub fn record_denied(&mut self, path: PathBuf, sha: impl Into<String>) {
+        self.denied.insert(path, sha.into());
+    }
+
+    /// Should this `(path, sha)` be skipped as a known-denied capture? A
+    /// different sha for the same path clears the denial (content changed —
+    /// the new bytes deserve a fresh attempt).
+    pub fn is_denied(&mut self, path: &PathBuf, sha: &str) -> bool {
+        match self.denied.get(path) {
+            Some(denied) if denied == sha => true,
+            Some(_) => {
+                self.denied.remove(path);
+                false
+            }
+            None => false,
         }
     }
 

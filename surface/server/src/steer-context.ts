@@ -9,13 +9,15 @@ export type SteerContextActorKind = 'human' | 'agent';
 
 export interface SteerContextActor {
   name: string;
+  /** Unique @handle — the canonical, rename-stable identifier agents should use. */
+  handle?: string | null;
   kind: SteerContextActorKind;
   seat?: string | null;
 }
 
 export interface SteerContextSuggestionAttribution {
-  suggestedBy: Pick<SteerContextActor, 'name' | 'kind'>;
-  acceptedBy: Pick<SteerContextActor, 'name'> & { seat?: string | null };
+  suggestedBy: Pick<SteerContextActor, 'name' | 'handle' | 'kind'>;
+  acceptedBy: Pick<SteerContextActor, 'name' | 'handle'> & { seat?: string | null };
 }
 
 export interface SteerContextProvenance {
@@ -27,16 +29,19 @@ export interface SteerContextProvenance {
 
 export interface ParsedSteerContextBlock {
   name: string;
+  handle: string | null;
   kind: SteerContextActorKind;
   seat: string | null;
   channel: string | null;
   sent: string | null;
   suggestedBy?: {
     name: string;
+    handle: string | null;
     kind: SteerContextActorKind;
   };
   acceptedBy?: {
     name: string;
+    handle: string | null;
     seat: string | null;
   };
 }
@@ -50,7 +55,7 @@ export function buildSteerContextBlock(provenance: SteerContextProvenance): stri
   const from = provenance.from;
   const lines = [
     ATRIUM_CONTEXT_MARKER,
-    `from: ${oneLine(from.name)} (${actorLabel(from.kind, from.seat)})`,
+    `from: ${oneLine(from.name)} (${actorLabel(from.handle, from.kind, from.seat)})`,
     `channel: #${channelLabel(provenance.channel)}`,
     `sent: ${sentIso(provenance.sent)}`,
   ];
@@ -59,8 +64,8 @@ export function buildSteerContextBlock(provenance: SteerContextProvenance): stri
     const { suggestedBy, acceptedBy } = provenance.suggestion;
     lines.push(
       [
-        `suggested by: ${oneLine(suggestedBy.name)} (${suggestedBy.kind})`,
-        `accepted and sent by: ${oneLine(acceptedBy.name)} (${oneLine(acceptedBy.seat ?? '') || 'driver'})`,
+        `suggested by: ${oneLine(suggestedBy.name)} (${actorLabel(suggestedBy.handle, suggestedBy.kind, null)})`,
+        `accepted and sent by: ${oneLine(acceptedBy.name)} (${handleLabelParts(acceptedBy.handle, oneLine(acceptedBy.seat ?? '') || 'driver')})`,
       ].join(SUGGESTION_SEPARATOR),
     );
   }
@@ -84,6 +89,7 @@ export function parseSteerContextBlock(text: string): ParsedSteerContextBlock | 
 
   return {
     name: from.name,
+    handle: from.handle,
     kind: from.kind,
     seat: from.seat,
     channel: channelLine ? channelLine.slice('channel: '.length).trim().replace(/^#/, '') || null : null,
@@ -145,16 +151,24 @@ function stripOneBlankSeparator(text: string): string {
 function parseActorLine(
   line: string,
   prefix: string,
-): { name: string; kind: SteerContextActorKind; seat: string | null } | null {
+): { name: string; handle: string | null; kind: SteerContextActorKind; seat: string | null } | null {
   if (!line.startsWith(prefix)) return null;
   const body = line.slice(prefix.length);
   const match = /^(.+?) \(([^()]+)\)$/.exec(body);
   if (!match) return null;
-  const labelParts = match[2]!.split(ACTOR_SEAT_SEPARATOR).map((part) => part.trim());
+  let labelParts = match[2]!.split(ACTOR_SEAT_SEPARATOR).map((part) => part.trim());
+  // Leading @handle label part is optional (blocks written before handles
+  // shipped omit it) — the kind always follows it.
+  let handle: string | null = null;
+  if (labelParts[0]?.startsWith('@')) {
+    handle = labelParts[0].slice(1) || null;
+    labelParts = labelParts.slice(1);
+  }
   const kind = parseActorKind(labelParts[0]);
   if (!kind) return null;
   return {
     name: match[1]!.trim(),
+    handle,
     kind,
     seat: labelParts.slice(1).join(ACTOR_SEAT_SEPARATOR).trim() || null,
   };
@@ -173,9 +187,19 @@ function parseSuggestionLine(
     : '';
   const accepted = /^(.+?) \(([^()]+)\)$/.exec(acceptedBody);
   if (!accepted) return null;
+  let acceptedParts = accepted[2]!.split(ACTOR_SEAT_SEPARATOR).map((part) => part.trim());
+  let acceptedHandle: string | null = null;
+  if (acceptedParts[0]?.startsWith('@')) {
+    acceptedHandle = acceptedParts[0].slice(1) || null;
+    acceptedParts = acceptedParts.slice(1);
+  }
   return {
-    suggestedBy: { name: suggestedBy.name, kind: suggestedBy.kind },
-    acceptedBy: { name: accepted[1]!.trim(), seat: accepted[2]!.trim() || null },
+    suggestedBy: { name: suggestedBy.name, handle: suggestedBy.handle, kind: suggestedBy.kind },
+    acceptedBy: {
+      name: accepted[1]!.trim(),
+      handle: acceptedHandle,
+      seat: acceptedParts.join(ACTOR_SEAT_SEPARATOR).trim() || null,
+    },
   };
 }
 
@@ -183,9 +207,18 @@ function parseActorKind(value: string | undefined): SteerContextActorKind | null
   return value === 'human' || value === 'agent' ? value : null;
 }
 
-function actorLabel(kind: SteerContextActorKind, seat?: string | null): string {
+function actorLabel(
+  handle: string | null | undefined,
+  kind: SteerContextActorKind,
+  seat?: string | null,
+): string {
   const cleanSeat = oneLine(seat ?? '');
-  return cleanSeat ? `${kind}${ACTOR_SEAT_SEPARATOR}${cleanSeat}` : kind;
+  return handleLabelParts(handle, cleanSeat ? `${kind}${ACTOR_SEAT_SEPARATOR}${cleanSeat}` : kind);
+}
+
+function handleLabelParts(handle: string | null | undefined, rest: string): string {
+  const cleanHandle = oneLine(handle ?? '').replace(/^@+/, '');
+  return cleanHandle ? `@${cleanHandle}${ACTOR_SEAT_SEPARATOR}${rest}` : rest;
 }
 
 function channelLabel(channel: string): string {

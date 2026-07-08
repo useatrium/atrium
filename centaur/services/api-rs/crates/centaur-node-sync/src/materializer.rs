@@ -174,9 +174,14 @@ fn read_session_index_rows(sessions_dir: &Path) -> Result<Vec<SessionIndexRow>, 
             status: json_string(&meta, "status").unwrap_or_else(|| "unknown".to_string()),
             channel_name: json_string(&meta, "channelName")
                 .unwrap_or_else(|| "unknown".to_string()),
-            driver_name: json_string(&meta, "driverName")
-                .or_else(|| json_string(&meta, "driver"))
-                .unwrap_or_else(|| "unknown".to_string()),
+            driver_name: match (
+                json_string(&meta, "driverName"),
+                json_string(&meta, "driverHandle"),
+            ) {
+                (Some(name), Some(handle)) => format!("{name} (@{handle})"),
+                (Some(name), None) => name,
+                (None, _) => json_string(&meta, "driver").unwrap_or_else(|| "unknown".to_string()),
+            },
             updated_at: json_string(&meta, "updatedAt")
                 .or_else(|| json_string(&meta, "completedAt"))
                 .or_else(|| json_string(&meta, "createdAt"))

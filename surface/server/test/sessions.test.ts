@@ -3439,7 +3439,7 @@ describe('Phase 2 sessions', () => {
     expect(messages[0]!.body.parts).toEqual(messages[1]!.body.parts);
     expect(messages[0]!.body.parts[0]).toMatchObject({
       type: 'context',
-      text: expect.stringContaining('[atrium context]\nfrom: Alice (human · driver)\nchannel: #general\nsent:'),
+      text: expect.stringContaining('[atrium context]\nfrom: Alice (@alice · human · driver)\nchannel: #general\nsent:'),
     });
     expect(messages[0]!.body.parts[1]).toEqual({ type: 'text', text: 'retry after stale' });
     const execute = fake.requests.find((r) => r.path === '/agent/execute');
@@ -4041,10 +4041,10 @@ describe('Phase 2 sessions', () => {
     expect(posted?.body.parts[0]).toMatchObject({
       type: 'context',
       text: expect.stringContaining(
-        'suggested by: Bob (human) — accepted and sent by: Alice (driver)',
+        'suggested by: Bob (@bob · human) — accepted and sent by: Alice (@alice · driver)',
       ),
     });
-    expect(posted?.body.parts[0].text).toContain('from: Alice (human · driver)');
+    expect(posted?.body.parts[0].text).toContain('from: Alice (@alice · human · driver)');
     expect(posted?.body.parts[1]).toEqual({ type: 'text', text: 'run the tests -v' });
 
     const row = await pool.query(

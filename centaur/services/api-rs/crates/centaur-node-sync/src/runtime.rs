@@ -543,13 +543,22 @@ pub fn capture_sweep(
                         out.skipped_echo.push(key);
                         continue;
                     }
+                    if echo.is_denied(&path, &sha) {
+                        out.skipped_other.push(key);
+                        continue;
+                    }
                     let Some(mut body) = reader.open_stream(&path) else {
                         out.errors.push((key, "unreadable (torn/escaped)".into()));
                         continue;
                     };
                     match client.post_capture_stream(&key, base, &mut *body, size) {
                         Ok(seq) => out.streamed.push((key, seq, sha)),
-                        Err(e) => out.errors.push((key, e)),
+                        Err(e) => {
+                            if is_permanent_capture_denial(&e) {
+                                echo.record_denied(path.clone(), sha.clone());
+                            }
+                            out.errors.push((key, e));
+                        }
                     }
                     continue;
                 }
@@ -568,9 +577,18 @@ pub fn capture_sweep(
                     out.skipped_echo.push(key);
                     continue;
                 }
+                if echo.is_denied(&path, &sha) {
+                    out.skipped_other.push(key);
+                    continue;
+                }
                 match client.post_capture(&key, base, &bytes) {
                     Ok(seq) => out.captured.push((key, seq, sha)),
-                    Err(e) => out.errors.push((key, e)),
+                    Err(e) => {
+                        if is_permanent_capture_denial(&e) {
+                            echo.record_denied(path.clone(), sha.clone());
+                        }
+                        out.errors.push((key, e));
+                    }
                 }
             }
             OverlayOp::Delete { path } => {
@@ -588,6 +606,13 @@ pub fn capture_sweep(
         }
     }
     out
+}
+
+/// A 403 from the capture endpoint is a policy verdict on these exact bytes
+/// (unwritable root), not a transient fault — retrying the same content every
+/// tick would spam forever. New bytes at the path clear the denial.
+fn is_permanent_capture_denial(error: &str) -> bool {
+    error.contains("status code 403")
 }
 
 fn read_secret_sample(reader: &dyn UpperReader, path: &Path) -> Result<Vec<u8>, String> {
@@ -1215,9 +1240,15 @@ mod tests {
         profile_bundles: Vec<BundleRef>,
         profile_bundle_blob_bytes: HashMap<String, Vec<u8>>,
         next_seq: u64,
+        capture_attempts: u64,
+        deny_captures: bool,
     }
     impl AtriumClient for FakeClient {
         fn post_capture(&mut self, path: &str, _base: u64, _bytes: &[u8]) -> Result<u64, String> {
+            self.capture_attempts += 1;
+            if self.deny_captures {
+                return Err(format!("capture {path}: status code 403"));
+            }
             self.next_seq += 1;
             self.captures.push((path.to_string(), self.next_seq));
             Ok(self.next_seq)
@@ -1616,6 +1647,46 @@ mod tests {
         assert_eq!(out.captured.len(), 1);
         assert_eq!(out.deleted.len(), 1);
         assert!(out.errors.is_empty());
+    }
+
+    #[test]
+    fn capture_sweep_tombstones_denied_captures_until_content_changes() {
+        let entries = vec![reg("shared/channels/other/plan.md")];
+        let mut files = HashMap::new();
+        files.insert(
+            PathBuf::from("shared/channels/other/plan.md"),
+            b"the plan".to_vec(),
+        );
+        let reader = MapReader(files);
+        let base = HashMap::new();
+        let mut echo = EchoGuard::new();
+        let mut client = FakeClient {
+            deny_captures: true,
+            ..FakeClient::default()
+        };
+
+        // First sweep: the server refuses with 403 — one attempt, one error.
+        let first = capture_sweep(&entries, &base, &reader, &mut echo, &mut client, 1 << 20);
+        assert_eq!(client.capture_attempts, 1);
+        assert_eq!(first.errors.len(), 1);
+
+        // Second sweep, same bytes: tombstoned — NO further attempt, no error.
+        let second = capture_sweep(&entries, &base, &reader, &mut echo, &mut client, 1 << 20);
+        assert_eq!(client.capture_attempts, 1, "denied capture must not retry");
+        assert!(second.errors.is_empty());
+        assert_eq!(second.skipped_other, vec!["shared/channels/other/plan.md"]);
+
+        // New bytes at the path clear the denial and capture again.
+        let mut changed = HashMap::new();
+        changed.insert(
+            PathBuf::from("shared/channels/other/plan.md"),
+            b"the revised plan".to_vec(),
+        );
+        let reader = MapReader(changed);
+        client.deny_captures = false;
+        let third = capture_sweep(&entries, &base, &reader, &mut echo, &mut client, 1 << 20);
+        assert_eq!(client.capture_attempts, 2);
+        assert_eq!(third.captured.len(), 1);
     }
 
     #[test]

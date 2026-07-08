@@ -85,11 +85,16 @@ describe('artifact path canonicalization', () => {
     expect(() => canonicalizeSessionArtifactPath('repo/src/app.ts', ctx)).toThrow(InvalidArtifactPathError);
     expect(() => canonicalizeSessionArtifactPath('.codex/auth.json', ctx)).toThrow(InvalidArtifactPathError);
     expect(() => canonicalizeSessionArtifactPath('shared/report.md', ctx)).toThrow(InvalidArtifactPathError);
-    expect(() =>
+    // Writes follow reads: a foreign channel UUID is addressable at the path
+    // layer; authorization (403) happens at the route scope checks instead.
+    expect(
       canonicalizeSessionArtifactPath(
         'shared/channels/33333333-3333-4333-8333-333333333333/report.md',
         ctx,
       ),
+    ).toBe('shared/channels/33333333-3333-4333-8333-333333333333/report.md');
+    expect(() =>
+      canonicalizeSessionArtifactPath('shared/channels/not-a-uuid/report.md', ctx),
     ).toThrow(InvalidArtifactPathError);
     expect(() =>
       canonicalizeSessionArtifactPath('shared/projects/proj-1/report.md', ctx),

@@ -143,7 +143,7 @@ describe('atrium session projection renderers', () => {
     expect(lean.map((record) => record.kind)).toEqual(['message', 'message', 'command', 'file_change', 'artifact']);
 
     const transcript = renderTranscriptMarkdown(lean);
-    expect(transcript).toContain('Session "Render session records" — spawned by Alice, driver Bob, in #general');
+    expect(transcript).toContain('Session "Render session records" — spawned by Alice (@alice), driver Bob (@bob), in #general');
     expect(transcript).toContain('**User**: Please repair the widget renderer.');
     expect(transcript).toContain('$ pnpm test');
     expect(transcript).not.toContain('Hidden reasoning');
@@ -184,7 +184,7 @@ describe('atrium session projection renderers', () => {
 
     const summary = renderSummaryMarkdown(full, meta);
     expect(summary).toContain('# Render session records');
-    expect(summary).toContain('Session "Render session records" — spawned by Alice, driver Bob, in #general');
+    expect(summary).toContain('Session "Render session records" — spawned by Alice (@alice), driver Bob (@bob), in #general');
     expect(summary).toContain('Status: completed');
     expect(summary).toContain('Messages: 2');
     expect(summary).toContain('Commands: 1');

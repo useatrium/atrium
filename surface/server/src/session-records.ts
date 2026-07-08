@@ -1328,6 +1328,7 @@ function projectUserMessageEcho(
 function authorMetaFromContext(context: ParsedSteerContextBlock): JsonObject {
   return compactJsonObject({
     name: context.name,
+    handle: context.handle ?? undefined,
     seat: context.seat ?? undefined,
   });
 }
