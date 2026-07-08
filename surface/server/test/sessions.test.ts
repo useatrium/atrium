@@ -44,6 +44,7 @@ class FakeCentaur {
   interruptFailure: { status: number; body: object } | null = null;
   interruptResponse: object | null = null;
   private answerNotPendingCount = 0;
+  private executeAlreadyActiveCount = 0;
   url = '';
 
   constructor() {
@@ -188,6 +189,10 @@ class FakeCentaur {
         this.recordLegacy('POST', '/agent/execute', legacyBody, url.searchParams);
         const replay = this.replayIdempotent(res, 'execute', threadKey, executeId, legacyBody);
         if (replay) return;
+        if (this.executeAlreadyActiveCount > 0) {
+          this.executeAlreadyActiveCount -= 1;
+          return sendJson(res, { code: 'execution_already_active' }, 409);
+        }
         await this.waitForExecuteGate();
         const executionId = `exe_fake_${this.acceptedExecutions.length + 1}`;
         const response = { execution_id: executionId };
@@ -248,6 +253,10 @@ class FakeCentaur {
     if (req.method === 'POST' && url.pathname === '/agent/execute') {
       const replay = this.replayIdempotent(res, 'execute', body.thread_key, body.execute_id, body);
       if (replay) return;
+      if (this.executeAlreadyActiveCount > 0) {
+        this.executeAlreadyActiveCount -= 1;
+        return sendJson(res, { code: 'execution_already_active' }, 409);
+      }
       await this.waitForExecuteGate();
       const executionId = `exe_fake_${this.acceptedExecutions.length + 1}`;
       const response = { execution_id: executionId };
@@ -290,6 +299,10 @@ class FakeCentaur {
 
   rejectNextAnswerQuestionNotPending(): void {
     this.answerNotPendingCount += 1;
+  }
+
+  rejectNextExecuteAlreadyActive(): void {
+    this.executeAlreadyActiveCount += 1;
   }
 
   pauseNextExecute(): void {
@@ -3125,6 +3138,48 @@ describe('Phase 2 sessions', () => {
     await app.close();
   });
 
+  it('treats execute-during-active-turn as delivered without replacing the current execution id', async () => {
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const cookie = await loginCookie(app);
+    const inserted = await pool.query<{ id: string }>(
+      `INSERT INTO sessions (
+         workspace_id, channel_id, centaur_thread_key, harness, title, status, spawned_by,
+         driver_id, current_execution_id, assignment_generation
+       )
+       VALUES ($1, $2, 'thread-active-execute', 'claude-code', 'active execute', 'running', $3, $3, 'exe_running', 1)
+       RETURNING id`,
+      [fx.workspaceId, fx.channelId, fx.userId],
+    );
+    const id = inserted.rows[0]!.id;
+    fake.setThreadGeneration('thread-active-execute', 1);
+    fake.rejectNextExecuteAlreadyActive();
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${id}/messages`,
+      headers: { cookie },
+      payload: { text: 'steer the running turn' },
+    });
+
+    expect(res.statusCode).toBe(202);
+    expect(fake.requests.some((r) => r.path === '/agent/message')).toBe(true);
+    expect(fake.acceptedExecutions).toEqual([]);
+    const row = await pool.query(
+      'SELECT current_execution_id, centaur_execute_id, centaur_message_id FROM sessions WHERE id = $1',
+      [id],
+    );
+    expect(row.rows[0]).toMatchObject({
+      current_execution_id: 'exe_running',
+      centaur_execute_id: null,
+      centaur_message_id: null,
+    });
+    await app.close();
+  });
+
   it('steer with an effort override sends the reasoning field, records it, and emits the event', async () => {
     const app = await buildApp({
       pool,
@@ -3245,14 +3300,14 @@ describe('Phase 2 sessions', () => {
 
     expect(res.statusCode).toBe(202);
     const message = fake.requests.filter((r) => r.path === '/agent/message').at(-1);
-    const deliveredText = message?.body.parts?.[0]?.text;
+    const deliveredText = message?.body.parts?.find((part: { type?: string }) => part.type === 'text')?.text;
     expect(deliveredText).toContain(`please use ${link}`);
     expect(deliveredText).toContain('---\nReferenced entries:');
     expect(deliveredText).toContain(`- ${link} (Alice, message): "root context for the agent"`);
 
     const execute = fake.requests.filter((r) => r.path === '/agent/execute').at(-1);
     const input = JSON.parse(execute?.body.input_lines?.[0] ?? '{}');
-    expect(input.message.content[0].text).toBe(deliveredText);
+    expect(input.message.content.find((part: { type?: string }) => part.type === 'text')?.text).toBe(deliveredText);
     await app.close();
   });
 
@@ -3300,7 +3355,7 @@ describe('Phase 2 sessions', () => {
     await app.close();
   });
 
-  it('steer reuses a pending message id after Centaur accepted the message before a crash', async () => {
+  it('steer mints a fresh message id when a pending id holds pre-context content', async () => {
     const app = await buildApp({
       pool,
       sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
@@ -3337,9 +3392,10 @@ describe('Phase 2 sessions', () => {
     });
 
     expect(res.statusCode).toBe(202);
-    const message = fake.requests.find((r) => r.path === '/agent/message');
-    expect(message?.body.message_id).toBe(messageId);
-    expect(fake.acceptedMessages).toEqual([messageId]);
+    const messages = fake.requests.filter((r) => r.path === '/agent/message');
+    expect(messages[0]?.body.message_id).toBe(messageId);
+    expect(messages.at(-1)?.body.message_id).toBe(`msg-${id}-a2`);
+    expect(fake.acceptedMessages).toEqual([messageId, `msg-${id}-a2`]);
     const row = await pool.query('SELECT centaur_message_id, current_execution_id FROM sessions WHERE id = $1', [
       id,
     ]);
@@ -3380,6 +3436,15 @@ describe('Phase 2 sessions', () => {
     expect(messages).toHaveLength(2);
     expect(messages[0]!.body.assignment_generation).toBe(1);
     expect(messages[1]!.body.assignment_generation).toBe(2);
+    expect(messages[0]!.body.parts).toEqual(messages[1]!.body.parts);
+    expect(messages[0]!.body.parts[0]).toMatchObject({
+      type: 'context',
+      text: expect.stringContaining('[atrium context]\nfrom: Alice (human · driver)\nchannel: #general\nsent:'),
+    });
+    expect(messages[0]!.body.parts[1]).toEqual({ type: 'text', text: 'retry after stale' });
+    const execute = fake.requests.find((r) => r.path === '/agent/execute');
+    const inputLine = JSON.parse(((execute?.body.input_lines ?? []) as string[])[0]!);
+    expect(inputLine.message.content).toEqual(messages[0]!.body.parts);
     const spawn = fake.requests.find((r) => r.path === '/agent/spawn');
     expect(spawn?.body.spawn_id).toBe(`spawn-${id}-a1`);
     const row = await pool.query(
@@ -3972,6 +4037,15 @@ describe('Phase 2 sessions', () => {
       payload: { action: 'send', text: 'run the tests -v' },
     });
     expect(send.statusCode).toBe(202);
+    const posted = fake.requests.find((r) => r.path === '/agent/message');
+    expect(posted?.body.parts[0]).toMatchObject({
+      type: 'context',
+      text: expect.stringContaining(
+        'suggested by: Bob (human) — accepted and sent by: Alice (driver)',
+      ),
+    });
+    expect(posted?.body.parts[0].text).toContain('from: Alice (human · driver)');
+    expect(posted?.body.parts[1]).toEqual({ type: 'text', text: 'run the tests -v' });
 
     const row = await pool.query(
       'SELECT status, resolved_by, sent_text FROM session_suggestions WHERE id = $1',

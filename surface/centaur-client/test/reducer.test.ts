@@ -262,6 +262,27 @@ describe("reduceSession", () => {
     expect(userMessages[0]?.text).not.toContain("# Session Context");
   });
 
+  it("drops Atrium context-only Codex echoes and stores clean text for merged echoes", () => {
+    const context =
+      "[atrium context]\n" +
+      "from: Alice Basin (human · driver)\n" +
+      "channel: #design\n" +
+      "sent: 2026-07-08T14:32:05Z";
+    const state = reduceAll([
+      userMessageFrame(40, "ctx-1", `<context>${context}</context>`),
+      userMessageFrame(41, "steer-1", `${context}\n\nPlease explain the failure.`),
+    ]);
+    const userMessages = state.items.filter((item) => item.type === "user_message");
+
+    expect(userMessages).toHaveLength(1);
+    expect(userMessages[0]).toMatchObject({
+      type: "user_message",
+      id: "steer-1",
+      text: "Please explain the failure.",
+      sourceEventIds: [41],
+    });
+  });
+
   it("keeps distinct Codex userMessages in arrival order", () => {
     const state = reduceAll([
       userMessageFrame(10, "steer-1", "First steer"),

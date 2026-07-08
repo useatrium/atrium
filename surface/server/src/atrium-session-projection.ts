@@ -244,7 +244,7 @@ export function renderFullMarkdown(records: SessionRecord[]): string {
   if (records.length === 0) return `${lines.join('\n')}No session records.\n`;
 
   for (const record of records) {
-    lines.push(`## ${record.seq}. ${titleCase(record.kind)} - ${labelActor(record.actor)}`);
+    lines.push(`## ${record.seq}. ${titleCase(record.kind)} - ${labelRecordActor(record)}`);
     lines.push(`Event: ${record.eventId}`);
     if (record.driver) lines.push(`Driver: ${record.driver}`);
     lines.push(`Tier: ${record.viewTier}`);
@@ -438,7 +438,7 @@ function toSessionRecord(row: SessionRecordRow): SessionRecord {
 function renderLeanRecord(lines: string[], record: SessionRecord): void {
   switch (record.kind) {
     case 'message':
-      lines.push(`**${labelActor(record.actor)}**: ${record.text}`);
+      lines.push(`**${labelRecordActor(record)}**: ${record.text}`);
       lines.push('');
       return;
     case 'command':
@@ -557,6 +557,14 @@ function labelActor(actor: SessionRecordActor): string {
   if (actor === 'user') return 'User';
   if (actor === 'agent') return 'Agent';
   return 'System';
+}
+
+function labelRecordActor(record: SessionRecord): string {
+  if (record.actor === 'user') {
+    const name = stringFrom(objectFrom(record.meta.author), 'name');
+    if (name) return name;
+  }
+  return labelActor(record.actor);
 }
 
 function titleCase(input: SessionRecordKind | string): string {

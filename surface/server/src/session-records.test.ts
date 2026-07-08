@@ -234,6 +234,71 @@ describe('projectFrames', () => {
     expect(toolCall?.text).toContain('Fetched docs');
   });
 
+  it('drops separate steer context echoes and applies their author to the next user message', () => {
+    const context =
+      '<context>[atrium context]\n' +
+      'from: Alice Basin (human · driver)\n' +
+      'channel: #design\n' +
+      'sent: 2026-07-08T14:32:05Z</context>';
+    const frames: CentaurEventFrame[] = [
+      {
+        event: 'amp_raw_event',
+        event_id: 1,
+        data: {
+          type: 'item.completed',
+          item: { id: 'ctx-1', type: 'userMessage', text: context },
+        },
+      },
+      {
+        event: 'amp_raw_event',
+        event_id: 2,
+        data: {
+          type: 'item.completed',
+          item: { id: 'u-1', type: 'userMessage', text: 'Please keep the raw text.' },
+        },
+      },
+    ];
+
+    const records = projectFrames(frames, { driver: 'codex' });
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({
+      eventId: 2,
+      kind: 'message',
+      actor: 'user',
+      text: 'Please keep the raw text.',
+      meta: { itemId: 'u-1', author: { name: 'Alice Basin', seat: 'driver' } },
+    });
+  });
+
+  it('strips merged steer context prefixes and attaches the author to the same user message', () => {
+    const context =
+      '[atrium context]\n' +
+      'from: Alice Basin (human · driver)\n' +
+      'channel: #design\n' +
+      'sent: 2026-07-08T14:32:05Z';
+    const records = projectFrames(
+      [
+        {
+          event: 'amp_raw_event',
+          event_id: 1,
+          data: {
+            type: 'item.completed',
+            item: { id: 'u-1', type: 'userMessage', text: `${context}\n\nPlease keep the raw text.` },
+          },
+        },
+      ],
+      { driver: 'codex' },
+    );
+
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({
+      kind: 'message',
+      actor: 'user',
+      text: 'Please keep the raw text.',
+      meta: { itemId: 'u-1', author: { name: 'Alice Basin', seat: 'driver' } },
+    });
+  });
+
   it('projects Claude-normalized thinking, tool use/results, and assistant text', () => {
     const frames: CentaurEventFrame[] = [
       {

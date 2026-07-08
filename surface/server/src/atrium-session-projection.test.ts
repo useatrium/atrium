@@ -208,4 +208,21 @@ describe('atrium session projection renderers', () => {
       handle: 'rec_test_0',
     });
   });
+
+  it('renders user message author names from record metadata when present', async () => {
+    const sessionId = await insertSession();
+    await insertRecord({
+      sessionId,
+      seq: 0,
+      kind: 'message',
+      actor: 'user',
+      viewTier: 'lean',
+      text: 'Please repair the widget renderer.',
+      meta: { author: { name: 'Alice Basin', seat: 'driver' } },
+    });
+
+    const records = await loadSessionRecords(pool, sessionId, 'full');
+    expect(renderTranscriptMarkdown(records)).toContain('**Alice Basin**: Please repair the widget renderer.');
+    expect(renderFullMarkdown(records)).toContain('## 0. Message - Alice Basin');
+  });
 });

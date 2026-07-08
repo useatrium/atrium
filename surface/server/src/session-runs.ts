@@ -51,6 +51,7 @@ import type { IronControlAdminClient } from './iron-control.js';
 import { AgentProfiles } from './agent-profiles.js';
 import { agentTurnInputLine, agentTurnMessageParts, type AgentTurnAttachmentRef } from './session-attachments.js';
 import { appendReferencedEntriesAppendix } from './referenced-entries.js';
+import { buildSteerContextBlock, type SteerContextSuggestionAttribution } from './steer-context.js';
 
 export type SessionStatus = 'spawning' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
 
@@ -338,6 +339,12 @@ type SessionListStatus = 'running' | 'recent' | 'all';
 interface SessionListRow extends SessionRow {
   channel_name: string;
   spawner_name: string;
+}
+
+interface SteerContextRow {
+  display_name: string;
+  channel_name: string;
+  sent_at: Date;
 }
 
 const TERMINAL_STATUSES = new Set<SessionStatus>(['completed', 'failed', 'cancelled']);
@@ -1020,7 +1027,10 @@ export class SessionRuns {
     client: Db | DbClient = this.pool,
     effort?: SessionEffortLevel,
     attachments: readonly AgentTurnAttachmentRef[] = [],
+    contextBlock?: string,
   ): Promise<void> {
+    const turnContextBlock =
+      contextBlock ?? (await this.buildUserTurnContextBlock(client, row, userId, 'driver'));
     text = await appendReferencedEntriesAppendix(client, { sessionId: row.id, userId, text });
     // Stickiness is enforced HERE, at the single authoritative send point:
     // harness effort is per-turn (an omitted field reverts codex to its config
@@ -1046,14 +1056,14 @@ export class SessionRuns {
       await this.centaur.postMessage(
         row.centaur_thread_key,
         generation,
-        agentTurnMessageParts(text, attachments),
+        agentTurnMessageParts(text, attachments, turnContextBlock),
         { user_id: userId },
         { messageId },
       );
     } catch (err) {
       if (allowStaleRetry && isCentaurCode(err, 'ASSIGNMENT_GENERATION_STALE')) {
         const refreshed = await this.clearAssignment(row.id, client);
-        await this.postUserMessageOnce(refreshed, userId, text, false, client, effort, attachments);
+        await this.postUserMessageOnce(refreshed, userId, text, false, client, effort, attachments, turnContextBlock);
         return;
       }
       if (isCentaurCode(err, 'IDEMPOTENCY_PAYLOAD_MISMATCH')) {
@@ -1067,7 +1077,7 @@ export class SessionRuns {
         await this.centaur.postMessage(
           row.centaur_thread_key,
           generation,
-          agentTurnMessageParts(text, attachments),
+          agentTurnMessageParts(text, attachments, turnContextBlock),
           { user_id: userId },
           { messageId: freshId },
         );
@@ -1081,10 +1091,22 @@ export class SessionRuns {
     // only for boot resume (startSession), which posts no message.
     await client.query('UPDATE sessions SET centaur_execute_id = NULL WHERE id = $1', [row.id]);
     const executeId = await this.reserveExecuteId(row.id, client);
-    const exec = await this.executeWithProviderEnvironment(row, generation, {
-      executeId,
-      inputLines: [agentTurnInputLine(text, attachments, effort)],
-    });
+    let exec: ExecuteResponse;
+    try {
+      exec = await this.executeWithProviderEnvironment(row, generation, {
+        executeId,
+        inputLines: [agentTurnInputLine(text, attachments, effort, turnContextBlock)],
+      });
+    } catch (err) {
+      if (isCentaurCode(err, 'execution_already_active')) {
+        await client.query(
+          'UPDATE sessions SET centaur_execute_id = NULL, centaur_message_id = NULL WHERE id = $1',
+          [row.id],
+        );
+        return;
+      }
+      throw err;
+    }
     await client.query(
       `UPDATE sessions
        SET current_execution_id = $1, status = CASE WHEN status = 'completed' THEN 'queued' ELSE status END,
@@ -1095,6 +1117,41 @@ export class SessionRuns {
        WHERE id = $2`,
       [exec.execution_id, row.id],
     );
+  }
+
+  private async buildUserTurnContextBlock(
+    client: Db | DbClient,
+    row: SessionRow,
+    userId: string,
+    seat: string,
+    suggestion?: Pick<SteerContextSuggestionAttribution, 'suggestedBy'>,
+  ): Promise<string> {
+    const res = await client.query<SteerContextRow>(
+      `SELECT u.display_name,
+              c.name AS channel_name,
+              now() AS sent_at
+         FROM users u
+         JOIN channels c ON c.id = $2
+        WHERE u.id = $1`,
+      [userId, row.channel_id],
+    );
+    const context = res.rows[0];
+    if (!context) {
+      throw new DomainError(404, 'user_not_found', 'user not found');
+    }
+    return buildSteerContextBlock({
+      from: { name: context.display_name, kind: 'human', seat },
+      channel: context.channel_name,
+      sent: context.sent_at,
+      ...(suggestion
+        ? {
+            suggestion: {
+              suggestedBy: suggestion.suggestedBy,
+              acceptedBy: { name: context.display_name, seat },
+            },
+          }
+        : {}),
+    });
   }
 
   private async postQuestionAnswer(
@@ -1335,8 +1392,21 @@ export class SessionRuns {
     opts: { text?: string; note?: string } = {},
   ): Promise<{ event: WireEvent; postedSteer: boolean }> {
     const row = await this.requireDriverInTx(client, id, driverUserId);
-    const res = await client.query<{ status: SuggestionStatus; text: string }>(
-      'SELECT status, text FROM session_suggestions WHERE id = $1 AND session_id = $2 FOR UPDATE',
+    const res = await client.query<{
+      status: SuggestionStatus;
+      text: string;
+      author_id: string;
+      author_name: string;
+    }>(
+      `SELECT s.status,
+              s.text,
+              s.author_id,
+              author.display_name AS author_name
+         FROM session_suggestions s
+         JOIN users author ON author.id = s.author_id
+        WHERE s.id = $1
+          AND s.session_id = $2
+        FOR UPDATE OF s`,
       [suggestionId, id],
     );
     const sug = res.rows[0];
@@ -1353,7 +1423,10 @@ export class SessionRuns {
       this.cancelScheduledRelease(id);
       const sendText = (opts.text ?? '').trim() || sug.text;
       const edited = sendText !== sug.text;
-      await this.postUserMessageOnce(row, driverUserId, sendText, true, client);
+      const contextBlock = await this.buildUserTurnContextBlock(client, row, driverUserId, 'driver', {
+        suggestedBy: { name: sug.author_name, kind: 'human' },
+      });
+      await this.postUserMessageOnce(row, driverUserId, sendText, true, client, undefined, [], contextBlock);
       await client.query(
         `UPDATE session_suggestions
          SET status = 'sent', resolved_by = $1, sent_text = $2, resolved_at = now()
@@ -1578,7 +1651,9 @@ export class SessionRuns {
       row = await this.getStartableSessionRow(id);
       if (!row) return;
       generation = row.assignment_generation ?? generation;
+      let initialContextBlock: string | undefined;
       if (task != null) {
+        initialContextBlock = await this.buildUserTurnContextBlock(this.pool, row, row.spawned_by, 'spawner');
         // Inline any /e/<handle> references in the spawn task the same way steers do
         // (postUserMessageOnce), so an agent can resolve an explicit reference to a
         // channel message/artifact at spawn. Never let a resolver hiccup fail the spawn.
@@ -1596,7 +1671,7 @@ export class SessionRuns {
         await this.centaur.postMessage(
           row.centaur_thread_key,
           generation,
-          agentTurnMessageParts(task, attachments),
+          agentTurnMessageParts(task, attachments, initialContextBlock),
           { user_id: row.spawned_by },
           { messageId: `msg-${id}-initial` },
         );
@@ -1607,7 +1682,7 @@ export class SessionRuns {
       const executeId = await this.reserveExecuteId(id);
       const exec = await this.executeWithProviderEnvironment(row, generation, {
         executeId,
-        inputLines: task == null ? [] : [agentTurnInputLine(task, attachments)],
+        inputLines: task == null ? [] : [agentTurnInputLine(task, attachments, undefined, initialContextBlock)],
       });
       const updated = await this.updateExecution(id, exec.execution_id, generation);
       if (!updated) {
