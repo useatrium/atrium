@@ -193,6 +193,7 @@ export async function backfillMissingThumbnails(
       WHERE thumbnail_sha IS NULL
         AND media_kind IN ('image', 'pdf', 'video')
         AND s3_key IS NOT NULL
+        AND sha256 NOT IN (SELECT thumbnail_sha FROM cas_blobs WHERE thumbnail_sha IS NOT NULL)
       ORDER BY created_at DESC
       LIMIT $1`,
     [limit],
