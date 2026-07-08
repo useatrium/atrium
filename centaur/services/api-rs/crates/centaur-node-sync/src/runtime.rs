@@ -145,6 +145,26 @@ pub trait AtriumClient {
     fn atrium_changes(&self, since: &str) -> Result<(Vec<String>, String), String>;
     /// Fetch one rendered Atrium document body for a target session.
     fn atrium_doc(&self, target_id: &str, doc: &str) -> Result<Vec<u8>, String>;
+    /// Fetch readable Atrium channels for this viewer session. Default empty so
+    /// legacy test fakes that only exercise session docs keep their old shape.
+    fn atrium_channels(&self) -> Result<Vec<AtriumChannel>, String> {
+        Ok(vec![])
+    }
+    /// Fetch one rendered channel document body.
+    fn atrium_channel_doc(&self, _channel_id: &str, _doc: &str) -> Result<Vec<u8>, String> {
+        Err("atrium channel docs not supported by this client".to_string())
+    }
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+pub struct AtriumChannel {
+    pub id: String,
+    pub name: String,
+    pub kind: String,
+    #[serde(default)]
+    pub active: bool,
+    #[serde(default, rename = "lastEventId")]
+    pub last_event_id: u64,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, serde::Deserialize, serde::Serialize)]

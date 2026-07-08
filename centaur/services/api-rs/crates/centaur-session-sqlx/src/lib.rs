@@ -21,6 +21,7 @@ static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
 
 pub const SESSION_EVENTS_CHANNEL: &str = "centaur_session_events";
 const DEFAULT_MAX_CONNECTIONS: u32 = 500;
+const SESSION_EXECUTIONS_ONE_ACTIVE_IDX: &str = "session_executions_one_active_idx";
 
 #[derive(Clone, Debug)]
 pub struct CreateExecutionResult {
@@ -275,7 +276,16 @@ impl PgSessionStore {
         .bind(ExecutionStatus::Queued.as_ref())
         .bind(metadata)
         .fetch_one(&self.pool)
-        .await?;
+        .await
+        .map_err(|error| {
+            if database_error_constraint(&error) == Some(SESSION_EXECUTIONS_ONE_ACTIVE_IDX) {
+                SessionStoreError::ExecutionAlreadyActive {
+                    thread_key: thread_key.as_str().to_owned(),
+                }
+            } else {
+                error.into()
+            }
+        })?;
 
         row.try_into()
     }
@@ -1170,6 +1180,8 @@ pub enum SessionStoreError {
         existing: Option<String>,
         requested: Option<String>,
     },
+    #[error("execution already active for thread_key {thread_key}")]
+    ExecutionAlreadyActive { thread_key: String },
     #[error("invalid persisted value: {0}")]
     InvalidPersistedValue(String),
     #[error("invalid notification payload on {channel}: {payload}: {error}")]
@@ -1406,13 +1418,23 @@ fn prefixed_id(prefix: &str) -> String {
     format!("{prefix}_{}", Uuid::new_v4().simple())
 }
 
+fn database_error_constraint(error: &sqlx::Error) -> Option<&str> {
+    error
+        .as_database_error()
+        .and_then(|error| error.constraint())
+}
+
 pub fn default_metadata(metadata: Option<Value>) -> Value {
     metadata.unwrap_or_else(empty_object)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::SessionEventNotification;
+    use centaur_session_core::{HarnessType, ThreadKey};
+    use serde_json::json;
+    use uuid::Uuid;
+
+    use super::{PgSessionStore, SessionEventNotification, SessionStoreError};
 
     #[test]
     fn parses_session_event_notification_payload() {
@@ -1426,5 +1448,53 @@ mod tests {
                 event_id: 42,
             }
         );
+    }
+
+    #[tokio::test]
+    async fn second_active_create_execution_returns_execution_already_active() {
+        let Some(store) = test_store().await else {
+            return;
+        };
+        let thread_key = ThreadKey::parse(format!(
+            "sqlx-test:active-execution-{}",
+            Uuid::new_v4().simple()
+        ))
+        .unwrap();
+
+        store
+            .create_or_get_session(&thread_key, &HarnessType::Codex, None, json!({}))
+            .await
+            .expect("create session");
+        store
+            .create_execution(&thread_key, None, json!({}))
+            .await
+            .expect("create first execution");
+
+        let error = store
+            .create_execution(&thread_key, None, json!({}))
+            .await
+            .expect_err("second active execution should fail");
+
+        assert!(matches!(
+            error,
+            SessionStoreError::ExecutionAlreadyActive { thread_key: key }
+                if key == thread_key.as_str()
+        ));
+    }
+
+    async fn test_store() -> Option<PgSessionStore> {
+        let Ok(url) = std::env::var("SESSION_SQLX_TEST_DATABASE_URL")
+            .or_else(|_| std::env::var("SESSION_RUNTIME_TEST_DATABASE_URL"))
+        else {
+            eprintln!(
+                "skipping active execution SQLx test: set SESSION_SQLX_TEST_DATABASE_URL to a Postgres URL"
+            );
+            return None;
+        };
+        let store = PgSessionStore::connect(&url)
+            .await
+            .expect("connect test db");
+        store.run_migrations().await.expect("run migrations");
+        Some(store)
     }
 }

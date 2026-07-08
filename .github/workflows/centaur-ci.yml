@@ -173,10 +173,36 @@ jobs:
         working-directory: centaur/services/api-rs
         run: cargo clippy --workspace --all-targets -- -D warnings
 
+      # The sqlx DB-backed tests run the full embedded migration set, which
+      # requires the pg_search extension (migration 0012+). The plain
+      # postgres:17 service can't load it, so give the tests a paradedb
+      # database instead.
+      - name: Start pg_search Postgres for sqlx tests
+        run: |
+          docker run --detach --name centaur-sqlx-test-postgres \
+            --publish 127.0.0.1:15433:5432 \
+            --env POSTGRES_USER=postgres \
+            --env POSTGRES_PASSWORD=postgres \
+            --env POSTGRES_DB=sqlx_test \
+            paradedb/paradedb:0.23.0-pg16 \
+            -c shared_preload_libraries=pg_search,pg_cron \
+            -c max_connections=500
+          for _ in {1..60}; do
+            if docker logs centaur-sqlx-test-postgres 2>&1 \
+              | grep -q 'PostgreSQL init process complete' \
+              && docker exec centaur-sqlx-test-postgres \
+              psql -U postgres -d sqlx_test -tAc 'select 1' >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs centaur-sqlx-test-postgres
+          exit 1
+
       - name: Test
         working-directory: centaur/services/api-rs
         env:
-          SESSION_SQLX_TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+          SESSION_SQLX_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:15433/sqlx_test?sslmode=disable
         run: cargo test --workspace
 
       - name: Start API integration test dependencies

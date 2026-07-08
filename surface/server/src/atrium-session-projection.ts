@@ -10,11 +10,18 @@ import type {
 
 export type SessionProjectionTier = 'lean' | 'full';
 
+export interface SessionParticipant {
+  userId: string;
+  displayName: string;
+  handle?: string;
+}
+
 export interface SessionMeta {
   sessionId: string;
   workspaceId: string;
   channelId: string;
   channelName: string;
+  channelKind: string;
   threadRootEventId: number | null;
   centaurThreadKey: string;
   harness: string;
@@ -35,6 +42,8 @@ export interface SessionMeta {
   usageCostUsd: number;
   createdAt: string;
   completedAt: string | null;
+  updatedAt: string;
+  participants: SessionParticipant[];
 }
 
 interface SessionRecordRow {
@@ -56,6 +65,7 @@ interface SessionMetaRow {
   workspace_id: string;
   channel_id: string;
   channel_name: string;
+  channel_kind: string;
   thread_root_event_id: number | null;
   centaur_thread_key: string;
   harness: string;
@@ -74,8 +84,15 @@ interface SessionMetaRow {
   cost_usd: string | number;
   created_at: Date;
   completed_at: Date | null;
+  updated_at: Date;
   record_driver: string | null;
   usage_cost_usd: string | number;
+}
+
+interface SessionParticipantRow {
+  user_id: string;
+  display_name: string;
+  handle: string | null;
 }
 
 export async function loadSessionRecords(
@@ -102,7 +119,10 @@ export async function loadSessionRecords(
       ORDER BY seq ASC`,
     [sessionId],
   );
-  return res.rows.map(toSessionRecord);
+  const records = res.rows.map(toSessionRecord);
+  const meta = await buildSessionMeta(pool, sessionId).catch(() => null);
+  if (meta) attachSessionMeta(records, meta);
+  return records;
 }
 
 export async function buildSessionMeta(pool: Db, sessionId: string): Promise<SessionMeta> {
@@ -111,6 +131,7 @@ export async function buildSessionMeta(pool: Db, sessionId: string): Promise<Ses
             s.workspace_id,
             s.channel_id,
             c.name AS channel_name,
+            c.kind AS channel_kind,
             s.thread_root_event_id,
             s.centaur_thread_key,
             s.harness,
@@ -129,6 +150,7 @@ export async function buildSessionMeta(pool: Db, sessionId: string): Promise<Ses
             s.cost_usd,
             s.created_at,
             s.completed_at,
+            COALESCE(last_record.ts, s.completed_at, s.created_at) AS updated_at,
             first_record.driver AS record_driver,
             COALESCE(usage_cost.total, 0) AS usage_cost_usd
        FROM sessions s
@@ -143,6 +165,13 @@ export async function buildSessionMeta(pool: Db, sessionId: string): Promise<Ses
           ORDER BY sr.seq ASC
           LIMIT 1
        ) first_record ON true
+       LEFT JOIN LATERAL (
+         SELECT sr.ts
+           FROM session_records sr
+          WHERE sr.session_id = s.id
+          ORDER BY sr.seq DESC
+          LIMIT 1
+       ) last_record ON true
        LEFT JOIN LATERAL (
          SELECT SUM(
                   CASE
@@ -163,11 +192,13 @@ export async function buildSessionMeta(pool: Db, sessionId: string): Promise<Ses
   if (!row) throw new Error('session not found');
   const sessionCost = Number(row.cost_usd);
   const usageCost = Number(row.usage_cost_usd);
+  const participants = await loadSessionParticipants(pool, row);
   return {
     sessionId: row.id,
     workspaceId: row.workspace_id,
     channelId: row.channel_id,
     channelName: row.channel_name,
+    channelKind: row.channel_kind,
     threadRootEventId: row.thread_root_event_id,
     centaurThreadKey: row.centaur_thread_key,
     harness: row.harness,
@@ -188,11 +219,17 @@ export async function buildSessionMeta(pool: Db, sessionId: string): Promise<Ses
     usageCostUsd: usageCost,
     createdAt: row.created_at.toISOString(),
     completedAt: row.completed_at ? row.completed_at.toISOString() : null,
+    updatedAt: row.updated_at.toISOString(),
+    participants,
   };
 }
 
-export function renderTranscriptMarkdown(records: SessionRecord[]): string {
+export function renderTranscriptMarkdown(
+  records: SessionRecord[],
+  meta?: SessionMeta | Record<string, unknown>,
+): string {
   const lines = ['# Transcript', ''];
+  appendSessionHeader(lines, meta ?? sessionMetaFromRecords(records));
   const leanRecords = records.filter((record) => record.viewTier === 'lean');
   if (leanRecords.length === 0) return `${lines.join('\n')}No transcript records.\n`;
 
@@ -207,7 +244,7 @@ export function renderFullMarkdown(records: SessionRecord[]): string {
   if (records.length === 0) return `${lines.join('\n')}No session records.\n`;
 
   for (const record of records) {
-    lines.push(`## ${record.seq}. ${titleCase(record.kind)} - ${labelActor(record.actor)}`);
+    lines.push(`## ${record.seq}. ${titleCase(record.kind)} - ${labelRecordActor(record)}`);
     lines.push(`Event: ${record.eventId}`);
     if (record.driver) lines.push(`Driver: ${record.driver}`);
     lines.push(`Tier: ${record.viewTier}`);
@@ -225,9 +262,9 @@ export function renderSummaryMarkdown(records: SessionRecord[], meta: SessionMet
   const driver = stringFrom(meta, 'driver') ?? 'unknown';
   const counts = countRecords(records);
   const actions = keyActions(records);
-  const lines = [
-    `# ${title}`,
-    '',
+  const lines = [`# ${title}`, ''];
+  appendSessionHeader(lines, meta);
+  lines.push(
     `Status: ${status}`,
     `Driver: ${driver}`,
     '',
@@ -240,7 +277,7 @@ export function renderSummaryMarkdown(records: SessionRecord[], meta: SessionMet
     '',
     '## Key Actions',
     '',
-  ];
+  );
 
   if (actions.length === 0) {
     lines.push('None.');
@@ -248,6 +285,67 @@ export function renderSummaryMarkdown(records: SessionRecord[], meta: SessionMet
     for (const action of actions) lines.push(`- ${action}`);
   }
   return finalize(lines);
+}
+
+async function loadSessionParticipants(pool: Db, row: SessionMetaRow): Promise<SessionParticipant[]> {
+  const participants = new Map<string, SessionParticipant>();
+  const add = (participant: SessionParticipantRow): void => {
+    participants.set(participant.user_id, {
+      userId: participant.user_id,
+      displayName: participant.display_name,
+      ...(participant.handle ? { handle: participant.handle } : {}),
+    });
+  };
+
+  const directIds = [row.spawned_by, row.driver_id].filter((id): id is string => Boolean(id));
+  if (directIds.length > 0) {
+    const direct = await pool.query<SessionParticipantRow>(
+      `SELECT id AS user_id, display_name, handle
+         FROM users
+        WHERE id = ANY($1::uuid[])
+        ORDER BY handle ASC`,
+      [directIds],
+    );
+    for (const participant of direct.rows) add(participant);
+  }
+
+  const roster = await pool.query<SessionParticipantRow>(
+    `SELECT u.id AS user_id, u.display_name, u.handle
+       FROM channel_members m
+       JOIN users u ON u.id = m.user_id
+      WHERE m.channel_id = $1
+      ORDER BY u.handle ASC`,
+    [row.channel_id],
+  );
+  for (const participant of roster.rows) add(participant);
+  return [...participants.values()];
+}
+
+function attachSessionMeta(records: SessionRecord[], meta: SessionMeta): void {
+  Object.defineProperty(records, 'sessionMeta', {
+    value: meta,
+    enumerable: false,
+  });
+}
+
+function sessionMetaFromRecords(records: SessionRecord[]): SessionMeta | Record<string, unknown> | null {
+  return (records as SessionRecord[] & { sessionMeta?: SessionMeta }).sessionMeta ?? null;
+}
+
+function appendSessionHeader(lines: string[], meta: SessionMeta | Record<string, unknown> | null): void {
+  const header = sessionHeaderLine(meta);
+  if (!header) return;
+  lines.push(header);
+  lines.push('');
+}
+
+function sessionHeaderLine(meta: SessionMeta | Record<string, unknown> | null): string | null {
+  if (!meta) return null;
+  const title = stringFrom(meta, 'title') ?? 'Session';
+  const spawner = stringFrom(meta, 'spawnerName') ?? stringFrom(meta, 'spawnedBy') ?? 'unknown';
+  const driver = stringFrom(meta, 'driverName') ?? stringFrom(meta, 'driver') ?? 'unknown';
+  const channel = stringFrom(meta, 'channelName') ?? 'unknown';
+  return `Session "${title}" — spawned by ${spawner}, driver ${driver}, in #${channel}`;
 }
 
 export function renderChangesMarkdown(records: SessionRecord[]): string {
@@ -340,7 +438,7 @@ function toSessionRecord(row: SessionRecordRow): SessionRecord {
 function renderLeanRecord(lines: string[], record: SessionRecord): void {
   switch (record.kind) {
     case 'message':
-      lines.push(`**${labelActor(record.actor)}**: ${record.text}`);
+      lines.push(`**${labelRecordActor(record)}**: ${record.text}`);
       lines.push('');
       return;
     case 'command':
@@ -459,6 +557,14 @@ function labelActor(actor: SessionRecordActor): string {
   if (actor === 'user') return 'User';
   if (actor === 'agent') return 'Agent';
   return 'System';
+}
+
+function labelRecordActor(record: SessionRecord): string {
+  if (record.actor === 'user') {
+    const name = stringFrom(objectFrom(record.meta.author), 'name');
+    if (name) return name;
+  }
+  return labelActor(record.actor);
 }
 
 function titleCase(input: SessionRecordKind | string): string {

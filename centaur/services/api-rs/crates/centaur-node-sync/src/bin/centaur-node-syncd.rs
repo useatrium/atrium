@@ -370,7 +370,7 @@ mod linux_daemon {
     use centaur_node_sync::feeds::{ArtifactFeed, AtriumFeed};
     use centaur_node_sync::fs_linux;
     use centaur_node_sync::http_client::HttpAtriumClient;
-    use centaur_node_sync::materializer::materialize_changed_sessions;
+    use centaur_node_sync::materializer::{materialize_changed_sessions, materialize_channel_docs};
     use centaur_node_sync::overlay::RawEntry;
     use centaur_node_sync::overlay_mount::{
         OverlayMountPlan, READY_MARKER_FILE, mount_overlay, plan_overlay_mount,
@@ -1101,7 +1101,19 @@ mod linux_daemon {
                     }
                 }
                 if let Some(atrium) = atrium_feed.as_ref() {
-                    apply_atrium_feed(&global, &session, state, &client, atrium);
+                    let dirty_channel_ids = dirty_by_key
+                        .get(&session.atrium_session)
+                        .map(|feeds| feeds.channel_ids.iter().cloned().collect::<Vec<_>>())
+                        .unwrap_or_default();
+                    apply_atrium_feed(
+                        &global,
+                        &session,
+                        state,
+                        &client,
+                        atrium,
+                        &dirty_channel_ids,
+                        full_remote_poll,
+                    );
                 }
                 if let Err(e) = state.save(&session.state_file) {
                     eprintln!(
@@ -1238,6 +1250,8 @@ mod linux_daemon {
         state: &mut DaemonState,
         client: &HttpAtriumClient,
         feed: &AtriumFeed,
+        dirty_channel_ids: &[String],
+        refresh_all_channels: bool,
     ) {
         let atrium_root = super::scoped_atrium_root(&global.atrium_root, &session.session);
         match materialize_changed_sessions(
@@ -1254,6 +1268,16 @@ mod linux_daemon {
                 state.atrium_cursor = next;
             }
             Err(e) => eprintln!("atrium materializer: {e}"),
+        }
+        if refresh_all_channels || !dirty_channel_ids.is_empty() {
+            let only = if refresh_all_channels {
+                None
+            } else {
+                Some(dirty_channel_ids)
+            };
+            if let Err(e) = materialize_channel_docs(client, &atrium_root, only) {
+                eprintln!("atrium channel materializer: {e}");
+            }
         }
     }
 
@@ -2508,6 +2532,11 @@ mod linux_daemon {
                 state.atrium_cursor = next;
             }
             Err(e) => eprintln!("atrium materializer: {e}"),
+        }
+        if let Err(e) =
+            centaur_node_sync::materializer::materialize_channel_docs(client, &atrium_root, None)
+        {
+            eprintln!("atrium channel materializer: {e}");
         }
     }
 

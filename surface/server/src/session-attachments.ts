@@ -346,8 +346,10 @@ function displayPath(path: string, access: ArtifactAccessContext): string {
 export function agentTurnMessageParts(
   text: string,
   attachments: readonly AgentTurnAttachmentRef[] = [],
+  contextBlock?: string,
 ): MessagePart[] {
   const parts: MessagePart[] = [];
+  if (contextBlock) parts.push({ type: 'context', text: contextBlock });
   if (text.trim()) parts.push({ type: 'text', text });
   for (const attachment of attachments) parts.push(agentAttachmentBlock(attachment));
   return parts.length > 0 ? parts : [{ type: 'text', text: '' }];
@@ -357,11 +359,12 @@ export function agentTurnInputLine(
   text: string,
   attachments: readonly AgentTurnAttachmentRef[] = [],
   effort?: string | null,
+  contextBlock?: string,
 ): string {
   return JSON.stringify({
     type: 'user',
     message: {
-      content: agentTurnMessageParts(text, attachments),
+      content: agentTurnMessageParts(text, attachments, contextBlock),
     },
     ...(effort ? { reasoning: effort } : {}),
   });

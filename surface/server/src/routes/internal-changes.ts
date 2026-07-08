@@ -8,7 +8,7 @@ import type { Db } from '../db.js';
 import { FilesChangedDebouncer } from '../files-nudge.js';
 import { isHarness, type Harness } from '../harness-transcript.js';
 import type { WsHub } from '../hub.js';
-import { workspaceMemberIds } from '../membership.js';
+import { workspaceMemberExists, workspaceMemberIds } from '../membership.js';
 import { CLAUDE_CODE_PROVIDER, CODEX_PROVIDER } from '../provider-credentials.js';
 import { listSessionProfileBundles } from '../profile-bundles.js';
 import {
@@ -39,6 +39,7 @@ type PendingChangeEvent = {
   feed: ChangeFeed;
   key?: string;
   workspaceId?: string;
+  channels?: string[];
 };
 
 type ChangeEvent = PendingChangeEvent & {
@@ -317,26 +318,29 @@ class InternalChangeBroadcaster {
   }
 
   private async processNotification(notification: pg.Notification): Promise<void> {
-    const change = await this.mapNotification(notification);
-    if (!change) return;
-    if (change.feed === 'artifacts' && change.workspaceId) {
-      this.filesNudge?.nudge(change.workspaceId);
+    const changes = await this.mapNotification(notification);
+    if (changes.length === 0) return;
+    for (const change of changes) {
+      if (change.feed === 'artifacts' && change.workspaceId) {
+        this.filesNudge?.nudge(change.workspaceId);
+      }
+      this.seq += 1;
+      this.broadcast({ ...change, seq: this.seq });
     }
-    this.seq += 1;
-    this.broadcast({ ...change, seq: this.seq });
   }
 
-  private async mapNotification(notification: pg.Notification): Promise<PendingChangeEvent | null> {
+  private async mapNotification(notification: pg.Notification): Promise<PendingChangeEvent[]> {
     const payload = parseJsonPayload(notification.payload);
     switch (notification.channel) {
       case ARTIFACT_ADVANCED_CHANNEL:
-        return this.mapArtifactAdvanced(payload);
+        return [await this.mapArtifactAdvanced(payload)];
       case SESSION_RECORD_CHANGES_NOTIFY_CHANNEL:
+        if (stringField(payload.channelId)) return this.mapChannelAdvanced(payload);
         return this.mapSessionAdvanced('atrium', payload);
       case PROFILE_BUNDLES_NOTIFY_CHANNEL:
         return this.mapSessionAdvanced('profile', payload);
       default:
-        return null;
+        return [];
     }
   }
 
@@ -365,14 +369,14 @@ class InternalChangeBroadcaster {
   private async mapSessionAdvanced(
     feed: Exclude<ChangeFeed, 'artifacts'>,
     payload: Record<string, unknown>,
-  ): Promise<PendingChangeEvent> {
+  ): Promise<PendingChangeEvent[]> {
     const sessionId = stringField(payload.sessionId);
     const payloadWorkspaceId = stringField(payload.workspaceId);
     if (!sessionId) {
-      return {
+      return [{
         feed,
         ...(payloadWorkspaceId ? { workspaceId: payloadWorkspaceId } : {}),
-      };
+      }];
     }
     const res = await this.pool.query<{
       workspace_id: string;
@@ -385,13 +389,44 @@ class InternalChangeBroadcaster {
       [sessionId],
     );
     const row = res.rows[0];
-    return {
+    return [{
       feed,
       ...(row?.centaur_thread_key ? { key: row.centaur_thread_key } : {}),
       ...(row?.workspace_id || payloadWorkspaceId
         ? { workspaceId: row?.workspace_id ?? payloadWorkspaceId }
         : {}),
-    };
+    }];
+  }
+
+  private async mapChannelAdvanced(payload: Record<string, unknown>): Promise<PendingChangeEvent[]> {
+    const channelId = stringField(payload.channelId);
+    if (!channelId) return [{ feed: 'atrium' }];
+    const res = await this.pool.query<{
+      workspace_id: string;
+      centaur_thread_key: string;
+    }>(
+      `SELECT DISTINCT c.workspace_id,
+              s.centaur_thread_key
+         FROM channels c
+         JOIN sessions s ON s.workspace_id = c.workspace_id
+        WHERE c.id = $1::uuid
+          AND s.centaur_thread_key IS NOT NULL
+          AND (
+            (c.kind = 'public' AND ${workspaceMemberExists('c.workspace_id', 's.spawned_by')})
+            OR EXISTS (SELECT 1 FROM channel_members cm
+                       WHERE cm.channel_id = c.id AND cm.user_id = s.spawned_by)
+            OR EXISTS (SELECT 1 FROM sessions own
+                       WHERE own.channel_id = c.id AND own.spawned_by = s.spawned_by)
+          )
+          AND (c.kind NOT IN ('dm', 'gdm') OR s.channel_id = c.id)`,
+      [channelId],
+    );
+    return res.rows.map((row) => ({
+      feed: 'atrium',
+      key: row.centaur_thread_key,
+      workspaceId: row.workspace_id,
+      channels: [channelId],
+    }));
   }
 
   private broadcast(event: ChangeEvent): void {

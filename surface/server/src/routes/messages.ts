@@ -16,11 +16,13 @@ import {
   setReactionTx,
   type AttachmentMeta,
   type UserRef,
+  type WireEvent,
 } from '../events.js';
 import type { WsHub } from '../hub.js';
 import { persistMentions } from '../mentions.js';
 import { sendMessagePush } from '../push.js';
 import { decodeRouteBody, decodeRouteParams, decodeRouteQuery } from '../route-schema.js';
+import { emitChannelChange } from '../session-record-changefeed.js';
 import { landUploadAttachmentAsArtifact, type UploadAttachmentFileRow } from '../upload-artifacts.js';
 
 type MessageAttachmentFileRow = UploadAttachmentFileRow;
@@ -94,6 +96,13 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 
 function optionalUuid(value: unknown): string | null {
   return typeof value === 'string' && /^[0-9a-f-]{36}$/i.test(value) ? value : null;
+}
+
+function nudgeChannelDocs(app: FastifyInstance, pool: Db, event: WireEvent): void {
+  if (!event.channelId) return;
+  void emitChannelChange(pool, event.channelId).catch((err) => {
+    app.log.warn({ err, channelId: event.channelId }, 'atrium channel doc nudge failed');
+  });
 }
 
 function parseVoicePost(
@@ -259,6 +268,7 @@ export function registerMessageRoutes(app: FastifyInstance, deps: MessageRouteDe
       }
     }
     if (voice) deps.stt?.enqueue();
+    nudgeChannelDocs(app, pool, event);
     void persistMentions(pool, {
       eventId: event.id,
       channelId: event.channelId,
@@ -329,6 +339,7 @@ export function registerMessageRoutes(app: FastifyInstance, deps: MessageRouteDe
       },
       onApplied: (response) => {
         hub.publishEvent(response.event);
+        nudgeChannelDocs(app, pool, response.event);
       },
     });
   });
@@ -354,6 +365,7 @@ export function registerMessageRoutes(app: FastifyInstance, deps: MessageRouteDe
       },
       onApplied: (response) => {
         hub.publishEvent(response.event);
+        nudgeChannelDocs(app, pool, response.event);
       },
     });
   });

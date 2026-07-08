@@ -16,18 +16,22 @@ let config: typeof import('./config.js').config;
 let buildApp: (deps: AppDeps) => Promise<FastifyInstance>;
 let createTestPool: typeof import('../test/helpers.js').createTestPool;
 let seedFixture: typeof import('../test/helpers.js').seedFixture;
+let seedMember: typeof import('../test/helpers.js').seedMember;
 let truncateAll: typeof import('../test/helpers.js').truncateAll;
 let createChannel: typeof import('./events.js').createChannel;
+let deleteMessage: typeof import('./events.js').deleteMessage;
 let emitSessionRecordChange: typeof import('./session-record-changefeed.js').emitSessionRecordChange;
+let editMessage: typeof import('./events.js').editMessage;
+let postMessage: typeof import('./events.js').postMessage;
 
 beforeAll(async () => {
   process.env.ARTIFACT_CAPTURE_API_KEY = KEY;
   process.env.ATRIUM_FULL_VIEW = '1';
   vi.resetModules();
-  ({ createTestPool, seedFixture, truncateAll } = await import('../test/helpers.js'));
+  ({ createTestPool, seedFixture, seedMember, truncateAll } = await import('../test/helpers.js'));
   ({ config } = await import('./config.js'));
   ({ buildApp } = await import('./app.js'));
-  ({ createChannel } = await import('./events.js'));
+  ({ createChannel, deleteMessage, editMessage, postMessage } = await import('./events.js'));
   ({ emitSessionRecordChange } = await import('./session-record-changefeed.js'));
   pool = await createTestPool();
 });
@@ -88,12 +92,13 @@ async function insertSession(args: {
   channelId?: string;
   workspaceId?: string;
   spawnedBy?: string;
+  driverId?: string | null;
   title?: string;
 } = {}): Promise<string> {
   const res = await pool.query<{ id: string }>(
     `INSERT INTO sessions
-       (workspace_id, channel_id, centaur_thread_key, harness, title, status, spawned_by)
-     VALUES ($1, $2, $3, 'codex', $4, 'completed', $5)
+       (workspace_id, channel_id, centaur_thread_key, harness, title, status, spawned_by, driver_id)
+     VALUES ($1, $2, $3, 'codex', $4, 'completed', $5, $6)
      RETURNING id`,
     [
       args.workspaceId ?? fx.workspaceId,
@@ -101,8 +106,25 @@ async function insertSession(args: {
       `atrium-internal:${randomUUID()}`,
       args.title ?? 'Atrium internal session',
       args.spawnedBy ?? fx.userId,
+      args.driverId === undefined ? (args.spawnedBy ?? fx.userId) : args.driverId,
     ],
   );
+  return res.rows[0]!.id;
+}
+
+async function insertDmChannel(memberIds: string[]): Promise<string> {
+  const res = await pool.query<{ id: string }>(
+    `INSERT INTO channels (workspace_id, name, kind, created_by)
+     VALUES ($1, $2, 'dm', $3)
+     RETURNING id`,
+    [fx.workspaceId, `dm-${randomUUID()}`, memberIds[0] ?? null],
+  );
+  for (const memberId of memberIds) {
+    await pool.query('INSERT INTO channel_members (channel_id, user_id) VALUES ($1, $2)', [
+      res.rows[0]!.id,
+      memberId,
+    ]);
+  }
   return res.rows[0]!.id;
 }
 
@@ -278,6 +300,97 @@ describe('internal /atrium node-facing routes', () => {
       headers: { cookie },
     });
     expect(userEvents.statusCode).toBe(200);
+  });
+
+  it('lists readable channels and excludes DMs unless they are the viewer session channel', async () => {
+    const bobId = await seedMember(pool, fx.workspaceId, 'bob', 'Bob Jones');
+    const dmId = await insertDmChannel([fx.userId, bobId]);
+
+    const generalViewer = await insertSession({ title: 'General viewer' });
+    const generalChannels = await app.inject({
+      method: 'GET',
+      url: `/api/internal/sessions/${generalViewer}/atrium/channels`,
+      headers: { 'x-api-key': KEY },
+    });
+    expect(generalChannels.statusCode).toBe(200);
+    expect(generalChannels.json<{ id: string; active: boolean; kind: string }[]>()).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: fx.channelId, active: true, kind: 'public' })]),
+    );
+    expect(generalChannels.json<{ id: string }[]>().map((channel) => channel.id)).not.toContain(dmId);
+
+    const dmViewer = await insertSession({ channelId: dmId, title: 'DM viewer' });
+    const dmChannels = await app.inject({
+      method: 'GET',
+      url: `/api/internal/sessions/${dmViewer}/atrium/channels`,
+      headers: { 'x-api-key': KEY },
+    });
+    expect(dmChannels.statusCode).toBe(200);
+    expect(dmChannels.json()).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: dmId, active: true, kind: 'dm' })]),
+    );
+  });
+
+  it('serves channel and chat docs with real names, anchors, threads, and current-view edits', async () => {
+    await pool.query("UPDATE users SET display_name = 'Alice Basin' WHERE id = $1", [fx.userId]);
+    const bobId = await seedMember(pool, fx.workspaceId, 'bob', 'Bob Jones');
+    const viewerId = await insertSession({ driverId: bobId, title: 'Channel doc viewer' });
+    const root = await postMessage(pool, {
+      workspaceId: fx.workspaceId,
+      channelId: fx.channelId,
+      actorId: fx.userId,
+      text: 'original pagination text',
+    });
+    const reply = await postMessage(pool, {
+      workspaceId: fx.workspaceId,
+      channelId: fx.channelId,
+      actorId: bobId,
+      text: 'Agreed, but cap page size.',
+      threadRootEventId: root.id,
+    });
+    await editMessage(pool, {
+      targetEventId: root.id,
+      actorId: fx.userId,
+      text: "Let's use cursor-based pagination...",
+    });
+    const deleted = await postMessage(pool, {
+      workspaceId: fx.workspaceId,
+      channelId: fx.channelId,
+      actorId: fx.userId,
+      text: 'deleted secret text',
+    });
+    await deleteMessage(pool, { targetEventId: deleted.id, actorId: fx.userId });
+    await pool.query(
+      `UPDATE events
+          SET created_at = CASE id
+            WHEN $1 THEN '2026-07-07T14:32:00Z'::timestamptz
+            WHEN $2 THEN '2026-07-07T14:35:00Z'::timestamptz
+            ELSE created_at
+          END
+        WHERE id IN ($1, $2)`,
+      [root.id, reply.id],
+    );
+
+    const channel = await app.inject({
+      method: 'GET',
+      url: `/api/internal/sessions/${viewerId}/atrium/channels/${fx.channelId}/channel`,
+      headers: { 'x-api-key': KEY },
+    });
+    expect(channel.statusCode).toBe(200);
+    expect(channel.body).toContain('# general');
+    expect(channel.body).toContain('- this session driver: Bob Jones (@bob)');
+    expect(channel.body).toContain('- Alice Basin (@alice)');
+
+    const chat = await app.inject({
+      method: 'GET',
+      url: `/api/internal/sessions/${viewerId}/atrium/channels/${fx.channelId}/chat`,
+      headers: { 'x-api-key': KEY },
+    });
+    expect(chat.statusCode).toBe(200);
+    expect(chat.body).toContain(`**Alice Basin** · 2026-07-07 14:32 ⟨/e/evt_${root.id}⟩`);
+    expect(chat.body).toContain("Let's use cursor-based pagination...");
+    expect(chat.body).toContain(`  ↳ **Bob Jones** · 14:35 ⟨/e/evt_${reply.id}⟩`);
+    expect(chat.body).not.toContain('original pagination text');
+    expect(chat.body).not.toContain('deleted secret text');
   });
 
   it('gates full and events views while keeping lean transcript available', async () => {

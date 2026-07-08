@@ -9,7 +9,10 @@ use codex_app_server_protocol::UserInput;
 use serde_json::{Value, json};
 
 use crate::otel;
-use crate::server::{BlocksCommand, BlocksState, parse_blocks_line_with_state, write_blocks_error};
+use crate::server::{
+    BlocksCommand, BlocksState, parse_blocks_line_with_state, prepend_context_input,
+    write_blocks_error,
+};
 use crate::util::write_value;
 use crate::{AppServerRuntime, HarnessServerError, Result};
 
@@ -137,6 +140,7 @@ pub(crate) fn run_codex_blocks_server(config: CodexHarnessServer) -> Result<()> 
         match parse_blocks_line_with_state(trimmed, &mut blocks_state) {
             Ok(BlocksCommand::User {
                 input,
+                context,
                 client_user_message_id,
                 model,
                 provider,
@@ -160,6 +164,7 @@ pub(crate) fn run_codex_blocks_server(config: CodexHarnessServer) -> Result<()> 
                     config.model_provider_for(provider.as_deref(), model.as_deref());
                 let turn = CodexTurnInput {
                     input,
+                    context,
                     client_user_message_id,
                     model,
                     model_provider,
@@ -263,6 +268,7 @@ struct CodexBlocksTurn<'a, W: Write> {
 
 struct CodexTurnInput {
     input: Vec<UserInput>,
+    context: Vec<String>,
     client_user_message_id: Option<String>,
     model: Option<String>,
     model_provider: String,
@@ -306,9 +312,10 @@ fn run_codex_user_turn<W: Write>(
         .expect("thread id was initialized")
         .clone();
 
+    let input = prepend_context_input(&turn.context, turn.input);
     let mut params = json!({
         "threadId": current_thread_id,
-        "input": turn.input,
+        "input": input,
     });
     if let Some(client_user_message_id) = turn.client_user_message_id {
         params["clientUserMessageId"] = Value::String(client_user_message_id);
@@ -623,6 +630,7 @@ impl CodexJsonRpcChild {
             match parse_blocks_line_with_state(trimmed, blocks_state) {
                 Ok(BlocksCommand::User {
                     input,
+                    context,
                     client_user_message_id: _,
                     model,
                     provider,
@@ -640,7 +648,7 @@ impl CodexJsonRpcChild {
                         json!({
                             "threadId": thread_id,
                             "expectedTurnId": turn_id,
-                            "input": input,
+                            "input": prepend_context_input(&context, input),
                         }),
                         traceparent,
                     )?;
@@ -1014,5 +1022,25 @@ mod tests {
             codex.model_provider_for(Some("   "), Some("vendor/model")),
             "openrouter"
         );
+    }
+
+    #[test]
+    fn context_is_separate_first_codex_input_item() {
+        let input = prepend_context_input(
+            &["[atrium context]\nfrom: Alice Basin (human - driver)".to_string()],
+            vec![UserInput::Text {
+                text: "hello".to_string(),
+                text_elements: Vec::new(),
+            }],
+        );
+        let value = serde_json::to_value(input).unwrap();
+
+        assert_eq!(value[0]["type"], "text");
+        assert_eq!(
+            value[0]["text"],
+            "<context>\n[atrium context]\nfrom: Alice Basin (human - driver)\n</context>"
+        );
+        assert_eq!(value[1]["type"], "text");
+        assert_eq!(value[1]["text"], "hello");
     }
 }

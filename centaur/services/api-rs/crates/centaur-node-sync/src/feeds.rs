@@ -106,6 +106,9 @@ pub fn local_artifact_paths(
     if let Some(prefix) = active_prefix.map(|value| value.trim_matches('/'))
         && let Some(rest) = path.strip_prefix(&format!("{prefix}/"))
     {
+        if is_denied_workspace_root_mirror(rest) {
+            return vec![path.to_string()];
+        }
         return vec![rest.to_string(), path.to_string()];
     }
     let scratch_prefix = format!("scratch/{session_id}/");
@@ -113,6 +116,16 @@ pub fn local_artifact_paths(
         return vec![format!("scratch/{rest}")];
     }
     vec![path.to_string()]
+}
+
+fn is_denied_workspace_root_mirror(path: &str) -> bool {
+    if path.contains('/') {
+        return false;
+    }
+    matches!(
+        path,
+        "AGENTS.md" | "AGENTS_BASE.md" | "AGENTS_OVERLAY.md" | "CLAUDE.md" | "AGENT.md"
+    )
 }
 
 #[cfg(test)]
@@ -167,6 +180,33 @@ mod tests {
         assert_eq!(
             local_artifact_paths("scratch/sess-1/note.md", None, "sess-1"),
             vec!["scratch/note.md".to_string()]
+        );
+    }
+
+    #[test]
+    fn local_artifact_paths_does_not_project_agent_prompt_files_to_root() {
+        assert_eq!(
+            local_artifact_paths(
+                "shared/channels/channel-1/AGENTS_BASE.md",
+                Some("shared/channels/channel-1"),
+                "sess-1",
+            ),
+            vec!["shared/channels/channel-1/AGENTS_BASE.md".to_string()]
+        );
+        assert_eq!(
+            local_artifact_paths("uploads/AGENTS_BASE.md", Some("uploads"), "sess-1",),
+            vec!["uploads/AGENTS_BASE.md".to_string()]
+        );
+        assert_eq!(
+            local_artifact_paths(
+                "shared/channels/channel-1/docs/AGENTS_BASE.md",
+                Some("shared/channels/channel-1"),
+                "sess-1",
+            ),
+            vec![
+                "docs/AGENTS_BASE.md".to_string(),
+                "shared/channels/channel-1/docs/AGENTS_BASE.md".to_string()
+            ]
         );
     }
 }

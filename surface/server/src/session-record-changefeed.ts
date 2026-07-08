@@ -73,6 +73,31 @@ export async function emitSessionRecordChange(
   await run(clientOrPool);
 }
 
+export async function emitChannelChange(clientOrPool: Db | DbClient, channelId: string): Promise<void> {
+  const run = async (client: Queryable): Promise<void> => {
+    const res = await client.query<{ workspace_id: string }>(
+      `SELECT workspace_id
+         FROM channels
+        WHERE id = $1`,
+      [channelId],
+    );
+    const row = res.rows[0];
+    if (!row) throw new Error('channel not found');
+    await client.query("SELECT pg_notify('atrium_changes_advanced', $1)", [
+      JSON.stringify({
+        channelId,
+        workspaceId: row.workspace_id,
+      }),
+    ]);
+  };
+
+  if (isPool(clientOrPool)) {
+    await withTx(clientOrPool, run);
+    return;
+  }
+  await run(clientOrPool);
+}
+
 export async function projectAndEmitChange(pool: Db, sessionId: string): Promise<number> {
   const count = await rebuildSessionRecords(pool, sessionId);
   await emitSessionRecordChange(pool, sessionId, count);

@@ -15,6 +15,8 @@ pub struct ChangedEvent {
     pub key: Option<String>,
     #[serde(default, rename = "workspaceId")]
     pub workspace_id: Option<String>,
+    #[serde(default)]
+    pub channels: Vec<String>,
     pub seq: i64,
 }
 
@@ -98,22 +100,32 @@ impl SseParser {
     }
 }
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct DirtyFeeds {
     pub artifacts: bool,
     pub atrium: bool,
     pub profile: bool,
+    pub channel_ids: HashSet<String>,
 }
 
 impl DirtyFeeds {
-    pub fn any(self) -> bool {
-        self.artifacts || self.atrium || self.profile
+    pub fn any(&self) -> bool {
+        self.artifacts || self.atrium || self.profile || !self.channel_ids.is_empty()
     }
 
-    fn mark(&mut self, feed: ChangeFeed) {
-        match feed {
+    fn mark(&mut self, event: &ChangedEvent) {
+        match event.feed {
             ChangeFeed::Artifacts => self.artifacts = true,
-            ChangeFeed::Atrium => self.atrium = true,
+            ChangeFeed::Atrium => {
+                self.atrium = true;
+                self.channel_ids.extend(
+                    event
+                        .channels
+                        .iter()
+                        .filter(|id| !id.trim().is_empty())
+                        .cloned(),
+                );
+            }
             ChangeFeed::Profile => self.profile = true,
         }
     }
@@ -131,17 +143,11 @@ impl DirtySet {
         current_session_keys: impl IntoIterator<Item = &'a str>,
     ) {
         if let Some(key) = event.key.as_deref().filter(|key| !key.trim().is_empty()) {
-            self.by_key
-                .entry(key.to_string())
-                .or_default()
-                .mark(event.feed);
+            self.by_key.entry(key.to_string()).or_default().mark(event);
             return;
         }
         for key in current_session_keys {
-            self.by_key
-                .entry(key.to_string())
-                .or_default()
-                .mark(event.feed);
+            self.by_key.entry(key.to_string()).or_default().mark(event);
         }
     }
 
@@ -177,6 +183,7 @@ mod tests {
             feed,
             key: key.map(str::to_string),
             workspace_id: None,
+            channels: Vec::new(),
             seq: 42,
         }
     }
@@ -197,6 +204,7 @@ mod tests {
                 feed: ChangeFeed::Artifacts,
                 key: Some("s1".to_string()),
                 workspace_id: None,
+                channels: Vec::new(),
                 seq: 7,
             })]
         );
@@ -231,5 +239,22 @@ mod tests {
         dirty.mark_changed(&changed(ChangeFeed::Atrium, Some("gone")), ["gone"]);
         assert!(dirty.drain_for(["current"]).is_empty());
         assert!(dirty.drain_for(["gone"]).is_empty());
+    }
+
+    #[test]
+    fn dirty_set_carries_channel_ids_for_atrium_events() {
+        let mut dirty = DirtySet::default();
+        let mut event = changed(ChangeFeed::Atrium, Some("s1"));
+        event.channels = vec!["chan-1".to_string(), "chan-2".to_string()];
+
+        dirty.mark_changed(&event, ["s1"]);
+        let drained = dirty.drain_for(["s1"]);
+
+        let feeds = drained.get("s1").unwrap();
+        assert!(feeds.atrium);
+        assert_eq!(
+            feeds.channel_ids,
+            HashSet::from(["chan-1".to_string(), "chan-2".to_string()])
+        );
     }
 }

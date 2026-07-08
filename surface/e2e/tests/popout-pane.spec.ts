@@ -82,9 +82,9 @@ async function centaurRequests(request: APIRequestContext): Promise<
 }
 
 function messageText(body: unknown): string {
-  const parts = (body as { messages?: Array<{ parts?: Array<{ text?: unknown }> }> }).messages?.[0]
+  const parts = (body as { messages?: Array<{ parts?: Array<{ type?: unknown; text?: unknown }> }> }).messages?.[0]
     ?.parts;
-  const text = parts?.find((part) => typeof part.text === 'string')?.text;
+  const text = parts?.find((part) => part.type === 'text' && typeof part.text === 'string')?.text;
   return typeof text === 'string' ? text : '';
 }
 
