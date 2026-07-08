@@ -8,6 +8,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type MouseEvent as ReactMouseEvent,
   type ReactNode,
   type SVGProps,
 } from 'react';
@@ -104,6 +105,12 @@ import { groupQuestionEventsByQuestion, QuestionTranscriptCard } from './Session
 import { SuggestionStrip } from './SessionSuggestions';
 import { showErrorToast } from '../components/Toasts';
 import { TimestampDisclosure } from '../components/TimestampDisclosure';
+import {
+  MessageActionMenu,
+  type MessageActionMenuAction,
+  type MessageActionMenuState,
+} from '../components/MessageActionMenu';
+import { useLongPress } from '../components/useLongPress';
 import { entryParamFromSearch, stripEntryParamFromLocation } from '../EntryLinkRoute';
 import { entryShareUrl, sessionShareUrl } from '../lib/publicUrl';
 
@@ -111,6 +118,7 @@ import { entryShareUrl, sessionShareUrl } from '../lib/publicUrl';
 const ITEM_VIS: CSSProperties = { contentVisibility: 'auto', containIntrinsicSize: 'auto 32px' };
 const ENTRY_REFERENCES_REFETCH_MS = 60_000;
 const MOBILE_MEDIA_QUERY = '(max-width: 767px)';
+const HOVER_NONE_MEDIA_QUERY = '(hover: none)';
 
 function isMobileViewportNow(): boolean {
   return typeof window !== 'undefined' && typeof window.matchMedia === 'function'
@@ -129,6 +137,36 @@ function useIsMobileViewport(): boolean {
     return () => query.removeEventListener('change', sync);
   }, []);
   return isMobileViewport;
+}
+
+function isHoverNoneNow(): boolean {
+  return typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+    ? window.matchMedia(HOVER_NONE_MEDIA_QUERY).matches
+    : false;
+}
+
+export function useIsHoverNone(): boolean {
+  const [isHoverNone, setIsHoverNone] = useState(isHoverNoneNow);
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
+    const query = window.matchMedia(HOVER_NONE_MEDIA_QUERY);
+    const sync = () => setIsHoverNone(query.matches);
+    sync();
+    query.addEventListener('change', sync);
+    return () => query.removeEventListener('change', sync);
+  }, []);
+  return isHoverNone;
+}
+
+function isTouchContextMenu(event: MouseEvent): boolean {
+  return 'pointerType' in event && event.pointerType === 'touch';
+}
+
+function isInteractiveTarget(target: EventTarget): boolean {
+  return (
+    target instanceof Element &&
+    target.closest('a,button,[role="button"],input,textarea,select,summary,[contenteditable="true"]') != null
+  );
 }
 
 export function isTranscriptEntryHandle(handle: string | null): handle is string {
@@ -364,6 +402,30 @@ export function SessionPane({
   });
   const conflictsN = conflicts.length;
   const isMobileViewport = useIsMobileViewport();
+  const isHoverNone = useIsHoverNone();
+  const [activeTranscriptActionHandle, setActiveTranscriptActionHandle] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isHoverNone) setActiveTranscriptActionHandle(null);
+  }, [isHoverNone]);
+
+  useEffect(() => {
+    if (!isHoverNone || activeTranscriptActionHandle == null) return;
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (target instanceof Element && target.closest('[data-entry-handle]')) return;
+      setActiveTranscriptActionHandle(null);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setActiveTranscriptActionHandle(null);
+    };
+    document.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [activeTranscriptActionHandle, isHoverNone]);
 
   // Work drawer (Phase 4): one tabbed surface over Changes + Side-effects, with
   // a peek→pin ladder. `workTab` null = closed; `workPinned` docks it beside the
@@ -1072,6 +1134,7 @@ export function SessionPane({
   const onScroll = () => {
     const el = scrollRef.current;
     if (el) stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    setActiveTranscriptActionHandle(null);
   };
 
   const focused = layout === 'focus';
@@ -1571,6 +1634,9 @@ export function SessionPane({
                   references={item.handle != null ? entryReferences[item.handle] : null}
                   discussContext={discussContext}
                   onDiscussEntry={onDiscussEntry}
+                  touchActionsEnabled={isHoverNone}
+                  touchActionsActive={item.handle != null && item.handle === activeTranscriptActionHandle}
+                  onActivateTouchActions={setActiveTranscriptActionHandle}
                 >
                   {/* `group` + title: every row gets a native mouseover timestamp;
                   steer rows also reveal an inline one (their hover target is
@@ -1971,6 +2037,9 @@ export function AnnotatedTranscriptRow({
   references,
   discussContext,
   onDiscussEntry,
+  touchActionsEnabled = false,
+  touchActionsActive = false,
+  onActivateTouchActions,
   children,
 }: {
   handle: string | null;
@@ -1980,6 +2049,9 @@ export function AnnotatedTranscriptRow({
   references?: EntryReferenceSummary | null;
   discussContext?: { channelId: string; threadRootEventId: number } | null;
   onDiscussEntry?: (payload: TranscriptDiscussPayload) => void;
+  touchActionsEnabled?: boolean;
+  touchActionsActive?: boolean;
+  onActivateTouchActions?: (handle: string) => void;
   children: ReactNode;
 }) {
   const contentRef = useRef<HTMLDivElement | null>(null);
@@ -1988,6 +2060,8 @@ export function AnnotatedTranscriptRow({
   const [linkCopied, setLinkCopied] = useState(false);
   const [textCopied, setTextCopied] = useState(false);
   const [hasCopyableText, setHasCopyableText] = useState(false);
+  const [actionMenu, setActionMenu] = useState<MessageActionMenuState | null>(null);
+  const suppressTapRevealUntilRef = useRef(0);
 
   const rowText = useCallback(() => {
     const node = contentRef.current;
@@ -2009,12 +2083,12 @@ export function AnnotatedTranscriptRow({
     };
   }, []);
 
-  if (!handle) return <>{children}</>;
-  const canMarkup = handle.startsWith('rec_') && onMarkupEntry != null;
-  const canDiscuss = handle.startsWith('rec_') && discussContext != null && onDiscussEntry != null;
+  const canMarkup = handle != null && handle.startsWith('rec_') && onMarkupEntry != null;
+  const canDiscuss = handle != null && handle.startsWith('rec_') && discussContext != null && onDiscussEntry != null;
 
-  const copyEntryLink = () => {
-    if (typeof navigator === 'undefined') return;
+  const closeActionMenu = useCallback(() => setActionMenu(null), []);
+  const copyEntryLink = useCallback(() => {
+    if (!handle || typeof navigator === 'undefined') return;
     const clipboard = navigator.clipboard;
     if (!clipboard?.writeText) return;
     void clipboard
@@ -2025,9 +2099,9 @@ export function AnnotatedTranscriptRow({
         linkCopyResetRef.current = setTimeout(() => setLinkCopied(false), 1400);
       })
       .catch(() => {});
-  };
+  }, [handle]);
 
-  const copyBlockText = () => {
+  const copyBlockText = useCallback(() => {
     if (typeof navigator === 'undefined') return;
     const text = rowText();
     if (!text) {
@@ -2044,27 +2118,156 @@ export function AnnotatedTranscriptRow({
         textCopyResetRef.current = setTimeout(() => setTextCopied(false), 1400);
       })
       .catch(() => {});
-  };
+  }, [rowText]);
+
+  const discussEntry = useCallback(() => {
+    if (!handle || !discussContext || !onDiscussEntry) return;
+    onDiscussEntry({
+      handle,
+      channelId: discussContext.channelId,
+      threadRootEventId: discussContext.threadRootEventId,
+      draft: `/e/${handle} `,
+    });
+  }, [discussContext, handle, onDiscussEntry]);
+
+  const markupEntry = useCallback(() => {
+    if (!handle || !onMarkupEntry || markupLoading) return;
+    onMarkupEntry(handle);
+  }, [handle, markupLoading, onMarkupEntry]);
+
+  const transcriptActions = useMemo<MessageActionMenuAction[]>(() => {
+    if (!handle) return [];
+    const actions: MessageActionMenuAction[] = [
+      {
+        key: 'copy-entry-link',
+        label: 'Copy entry link',
+        onSelect: copyEntryLink,
+      },
+    ];
+    if (hasCopyableText) {
+      actions.push({
+        key: 'copy-block-text',
+        label: 'Copy block text',
+        onSelect: copyBlockText,
+      });
+    }
+    if (canDiscuss) {
+      actions.push({
+        key: 'discuss-thread',
+        label: 'Discuss in thread',
+        onSelect: discussEntry,
+      });
+    }
+    if (canMarkup) {
+      actions.push({
+        key: 'markup-reply',
+        label: markupLoading ? 'Opening...' : 'Mark up & reply',
+        onSelect: markupEntry,
+        closeOnSelect: !markupLoading,
+      });
+    }
+    return actions;
+  }, [
+    canDiscuss,
+    canMarkup,
+    copyBlockText,
+    copyEntryLink,
+    discussEntry,
+    handle,
+    hasCopyableText,
+    markupEntry,
+    markupLoading,
+  ]);
+  const actionMenuAllowed = transcriptActions.length > 0;
+  const openSheetMenu = useCallback(() => {
+    if (!actionMenuAllowed) return;
+    setActionMenu({ mode: 'sheet' });
+  }, [actionMenuAllowed]);
+  const onContentContextMenu = useCallback(
+    (event: ReactMouseEvent<HTMLDivElement>) => {
+      if (event.defaultPrevented) return;
+      if (!actionMenuAllowed) return;
+      if (isTouchContextMenu(event.nativeEvent)) {
+        event.preventDefault();
+        return;
+      }
+      event.preventDefault();
+      setActionMenu({ mode: 'popover', anchor: { x: event.clientX, y: event.clientY } });
+    },
+    [actionMenuAllowed],
+  );
+  const longPress = useLongPress({
+    disabled: !actionMenuAllowed,
+    onLongPress: () => {
+      suppressTapRevealUntilRef.current = Date.now() + 1000;
+      openSheetMenu();
+    },
+  });
+  const onContentClick = useCallback(
+    (event: ReactMouseEvent<HTMLDivElement>) => {
+      if (!handle || !touchActionsEnabled || !actionMenuAllowed || event.defaultPrevented) return;
+      if (Date.now() <= suppressTapRevealUntilRef.current) return;
+      if (isInteractiveTarget(event.target)) return;
+      onActivateTouchActions?.(handle);
+    },
+    [actionMenuAllowed, handle, onActivateTouchActions, touchActionsEnabled],
+  );
+
+  if (!handle) return <>{children}</>;
 
   return (
     <div
       data-entry-handle={handle}
       className={`group relative ${highlighted ? 'entry-flash bg-accent-hover/10' : ''}`}
     >
-      <div ref={contentRef} className="contents">
+      {/* biome-ignore lint/a11y: touch/context handlers expose the existing transcript actions without changing keyboard access. */}
+      <div
+        ref={contentRef}
+        onPointerDown={(event) => {
+          if (isInteractiveTarget(event.target)) return;
+          longPress.onPointerDown(event);
+        }}
+        onPointerMove={longPress.onPointerMove}
+        onPointerUp={longPress.onPointerUp}
+        onPointerCancel={longPress.onPointerCancel}
+        onLostPointerCapture={longPress.onLostPointerCapture}
+        onContextMenu={(event) => {
+          longPress.onContextMenu(event);
+          onContentContextMenu(event);
+        }}
+        onClick={onContentClick}
+        style={{ touchAction: 'pan-y pinch-zoom' }}
+        className="min-w-0"
+      >
         {children}
       </div>
-      <div className="pointer-events-none absolute -top-1 right-0 z-10 flex items-start gap-1 max-md:static max-md:mt-1 max-md:justify-end [@media(hover:none)]:static [@media(hover:none)]:mt-1 [@media(hover:none)]:justify-end">
+      <div className="pointer-events-none absolute -top-1 right-0 z-10 flex items-start gap-1">
         <div className="pointer-events-auto">
           <EntryReferencesChip summary={references} />
         </div>
-        <div className="pointer-events-none flex gap-1 opacity-0 focus-within:pointer-events-auto focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100 max-md:pointer-events-auto max-md:flex-wrap max-md:justify-end max-md:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:flex-wrap [@media(hover:none)]:justify-end [@media(hover:none)]:opacity-100">
+        {touchActionsEnabled && touchActionsActive && actionMenuAllowed && (
+          <Tooltip content="More transcript actions">
+            <button
+              type="button"
+              onClick={openSheetMenu}
+              aria-label="More transcript actions"
+              className="pointer-events-auto inline-flex size-11 items-center justify-center rounded-md border border-edge-strong bg-surface-overlay text-lg leading-none text-fg-secondary shadow-sm transition-colors hover:bg-edge-strong hover:text-fg"
+            >
+              ⋯
+            </button>
+          </Tooltip>
+        )}
+        {/* No-hover devices never render the inline bar: even at opacity-0 it
+        reserves flex space, which would push the ⋯ (and the references chip)
+        into the middle of the entry text. Touch gets the ⋯ + sheet instead. */}
+        {!touchActionsEnabled && (
+        <div data-testid="transcript-entry-action-bar" className="pointer-events-none flex gap-1 opacity-0 focus-within:pointer-events-auto focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100">
           <Tooltip content={linkCopied ? 'Copied entry link' : 'Copy entry link'}>
             <button
               type="button"
               onClick={copyEntryLink}
               aria-label={linkCopied ? 'Copied entry link' : 'Copy entry link'}
-              className={`inline-flex h-7 w-8 items-center justify-center rounded-md border border-edge-strong bg-surface-overlay text-xs shadow-sm transition-colors hover:bg-edge-strong hover:text-fg max-md:size-11 [@media(pointer:coarse)]:size-11 ${
+              className={`inline-flex h-7 w-8 items-center justify-center rounded-md border border-edge-strong bg-surface-overlay text-xs shadow-sm transition-colors hover:bg-edge-strong hover:text-fg ${
                 linkCopied ? 'text-accent-text-strong' : 'text-fg-secondary'
               }`}
             >
@@ -2077,7 +2280,7 @@ export function AnnotatedTranscriptRow({
                 type="button"
                 onClick={copyBlockText}
                 aria-label={textCopied ? 'Copied block text' : 'Copy block text'}
-                className={`inline-flex h-7 w-8 items-center justify-center rounded-md border border-edge-strong bg-surface-overlay text-xs shadow-sm transition-colors hover:bg-edge-strong hover:text-fg max-md:size-11 [@media(pointer:coarse)]:size-11 ${
+                className={`inline-flex h-7 w-8 items-center justify-center rounded-md border border-edge-strong bg-surface-overlay text-xs shadow-sm transition-colors hover:bg-edge-strong hover:text-fg ${
                   textCopied ? 'text-accent-text-strong' : 'text-fg-secondary'
                 }`}
               >
@@ -2098,7 +2301,7 @@ export function AnnotatedTranscriptRow({
                   });
                 }}
                 aria-label="Discuss in thread"
-                className="inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-edge-strong bg-surface-overlay px-2 py-1 text-xs text-fg-secondary shadow-sm hover:bg-edge-strong hover:text-fg max-md:min-h-11 max-md:px-2.5 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:px-2.5"
+                className="inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-edge-strong bg-surface-overlay px-2 py-1 text-xs text-fg-secondary shadow-sm hover:bg-edge-strong hover:text-fg"
               >
                 <MessageSquarePlusIcon />
                 Discuss
@@ -2118,7 +2321,7 @@ export function AnnotatedTranscriptRow({
                 }}
                 aria-disabled={markupLoading || undefined}
                 aria-label="Mark up & reply"
-                className="inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-edge-strong bg-surface-overlay px-2 py-1 text-xs text-fg-secondary shadow-sm hover:bg-edge-strong hover:text-fg aria-disabled:cursor-default aria-disabled:text-fg-faint max-md:min-h-11 max-md:px-2.5 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:px-2.5"
+                className="inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-edge-strong bg-surface-overlay px-2 py-1 text-xs text-fg-secondary shadow-sm hover:bg-edge-strong hover:text-fg aria-disabled:cursor-default aria-disabled:text-fg-faint"
               >
                 <PenLineIcon />
                 {markupLoading ? 'Opening...' : 'Mark up'}
@@ -2126,7 +2329,14 @@ export function AnnotatedTranscriptRow({
             </Tooltip>
           )}
         </div>
+        )}
       </div>
+      <MessageActionMenu
+        state={actionMenu}
+        onClose={closeActionMenu}
+        restoreFocusRef={contentRef}
+        actions={transcriptActions}
+      />
     </div>
   );
 }

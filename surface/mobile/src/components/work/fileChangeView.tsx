@@ -70,9 +70,11 @@ export function DiffView({ diff }: { diff: string }) {
 export function InlineFileChange({
   change,
   status = 'done',
+  onLongPress,
 }: {
   change: FileChange;
   status?: 'running' | 'error' | 'done';
+  onLongPress?: () => void;
 }) {
   const { colors } = useTheme();
   const [open, setOpen] = useState(false);
@@ -92,9 +94,15 @@ export function InlineFileChange({
     >
       <Pressable
         onPress={() => setOpen((value) => !value)}
+        onLongPress={onLongPress}
+        delayLongPress={250}
         accessibilityRole="button"
         accessibilityState={{ expanded: open }}
-        accessibilityLabel={`${KIND_LABEL[change.kind]} ${change.path}`}
+        accessibilityLabel={
+          onLongPress
+            ? `Message actions: ${KIND_LABEL[change.kind]} ${change.path}`
+            : `${KIND_LABEL[change.kind]} ${change.path}`
+        }
         style={({ pressed }) => ({
           flexDirection: 'row',
           alignItems: 'center',

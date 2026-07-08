@@ -1,4 +1,4 @@
-// Long-press action sheet for a message: quick reactions + reply/edit/delete.
+// Long-press action sheet: optional quick reactions + a data-driven action list.
 
 import { useEffect, useRef, useState, type Ref } from 'react';
 import { Alert, Modal, Pressable, Text, View } from 'react-native';
@@ -15,6 +15,24 @@ type MessageActionMetadata = {
   actionCopyText?: unknown;
   actionCopyLink?: unknown;
 };
+
+export type MessageActionListItem = {
+  key: string;
+  label: string;
+  onSelect: () => void;
+  destructive?: boolean;
+  hint?: string;
+};
+
+export interface MessageActionSheetProps {
+  visible: boolean;
+  actions: MessageActionListItem[];
+  onClose: () => void;
+  reactions?: {
+    onQuickReact: (emoji: string) => void;
+    onPickerReact: (emoji: string) => void;
+  };
+}
 
 export interface MessageActionsProps {
   message: ChatMessage | null;
@@ -71,6 +89,152 @@ function Action({
   );
 }
 
+export function MessageActionSheet({
+  visible,
+  actions,
+  onClose,
+  reactions,
+}: MessageActionSheetProps) {
+  const { colors, reduceMotion } = useTheme();
+  const insets = useSafeAreaInsets();
+  const [pickerVisible, setPickerVisible] = useState(false);
+  const firstActionRef = useRef<View>(null);
+  const canReact = reactions != null;
+
+  useModalAccessibilityFocus(firstActionRef, visible);
+
+  useEffect(() => {
+    setPickerVisible(false);
+  }, [visible]);
+
+  const closeAll = () => {
+    setPickerVisible(false);
+    onClose();
+  };
+
+  const firstActionIndex = canReact ? -1 : 0;
+
+  return (
+    <Modal visible={visible} transparent animationType={reduceMotion ? 'none' : 'fade'} onRequestClose={closeAll}>
+      <Pressable
+        // Scrim: tap-to-dismiss for sighted users. It must NOT be an accessibility
+        // element — a labelled, role="button" container collapses into a single a11y
+        // node on iOS and HIDES all its children (the reactions + actions) from
+        // VoiceOver and from UI test drivers. VoiceOver users close via "Cancel" below.
+        accessible={false}
+        importantForAccessibility="no"
+        style={{ flex: 1, backgroundColor: colors.scrim, justifyContent: 'flex-end' }}
+        onPress={closeAll}
+      >
+        <Pressable
+          // Inner sheet only exists to swallow taps (so they don't hit the scrim).
+          // Same a11y rule as the scrim: it must not be an accessibility element, or
+          // it collapses every action into one combined node instead of exposing the
+          // individual reaction/action buttons.
+          accessible={false}
+          importantForAccessibility="no"
+          accessibilityViewIsModal
+          onPress={() => {}}
+          style={{
+            backgroundColor: colors.bgElevated,
+            borderTopLeftRadius: radius.lg,
+            borderTopRightRadius: radius.lg,
+            paddingBottom: insets.bottom + 8,
+            paddingTop: space.md,
+          }}
+        >
+          {pickerVisible && reactions ? (
+            <ReactionPickerBody
+              onBack={() => setPickerVisible(false)}
+              onSelect={(emoji) => {
+                selectionHaptic();
+                reactions.onPickerReact(emoji);
+                closeAll();
+              }}
+            />
+          ) : (
+            <>
+              {reactions ? (
+                <View
+                  style={{
+                    flexDirection: 'row',
+                    flexWrap: 'wrap',
+                    gap: space.sm,
+                    paddingHorizontal: space.lg,
+                    paddingBottom: space.md,
+                  }}
+                >
+                  {QUICK_REACTIONS.map((e, index) => (
+                    <Pressable
+                      ref={index === 0 ? firstActionRef : undefined}
+                      key={e}
+                      accessibilityRole="button"
+                      accessibilityLabel={`React with ${e}`}
+                      accessibilityHint="Adds this reaction to the message"
+                      onPress={() => {
+                        selectionHaptic();
+                        reactions.onQuickReact(e);
+                        closeAll();
+                      }}
+                      style={({ pressed }) => ({
+                        width: 44,
+                        height: 44,
+                        borderRadius: 22,
+                        backgroundColor: pressed ? colors.bgPressed : colors.bgInput,
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                      })}
+                    >
+                      <Text style={{ fontSize: 22 }}>{e}</Text>
+                    </Pressable>
+                  ))}
+                  <Pressable
+                    key="more-reactions"
+                    accessibilityRole="button"
+                    accessibilityLabel="Open reaction picker"
+                    accessibilityHint="Shows all available reactions"
+                    onPress={() => {
+                      selectionHaptic();
+                      setPickerVisible(true);
+                    }}
+                    style={({ pressed }) => ({
+                      width: 44,
+                      height: 44,
+                      borderRadius: 22,
+                      backgroundColor: pressed ? colors.bgPressed : colors.bgInput,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    })}
+                  >
+                    <Text style={{ color: colors.textSecondary, fontSize: 22, fontWeight: '600' }}>＋</Text>
+                  </Pressable>
+                </View>
+              ) : null}
+              <View style={{ height: 1, backgroundColor: colors.border }} />
+              {actions.map((action, index) => (
+                <Action
+                  key={action.key}
+                  label={action.label}
+                  hint={action.hint}
+                  destructive={action.destructive}
+                  focusRef={index === firstActionIndex ? firstActionRef : undefined}
+                  onPress={action.onSelect}
+                />
+              ))}
+              <Action
+                label="Cancel"
+                hint="Closes the action menu"
+                focusRef={actions.length === 0 && !canReact ? firstActionRef : undefined}
+                onPress={closeAll}
+              />
+            </>
+          )}
+        </Pressable>
+      </Pressable>
+    </Modal>
+  );
+}
+
 export function MessageActions({
   message,
   mine,
@@ -83,12 +247,8 @@ export function MessageActions({
   onEdit,
   onDelete,
 }: MessageActionsProps) {
-  const { colors, reduceMotion } = useTheme();
-  const insets = useSafeAreaInsets();
   const [copied, setCopied] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
-  const [pickerVisible, setPickerVisible] = useState(false);
-  const firstActionRef = useRef<View>(null);
   const closeAfterCopyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const m = message;
   const deleted = m?.deleted === true;
@@ -110,27 +270,7 @@ export function MessageActions({
   const canReplyAction = confirmed && canReply && !sessionBlock;
   const canMarkupReplyAction = confirmed && canMarkupReply && !sessionBlock && onMarkupReply != null;
   const canMutateMessage = confirmed && mine && !sessionBlock;
-  const focusReply = !canReact && canReplyAction;
-  const focusMarkupReply = !canReact && !canReplyAction && canMarkupReplyAction;
-  const focusCopyText = !canReact && !canReplyAction && !canMarkupReplyAction && copyText != null;
-  const focusCopyLink =
-    !canReact && !canReplyAction && !canMarkupReplyAction && copyText == null && copyLink != null;
-  const focusEdit =
-    !canReact &&
-    !canReplyAction &&
-    !canMarkupReplyAction &&
-    copyText == null &&
-    copyLink == null &&
-    canMutateMessage;
-  const focusCancel =
-    !canReact &&
-    !canReplyAction &&
-    !canMarkupReplyAction &&
-    copyText == null &&
-    copyLink == null &&
-    !canMutateMessage;
 
-  useModalAccessibilityFocus(firstActionRef, m != null);
   useAccessibilityAnnouncement(
     copied ? 'Message text copied.' : copiedLink ? 'Message link copied.' : null,
   );
@@ -138,7 +278,6 @@ export function MessageActions({
   useEffect(() => {
     setCopied(false);
     setCopiedLink(false);
-    setPickerVisible(false);
     if (closeAfterCopyTimer.current) {
       clearTimeout(closeAfterCopyTimer.current);
       closeAfterCopyTimer.current = null;
@@ -157,202 +296,103 @@ export function MessageActions({
       closeAfterCopyTimer.current = null;
       setCopied(false);
       setCopiedLink(false);
-      setPickerVisible(false);
       onClose();
     }, 700);
   };
 
-  const closeAll = () => {
-    setPickerVisible(false);
-    onClose();
-  };
+  const actions: MessageActionListItem[] = [];
+  if (m && canReplyAction) {
+    actions.push({
+      key: 'reply',
+      label: 'Reply in thread',
+      hint: 'Opens the thread for this message',
+      onSelect: () => {
+        onReply(m);
+        onClose();
+      },
+    });
+  }
+  if (m && canMarkupReplyAction) {
+    actions.push({
+      key: 'markup-reply',
+      label: 'Mark up & reply',
+      hint: 'Starts a markup reply from this message',
+      onSelect: () => {
+        onMarkupReply(m);
+        onClose();
+      },
+    });
+  }
+  if (m && copyText) {
+    actions.push({
+      key: 'copy-text',
+      label: copied ? 'Copied' : 'Copy text',
+      hint: 'Copies the message text to the clipboard',
+      onSelect: () => {
+        selectionHaptic();
+        void Clipboard.setStringAsync(copyText)
+          .then(() => {
+            setCopied(true);
+            closeAfterCopy();
+          })
+          .catch(() => onClose());
+      },
+    });
+  }
+  if (m && copyLink) {
+    actions.push({
+      key: 'copy-link',
+      label: copiedLink ? 'Copied link' : 'Copy link',
+      hint: 'Copies a link to this message to the clipboard',
+      onSelect: () => {
+        selectionHaptic();
+        void Clipboard.setStringAsync(copyLink)
+          .then(() => {
+            setCopiedLink(true);
+            closeAfterCopy();
+          })
+          .catch(() => onClose());
+      },
+    });
+  }
+  if (m && canMutateMessage) {
+    actions.push({
+      key: 'edit',
+      label: 'Edit message',
+      hint: 'Opens this message for editing',
+      onSelect: () => {
+        onEdit(m);
+        onClose();
+      },
+    });
+    actions.push({
+      key: 'delete',
+      label: 'Delete message',
+      hint: 'Opens a confirmation before deleting this message',
+      destructive: true,
+      onSelect: () => {
+        onClose();
+        Alert.alert('Delete message?', 'This cannot be undone.', [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Delete', style: 'destructive', onPress: () => onDelete(m) },
+        ]);
+      },
+    });
+  }
 
   return (
-      <Modal visible={m != null} transparent animationType={reduceMotion ? 'none' : 'fade'} onRequestClose={closeAll}>
-        <Pressable
-          // Scrim: tap-to-dismiss for sighted users. It must NOT be an accessibility
-          // element — a labelled, role="button" container collapses into a single a11y
-          // node on iOS and HIDES all its children (the reactions + actions) from
-          // VoiceOver and from UI test drivers. VoiceOver users close via "Cancel" below.
-          accessible={false}
-          importantForAccessibility="no"
-          style={{ flex: 1, backgroundColor: colors.scrim, justifyContent: 'flex-end' }}
-          onPress={closeAll}
-        >
-          <Pressable
-            // Inner sheet only exists to swallow taps (so they don't hit the scrim).
-            // Same a11y rule as the scrim: it must not be an accessibility element, or
-            // it collapses every action into one combined node instead of exposing the
-            // individual reaction/action buttons.
-            accessible={false}
-            importantForAccessibility="no"
-            accessibilityViewIsModal
-            onPress={() => {}}
-            style={{
-              backgroundColor: colors.bgElevated,
-              borderTopLeftRadius: radius.lg,
-              borderTopRightRadius: radius.lg,
-              paddingBottom: insets.bottom + 8,
-              paddingTop: space.md,
-            }}
-          >
-            {pickerVisible && m && canReact ? (
-              <ReactionPickerBody
-                onBack={() => setPickerVisible(false)}
-                onSelect={(emoji) => {
-                  selectionHaptic();
-                  onReact(m, emoji);
-                  closeAll();
-                }}
-              />
-            ) : (
-              <>
-            {m && canReact && (
-              <View
-                style={{
-                  flexDirection: 'row',
-                  flexWrap: 'wrap',
-                  gap: space.sm,
-                  paddingHorizontal: space.lg,
-                  paddingBottom: space.md,
-                }}
-              >
-                {QUICK_REACTIONS.map((e, index) => (
-                  <Pressable
-                    ref={index === 0 ? firstActionRef : undefined}
-                    key={e}
-                    accessibilityRole="button"
-                    accessibilityLabel={`React with ${e}`}
-                    accessibilityHint="Adds this reaction to the message"
-                    onPress={() => {
-                      selectionHaptic();
-                      onReact(m, e);
-                      closeAll();
-                    }}
-                    style={({ pressed }) => ({
-                      width: 44,
-                      height: 44,
-                      borderRadius: 22,
-                      backgroundColor: pressed ? colors.bgPressed : colors.bgInput,
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                    })}
-                  >
-                    <Text style={{ fontSize: 22 }}>{e}</Text>
-                  </Pressable>
-                ))}
-                <Pressable
-                  key="more-reactions"
-                  accessibilityRole="button"
-                  accessibilityLabel="Open reaction picker"
-                  accessibilityHint="Shows all available reactions"
-                  onPress={() => {
-                    selectionHaptic();
-                    setPickerVisible(true);
-                  }}
-                  style={({ pressed }) => ({
-                    width: 44,
-                    height: 44,
-                    borderRadius: 22,
-                    backgroundColor: pressed ? colors.bgPressed : colors.bgInput,
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                  })}
-                >
-                  <Text style={{ color: colors.textSecondary, fontSize: 22, fontWeight: '600' }}>＋</Text>
-                </Pressable>
-              </View>
-            )}
-            <View style={{ height: 1, backgroundColor: colors.border }} />
-            {m && canReplyAction && (
-              <Action
-                label="Reply in thread"
-                hint="Opens the thread for this message"
-                focusRef={focusReply ? firstActionRef : undefined}
-                onPress={() => {
-                  onReply(m);
-                  closeAll();
-                }}
-              />
-            )}
-            {m && canMarkupReplyAction && (
-              <Action
-                label="Mark up & reply"
-                hint="Starts a markup reply from this message"
-                focusRef={focusMarkupReply ? firstActionRef : undefined}
-                onPress={() => {
-                  onMarkupReply(m);
-                  closeAll();
-                }}
-              />
-            )}
-            {m && copyText && (
-              <Action
-                label={copied ? 'Copied' : 'Copy text'}
-                hint="Copies the message text to the clipboard"
-                focusRef={focusCopyText ? firstActionRef : undefined}
-                onPress={() => {
-                  selectionHaptic();
-                  void Clipboard.setStringAsync(copyText)
-                    .then(() => {
-                      setCopied(true);
-                      closeAfterCopy();
-                    })
-                    .catch(() => closeAll());
-                }}
-              />
-            )}
-            {m && copyLink && (
-              <Action
-                label={copiedLink ? 'Copied link' : 'Copy link'}
-                hint="Copies a link to this message to the clipboard"
-                focusRef={focusCopyLink ? firstActionRef : undefined}
-                onPress={() => {
-                  selectionHaptic();
-                  void Clipboard.setStringAsync(copyLink)
-                    .then(() => {
-                      setCopiedLink(true);
-                      closeAfterCopy();
-                    })
-                    .catch(() => closeAll());
-                }}
-              />
-            )}
-            {m && canMutateMessage && (
-              <Action
-                label="Edit message"
-                hint="Opens this message for editing"
-                focusRef={focusEdit ? firstActionRef : undefined}
-                onPress={() => {
-                  onEdit(m);
-                  closeAll();
-                }}
-              />
-            )}
-            {m && canMutateMessage && (
-              <Action
-                label="Delete message"
-                hint="Opens a confirmation before deleting this message"
-                destructive
-                onPress={() => {
-                  closeAll();
-                  Alert.alert('Delete message?', 'This cannot be undone.', [
-                    { text: 'Cancel', style: 'cancel' },
-                    { text: 'Delete', style: 'destructive', onPress: () => onDelete(m) },
-                  ]);
-                }}
-              />
-            )}
-            <Action
-              label="Cancel"
-              hint="Closes the action menu"
-              focusRef={focusCancel ? firstActionRef : undefined}
-              onPress={closeAll}
-            />
-              </>
-            )}
-          </Pressable>
-        </Pressable>
-      </Modal>
+    <MessageActionSheet
+      visible={m != null}
+      actions={actions}
+      onClose={onClose}
+      reactions={
+        m && canReact
+          ? {
+              onQuickReact: (emoji) => onReact(m, emoji),
+              onPickerReact: (emoji) => onReact(m, emoji),
+            }
+          : undefined
+      }
+    />
   );
 }
