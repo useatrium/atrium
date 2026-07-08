@@ -4,7 +4,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import type pg from 'pg';
 import { buildApp } from '../src/app.js';
 import type { WsHub } from '../src/hub.js';
-import { emitSessionRecordChange } from '../src/session-record-changefeed.js';
+import { emitChannelChange, emitSessionRecordChange } from '../src/session-record-changefeed.js';
 import { registerInternalChangesRoutes } from '../src/routes/internal-changes.js';
 import { createTestPool, seedFixture, truncateAll, type Fixture } from './helpers.js';
 
@@ -301,6 +301,22 @@ describe('GET /api/internal/changes/stream', () => {
     }
   });
 
+  it('pushes keyed channel-dirty atrium events with channel ids only', async () => {
+    const known = await session();
+    const stream = await openSse(app);
+    try {
+      await stream.waitFor((frame) => frame.event === 'hello');
+
+      await emitChannelChange(pool, fx.channelId);
+      const changed = await stream.waitForChanged('atrium', known.key);
+
+      expect(changed.workspaceId).toBe(fx.workspaceId);
+      expect(changed.channels).toEqual([fx.channelId]);
+    } finally {
+      await stream.close();
+    }
+  });
+
   it('publishes debounced files.changed nudges for artifact notifications only', async () => {
     const known = await session();
     const publishToUsers = vi.fn();
@@ -422,13 +438,19 @@ async function openSse(appToListen: FastifyInstance) {
     async waitForChanged(
       feed: string,
       key: string,
-    ): Promise<{ feed: string; key: string; workspaceId?: string; seq: number }> {
+    ): Promise<{ feed: string; key: string; workspaceId?: string; seq: number; channels?: string[] }> {
       const frame = await waitFor((candidate) => {
         if (candidate.event !== 'changed' || !candidate.data) return false;
         const data = JSON.parse(candidate.data) as { feed?: string; key?: string };
         return data.feed === feed && data.key === key;
       });
-      return JSON.parse(frame.data!) as { feed: string; key: string; workspaceId?: string; seq: number };
+      return JSON.parse(frame.data!) as {
+        feed: string;
+        key: string;
+        workspaceId?: string;
+        seq: number;
+        channels?: string[];
+      };
     },
     async close(): Promise<void> {
       await reader.cancel().catch(() => {});

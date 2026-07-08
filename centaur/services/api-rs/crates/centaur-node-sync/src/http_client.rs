@@ -9,7 +9,7 @@ use crate::feeds::{
     ArtifactFeed, AtriumFeed, local_artifact_paths, parse_artifact_changes, parse_atrium_changes,
     parse_profile_bundles,
 };
-use crate::runtime::{AtriumClient, BundleRef};
+use crate::runtime::{AtriumChannel, AtriumClient, BundleRef};
 use serde::Deserialize;
 
 pub struct HttpAtriumClient {
@@ -494,6 +494,29 @@ impl AtriumClient for HttpAtriumClient {
         std::io::copy(&mut resp.into_reader(), &mut buf).map_err(|e| e.to_string())?;
         Ok(buf)
     }
+
+    fn atrium_channels(&self) -> Result<Vec<AtriumChannel>, String> {
+        let resp = self
+            .agent
+            .get(&self.url("/atrium/channels"))
+            .set("x-api-key", &self.api_key)
+            .call()
+            .map_err(|e| format!("atrium channels: {e}"))?;
+        resp.into_json()
+            .map_err(|e| format!("parse atrium channels: {e}"))
+    }
+
+    fn atrium_channel_doc(&self, channel_id: &str, doc: &str) -> Result<Vec<u8>, String> {
+        let resp = self
+            .agent
+            .get(&self.url(&format!("/atrium/channels/{}/{}", enc(channel_id), doc)))
+            .set("x-api-key", &self.api_key)
+            .call()
+            .map_err(|e| format!("atrium channel doc {channel_id}/{doc}: {e}"))?;
+        let mut buf = Vec::new();
+        std::io::copy(&mut resp.into_reader(), &mut buf).map_err(|e| e.to_string())?;
+        Ok(buf)
+    }
 }
 
 #[cfg(test)]
@@ -543,6 +566,20 @@ mod tests {
         assert_eq!(
             client.url("/profile-bundle-blob?sha256=abc123&path=.codex/skills/a/SKILL.md"),
             "http://atrium/api/internal/sessions/slack:C123:123.456/profile-bundle-blob?sha256=abc123&path=.codex/skills/a/SKILL.md"
+        );
+    }
+
+    #[test]
+    fn channel_doc_urls_use_internal_session_endpoint() {
+        let client = HttpAtriumClient::new("http://atrium/", "key", "slack:C123:123.456");
+
+        assert_eq!(
+            client.url("/atrium/channels"),
+            "http://atrium/api/internal/sessions/slack:C123:123.456/atrium/channels"
+        );
+        assert_eq!(
+            client.url("/atrium/channels/channel-1/chat"),
+            "http://atrium/api/internal/sessions/slack:C123:123.456/atrium/channels/channel-1/chat"
         );
     }
 
