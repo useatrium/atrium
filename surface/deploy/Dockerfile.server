@@ -37,7 +37,9 @@ RUN cd surface/server && pnpm exec esbuild src/index.ts \
   --external:fastify \
   --external:@fastify/* \
   --external:pg \
-  --external:@aws-sdk/*
+  --external:@aws-sdk/* \
+  --external:sharp \
+  --external:pdf-to-img
 RUN cd surface && pnpm --filter @atrium/server deploy --prod --legacy /out
 
 FROM node:24-alpine AS runtime
