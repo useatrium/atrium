@@ -88,3 +88,33 @@ test('touch swipe right on a message opens the reply thread', async ({ context, 
     await cdp.detach();
   }
 });
+
+// Regression: TimestampDisclosure used `[@media(hover:none)]:opacity-100`, so
+// on touch devices every ungrouped message rendered its exact-timestamp
+// tooltip OPEN on load, overlapping the message text. Touch now starts hidden
+// and pins on tap (the toggle the component always had).
+test('exact-timestamp tooltip is hidden on touch until the timestamp is tapped', async ({
+  page,
+}) => {
+  await login(page, unique('tsq'), 'Timestamp Tester');
+  const text = unique('timestamp-quirk');
+  await sendMessage(page, text);
+
+  // Guard: this test only means something if the context emulates a no-hover
+  // (touch) device — otherwise it would false-pass on the desktop CSS path.
+  expect(await page.evaluate(() => window.matchMedia('(hover: none)').matches)).toBe(true);
+
+  const row = messageRow(page, text);
+  const tooltip = row.getByRole('tooltip');
+  await expect(tooltip).toHaveCount(1);
+  const opacityOf = () =>
+    tooltip.evaluate((el) => getComputedStyle(el).opacity);
+  expect(await opacityOf()).toBe('0');
+
+  await row.getByRole('button', { name: /Exact timestamp:/ }).first().tap();
+  await expect.poll(opacityOf).toBe('1');
+
+  // Tapping the timestamp again unpins it.
+  await row.getByRole('button', { name: /Exact timestamp:/ }).first().tap();
+  await expect.poll(opacityOf).toBe('0');
+});
