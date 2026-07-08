@@ -110,6 +110,10 @@ async function distanceFromBottom(log: Locator): Promise<number> {
   });
 }
 
+async function scrollHeight(log: Locator): Promise<number> {
+  return log.evaluate((node) => (node as HTMLElement).scrollHeight);
+}
+
 test('fully read channel stays pinned when a landing image finishes loading late', async ({
   page,
 }) => {
@@ -118,6 +122,7 @@ test('fully read channel stays pinned when a landing image finishes loading late
   const readerHandle = unique('reader');
   const writer = await apiAs(unique('writer'), 'Writer');
   const reader = await apiAs(readerHandle, 'Reader');
+  let releaseImageResponse: () => void = () => {};
 
   try {
     const roomId = await channelId(writer, room);
@@ -125,7 +130,10 @@ test('fully read channel stays pinned when a landing image finishes loading late
     for (let i = 1; i <= 28; i += 1) {
       latestId = await postMessage(writer, roomId, `media pin filler ${i}`);
     }
-    const fileId = await uploadViaApi(writer, 'late-growth.png', 'image/png', LATE_IMAGE_PNG);
+    const fileId = await uploadViaApi(writer, 'late-growth.png', 'image/png', LATE_IMAGE_PNG, {
+      width: 640,
+      height: 480,
+    });
     latestId = await postWithAttachment(writer, roomId, 'late image attachment', fileId);
     await setReadCursor({
       handle: readerHandle,
@@ -134,9 +142,12 @@ test('fully read channel stays pinned when a landing image finishes loading late
     });
 
     let imageRequestSeen = false;
+    const imageResponseReleased = new Promise<void>((resolve) => {
+      releaseImageResponse = resolve;
+    });
     await page.route(`**/api/files/${fileId}**`, async (route) => {
       imageRequestSeen = true;
-      await new Promise((resolve) => setTimeout(resolve, 1500));
+      await imageResponseReleased;
       await route.continue();
     }, { times: 1 });
 
@@ -147,6 +158,8 @@ test('fully read channel stays pinned when a landing image finishes loading late
     await expect(log.getByText('late image attachment', { exact: true })).toBeVisible();
     await expect.poll(() => imageRequestSeen, { timeout: 10_000 }).toBe(true);
     await expect.poll(() => distanceFromBottom(log), { timeout: 10_000 }).toBeLessThan(8);
+    const scrollHeightInFlight = await scrollHeight(log);
+    releaseImageResponse();
 
     const img = page.getByRole('button', { name: 'late-growth.png' }).locator('img');
     await expect
@@ -160,8 +173,11 @@ test('fully read channel stays pinned when a landing image finishes loading late
       )
       .toBe(true);
 
+    const scrollHeightComplete = await scrollHeight(log);
+    expect(Math.abs(scrollHeightComplete - scrollHeightInFlight)).toBeLessThanOrEqual(2);
     await expect.poll(() => distanceFromBottom(log), { timeout: 10_000 }).toBeLessThan(8);
   } finally {
+    releaseImageResponse();
     await writer.dispose();
     await reader.dispose();
   }
