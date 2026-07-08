@@ -6,29 +6,72 @@ function normalizeAtriumPath(url: URL): string {
   return url.pathname.startsWith('/') ? url.pathname : `/${url.pathname}`;
 }
 
-function validSegment(value: string | undefined): string | null {
-  if (!value) return null;
+function validSegment(value: string | undefined): value is string {
+  if (!value) return false;
   try {
     decodeURIComponent(value);
   } catch {
-    return null;
+    return false;
   }
-  return value;
+  return true;
+}
+
+function pathSegments(pathname: string): string[] | null {
+  const path = pathname === '' ? '/' : pathname;
+  if (!path.startsWith('/')) return null;
+  if (path === '/') return [];
+
+  const segments = path.slice(1).split('/');
+  if (segments.some((segment) => segment.length === 0)) return null;
+  return segments;
 }
 
 function routeFromPath(pathname: string, options: { allowSessionAlias: boolean }): string | null {
-  const segments = pathname.split('/').filter(Boolean);
-  const kind = segments[0];
-  const id = validSegment(segments[1]);
+  const path = pathname === '' ? '/' : pathname;
+  const segments = pathSegments(path);
+  if (!segments) return null;
+  if (segments.length === 0) return path;
 
-  if (kind === 's' && id && segments.length === 2) return `/s/${id}`;
-  if (kind === 'e' && id && segments.length === 2) return `/e/${id}`;
-  if (kind === 'c' && id) return `/c/${id}`;
-  if (options.allowSessionAlias && kind === 'session' && id && segments.length === 2) {
+  const kind = segments[0];
+  const id = segments[1];
+
+  if (kind === 'files' && segments.length === 1) return path;
+  if (kind === 'activity' && segments.length === 1) return path;
+  if (kind === 'agents' && segments.length === 1) return path;
+
+  if (kind === 'settings') {
+    if (segments.length === 1) return path;
+    if (segments.length === 2 && validSegment(id)) return path;
+    return null;
+  }
+
+  if (kind === 's' && validSegment(id)) {
+    if (segments.length === 2) return path;
+    if (segments.length === 3 && segments[2] === 'pane') return path;
+    if (segments.length === 4 && segments[2] === 'work' && validSegment(segments[3])) return path;
+    return null;
+  }
+
+  if (kind === 'e' && segments.length === 2 && validSegment(id)) return path;
+
+  if (kind === 'c' && validSegment(id)) {
+    if (segments.length === 2) return path;
+    if (segments.length === 3 && segments[2] === 'members') return path;
+    if (segments.length === 4 && segments[2] === 's' && validSegment(segments[3])) return path;
+    if (segments.length === 4 && segments[2] === 't' && validSegment(segments[3])) return path;
+    return null;
+  }
+
+  if (options.allowSessionAlias && kind === 'session' && segments.length === 2 && validSegment(id)) {
     return `/s/${id}`;
   }
 
   return null;
+}
+
+function routeFromUrl(url: URL, pathname: string, options: { allowSessionAlias: boolean }): string | null {
+  const route = routeFromPath(pathname, options);
+  return route ? `${route}${url.search}` : null;
 }
 
 export function deepLinkToRoute(value: string): string | null {
@@ -40,11 +83,11 @@ export function deepLinkToRoute(value: string): string | null {
   }
 
   if (url.protocol === `${DEEP_LINK_SCHEME}:`) {
-    return routeFromPath(normalizeAtriumPath(url), { allowSessionAlias: true });
+    return routeFromUrl(url, normalizeAtriumPath(url), { allowSessionAlias: true });
   }
 
   if (url.protocol === 'https:') {
-    return routeFromPath(url.pathname, { allowSessionAlias: false });
+    return routeFromUrl(url, url.pathname, { allowSessionAlias: false });
   }
 
   return null;
