@@ -12,6 +12,7 @@ import { classifyMedia } from '../media-classifier.js';
 import { isWorkspaceMember } from '../membership.js';
 import { getObjectBytes, getObjectStream, headObject, presignGet, uploadObject } from '../s3.js';
 import { sanitizeFilename } from '../safe-filename.js';
+import { ensureThumbnailForBlobDeduped } from '../thumbnails.js';
 import { writeBackArtifactById, writeBackDeleteById } from '../artifact-writeback.js';
 
 type FileCategory = 'image' | 'doc' | 'data' | 'app' | 'upload';
@@ -615,10 +616,46 @@ export async function registerFilesHubRoutes(app: FastifyInstance, deps: FilesHu
     if (file.tombstoned || file.kind === 'deleted') {
       return reply.code(410).send({ error: 'artifact_deleted', message: 'artifact was deleted' });
     }
-    if (!file.thumbnailSha || !file.s3Key) {
-      return reply.code(404).send({ error: 'thumbnail_not_found', message: 'thumbnail not found' });
+    let thumbnail = file;
+    if (!thumbnail.thumbnailSha || !thumbnail.s3Key) {
+      if (file.sourceBlobSha) {
+        const source = await pool.query<{
+          sha256: string;
+          s3_key: string | null;
+          mime: string | null;
+          media_kind: string | null;
+        }>(
+          `SELECT sha256, s3_key, mime, media_kind
+             FROM cas_blobs
+            WHERE sha256 = $1`,
+          [file.sourceBlobSha],
+        );
+        const sourceRow = source.rows[0];
+        if (
+          sourceRow?.s3_key &&
+          (sourceRow.media_kind === 'image' || sourceRow.media_kind === 'pdf' || sourceRow.media_kind === 'video')
+        ) {
+          const generated = await ensureThumbnailForBlobDeduped({
+            pool,
+            sourceSha: sourceRow.sha256,
+            s3Key: sourceRow.s3_key,
+            mime: sourceRow.mime,
+            mediaKind: sourceRow.media_kind,
+            logger: app.log,
+          }).catch((err) => {
+            app.log.warn({ err, sourceSha: sourceRow.sha256 }, 'on-demand thumbnail generation failed');
+            return null;
+          });
+          if (generated) {
+            thumbnail = (await ledger.artifactThumbnailById(artifactId)) ?? thumbnail;
+          }
+        }
+      }
+      if (!thumbnail.thumbnailSha || !thumbnail.s3Key) {
+        return reply.code(404).send({ error: 'thumbnail_not_found', message: 'thumbnail not found' });
+      }
     }
     const filename = `${basename(file.path) || 'artifact'}-thumbnail`;
-    return reply.redirect(await presignGet(file.s3Key, filename, true), 302);
+    return reply.redirect(await presignGet(thumbnail.s3Key, filename, true), 302);
   });
 }

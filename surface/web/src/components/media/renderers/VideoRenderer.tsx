@@ -5,7 +5,7 @@ export function VideoRenderer({ file, variant }: { file: PreviewFile; variant: M
   if (variant === 'tile') {
     const thumbnailUrl = file.thumbnailUrl;
     return (
-      <div className="relative h-full min-h-32 bg-surface-raised">
+      <div className="relative h-full min-h-0 bg-surface-raised">
         {thumbnailUrl ? (
           <img src={thumbnailUrl} alt={file.name} loading="lazy" className="h-full w-full object-cover" />
         ) : (

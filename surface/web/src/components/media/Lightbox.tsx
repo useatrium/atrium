@@ -118,6 +118,7 @@ export function Lightbox({
   const [historyRefreshKey, setHistoryRefreshKey] = useState(0);
   const dialogRef = useRef<HTMLDivElement | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
+  const activeFilmstripButtonRef = useRef<HTMLButtonElement | null>(null);
   const touchStartRef = useRef<number | null>(null);
   const canPrev = index > 0;
   const canNext = index < files.length - 1;
@@ -169,6 +170,14 @@ export function Lightbox({
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [canNext, canPrev, index, onIndexChange]);
+
+  useEffect(() => {
+    activeFilmstripButtonRef.current?.scrollIntoView?.({
+      block: 'nearest',
+      inline: 'nearest',
+      behavior: 'smooth',
+    });
+  }, [index]);
 
   useDialog({ open: true, containerRef: dialogRef, initialFocusRef: closeButtonRef, onClose });
 
@@ -623,12 +632,15 @@ export function Lightbox({
         </div>
       </main>
 
-      <footer className="flex h-20 shrink-0 items-center gap-2 overflow-x-auto border-t border-edge bg-surface-raised px-3">
+      <footer className="flex h-32 shrink-0 items-center gap-3 overflow-x-auto border-t border-edge bg-surface-raised px-3 py-2 max-md:h-28 max-md:gap-2 max-md:px-2">
         {files.map((item, itemIndex) => (
           <button
             type="button"
             key={item.id}
-            className={`h-14 w-20 shrink-0 overflow-hidden rounded-md border text-left transition-colors ${
+            ref={(node) => {
+              if (itemIndex === index) activeFilmstripButtonRef.current = node;
+            }}
+            className={`h-28 w-36 shrink-0 overflow-hidden rounded-md border-2 text-left transition-colors max-md:h-24 max-md:w-32 ${
               itemIndex === index ? 'border-accent-border bg-accent-tint' : 'border-edge bg-surface hover:border-edge-strong'
             }`}
             onClick={() => onIndexChange(itemIndex)}

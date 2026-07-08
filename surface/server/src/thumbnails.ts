@@ -7,7 +7,7 @@ import { ArtifactLedger, casBlobKey } from './artifact-ledger.js';
 import type { Db } from './db.js';
 import { withTx } from './db.js';
 import { classifyMediaFromMime, type MediaKind } from './media-classifier.js';
-import { getObjectBytes, uploadObject } from './s3.js';
+import { getObjectBytes, storageReady, uploadObject } from './s3.js';
 
 const IMAGE_THUMBNAIL_MIME = 'image/webp';
 const VIDEO_THUMBNAIL_MIME = 'image/jpeg';
@@ -15,6 +15,7 @@ const THUMBNAIL_WIDTH = 320;
 
 type ThumbnailLogger = {
   warn(obj: unknown, msg?: string): void;
+  info?(obj: unknown, msg?: string): void;
 };
 
 export interface ThumbnailJob {
@@ -33,7 +34,20 @@ export interface GeneratedThumbnail {
 }
 
 const pending = new Map<string, ThumbnailJob>();
+const inFlight = new Map<string, Promise<string | null>>();
 let draining = false;
+const warnedDependencies = new Set<string>();
+
+const defaultLogger: ThumbnailLogger = {
+  warn(obj: unknown, msg?: string) {
+    if (msg) console.warn(msg, obj);
+    else console.warn(obj);
+  },
+  info(obj: unknown, msg?: string) {
+    if (msg) console.info(msg, obj);
+    else console.info(obj);
+  },
+};
 
 export function enqueueThumbnailGeneration(job: ThumbnailJob): void {
   const existing = pending.get(job.sourceSha);
@@ -45,6 +59,19 @@ export function enqueueThumbnailGeneration(job: ThumbnailJob): void {
     logger: job.logger ?? existing?.logger,
   });
   void drainThumbnailQueue();
+}
+
+export function ensureThumbnailForBlobDeduped(
+  job: ThumbnailJob,
+  ensure: (job: ThumbnailJob) => Promise<string | null> = ensureThumbnailForBlob,
+): Promise<string | null> {
+  const existing = inFlight.get(job.sourceSha);
+  if (existing) return existing;
+  const promise = ensure(job).finally(() => {
+    if (inFlight.get(job.sourceSha) === promise) inFlight.delete(job.sourceSha);
+  });
+  inFlight.set(job.sourceSha, promise);
+  return promise;
 }
 
 async function drainThumbnailQueue(): Promise<void> {
@@ -92,6 +119,7 @@ export async function ensureThumbnailForBlob(job: ThumbnailJob): Promise<string 
     bytes: sourceBytes,
     mediaKind,
     mime,
+    logger: job.logger,
   });
   if (!generated) return null;
 
@@ -126,28 +154,94 @@ export async function generateThumbnail(input: {
   bytes: Buffer;
   mediaKind: MediaKind | string | null;
   mime: string | null;
+  logger?: ThumbnailLogger;
 }): Promise<GeneratedThumbnail | null> {
   if (input.mediaKind === 'image') {
-    return imageThumbnail(input.bytes);
+    return imageThumbnail(input.bytes, input.logger);
   }
   if (input.mediaKind === 'video') {
-    return videoThumbnail(input.bytes);
+    return videoThumbnail(input.bytes, input.logger);
   }
   if (input.mediaKind === 'pdf') {
-    return pdfThumbnail(input.bytes);
+    return pdfThumbnail(input.bytes, input.logger);
   }
   return null;
 }
 
-async function imageThumbnail(bytes: Buffer): Promise<GeneratedThumbnail | null> {
-  return webpImageThumbnail(bytes);
+export async function backfillMissingThumbnails(
+  pool: Db,
+  opts: {
+    limit?: number;
+    logger?: ThumbnailLogger;
+    enqueue?: (job: ThumbnailJob) => void;
+  } = {},
+): Promise<{ scanned: number; enqueued: number }> {
+  const logger = opts.logger ?? defaultLogger;
+  const limit = opts.limit ?? thumbnailBackfillLimit();
+  if (limit <= 0) {
+    logger.info?.({ limit }, 'thumbnail backfill disabled');
+    return { scanned: 0, enqueued: 0 };
+  }
+  const res = await pool.query<{
+    sha256: string;
+    mime: string | null;
+    media_kind: MediaKind | string | null;
+    s3_key: string | null;
+  }>(
+    `SELECT sha256, mime, media_kind, s3_key
+       FROM cas_blobs
+      WHERE thumbnail_sha IS NULL
+        AND media_kind IN ('image', 'pdf', 'video')
+        AND s3_key IS NOT NULL
+      ORDER BY created_at DESC
+      LIMIT $1`,
+    [limit],
+  );
+  let enqueued = 0;
+  const enqueue = opts.enqueue ?? enqueueThumbnailGeneration;
+  for (const row of res.rows) {
+    if (!row.s3_key) continue;
+    enqueue({
+      pool,
+      sourceSha: row.sha256,
+      mime: row.mime,
+      mediaKind: row.media_kind,
+      s3Key: row.s3_key,
+      logger,
+    });
+    enqueued += 1;
+  }
+  logger.info?.({ scanned: res.rows.length, enqueued, limit }, 'thumbnail backfill queued missing thumbnails');
+  logger.info?.({ enqueued }, 'thumbnail backfill sweep complete');
+  return { scanned: res.rows.length, enqueued };
 }
 
-async function webpImageThumbnail(bytes: Buffer): Promise<GeneratedThumbnail | null> {
+export function startThumbnailBackfill(pool: Db, logger: ThumbnailLogger = defaultLogger): void {
+  void (async () => {
+    const limit = thumbnailBackfillLimit();
+    if (limit <= 0) {
+      logger.info?.({ limit }, 'thumbnail backfill disabled');
+      return;
+    }
+    while (storageReady() !== true) {
+      await delay(1_000);
+    }
+    await backfillMissingThumbnails(pool, { limit, logger });
+  })().catch((err) => {
+    logger.warn({ err }, 'thumbnail backfill failed');
+  });
+}
+
+async function imageThumbnail(bytes: Buffer, logger?: ThumbnailLogger): Promise<GeneratedThumbnail | null> {
+  return webpImageThumbnail(bytes, logger);
+}
+
+async function webpImageThumbnail(bytes: Buffer, logger?: ThumbnailLogger): Promise<GeneratedThumbnail | null> {
   let sharp: typeof import('sharp');
   try {
     sharp = await import('sharp');
-  } catch {
+  } catch (err) {
+    warnDependencyOnce('sharp', err, logger, 'thumbnail generator dependency unavailable: sharp import failed');
     return null;
   }
   const output = await sharp.default(bytes, { animated: false })
@@ -163,13 +257,19 @@ async function webpImageThumbnail(bytes: Buffer): Promise<GeneratedThumbnail | n
   return output.byteLength > 0 ? { bytes: output, mime: IMAGE_THUMBNAIL_MIME } : null;
 }
 
-async function pdfThumbnail(bytes: Buffer): Promise<GeneratedThumbnail | null> {
+async function pdfThumbnail(bytes: Buffer, logger?: ThumbnailLogger): Promise<GeneratedThumbnail | null> {
+  let pdf: typeof import('pdf-to-img').pdf;
+  try {
+    ({ pdf } = await import('pdf-to-img'));
+  } catch (err) {
+    warnDependencyOnce('pdf-to-img', err, logger, 'thumbnail generator dependency unavailable: pdf-to-img import failed');
+    return null;
+  }
   let document: Awaited<ReturnType<typeof import('pdf-to-img').pdf>> | null = null;
   try {
-    const { pdf } = await import('pdf-to-img');
     document = await pdf(bytes, { scale: 2 });
     for await (const pagePng of document) {
-      return await webpImageThumbnail(pagePng);
+      return await webpImageThumbnail(pagePng, logger);
     }
     return null;
   } catch {
@@ -179,7 +279,7 @@ async function pdfThumbnail(bytes: Buffer): Promise<GeneratedThumbnail | null> {
   }
 }
 
-async function videoThumbnail(bytes: Buffer): Promise<GeneratedThumbnail | null> {
+async function videoThumbnail(bytes: Buffer, logger?: ThumbnailLogger): Promise<GeneratedThumbnail | null> {
   const dir = await mkdtemp(join(tmpdir(), 'atrium-thumb-'));
   const sourcePath = join(dir, 'source-video');
   const outputPath = join(dir, 'poster.jpg');
@@ -197,7 +297,7 @@ async function videoThumbnail(bytes: Buffer): Promise<GeneratedThumbnail | null>
       '-vf',
       `scale=${THUMBNAIL_WIDTH}:-2`,
       outputPath,
-    ]);
+    ], logger);
     if (!result) return null;
     const output = await readFile(outputPath).catch(() => null);
     return output && output.byteLength > 0 ? { bytes: output, mime: VIDEO_THUMBNAIL_MIME } : null;
@@ -206,19 +306,26 @@ async function videoThumbnail(bytes: Buffer): Promise<GeneratedThumbnail | null>
   }
 }
 
-function runProcess(command: string, args: string[]): Promise<boolean> {
+function runProcess(command: string, args: string[], logger?: ThumbnailLogger): Promise<boolean> {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, { stdio: ['ignore', 'ignore', 'pipe'] });
     const stderr: Buffer[] = [];
+    let settled = false;
     child.stderr.on('data', (chunk: Buffer) => stderr.push(chunk));
     child.on('error', (err: NodeJS.ErrnoException) => {
+      if (settled) return;
       if (err.code === 'ENOENT') {
+        settled = true;
+        warnDependencyOnce(command, err, logger, `${command} unavailable; video thumbnail generation disabled`);
         resolve(false);
         return;
       }
+      settled = true;
       reject(err);
     });
     child.on('close', (code) => {
+      if (settled) return;
+      settled = true;
       if (code === 0) {
         resolve(true);
         return;
@@ -231,4 +338,42 @@ function runProcess(command: string, args: string[]): Promise<boolean> {
 
 function sha256(bytes: Buffer): string {
   return createHash('sha256').update(bytes).digest('hex');
+}
+
+function thumbnailBackfillLimit(): number {
+  const raw = process.env.THUMBNAIL_BACKFILL_LIMIT;
+  if (raw == null || raw.trim() === '') return 500;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < 0) return 500;
+  return Math.floor(parsed);
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    timer.unref?.();
+  });
+}
+
+function warnDependencyOnce(key: string, err: unknown, logger: ThumbnailLogger | undefined, msg: string): void {
+  if (warnedDependencies.has(key)) return;
+  warnedDependencies.add(key);
+  (logger ?? defaultLogger).warn({ err, message: errorMessage(err) }, msg);
+}
+
+function errorMessage(err: unknown): string {
+  if (err instanceof Error) {
+    const messages = [err.message];
+    let cause = err.cause;
+    while (cause instanceof Error) {
+      messages.push(cause.message);
+      cause = cause.cause;
+    }
+    return messages.join(': caused by: ');
+  }
+  return String(err);
+}
+
+export function resetThumbnailWarningStateForTest(): void {
+  warnedDependencies.clear();
 }

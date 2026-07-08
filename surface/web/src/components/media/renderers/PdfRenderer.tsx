@@ -71,11 +71,11 @@ export function PdfRenderer({ file, variant }: { file: PreviewFile; variant: Med
 
   if (variant === 'tile') {
     if (tileThumbnailUrl) {
-      return <img src={tileThumbnailUrl} alt={file.name} loading="lazy" className="h-full min-h-32 w-full bg-surface-raised object-cover" />;
+      return <img src={tileThumbnailUrl} alt={file.name} loading="lazy" className="h-full min-h-0 w-full bg-surface-raised object-cover" />;
     }
 
     return (
-      <div className="flex h-full min-h-32 items-center justify-center overflow-hidden bg-surface-raised/40 p-2">
+      <div className="flex h-full min-h-0 items-center justify-center overflow-hidden bg-surface-raised/40 p-2">
         {error ? (
           <div className="flex flex-col items-center gap-2 text-center text-xs text-fg-muted">
             <FileIcon size={24} />

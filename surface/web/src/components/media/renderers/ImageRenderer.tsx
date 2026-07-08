@@ -11,7 +11,7 @@ export function ImageRenderer({ file, variant }: { file: PreviewFile; variant: M
         src={file.thumbnailUrl ?? file.contentUrl}
         alt={file.name}
         loading="lazy"
-        className="h-full min-h-32 w-full bg-surface-raised object-cover"
+        className="h-full min-h-0 w-full bg-surface-raised object-cover"
       />
     );
   }
