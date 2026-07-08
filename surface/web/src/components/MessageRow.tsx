@@ -3,6 +3,7 @@ import {
   useCallback,
   useEffect,
   useId,
+  useMemo,
   useRef,
   useState,
   type KeyboardEvent,
@@ -20,7 +21,7 @@ import { Tooltip } from './a11y';
 import { CornerUpLeftIcon, FileIcon, SmilePlusIcon } from './icons';
 import { Lightbox } from './media';
 import type { PreviewFile } from './media';
-import { MessageActionMenu, type MessageActionMenuState } from './MessageActionMenu';
+import { MessageActionMenu, type MessageActionMenuAction, type MessageActionMenuState } from './MessageActionMenu';
 import { CompactMarkdownText, MessageText } from './MessageText';
 import { ReactionPicker } from './ReactionPicker';
 import { TimestampDisclosure } from './TimestampDisclosure';
@@ -321,6 +322,77 @@ export const MessageRow = memo(function MessageRow({
     setDeleteAsk(false);
     onDelete!(m).catch(() => {});
   };
+  const actionMenuActions = useMemo<MessageActionMenuAction[]>(() => {
+    const actions: MessageActionMenuAction[] = [];
+    if (canThread) {
+      actions.push({
+        key: 'reply-thread',
+        label: 'Reply in thread',
+        onSelect: () => onOpenThread!(threadTargetEventId!),
+      });
+    }
+    if (canMarkupReply && entryHandle != null) {
+      actions.push({
+        key: 'markup-reply',
+        label: 'Mark up & reply',
+        onSelect: () => onMarkupEntry?.(entryHandle, m),
+      });
+    }
+    if (canAnnotate) {
+      actions.push({
+        key: 'copy-link',
+        label: 'Copy link',
+        onSelect: () => {
+          setPickerOpen(false);
+          copyEntryLink();
+        },
+      });
+    }
+    if (canAnnotate && canCopyMessageText) {
+      actions.push({
+        key: 'copy-text',
+        label: 'Copy text',
+        onSelect: () => {
+          setPickerOpen(false);
+          copyBlockText();
+        },
+      });
+    }
+    if (canEdit) {
+      actions.push({
+        key: 'edit',
+        label: 'Edit',
+        onSelect: startEdit,
+      });
+    }
+    if (canDelete) {
+      actions.push({
+        key: 'delete',
+        label: deleteAsk ? 'Confirm delete' : 'Delete',
+        onSelect: onDeleteClick,
+        variant: 'danger',
+        closeOnSelect: deleteAsk,
+      });
+    }
+    return actions;
+  }, [
+    canAnnotate,
+    canCopyMessageText,
+    canDelete,
+    canEdit,
+    canMarkupReply,
+    canThread,
+    copyBlockText,
+    copyEntryLink,
+    deleteAsk,
+    entryHandle,
+    m,
+    onDeleteClick,
+    onMarkupEntry,
+    onOpenThread,
+    startEdit,
+    threadTargetEventId,
+  ]);
 
   const actionMenuAllowed = (canThread || canEdit || canDelete || canReact || canAnnotate || canMarkupReply) && !editing;
   const closeActionMenu = useCallback(() => setActionMenu(null), []);
@@ -806,29 +878,8 @@ export const MessageRow = memo(function MessageRow({
         state={actionMenu}
         onClose={closeActionMenu}
         restoreFocusRef={rowRef}
-        canThread={!!canThread}
-        canEdit={canEdit}
-        canDelete={canDelete}
-        canReact={canReact}
-        canAnnotate={canAnnotate}
-        canCopyMessageText={canCopyMessageText}
-        canMarkupReply={canMarkupReply && entryHandle != null}
-        deleteConfirming={deleteAsk}
-        onReact={react}
-        onReplyThread={() => onOpenThread!(threadTargetEventId!)}
-        onMarkupReply={() => {
-          if (entryHandle) onMarkupEntry?.(entryHandle, m);
-        }}
-        onCopyLink={() => {
-          setPickerOpen(false);
-          copyEntryLink();
-        }}
-        onCopyText={() => {
-          setPickerOpen(false);
-          copyBlockText();
-        }}
-        onEdit={startEdit}
-        onDelete={onDeleteClick}
+        actions={actionMenuActions}
+        reactions={canReact ? { onSelect: react } : undefined}
       />
     </div>
   );

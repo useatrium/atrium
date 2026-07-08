@@ -106,6 +106,25 @@ describe('SteerRow (mobile)', () => {
     expect(screen.queryByTestId('steer-time')).toBeNull();
   });
 
+  it('wires tap actions when provided and exposes the actions label', () => {
+    const onPress = vi.fn();
+    const onLongPress = vi.fn();
+    renderWithTheme(
+      <SteerRow
+        text="fix the parser"
+        onPress={onPress}
+        onLongPress={onLongPress}
+        delayLongPress={250}
+      />,
+    );
+
+    const row = screen.getByRole('button', { name: 'Message actions: fix the parser' });
+    fireEvent.click(row);
+
+    expect(onPress).toHaveBeenCalledTimes(1);
+    expect(onLongPress).not.toHaveBeenCalled();
+  });
+
   it('shows an always-visible provenance byline for accepted suggestions', () => {
     renderWithTheme(
       <SteerRow

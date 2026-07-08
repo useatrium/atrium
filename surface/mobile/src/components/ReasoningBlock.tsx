@@ -3,7 +3,16 @@ import { Pressable, Text, View } from 'react-native';
 import type { ReasoningItem } from '@atrium/centaur-client';
 import { font, radius, space, useTheme } from '../lib/theme';
 
-export function ReasoningBlock({ item }: { item: ReasoningItem }) {
+export function ReasoningBlock({
+  item,
+  onLongPress,
+}: {
+  item: ReasoningItem;
+  // The header Pressable wins the gesture over any wrapping Pressable, so the
+  // entry-actions long-press must be forwarded here or a collapsed block has
+  // no way to open the action sheet.
+  onLongPress?: () => void;
+}) {
   const { colors } = useTheme();
   const [open, setOpen] = useState(false);
   const hasSummary = Boolean(item.summary?.trim());
@@ -20,6 +29,8 @@ export function ReasoningBlock({ item }: { item: ReasoningItem }) {
     >
       <Pressable
         onPress={() => setOpen((value) => !value)}
+        onLongPress={onLongPress}
+        delayLongPress={250}
         accessibilityRole="button"
         accessibilityState={{ expanded: open }}
         accessibilityLabel="Thinking"
