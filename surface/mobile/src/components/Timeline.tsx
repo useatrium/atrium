@@ -53,8 +53,6 @@ export interface TimelineProps {
   onOpenSession?: (sessionId: string) => void;
   unreadDividerAfterId?: number | null;
   dividerReady?: boolean;
-  latestLandingSignal?: number;
-  onUserEngaged?: () => void;
   onReachBottom?: () => void;
 }
 
@@ -177,8 +175,6 @@ export function Timeline({
   onOpenSession,
   unreadDividerAfterId,
   dividerReady,
-  latestLandingSignal,
-  onUserEngaged,
   onReachBottom,
 }: TimelineProps) {
   const { colors, reduceMotion } = useTheme();
@@ -274,12 +270,6 @@ export function Timeline({
     startScrollToIndexRetry,
   ]);
 
-  useEffect(() => {
-    if (!latestLandingSignal || !loaded) return;
-    listRef.current?.scrollToEnd({ animated: false });
-    setAtBottomValue(true);
-  }, [latestLandingSignal, loaded, setAtBottomValue]);
-
   // FlashList keeps new messages pinned when already near the bottom; mirror
   // that by advancing the read cursor when the rendered tail changes there.
   useEffect(() => {
@@ -300,8 +290,7 @@ export function Timeline({
 
   const handleScrollBeginDrag = useCallback(() => {
     userDraggedRef.current = true;
-    onUserEngaged?.();
-  }, [onUserEngaged]);
+  }, []);
 
   const handleScroll = useCallback(
     (event: NativeSyntheticEvent<NativeScrollEvent>) => {

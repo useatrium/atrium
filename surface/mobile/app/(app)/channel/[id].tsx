@@ -56,10 +56,7 @@ export default function ChannelScreen() {
   const presentCount = id ? (state.presence[id]?.length ?? 0) : 0;
   const headerHeight = useHeaderHeight();
   const [unreadDividerSnapshot, setUnreadDividerSnapshot] = useState<UnreadDividerSnapshot | null>(null);
-  const [latestLandingSignal, setLatestLandingSignal] = useState(0);
-  const [latestLandingChannelId, setLatestLandingChannelId] = useState<string | null>(null);
   const unreadDividerSnapshotRef = useRef<UnreadDividerSnapshot | null>(null);
-  const unreadLandingEngagedRef = useRef(false);
   const channelRef = useRef(channel);
   const timelineLoadedRef = useRef(timeline.loaded);
   channelRef.current = channel;
@@ -81,7 +78,6 @@ export default function ChannelScreen() {
   useFocusEffect(
     useCallback(() => {
       if (!id) return;
-      unreadLandingEngagedRef.current = false;
       commitUnreadDividerSnapshot({
         channelId: id,
         value: computeUnreadDividerAfterId(channelRef.current),
@@ -103,24 +99,18 @@ export default function ChannelScreen() {
     });
   }, [channel, commitUnreadDividerSnapshot, id, timeline.loaded]);
 
+  // Dissolve a frozen divider when a REMOTE read (another device/tab) has caught
+  // this channel up. The frozen `value` doesn't move as you read here; only a
+  // remote catch-up clears it. Marker only — no scroll. A partial remote read
+  // leaves the divider in place (there's still genuinely-new content).
   useEffect(() => {
     if (!id || !channel) return;
     const current = unreadDividerSnapshotRef.current;
-    if (
-      current?.channelId !== id ||
-      !current.ready ||
-      current.value == null ||
-      unreadLandingEngagedRef.current
-    ) {
-      return;
-    }
-    const currentDivider = computeUnreadDividerAfterId(channel);
-    const lastRead = channel.lastReadEventId ?? 0;
-    if (currentDivider != null || lastRead <= current.value) return;
+    if (current?.channelId !== id || !current.ready || current.value == null) return;
+    if ((state.remoteReadCursors[id] ?? 0) <= current.value) return;
+    if (computeUnreadDividerAfterId(channel) != null) return;
     commitUnreadDividerSnapshot({ channelId: id, value: null, ready: true });
-    setLatestLandingChannelId(id);
-    setLatestLandingSignal((n) => n + 1);
-  }, [channel, commitUnreadDividerSnapshot, id]);
+  }, [state.remoteReadCursors, channel, commitUnreadDividerSnapshot, id]);
 
   const activeUnreadDividerSnapshot =
     unreadDividerSnapshot?.channelId === id ? unreadDividerSnapshot : null;
@@ -129,10 +119,6 @@ export default function ChannelScreen() {
     if (!id) return;
     chat.markRead(id, timeline.lastEventId);
   }, [chat.markRead, id, timeline.lastEventId]);
-
-  const markUnreadLandingEngaged = useCallback(() => {
-    unreadLandingEngagedRef.current = true;
-  }, []);
 
   // Kicked from a private channel (or it was deleted) while viewing it: the
   // channel drops out of state. Leave rather than sit on a dead screen whose
@@ -461,8 +447,6 @@ export default function ChannelScreen() {
           onOpenSession={(sessionId) => router.push(`/session/${sessionId}`)}
           unreadDividerAfterId={activeUnreadDividerSnapshot?.value ?? null}
           dividerReady={activeUnreadDividerSnapshot?.ready === true}
-          latestLandingSignal={latestLandingChannelId === id ? latestLandingSignal : 0}
-          onUserEngaged={markUnreadLandingEngaged}
           onReachBottom={markReadAtBottom}
         />
         <TypingLine typing={chat.typing} />

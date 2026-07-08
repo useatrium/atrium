@@ -1046,7 +1046,7 @@ export function ChatProvider({ session, children }: { session: Session; children
           lastReadSentRef.current[channelId] ?? 0,
           lastReadEventId,
         );
-        dispatch({ type: 'read-cursor', channelId, lastReadEventId });
+        dispatch({ type: 'read-cursor', channelId, lastReadEventId, source: 'remote' });
         cacheReadCursorAdvance(channelId, lastReadEventId, 'remote');
       },
       onMuted: (channelId, muted) => {

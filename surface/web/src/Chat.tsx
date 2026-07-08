@@ -590,8 +590,6 @@ export function Chat({
       dividerFrozenForRef.current = null;
       return;
     }
-    if (dividerFrozenForRef.current === cid) return;
-
     const channel = state.channels.find((c) => c.id === cid);
     const timeline = state.timelines[cid];
     const lastRead = channel?.lastReadEventId ?? 0;
@@ -599,6 +597,17 @@ export function Chat({
     // fetch) over the channel's cached counter so a cold reload still sees
     // messages that arrived while away.
     const latest = Math.max(channel?.latestEventId ?? 0, timeline?.lastEventId ?? 0);
+
+    if (dividerFrozenForRef.current === cid) {
+      // Frozen so it doesn't move as YOU read here. But if another device/tab
+      // (a remote read) has caught this channel up, the divider is now a phantom
+      // above already-read messages — dissolve it. Marker only; never scroll.
+      if ((state.remoteReadCursors[cid] ?? 0) >= latest && latest > 0) {
+        setUnreadDividerAfterId((prev) => (prev == null ? prev : null));
+      }
+      return;
+    }
+
     setUnreadDividerAfterId(lastRead > 0 && latest > lastRead ? lastRead : null);
 
     // Freeze once the timeline is loaded (from cache or the history fetch —
@@ -608,7 +617,7 @@ export function Chat({
       dividerFrozenForRef.current = cid;
       setDividerReadyChannelId(cid);
     }
-  }, [state.activeChannelId, state.channels, state.timelines]);
+  }, [state.activeChannelId, state.channels, state.timelines, state.remoteReadCursors]);
 
   // Ready only when the frozen decision belongs to the currently active channel.
   const dividerReady = dividerReadyChannelId != null && dividerReadyChannelId === state.activeChannelId;
@@ -779,7 +788,7 @@ export function Chat({
       onCall: calls.handleCallEvent,
       onRead: (channelId, lastReadEventId) => {
         noteReadCursor(channelId, lastReadEventId);
-        dispatchWithReadCache({ type: 'read-cursor', channelId, lastReadEventId });
+        dispatchWithReadCache({ type: 'read-cursor', channelId, lastReadEventId, source: 'remote' });
       },
       onMuted: (channelId, muted) => {
         dispatch({ type: 'mute-changed', channelId, muted });
