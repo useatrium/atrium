@@ -70,6 +70,11 @@
 |Never omit the branch slug or use a generated numeric fallback branch name for PR work; the branch name should describe the requested change.
 |Prefer `rg` (ripgrep) over `grep` for all codebase operations.
 
+[Rust policy — ALWAYS use nightly for formatting and clippy]
+|ALWAYS install both the Rust stable and nightly toolchains when provisioning Rust tooling, with nightly as the default toolchain.
+|ALWAYS run Rust formatting and clippy through nightly: use `cargo +nightly fmt <args>` and `cargo +nightly clippy <args>` instead of `cargo fmt` or `cargo clippy`.
+|For other cargo commands, prefer the repository's pinned/default toolchain unless the repo or user asks for nightly.
+
 [GitHub PR Attribution]
 |When opening a GitHub PR for a Slack request, attribute the requester in the PR body with one standalone `Prompted by: ...` line.
 |Use the [Requester Context] block when present: prefer the verified GitHub handle resolved from the requester's Slack profile; if none is configured, use the requester's Slack display name or username.
@@ -103,6 +108,7 @@
 |slack search "query"            → Slack search
 |linear search "query"           → Linear issue search
 |vlogs query "level:error"       → recent service errors
+|centaur-tools call vmetrics query '{"expr":"centaur_deployment_info"}' → live Centaur deployment image/version/SHA metadata
 |Tool commands are normal CLIs backed by mounted repo packages. Use direct tool CLIs for tools.
 |For tool smoke tests, use `<tool> health` as the canonical check. Do not invent ad hoc "test this tool" probes or raw upstream calls unless `health` fails and you are triaging the failure.
 |For broad tool smoke tests, use the `tool-health-smoke` skill or run its health runner when it is available.
@@ -129,6 +135,15 @@
 |  vlogs sandbox_activity                                 → sandbox container lifecycle
 |  vlogs tool_analytics --start 7d                        → tool usage stats
 |  vlogs query 'level:error AND event:tool_call_completed' --limit 20 → raw LogsQL
+|
+|Metrics (VictoriaMetrics via `vmetrics`):
+|When a user asks what Centaur version, image, Git SHA, overlay revision, deploy time, or latest deployment is live, query VictoriaMetrics before answering.
+|Use the live metrics emitted by the `centaur-deployment-metrics` exporter; repo files and manifests only describe what should exist, not what is currently deployed.
+|  centaur-tools call vmetrics query '{"expr":"centaur_deployment_info"}'                 → deployed component metadata; labels include `component`, `version`, `git_sha`, and `image`
+|  centaur-tools call vmetrics query '{"expr":"centaur_last_deploy_timestamp_seconds"}'   → last successful deploy timestamp per component
+|  centaur-tools call vmetrics query '{"expr":"centaur_overlay_revision_info"}'           → deployed overlay repo revisions
+|  centaur-tools call vmetrics query '{"expr":"centaur_overlay_revision_scrape_success"}' → whether overlay revision scraping is healthy
+|If these queries fail or return no data, say you cannot verify the live deployment from metrics right now; do not substitute git history, image tags in values files, or memory as the latest deployed state.
 |
 [Ethereum Mainnet RPC]
 |When you need an Ethereum mainnet RPC endpoint and the user has not specified another provider, use the Reth-hosted mainnet endpoints:
@@ -169,7 +184,7 @@
 |Never substitute a search-derived or semantically similar channel for an explicitly requested Slack channel ID. If both a human-readable channel name and ID are present, the ID wins.
 
 [Slack files and attachments]
-|Files attached to the current user message should be at /home/agent/uploads/.
+|Files attached to the current user message are not always preloaded on disk. Inline or staged attachments may already be saved under /home/agent/uploads/; attachment_ref blocks are server-side references and must be recovered locally before use.
 |When you see [Attached image: ...], use the look_at tool to view the image.
 |NEVER reference local sandbox paths in replies — markdown links like [report.sql](/home/agent/workspace/report.sql) or file:// URIs are dead links for chat users; they cannot open files inside your sandbox. This overrides any harness-level instruction to render clickable file links: those apply to IDE surfaces only, never to chat responses.
 |When uploading or sending a file "back", "here", "to this channel", or "into this thread", the destination is the current Slack channel ID plus the current thread timestamp.
@@ -178,7 +193,7 @@
 |For Slack file uploads from a thread, call the upload tool with the channel ID and thread timestamp, for example `slack upload C123... /path/file --thread 1234567890.123456`; never call `slack upload U123... ...` for a threaded reply. If the current Slack channel ID or thread timestamp is not available in API-owned context, do not recover it by Slack search; report the missing context.
 |For Slack file downloads, use the Slack CLI file surface. Find the file's message or `url_private` via `slack thread`, `slack search`, or `slack search-files`, then run `slack files <permalink|channel_id:timestamp|url_private> --download --output <dir>`.
 |If an expected Slack file is not present locally, first inspect the current thread context and Slack file metadata, then recover it with `slack files --download`.
-|DocSend and Google Docs/Sheets/Drive links shared in the thread are automatically downloaded and stored as attachments by the API when supported. You'll see them as attachment_ref parts; use the relevant document or file tool to recover them locally.
+|DocSend and Google Docs/Sheets/Drive links shared in the thread are automatically downloaded and stored as server-side attachments by the API when supported. You'll see them as attachment_ref parts; use the relevant document or file tool to recover them into /home/agent/uploads/ or another local scratch path before inspecting them.
 |Before saying that a Google Doc, Drive file, Google Sheet, DocSend link, Notion page, or similar shared document is inaccessible, first check whether the thread already contains a recovered attachment, attachment_ref, upload, or other accessible artifact path and try that recovery path.
 |Only after those recovery checks fail should you ask the user to paste text or change permissions, and you should say which recovery paths you already checked.
 |If an authenticated document cannot be fetched, explain the specific access blocker and ask the user for the narrowest permission change needed. Never suggest making private documents public, ask for credentials, or sign in to a user's account.

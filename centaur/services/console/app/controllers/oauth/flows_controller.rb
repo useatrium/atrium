@@ -6,8 +6,8 @@ module Oauth
   # The OAuth consent flow, keyed by an app's well-known slug:
   # /oauth/:slug/start sends a team member to the IdP's consent screen, and
   # /oauth/:slug/callback turns the returned authorization code into a managed
-  # BrokerCredential linked to the OauthApp, then renders an centaur-console result
-  # page.
+  # BrokerCredential linked to the OauthApp, then sends the user back to the
+  # console Integrations page (or renders a result page on failure).
   #
   # Deliberately unauthenticated -- a team member connects an integration by
   # clicking a well-known link; there is no external app to integrate with, so
@@ -91,7 +91,10 @@ module Oauth
       @credential = upsert_credential(state, result, identity)
       enqueue_identity_enrichment(@credential)
 
-      render_result(:success, identity: identity)
+      # Back to the Integrations page the user started from; failures below
+      # still render the standalone result page, which offers a retry link.
+      connected_as = " as #{identity[:email]}" if identity[:email].present?
+      redirect_to console_integrations_path, notice: "#{@app.slug} connected#{connected_as}."
     rescue Broker::ExchangeError => e
       render_result(:error, message: "Connecting the integration failed (#{e.reason}).")
     rescue ActiveRecord::RecordInvalid => e
@@ -160,6 +163,12 @@ module Oauth
     def upsert_credential(state, result, identity)
       BrokerCredential.transaction do
         credential = BrokerCredential.find_or_initialize_by(oauth_app: @app, provider_subject: identity[:subject])
+        # When the consenting browser carries a signed-in console session,
+        # remember which user connected this account. The Integrations page
+        # matches on it, so the card flips to "Connected" even when the
+        # provider account's email differs from the console login email.
+        # Never overwritten: the first linked user keeps the credential.
+        credential.created_by ||= current_user
         if credential.new_record?
           credential.namespace = @app.credential_namespace
           credential.foreign_id = "#{@app.provider}-#{@app.slug}-#{identity[:subject].downcase}"
@@ -214,8 +223,8 @@ module Oauth
     #
     # Created once per credential (keyed on the broker_credential association, which
     # a unique index enforces) and left untouched on re-consent, so any operator
-    # edits -- a different header, extra rules -- survive. Has no created_by: the
-    # unauthenticated flow has no current user, like the credential it wraps. Left
+    # edits -- a different header, extra rules -- survive. Has no created_by:
+    # unlike the credential, no console feature keys off the secret's owner. Left
     # without a foreign_id: it is found by association, and copying the credential's
     # would risk colliding with an operator-created secret.
     def ensure_wrapping_secret(credential)
@@ -242,14 +251,13 @@ module Oauth
       nil
     end
 
-    # Renders the team-facing result page. +kind+ is :success, :denied, or
-    # :error; the matching HTTP status defaults sensibly but callers override it
-    # for the 4xx pre-consent rejections.
-    def render_result(kind, status: nil, message: nil, identity: nil, **)
+    # Renders the team-facing failure page. +kind+ is :denied or :error; the
+    # status defaults to 422 but callers override it for the 4xx pre-consent
+    # rejections. Success does not come through here -- the happy path
+    # redirects back to the console Integrations page.
+    def render_result(kind, status: :unprocessable_entity, message: nil)
       @kind = kind
       @message = message
-      @identity = identity
-      status ||= (kind == :success ? :ok : :unprocessable_entity)
       render :result, status: status
     end
   end

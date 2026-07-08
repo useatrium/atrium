@@ -22,10 +22,31 @@ Rails.application.routes.draw do
   get "auth/:provider/start", to: "session_oauth#start", as: :auth_start
   get "auth/:provider/callback", to: "session_oauth#callback", as: :auth_callback
 
+  # MCP OAuth authorization server. MCP clients discover this from api-rs'
+  # OAuth protected-resource metadata and register public PKCE clients here.
+  get ".well-known/oauth-authorization-server", to: "mcp/oauth#metadata"
+  get ".well-known/openid-configuration", to: "mcp/oauth#metadata"
+  post "mcp/oauth/register", to: "mcp/oauth#register"
+  get "mcp/oauth/authorize", to: "mcp/oauth#authorize"
+  post "mcp/oauth/authorize", to: "mcp/oauth#approve"
+  post "mcp/oauth/token", to: "mcp/oauth#token"
+
   # Operator console (server-rendered HTML UI).
   root "console#principals"
   get "console/principals", to: "console#principals", as: :console_principals
+  namespace :console do
+    get  "principals/new", to: "principals#new",    as: :new_principal
+    post "principals",     to: "principals#create", as: :create_principal
+  end
   get "console/principals/:id", to: "console#principal", as: :console_principal
+  namespace :console do
+    resources :threads, only: %i[index create]
+    resources :workflows, only: %i[index show]
+    # Lazily-loaded sidebar thread list (Turbo Frame src). Kept off the main
+    # page render so the unindexed cross-database sessions query does not block
+    # every console page. See ApplicationController#load_console_sidebar_threads.
+    get "sidebar_threads", to: "threads#sidebar", as: :sidebar_threads
+  end
   namespace :console do
     resources :roles, only: %i[index show new create edit update] do
       member do
@@ -38,6 +59,7 @@ Rails.application.routes.draw do
   # extra /roles and /grants path segments keep these clear of the show route above
   # and avoid clobbering the console_principal_path helper.
   namespace :console do
+    delete "principals/:id",                  to: "principals#destroy", as: :delete_principal
     patch  "principals/:id/sandbox_access",   to: "principals#update_sandbox_access", as: :principal_sandbox_access
     post   "principals/:id/roles",            to: "principals#assign_role",   as: :principal_assign_role
     delete "principals/:id/roles/:role_id",   to: "principals#unassign_role", as: :principal_unassign_role
@@ -64,6 +86,9 @@ Rails.application.routes.draw do
   end
   get "console/credentials/:id", to: "console#credential", as: :console_credential
   get "console/oauth_apps", to: "console#oauth_apps", as: :console_oauth_apps
+  # User-facing list of enabled OAuth apps and their consent start links. Not
+  # admin-gated: any signed-in team member connects integrations from here.
+  get "console/integrations", to: "console/integrations#index", as: :console_integrations
   get "console/etls", to: "console/etls#index", as: :console_etls
   namespace :console do
     post "etls/slack_archive_imports",
@@ -97,6 +122,9 @@ Rails.application.routes.draw do
         post :promote
       end
     end
+    # Admin self-descope ("view as operator"): pause (admin-only) and restore
+    # admin permissions. A singular resource because it's a per-session flag.
+    resource :descope, only: %i[create destroy]
   end
 
   namespace :api do

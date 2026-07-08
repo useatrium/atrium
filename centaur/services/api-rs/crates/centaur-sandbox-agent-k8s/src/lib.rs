@@ -40,6 +40,8 @@ const BACKEND_NAME: &str = "agent-sandbox-k8s";
 const DEFAULT_CONTAINER_NAME: &str = "agent";
 const MANAGED_BY_LABEL: &str = "centaur.ai/managed-by";
 const SANDBOX_ID_LABEL: &str = "centaur.ai/sandbox-id";
+const OBSERVABILITY_ENABLED_LABEL: &str = "centaur.ai/observability-enabled";
+const API_SERVER_ENABLED_LABEL: &str = "centaur.ai/api-server-enabled";
 const MANAGED_BY_VALUE: &str = "api-rs";
 const NODE_SYNC_COMPONENT_LABEL: &str = "app.kubernetes.io/component";
 const NODE_SYNC_COMPONENT_VALUE: &str = "node-sync";
@@ -53,10 +55,8 @@ const RUNTIME_CONTEXT_VOLUME: &str = "runtime-context";
 const RUNTIME_CONTEXT_MOUNT_PATH: &str = "/etc/centaur/runtime-context";
 const WARMCACHE_CAS_VOLUME: &str = "warmcache-cas";
 const CLAIMED_HOME_HELPER_CONTAINER: &str = "overlay-claim-home";
-// RFC 3339 instant stamped when the sandbox is paused for idleness and
-// cleared on resume. The reaper uses it to stop sandboxes whose pause
-// outlived the idle TTL, surviving api-rs restarts (the pause timer is
-// otherwise in-memory only).
+// RFC 3339 instant stamped when the sandbox is paused for idleness and cleared
+// on resume. This keeps suspended status observable across api-rs restarts.
 const PAUSED_AT_ANNOTATION: &str = "centaur.ai/paused-at";
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
@@ -84,10 +84,9 @@ pub struct AgentSandboxConfig {
     /// When set, repo-backed sandboxes with a dep-cache mount get a best-effort
     /// `warmcache-hydrate` init container before the agent starts.
     pub warmcache_hydrate: Option<WarmcacheHydrateConfig>,
-    /// In-cluster OTLP collector (e.g. Laminar) the sandbox exports harness
-    /// traces to directly. The per-sandbox egress NetworkPolicy denies all
-    /// destinations except the proxy/control plane, so without this rule the
-    /// harness's usage/cost spans never leave the pod.
+    /// In-cluster OTLP collector (e.g. Laminar) used for observability-capable
+    /// sandboxes. Sandbox pod egress is granted by chart-level label policy;
+    /// the per-sandbox proxy uses this target for its own explicit egress.
     pub otlp_egress: Option<OtlpEgressTarget>,
     pub ready_timeout: Duration,
 }
@@ -1054,6 +1053,12 @@ fn build_agent_sandbox(
     labels.extend(spec.labels.clone());
     labels.insert(MANAGED_BY_LABEL.to_owned(), MANAGED_BY_VALUE.to_owned());
     labels.insert(SANDBOX_ID_LABEL.to_owned(), id.as_str().to_owned());
+    if spec.capabilities.observability_enabled {
+        labels.insert(OBSERVABILITY_ENABLED_LABEL.to_owned(), "true".to_owned());
+    }
+    if spec.capabilities.api_server_enabled {
+        labels.insert(API_SERVER_ENABLED_LABEL.to_owned(), "true".to_owned());
+    }
 
     let mut pod_labels = labels.clone();
     pod_labels.insert(
@@ -1087,8 +1092,21 @@ fn build_agent_sandbox(
         .iter()
         .map(|env| (env.name.clone(), env.value.clone()))
         .collect();
-    if config.tools.is_some() {
-        for (name, value) in tools::agent_env(config.tools.as_ref()) {
+    let repo_cache_enabled = spec.capabilities.repo_cache.enabled();
+    let scoped_tools = config
+        .tools
+        .as_ref()
+        .filter(|_| repo_cache_enabled)
+        .map(|tools| tools.scoped_for_repo_cache_access(&spec.capabilities.repo_cache));
+    let repo_cache_tools = scoped_tools.as_ref().filter(|tools| tools.has_sources());
+    let baked_base_tools = config.tools.is_some() && repo_cache_tools.is_none();
+
+    if repo_cache_tools.is_some() {
+        for (name, value) in tools::agent_env(repo_cache_tools) {
+            upsert_env(&mut agent_env, &name, value);
+        }
+    } else if baked_base_tools {
+        for (name, value) in tools::baked_base_agent_env() {
             upsert_env(&mut agent_env, &name, value);
         }
     }
@@ -1151,9 +1169,9 @@ fn build_agent_sandbox(
     // Tool sources are bootstrapped into an emptyDir by an init container and
     // mounted into the agent at the same path `TOOL_DIRS` points at. The mount is
     // writable so `centaur-tools refresh` can fetch and republish the tree.
-    if config.tools.is_some() {
-        volume_mounts.extend(tools::agent_volume_mounts_json(config.tools.as_ref()));
-        volumes.extend(tools::volumes_json(config.tools.as_ref()));
+    if repo_cache_tools.is_some() {
+        volume_mounts.extend(tools::agent_volume_mounts_json(repo_cache_tools));
+        volumes.extend(tools::volumes_json(repo_cache_tools));
     }
     if let Some(overlay) = &config.overlay {
         let agent_uid = agent_run_as_user(&container).unwrap_or(overlay.agent_uid);
@@ -1274,7 +1292,7 @@ fn build_agent_sandbox(
     );
 
     // tools-bootstrap publishes the tools repo into /app/tools.
-    if let Some(tools) = &config.tools {
+    if let Some(tools) = repo_cache_tools {
         // The sandbox NetworkPolicy only allows egress to the per-sandbox proxy
         // (plus api-rs and DNS), so when iron-proxy is on the clone must ride it.
         // `apply_proxy_env` ran before this builder, so the resolved proxy URL is
@@ -1301,7 +1319,7 @@ fn build_agent_sandbox(
         "automountServiceAccountToken": false,
         "enableServiceLinks": false,
     });
-    if config.tools.is_some() {
+    if repo_cache_tools.is_some() {
         pod_spec["securityContext"] = tools::pod_security_context_json();
     }
     insert_optional(
@@ -1599,6 +1617,9 @@ fn mount_json(spec: &SandboxSpec) -> (Vec<Value>, Vec<Value>) {
             "mountPath": mount.target_path,
             "readOnly": mount.read_only,
         });
+        if let Some(sub_path) = &mount.sub_path {
+            volume_mount["subPath"] = Value::String(sub_path.clone());
+        }
         volumes.push(match &mount.kind {
             MountKind::EmptyDir => json!({
                 "name": name,
@@ -1853,7 +1874,9 @@ fn map_kube_error(operation: &str, err: Error) -> SandboxError {
 
 #[cfg(test)]
 mod tests {
-    use centaur_sandbox_core::{Mount, MountKind, ResourceLimits, SandboxSpec};
+    use centaur_sandbox_core::{
+        Mount, MountKind, RepoCacheAccess, ResourceLimits, SandboxCapabilities, SandboxSpec,
+    };
     use k8s_openapi::api::core::v1::{
         ContainerState, ContainerStateTerminated, ContainerStateWaiting, PodCondition, PodStatus,
     };
@@ -1979,6 +2002,104 @@ mod tests {
     }
 
     #[test]
+    fn labels_observability_enabled_sandboxes_for_chart_policy() {
+        let spec = SandboxSpec::new("centaur-agent:latest").capabilities(SandboxCapabilities {
+            repo_cache: RepoCacheAccess::All,
+            observability_enabled: true,
+            api_server_enabled: true,
+        });
+        let config = AgentSandboxConfig::new("centaur");
+
+        let sandbox = build_agent_sandbox(&SandboxId::new("asbx-test"), &spec, &config).unwrap();
+
+        assert_eq!(
+            sandbox
+                .metadata
+                .labels
+                .as_ref()
+                .and_then(|labels| labels.get(OBSERVABILITY_ENABLED_LABEL))
+                .map(String::as_str),
+            Some("true")
+        );
+        assert_eq!(
+            sandbox
+                .spec
+                .pod_template
+                .metadata
+                .as_ref()
+                .and_then(|metadata| metadata.labels.as_ref())
+                .and_then(|labels| labels.get(OBSERVABILITY_ENABLED_LABEL))
+                .map(String::as_str),
+            Some("true")
+        );
+        assert_eq!(
+            sandbox
+                .metadata
+                .labels
+                .as_ref()
+                .and_then(|labels| labels.get(API_SERVER_ENABLED_LABEL))
+                .map(String::as_str),
+            Some("true")
+        );
+        assert_eq!(
+            sandbox
+                .spec
+                .pod_template
+                .metadata
+                .as_ref()
+                .and_then(|metadata| metadata.labels.as_ref())
+                .and_then(|labels| labels.get(API_SERVER_ENABLED_LABEL))
+                .map(String::as_str),
+            Some("true")
+        );
+    }
+
+    #[test]
+    fn omits_api_server_label_for_restricted_sandboxes() {
+        let spec = SandboxSpec::new("centaur-agent:latest").capabilities(SandboxCapabilities {
+            repo_cache: RepoCacheAccess::All,
+            observability_enabled: false,
+            api_server_enabled: false,
+        });
+        let config = AgentSandboxConfig::new("centaur");
+
+        let sandbox = build_agent_sandbox(&SandboxId::new("asbx-test"), &spec, &config).unwrap();
+
+        assert!(
+            sandbox
+                .metadata
+                .labels
+                .as_ref()
+                .is_none_or(|labels| !labels.contains_key(OBSERVABILITY_ENABLED_LABEL))
+        );
+        assert!(
+            sandbox
+                .spec
+                .pod_template
+                .metadata
+                .as_ref()
+                .and_then(|metadata| metadata.labels.as_ref())
+                .is_none_or(|labels| !labels.contains_key(OBSERVABILITY_ENABLED_LABEL))
+        );
+        assert!(
+            sandbox
+                .metadata
+                .labels
+                .as_ref()
+                .is_none_or(|labels| !labels.contains_key(API_SERVER_ENABLED_LABEL))
+        );
+        assert!(
+            sandbox
+                .spec
+                .pod_template
+                .metadata
+                .as_ref()
+                .and_then(|metadata| metadata.labels.as_ref())
+                .is_none_or(|labels| !labels.contains_key(API_SERVER_ENABLED_LABEL))
+        );
+    }
+
+    #[test]
     fn tools_clone_rides_iron_proxy_when_enabled() {
         // apply_proxy_env runs before build_agent_sandbox in create(), so the
         // resolved per-sandbox proxy URL arrives on the spec env.
@@ -2026,6 +2147,54 @@ mod tests {
                 .iter()
                 .any(|mount| mount.name == "firewall-ca")
         );
+    }
+
+    #[test]
+    fn disabled_repo_cache_uses_baked_base_tools_without_bootstrap() {
+        let spec = SandboxSpec::new("centaur-agent:latest").capabilities(SandboxCapabilities {
+            repo_cache: RepoCacheAccess::None,
+            observability_enabled: true,
+            api_server_enabled: true,
+        });
+        let mut tools = ToolsConfig::new("paradigmxyz/centaur", "api:test");
+        tools.repo_cache_path = Some("/var/lib/centaur/repos".to_owned());
+        let config = AgentSandboxConfig::new("centaur").tools(tools);
+
+        let sandbox = build_agent_sandbox(&SandboxId::new("asbx-test"), &spec, &config).unwrap();
+        let pod_spec = &sandbox.spec.pod_template.spec;
+        let tool_dirs = pod_spec.containers[0]
+            .env
+            .as_ref()
+            .and_then(|env| env.iter().find(|env| env.name == "TOOL_DIRS"))
+            .map(|env| env.value.as_deref())
+            .flatten();
+        assert_eq!(tool_dirs, Some("/opt/centaur/tools"));
+        assert!(
+            pod_spec
+                .init_containers
+                .as_ref()
+                .is_none_or(|containers| containers.iter().all(|container| {
+                    container.name != "tools-bootstrap" && container.name != "tools-sync"
+                }))
+        );
+        assert!(
+            pod_spec.containers[0]
+                .volume_mounts
+                .as_ref()
+                .is_none_or(|mounts| {
+                    !mounts.iter().any(|mount| {
+                        mount.name == "tools-root"
+                            || mount.name == "tools-repo-cache"
+                            || mount.mount_path == "/app/tools"
+                            || mount.mount_path == "/var/lib/centaur/repos"
+                    })
+                })
+        );
+        assert!(pod_spec.volumes.as_ref().is_none_or(|volumes| {
+            !volumes
+                .iter()
+                .any(|volume| volume.name == "tools-root" || volume.name == "tools-repo-cache")
+        }));
     }
 
     #[test]

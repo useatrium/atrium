@@ -189,7 +189,7 @@ export class CentaurClient {
   }
 
   async startWorkflowRun(opts: WorkflowRunOptions): Promise<WorkflowRunAccepted> {
-    const { data } = await this.http.post("/workflows/runs", {
+    const { data } = await this.http.post("/api/workflows/runs", {
       workflow_name: opts.workflowName,
       trigger_key: opts.triggerKey,
       input: opts.input ?? {},
@@ -201,7 +201,7 @@ export class CentaurClient {
   }
 
   async getWorkflowRun(runId: string): Promise<WorkflowRunAccepted> {
-    const { data } = await this.http.get(`/workflows/runs/${encodeURIComponent(runId)}`);
+    const { data } = await this.http.get(`/api/workflows/runs/${encodeURIComponent(runId)}`);
     return data as WorkflowRunAccepted;
   }
 
@@ -212,7 +212,7 @@ export class CentaurClient {
     parentRunId?: string;
     limit?: number;
   }): Promise<{ ok: boolean; items: WorkflowRunAccepted[] }> {
-    const { data } = await this.http.get("/workflows/runs", {
+    const { data } = await this.http.get("/api/workflows/runs", {
       params: {
         workflow_name: opts?.workflowName,
         thread_key: opts?.threadKey,
@@ -225,14 +225,14 @@ export class CentaurClient {
   }
 
   async getWorkflowChildren(runId: string, limit = 200): Promise<{ ok: boolean; items: WorkflowRunAccepted[] }> {
-    const { data } = await this.http.get(`/workflows/runs/${encodeURIComponent(runId)}/children`, {
+    const { data } = await this.http.get(`/api/workflows/runs/${encodeURIComponent(runId)}/children`, {
       params: { limit },
     });
     return data as { ok: boolean; items: WorkflowRunAccepted[] };
   }
 
   async cancelWorkflowRun(runId: string): Promise<WorkflowRunAccepted> {
-    const { data } = await this.http.post(`/workflows/runs/${encodeURIComponent(runId)}/cancel`);
+    const { data } = await this.http.post(`/api/workflows/runs/${encodeURIComponent(runId)}/cancel`);
     return data as WorkflowRunAccepted;
   }
 
@@ -241,7 +241,7 @@ export class CentaurClient {
     correlationId: string;
     payload?: Record<string, unknown>;
   }): Promise<Record<string, unknown>> {
-    const { data } = await this.http.post("/workflows/events", {
+    const { data } = await this.http.post("/api/workflows/events", {
       event_type: opts.eventType,
       correlation_id: opts.correlationId,
       payload: opts.payload ?? {},
