@@ -1,17 +1,26 @@
-# Atrium Centaur Overlay
+# Atrium Centaur prompt overlay
 
-This directory is the Atrium org prompt overlay for Centaur sandboxes. The prompt addendum lives at `services/sandbox/SYSTEM_PROMPT.md` and is appended after the base sandbox prompt when `CENTAUR_OVERLAY_DIR` points at this overlay tree.
+The Atrium org prompt addendum (the text that teaches agents about `~/context`,
+the `[atrium context]` provenance blocks, artifact capture, and `/e/` citation
+conventions) lives at **`centaur/services/sandbox/ATRIUM_OVERLAY_PROMPT.md`**
+and is **baked into the sandbox image**: the Dockerfile copies it to
+`/opt/centaur-overlay/services/sandbox/SYSTEM_PROMPT.md` and sets
+`CENTAUR_OVERLAY_DIR=/opt/centaur-overlay`, which the entrypoint appends after
+the base system prompt on every session start.
 
-## Deploy
+Why baked: the chart's `overlay.systemPrompt` ConfigMap is only mounted into
+the api-rs pod; sandbox pods are created dynamically by api-rs and never see
+it. Since we build `centaur-agent` ourselves, the image is the reliable
+delivery vehicle. Deploying a prompt change = `cd centaur && just build-one
+sandbox && just deploy`.
 
-The chart has an `overlay.systemPrompt` ConfigMap value, but in this checkout that ConfigMap is not mounted into sandbox pods. The working path is to publish this directory as a repo-cache overlay, then set `CENTAUR_OVERLAY_DIR` to that repo's sandbox path.
+## Alternative: external overlay repo (kept for reference)
 
-Use `values.example.yaml` as a template and include it through `CENTAUR_EXTRA_VALUES` with the existing local/dev values. Replace `YOUR_ORG/atrium-centaur-overlay` and `main` with the published overlay repo and ref.
-
-In flat-home deployments, the overlay repo appears at:
-
-```text
-/home/agent/repos/YOUR_ORG/atrium-centaur-overlay
-```
-
-If this directory is baked into a sandbox image instead, set `sandbox.extraEnv.CENTAUR_OVERLAY_DIR` to the baked path that contains `services/sandbox/SYSTEM_PROMPT.md`.
+Deployments that prefer to keep the prompt out of the image can publish an
+overlay tree as a repo synced by repo-cache and set a pod-level
+`CENTAUR_OVERLAY_DIR` pointing at its clone — pod env overrides the image
+default. Use `values.example.yaml` as the template (replace
+`YOUR_ORG/atrium-centaur-overlay` and `main`); in flat-home deployments the
+repo appears at `/home/agent/repos/YOUR_ORG/atrium-centaur-overlay`. Note the
+repos mount is read-only to the agent, but keeping the prompt in agent-visible
+repo space is a weaker posture than the baked path.
