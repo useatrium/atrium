@@ -134,6 +134,7 @@ export function App() {
             initialChannelId={destination.initialChannelId}
             initialMainSurface={destination.initialFileArtifactId ? 'files' : 'chat'}
             initialEntryHandle={destination.initialEntryHandle}
+            initialThreadRootEventId={destination.initialThreadRootEventId}
             onLogout={() => {
               api.logout().catch(() => {}).finally(() => {
                 void clearDesktopSession().finally(() => {
@@ -155,6 +156,11 @@ export function App() {
         initialMainSurface={initialRoute.surface}
         initialSessionFocus={initialRoute.focusSession}
         initialEntryHandle={new URLSearchParams(location.search).get('entry')}
+        initialThreadRootEventId={
+          initialRoute.threadRootId != null && Number.isSafeInteger(Number(initialRoute.threadRootId))
+            ? Number(initialRoute.threadRootId)
+            : null
+        }
         onLogout={() => {
           // logout() first (still holds the token), then drop the keychain
           // session, then clear the cache and reload.
