@@ -67,7 +67,9 @@ export function dispatchSyncSnapshot(
 ): void {
   dispatch({ type: 'channels-loaded', channels: snapshot.channels });
   for (const [channelId, lastReadEventId] of Object.entries(snapshot.readCursors)) {
-    dispatch({ type: 'read-cursor', channelId, lastReadEventId });
+    // A sync snapshot is server truth, which may reflect a read from another
+    // device/tab — mark it remote so a frozen divider can dissolve on catch-up.
+    dispatch({ type: 'read-cursor', channelId, lastReadEventId, source: 'remote' });
   }
   const muted = new Set(snapshot.mutes);
   for (const channel of snapshot.channels) {
