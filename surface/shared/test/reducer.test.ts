@@ -5,6 +5,7 @@ import {
   appReducer,
   DEFAULT_PREFS,
   dispatchSyncResponse,
+  dispatchSyncSnapshot,
   emptyTimeline,
   initialAppState,
   markFailed,
@@ -862,6 +863,84 @@ describe('live cold-counter advancement (unread divider depends on it)', () => {
     state = appReducer(state, { type: 'read-cursor', channelId: CH, lastReadEventId: 4 });
     expect(state.channels.find((c) => c.id === CH)!.lastReadEventId).toBe(8);
     expect(state.unread[CH]).toBe(false);
+  });
+
+  it('does not track a remote read-cursor echo equal to local state', () => {
+    const state = appReducer(loadedWith({ lastReadEventId: 8 }), {
+      type: 'read-cursor',
+      channelId: CH,
+      lastReadEventId: 8,
+      source: 'remote',
+    });
+
+    expect(state.remoteReadCursors[CH]).toBeUndefined();
+    expect(state.channels.find((c) => c.id === CH)!.lastReadEventId).toBe(8);
+  });
+
+  it('tracks remote read-cursors only when they advance past local state', () => {
+    const state = appReducer(loadedWith({ lastReadEventId: 5 }), {
+      type: 'read-cursor',
+      channelId: CH,
+      lastReadEventId: 8,
+      source: 'remote',
+    });
+
+    expect(state.remoteReadCursors[CH]).toBe(8);
+    expect(state.channels.find((c) => c.id === CH)!.lastReadEventId).toBe(8);
+  });
+
+  it('does not track self read-cursors even when they advance local state', () => {
+    const state = appReducer(loadedWith({ lastReadEventId: 5 }), {
+      type: 'read-cursor',
+      channelId: CH,
+      lastReadEventId: 8,
+      source: 'self',
+    });
+
+    expect(state.remoteReadCursors[CH]).toBeUndefined();
+    expect(state.channels.find((c) => c.id === CH)!.lastReadEventId).toBe(8);
+  });
+
+  const snapshotChannel = (lastReadEventId: number) => ({
+    id: CH,
+    workspaceId: 'ws-1',
+    name: 'general',
+    createdAt: new Date(0).toISOString(),
+    kind: 'public' as const,
+    latestEventId: 8,
+    lastReadEventId,
+  });
+
+  const applySnapshot = (start: ReturnType<typeof loadedWith>, lastReadEventId: number) => {
+    let state = start;
+    dispatchSyncSnapshot(
+      (action) => {
+        state = appReducer(state, action);
+      },
+      {
+        readCursors: { [CH]: lastReadEventId },
+        mutes: [],
+        prefs: DEFAULT_PREFS,
+        drafts: {},
+        draftDeletions: {},
+        channels: [snapshotChannel(lastReadEventId)],
+      },
+    );
+    return state;
+  };
+
+  it('sync snapshot reflecting another device’s read registers a remote advance', () => {
+    // Local sits at 5; the server snapshot says another device read to 8. The
+    // cursor dispatch must precede channels-loaded or the overwrite masks it.
+    const state = applySnapshot(loadedWith({ latestEventId: 8, lastReadEventId: 5 }), 8);
+    expect(state.remoteReadCursors[CH]).toBe(8);
+    expect(state.channels.find((c) => c.id === CH)!.lastReadEventId).toBe(8);
+  });
+
+  it('sync snapshot echoing this device’s own reads is not a remote advance', () => {
+    const state = applySnapshot(loadedWith({ latestEventId: 8, lastReadEventId: 8 }), 8);
+    expect(state.remoteReadCursors[CH]).toBeUndefined();
+    expect(state.channels.find((c) => c.id === CH)!.lastReadEventId).toBe(8);
   });
 });
 

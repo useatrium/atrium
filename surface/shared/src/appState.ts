@@ -210,6 +210,8 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     case 'read-cursor': {
       // Keep the cold counter current too — the unread divider and unmute
       // re-derivation compare against it long after channels-loaded.
+      const currentLastReadEventId =
+        state.channels.find((c) => c.id === action.channelId)?.lastReadEventId ?? 0;
       const channels = state.channels.map((c) =>
         c.id === action.channelId && (c.lastReadEventId ?? 0) < action.lastReadEventId
           ? { ...c, lastReadEventId: action.lastReadEventId }
@@ -217,8 +219,13 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       );
       // Track remote advances separately so a frozen unread divider can dissolve
       // when another device/tab catches up — without a local self-read moving it.
+      // The server echoes your own reads to your own socket too; source-tagging
+      // cannot distinguish that echo from another device, but self-reads apply
+      // optimistically first, so only a cursor that advances past local state is
+      // a true remote advance.
       const remoteReadCursors =
         action.source === 'remote' &&
+        currentLastReadEventId < action.lastReadEventId &&
         (state.remoteReadCursors[action.channelId] ?? 0) < action.lastReadEventId
           ? { ...state.remoteReadCursors, [action.channelId]: action.lastReadEventId }
           : state.remoteReadCursors;
