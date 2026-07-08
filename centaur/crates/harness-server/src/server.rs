@@ -96,6 +96,7 @@ pub(crate) fn run_blocks_app_server<H: HarnessServer>(harness: &H) -> Result<()>
         match parse_blocks_line_with_state(trimmed, &mut blocks_state) {
             Ok(BlocksCommand::User {
                 input,
+                context,
                 client_user_message_id,
                 model,
                 // Provider selection only applies to the codex harness; the
@@ -128,6 +129,7 @@ pub(crate) fn run_blocks_app_server<H: HarnessServer>(harness: &H) -> Result<()>
                     harness,
                     &mut state,
                     input,
+                    context,
                     client_user_message_id,
                     &trace_context,
                     &mut stdout,
@@ -231,6 +233,7 @@ fn run_blocks_turn<H: HarnessServer, W: Write>(
     harness: &H,
     state: &mut ThreadState,
     input: Vec<UserInput>,
+    context: Vec<String>,
     client_user_message_id: Option<String>,
     trace_context: &TraceContext,
     stdout: &mut W,
@@ -239,11 +242,13 @@ fn run_blocks_turn<H: HarnessServer, W: Write>(
 ) -> Result<()> {
     let turn_id = format!("turn-{}", Uuid::new_v4().simple());
     let mut normalizer = normalizer_for(harness, state, &turn_id);
+    let harness_input = prepend_context_input(&context, input.clone());
     run_normalized_turn(
         harness,
         state,
         TurnRunContext {
             input: &input,
+            harness_input: &harness_input,
             client_user_message_id,
             trace_context: Some(trace_context),
             normalizer: &mut normalizer,
@@ -258,6 +263,7 @@ fn run_blocks_turn<H: HarnessServer, W: Write>(
 pub(crate) enum BlocksCommand {
     User {
         input: Vec<UserInput>,
+        context: Vec<String>,
         client_user_message_id: Option<String>,
         model: Option<String>,
         provider: Option<String>,
@@ -346,6 +352,7 @@ struct ActiveBlocksInput<'a> {
 
 struct TurnRunContext<'a, W: Write> {
     input: &'a [UserInput],
+    harness_input: &'a [UserInput],
     client_user_message_id: Option<String>,
     trace_context: Option<&'a TraceContext>,
     normalizer: &'a mut CodexTurnNormalizer,
@@ -463,6 +470,8 @@ struct AttachmentBlock {
     fetch_error: Option<String>,
     #[serde(default)]
     url: Option<String>,
+    #[serde(default)]
+    text: Option<String>,
 }
 
 #[cfg(test)]
@@ -487,26 +496,27 @@ pub(crate) fn parse_blocks_line_with_state(
                 .as_ref()
                 .and_then(|message| message.content.as_ref())
                 .or(parsed.content.as_ref());
-            let mut input = match content {
+            let mut parsed_content = match content {
                 Some(content) => blocks_content_to_user_input(content, state)?,
                 None => parsed
                     .text
                     .map(|text| {
-                        vec![UserInput::Text {
+                        ParsedBlocksContent::from_input(vec![UserInput::Text {
                             text,
                             text_elements: Vec::new(),
-                        }]
+                        }])
                     })
                     .unwrap_or_default(),
             };
-            if input.is_empty() {
-                input.push(UserInput::Text {
+            if parsed_content.input.is_empty() {
+                parsed_content.input.push(UserInput::Text {
                     text: "continue".to_string(),
                     text_elements: Vec::new(),
                 });
             }
             Ok(BlocksCommand::User {
-                input,
+                input: parsed_content.input,
+                context: parsed_content.context,
                 client_user_message_id: parsed
                     .client_user_message_id
                     .or_else(|| parsed.message.and_then(|message| message.id)),
@@ -547,37 +557,91 @@ pub(crate) fn parse_blocks_line_with_state(
     }
 }
 
+#[derive(Debug, Default)]
+struct ParsedBlocksContent {
+    input: Vec<UserInput>,
+    context: Vec<String>,
+}
+
+impl ParsedBlocksContent {
+    fn from_input(input: Vec<UserInput>) -> Self {
+        Self {
+            input,
+            context: Vec::new(),
+        }
+    }
+
+    fn from_context(context: String) -> Self {
+        Self {
+            input: Vec::new(),
+            context: vec![context],
+        }
+    }
+
+    fn extend(&mut self, other: Self) {
+        self.input.extend(other.input);
+        self.context.extend(other.context);
+    }
+}
+
 fn blocks_content_to_user_input(
     content: &BlocksContent,
     state: &mut BlocksState,
-) -> Result<Vec<UserInput>> {
+) -> Result<ParsedBlocksContent> {
     match content {
-        BlocksContent::Inputs(input) => input
-            .iter()
-            .map(|item| blocks_input_to_user_input(item, state))
-            .collect::<Result<Vec<_>>>()
-            .map(|items| items.into_iter().flatten().collect()),
-        BlocksContent::Text(text) => Ok(vec![UserInput::Text {
+        BlocksContent::Inputs(input) => {
+            let mut parsed = ParsedBlocksContent::default();
+            for item in input {
+                parsed.extend(blocks_input_to_user_input(item, state)?);
+            }
+            Ok(parsed)
+        }
+        BlocksContent::Text(text) => Ok(ParsedBlocksContent::from_input(vec![UserInput::Text {
             text: text.clone(),
             text_elements: Vec::new(),
-        }]),
+        }])),
     }
 }
 
 fn blocks_input_to_user_input(
     input: &BlocksInput,
     state: &mut BlocksState,
-) -> Result<Vec<UserInput>> {
+) -> Result<ParsedBlocksContent> {
     match input {
-        BlocksInput::UserInput(input) => Ok(vec![input.clone()]),
+        BlocksInput::UserInput(input) => Ok(ParsedBlocksContent::from_input(vec![input.clone()])),
+        BlocksInput::Attachment(block) if block.kind == "context" => Ok(
+            ParsedBlocksContent::from_context(block.text.clone().unwrap_or_default()),
+        ),
         BlocksInput::Attachment(block) if block.kind == "attachment" => {
-            attachment_block_to_user_input(block, state)
+            attachment_block_to_user_input(block, state).map(ParsedBlocksContent::from_input)
         }
-        BlocksInput::Attachment(block) => Ok(vec![UserInput::Text {
-            text: format!("[Unsupported attachment block type: {}]", block.kind),
-            text_elements: Vec::new(),
-        }]),
+        BlocksInput::Attachment(block) => {
+            Ok(ParsedBlocksContent::from_input(vec![UserInput::Text {
+                text: format!("[Unsupported attachment block type: {}]", block.kind),
+                text_elements: Vec::new(),
+            }]))
+        }
     }
+}
+
+pub(crate) fn prepend_context_input(context: &[String], input: Vec<UserInput>) -> Vec<UserInput> {
+    let Some(context) = wrapped_context_text(context) else {
+        return input;
+    };
+    let mut with_context = Vec::with_capacity(input.len() + 1);
+    with_context.push(UserInput::Text {
+        text: context,
+        text_elements: Vec::new(),
+    });
+    with_context.extend(input);
+    with_context
+}
+
+fn wrapped_context_text(context: &[String]) -> Option<String> {
+    if context.is_empty() {
+        return None;
+    }
+    Some(format!("<context>\n{}\n</context>", context.join("\n")))
 }
 
 fn attachment_block_to_user_input(
@@ -983,6 +1047,7 @@ fn handle_request<H: HarnessServer, W: Write>(
                 state,
                 TurnRunContext {
                     input: &params.input,
+                    harness_input: &params.input,
                     client_user_message_id: params.client_user_message_id.clone(),
                     trace_context: None,
                     normalizer: &mut normalizer,
@@ -1218,7 +1283,7 @@ fn run_harness_turn<H: HarnessServer, W: Write>(
     let usage_span_model = state.model.clone();
     let usage_span_model_provider = state.model_provider.clone();
     let usage_span_turn_id = ctx.normalizer.turn_id().to_string();
-    let usage_span_input = usage_span_input_value(ctx.input);
+    let usage_span_input = usage_span_input_value(ctx.harness_input);
     let mut usage_span_output = UsageSpanOutput::default();
     ensure_harness_process(harness, state)?;
     let process = state
@@ -1227,7 +1292,7 @@ fn run_harness_turn<H: HarnessServer, W: Write>(
         .ok_or(HarnessServerError::HarnessStdinUnavailable)?;
     process
         .stdin
-        .write_all(&harness.stdin_for_turn(ctx.input)?)?;
+        .write_all(&harness.stdin_for_turn(ctx.harness_input)?)?;
     process.stdin.flush()?;
 
     let mut last_session_id = state.harness_session_id.clone();
@@ -1340,6 +1405,7 @@ fn drain_active_blocks_input<H: HarnessServer, W: Write>(
         match parse_blocks_line_with_state(trimmed, active_blocks.blocks_state) {
             Ok(BlocksCommand::User {
                 input,
+                context,
                 client_user_message_id,
                 model,
                 provider,
@@ -1355,7 +1421,10 @@ fn drain_active_blocks_input<H: HarnessServer, W: Write>(
                 if let Some(reasoning) = reasoning {
                     active_blocks.blocks_state.pending_reasoning = Some(reasoning);
                 }
-                process.stdin.write_all(&harness.stdin_for_steer(&input)?)?;
+                let harness_input = prepend_context_input(&context, input.clone());
+                process
+                    .stdin
+                    .write_all(&harness.stdin_for_steer(&harness_input)?)?;
                 process.stdin.flush()?;
                 for notification in normalizer.emit_user_message(client_user_message_id, input)? {
                     write_value(stdout, &notification_to_wire_value(&notification)?)?;
@@ -1849,6 +1918,114 @@ mod tests {
     }
 
     #[test]
+    fn context_blocks_are_split_from_user_input_and_unknown_types_still_degrade() {
+        let line = serde_json::json!({
+            "type": "user",
+            "message": {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "context",
+                        "text": "[atrium context]\nfrom: Alice Basin (human - driver)"
+                    },
+                    {"type": "text", "text": "inspect this"},
+                    {
+                        "type": "attachment",
+                        "attachment_type": "document",
+                        "name": "notes.txt",
+                        "mimeType": "text/plain",
+                        "url": "https://example.test/notes.txt"
+                    },
+                    {
+                        "type": "context",
+                        "text": "[atrium context]\nfrom: Bob Basin (human - reviewer)"
+                    },
+                    {"type": "mystery", "text": "still unsupported"}
+                ]
+            }
+        })
+        .to_string();
+
+        let BlocksCommand::User { input, context, .. } =
+            parse_blocks_line(&line).expect("user parses")
+        else {
+            panic!("expected user command");
+        };
+
+        assert_eq!(
+            context,
+            vec![
+                "[atrium context]\nfrom: Alice Basin (human - driver)".to_string(),
+                "[atrium context]\nfrom: Bob Basin (human - reviewer)".to_string(),
+            ]
+        );
+        assert_eq!(input.len(), 3);
+        assert_eq!(text_input(&input[0]), "inspect this");
+        assert_eq!(
+            text_input(&input[1]),
+            "[Slack attachment: name=notes.txt mime=text/plain url=https://example.test/notes.txt]"
+        );
+        assert_eq!(
+            text_input(&input[2]),
+            "[Unsupported attachment block type: mystery]"
+        );
+        assert!(
+            input
+                .iter()
+                .filter_map(user_input_text)
+                .all(|text| !text.contains("Unsupported attachment block type: context"))
+        );
+    }
+
+    #[test]
+    fn context_is_prepended_to_claude_amp_stdin_and_kept_out_of_echo() {
+        let input = vec![UserInput::Text {
+            text: "hello".to_string(),
+            text_elements: Vec::new(),
+        }];
+        let context = vec![
+            "[atrium context]\nfrom: Alice Basin (human - driver)".to_string(),
+            "[atrium context]\nfrom: Bob Basin (human - reviewer)".to_string(),
+        ];
+        let wrapped = "<context>\n[atrium context]\nfrom: Alice Basin (human - driver)\n[atrium context]\nfrom: Bob Basin (human - reviewer)\n</context>";
+        let delivered = prepend_context_input(&context, input.clone());
+
+        assert_eq!(delivered.len(), 2);
+        assert_eq!(text_input(&delivered[0]), wrapped);
+        assert_eq!(text_input(&delivered[1]), "hello");
+
+        for bytes in [
+            ClaudeCodeHarness.stdin_for_turn(&delivered).unwrap(),
+            AmpHarness.stdin_for_turn(&delivered).unwrap(),
+            AmpHarness.stdin_for_steer(&delivered).unwrap(),
+        ] {
+            let value: Value = serde_json::from_slice(&bytes).unwrap();
+            let content = value["message"]["content"].as_array().unwrap();
+            assert_eq!(content[0]["text"], wrapped);
+            assert_eq!(content[1]["text"], "hello");
+        }
+
+        let mut normalizer = CodexTurnNormalizer::new(BridgeConfig::new("thread-1", "turn-1"));
+        let emitted = normalizer
+            .emit_user_message(Some("client-user-1".to_string()), input)
+            .unwrap();
+        let completed = emitted
+            .iter()
+            .find_map(|notification| match notification {
+                ServerNotification::ItemCompleted(completed) => Some(completed),
+                _ => None,
+            })
+            .expect("expected item completed notification");
+        let codex_app_server_protocol::ThreadItem::UserMessage { content, .. } = &completed.item
+        else {
+            panic!("expected user message item");
+        };
+
+        assert_eq!(content.len(), 1);
+        assert_eq!(text_input(&content[0]), "hello");
+    }
+
+    #[test]
     fn usage_span_output_replaces_delta_reconstruction_with_canonical_text() {
         let mut output = UsageSpanOutput::default();
         append_usage_span_output(
@@ -2103,6 +2280,17 @@ mod tests {
             } else {
                 env::remove_var(LOCAL_ATTACHMENT_WAIT_ENV);
             }
+        }
+    }
+
+    fn text_input(input: &UserInput) -> &str {
+        user_input_text(input).expect("expected text input")
+    }
+
+    fn user_input_text(input: &UserInput) -> Option<&str> {
+        match input {
+            UserInput::Text { text, .. } => Some(text.as_str()),
+            _ => None,
         }
     }
 }
