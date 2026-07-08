@@ -2,6 +2,32 @@ use std::path::{Path, PathBuf};
 
 use crate::runtime::AtriumClient;
 
+const ROOT_README: &str = r#"# Atrium Context Mount
+
+This read-only mount is the local context map for the Atrium channel and its sessions. It refreshes within a few seconds of server-side changes.
+
+## Tree
+
+- `README.md`: this guide.
+- `sessions/index.md`: entry point for materialized sessions.
+- `sessions/<id>/transcript.md`: lean user-visible transcript.
+- `sessions/<id>/summary.md`: compact status and key-action summary.
+- `sessions/<id>/meta.json`: session metadata, channel, driver, and participants.
+- `sessions/<id>/tools.md`: commands and tool calls.
+- `sessions/<id>/artifacts.md`: artifacts captured by the session.
+- `sessions/<id>/changes.md`: files changed by the session.
+- `channels/index.md`: entry point for channel context.
+- `channels/<id>/channel.md`: channel metadata, roster, and current state.
+- `channels/<id>/chat.md`: channel chat transcript.
+- `channel`: symlink to the active channel directory.
+
+## Recipes
+
+- Follow an `/e/<handle>` link: `rg -n "<handle>" ~/context/channels/*/chat.md`, then read about 30 lines around the hit.
+- Find a topic: `rg -i "<topic>" ~/context/channels/*/chat.md ~/context/sessions/*/summary.md`.
+- See who is here: `cat ~/context/channel/channel.md`.
+"#;
+
 pub const ATRIUM_DOCS: &[(&str, &str)] = &[
     ("transcript", "transcript.md"),
     ("full", "full.md"),
@@ -31,7 +57,13 @@ pub fn materialize_changed_sessions<C: AtriumClient + ?Sized>(
     session_ids: Vec<String>,
     next_cursor: String,
 ) -> Result<String, String> {
+    if let Err(error) = write_mount_readme(atrium_root) {
+        eprintln!("atrium materializer write README.md: {error}");
+    }
     if session_ids.is_empty() {
+        if let Err(error) = write_sessions_index(atrium_root) {
+            eprintln!("atrium materializer write sessions/index.md: {error}");
+        }
         return Ok(since.to_string());
     }
 
@@ -60,8 +92,109 @@ pub fn materialize_changed_sessions<C: AtriumClient + ?Sized>(
             }
         }
     }
+    if let Err(error) = write_sessions_index(atrium_root) {
+        eprintln!("atrium materializer write sessions/index.md: {error}");
+    }
 
     Ok(next_cursor)
+}
+
+fn write_mount_readme(atrium_root: &Path) -> Result<(), String> {
+    write_atomic(&atrium_root.join("README.md"), ROOT_README.as_bytes())
+}
+
+fn write_sessions_index(atrium_root: &Path) -> Result<(), String> {
+    let sessions_dir = atrium_root.join("sessions");
+    let mut rows = read_session_index_rows(&sessions_dir)?;
+    rows.sort_by(|a, b| {
+        b.updated_at
+            .cmp(&a.updated_at)
+            .then_with(|| a.dir_name.cmp(&b.dir_name))
+    });
+
+    let mut lines = vec!["# Sessions".to_string(), String::new()];
+    if rows.is_empty() {
+        lines.push("No sessions have been materialized yet.".to_string());
+    } else {
+        lines.push("| Title | Status | Channel | Driver | Updated | Dir |".to_string());
+        lines.push("|---|---|---|---|---|---|".to_string());
+        for row in rows {
+            lines.push(format!(
+                "| {} | {} | {} | {} | {} | `{}` |",
+                markdown_cell(&row.title),
+                markdown_cell(&row.status),
+                markdown_cell(&row.channel_name),
+                markdown_cell(&row.driver_name),
+                markdown_cell(&row.updated_at),
+                row.dir_name
+            ));
+        }
+    }
+    lines.push(String::new());
+    write_atomic(&sessions_dir.join("index.md"), lines.join("\n").as_bytes())
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct SessionIndexRow {
+    dir_name: String,
+    title: String,
+    status: String,
+    channel_name: String,
+    driver_name: String,
+    updated_at: String,
+}
+
+fn read_session_index_rows(sessions_dir: &Path) -> Result<Vec<SessionIndexRow>, String> {
+    let entries = match std::fs::read_dir(sessions_dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(format!("read_dir {}: {error}", sessions_dir.display())),
+    };
+    let mut rows = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let file_type = entry.file_type().map_err(|error| error.to_string())?;
+        if !file_type.is_dir() {
+            continue;
+        }
+        let dir_name = entry.file_name().to_string_lossy().into_owned();
+        let meta_path = entry.path().join("meta.json");
+        let bytes = match std::fs::read(&meta_path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(format!("read {}: {error}", meta_path.display())),
+        };
+        let Ok(meta) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+            continue;
+        };
+        rows.push(SessionIndexRow {
+            dir_name,
+            title: json_string(&meta, "title").unwrap_or_else(|| "Untitled".to_string()),
+            status: json_string(&meta, "status").unwrap_or_else(|| "unknown".to_string()),
+            channel_name: json_string(&meta, "channelName")
+                .unwrap_or_else(|| "unknown".to_string()),
+            driver_name: json_string(&meta, "driverName")
+                .or_else(|| json_string(&meta, "driver"))
+                .unwrap_or_else(|| "unknown".to_string()),
+            updated_at: json_string(&meta, "updatedAt")
+                .or_else(|| json_string(&meta, "completedAt"))
+                .or_else(|| json_string(&meta, "createdAt"))
+                .unwrap_or_else(|| "unknown".to_string()),
+        });
+    }
+    Ok(rows)
+}
+
+fn json_string(value: &serde_json::Value, key: &str) -> Option<String> {
+    value
+        .get(key)
+        .and_then(|field| field.as_str())
+        .filter(|field| !field.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn markdown_cell(value: &str) -> String {
+    value.replace('|', "\\|").replace('\n', " ")
 }
 
 fn write_atomic(dst: &Path, bytes: &[u8]) -> Result<(), String> {
@@ -137,8 +270,34 @@ mod tests {
             {
                 return Err(format!("boom {target_id}/{doc}"));
             }
+            if doc == "meta" {
+                return Ok(serde_json::json!({
+                    "title": format!("Session {target_id}"),
+                    "status": "running",
+                    "channelName": "general",
+                    "driverName": "Codex",
+                    "updatedAt": format!("2026-01-01T00:00:0{}.000Z", target_id.len())
+                })
+                .to_string()
+                .into_bytes());
+            }
             Ok(format!("{target_id}/{doc}").into_bytes())
         }
+    }
+
+    fn expected_doc_bytes(session_id: &str, doc: &str) -> Vec<u8> {
+        if doc == "meta" {
+            return serde_json::json!({
+                "title": format!("Session {session_id}"),
+                "status": "running",
+                "channelName": "general",
+                "driverName": "Codex",
+                "updatedAt": format!("2026-01-01T00:00:0{}.000Z", session_id.len())
+            })
+            .to_string()
+            .into_bytes();
+        }
+        format!("{session_id}/{doc}").into_bytes()
     }
 
     #[test]
@@ -154,21 +313,28 @@ mod tests {
                 let path = temp.path().join("sessions").join(session_id).join(filename);
                 assert_eq!(
                     std::fs::read(path).unwrap(),
-                    format!("{session_id}/{doc}").into_bytes()
+                    expected_doc_bytes(session_id, doc)
                 );
             }
         }
+        let readme = std::fs::read_to_string(temp.path().join("README.md")).unwrap();
+        assert!(readme.contains("Atrium Context Mount"));
+        let index = std::fs::read_to_string(temp.path().join("sessions").join("index.md")).unwrap();
+        assert!(index.contains("| Session s1 | running | general | Codex |"));
+        assert!(index.contains("`s1`"));
     }
 
     #[test]
-    fn empty_changes_page_keeps_cursor_and_writes_nothing() {
+    fn empty_changes_page_keeps_cursor_and_writes_mount_entrypoints() {
         let temp = tempfile::tempdir().unwrap();
         let client = FakeClient::with_sessions(&[], "7.8");
 
         let cursor = materialize_once(&client, temp.path(), "1.2").unwrap();
 
         assert_eq!(cursor, "1.2");
-        assert!(!temp.path().join("sessions").exists());
+        assert!(temp.path().join("README.md").exists());
+        let index = std::fs::read_to_string(temp.path().join("sessions").join("index.md")).unwrap();
+        assert!(index.contains("No sessions have been materialized yet."));
     }
 
     #[test]
@@ -196,7 +362,7 @@ mod tests {
             let path = temp.path().join("sessions").join("good").join(filename);
             assert_eq!(
                 std::fs::read(path).unwrap(),
-                format!("good/{doc}").into_bytes()
+                expected_doc_bytes("good", doc)
             );
         }
     }

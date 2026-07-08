@@ -1,0 +1,14 @@
+# Template values for deploying the Atrium prompt overlay through the current
+# repo-cache overlay path. Replace the repo/ref before using this file.
+
+overlays:
+  sources:
+    - repo: YOUR_ORG/atrium-centaur-overlay
+      ref: main
+      toolsSubdir: ""
+      workflowsSubdir: ""
+      skillsSubdir: ""
+
+sandbox:
+  extraEnv:
+    CENTAUR_OVERLAY_DIR: /home/agent/repos/YOUR_ORG/atrium-centaur-overlay
