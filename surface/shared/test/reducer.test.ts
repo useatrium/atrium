@@ -213,6 +213,54 @@ describe('threads and reply counts', () => {
     expect(t.main[0]!.lastReplyId).toBe(2);
   });
 
+  it('confirms optimistic broadcast thread replies in main and thread without duplicating main', () => {
+    let t = applyEvent(emptyTimeline, wire(1, 'root', { replyCount: 0, lastReplyId: 0 }));
+    t = mergeThread(t, 1, []);
+
+    t = addPending(t, pending('cm-b-ok', 'pending broadcast', 1, { broadcast: true }));
+    expect(t.main.map((m) => [m.clientMsgId, m.status])).toEqual([
+      [null, 'confirmed'],
+      ['cm-b-ok', 'pending'],
+    ]);
+    expect(t.threads[1]!.map((m) => [m.clientMsgId, m.status])).toEqual([['cm-b-ok', 'pending']]);
+
+    t = applyEvent(t, wire(2, 'pending broadcast', { clientMsgId: 'cm-b-ok', threadRoot: 1, broadcast: true }));
+
+    expect(t.main.filter((m) => m.clientMsgId === 'cm-b-ok')).toHaveLength(1);
+    expect(t.main.map((m) => [m.id, m.clientMsgId, m.status])).toEqual([
+      [1, null, 'confirmed'],
+      [2, 'cm-b-ok', 'confirmed'],
+    ]);
+    expect(t.threads[1]!.map((m) => [m.id, m.clientMsgId, m.status])).toEqual([
+      [2, 'cm-b-ok', 'confirmed'],
+    ]);
+    expect(t.main[0]!.replyCount).toBe(1);
+    expect(t.main[0]!.lastReplyId).toBe(2);
+  });
+
+  it('drops an optimistic main broadcast copy when the server echo is thread-only', () => {
+    let t = applyEvent(emptyTimeline, wire(1, 'root', { replyCount: 0, lastReplyId: 0 }));
+    t = mergeThread(t, 1, []);
+
+    t = addPending(t, pending('cm-strand', 'pending broadcast', 1, { broadcast: true }));
+    expect(t.main.map((m) => [m.clientMsgId, m.status])).toEqual([
+      [null, 'confirmed'],
+      ['cm-strand', 'pending'],
+    ]);
+    expect(t.threads[1]!.map((m) => [m.clientMsgId, m.status])).toEqual([['cm-strand', 'pending']]);
+    expect(t.main[0]!.replyCount).toBe(1);
+
+    t = applyEvent(t, wire(2, 'pending broadcast', { clientMsgId: 'cm-strand', threadRoot: 1 }));
+
+    expect(t.main.map((m) => [m.id, m.clientMsgId, m.status])).toEqual([[1, null, 'confirmed']]);
+    expect(t.main.some((m) => m.clientMsgId === 'cm-strand')).toBe(false);
+    expect(t.threads[1]!.map((m) => [m.id, m.clientMsgId, m.status])).toEqual([
+      [2, 'cm-strand', 'confirmed'],
+    ]);
+    expect(t.main[0]!.replyCount).toBe(1);
+    expect(t.main[0]!.lastReplyId).toBe(2);
+  });
+
   it('thread fetch materializes a session question already seen by catch-up', () => {
     const root: WireEvent = {
       id: 1,

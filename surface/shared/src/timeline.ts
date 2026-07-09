@@ -402,6 +402,11 @@ function upsertPending(list: ChatMessage[], msg: ChatMessage): ChatMessage[] {
   return copy;
 }
 
+function dropUnconfirmedByClientMsgId(list: ChatMessage[], clientMsgId: string | null): ChatMessage[] {
+  if (clientMsgId == null) return list;
+  return list.filter((m) => !(m.status !== 'confirmed' && m.clientMsgId === clientMsgId));
+}
+
 function hasPendingReply(t: ChannelTimeline, msg: ChatMessage): boolean {
   if (msg.clientMsgId == null || msg.threadRootEventId == null) return false;
   const matches = (m: ChatMessage) =>
@@ -826,7 +831,10 @@ export function applyEvent(t: ChannelTimeline, ev: WireEvent): ChannelTimeline {
     const threads = { ...t.threads };
     const thread = threads[rootId];
     if (thread) threads[rootId] = upsertConfirmed(thread, msg);
-    const withBroadcast = msg.broadcast === true ? upsertConfirmed(main, msg) : main;
+    const withBroadcast =
+      msg.broadcast === true
+        ? upsertConfirmed(main, msg)
+        : dropUnconfirmedByClientMsgId(main, msg.clientMsgId);
     return bumpLastEvent({ ...t, main: withBroadcast, threads, seenIds }, ev.id);
   }
 
