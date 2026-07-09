@@ -21,6 +21,10 @@ GitHub CD that drives it. Full setup: [`docs/self-host-ovh.md`](../docs/self-hos
   images resolve. **Run automatically by `redeploy.sh`** after each deploy (no cron);
   can also be run standalone. **Requires `registry:3`** — v2's `garbage-collect`
   deletes in-use OCI-index blobs (verified); v3 does not.
+- **`install-boot-heal.sh`** — installs the `boot-heal.service` systemd oneshot.
+  On boot it reconciles the Surface production compose stack and the
+  `infra/observability` compose stack with `docker compose up -d`, which repairs
+  Docker restore drift such as missing network endpoints or skipped containers.
 
 Image sprawl across three stores (docker build host, k3s containerd, local registry)
 is the box's dominant disk consumer. `redeploy.sh` prunes the first two after each
