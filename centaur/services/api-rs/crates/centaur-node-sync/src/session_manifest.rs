@@ -217,11 +217,16 @@ pub fn discover_sessions(overlays_root: &Path) -> Result<SessionDiscovery, Strin
         }
         match read_manifest(overlays_root, name) {
             Ok(manifest) => {
-                let manifest_atrium_session_empty = manifest.atrium_session.trim().is_empty();
-                let atrium_session = if manifest_atrium_session_empty {
+                // Unclaimed = no real Atrium key. provision-overlay defaults an
+                // omitted --atrium-session to the sandbox/dir name, so a
+                // self-referential value is just as unresolvable as an empty one
+                // (real thread keys are `:`-namespaced; sandbox names never are).
+                let trimmed = manifest.atrium_session.trim();
+                let manifest_atrium_session_empty = trimmed.is_empty() || trimmed == name;
+                let atrium_session = if trimmed.is_empty() {
                     name.to_string()
                 } else {
-                    manifest.atrium_session.trim().to_string()
+                    trimmed.to_string()
                 };
                 out.sessions.push(DiscoveredSession {
                     session: name.to_string(),
@@ -552,7 +557,28 @@ mod tests {
         std::fs::create_dir_all(root.join(".sessions")).unwrap();
         std::fs::create_dir_all(root.join("blank")).unwrap();
         std::fs::create_dir_all(root.join("claimed")).unwrap();
+        std::fs::create_dir_all(root.join("selfref")).unwrap();
 
+        write_manifest(
+            root,
+            &SessionManifest {
+                session: "selfref".to_string(),
+                // provision-overlay defaults an omitted --atrium-session to the
+                // sandbox name — the prod shape of an unclaimed warm pod.
+                atrium_session: "selfref".to_string(),
+                merged: PathBuf::from("/run/centaur/merged/selfref"),
+                harness: None,
+                harness_thread_id: String::new(),
+                harness_home: String::new(),
+                flat_home: false,
+                generic_home_lower: PathBuf::new(),
+                context_source: PathBuf::new(),
+                repo: String::new(),
+                repos: Vec::new(),
+                agent_uid: 1001,
+            },
+        )
+        .unwrap();
         write_manifest(
             root,
             &SessionManifest {
@@ -592,7 +618,7 @@ mod tests {
 
         let discovery = discover_sessions(root).unwrap();
 
-        assert_eq!(discovery.sessions.len(), 2);
+        assert_eq!(discovery.sessions.len(), 3);
         let blank = discovery
             .sessions
             .iter()
@@ -600,6 +626,13 @@ mod tests {
             .unwrap();
         assert_eq!(blank.atrium_session, "blank");
         assert!(blank.manifest_atrium_session_empty);
+        let selfref = discovery
+            .sessions
+            .iter()
+            .find(|session| session.session == "selfref")
+            .unwrap();
+        assert_eq!(selfref.atrium_session, "selfref");
+        assert!(selfref.manifest_atrium_session_empty);
         let claimed = discovery
             .sessions
             .iter()
