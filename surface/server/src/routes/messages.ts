@@ -246,6 +246,16 @@ export function registerMessageRoutes(app: FastifyInstance, deps: MessageRouteDe
       attachments,
       voice,
     });
+    try {
+      await persistMentions(pool, {
+        eventId: event.id,
+        channelId: event.channelId,
+        text,
+        actorId: event.actorId,
+      });
+    } catch (err) {
+      app.log.warn({ err }, 'mention persistence failed');
+    }
     hub.publishEvent(event);
     for (const file of uploadAttachmentFiles) {
       if (file.content_hash == null) {
@@ -269,12 +279,6 @@ export function registerMessageRoutes(app: FastifyInstance, deps: MessageRouteDe
     }
     if (voice) deps.stt?.enqueue();
     nudgeChannelDocs(app, pool, event);
-    void persistMentions(pool, {
-      eventId: event.id,
-      channelId: event.channelId,
-      text,
-      actorId: event.actorId,
-    }).catch((err) => app.log.warn({ err }, 'mention persistence failed'));
     void sendMessagePush(pool, hub, event).catch((err) => app.log.warn({ err }, 'push fanout failed'));
     return reply.code(201).send({ event });
   });
