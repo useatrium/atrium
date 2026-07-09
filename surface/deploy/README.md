@@ -27,7 +27,7 @@ openssl rand -base64 32
 
 Put generated values into `DB_PASSWORD`, `MINIO_PASSWORD`, and `SESSION_SECRET`.
 
-Critical: `S3_ENDPOINT` is embedded into presigned file upload/download URLs. Set it to a URL the phone can reach. `http://minio:9000` works inside Docker but fails on the phone.
+Critical: `S3_ENDPOINT` is embedded into presigned file upload/download URLs; server byte I/O uses `S3_INTERNAL_ENDPOINT`, which defaults to `http://minio:9000` in prod compose. Set `S3_ENDPOINT` to a URL the phone can reach.
 
 Before exposing Atrium beyond your own machine:
 
@@ -48,6 +48,8 @@ HTTP_HOST_PORT=80
 BIND_HOST=0.0.0.0
 S3_ENDPOINT=http://<mac-tailscale-ip-or-magicdns-name>:9000
 ```
+
+Leave `S3_INTERNAL_ENDPOINT` unset unless the server cannot reach MinIO at the compose-internal `http://minio:9000` default.
 
 Only use `BIND_HOST=0.0.0.0` when the host firewall or network boundary prevents
 non-tailnet access to the API and MinIO ports.
@@ -91,6 +93,8 @@ HTTPS_HOST_PORT=443
 S3_ENDPOINT=https://minio.example.com
 ```
 
+Leave `S3_INTERNAL_ENDPOINT` unset unless the server needs a different private MinIO URL than the compose-internal `http://minio:9000` default.
+
 The mobile app server URL is:
 
 ```text
@@ -104,7 +108,7 @@ cd surface/deploy
 docker compose -f docker-compose.prod.yml --profile caddy up -d --build
 ```
 
-For file uploads on a VPS, expose MinIO through a separate TLS name such as `minio.example.com`, or add a deliberate Caddy proxy for a storage path and set `S3_ENDPOINT` to that public HTTPS URL. Do not leave `S3_ENDPOINT` pointing at Docker-only hostnames.
+For file uploads on a VPS, expose MinIO through a separate TLS name such as `minio.example.com`, or add a deliberate Caddy proxy for a storage path and set public `S3_ENDPOINT` to that HTTPS URL. Keep server byte I/O on private `S3_INTERNAL_ENDPOINT` where possible.
 
 ## Production Voice Calls
 
@@ -120,7 +124,7 @@ Use separate names so the routing boundary stays obvious:
 | Hostname | DNS / route | Purpose |
 |---|---|---|
 | `atrium.example.com` | Cloudflare Tunnel route | App/API/WebSocket |
-| `atrium-files.example.com` | Cloudflare Tunnel route, no Access policy | MinIO presigned uploads/downloads |
+| `atrium-files.example.com` | Cloudflare Tunnel route, no Access policy | Public `S3_ENDPOINT` for MinIO presigned uploads/downloads |
 | `livekit.example.com` | Cloudflare Tunnel route to `http://localhost:7880` | LiveKit signaling endpoint in `LIVEKIT_URL` |
 | `turn.example.com` | DNS-only A/AAAA to the OVH IP | TURN/TLS domain from `LIVEKIT_TURN_DOMAIN` |
 
@@ -296,7 +300,7 @@ docker compose -f docker-compose.prod.yml exec -T db psql -U atrium atrium < atr
 
 ## Troubleshooting
 
-Presigned URLs fail on mobile: verify `S3_ENDPOINT` opens from the phone. On Tailscale, use the Mac's Tailscale IP or MagicDNS name plus `:9000`. On a VPS, use a public HTTPS MinIO endpoint or path proxy.
+Presigned URLs fail on mobile: verify public `S3_ENDPOINT` opens from the phone. On Tailscale, use the Mac's Tailscale IP or MagicDNS name plus `:9000`; on a VPS, use a public HTTPS MinIO endpoint or path proxy. If server storage ops fail, verify `S3_INTERNAL_ENDPOINT` reaches MinIO from the server container.
 
 WebSocket connection fails: make sure traffic reaches Caddy, then check `docker compose logs caddy server`. The Caddyfile proxies `/ws` to the server and Caddy handles WebSocket upgrades automatically.
 

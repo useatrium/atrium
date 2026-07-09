@@ -10,14 +10,10 @@ export type ArtifactPreviewRenderer = 'html-app' | 'react-jsx';
 
 export async function artifactPreviewBytes(plan: ArtifactServePlan): Promise<Buffer> {
   if (plan.kind === 'redirect') {
-    if (plan.s3Key) {
-      return getObjectBytes(plan.s3Key);
+    if (!plan.s3Key) {
+      throw new DomainError(503, 'blob_unavailable', 'artifact bytes are not durable in CAS');
     }
-    const response = await fetch(plan.url);
-    if (!response.ok) {
-      throw new DomainError(502, 'artifact_preview_fetch_failed', 'failed to fetch artifact preview bytes');
-    }
-    return Buffer.from(await response.arrayBuffer());
+    return getObjectBytes(plan.s3Key);
   }
   throw new DomainError(500, 'artifact_preview_unsupported_plan', 'unsupported artifact preview serve plan');
 }
