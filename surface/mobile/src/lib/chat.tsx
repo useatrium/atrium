@@ -203,9 +203,7 @@ type EnqueueOpOptions = {
   onStored?: () => void;
 };
 
-type MobileMsgSendPayload = MsgSendPayload & {
-  voice?: VoiceSendMeta;
-};
+type MobileMsgSendPayload = MsgSendPayload;
 
 function sanitizedFilename(name: string): string {
   const clean = name.replace(/[^a-z0-9._-]/gi, '_').slice(0, 100);
@@ -383,31 +381,6 @@ export function ChatProvider({ session, children }: { session: Session; children
     const msgSend = registry['msg.send'];
     registry['msg.send'] = {
       ...msgSend,
-      execute: async (apiClient, payload, op, context) => {
-        const mobilePayload = payload as MobileMsgSendPayload;
-        let attachments = mobilePayload.attachments?.map((a) => a.id);
-        if (mobilePayload.attachmentRefs && mobilePayload.attachmentRefs.length > 0) {
-          const ops = await context.listOps();
-          attachments = mobilePayload.attachmentRefs.map((ref) => {
-            const uploadOp = ops.find((candidate) => candidate.queueKey === `upload:${ref.uploadKey}`);
-            const uploadPayload = uploadOp?.payload as Partial<UploadPayload> | undefined;
-            if (uploadOp?.status !== 'completed' || !uploadPayload?.uploaded || !uploadPayload.fileId) {
-              throw new TypeError(`upload ${ref.uploadKey} is not ready`);
-            }
-            return uploadPayload.fileId;
-          });
-        }
-        return apiClient.postMessage({
-          channelId: mobilePayload.channelId,
-          text: mobilePayload.text,
-          clientMsgId: mobilePayload.clientMsgId,
-          threadRootEventId: mobilePayload.threadRootEventId,
-          ...(mobilePayload.broadcast === true ? { broadcast: true } : {}),
-          attachments,
-          voice: mobilePayload.voice,
-          opId: op.opId,
-        });
-      },
       onConfirmed: async (dispatchFn, result, payload, op) => {
         await deleteUploadRefs(payload.attachmentRefs);
         await msgSend.onConfirmed(dispatchFn, result, payload, op);
