@@ -2251,6 +2251,13 @@ mod linux_daemon {
                 }
 
                 for (harness, harness_home) in harnesses_to_capture(session) {
+                    // Unclaimed sessions have no resolvable Atrium ref, so profile
+                    // baseline/candidate and transcript pushes are guaranteed 404s
+                    // that retry every cycle. A claim rewrites the manifest and the
+                    // next cycle uploads normally (profile_baseline_sent stays false).
+                    if session.manifest_atrium_session_empty {
+                        continue;
+                    }
                     let harness_key = harness.atrium_harness().to_string();
                     if !state
                         .profile_baseline_sent
