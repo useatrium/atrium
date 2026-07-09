@@ -35,7 +35,6 @@ import {
   randomId,
   reconcileDraftSnapshot,
   sessionFromWire,
-  useQueuedChangesCount,
   useWs,
   type Api,
   type AppState,
@@ -102,7 +101,6 @@ type SpawnSessionOptions = Pick<
 interface ChatContextValue {
   state: AppState;
   me: UserRef;
-  queuedChangesCount: number;
   serverUrl: string;
   api: Api;
   resolveEntry: EntryResolver;
@@ -265,7 +263,6 @@ export function ChatProvider({ session, children }: { session: Session; children
   const [failedSessionCancels, setFailedSessionCancels] = useState<Record<string, true>>({});
   const flushOnWakeRef = useRef<() => void>(() => {});
   const [mentionUsers, setMentionUsers] = useState<UserRef[] | null>(null);
-  const [queueNudgeSeq, setQueueNudgeSeq] = useState(0);
   const loadingMentionUsersRef = useRef(false);
   const touchedDraftKeysRef = useRef<Set<string>>(new Set());
   const activeDraftKeysRef = useRef<Set<string>>(new Set());
@@ -472,10 +469,6 @@ export function ChatProvider({ session, children }: { session: Session; children
     [adoptPrefs, api, cacheMute, onApiError, opRegistry, queueDispatch, queuedFailureMessage],
   );
 
-  const markQueueNudged = useCallback(() => {
-    setQueueNudgeSeq((n) => n + 1);
-  }, []);
-
   const enqueueOp = useCallback(
     async <T extends OpType>(
       input: EnqueueOpInput<T>,
@@ -485,11 +478,10 @@ export function ChatProvider({ session, children }: { session: Session; children
       if (op) {
         options?.onStored?.();
         opQueue.nudge();
-        markQueueNudged();
       }
       return op;
     },
-    [markQueueNudged, opQueue],
+    [opQueue],
   );
 
   const clearFailedSessionSteer = useCallback((sessionId: string) => {
@@ -596,8 +588,6 @@ export function ChatProvider({ session, children }: { session: Session; children
     },
     [],
   );
-
-  const queuedChangesCount = useQueuedChangesCount(eventCache, state.wsStatus, queueNudgeSeq);
 
   const waitForUpload = useCallback(
     (uploadKey: string): Promise<{ fileId: string }> =>
@@ -1717,7 +1707,6 @@ export function ChatProvider({ session, children }: { session: Session; children
     () => ({
       state,
       me,
-      queuedChangesCount,
       serverUrl,
       api,
       resolveEntry,
@@ -1777,7 +1766,6 @@ export function ChatProvider({ session, children }: { session: Session; children
     [
       state,
       me,
-      queuedChangesCount,
       serverUrl,
       api,
       resolveEntry,

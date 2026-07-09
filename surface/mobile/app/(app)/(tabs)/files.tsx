@@ -592,7 +592,7 @@ export default function FilesTab() {
           </Text>
         }
       />
-      <ConnectionBanner status={chat.state.wsStatus} queuedChangesCount={chat.queuedChangesCount} />
+      <ConnectionBanner status={chat.state.wsStatus} />
       <View style={{ paddingHorizontal: space.lg, paddingTop: space.md, gap: space.sm }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm }}>
           <View

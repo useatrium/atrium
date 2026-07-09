@@ -30,7 +30,7 @@ function statusColor(status: SessionStatus, colors: Colors): string {
 }
 
 export default function ActivityScreen() {
-  const { api, state, queuedChangesCount } = useChat();
+  const { api, state } = useChat();
   const { colors } = useTheme();
   const [sessions, setSessions] = useState<SessionListItem[]>([]);
   const [activityItems, setActivityItems] = useState<ActivityItem[]>([]);
@@ -218,7 +218,7 @@ export default function ActivityScreen() {
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg }}>
       <MobileHeader title="Inbox" />
-      <ConnectionBanner status={state.wsStatus} queuedChangesCount={queuedChangesCount} />
+      <ConnectionBanner status={state.wsStatus} />
       {loading ? (
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
           <ActivityIndicator color={colors.textMuted} />

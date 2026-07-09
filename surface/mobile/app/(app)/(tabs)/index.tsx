@@ -62,7 +62,6 @@ export default function ChannelList() {
   const {
     state,
     me,
-    queuedChangesCount,
     leaveChannel,
     setMute,
     channelsLoaded,
@@ -179,7 +178,7 @@ export default function ChannelList() {
           </>
         }
       />
-      <ConnectionBanner status={state.wsStatus} queuedChangesCount={queuedChangesCount} />
+      <ConnectionBanner status={state.wsStatus} />
       <FlatList
         style={{ flex: 1 }}
         data={sections}
