@@ -74,6 +74,7 @@ fn path_is_empty(path: &Path) -> bool {
 pub struct DiscoveredSession {
     pub session: String,
     pub atrium_session: String,
+    pub manifest_atrium_session_empty: bool,
     pub upper: PathBuf,
     pub state_file: PathBuf,
     pub manifest: SessionManifest,
@@ -216,7 +217,8 @@ pub fn discover_sessions(overlays_root: &Path) -> Result<SessionDiscovery, Strin
         }
         match read_manifest(overlays_root, name) {
             Ok(manifest) => {
-                let atrium_session = if manifest.atrium_session.trim().is_empty() {
+                let manifest_atrium_session_empty = manifest.atrium_session.trim().is_empty();
+                let atrium_session = if manifest_atrium_session_empty {
                     name.to_string()
                 } else {
                     manifest.atrium_session.trim().to_string()
@@ -224,6 +226,7 @@ pub fn discover_sessions(overlays_root: &Path) -> Result<SessionDiscovery, Strin
                 out.sessions.push(DiscoveredSession {
                     session: name.to_string(),
                     atrium_session,
+                    manifest_atrium_session_empty,
                     upper: overlays_root.join(name),
                     state_file: state_path(overlays_root, name),
                     manifest,
@@ -510,6 +513,7 @@ mod tests {
         assert_eq!(discovery.sessions.len(), 1);
         assert_eq!(discovery.sessions[0].session, "active");
         assert_eq!(discovery.sessions[0].atrium_session, "surface:active");
+        assert!(!discovery.sessions[0].manifest_atrium_session_empty);
         assert_eq!(discovery.sessions[0].upper, root.join("active"));
         assert_eq!(
             discovery.sessions[0].state_file,
@@ -539,6 +543,70 @@ mod tests {
                 .iter()
                 .all(|warning| !warning.contains("artifact-lower"))
         );
+    }
+
+    #[test]
+    fn discovery_flags_empty_manifest_atrium_session_before_fallback() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join(".sessions")).unwrap();
+        std::fs::create_dir_all(root.join("blank")).unwrap();
+        std::fs::create_dir_all(root.join("claimed")).unwrap();
+
+        write_manifest(
+            root,
+            &SessionManifest {
+                session: "blank".to_string(),
+                atrium_session: "  ".to_string(),
+                merged: PathBuf::from("/run/centaur/merged/blank"),
+                harness: None,
+                harness_thread_id: String::new(),
+                harness_home: String::new(),
+                flat_home: false,
+                generic_home_lower: PathBuf::new(),
+                context_source: PathBuf::new(),
+                repo: String::new(),
+                repos: Vec::new(),
+                agent_uid: 1001,
+            },
+        )
+        .unwrap();
+        write_manifest(
+            root,
+            &SessionManifest {
+                session: "claimed".to_string(),
+                atrium_session: "surface:claimed".to_string(),
+                merged: PathBuf::from("/run/centaur/merged/claimed"),
+                harness: None,
+                harness_thread_id: String::new(),
+                harness_home: String::new(),
+                flat_home: false,
+                generic_home_lower: PathBuf::new(),
+                context_source: PathBuf::new(),
+                repo: String::new(),
+                repos: Vec::new(),
+                agent_uid: 1001,
+            },
+        )
+        .unwrap();
+
+        let discovery = discover_sessions(root).unwrap();
+
+        assert_eq!(discovery.sessions.len(), 2);
+        let blank = discovery
+            .sessions
+            .iter()
+            .find(|session| session.session == "blank")
+            .unwrap();
+        assert_eq!(blank.atrium_session, "blank");
+        assert!(blank.manifest_atrium_session_empty);
+        let claimed = discovery
+            .sessions
+            .iter()
+            .find(|session| session.session == "claimed")
+            .unwrap();
+        assert_eq!(claimed.atrium_session, "surface:claimed");
+        assert!(!claimed.manifest_atrium_session_empty);
     }
 
     #[test]

@@ -30,6 +30,7 @@ fn scoped_atrium_root(atrium_root: &std::path::Path, session: &str) -> std::path
 struct SessionConfig {
     session: String,
     atrium_session: String,
+    manifest_atrium_session_empty: bool,
     upper: std::path::PathBuf,
     merged: std::path::PathBuf,
     harness: Option<centaur_node_sync::runtime::HarnessTranscriptKind>,
@@ -58,6 +59,7 @@ fn session_config_from_discovered(
     SessionConfig {
         session: discovered.session.clone(),
         atrium_session: discovered.atrium_session.clone(),
+        manifest_atrium_session_empty: discovered.manifest_atrium_session_empty,
         upper: mounted.upper.clone(),
         merged: merged.clone(),
         harness: discovered
@@ -138,6 +140,9 @@ fn hydrate_state_if_needed(
     state: &mut centaur_node_sync::state::DaemonState,
     client: &mut dyn centaur_node_sync::runtime::AtriumClient,
 ) {
+    if session.manifest_atrium_session_empty {
+        return;
+    }
     if state.hydrated {
         return;
     }
@@ -339,6 +344,118 @@ fn normalized_harness_home(
     }
 }
 
+#[cfg(any(target_os = "linux", test))]
+#[derive(Clone)]
+struct ActiveSession {
+    config: SessionConfig,
+    wip_remounted: bool,
+    wip_restored: bool,
+}
+
+#[cfg(any(target_os = "linux", test))]
+#[derive(Clone)]
+struct ProbeSession {
+    session: String,
+    atrium_session: String,
+    profile_harness: centaur_node_sync::runtime::HarnessTranscriptKind,
+}
+
+#[cfg(any(target_os = "linux", test))]
+#[derive(Clone)]
+struct PollTarget {
+    session: String,
+    atrium_session: String,
+    artifacts_since: String,
+    atrium_since: String,
+    profile_harness: centaur_node_sync::runtime::HarnessTranscriptKind,
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn profile_harness_for_session(
+    session: &SessionConfig,
+) -> centaur_node_sync::runtime::HarnessTranscriptKind {
+    session
+        .harness
+        .unwrap_or(centaur_node_sync::runtime::HarnessTranscriptKind::Codex)
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn profile_harness_for_discovered(
+    discovered: &centaur_node_sync::session_manifest::DiscoveredSession,
+) -> centaur_node_sync::runtime::HarnessTranscriptKind {
+    discovered
+        .manifest
+        .harness
+        .as_deref()
+        .and_then(centaur_node_sync::runtime::HarnessTranscriptKind::parse)
+        .unwrap_or(centaur_node_sync::runtime::HarnessTranscriptKind::Codex)
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn probe_unclaimed_session_if_due(
+    discovered: &centaur_node_sync::session_manifest::DiscoveredSession,
+    eviction: &mut centaur_node_sync::eviction::SessionEvictionState,
+    states: &mut std::collections::HashMap<String, centaur_node_sync::state::DaemonState>,
+    now: std::time::Instant,
+    recheck: std::time::Duration,
+) -> Option<ProbeSession> {
+    if !discovered.manifest_atrium_session_empty || !eviction.probe_interval_elapsed(now, recheck) {
+        return None;
+    }
+    eviction.mark_probe(now);
+    states
+        .entry(discovered.session.clone())
+        .or_insert_with(|| centaur_node_sync::state::DaemonState::load(&discovered.state_file));
+    Some(ProbeSession {
+        session: discovered.session.clone(),
+        atrium_session: discovered.atrium_session.clone(),
+        profile_harness: profile_harness_for_discovered(discovered),
+    })
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn select_poll_targets(
+    active_sessions: &[ActiveSession],
+    probe_sessions: &[ProbeSession],
+    states: &std::collections::HashMap<String, centaur_node_sync::state::DaemonState>,
+    dirty_by_key: &std::collections::HashMap<String, centaur_node_sync::sse::DirtyFeeds>,
+    full_remote_poll: bool,
+) -> Vec<PollTarget> {
+    let mut out = Vec::new();
+    for active in active_sessions {
+        let session = &active.config;
+        if session.manifest_atrium_session_empty {
+            continue;
+        }
+        if !full_remote_poll && !dirty_by_key.contains_key(&session.atrium_session) {
+            continue;
+        }
+        let Some(state) = states.get(&session.session) else {
+            continue;
+        };
+        out.push(PollTarget {
+            session: session.session.clone(),
+            atrium_session: session.atrium_session.clone(),
+            artifacts_since: state.cursor.clone(),
+            atrium_since: state.atrium_cursor.clone(),
+            profile_harness: profile_harness_for_session(session),
+        });
+    }
+    for probe in probe_sessions {
+        let Some(state) = states.get(&probe.session) else {
+            continue;
+        };
+        out.push(PollTarget {
+            session: probe.session.clone(),
+            atrium_session: probe.atrium_session.clone(),
+            artifacts_since: state.cursor.clone(),
+            atrium_since: state.atrium_cursor.clone(),
+            profile_harness: probe.profile_harness,
+        });
+    }
+    out
+}
+
 #[cfg(target_os = "linux")]
 fn main() {
     linux_daemon::main();
@@ -347,8 +464,10 @@ fn main() {
 #[cfg(target_os = "linux")]
 mod linux_daemon {
     use super::{
-        SessionConfig, hydrate_state_if_needed, normalized_harness_home, repo_worktrees,
-        session_config_from_discovered, warmcache_capture_if_needed,
+        ActiveSession, PollTarget, ProbeSession, SessionConfig, hydrate_state_if_needed,
+        normalized_harness_home, probe_unclaimed_session_if_due, profile_harness_for_discovered,
+        repo_worktrees, select_poll_targets, session_config_from_discovered,
+        warmcache_capture_if_needed,
     };
     use centaur_node_sync::backpressure;
     use centaur_node_sync::backpressure::Budget;
@@ -658,6 +777,7 @@ mod linux_daemon {
         let merged = PathBuf::from(merged_env);
         Ok(SessionConfig {
             atrium_session: session.clone(),
+            manifest_atrium_session_empty: false,
             session,
             upper: PathBuf::from(upper_env),
             merged: merged.clone(),
@@ -705,20 +825,6 @@ mod linux_daemon {
         }
     }
 
-    #[derive(Clone)]
-    struct ActiveSession {
-        config: SessionConfig,
-        wip_remounted: bool,
-        wip_restored: bool,
-    }
-
-    #[derive(Clone)]
-    struct ProbeSession {
-        session: String,
-        atrium_session: String,
-        profile_harness: HarnessTranscriptKind,
-    }
-
     #[derive(Debug)]
     enum RemotePollOutcome {
         Found(RemoteFeeds),
@@ -732,15 +838,6 @@ mod linux_daemon {
         artifacts: Option<ArtifactFeed>,
         atrium: Option<AtriumFeed>,
         profile_bundles: Option<Vec<centaur_node_sync::runtime::BundleRef>>,
-    }
-
-    #[derive(Clone)]
-    struct PollTarget {
-        session: String,
-        atrium_session: String,
-        artifacts_since: String,
-        atrium_since: String,
-        profile_harness: HarnessTranscriptKind,
     }
 
     fn run_multi_session(
@@ -871,6 +968,15 @@ mod linux_daemon {
                                 &mut mounted_overlays,
                             );
                             continue;
+                        }
+                        if let Some(probe) = probe_unclaimed_session_if_due(
+                            &discovered,
+                            eviction,
+                            &mut states,
+                            now,
+                            global.evict_recheck,
+                        ) {
+                            probe_sessions.push(probe);
                         }
 
                         let has_active_mount = has_active_overlay_mount(
@@ -1142,19 +1248,6 @@ mod linux_daemon {
         }
     }
 
-    fn profile_harness_for_session(session: &SessionConfig) -> HarnessTranscriptKind {
-        session.harness.unwrap_or(HarnessTranscriptKind::Codex)
-    }
-
-    fn profile_harness_for_discovered(discovered: &DiscoveredSession) -> HarnessTranscriptKind {
-        discovered
-            .manifest
-            .harness
-            .as_deref()
-            .and_then(HarnessTranscriptKind::parse)
-            .unwrap_or(HarnessTranscriptKind::Codex)
-    }
-
     fn prepare_session_before_remote(
         global: &GlobalConfig,
         session: &SessionConfig,
@@ -1279,45 +1372,6 @@ mod linux_daemon {
                 eprintln!("atrium channel materializer: {e}");
             }
         }
-    }
-
-    fn select_poll_targets(
-        active_sessions: &[ActiveSession],
-        probe_sessions: &[ProbeSession],
-        states: &HashMap<String, DaemonState>,
-        dirty_by_key: &HashMap<String, centaur_node_sync::sse::DirtyFeeds>,
-        full_remote_poll: bool,
-    ) -> Vec<PollTarget> {
-        let mut out = Vec::new();
-        for active in active_sessions {
-            let session = &active.config;
-            if !full_remote_poll && !dirty_by_key.contains_key(&session.atrium_session) {
-                continue;
-            }
-            let Some(state) = states.get(&session.session) else {
-                continue;
-            };
-            out.push(PollTarget {
-                session: session.session.clone(),
-                atrium_session: session.atrium_session.clone(),
-                artifacts_since: state.cursor.clone(),
-                atrium_since: state.atrium_cursor.clone(),
-                profile_harness: profile_harness_for_session(session),
-            });
-        }
-        for probe in probe_sessions {
-            let Some(state) = states.get(&probe.session) else {
-                continue;
-            };
-            out.push(PollTarget {
-                session: probe.session.clone(),
-                atrium_session: probe.atrium_session.clone(),
-                artifacts_since: state.cursor.clone(),
-                atrium_since: state.atrium_cursor.clone(),
-                profile_harness: probe.profile_harness,
-            });
-        }
-        out
     }
 
     fn poll_remote_targets(
@@ -2671,6 +2725,7 @@ mod tests {
 
     struct FlakyFeedClient {
         fail: bool,
+        polls: usize,
         rows: Vec<(String, RemoteChange)>,
     }
 
@@ -2691,6 +2746,7 @@ mod tests {
             &mut self,
             cursor: &str,
         ) -> Result<(Vec<(String, RemoteChange)>, String), String> {
+            self.polls += 1;
             if self.fail {
                 return Err("simulated feed outage (429)".to_string());
             }
@@ -2719,6 +2775,7 @@ mod tests {
         let mut state = DaemonState::load(&session.state_file);
         let mut client = FlakyFeedClient {
             fail: true,
+            polls: 0,
             rows: vec![(
                 "shared/doc.md".to_string(),
                 RemoteChange {
@@ -2747,10 +2804,130 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    #[test]
+    fn flagged_session_is_excluded_from_per_tick_poll_targets() {
+        let mut session = warmcache_test_session();
+        session.session = "warm-pool-dir".to_string();
+        session.atrium_session = "warm-pool-dir".to_string();
+        session.manifest_atrium_session_empty = true;
+        let active_sessions = vec![ActiveSession {
+            config: session.clone(),
+            wip_remounted: false,
+            wip_restored: false,
+        }];
+        assert!(!active_sessions[0].wip_remounted);
+        assert!(!active_sessions[0].wip_restored);
+        let mut states = std::collections::HashMap::new();
+        states.insert(session.session.clone(), state_with_cursors("7.1", "8.2"));
+
+        let targets = select_poll_targets(
+            &active_sessions,
+            &[],
+            &states,
+            &std::collections::HashMap::new(),
+            true,
+        );
+
+        assert!(targets.is_empty());
+    }
+
+    #[test]
+    fn flagged_session_is_included_only_when_probe_cadence_is_due() {
+        let now = std::time::Instant::now();
+        let recheck = std::time::Duration::from_secs(300);
+        let discovered = discovered_session_fixture("warm-pool-dir", true);
+        let mut eviction = centaur_node_sync::eviction::SessionEvictionState::default();
+        let mut states = std::collections::HashMap::new();
+
+        let first =
+            probe_unclaimed_session_if_due(&discovered, &mut eviction, &mut states, now, recheck)
+                .expect("first unclaimed probe should be due");
+        assert_eq!(first.session, "warm-pool-dir");
+        assert_eq!(first.atrium_session, "warm-pool-dir");
+        assert!(states.contains_key("warm-pool-dir"));
+
+        assert!(
+            probe_unclaimed_session_if_due(
+                &discovered,
+                &mut eviction,
+                &mut states,
+                now + std::time::Duration::from_secs(299),
+                recheck,
+            )
+            .is_none()
+        );
+        let due = probe_unclaimed_session_if_due(
+            &discovered,
+            &mut eviction,
+            &mut states,
+            now + recheck,
+            recheck,
+        )
+        .expect("unclaimed probe should be due at recheck cadence");
+
+        let active_sessions = vec![ActiveSession {
+            config: {
+                let mut session = warmcache_test_session();
+                session.session = discovered.session.clone();
+                session.atrium_session = discovered.atrium_session.clone();
+                session.manifest_atrium_session_empty = true;
+                session
+            },
+            wip_remounted: false,
+            wip_restored: false,
+        }];
+        let targets = select_poll_targets(
+            &active_sessions,
+            &[due],
+            &states,
+            &std::collections::HashMap::new(),
+            true,
+        );
+
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0].session, "warm-pool-dir");
+        assert_eq!(targets[0].atrium_session, "warm-pool-dir");
+        assert_eq!(targets[0].artifacts_since, "0.0");
+        assert_eq!(targets[0].atrium_since, "0.0");
+        assert_eq!(targets[0].profile_harness, HarnessTranscriptKind::Codex);
+    }
+
+    #[test]
+    fn hydrate_state_is_skipped_until_manifest_atrium_session_is_claimed() {
+        let mut session = warmcache_test_session();
+        session.manifest_atrium_session_empty = true;
+        let mut state = DaemonState::default();
+        let mut client = FlakyFeedClient {
+            fail: false,
+            polls: 0,
+            rows: vec![(
+                "shared/doc.md".to_string(),
+                RemoteChange {
+                    seq: 5,
+                    sha: Some("sha5".to_string()),
+                    status: RemoteStatus::Normal,
+                    group_id: None,
+                },
+            )],
+        };
+
+        hydrate_state_if_needed(&session, &mut state, &mut client);
+        assert_eq!(client.polls, 0);
+        assert!(!state.hydrated);
+        assert!(state.locals().is_empty());
+
+        session.manifest_atrium_session_empty = false;
+        hydrate_state_if_needed(&session, &mut state, &mut client);
+        assert_eq!(client.polls, 2);
+        assert!(state.hydrated);
+        assert_eq!(state.locals().get("shared/doc.md").unwrap().base_seq, 5);
+    }
+
     fn warmcache_test_session() -> SessionConfig {
         SessionConfig {
             session: "local-session".to_string(),
             atrium_session: "surface:atrium-session".to_string(),
+            manifest_atrium_session_empty: false,
             upper: PathBuf::from("/upper"),
             merged: PathBuf::from("/merged"),
             harness: None,
@@ -2760,6 +2937,51 @@ mod tests {
             repo_subdirs: Vec::new(),
             repo_worktrees: Vec::new(),
             state_file: PathBuf::from("/state.json"),
+        }
+    }
+
+    fn state_with_cursors(cursor: &str, atrium_cursor: &str) -> DaemonState {
+        DaemonState {
+            cursor: cursor.to_string(),
+            atrium_cursor: atrium_cursor.to_string(),
+            ..DaemonState::default()
+        }
+    }
+
+    fn discovered_session_fixture(
+        session: &str,
+        manifest_atrium_session_empty: bool,
+    ) -> DiscoveredSession {
+        DiscoveredSession {
+            session: session.to_string(),
+            atrium_session: if manifest_atrium_session_empty {
+                session.to_string()
+            } else {
+                format!("surface:{session}")
+            },
+            manifest_atrium_session_empty,
+            upper: PathBuf::from(format!("/var/lib/centaur/overlays/{session}")),
+            state_file: PathBuf::from(format!(
+                "/var/lib/centaur/overlays/.sessions/{session}.state.json"
+            )),
+            manifest: SessionManifest {
+                session: session.to_string(),
+                atrium_session: if manifest_atrium_session_empty {
+                    String::new()
+                } else {
+                    format!("surface:{session}")
+                },
+                merged: PathBuf::from(format!("/run/centaur/merged/{session}")),
+                harness: Some("codex".to_string()),
+                harness_thread_id: String::new(),
+                harness_home: ".codex".to_string(),
+                flat_home: false,
+                generic_home_lower: PathBuf::new(),
+                context_source: PathBuf::new(),
+                repo: String::new(),
+                repos: Vec::new(),
+                agent_uid: 1001,
+            },
         }
     }
 
@@ -2884,6 +3106,7 @@ mod tests {
         let discovered = DiscoveredSession {
             session: session.to_string(),
             atrium_session: "surface:sess-multi".to_string(),
+            manifest_atrium_session_empty: false,
             upper: mounted.lower.path.clone(),
             state_file: PathBuf::from("/var/lib/centaur/overlays/.sessions/sess-multi.state.json"),
             manifest: SessionManifest {
@@ -2965,6 +3188,7 @@ mod tests {
         let discovered = DiscoveredSession {
             session: session.to_string(),
             atrium_session: String::new(),
+            manifest_atrium_session_empty: true,
             upper: mounted.lower.path.clone(),
             state_file: PathBuf::from("/var/lib/centaur/overlays/.sessions/sess-single.state.json"),
             manifest: SessionManifest {
