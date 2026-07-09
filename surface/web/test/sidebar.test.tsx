@@ -52,6 +52,7 @@ function renderSidebar(channels: Channel[], props: Partial<Parameters<typeof Sid
         unread={{}}
         me={me}
         wsStatus="open"
+        queueSync={{ queuedCount: 0, syncStuck: false }}
         onSelect={vi.fn()}
         onSetMute={vi.fn()}
         onCreateChannel={async () => {}}
@@ -122,6 +123,90 @@ describe('sessionSidebarPreview', () => {
 });
 
 describe('Sidebar', () => {
+  it('keeps the connection status accessible but invisible when healthy', () => {
+    renderSidebar([
+      {
+        id: 'ch-general',
+        workspaceId: 'ws-1',
+        name: 'general',
+        kind: 'public',
+        muted: false,
+        createdAt: '2026-01-01T00:00:00.000Z',
+      },
+    ]);
+
+    const status = screen.getByRole('status', { name: 'connection: open' });
+    expect(status.getAttribute('class')).toContain('bg-transparent');
+    expect(status.getAttribute('class')).not.toContain('animate-pulse');
+    expect(status.getAttribute('title')).toBe('connection: open');
+  });
+
+  it('shows an info pulsing connection status when sync is stuck', () => {
+    renderSidebar(
+      [
+        {
+          id: 'ch-general',
+          workspaceId: 'ws-1',
+          name: 'general',
+          kind: 'public',
+          muted: false,
+          createdAt: '2026-01-01T00:00:00.000Z',
+        },
+      ],
+      { queueSync: { queuedCount: 3, syncStuck: true } },
+    );
+
+    const status = screen.getByRole('status', { name: 'connection: open' });
+    const className = status.getAttribute('class') ?? '';
+    expect(className).toContain('animate-pulse');
+    expect(className).toContain('bg-info');
+    expect(status.getAttribute('title')).toBe('Syncing — 3 changes queued');
+  });
+
+  it('uses the singular sync title for one queued change', () => {
+    renderSidebar(
+      [
+        {
+          id: 'ch-general',
+          workspaceId: 'ws-1',
+          name: 'general',
+          kind: 'public',
+          muted: false,
+          createdAt: '2026-01-01T00:00:00.000Z',
+        },
+      ],
+      { queueSync: { queuedCount: 1, syncStuck: true } },
+    );
+
+    expect(screen.getByRole('status', { name: 'connection: open' }).getAttribute('title')).toBe(
+      'Syncing — 1 change queued',
+    );
+  });
+
+  it('keeps warning and danger connection dots for connecting and closed states', () => {
+    const channel = {
+      id: 'ch-general',
+      workspaceId: 'ws-1',
+      name: 'general',
+      kind: 'public' as const,
+      muted: false,
+      createdAt: '2026-01-01T00:00:00.000Z',
+    };
+
+    const { unmount } = renderSidebar([channel], { wsStatus: 'connecting' });
+    const connecting = screen.getByRole('status', { name: 'connection: connecting' });
+    expect(connecting.getAttribute('class')).toContain('animate-pulse');
+    expect(connecting.getAttribute('class')).toContain('bg-warning');
+    expect(connecting.getAttribute('title')).toBe('connection: connecting');
+
+    unmount();
+    renderSidebar([channel], { wsStatus: 'closed' });
+    const closed = screen.getByRole('status', { name: 'connection: closed' });
+    expect(closed.getAttribute('class')).toContain('bg-danger');
+    expect(closed.getAttribute('class')).not.toContain('animate-pulse');
+    expect(closed.getAttribute('title')).toBe('connection: closed');
+  });
+
   it('uses the DM partner display name, not the decorated label, for avatar initials', () => {
     renderSidebar([
         {
