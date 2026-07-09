@@ -166,7 +166,18 @@ backup_db(){
 
 # ---------- surface ----------
 deploy_surface(){
-  if [ "$need_surface" != 1 ]; then log "surface: no source change, skipping"; return; fi
+  if [ "$need_surface" != 1 ]; then
+    # No rebuild needed — but "skip" must never leave a down stack down (the
+    # 2026-07-09 outage: server crashed, box rebooted, and a no-change deploy
+    # "succeeded" while prod stayed dead). Ensure it's up and healthy.
+    if health_surface; then log "surface: no source change, healthy, skipping"; return; fi
+    log "surface: no source change but UNHEALTHY — starting existing image"
+    "${DC[@]}" up -d --no-build server || die "surface ensure-up"
+    local up=; for i in $(seq 1 25); do health_surface && { up=1; break; }; sleep 3; done
+    [ -n "$up" ] || die "surface still unhealthy after ensure-up"
+    log "surface: OK (ensure-up, no rebuild)"
+    return
+  fi
   clean_source_strays
   clean_legacy_pnpm_store
   log "surface: building web SPA"

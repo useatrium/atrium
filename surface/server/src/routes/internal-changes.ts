@@ -50,6 +50,8 @@ const ARTIFACT_ADVANCED_CHANNEL = 'artifact_advanced';
 const MAX_BATCH_SESSIONS = 200;
 const DEFAULT_HEARTBEAT_MS = 15_000;
 const MAX_QUEUED_SSE_FRAMES = 1000;
+const LISTEN_RECONNECT_MIN_MS = 1_000;
+const LISTEN_RECONNECT_MAX_MS = 30_000;
 
 export interface InternalChangesRouteDeps {
   pool: Db;
@@ -261,6 +263,9 @@ class InternalChangeBroadcaster {
   private processing: Promise<void> = Promise.resolve();
   private readonly subscribers = new Set<SseSubscriber>();
   private seq = 0;
+  private closed = false;
+  private reconnectTimer: NodeJS.Timeout | null = null;
+  private reconnectDelayMs = LISTEN_RECONNECT_MIN_MS;
 
   constructor(
     private readonly pool: Db,
@@ -269,11 +274,13 @@ class InternalChangeBroadcaster {
   ) {}
 
   async start(): Promise<void> {
+    if (this.closed) return;
     if (this.client) return;
     if (this.starting) return this.starting;
     this.starting = this.startListener();
     try {
       await this.starting;
+      this.reconnectDelayMs = LISTEN_RECONNECT_MIN_MS;
     } finally {
       this.starting = null;
     }
@@ -288,6 +295,11 @@ class InternalChangeBroadcaster {
   }
 
   async close(): Promise<void> {
+    this.closed = true;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
     for (const subscriber of [...this.subscribers]) subscriber.close();
     this.filesNudge?.close();
     if (!this.client) return;
@@ -295,6 +307,7 @@ class InternalChangeBroadcaster {
     this.client = null;
     client.removeAllListeners('notification');
     client.removeAllListeners('error');
+    client.removeAllListeners('end');
     await client.query('UNLISTEN *').catch(() => {});
     client.release();
   }
@@ -311,10 +324,48 @@ class InternalChangeBroadcaster {
     });
     client.on('error', (err) => {
       this.log.error({ err }, 'internal changes listener failed');
+      this.restartListener(client);
+    });
+    client.on('end', () => {
+      this.restartListener(client);
     });
     await client.query(`LISTEN ${ARTIFACT_ADVANCED_CHANNEL}`);
     await client.query(`LISTEN ${SESSION_RECORD_CHANGES_NOTIFY_CHANNEL}`);
     await client.query(`LISTEN ${PROFILE_BUNDLES_NOTIFY_CHANNEL}`);
+  }
+
+  /** The LISTEN connection died under us: drop it and reconnect with backoff. */
+  private restartListener(client: pg.PoolClient): void {
+    if (this.client !== client) return;
+    this.client = null;
+    client.removeAllListeners('notification');
+    client.removeAllListeners('error');
+    client.removeAllListeners('end');
+    try {
+      // Release with an error so the pool destroys the dead connection.
+      client.release(new Error('internal changes listener connection lost'));
+    } catch {
+      // already released
+    }
+    this.scheduleReconnect();
+  }
+
+  private scheduleReconnect(): void {
+    if (this.closed || this.reconnectTimer) return;
+    const delay = this.reconnectDelayMs;
+    this.reconnectDelayMs = Math.min(this.reconnectDelayMs * 2, LISTEN_RECONNECT_MAX_MS);
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      this.start()
+        .then(() => {
+          this.log.info('internal changes listener reconnected');
+        })
+        .catch((err) => {
+          this.log.error({ err }, 'internal changes listener reconnect failed');
+          this.scheduleReconnect();
+        });
+    }, delay);
+    this.reconnectTimer.unref?.();
   }
 
   private async processNotification(notification: pg.Notification): Promise<void> {

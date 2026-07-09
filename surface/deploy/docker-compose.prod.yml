@@ -1,6 +1,7 @@
 services:
   db:
     image: postgres:16
+    restart: unless-stopped
     environment:
       POSTGRES_DB: ${DB_NAME:-atrium}
       POSTGRES_USER: ${DB_USER:-atrium}
@@ -17,6 +18,7 @@ services:
 
   minio:
     image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-atrium}
@@ -36,6 +38,10 @@ services:
     build:
       context: ../..
       dockerfile: surface/deploy/Dockerfile.server
+    # The 2026-07-09 outage: the server crashed as Postgres stopped under it and
+    # nothing restarted it (and a box reboot didn't either). Every long-lived
+    # service here must carry a restart policy — new services included.
+    restart: unless-stopped
     depends_on:
       db:
         condition: service_healthy
@@ -145,6 +151,7 @@ services:
   caddy:
     image: caddy:2-alpine
     profiles: ["caddy"]
+    restart: unless-stopped
     depends_on:
       server:
         condition: service_healthy

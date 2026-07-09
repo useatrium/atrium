@@ -5,7 +5,13 @@ import pg from 'pg';
 pg.types.setTypeParser(20, (v) => Number(v));
 
 export function createPool(connectionString: string): pg.Pool {
-  return new pg.Pool({ connectionString, max: 10 });
+  const pool = new pg.Pool({ connectionString, max: 10 });
+  // Without an 'error' listener, an idle client dying (e.g. Postgres shutting
+  // down under the server) is an unhandled 'error' event that kills the process.
+  pool.on('error', (err) => {
+    console.error('pg pool: idle client error', err);
+  });
+  return pool;
 }
 
 export type Db = pg.Pool;
