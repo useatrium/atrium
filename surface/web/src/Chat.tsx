@@ -6,14 +6,15 @@ import {
   FILES_CHANGED_EVENT_TYPE,
   appReducer,
   filesChangedWorkspaceId,
-  queuedChangesLabel,
   dispatchSyncSnapshot,
   dispatchSyncResponse,
   initialAppState,
   randomId,
+  reconnectingLabel,
   type EnqueueOpInput,
   type OpType,
-  useQueuedChangesCount,
+  type QueueSyncState,
+  useQueueSyncState,
 } from '@atrium/surface-client';
 import { showNotification } from './notify';
 import { emptyTimeline, type Channel, type UserRef, type WireEvent } from '@atrium/surface-client';
@@ -87,6 +88,28 @@ const PAGE_SIZE = 50;
 const SYNC_LIMIT = 500;
 const MOBILE_MEDIA_QUERY = '(max-width: 767px)';
 const browserWsUrl = import.meta.env.VITE_ATRIUM_WS_URL?.trim();
+
+type QueueStatusBanner = {
+  text: string;
+  title?: string;
+};
+
+function queuedReconnectTitle(queuedCount: number): string | undefined {
+  if (queuedCount <= 0) return undefined;
+  return `${queuedCount} ${queuedCount === 1 ? 'change' : 'changes'} will send when reconnected`;
+}
+
+export function queueStatusBanner(
+  wsStatus: 'connecting' | 'open' | 'closed',
+  queueSync: QueueSyncState,
+): QueueStatusBanner | null {
+  const text = reconnectingLabel(wsStatus);
+  if (!text) return null;
+  return {
+    text,
+    title: queuedReconnectTitle(queueSync.queuedCount),
+  };
+}
 
 // === web-client additions ===
 type NotificationClickTarget = {
@@ -468,7 +491,7 @@ export function Chat({
     return () => window.removeEventListener('storage', onStorage);
   }, [markQueueNudged, opQueue]);
 
-  const queuedChangesCount = useQueuedChangesCount(eventCache, state.wsStatus, queueNudgeSeq);
+  const queueSync = useQueueSyncState(eventCache, state.wsStatus, queueNudgeSeq);
 
   useEffect(() => {
     const flushCache = () => {
@@ -1790,7 +1813,7 @@ export function Chat({
     startVoiceCallForActiveChannel,
   ]);
 
-  const queueStatusText = queuedChangesLabel(state.wsStatus, queuedChangesCount);
+  const queueStatus = queueStatusBanner(state.wsStatus, queueSync);
   const currentRoute = useMemo(() => parseInAppRoute(locationState.pathname), [locationState.pathname]);
   const membersRouteOpen =
     currentRoute?.surface === 'chat' &&
@@ -1829,6 +1852,7 @@ export function Chat({
         unread={state.unread}
         me={me}
         wsStatus={state.wsStatus}
+        queueSync={queueSync}
         onSelect={(channelId) => {
           goToChannel(channelId);
           setIsSidebarOpen(false);
@@ -2105,17 +2129,14 @@ export function Chat({
             </div>
           )}
 
-          {queueStatusText && (
+          {queueStatus && (
             <div
               role="status"
               aria-live="polite"
-              className={`flex shrink-0 items-center justify-center border-b px-4 py-1 text-2xs ${
-                state.wsStatus === 'open'
-                  ? 'border-info/20 bg-info/10 text-info-text'
-                  : 'border-warning-border/40 bg-warning-tint/30 text-warning-text'
-              }`}
+              title={queueStatus.title}
+              className="flex shrink-0 items-center justify-center border-b border-warning-border/40 bg-warning-tint/30 px-4 py-1 text-2xs text-warning-text"
             >
-              {queueStatusText}
+              {queueStatus.text}
             </div>
           )}
 
