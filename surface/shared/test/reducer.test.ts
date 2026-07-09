@@ -261,6 +261,51 @@ describe('threads and reply counts', () => {
     expect(t.main[0]!.lastReplyId).toBe(2);
   });
 
+  it('folds a broadcast reply into main when the thread fetch lands before the history page', () => {
+    // Cold load with the thread panel open: mergeThread marks the reply seen,
+    // so the later history merge must not be the only path into main.
+    let t = mergeThread(emptyTimeline, 1, [
+      wire(2, 'broadcast reply', { threadRoot: 1, broadcast: true }),
+      wire(3, 'plain reply', { threadRoot: 1 }),
+    ]);
+    expect(t.main.map((m) => [m.id, m.text])).toEqual([[2, 'broadcast reply']]);
+
+    t = mergeHistory(
+      t,
+      [
+        wire(1, 'root', { replyCount: 2, lastReplyId: 3 }),
+        wire(2, 'broadcast reply', { threadRoot: 1, broadcast: true }),
+      ],
+      { hasMoreBefore: false },
+    );
+
+    expect(t.main.map((m) => [m.id, m.text])).toEqual([
+      [1, 'root'],
+      [2, 'broadcast reply'],
+    ]);
+    expect(t.main.filter((m) => m.id === 2)).toHaveLength(1);
+    expect(t.threads[1]!.map((m) => m.id)).toEqual([2, 3]);
+  });
+
+  it('does not duplicate a broadcast reply when the history page lands before the thread fetch', () => {
+    let t = mergeHistory(
+      emptyTimeline,
+      [
+        wire(1, 'root', { replyCount: 1, lastReplyId: 2 }),
+        wire(2, 'broadcast reply', { threadRoot: 1, broadcast: true }),
+      ],
+      { hasMoreBefore: false },
+    );
+    expect(t.main.map((m) => m.id)).toEqual([1, 2]);
+
+    t = mergeThread(t, 1, [wire(2, 'broadcast reply', { threadRoot: 1, broadcast: true })]);
+
+    expect(t.main.map((m) => m.id)).toEqual([1, 2]);
+    expect(t.main.filter((m) => m.id === 2)).toHaveLength(1);
+    expect(t.threads[1]!.map((m) => m.id)).toEqual([2]);
+    expect(t.main[0]!.replyCount).toBe(1);
+  });
+
   it('thread fetch materializes a session question already seen by catch-up', () => {
     const root: WireEvent = {
       id: 1,
