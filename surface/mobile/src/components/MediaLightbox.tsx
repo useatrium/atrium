@@ -21,7 +21,7 @@ import { useAudioPlayer, useAudioPlayerStatus } from 'expo-audio';
 import { VideoView, useVideoPlayer, type VideoSource } from 'expo-video';
 import Pdf from 'react-native-pdf';
 import { Ionicons } from '@expo/vector-icons';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { formatBytes, formatRelativeTimestamp, type Api, type HubFile } from '@atrium/surface-client';
 // @ts-expect-error react-native-syntax-highlighter does not publish TypeScript declarations.
 import SyntaxHighlighter from 'react-native-syntax-highlighter';
@@ -666,7 +666,6 @@ export function MediaLightbox({
   onFileChanged,
 }: MediaLightboxProps) {
   const { colors, reduceMotion } = useTheme();
-  const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
   const listRef = useRef<FlatList<HubFile>>(null);
   const closeButtonRef = useRef<View>(null);
@@ -719,10 +718,14 @@ export function MediaLightbox({
 
   return (
     <Modal visible transparent animationType={reduceMotion ? 'none' : 'fade'} onRequestClose={onClose}>
+      {/* RN Modals render in their own window, where the screen's safe-area
+          context reads 0 — a fresh provider measures the modal window itself,
+          keeping the toolbar out of the status-bar band. */}
+      <SafeAreaProvider>
       <View accessibilityViewIsModal style={{ flex: 1, backgroundColor: colors.letterbox }}>
         <View
           style={{
-            paddingTop: insets.top + 4,
+            paddingTop: 4,
             paddingHorizontal: space.sm,
             paddingBottom: space.xs,
             borderBottomWidth: 1,
@@ -731,6 +734,7 @@ export function MediaLightbox({
             zIndex: 2,
           }}
         >
+          <ModalTopInset />
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.xs }}>
             <ChromeButton
               icon="close"
@@ -842,8 +846,16 @@ export function MediaLightbox({
           />
         ) : null}
       </View>
+      </SafeAreaProvider>
     </Modal>
   );
+}
+
+/** Spacer equal to the top safe-area inset, read under the Modal's own
+ * SafeAreaProvider (the outer screen's insets are 0 inside a Modal window). */
+function ModalTopInset() {
+  const insets = useSafeAreaInsets();
+  return <View style={{ height: insets.top }} />;
 }
 
 export function thumbnailSource(

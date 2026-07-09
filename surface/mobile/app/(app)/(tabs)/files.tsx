@@ -312,6 +312,7 @@ export default function FilesTab() {
   const [filtersExpanded, setFiltersExpanded] = useState(false);
   const [search, setSearch] = useState(routeQ);
   const [openFileId, setOpenFileId] = useState<string | null>(routeFileId);
+  const openFileIdRef = useRef<string | null>(routeFileId);
   const [files, setFiles] = useState<HubFile[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -350,21 +351,50 @@ export default function FilesTab() {
     setOpenFileId((current) => (current === routeFileId ? current : routeFileId));
   }, [routeFileId]);
 
-  useEffect(() => {
-    setSearch((current) => (current === routeQ ? current : routeQ));
-  }, [routeQ]);
+  // Filter params adopt from the route only when explicitly present. Pressing
+  // the tab-bar button re-navigates to a bare /files (params cleared) — that
+  // must not wipe the user's filters, so absent params get the local state
+  // written back instead (deep links with explicit params still win).
+  const qPresent = params.q != null;
+  const categoryPresent = params.category != null;
+  const starredPresent = params.starred != null;
+  const includeDeletedPresent = params.includeDeleted != null;
 
   useEffect(() => {
-    setCategory((current) => (current === routeCategory ? current : routeCategory));
-  }, [routeCategory]);
+    if (qPresent) {
+      setSearch((current) => (current === routeQ ? current : routeQ));
+      return;
+    }
+    if (search.trim()) setRouteParams({ q: search.trim() });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [qPresent, routeQ]);
 
   useEffect(() => {
-    setStarred((current) => (current === routeStarred ? current : routeStarred));
-  }, [routeStarred]);
+    if (categoryPresent) {
+      setCategory((current) => (current === routeCategory ? current : routeCategory));
+      return;
+    }
+    if (category !== 'all') setRouteParams({ category });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [categoryPresent, routeCategory]);
 
   useEffect(() => {
-    setIncludeDeleted((current) => (current === routeIncludeDeleted ? current : routeIncludeDeleted));
-  }, [routeIncludeDeleted]);
+    if (starredPresent) {
+      setStarred((current) => (current === routeStarred ? current : routeStarred));
+      return;
+    }
+    if (starred) setRouteParams({ starred: 'true' });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [starredPresent, routeStarred]);
+
+  useEffect(() => {
+    if (includeDeletedPresent) {
+      setIncludeDeleted((current) => (current === routeIncludeDeleted ? current : routeIncludeDeleted));
+      return;
+    }
+    if (includeDeleted) setRouteParams({ includeDeleted: 'true' });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [includeDeletedPresent, routeIncludeDeleted]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -453,6 +483,23 @@ export default function FilesTab() {
         focusedForReferences.current = false;
       };
     }, []),
+  );
+
+  // The lightbox is an RN Modal, which floats above the navigator — without
+  // this, an incoming deep link navigates underneath while the modal keeps
+  // covering the screen. Close it whenever this tab loses focus. (Read via a
+  // ref: depending on openFileId would rerun the effect — and its cleanup —
+  // on every open.)
+  openFileIdRef.current = openFileId;
+  useFocusEffect(
+    useCallback(() => {
+      return () => {
+        if (openFileIdRef.current) {
+          setOpenFileId(null);
+          setRouteParams({ file: undefined });
+        }
+      };
+    }, [setRouteParams]),
   );
 
   useEffect(() => {
