@@ -34,6 +34,9 @@
       "esbuild": "0.28.1",
       "shell-quote": "1.8.4",
       "xcode>uuid": "11.1.1"
+    },
+    "patchedDependencies": {
+      "react-native-syntax-highlighter@2.1.0": "patches/react-native-syntax-highlighter@2.1.0.patch"
     }
   }
 }

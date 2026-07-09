@@ -14,6 +14,11 @@ overrides:
   shell-quote: 1.8.4
   xcode>uuid: 11.1.1
 
+patchedDependencies:
+  react-native-syntax-highlighter@2.1.0:
+    hash: 8f8b714a630ff0974f8b59cc95550439ab028f9d4c5bad28ed0527b6199d387e
+    path: patches/react-native-syntax-highlighter@2.1.0.patch
+
 importers:
 
   .:
@@ -226,7 +231,7 @@ importers:
         version: 4.25.2(react-native@0.85.3(@babel/core@7.29.7)(@react-native/metro-config@0.85.3(@babel/core@7.29.7))(@types/react@19.2.16)(react@19.2.3))(react@19.2.3)
       react-native-syntax-highlighter:
         specifier: ^2.1.0
-        version: 2.1.0(react-syntax-highlighter@16.1.1(react@19.2.3))
+        version: 2.1.0(patch_hash=8f8b714a630ff0974f8b59cc95550439ab028f9d4c5bad28ed0527b6199d387e)(react-syntax-highlighter@16.1.1(react@19.2.3))
       react-native-webview:
         specifier: 13.16.1
         version: 13.16.1(react-native@0.85.3(@babel/core@7.29.7)(@react-native/metro-config@0.85.3(@babel/core@7.29.7))(@types/react@19.2.16)(react@19.2.3))(react@19.2.3)
@@ -15397,7 +15402,7 @@ snapshots:
       react-native: 0.85.3(@babel/core@7.29.7)(@react-native/metro-config@0.85.3(@babel/core@7.29.7))(@types/react@19.2.16)(react@19.2.3)
       warn-once: 0.1.1
 
-  react-native-syntax-highlighter@2.1.0(react-syntax-highlighter@16.1.1(react@19.2.3)):
+  react-native-syntax-highlighter@2.1.0(patch_hash=8f8b714a630ff0974f8b59cc95550439ab028f9d4c5bad28ed0527b6199d387e)(react-syntax-highlighter@16.1.1(react@19.2.3)):
     dependencies:
       react-syntax-highlighter: 16.1.1(react@19.2.3)
 
