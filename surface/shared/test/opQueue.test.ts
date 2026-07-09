@@ -607,6 +607,71 @@ describe('durable op queue flushing', () => {
 });
 
 describe('upload op dependencies', () => {
+  it('passes thread broadcast voice sends with resolved attachments through the default executor', async () => {
+    const registry = createDefaultOpRegistry();
+    const payload: MsgSendPayload = {
+      channelId: 'ch-1',
+      text: 'voice reply',
+      clientMsgId: 'cm-voice',
+      threadRootEventId: 42,
+      broadcast: true,
+      voice: { durationMs: 1234, waveform: [0, 0.5, 1] },
+      attachmentRefs: [{ uploadKey: 'up-1' }],
+      attachments: [
+        {
+          id: 'up-1',
+          filename: 'voice.m4a',
+          contentType: 'audio/mp4',
+          size: 456,
+        },
+      ],
+      createdAt: '2026-06-11T12:00:00.000Z',
+    };
+    const op = makeQueuedOp(
+      {
+        opId: 'msg-voice',
+        opType: 'msg.send',
+        payload,
+      },
+      '2026-06-11T12:00:00.000Z',
+    );
+    const posted: Array<Parameters<Api['postMessage']>[0]> = [];
+    const postMessage = vi.fn(async (body: Parameters<Api['postMessage']>[0]) => {
+      posted.push(body);
+      return { event: eventFor(payload) };
+    });
+
+    await registry['msg.send'].execute(
+      { postMessage } as unknown as Api,
+      payload,
+      op,
+      {
+        listOps: async () => [
+          {
+            ...upload('upload-1', { fileId: 'file-1', uploaded: true }),
+            status: 'completed',
+          },
+        ],
+        putOp: async () => {},
+        uploadFetch: async () => new Response(),
+        readUploadBody: async () => new Blob(),
+      },
+    );
+
+    expect(posted).toEqual([
+      {
+        channelId: 'ch-1',
+        text: 'voice reply',
+        clientMsgId: 'cm-voice',
+        threadRootEventId: 42,
+        broadcast: true,
+        attachments: ['file-1'],
+        voice: { durationMs: 1234, waveform: [0, 0.5, 1] },
+        opId: 'msg-voice',
+      },
+    ]);
+  });
+
   it('does not flush a dependent message until its upload marker is completed', async () => {
     const storage = new MemoryOpStorage([msgWithUpload('msg-1')]);
     const posted: string[][] = [];

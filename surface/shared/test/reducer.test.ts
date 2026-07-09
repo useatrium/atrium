@@ -213,6 +213,99 @@ describe('threads and reply counts', () => {
     expect(t.main[0]!.lastReplyId).toBe(2);
   });
 
+  it('confirms optimistic broadcast thread replies in main and thread without duplicating main', () => {
+    let t = applyEvent(emptyTimeline, wire(1, 'root', { replyCount: 0, lastReplyId: 0 }));
+    t = mergeThread(t, 1, []);
+
+    t = addPending(t, pending('cm-b-ok', 'pending broadcast', 1, { broadcast: true }));
+    expect(t.main.map((m) => [m.clientMsgId, m.status])).toEqual([
+      [null, 'confirmed'],
+      ['cm-b-ok', 'pending'],
+    ]);
+    expect(t.threads[1]!.map((m) => [m.clientMsgId, m.status])).toEqual([['cm-b-ok', 'pending']]);
+
+    t = applyEvent(t, wire(2, 'pending broadcast', { clientMsgId: 'cm-b-ok', threadRoot: 1, broadcast: true }));
+
+    expect(t.main.filter((m) => m.clientMsgId === 'cm-b-ok')).toHaveLength(1);
+    expect(t.main.map((m) => [m.id, m.clientMsgId, m.status])).toEqual([
+      [1, null, 'confirmed'],
+      [2, 'cm-b-ok', 'confirmed'],
+    ]);
+    expect(t.threads[1]!.map((m) => [m.id, m.clientMsgId, m.status])).toEqual([
+      [2, 'cm-b-ok', 'confirmed'],
+    ]);
+    expect(t.main[0]!.replyCount).toBe(1);
+    expect(t.main[0]!.lastReplyId).toBe(2);
+  });
+
+  it('drops an optimistic main broadcast copy when the server echo is thread-only', () => {
+    let t = applyEvent(emptyTimeline, wire(1, 'root', { replyCount: 0, lastReplyId: 0 }));
+    t = mergeThread(t, 1, []);
+
+    t = addPending(t, pending('cm-strand', 'pending broadcast', 1, { broadcast: true }));
+    expect(t.main.map((m) => [m.clientMsgId, m.status])).toEqual([
+      [null, 'confirmed'],
+      ['cm-strand', 'pending'],
+    ]);
+    expect(t.threads[1]!.map((m) => [m.clientMsgId, m.status])).toEqual([['cm-strand', 'pending']]);
+    expect(t.main[0]!.replyCount).toBe(1);
+
+    t = applyEvent(t, wire(2, 'pending broadcast', { clientMsgId: 'cm-strand', threadRoot: 1 }));
+
+    expect(t.main.map((m) => [m.id, m.clientMsgId, m.status])).toEqual([[1, null, 'confirmed']]);
+    expect(t.main.some((m) => m.clientMsgId === 'cm-strand')).toBe(false);
+    expect(t.threads[1]!.map((m) => [m.id, m.clientMsgId, m.status])).toEqual([
+      [2, 'cm-strand', 'confirmed'],
+    ]);
+    expect(t.main[0]!.replyCount).toBe(1);
+    expect(t.main[0]!.lastReplyId).toBe(2);
+  });
+
+  it('folds a broadcast reply into main when the thread fetch lands before the history page', () => {
+    // Cold load with the thread panel open: mergeThread marks the reply seen,
+    // so the later history merge must not be the only path into main.
+    let t = mergeThread(emptyTimeline, 1, [
+      wire(2, 'broadcast reply', { threadRoot: 1, broadcast: true }),
+      wire(3, 'plain reply', { threadRoot: 1 }),
+    ]);
+    expect(t.main.map((m) => [m.id, m.text])).toEqual([[2, 'broadcast reply']]);
+
+    t = mergeHistory(
+      t,
+      [
+        wire(1, 'root', { replyCount: 2, lastReplyId: 3 }),
+        wire(2, 'broadcast reply', { threadRoot: 1, broadcast: true }),
+      ],
+      { hasMoreBefore: false },
+    );
+
+    expect(t.main.map((m) => [m.id, m.text])).toEqual([
+      [1, 'root'],
+      [2, 'broadcast reply'],
+    ]);
+    expect(t.main.filter((m) => m.id === 2)).toHaveLength(1);
+    expect(t.threads[1]!.map((m) => m.id)).toEqual([2, 3]);
+  });
+
+  it('does not duplicate a broadcast reply when the history page lands before the thread fetch', () => {
+    let t = mergeHistory(
+      emptyTimeline,
+      [
+        wire(1, 'root', { replyCount: 1, lastReplyId: 2 }),
+        wire(2, 'broadcast reply', { threadRoot: 1, broadcast: true }),
+      ],
+      { hasMoreBefore: false },
+    );
+    expect(t.main.map((m) => m.id)).toEqual([1, 2]);
+
+    t = mergeThread(t, 1, [wire(2, 'broadcast reply', { threadRoot: 1, broadcast: true })]);
+
+    expect(t.main.map((m) => m.id)).toEqual([1, 2]);
+    expect(t.main.filter((m) => m.id === 2)).toHaveLength(1);
+    expect(t.threads[1]!.map((m) => m.id)).toEqual([2]);
+    expect(t.main[0]!.replyCount).toBe(1);
+  });
+
   it('thread fetch materializes a session question already seen by catch-up', () => {
     const root: WireEvent = {
       id: 1,

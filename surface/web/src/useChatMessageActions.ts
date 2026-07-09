@@ -20,9 +20,7 @@ import { showErrorToast } from './components/Toasts';
 import type { AttachmentMeta } from '@atrium/surface-client';
 
 export type VoiceSendMeta = { fileId: string; durationMs: number; waveform?: number[] };
-export type QueuedVoiceMsgSendPayload = MsgSendPayload & {
-  voice?: { durationMs: number; waveform?: number[] };
-};
+export type QueuedVoiceMsgSendPayload = MsgSendPayload;
 
 type EnqueueOpOptions = {
   onStored?: () => void;
