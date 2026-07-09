@@ -69,7 +69,7 @@ function displayFields(item: DisplaySession) {
 }
 
 export default function SessionsScreen() {
-  const { api, state, queuedChangesCount, startDemoSession } = useChat();
+  const { api, state, startDemoSession } = useChat();
   const { colors } = useTheme();
   const [sessions, setSessions] = useState<SessionListItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -177,7 +177,7 @@ export default function SessionsScreen() {
           </Pressable>
         }
       />
-      <ConnectionBanner status={state.wsStatus} queuedChangesCount={queuedChangesCount} />
+      <ConnectionBanner status={state.wsStatus} />
       {loading ? (
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
           <ActivityIndicator color={colors.textMuted} />

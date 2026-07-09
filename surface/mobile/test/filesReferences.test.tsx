@@ -25,7 +25,6 @@ const chatMock = vi.hoisted(() => ({
   fileHeaders: { authorization: 'Bearer test-token' },
   filesEventSeq: 0,
   me: { id: 'u-me', handle: 'me', displayName: 'Me' },
-  queuedChangesCount: 0,
   state: {
     wsStatus: 'open' as const,
     channels: [{ id: 'ch-general', workspaceId: 'ws-1', name: 'general', members: [] }],
