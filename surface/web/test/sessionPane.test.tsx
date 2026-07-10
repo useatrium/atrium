@@ -819,11 +819,54 @@ describe('driver seat', () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel turn' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Stop turn' }));
 
     await waitFor(() => expect(onApiError).toHaveBeenCalledTimes(1));
     expect(onStopTurn).toHaveBeenCalledWith('s-b');
-    expect(screen.getByRole('button', { name: 'Cancel turn failed — retry' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Stop failed — retry' })).toBeTruthy();
+  });
+
+  it('Escape stops the active turn for the spawner or driver', async () => {
+    const onStopTurn = vi.fn().mockResolvedValue(undefined);
+    const onClose = vi.fn();
+    render(
+      <SessionPane
+        session={bSession({ driverId: me.id })}
+        me={me}
+        watchers={[me]}
+        onClose={onClose}
+        onAnswerQuestion={async () => {}}
+        onStopTurn={onStopTurn}
+      />,
+    );
+
+    fireEvent.keyDown(window, { key: 'Escape' });
+
+    await waitFor(() => expect(onStopTurn).toHaveBeenCalledWith('s-b'));
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('Escape-to-stop yields to local editing and dialog Escape behavior', async () => {
+    vi.spyOn(sessionsApi, 'getCapabilities').mockResolvedValue({ sessionId: 's-b', snapshots: [] });
+    const onStopTurn = vi.fn().mockResolvedValue(undefined);
+    render(
+      <SessionPane
+        session={bSession({ driverId: me.id })}
+        me={me}
+        watchers={[me]}
+        onClose={() => {}}
+        onAnswerQuestion={async () => {}}
+        onStopTurn={onStopTurn}
+      />,
+    );
+
+    fireEvent.keyDown(screen.getByPlaceholderText(/Steer the agent/), { key: 'Escape' });
+    fireEvent.keyDown(window, { key: 'Escape', metaKey: true });
+    fireEvent.click(screen.getByRole('button', { name: 'Inspect session capabilities' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Session capabilities' });
+    fireEvent.keyDown(dialog, { key: 'Escape' });
+
+    expect(onStopTurn).not.toHaveBeenCalled();
   });
 
   it('cancel-session failures call the shared API error hook', async () => {

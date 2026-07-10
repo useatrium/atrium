@@ -28,14 +28,31 @@ const stoppedByUser = (eventId: number): CentaurEventFrame =>
     data: { type: "execution.state", status: "completed", completion_reason: "stopped_by_user" },
   }) as CentaurEventFrame;
 
+const cancelled = (eventId: number, reason?: string): CentaurEventFrame =>
+  ({
+    event: "execution_state",
+    event_id: eventId,
+    data: { type: "execution.state", status: "cancelled", ...(reason ? { reason } : {}) },
+  }) as CentaurEventFrame;
+
 describe("reduceSession stopped-by-user", () => {
   it("folds completion_reason=stopped_by_user onto stoppedByUser", () => {
     const state = reduceAll([running(1), stoppedByUser(2)]);
     expect(state.stoppedByUser).toBe(true);
   });
 
+  it("folds cancelled reason=turn_interrupted onto stoppedByUser", () => {
+    const state = reduceAll([running(1), cancelled(2, "turn_interrupted")]);
+    expect(state.stoppedByUser).toBe(true);
+  });
+
   it("leaves stoppedByUser falsy for a normal completion", () => {
     const state = reduceAll([running(1), completed(2)]);
+    expect(state.stoppedByUser).toBeFalsy();
+  });
+
+  it("leaves stoppedByUser falsy for a non-user cancellation", () => {
+    const state = reduceAll([running(1), cancelled(2, "session_cancelled")]);
     expect(state.stoppedByUser).toBeFalsy();
   });
 

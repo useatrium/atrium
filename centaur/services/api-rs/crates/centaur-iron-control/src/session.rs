@@ -17,6 +17,7 @@ use crate::principal::derive_principal_for_atrium_workspace;
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct SessionPrincipalMetadata<'a> {
     actor_user_id: Option<&'a str>,
+    slack_team_id: Option<&'a str>,
     conversation_name: Option<&'a str>,
     atrium_workspace_id: Option<&'a str>,
     atrium_user_id: Option<&'a str>,
@@ -33,6 +34,7 @@ impl<'a> SessionPrincipalMetadata<'a> {
                 .or_else(|| metadata.get("aad_object_id"))
                 .or_else(|| metadata.get("user_id"))
                 .and_then(Value::as_str),
+            slack_team_id: metadata.get("slack_team_id").and_then(Value::as_str),
             conversation_name: metadata
                 .get("slack_conversation_name")
                 .or_else(|| metadata.get("discord_conversation_name"))
@@ -89,20 +91,27 @@ impl SessionRegistrar {
         let principal = derive_principal_for_atrium_workspace(
             thread_key,
             metadata.actor_user_id,
+            metadata.slack_team_id,
             metadata.conversation_name,
             metadata.atrium_workspace_id,
             metadata.atrium_user_id,
         );
-        let input = principal.to_identity_input(&self.namespace);
-        let exists = match self
+        let mut input = principal.to_identity_input(&self.namespace);
+        let existing = match self
             .client
             .get_principal(&self.namespace, &input.foreign_id)
             .await
         {
-            Ok(_) => true,
-            Err(error) if is_status(&error, 404) => false,
+            Ok(existing) => Some(existing),
+            Err(error) if is_status(&error, 404) => None,
             Err(error) => return Err(error),
         };
+        let exists = existing.is_some();
+        if let Some(existing) = existing {
+            let mut labels = existing.labels;
+            labels.extend(input.labels);
+            input.labels = labels;
+        }
         let record = self.client.upsert_principal(&input).await?;
         if !exists {
             for role_id in &self.assign_role_ids {
@@ -184,6 +193,17 @@ mod tests {
         assert_eq!(metadata.atrium_user_id, Some("usr_456"));
     }
 
+    #[test]
+    fn session_principal_metadata_carries_slack_team_id() {
+        assert_eq!(
+            SessionPrincipalMetadata::from_session_metadata(Some(&json!({
+                "slack_team_id": "T123"
+            })))
+            .slack_team_id,
+            Some("T123")
+        );
+    }
+
     #[tokio::test]
     async fn register_session_seeds_roles_for_new_principal() {
         let (base_url, requests, server) =
@@ -195,6 +215,7 @@ mod tests {
         );
         let metadata = json!({
             "slack_user_id": "U123",
+            "slack_team_id": "T123",
             "slack_conversation_name": "general"
         });
 
@@ -225,6 +246,7 @@ mod tests {
         );
         let metadata = json!({
             "slack_user_id": "U123",
+            "slack_team_id": "T123",
             "slack_conversation_name": "general"
         });
 

@@ -54,12 +54,14 @@ use uuid::Uuid;
 
 use crate::{
     ApiError,
+    mcp::{mcp_get, mcp_post, mcp_protected_resource_metadata},
     types::{
         AnswerQuestionRequest, AnswerQuestionResponse, AppendMessagesRequest,
         AppendMessagesResponse, CancelSessionResponse, CreateSessionRequest, CreateSessionResponse,
         EmitWorkflowEventRequest, EventsQuery, ExecuteSessionRequest, ExecuteSessionResponse,
-        InterruptSessionResponse, ListWorkflowRunsQuery, OnHarnessConflict, SessionContextResponse,
-        SessionSseEvent, SlackThreadContext, metadata_with_repos, stream_error_sse,
+        InterruptSessionExecutionRequest, InterruptSessionResponse, ListWorkflowRunsQuery,
+        OnHarnessConflict, SessionContextResponse, SessionSseEvent, SlackThreadContext,
+        metadata_with_repos, stream_error_sse,
     },
 };
 
@@ -126,7 +128,15 @@ impl AppState {
         self.initialized().is_some()
     }
 
-    fn runtime(&self) -> Result<SessionRuntime, ApiError> {
+    /// The session runtime, if initialization completed. Unlike the private
+    /// request-path accessor this does not error while starting; the
+    /// shutdown path uses it to skip the execution handoff when the runtime
+    /// never came up.
+    pub fn session_runtime(&self) -> Option<SessionRuntime> {
+        self.initialized().map(|initialized| initialized.runtime)
+    }
+
+    pub(crate) fn runtime(&self) -> Result<SessionRuntime, ApiError> {
         self.initialized()
             .map(|initialized| initialized.runtime)
             .ok_or_else(|| ApiError::ServiceUnavailable("api-rs is still starting".to_owned()))
@@ -152,6 +162,7 @@ impl AppState {
 }
 
 const MAX_WEBHOOK_BODY_BYTES: usize = 1024 * 1024;
+const DEFAULT_INTERRUPT_REASON: &str = "Interrupted from client";
 const REDACTED_WEBHOOK_HEADERS: &[&str] = &[
     "authorization",
     "cookie",
@@ -190,6 +201,15 @@ pub fn build_router_with_app_state(state: AppState) -> Router {
         .route("/readyz", get(readyz))
         .route("/metrics", get(metrics))
         .route("/api/personas", get(list_personas))
+        .route("/mcp", post(mcp_post).get(mcp_get))
+        .route(
+            "/.well-known/oauth-protected-resource",
+            get(mcp_protected_resource_metadata),
+        )
+        .route(
+            "/.well-known/oauth-protected-resource/mcp",
+            get(mcp_protected_resource_metadata),
+        )
         .route(
             "/api/session/{thread_key}",
             post(create_or_get_session).get(get_session_context),
@@ -436,10 +456,22 @@ async fn get_session_context(
     State(state): State<AppState>,
     Path(raw_thread_key): Path<String>,
 ) -> Result<Json<SessionContextResponse>, ApiError> {
-    let _runtime = state.runtime()?;
+    let runtime = state.runtime()?;
     let thread_key = ThreadKey::try_from(raw_thread_key)?;
+    let title = match runtime.session_title(&thread_key).await {
+        Ok(title) => title,
+        Err(error) => {
+            tracing::warn!(
+                thread_key = %thread_key,
+                %error,
+                "failed to load optional session title"
+            );
+            None
+        }
+    };
     Ok(Json(SessionContextResponse {
         slack: slack_thread_context(&thread_key),
+        title,
         thread_key,
     }))
 }
@@ -553,15 +585,70 @@ async fn cancel_session(
 async fn interrupt_session(
     State(state): State<AppState>,
     Path(raw_thread_key): Path<String>,
+    body: Bytes,
 ) -> Result<Json<InterruptSessionResponse>, ApiError> {
     let thread_key = ThreadKey::try_from(raw_thread_key)?;
-    let outcome = state.runtime()?.interrupt_active_turn(&thread_key).await?;
+    let reason = interrupt_reason_from_body(&body)?;
+    let outcome = state
+        .runtime()?
+        .interrupt_active_execution(&thread_key, &reason)
+        .await?;
     Ok(Json(InterruptSessionResponse {
-        ok: outcome.error.is_none(),
+        ok: true,
         interrupted: outcome.interrupted,
         execution_id: outcome.execution_id,
-        error: outcome.error,
+        thread_key,
+        error: None,
     }))
+}
+
+fn interrupt_reason_from_body(body: &Bytes) -> Result<String, ApiError> {
+    let request = parse_interrupt_request(body)?;
+    Ok(request
+        .reason
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(DEFAULT_INTERRUPT_REASON)
+        .to_owned())
+}
+
+fn parse_interrupt_request(body: &Bytes) -> Result<InterruptSessionExecutionRequest, ApiError> {
+    if body.is_empty() {
+        return Ok(InterruptSessionExecutionRequest { reason: None });
+    }
+    serde_json::from_slice(body)
+        .map_err(|error| ApiError::BadRequest(format!("invalid interrupt request body: {error}")))
+}
+
+#[cfg(test)]
+mod interrupt_request_tests {
+    use super::*;
+
+    #[test]
+    fn interrupt_request_body_defaults_empty_body_and_empty_json_to_same_reason() {
+        assert_eq!(
+            interrupt_reason_from_body(&Bytes::new()).unwrap(),
+            DEFAULT_INTERRUPT_REASON
+        );
+        assert_eq!(
+            interrupt_reason_from_body(&Bytes::from_static(b"{}")).unwrap(),
+            DEFAULT_INTERRUPT_REASON
+        );
+        assert_eq!(
+            interrupt_reason_from_body(&Bytes::from_static(br#"{"reason":"   "}"#)).unwrap(),
+            DEFAULT_INTERRUPT_REASON
+        );
+    }
+
+    #[test]
+    fn interrupt_request_body_trims_custom_reason() {
+        assert_eq!(
+            interrupt_reason_from_body(&Bytes::from_static(br#"{"reason":"  client stop  "}"#))
+                .unwrap(),
+            "client stop"
+        );
+    }
 }
 
 async fn answer_execution_question(
@@ -3096,7 +3183,7 @@ fn signature_header_name(auth: &WorkflowWebhookAuth) -> Option<&str> {
     }
 }
 
-fn header_value(headers: &HeaderMap, name: &str) -> Option<String> {
+pub(crate) fn header_value(headers: &HeaderMap, name: &str) -> Option<String> {
     headers
         .get(name)
         .and_then(|value| value.to_str().ok())

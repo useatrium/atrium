@@ -191,6 +191,7 @@ export async function forwardToSessionApi(
     input.threadId,
     input.executeMessage,
     input.model,
+    input.provider,
     input.contextPreamble,
   );
   traceLog(options, "linearbot_session_execute_complete", input.trace, {
@@ -221,6 +222,7 @@ export async function executeSessionTurn(
     input.threadId,
     input.executeMessage,
     input.model,
+    input.provider,
     input.contextPreamble,
   );
   traceLog(options, "linearbot_session_execute_complete", input.trace, {
@@ -510,13 +512,14 @@ async function executeSession(
   threadId: string,
   message: LinearbotApiMessage,
   model?: string,
+  provider?: string,
   contextPreamble?: string,
 ): Promise<LinearbotExecuteSessionResponse> {
   const fetchFn = options.fetch ?? fetch;
   const body: LinearbotExecuteSessionRequest = {
     idempotency_key: message.id,
     metadata: sessionMetadata(message, { action: "execute" }),
-    input_lines: toCodexInputLines(message, threadId, model, contextPreamble),
+    input_lines: toCodexInputLines(message, threadId, model, provider, contextPreamble),
     ...(options.idleTimeoutMs === undefined
       ? {}
       : { idle_timeout_ms: options.idleTimeoutMs }),
@@ -683,6 +686,7 @@ function toCodexInputLines(
   message: LinearbotApiMessage,
   threadId: string,
   model?: string,
+  provider?: string,
   contextPreamble?: string,
 ): string[] {
   const staged = new Map<LinearbotApiAttachment, string>();
@@ -694,6 +698,7 @@ function toCodexInputLines(
       threadId,
       staged,
       model,
+      provider,
       contextPreamble,
     );
     if (
@@ -712,6 +717,7 @@ function toCodexInputLines(
       threadId,
       staged,
       model,
+      provider,
       contextPreamble,
     ),
   );
@@ -723,6 +729,7 @@ function toCodexInputLineWithStaged(
   threadId: string,
   staged: Map<LinearbotApiAttachment, string>,
   model?: string,
+  provider?: string,
   contextPreamble?: string,
 ): string {
   return JSON.stringify({
@@ -730,6 +737,7 @@ function toCodexInputLineWithStaged(
     thread_key: threadId,
     trace_metadata: sessionMetadata(message, { action: "execute" }),
     ...(model ? { model } : {}),
+    ...(provider ? { provider } : {}),
     message: {
       role: "user",
       content: codexInputContent(message, staged, contextPreamble),

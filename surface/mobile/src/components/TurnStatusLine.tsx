@@ -135,7 +135,7 @@ export function TurnStatusLine({
         {onCancel ? (
           <Pressable accessibilityRole="button" onPress={onCancel} hitSlop={8}>
             <Text style={{ color: colors.accent, fontSize: font.xs, fontWeight: '800' }}>
-              {cancelLabel ?? 'Cancel'}
+              {cancelLabel ?? 'Stop'}
             </Text>
           </Pressable>
         ) : null}

@@ -21,6 +21,10 @@ export interface ExecutionState {
   result_text?: string;
   agent_thread_id?: string;
   terminal_reason?: string;
+  /** Centaur cancellation reason. `turn_interrupted` means the user stopped the
+   * current turn; other cancellation reasons still represent cancelled
+   * execution/session state. */
+  reason?: string;
   /** Why the turn ended, when the api-rs terminal event carries it. `stopped_by_user`
    * = the user interrupted the turn (see the interrupt/stop-turn path); rendered as
    * "stopped by you" rather than a generic completed/failed label. */
@@ -376,4 +380,12 @@ export type CentaurEventFrame = { ts?: string } & (
 
 export function isTerminalExecutionStatus(status: ExecutionStatus): boolean {
   return status === "completed" || status === "failed" || status === "failed_permanent" || status === "cancelled";
+}
+
+export function isUserStoppedExecutionState(state: ExecutionState): boolean {
+  if (!isTerminalExecutionStatus(state.status)) return false;
+  return (
+    state.completion_reason === "stopped_by_user" ||
+    (state.status === "cancelled" && state.reason === "turn_interrupted")
+  );
 }

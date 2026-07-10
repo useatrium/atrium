@@ -2899,6 +2899,75 @@ describe('Phase 2 sessions', () => {
     await app.close();
   });
 
+  it('projects a user-stopped turn cancellation as completed and resumable', async () => {
+    fake.setFrames([
+      questionRequestedFrame(1),
+      {
+        event: 'execution_state',
+        event_id: 2,
+        data: {
+          type: 'execution.state',
+          status: 'cancelled',
+          reason: 'turn_interrupted',
+          thread_key: 'thread',
+          execution_id: 'exe_fake',
+          result_text: 'stopped',
+        },
+      },
+    ]);
+    const id = await insertSessionRow({ title: 'user stopped turn', status: 'running' });
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: true },
+    });
+    await app.ready();
+
+    await waitFor(async () => {
+      const row = await pool.query(
+        'SELECT status, pending_question, result_text, last_event_id FROM sessions WHERE id = $1',
+        [id],
+      );
+      expect(row.rows[0]).toMatchObject({
+        status: 'completed',
+        pending_question: null,
+        result_text: 'stopped',
+      });
+      expect(Number(row.rows[0].last_event_id)).toBe(2);
+
+      const mirrored = await pool.query(
+        `SELECT frame
+         FROM session_events
+         WHERE session_id = $1 AND centaur_event_id = 2`,
+        [id],
+      );
+      expect(mirrored.rows[0].frame).toMatchObject({
+        event: 'execution_state',
+        data: { status: 'cancelled', reason: 'turn_interrupted' },
+      });
+
+      const completed = await pool.query('SELECT payload FROM events WHERE type = $1', [
+        'session.completed',
+      ]);
+      expect(completed.rowCount).toBe(1);
+      expect(completed.rows[0].payload).toMatchObject({
+        sessionId: id,
+        status: 'completed',
+        resultExcerpt: 'stopped',
+      });
+
+      const resolved = await pool.query('SELECT payload FROM events WHERE type = $1', [
+        'session.question_resolved',
+      ]);
+      expect(resolved.rowCount).toBe(1);
+      expect(resolved.rows[0].payload).toMatchObject({
+        sessionId: id,
+        questionId: 'q-main',
+        reason: 'cancelled',
+      });
+    });
+    await app.close();
+  });
+
   describe('boot release sweep', () => {
     let previousReleaseIdleMs: string | undefined;
 

@@ -590,7 +590,7 @@ test('offline edit and reaction land and survive reload', async ({ page, context
   const editedRow = messageRow(page, edited);
   await editedRow.hover();
   await editedRow.getByLabel('Add reaction').click({ force: true });
-  await page.keyboard.press('Enter');
+  await page.getByRole('textbox', { name: 'Search reactions' }).press('Enter');
   await expect(editedRow.getByRole('button', { name: '👍 1, including you' })).toBeVisible();
 
   await context.setOffline(false);

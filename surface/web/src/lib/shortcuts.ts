@@ -118,7 +118,7 @@ export const SHORTCUTS = {
   closeOrCancel: {
     id: 'closeOrCancel',
     keys: ['Escape'],
-    label: 'Close dialog or cancel',
+    label: 'Close dialog or stop turn',
     group: 'General',
   },
   sendMessage: {

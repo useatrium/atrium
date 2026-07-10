@@ -2,22 +2,22 @@
  * Inline message directives, restored from the v1 slackbot:
  *   --claude | --claude-code | --amp | --codex   pick the harness for the thread
  *   --bedrock                                    codex via the AWS Bedrock provider
+ *   --meta                                       codex via Meta AI direct
  *   --model <name> (or --model=<name>)           pick the model within that harness
  *   -rsn <effort> (or -rsn=<effort>)             per-turn reasoning effort (codex)
  *   --fable | --opus | --sonnet | --haiku        model shortcuts (imply claude-code)
  *
  * Flags are stripped from the text before it reaches the agent. The harness
  * applies at session creation — an explicit harness flag on a thread pinned to
- * another harness restarts the thread on the requested one. The model and
- * reasoning effort apply per turn via the blocks-protocol `model` / `reasoning`
- * fields; `--model` accepts either a full model id (claude-sonnet-4-6, gpt-5.2,
- * ...), an amp mode (deep/fast), or a Claude alias (fable/opus/sonnet/haiku)
- * which expands to the full id. Reasoning effort only affects the codex harness
- * (it maps to codex's `turn/start` `effort`); other harnesses ignore it. The
- * provider rides the blocks-protocol `provider` field and is fixed when the
- * codex thread starts; `--bedrock` selects codex's built-in `amazon-bedrock`
- * provider (and implies the codex harness). Pair it with `--model <bedrock-id>`
- * to choose the Bedrock model.
+ * another harness restarts the thread on the requested one. Harness/model/provider
+ * choices are sticky at the Slack thread level: the last flag wins for later
+ * turns in the same thread. `--model` accepts either a full model id
+ * (claude-sonnet-4-6, gpt-5.2, ...), an amp mode (deep/fast), or a Claude alias
+ * (fable/opus/sonnet/haiku) which expands to the full id. Reasoning effort only
+ * affects the codex harness (it maps to codex's `turn/start` `effort`) and stays
+ * per-turn; other harnesses ignore it. The provider rides the blocks-protocol
+ * `provider` field and is fixed when the codex thread starts. Provider
+ * shortcuts imply the codex harness.
  */
 
 export type MessageOverrides = {
@@ -41,7 +41,8 @@ const HARNESS_FLAGS: Record<string, string> = {
 // it). Bedrock rides codex's built-in `amazon-bedrock` provider, whose wire
 // value is passed through as the blocks-protocol `provider` field.
 const PROVIDER_FLAGS: Record<string, { provider: string; harnessType: string }> = {
-  bedrock: { provider: 'amazon-bedrock', harnessType: 'codex' }
+  bedrock: { provider: 'amazon-bedrock', harnessType: 'codex' },
+  meta: { provider: 'responses', harnessType: 'codex' }
 }
 
 // Claude model aliases, usable both as bare flags (--opus) and as --model
@@ -61,11 +62,22 @@ const MODEL_SHORTCUTS: Record<string, { harnessType: string; model: string }> =
     ])
   )
 
-const MODEL_FLAG_PATTERN = /(?:^|\s)--model[=\s]+([A-Za-z0-9._/-]+)(?=\s|$)/i
+// Values are one horizontal-whitespace-delimited token; a newline after the
+// value starts the user's prompt, not part of the model/reasoning value.
+const MODEL_VALUE_SEPARATOR = String.raw`(?:[^\S\r\n]*=[^\S\r\n]*|[^\S\r\n]+)`
+const FLAG_VALUE_BOUNDARY = String.raw`(?=[^\S\r\n]|\r?\n|\r|<br\s*/?>|$)`
+
+const MODEL_FLAG_PATTERN = new RegExp(
+  String.raw`(?:^|\s)--model${MODEL_VALUE_SEPARATOR}([A-Za-z0-9._/-]+)${FLAG_VALUE_BOUNDARY}`,
+  'i'
+)
 
 // Single dash by design: a short per-turn knob (`-rsn high`), so it can't reuse
 // the `--`-prefixed flagPattern() helper. Value-capturing like --model.
-const REASONING_FLAG_PATTERN = /(?:^|\s)-rsn[=\s]+([A-Za-z-]+)(?=\s|$)/i
+const REASONING_FLAG_PATTERN = new RegExp(
+  String.raw`(?:^|\s)-rsn${MODEL_VALUE_SEPARATOR}([A-Za-z-]+)${FLAG_VALUE_BOUNDARY}`,
+  'i'
+)
 
 // Codex reasoning efforts (turn/start `effort`), plus convenience aliases.
 const REASONING_EFFORTS: Record<string, string> = {
@@ -142,5 +154,11 @@ function flagPattern(flag: string): RegExp {
 }
 
 function stripMatch(text: string, match: RegExpExecArray): string {
-  return `${text.slice(0, match.index)}${text.slice(match.index + match[0].length)}`
+  const before = text.slice(0, match.index)
+  const after = text
+    .slice(match.index + match[0].length)
+    .replace(/^(?:(?:\r\n?|\n)+|<br\s*\/?>)+/i, '')
+  const separator =
+    before && after && !/\s$/.test(before) && !/^\s/.test(after) ? ' ' : ''
+  return `${before}${separator}${after}`
 }

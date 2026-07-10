@@ -127,6 +127,31 @@ function isMobileViewportNow(): boolean {
     : false;
 }
 
+function isTextEditingEscapeTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) return false;
+  if (target.closest('input, textarea, select, .ProseMirror')) return true;
+  if (target instanceof HTMLElement && target.isContentEditable) return true;
+  const editable = target.closest('[contenteditable]');
+  return editable instanceof HTMLElement && editable.isContentEditable;
+}
+
+function escapeHasLocalMeaning(event: KeyboardEvent): boolean {
+  const target = event.target instanceof Element ? event.target : document.activeElement;
+  if (isTextEditingEscapeTarget(target)) return true;
+  return Boolean(target?.closest('[role="dialog"], [role="menu"], [role="listbox"], [aria-modal="true"]'));
+}
+
+function isPlainEscape(event: KeyboardEvent): boolean {
+  return (
+    event.key === 'Escape' &&
+    !event.repeat &&
+    !event.metaKey &&
+    !event.ctrlKey &&
+    !event.altKey &&
+    !event.shiftKey
+  );
+}
+
 function useIsMobileViewport(): boolean {
   const [isMobileViewport, setIsMobileViewport] = useState(isMobileViewportNow);
   useEffect(() => {
@@ -583,9 +608,13 @@ export function SessionPane({
       ? normalizeExecutionStatus(stream.status)
       : session.status;
   const displayTerminal = isTerminalSessionStatus(displayStatus);
+  // "stopped by you" is folded from the durable terminal event (reducer
+  // `stoppedByUser`), so every viewer sees it and it survives replay/reload; it
+  // clears automatically when a new turn starts.
+  const stoppedByUser = stream.stoppedByUser === true;
   // A completed session is idle/resumable (a steer regresses completed→queued),
   // NOT ended — only failed/cancelled are truly read-only.
-  const isEnded = displayStatus === 'failed' || displayStatus === 'cancelled';
+  const isEnded = displayStatus === 'failed' || (displayStatus === 'cancelled' && !stoppedByUser);
   const now = useNow(!displayTerminal);
   const stalled = !displayTerminal && stream.status === 'idle' && isStalledSessionStatus(session, now);
   const costUsd = Math.max(session.costUsd, stream.costUsd);
@@ -610,10 +639,6 @@ export function SessionPane({
   const activeTurn = !displayTerminal && !stalled;
   const starting = displayStatus === 'spawning' || displayStatus === 'queued';
   const canStopTurn = activeTurn && !starting;
-  // "stopped by you" is folded from the durable terminal event (reducer
-  // `stoppedByUser`), so every viewer sees it and it survives replay/reload; it
-  // clears automatically when a new turn starts.
-  const stoppedByUser = stream.stoppedByUser === true;
   // Silence counts from mount when no frame ever arrived; the reconnect grace
   // anchors to the actual disconnect moment (see deriveTurnStatus).
   const mountedAtRef = useRef(Date.now());
@@ -1046,7 +1071,7 @@ export function SessionPane({
     const t = setTimeout(() => setCancelAsk('idle'), 5000);
     return () => clearTimeout(t);
   }, [cancelAsk]);
-  const onCancel = () => {
+  const onCancel = useCallback(() => {
     if (canStopTurn) {
       setCancelAsk('idle');
       onClearFailedCancel();
@@ -1066,7 +1091,27 @@ export function SessionPane({
       setCancelAsk('failed');
       reportSessionActionError(err, "Couldn't cancel the session.", { toast: false });
     });
-  };
+  }, [
+    canStopTurn,
+    displayCancelAsk,
+    onCancelSession,
+    onClearFailedCancel,
+    onStopTurn,
+    reportSessionActionError,
+    session.id,
+  ]);
+
+  useEffect(() => {
+    if (!canStopTurn || (!isSpawner && !isDriver)) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!isPlainEscape(event) || escapeHasLocalMeaning(event)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      onCancel();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [canStopTurn, isDriver, isSpawner, onCancel]);
 
   // Driver-side grant banner; Ignore is a local dismissal only.
   const [ignoredRequests, setIgnoredRequests] = useState<ReadonlySet<string>>(new Set());
@@ -1276,7 +1321,7 @@ export function SessionPane({
       setMarkupLoadingHandle(handle);
       try {
         const extracted = await api.extractEntry(handle);
-        const response = await fetch(`/api/files/artifact/${extracted.artifactId}/content`, {
+        const response = await fetch(`/api/files/artifact/${encodeURIComponent(extracted.artifactId)}/content`, {
           credentials: 'same-origin',
         });
         if (!response.ok) throw new Error('Could not load markup source');
@@ -1399,7 +1444,7 @@ export function SessionPane({
           </div>
         </div>
         {(isSpawner || isDriver) && !displayTerminal && (
-          <Tooltip content={canStopTurn ? 'Cancel the current turn' : 'Cancel this session'}>
+          <Tooltip content={canStopTurn ? 'Stop current turn' : 'Cancel this session'}>
             <button
               type="button"
               onClick={onCancel}
@@ -1415,8 +1460,8 @@ export function SessionPane({
             >
               {canStopTurn
                 ? displayCancelAsk === 'failed'
-                  ? 'Cancel turn failed — retry'
-                  : 'Cancel turn'
+                  ? 'Stop failed — retry'
+                  : 'Stop turn'
                 : displayCancelAsk === 'confirm'
                   ? 'Confirm cancel'
                   : displayCancelAsk === 'failed'
@@ -1849,7 +1894,7 @@ export function SessionPane({
           costUsd={costUsd}
           models={stream.models}
           effort={modelEffort}
-          cancelLabel={canStopTurn ? 'Cancel turn' : displayCancelAsk === 'confirm' ? 'Confirm cancel' : 'Cancel'}
+          cancelLabel={canStopTurn ? 'Stop turn' : displayCancelAsk === 'confirm' ? 'Confirm cancel' : 'Cancel'}
           onCancel={isSpawner || isDriver ? onCancel : undefined}
         />
       )}

@@ -32,6 +32,7 @@ pub fn harness_auth_fragment(engine: &str, auth_mode: &str) -> Result<Option<Pro
         ("codex", "api_key") => CODEX_API_KEY_FRAGMENT,
         ("codex", "access_token") => CODEX_ACCESS_TOKEN_FRAGMENT,
         ("openrouter", "api_key") => OPENROUTER_API_KEY_FRAGMENT,
+        ("meta-ai", "api_key") => META_AI_API_KEY_FRAGMENT,
         ("claude-code", "api_key") => CLAUDE_CODE_API_KEY_FRAGMENT,
         ("claude-code", "access_token") => CLAUDE_CODE_ACCESS_TOKEN_FRAGMENT,
         _ => return Ok(None),
@@ -188,11 +189,9 @@ transforms:
     config:
       secrets:
         - id: OPENAI_API_KEY_AUTHORIZATION
-          source:
-            placeholder: OPENAI_API_KEY
-          inject:
-            header: Authorization
-            formatter: "Bearer {{.Value}}"
+          replace:
+            proxy_value: OPENAI_API_KEY
+            match_headers: ["Authorization"]
           rules: [{ host: api.openai.com }]
 "#;
 
@@ -202,11 +201,9 @@ transforms:
     config:
       secrets:
         - id: OPENROUTER_API_KEY_AUTHORIZATION
-          source:
-            placeholder: OPENROUTER_API_KEY
-          inject:
-            header: Authorization
-            formatter: "Bearer {{.Value}}"
+          replace:
+            proxy_value: OPENROUTER_API_KEY
+            match_headers: ["Authorization"]
           rules: [{ host: openrouter.ai }]
 "#;
 
@@ -218,6 +215,18 @@ transforms:
   - name: allowlist
     config:
       domains: ["chatgpt.com"]
+"#;
+
+const META_AI_API_KEY_FRAGMENT: &str = r#"
+transforms:
+  - name: secrets
+    config:
+      secrets:
+        - id: META_AI_API_KEY_AUTHORIZATION
+          replace:
+            proxy_value: META_AI_API_KEY
+            match_headers: ["Authorization"]
+          rules: [{ host: api.ai.meta.com }]
 "#;
 
 // The `openai-codex` broker credential this references is managed by
@@ -280,10 +289,10 @@ fn normalize_auth_mode(value: &str) -> String {
 }
 
 /// The `PLACEHOLDER=PLACEHOLDER` env for replace-mode secrets whose consumers
-/// read credentials straight from the environment (codex's `OPENAI_API_KEY`,
-/// git's `GITHUB_TOKEN`, …) rather than through the tool SDK, whose
-/// `StubBackend` already hands back the key name. Only the infra/harness
-/// fragments have such consumers; tool fragments are excluded at the call site.
+/// read credentials straight from the environment (for example codex's
+/// `OPENAI_API_KEY`) rather than through the tool SDK, whose `StubBackend`
+/// already hands back the key name. Only the infra/harness fragments have such
+/// consumers; tool fragments are excluded at the call site.
 pub fn placeholder_env(fragments: &[ProxyFragment]) -> BTreeMap<String, String> {
     fragments
         .iter()

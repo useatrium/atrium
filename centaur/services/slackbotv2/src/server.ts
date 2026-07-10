@@ -28,9 +28,18 @@ const options: SlackbotV2Options = {
   apiUrl,
   apiKey: optionalEnv('SLACKBOT_API_KEY'),
   assistantStatus: optionalEnv('SLACKBOTV2_ASSISTANT_STATUS'),
+  activitySummaryStatusEnabled: booleanEnv('SLACKBOTV2_ACTIVITY_SUMMARY_STATUS_ENABLED', false),
   botToken,
   botUserId: optionalEnv('SLACK_BOT_USER_ID'),
+  consolePublicUrl: optionalEnv('CENTAUR_CONSOLE_PUBLIC_URL'),
   defaultHarnessType: optionalEnv('SLACKBOTV2_DEFAULT_HARNESS'),
+  // Same env vars deployers use to override the sandbox harness model
+  // (sandbox.extraEnv); the chart mirrors them here so displayed defaults
+  // track the deployment instead of the baked harness config.
+  harnessDefaultModels: {
+    ...(optionalEnv('CLAUDE_MODEL') ? { claudecode: optionalEnv('CLAUDE_MODEL')! } : {}),
+    ...(optionalEnv('CODEX_MODEL') ? { codex: optionalEnv('CODEX_MODEL')! } : {})
+  },
   idleTimeoutMs: optionalNumberEnv('SESSION_IDLE_TIMEOUT_MS'),
   maxDurationMs: optionalNumberEnv('SESSION_MAX_DURATION_MS'),
   postgresUrl:
@@ -61,6 +70,7 @@ console.log(
     level: 'info',
     event: 'slackbotv2_started',
     service: 'slackbotv2',
+    activity_summary_status_enabled: options.activitySummaryStatusEnabled,
     port: server.port,
     api_url: apiUrl
   })
@@ -85,6 +95,14 @@ function stringEnv(name: string, fallback: string): string {
 
 function numberEnv(name: string, fallback: number): number {
   return optionalNumberEnv(name) ?? fallback
+}
+
+function booleanEnv(name: string, fallback: boolean): boolean {
+  const value = optionalEnv(name)
+  if (!value) return fallback
+  if (['1', 'true', 'yes', 'on'].includes(value.toLowerCase())) return true
+  if (['0', 'false', 'no', 'off'].includes(value.toLowerCase())) return false
+  throw new Error(`${name} must be a boolean`)
 }
 
 function optionalNumberEnv(name: string): number | undefined {
