@@ -7,6 +7,7 @@ delete process.env.NO_COLOR;
 const serverPort = Number(process.env.E2E_SERVER_PORT ?? 3101);
 const webPort = Number(process.env.E2E_WEB_PORT ?? 5273);
 const centaurPort = Number(process.env.E2E_CENTAUR_PORT ?? 18100);
+const webServerTimeout = Number(process.env.E2E_WEBSERVER_TIMEOUT ?? 60_000);
 const databaseUrl =
   process.env.E2E_DATABASE_URL ?? 'postgres://atrium:atrium@localhost:5433/atrium_e2e';
 const baseURL = `http://127.0.0.1:${webPort}`;
@@ -42,7 +43,7 @@ export default defineConfig({
       command: `node db-reset.mjs && pnpm --filter @atrium/server start`,
       url: `${apiTarget}/healthz`,
       reuseExistingServer: false,
-      timeout: 60_000,
+      timeout: webServerTimeout,
       env: {
         DATABASE_URL: databaseUrl,
         E2E_SERVER_PORT: String(serverPort),
@@ -59,7 +60,7 @@ export default defineConfig({
       command: `node centaur-stub.mjs`,
       url: `http://127.0.0.1:${centaurPort}/healthz`,
       reuseExistingServer: false,
-      timeout: 60_000,
+      timeout: webServerTimeout,
       env: {
         PORT: String(centaurPort),
       },
@@ -68,7 +69,7 @@ export default defineConfig({
       command: `pnpm --filter @atrium/web exec vite --host 127.0.0.1 --port ${webPort} --strictPort`,
       url: baseURL,
       reuseExistingServer: false,
-      timeout: 60_000,
+      timeout: webServerTimeout,
       env: {
         ATRIUM_API_TARGET: apiTarget,
         VITE_ATRIUM_WS_URL: `${apiTarget.replace(/^http/, 'ws')}/ws`,

@@ -162,6 +162,7 @@ impl AppState {
 }
 
 const MAX_WEBHOOK_BODY_BYTES: usize = 1024 * 1024;
+const DEFAULT_INTERRUPT_REASON: &str = "Interrupted from client";
 const REDACTED_WEBHOOK_HEADERS: &[&str] = &[
     "authorization",
     "cookie",
@@ -587,45 +588,67 @@ async fn interrupt_session(
     body: Bytes,
 ) -> Result<Json<InterruptSessionResponse>, ApiError> {
     let thread_key = ThreadKey::try_from(raw_thread_key)?;
-    if let Some(request) = parse_optional_interrupt_request(&body)? {
-        let reason = request
-            .reason
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .unwrap_or("Interrupted from client");
-        let outcome = state
-            .runtime()?
-            .interrupt_active_execution(&thread_key, reason)
-            .await?;
-        return Ok(Json(InterruptSessionResponse {
-            ok: true,
-            interrupted: outcome.interrupted,
-            execution_id: outcome.execution_id,
-            thread_key,
-            error: None,
-        }));
-    }
-
-    let outcome = state.runtime()?.interrupt_active_turn(&thread_key).await?;
+    let reason = interrupt_reason_from_body(&body)?;
+    let outcome = state
+        .runtime()?
+        .interrupt_active_execution(&thread_key, &reason)
+        .await?;
     Ok(Json(InterruptSessionResponse {
-        ok: outcome.error.is_none(),
+        ok: true,
         interrupted: outcome.interrupted,
         execution_id: outcome.execution_id,
         thread_key,
-        error: outcome.error,
+        error: None,
     }))
 }
 
-fn parse_optional_interrupt_request(
-    body: &Bytes,
-) -> Result<Option<InterruptSessionExecutionRequest>, ApiError> {
+fn interrupt_reason_from_body(body: &Bytes) -> Result<String, ApiError> {
+    let request = parse_interrupt_request(body)?;
+    Ok(request
+        .reason
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(DEFAULT_INTERRUPT_REASON)
+        .to_owned())
+}
+
+fn parse_interrupt_request(body: &Bytes) -> Result<InterruptSessionExecutionRequest, ApiError> {
     if body.is_empty() {
-        return Ok(None);
+        return Ok(InterruptSessionExecutionRequest { reason: None });
     }
     serde_json::from_slice(body)
-        .map(Some)
         .map_err(|error| ApiError::BadRequest(format!("invalid interrupt request body: {error}")))
+}
+
+#[cfg(test)]
+mod interrupt_request_tests {
+    use super::*;
+
+    #[test]
+    fn interrupt_request_body_defaults_empty_body_and_empty_json_to_same_reason() {
+        assert_eq!(
+            interrupt_reason_from_body(&Bytes::new()).unwrap(),
+            DEFAULT_INTERRUPT_REASON
+        );
+        assert_eq!(
+            interrupt_reason_from_body(&Bytes::from_static(b"{}")).unwrap(),
+            DEFAULT_INTERRUPT_REASON
+        );
+        assert_eq!(
+            interrupt_reason_from_body(&Bytes::from_static(br#"{"reason":"   "}"#)).unwrap(),
+            DEFAULT_INTERRUPT_REASON
+        );
+    }
+
+    #[test]
+    fn interrupt_request_body_trims_custom_reason() {
+        assert_eq!(
+            interrupt_reason_from_body(&Bytes::from_static(br#"{"reason":"  client stop  "}"#))
+                .unwrap(),
+            "client stop"
+        );
+    }
 }
 
 async fn answer_execution_question(

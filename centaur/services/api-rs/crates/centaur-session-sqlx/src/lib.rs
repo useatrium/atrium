@@ -1124,7 +1124,7 @@ impl PgSessionStore {
 
             select sandbox_id
             from session_warm_sandboxes
-            where status in ('ready', 'claimed', 'evicting')
+            where status in ('ready', 'claimed', 'drained')
             "#,
         )
         .fetch_all(&self.pool)
@@ -1648,7 +1648,7 @@ impl PgSessionStore {
             )
             update session_warm_sandboxes warm
             set
-                status = 'evicting',
+                status = 'drained',
                 updated_at = now()
             from candidates
             where warm.sandbox_id = candidates.sandbox_id
@@ -1661,7 +1661,7 @@ impl PgSessionStore {
         Ok(rows)
     }
 
-    pub async fn list_stale_evicting_warm_sandbox_ids(
+    pub async fn list_stale_drained_warm_sandbox_ids(
         &self,
         min_age: Duration,
     ) -> Result<Vec<String>, SessionStoreError> {
@@ -1669,7 +1669,7 @@ impl PgSessionStore {
             r#"
             select sandbox_id
             from session_warm_sandboxes
-            where status = 'evicting'
+            where status = 'drained'
               and updated_at <= now() - ($1::float8 * interval '1 second')
             order by updated_at, sandbox_id
             "#,

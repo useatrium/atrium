@@ -1975,6 +1975,7 @@ impl SessionRuntime {
     ) -> Result<bool, SessionRuntimeError> {
         let mut after_event_id = 0;
         let mut pending = false;
+        let mut interrupted = false;
         loop {
             let events = self
                 .store
@@ -1985,7 +1986,12 @@ impl SessionRuntime {
             }
             for event in &events {
                 after_event_id = event.event_id;
-                if output_line_question_event_matches(event, question_id, "question_requested") {
+                if event_is_interrupt_delivery(event) {
+                    interrupted = true;
+                    pending = false;
+                } else if !interrupted
+                    && output_line_question_event_matches(event, question_id, "question_requested")
+                {
                     pending = true;
                 } else if output_line_question_event_matches(
                     event,
@@ -7394,6 +7400,13 @@ fn output_line_question_event_matches(
         && value.get("question_id").and_then(Value::as_str) == Some(question_id)
 }
 
+fn event_is_interrupt_delivery(event: &SessionEvent) -> bool {
+    matches!(
+        event.event_type.as_str(),
+        "session.interrupt_delivered" | "session.turn_interrupt_delivered"
+    )
+}
+
 fn event_question_id_matches(
     event: &SessionEvent,
     question_id: &str,
@@ -10013,6 +10026,25 @@ mod adoption_tests {
         guard
     }
 
+    async fn reset_test_sessions(store: &PgSessionStore) {
+        sqlx::query("delete from session_events where thread_key like 'test:%'")
+            .execute(store.pool())
+            .await
+            .expect("reset test session events");
+        sqlx::query("delete from session_executions where thread_key like 'test:%'")
+            .execute(store.pool())
+            .await
+            .expect("reset test session executions");
+        sqlx::query("delete from sessions where thread_key like 'test:%'")
+            .execute(store.pool())
+            .await
+            .expect("reset test sessions");
+        sqlx::query("truncate table session_warm_sandboxes, session_warm_pool_state cascade")
+            .execute(store.pool())
+            .await
+            .expect("reset test warm pool state");
+    }
+
     async fn orphaned_execution(
         store: &PgSessionStore,
         thread_key: &ThreadKey,
@@ -10041,6 +10073,24 @@ mod adoption_tests {
                 .expect("mark running");
         }
         execution_id
+    }
+
+    async fn claim_stdout_for_runtime(
+        store: &PgSessionStore,
+        runtime: &SessionRuntime,
+        execution_id: &str,
+    ) {
+        assert!(
+            store
+                .claim_stdout_owner(
+                    execution_id,
+                    &runtime.stdout_owner_id,
+                    Duration::from_secs(60)
+                )
+                .await
+                .expect("claim stdout owner for test runtime"),
+            "test runtime should claim stdout ownership"
+        );
     }
 
     /// Ages an execution row past `QUEUED_ORPHAN_GRACE` so adoption treats it
@@ -10826,7 +10876,10 @@ mod adoption_tests {
         assert_eq!(created_specs.len(), 1);
         assert_eq!(
             spec_env_json(&created_specs[0], AGENT_REPOS_JSON_ENV),
-            json!([{"repo":"acme/work","ref":"feature"}])
+            json!([
+                {"repo":"acme/default","ref":"main"},
+                {"repo":"acme/work","ref":"feature"}
+            ])
         );
         let all = events(&store, &thread_key).await;
         assert!(
@@ -10875,10 +10928,7 @@ mod adoption_tests {
         assert_eq!(created_specs.len(), 1);
         assert_eq!(
             spec_env_json(&created_specs[0], AGENT_REPOS_JSON_ENV),
-            json!([
-                {"repo":"acme/default","ref":"main"},
-                {"repo":"acme/work","ref":"feature"}
-            ])
+            json!([{"repo":"acme/work","ref":"feature"}])
         );
         assert_eq!(
             store.get_session(&thread_key).await.unwrap().sandbox_id,
@@ -10946,6 +10996,7 @@ mod adoption_tests {
             return;
         };
         let _serial = TEST_LOCK.lock().await;
+        reset_test_sessions(&store).await;
 
         let backend = Arc::new(MockBackend::new(SandboxStatus::Running, Vec::new()));
         backend.set_observed_status(
@@ -11326,13 +11377,15 @@ mod adoption_tests {
         let _serial = TEST_LOCK.lock().await;
         let thread_key =
             ThreadKey::parse(format!("test:eof-recorded-{}", uuid::Uuid::new_v4())).unwrap();
-        orphaned_execution(&store, &thread_key, Some("sbx-recorded"), true).await;
+        let execution_id =
+            orphaned_execution(&store, &thread_key, Some("sbx-recorded"), true).await;
 
         let backend = Arc::new(MockBackend::new(SandboxStatus::Running, Vec::new()));
         let (io, stdout, _stdin) = mock_io();
         backend.push_io(io).await;
 
         let runtime = runtime_with(&store, backend.clone());
+        claim_stdout_for_runtime(&store, &runtime, &execution_id).await;
         runtime
             .ensure_session_pipe(&thread_key, "sbx-recorded")
             .await
@@ -11376,7 +11429,8 @@ mod adoption_tests {
         let _serial = TEST_LOCK.lock().await;
         let thread_key =
             ThreadKey::parse(format!("test:eof-reattach-{}", uuid::Uuid::new_v4())).unwrap();
-        orphaned_execution(&store, &thread_key, Some("sbx-reattach"), true).await;
+        let execution_id =
+            orphaned_execution(&store, &thread_key, Some("sbx-reattach"), true).await;
 
         let backend = Arc::new(MockBackend::new(SandboxStatus::Running, Vec::new()));
         let (first_io, mut first_stdout, _first_stdin) = mock_io();
@@ -11385,6 +11439,7 @@ mod adoption_tests {
         backend.push_io(second_io).await;
 
         let runtime = runtime_with(&store, backend.clone());
+        claim_stdout_for_runtime(&store, &runtime, &execution_id).await;
         runtime
             .ensure_session_pipe(&thread_key, "sbx-reattach")
             .await
@@ -11427,13 +11482,14 @@ mod adoption_tests {
         let _serial = TEST_LOCK.lock().await;
         let thread_key =
             ThreadKey::parse(format!("test:eof-gone-{}", uuid::Uuid::new_v4())).unwrap();
-        orphaned_execution(&store, &thread_key, Some("sbx-gone"), true).await;
+        let execution_id = orphaned_execution(&store, &thread_key, Some("sbx-gone"), true).await;
 
         let backend = Arc::new(MockBackend::new(SandboxStatus::Running, Vec::new()));
         let (io, stdout, _stdin) = mock_io();
         backend.push_io(io).await;
 
         let runtime = runtime_with(&store, backend.clone());
+        claim_stdout_for_runtime(&store, &runtime, &execution_id).await;
         runtime
             .ensure_session_pipe(&thread_key, "sbx-gone")
             .await
@@ -11648,6 +11704,68 @@ mod adoption_tests {
             all.iter()
                 .any(|event| event.event_type == "session.turn_interrupt_delivered"),
             "expected a turn_interrupt_delivered event"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn interrupt_active_execution_delivers_canonical_interrupt_input_and_event() {
+        let Some(store) = test_store().await else {
+            return;
+        };
+        let _serial = lock_clean_slate().await;
+        let thread_key =
+            ThreadKey::parse(format!("test:interrupt-canonical-{}", uuid::Uuid::new_v4())).unwrap();
+        let execution_id =
+            orphaned_execution(&store, &thread_key, Some("mock-sbx-canonical"), true).await;
+
+        let backend = Arc::new(MockBackend::new(SandboxStatus::Running, Vec::new()));
+        let (io, _stdout_far, stdin_far) = mock_io();
+        backend.push_io(io).await;
+        let runtime = runtime_with(&store, backend.clone());
+
+        let outcome = runtime
+            .interrupt_active_execution(&thread_key, "Interrupted from client")
+            .await
+            .unwrap();
+        assert!(
+            outcome.interrupted,
+            "should deliver an interrupt to the active execution: {outcome:?}"
+        );
+        assert_eq!(outcome.execution_id.as_deref(), Some(execution_id.as_str()));
+
+        let mut reader = BufReader::new(stdin_far);
+        let mut line = String::new();
+        let read = tokio::time::timeout(Duration::from_secs(5), reader.read_line(&mut line))
+            .await
+            .expect("read sandbox stdin within timeout")
+            .expect("read sandbox stdin line");
+        assert!(read > 0, "expected an interrupt input line");
+        let delivered: Value = serde_json::from_str(line.trim()).expect("interrupt json");
+        assert_eq!(delivered["type"], "interrupt");
+        assert_eq!(delivered["thread_key"], thread_key.as_str());
+        assert_eq!(
+            delivered["trace_metadata"]["source"],
+            "session.interrupt_active_execution"
+        );
+        assert_eq!(
+            delivered["trace_metadata"]["action"],
+            "interrupt_active_execution"
+        );
+        assert_eq!(
+            delivered["trace_metadata"]["reason"],
+            "Interrupted from client"
+        );
+
+        let all = events(&store, &thread_key).await;
+        let interrupt = all
+            .iter()
+            .find(|event| event.event_type == "session.interrupt_delivered")
+            .expect("expected canonical interrupt event");
+        assert_eq!(interrupt.payload["reason"], "Interrupted from client");
+        assert!(
+            all.iter()
+                .all(|event| event.event_type != "session.turn_interrupt_delivered"),
+            "canonical interrupt must not record the legacy delivery event"
         );
     }
 
@@ -12001,6 +12119,71 @@ mod adoption_tests {
 
         assert!(matches!(error, AnswerQuestionError::QuestionNotPending));
         assert_eq!(backend.opens(), 0);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn interrupt_delivery_rejects_pending_question_answer_before_resolution() {
+        let Some(store) = test_store().await else {
+            return;
+        };
+        let _serial = lock_clean_slate().await;
+
+        for interrupt_event_type in [
+            "session.interrupt_delivered",
+            "session.turn_interrupt_delivered",
+        ] {
+            let thread_key = ThreadKey::parse(format!(
+                "test:answer-interrupted-{}-{}",
+                interrupt_event_type.replace('.', "-"),
+                uuid::Uuid::new_v4()
+            ))
+            .unwrap();
+            let execution_id =
+                orphaned_execution(&store, &thread_key, Some("sbx-answer-interrupted"), true).await;
+            for question_id in ["q-1", "q-2"] {
+                store
+                    .append_event(
+                        &thread_key,
+                        Some(&execution_id),
+                        SESSION_OUTPUT_LINE_EVENT,
+                        Value::String(
+                            json!({
+                                "type": "question_requested",
+                                "question_id": question_id,
+                                "turn_id": "turn-1",
+                                "questions": [],
+                            })
+                            .to_string(),
+                        ),
+                    )
+                    .await
+                    .expect("append question event");
+            }
+            store
+                .append_event(
+                    &thread_key,
+                    Some(&execution_id),
+                    interrupt_event_type,
+                    json!({
+                        "execution_id": execution_id,
+                        "thread_key": thread_key.as_str(),
+                        "reason": "Interrupted from client",
+                    }),
+                )
+                .await
+                .expect("append interrupt event");
+
+            let backend = Arc::new(MockBackend::new(SandboxStatus::Running, Vec::new()));
+            let runtime = runtime_with(&store, backend.clone());
+            for question_id in ["q-1", "q-2"] {
+                let error = runtime
+                    .answer_execution_question(&thread_key, &execution_id, question_id, json!({}))
+                    .await
+                    .expect_err("interrupted question should be rejected");
+                assert!(matches!(error, AnswerQuestionError::QuestionNotPending));
+            }
+            assert_eq!(backend.opens(), 0);
+        }
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

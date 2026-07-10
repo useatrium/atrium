@@ -337,7 +337,7 @@ export function ChatProvider({ session, children }: { session: Session; children
       case 'session.cancel':
         return "Couldn't cancel the session.";
       case 'session.stop_turn':
-        return "Couldn't cancel the turn.";
+        return "Couldn't stop the turn.";
       case 'prefs.set':
         return "Couldn't sync settings.";
       case 'draft.set':

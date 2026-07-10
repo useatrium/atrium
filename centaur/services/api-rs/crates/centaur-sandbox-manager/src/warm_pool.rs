@@ -14,7 +14,7 @@ use crate::SandboxManager;
 pub type WarmSandboxSpecFactory = Arc<dyn Fn() -> WarmSandboxWorkload + Send + Sync>;
 const DEFAULT_WARM_POOL_NAME: &str = "session-default";
 const STALE_WARM_DRAIN_LIMIT: i64 = 16;
-const STALE_EVICTING_WARM_SANDBOX_AGE: Duration = Duration::from_secs(300);
+const STALE_DRAINED_WARM_SANDBOX_AGE: Duration = Duration::from_secs(300);
 
 #[derive(Clone, Debug)]
 pub struct WarmSandboxWorkload {
@@ -127,7 +127,7 @@ impl WarmPoolManager {
 
     async fn replenish_once(&self) -> Result<(), WarmPoolError> {
         self.prune_stale_ready_sandboxes().await?;
-        self.prune_stale_evicting_sandboxes().await?;
+        self.prune_stale_drained_sandboxes().await?;
 
         let desired_workload = (self.spec_factory)();
         let state = self.warm_pool_state_for(&desired_workload).await?;
@@ -300,10 +300,10 @@ impl WarmPoolManager {
         Ok(())
     }
 
-    async fn prune_stale_evicting_sandboxes(&self) -> Result<(), WarmPoolError> {
+    async fn prune_stale_drained_sandboxes(&self) -> Result<(), WarmPoolError> {
         for sandbox_id in self
             .store
-            .list_stale_evicting_warm_sandbox_ids(STALE_EVICTING_WARM_SANDBOX_AGE)
+            .list_stale_drained_warm_sandbox_ids(STALE_DRAINED_WARM_SANDBOX_AGE)
             .await?
         {
             let id = SandboxId::new(sandbox_id.as_str());
@@ -311,7 +311,7 @@ impl WarmPoolManager {
                 Ok(status) if status_consumes_running_slot(&status) => {
                     match self.manager.stop(&id).await {
                         Ok(()) | Err(SandboxError::NotFound(_)) => {
-                            "stale evicting warm sandbox stopped".to_owned()
+                            "stale drained warm sandbox stopped".to_owned()
                         }
                         Err(error) => {
                             let error_message = error.to_string();
@@ -320,9 +320,9 @@ impl WarmPoolManager {
                         }
                     }
                 }
-                Ok(status) => format!("stale evicting warm sandbox was not running: {status:?}"),
+                Ok(status) => format!("stale drained warm sandbox was not running: {status:?}"),
                 Err(SandboxError::NotFound(_)) => {
-                    "stale evicting warm sandbox was not found".to_owned()
+                    "stale drained warm sandbox was not found".to_owned()
                 }
                 Err(error) => {
                     let error_message = error.to_string();
@@ -330,7 +330,7 @@ impl WarmPoolManager {
                     return Err(WarmPoolError::Sandbox(error));
                 }
             };
-            warn!(%sandbox_id, reason = %failure, "marking stale evicting warm sandbox failed");
+            warn!(%sandbox_id, reason = %failure, "marking stale drained warm sandbox failed");
             self.store
                 .mark_warm_sandbox_failed(&sandbox_id, &failure)
                 .await?;
@@ -381,6 +381,7 @@ mod tests {
         ObservedSandbox, SandboxBackend, SandboxError, SandboxHandle, SandboxId, SandboxIo,
         SandboxResult, SandboxSpec, SandboxStatus,
     };
+    use centaur_session_core::{HarnessType, ThreadKey, empty_object};
 
     use super::*;
 
@@ -395,6 +396,8 @@ mod tests {
         let stale_sandbox = format!("stale-{suffix}");
         let old_stale_sandbox = format!("old-stale-{suffix}");
         let fresh_sandbox = format!("fresh-{suffix}");
+        let claim_thread = format!("test:thread-{suffix}");
+        ensure_session(&store, &claim_thread).await;
 
         store
             .insert_ready_warm_sandbox(&stale_sandbox, &workload_key)
@@ -450,7 +453,7 @@ mod tests {
         );
         assert_eq!(
             store
-                .claim_ready_warm_sandbox(&workload_key, "test-thread")
+                .claim_ready_warm_sandbox(&workload_key, &claim_thread)
                 .await
                 .expect("claim ready warm sandbox"),
             Some(fresh_sandbox)
@@ -465,29 +468,29 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn replenisher_prunes_stale_evicting_rows() {
+    async fn replenisher_prunes_stale_drained_rows() {
         let Some(store) = test_store().await else {
             return;
         };
         let suffix = unique_suffix();
-        let workload_key = format!("test-evicting-{suffix}");
-        let stale_sandbox = format!("stale-evicting-{suffix}");
+        let workload_key = format!("test-drained-{suffix}");
+        let stale_sandbox = format!("stale-drained-{suffix}");
 
         store
             .insert_ready_warm_sandbox(&stale_sandbox, &workload_key)
             .await
-            .expect("insert stale evicting warm sandbox row");
+            .expect("insert stale drained warm sandbox row");
         sqlx::query(
             r#"
             update session_warm_sandboxes
-            set status = 'evicting', updated_at = now() - interval '10 minutes'
+            set status = 'drained', updated_at = now() - interval '10 minutes'
             where sandbox_id = $1
             "#,
         )
         .bind(&stale_sandbox)
         .execute(store.pool())
         .await
-        .expect("make warm sandbox eviction stale");
+        .expect("make warm sandbox drain stale");
 
         let backend = Arc::new(TestBackend::new(format!("fresh-{suffix}")));
         backend.set_status(&stale_sandbox, SandboxStatus::Running);
@@ -525,6 +528,18 @@ mod tests {
                 .expect("list referenced sandboxes")
                 .contains(&stale_sandbox)
         );
+    }
+
+    async fn ensure_session(store: &PgSessionStore, thread_key: &str) {
+        store
+            .create_or_get_session(
+                &ThreadKey::parse(thread_key.to_owned()).expect("valid thread key"),
+                &HarnessType::Codex,
+                None,
+                empty_object(),
+            )
+            .await
+            .expect("create warm-pool test session");
     }
 
     async fn test_store() -> Option<PgSessionStore> {

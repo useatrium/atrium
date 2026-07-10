@@ -13,6 +13,7 @@ import {
   collectSideEffects,
   initialSessionState,
   isTerminalExecutionStatus,
+  isUserStoppedExecutionState,
   reduceSession,
   type Artifact,
   type CentaurEventFrame,
@@ -1787,7 +1788,9 @@ export class SessionRuns {
       return;
     }
     if (frame.event !== 'execution_state') return;
-    const status = normalizeStatus(frame.data.status);
+    const status = isUserStoppedExecutionState(frame.data)
+      ? 'completed'
+      : normalizeStatus(frame.data.status);
     if (isTerminalExecutionStatus(frame.data.status)) {
       const resultText = typeof frame.data.result_text === 'string' ? frame.data.result_text : null;
       const terminalAuthFailureEventId = providerAuthFailureTextForFrame(frame)

@@ -261,6 +261,15 @@ struct CodexBlocksTurn<'a, W: Write> {
     blocks_state: &'a mut BlocksState,
 }
 
+struct CodexActiveTurn<'a> {
+    thread_id: &'a str,
+    turn_id: &'a str,
+    input_rx: &'a Receiver<io::Result<String>>,
+    blocks_state: &'a mut BlocksState,
+    request_id: &'a mut i64,
+    traceparent: Option<&'a str>,
+}
+
 struct CodexTurnInput {
     input: Vec<UserInput>,
     client_user_message_id: Option<String>,
@@ -345,12 +354,14 @@ fn run_codex_user_turn<W: Write>(
             .to_string();
         match ctx.codex.read_until_turn_terminal(
             ctx.stdout,
-            ctx.thread_id.as_deref().unwrap_or_default(),
-            &turn_id,
-            ctx.input_rx,
-            ctx.blocks_state,
-            ctx.request_id,
-            turn.traceparent.as_deref(),
+            CodexActiveTurn {
+                thread_id: ctx.thread_id.as_deref().unwrap_or_default(),
+                turn_id: &turn_id,
+                input_rx: ctx.input_rx,
+                blocks_state: ctx.blocks_state,
+                request_id: ctx.request_id,
+                traceparent: turn.traceparent.as_deref(),
+            },
         )? {
             TurnTermination::Done => return Ok(()),
             TurnTermination::RetriableEngineError { withheld } => {
@@ -545,30 +556,17 @@ impl CodexJsonRpcChild {
     fn read_until_turn_terminal<W: Write>(
         &mut self,
         stdout: &mut W,
-        thread_id: &str,
-        turn_id: &str,
-        input_rx: &Receiver<io::Result<String>>,
-        blocks_state: &mut BlocksState,
-        request_id: &mut i64,
-        traceparent: Option<&str>,
+        mut turn: CodexActiveTurn<'_>,
     ) -> Result<TurnTermination> {
         let mut guard = TurnGuard::default();
         loop {
-            self.drain_active_turn_input(
-                stdout,
-                thread_id,
-                turn_id,
-                input_rx,
-                blocks_state,
-                request_id,
-                traceparent,
-            )?;
+            self.drain_active_turn_input(stdout, &mut turn)?;
 
             let Some(value) = self.read_value_timeout(ACTIVE_TURN_POLL_INTERVAL)? else {
                 continue;
             };
             if is_server_request(&value) {
-                handle_server_request(self, stdout, blocks_state, turn_id, &value)?;
+                handle_server_request(self, stdout, turn.blocks_state, turn.turn_id, &value)?;
                 continue;
             }
             if response_id(&value).is_some() {
@@ -580,10 +578,10 @@ impl CodexJsonRpcChild {
             if notification_method(&value).is_none() {
                 continue;
             }
-            if maybe_handle_server_request_resolved(stdout, blocks_state, &value)? {
+            if maybe_handle_server_request_resolved(stdout, turn.blocks_state, &value)? {
                 continue;
             }
-            let terminal = is_terminal_notification(&value, thread_id, turn_id);
+            let terminal = is_terminal_notification(&value, turn.thread_id, turn.turn_id);
             match guard.observe(value, terminal) {
                 GuardStep::Retry(withheld) => {
                     return Ok(TurnTermination::RetriableEngineError { withheld });
@@ -597,7 +595,7 @@ impl CodexJsonRpcChild {
                     for value in &values {
                         write_value(stdout, value)?;
                     }
-                    emit_questions_resolved(stdout, blocks_state, "empty")?;
+                    emit_questions_resolved(stdout, turn.blocks_state, "empty")?;
                     return Ok(TurnTermination::Done);
                 }
             }
@@ -607,20 +605,15 @@ impl CodexJsonRpcChild {
     fn drain_active_turn_input<W: Write>(
         &mut self,
         stdout: &mut W,
-        thread_id: &str,
-        turn_id: &str,
-        input_rx: &Receiver<io::Result<String>>,
-        blocks_state: &mut BlocksState,
-        request_id: &mut i64,
-        traceparent: Option<&str>,
+        turn: &mut CodexActiveTurn<'_>,
     ) -> Result<()> {
-        while let Ok(raw) = input_rx.try_recv() {
+        while let Ok(raw) = turn.input_rx.try_recv() {
             let line = raw?;
             let trimmed = line.trim();
             if trimmed.is_empty() {
                 continue;
             }
-            match parse_blocks_line_with_state(trimmed, blocks_state) {
+            match parse_blocks_line_with_state(trimmed, turn.blocks_state) {
                 Ok(BlocksCommand::User {
                     input,
                     client_user_message_id: _,
@@ -635,38 +628,44 @@ impl CodexJsonRpcChild {
                         );
                     }
                     self.send_request(
-                        next_request_id(request_id),
+                        next_request_id(turn.request_id),
                         "turn/steer",
                         json!({
-                            "threadId": thread_id,
-                            "expectedTurnId": turn_id,
+                            "threadId": turn.thread_id,
+                            "expectedTurnId": turn.turn_id,
                             "input": input,
                         }),
-                        traceparent,
+                        turn.traceparent,
                     )?;
                 }
                 Ok(BlocksCommand::QuestionAnswer {
                     question_id,
                     answers,
                 }) => {
-                    answer_pending_question(self, stdout, blocks_state, &question_id, answers)?;
+                    answer_pending_question(
+                        self,
+                        stdout,
+                        turn.blocks_state,
+                        &question_id,
+                        answers,
+                    )?;
                 }
                 Ok(BlocksCommand::Interrupt) => {
                     self.send_request(
-                        next_request_id(request_id),
+                        next_request_id(turn.request_id),
                         "turn/interrupt",
                         json!({
-                            "threadId": thread_id,
-                            "turnId": turn_id,
+                            "threadId": turn.thread_id,
+                            "turnId": turn.turn_id,
                         }),
-                        traceparent,
+                        turn.traceparent,
                     )?;
-                    emit_questions_resolved(stdout, blocks_state, "cancelled")?;
+                    emit_questions_resolved(stdout, turn.blocks_state, "cancelled")?;
                 }
                 Ok(BlocksCommand::AttachmentChunk) => {}
                 Err(error) => {
                     eprintln!("invalid Codex blocks input during active turn: {error:#}");
-                    write_blocks_error(stdout, thread_id, turn_id, error.to_string())?;
+                    write_blocks_error(stdout, turn.thread_id, turn.turn_id, error.to_string())?;
                 }
             }
         }

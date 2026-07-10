@@ -232,6 +232,53 @@ describe('mobile session stream glue', () => {
     expect((state.items[0] as TextItem).text).toBe('hello world');
   });
 
+  it('folds stopped-by-user from a cancelled terminal through the shared reducer', async () => {
+    const frames: CentaurEventFrame[] = [
+      {
+        event: 'execution_state',
+        event_id: 1,
+        data: {
+          type: 'execution.state',
+          status: 'running',
+          thread_key: 't',
+          execution_id: 'e',
+        },
+      },
+      {
+        event: 'execution_state',
+        event_id: 2,
+        data: {
+          type: 'execution.state',
+          status: 'cancelled',
+          thread_key: 't',
+          execution_id: 'e',
+          reason: 'turn_interrupted',
+        },
+      },
+    ];
+    const fetchImpl: typeof fetch = async () =>
+      new Response(streamFromChunks(frames.map(sse)), {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' },
+      });
+
+    const state = await streamSessionOnce(
+      {
+        baseUrl: 'http://server.test',
+        token: 'tok',
+        sessionId: 's-1',
+        afterEventId: 0,
+        signal: new AbortController().signal,
+        fetchImpl,
+      },
+      initialSessionState(),
+    );
+
+    expect(state.status).toBe('cancelled');
+    expect(state.stoppedByUser).toBe(true);
+    expect(state.lastEventId).toBe(2);
+  });
+
   it('lifts the atrium_ts stamp so folded items carry ts', async () => {
     const stamp = '2026-07-02T10:15:00.000Z';
     const body =

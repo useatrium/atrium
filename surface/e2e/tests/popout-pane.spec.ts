@@ -183,3 +183,62 @@ test('popout renders the lean pane, folds the stream, tracks unseen output, and 
     )
     .toBe(true);
 });
+
+test('popout stop turn forwards an interrupt without cancelling the session', async ({
+  page,
+  request,
+}) => {
+  const room = await createTestChannel('popout-stop');
+  const handle = unique('popout-stop');
+  await login(page, handle, 'Popout Stop Tester');
+  const roomId = await channelId(page.context().request, room);
+  const { sessionId, threadKey } = await injectSession({
+    handle,
+    channelId: roomId,
+    title: unique('popout-stop-session'),
+  });
+
+  await request.delete(`${centaurStubUrl}/__requests`);
+  const stamp = new Date().toISOString();
+  await page.route('**/api/sessions/*/stream*', async (route) => {
+    await route.fulfill({
+      status: 200,
+      headers: { 'content-type': 'text/event-stream; charset=utf-8' },
+      body: sseFrame('execution_state', 1, {
+        type: 'execution.state',
+        status: 'running',
+        thread_key: threadKey,
+        execution_id: 'exe_e2e_popout_stop',
+        atrium_ts: stamp,
+      }),
+    });
+  });
+
+  await page.goto(`/s/${sessionId}/pane`);
+  await expect(page.getByTestId('session-pane-page')).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByPlaceholder(/Steer the agent/)).toBeVisible({ timeout: 15_000 });
+
+  const stopAccepted = page.waitForResponse(
+    (response) =>
+      response.request().method() === 'POST' &&
+      response.url().includes(`/api/sessions/${sessionId}/stop-turn`),
+  );
+  await page.getByRole('button', { name: 'Stop turn' }).first().click();
+  expect((await stopAccepted).status()).toBe(202);
+
+  await expect
+    .poll(
+      async () => {
+        const requests = await centaurRequests(request);
+        return requests.some(
+          (entry) =>
+            entry.method === 'POST' &&
+            entry.path === `/api/session/${encodeURIComponent(threadKey)}/interrupt`,
+        );
+      },
+      { timeout: 10_000 },
+    )
+    .toBe(true);
+
+  await expect(page.getByPlaceholder(/Steer the agent/)).toBeVisible();
+});

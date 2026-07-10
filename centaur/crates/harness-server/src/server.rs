@@ -127,15 +127,17 @@ pub(crate) fn run_blocks_app_server<H: HarnessServer>(harness: &H) -> Result<()>
                 if let Err(error) = run_blocks_turn(
                     harness,
                     &mut state,
-                    input,
-                    client_user_message_id,
-                    &trace_context,
-                    &mut stdout,
-                    &request_rx,
-                    Some(ActiveBlocksInput {
-                        input_rx: &input_rx,
-                        blocks_state: &mut blocks_state,
-                    }),
+                    BlocksTurnRequest {
+                        input,
+                        client_user_message_id,
+                        trace_context: &trace_context,
+                        stdout: &mut stdout,
+                        request_rx: &request_rx,
+                        active_blocks: Some(ActiveBlocksInput {
+                            input_rx: &input_rx,
+                            blocks_state: &mut blocks_state,
+                        }),
+                    },
                 ) {
                     eprintln!("blocks turn failed: {error:#}");
                     write_blocks_error(&mut stdout, &state.id, "turn", error.to_string())?;
@@ -227,15 +229,19 @@ fn initial_blocks_thread_state<H: HarnessServer>(harness: &H) -> Result<ThreadSt
     Ok(state)
 }
 
+struct BlocksTurnRequest<'a, W: Write> {
+    input: Vec<UserInput>,
+    client_user_message_id: Option<String>,
+    trace_context: &'a TraceContext,
+    stdout: &'a mut W,
+    request_rx: &'a Receiver<JSONRPCRequest>,
+    active_blocks: Option<ActiveBlocksInput<'a>>,
+}
+
 fn run_blocks_turn<H: HarnessServer, W: Write>(
     harness: &H,
     state: &mut ThreadState,
-    input: Vec<UserInput>,
-    client_user_message_id: Option<String>,
-    trace_context: &TraceContext,
-    stdout: &mut W,
-    request_rx: &Receiver<JSONRPCRequest>,
-    active_blocks: Option<ActiveBlocksInput<'_>>,
+    request: BlocksTurnRequest<'_, W>,
 ) -> Result<()> {
     let turn_id = format!("turn-{}", Uuid::new_v4().simple());
     let mut normalizer = normalizer_for(harness, state, &turn_id);
@@ -243,13 +249,13 @@ fn run_blocks_turn<H: HarnessServer, W: Write>(
         harness,
         state,
         TurnRunContext {
-            input: &input,
-            client_user_message_id,
-            trace_context: Some(trace_context),
+            input: &request.input,
+            client_user_message_id: request.client_user_message_id,
+            trace_context: Some(request.trace_context),
             normalizer: &mut normalizer,
-            stdout,
-            request_rx,
-            active_blocks,
+            stdout: request.stdout,
+            request_rx: request.request_rx,
+            active_blocks: request.active_blocks,
         },
     )
 }
@@ -1090,7 +1096,7 @@ fn handle_active_turn_request<H: HarnessServer, W: Write>(
     normalizer: &mut CodexTurnNormalizer,
     request: JSONRPCRequest,
     stdout: &mut W,
-) -> Result<()> {
+) -> Result<bool> {
     match request.method.as_str() {
         "turn/steer" => {
             let params: TurnSteerParams = request_params(request.params)?;
@@ -1101,7 +1107,7 @@ fn handle_active_turn_request<H: HarnessServer, W: Write>(
                     -32600,
                     format!("unknown threadId {}", params.thread_id),
                 )?;
-                return Ok(());
+                return Ok(false);
             }
             if params.expected_turn_id != normalizer.turn_id() {
                 write_error(
@@ -1114,7 +1120,7 @@ fn handle_active_turn_request<H: HarnessServer, W: Write>(
                         normalizer.turn_id()
                     ),
                 )?;
-                return Ok(());
+                return Ok(false);
             }
             process
                 .stdin
@@ -1134,9 +1140,33 @@ fn handle_active_turn_request<H: HarnessServer, W: Write>(
             {
                 write_value(stdout, &notification_to_wire_value(&notification)?)?;
             }
-            Ok(())
+            Ok(false)
         }
         "turn/interrupt" => {
+            let params: TurnInterruptParams = request_params(request.params)?;
+            if params.thread_id != normalizer.thread_id() {
+                write_error(
+                    stdout,
+                    request.id,
+                    -32600,
+                    format!("unknown threadId {}", params.thread_id),
+                )?;
+                return Ok(false);
+            }
+            if params.turn_id != normalizer.turn_id() {
+                write_error(
+                    stdout,
+                    request.id,
+                    -32600,
+                    format!(
+                        "expected active turn id `{}` but found `{}`",
+                        params.turn_id,
+                        normalizer.turn_id()
+                    ),
+                )?;
+                return Ok(false);
+            }
+            process.kill_and_wait()?;
             write_client_response(
                 stdout,
                 ClientResponse::TurnInterrupt {
@@ -1144,7 +1174,7 @@ fn handle_active_turn_request<H: HarnessServer, W: Write>(
                     response: TurnInterruptResponse {},
                 },
             )?;
-            Ok(())
+            Ok(true)
         }
         _ => {
             write_error(
@@ -1153,7 +1183,7 @@ fn handle_active_turn_request<H: HarnessServer, W: Write>(
                 -32600,
                 format!("cannot handle {} while a turn is active", request.method),
             )?;
-            Ok(())
+            Ok(false)
         }
     }
 }
@@ -1182,7 +1212,25 @@ fn run_normalized_turn<H: HarnessServer, W: Write>(
     match run_harness_turn(harness, state, &mut ctx) {
         Ok(Some(turn)) => state.completed_turns.push(turn),
         Ok(None) => {}
+        Err(HarnessServerError::TurnInterrupted { .. }) => {
+            state.process = None;
+            finish_turn_interrupted(state, ctx.normalizer, ctx.stdout)?;
+        }
         Err(error) => finish_turn_with_error(state, ctx.normalizer, ctx.stdout, error)?,
+    }
+    Ok(())
+}
+
+fn finish_turn_interrupted<W: Write>(
+    state: &mut ThreadState,
+    normalizer: &mut CodexTurnNormalizer,
+    stdout: &mut W,
+) -> Result<()> {
+    if let Some(notification) = normalizer.finish_turn_interrupted()? {
+        if let ServerNotification::TurnCompleted(completed) = &notification {
+            state.completed_turns.push(completed.turn.clone());
+        }
+        write_value(stdout, &notification_to_wire_value(&notification)?)?;
     }
     Ok(())
 }
@@ -1221,86 +1269,158 @@ fn run_harness_turn<H: HarnessServer, W: Write>(
     let usage_span_input = usage_span_input_value(ctx.input);
     let mut usage_span_output = UsageSpanOutput::default();
     ensure_harness_process(harness, state)?;
-    let process = state
-        .process
-        .as_mut()
-        .ok_or(HarnessServerError::HarnessStdinUnavailable)?;
-    process
-        .stdin
-        .write_all(&harness.stdin_for_turn(ctx.input)?)?;
-    process.stdin.flush()?;
+    {
+        let process = state
+            .process
+            .as_mut()
+            .ok_or(HarnessServerError::HarnessStdinUnavailable)?;
+        // Buffered stdout predates this turn's input. A previous turn that
+        // completed via the assistant-stop fallback can leave the CLI's late
+        // native result behind; draining it here keeps it from terminating the
+        // next turn instantly.
+        while process.stdout.try_recv().is_ok() {}
+        process
+            .stdin
+            .write_all(&harness.stdin_for_turn(ctx.input)?)?;
+        process.stdin.flush()?;
+    }
 
+    let settle_window = harness.terminal_assistant_stop_settle();
+    let mut settle_deadline: Option<Instant> = None;
     let mut last_session_id = state.harness_session_id.clone();
     let mut event_normalizer = H::EventNormalizer::default();
     let mut completed_turn = None;
     let mut latest_usage = None;
     loop {
         while let Ok(request) = ctx.request_rx.try_recv() {
-            handle_active_turn_request(harness, process, ctx.normalizer, request, ctx.stdout)?;
-        }
-        if let Some(active_blocks) = ctx.active_blocks.as_mut() {
-            drain_active_blocks_input(
-                harness,
-                process,
-                ctx.normalizer,
-                ctx.stdout,
-                &state.id,
-                active_blocks,
-            )?;
-        }
-
-        let line = match process.stdout.recv_timeout(Duration::from_millis(50)) {
-            Ok(line) => line?,
-            Err(RecvTimeoutError::Timeout) => continue,
-            Err(RecvTimeoutError::Disconnected) => {
-                let status = process.child.wait()?;
-                return Err(HarnessServerError::HarnessExited {
+            let interrupted = {
+                let process = state
+                    .process
+                    .as_mut()
+                    .ok_or(HarnessServerError::HarnessStdinUnavailable)?;
+                handle_active_turn_request(harness, process, ctx.normalizer, request, ctx.stdout)?
+            };
+            if interrupted {
+                state.process = None;
+                return Err(HarnessServerError::TurnInterrupted {
                     kind: harness.kind(),
-                    status,
-                    stderr: String::new(),
                 });
             }
-        };
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
+            // Steering gives the active turn new input and therefore a new
+            // response window; any pending assistant-stop fallback no longer
+            // applies until the next terminal stop appears.
+            settle_deadline = None;
         }
-        if let Some(active_blocks) = ctx.active_blocks.as_mut()
-            && handle_harness_control_output(trimmed, ctx.stdout, active_blocks.blocks_state)?
-        {
-            continue;
+        if let Some(active_blocks) = ctx.active_blocks.as_mut() {
+            let drained_input = {
+                let process = state
+                    .process
+                    .as_mut()
+                    .ok_or(HarnessServerError::HarnessStdinUnavailable)?;
+                drain_active_blocks_input(
+                    harness,
+                    process,
+                    ctx.normalizer,
+                    ctx.stdout,
+                    &state.id,
+                    active_blocks,
+                )?
+            };
+            if drained_input {
+                settle_deadline = None;
+            }
         }
-        let event = harness.parse_stdout_line(trimmed)?;
-        let normalized_events = harness.normalize_events(&mut event_normalizer, event)?;
+
         let mut terminal = false;
-        for normalized in normalized_events {
-            if let Some(usage) = normalized.token_usage() {
-                latest_usage = Some(usage.clone());
+        match state
+            .process
+            .as_mut()
+            .ok_or(HarnessServerError::HarnessStdoutUnavailable)?
+            .stdout
+            .recv_timeout(Duration::from_millis(50))
+        {
+            Ok(line) => {
+                let line = line?;
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                if let Some(active_blocks) = ctx.active_blocks.as_mut()
+                    && handle_harness_control_output(
+                        trimmed,
+                        ctx.stdout,
+                        active_blocks.blocks_state,
+                    )?
+                {
+                    continue;
+                }
+                let event = harness.parse_stdout_line(trimmed)?;
+                let normalized_events = harness.normalize_events(&mut event_normalizer, event)?;
+                let mut terminal_stop = false;
+                for normalized in normalized_events {
+                    if let Some(usage) = normalized.token_usage() {
+                        latest_usage = Some(usage.clone());
+                    }
+                    append_usage_span_output(&normalized, &mut usage_span_output);
+                    if let Some(session_id) = normalized.session_id() {
+                        last_session_id = Some(session_id.to_string());
+                        state.harness_session_id = Some(session_id.to_string());
+                    }
+                    for notification in ctx.normalizer.process_event(&normalized)? {
+                        write_value(ctx.stdout, &notification_to_wire_value(&notification)?)?;
+                    }
+                    terminal |= normalized.is_terminal();
+                    terminal_stop |=
+                        settle_window.is_some() && normalized.is_terminal_assistant_stop();
+                }
+                if !terminal {
+                    match settle_window {
+                        Some(window) if terminal_stop && window.is_zero() => terminal = true,
+                        Some(window) if terminal_stop || settle_deadline.is_some() => {
+                            settle_deadline = Some(Instant::now() + window);
+                        }
+                        _ => {}
+                    }
+                }
             }
-            append_usage_span_output(&normalized, &mut usage_span_output);
-            if let Some(session_id) = normalized.session_id() {
-                last_session_id = Some(session_id.to_string());
-                state.harness_session_id = Some(session_id.to_string());
+            Err(RecvTimeoutError::Timeout) => match settle_deadline {
+                Some(deadline) if Instant::now() >= deadline => terminal = true,
+                _ => continue,
+            },
+            Err(RecvTimeoutError::Disconnected) => {
+                let status = state
+                    .process
+                    .as_mut()
+                    .ok_or(HarnessServerError::HarnessStdoutUnavailable)?
+                    .child
+                    .wait()?;
+                // A clean exit while waiting out the settle window means the
+                // native result is not coming; the terminal stop already seen
+                // is enough to complete the turn.
+                if settle_deadline.is_some() && status.success() {
+                    state.process = None;
+                    terminal = true;
+                } else {
+                    return Err(HarnessServerError::HarnessExited {
+                        kind: harness.kind(),
+                        status,
+                        stderr: String::new(),
+                    });
+                }
             }
-            for notification in ctx.normalizer.process_event(&normalized)? {
-                write_value(ctx.stdout, &notification_to_wire_value(&notification)?)?;
-            }
-            terminal |= normalized.is_terminal()
-                || (harness.terminal_assistant_stop_settle().is_some()
-                    && normalized.is_terminal_assistant_stop());
         }
         if terminal {
-            export_harness_usage_if_available(
-                ctx.trace_context,
-                harness.kind(),
-                &usage_span_model,
-                &usage_span_model_provider,
-                &usage_span_turn_id,
-                usage_span_input.as_deref(),
-                usage_span_output.value().as_deref(),
-                usage_span_start,
-                latest_usage.as_ref(),
-            );
+            export_harness_usage_if_available(HarnessUsageExport {
+                trace_context: ctx.trace_context,
+                harness: harness.kind(),
+                model: &usage_span_model,
+                model_provider: &usage_span_model_provider,
+                turn_id: &usage_span_turn_id,
+                input: usage_span_input.as_deref(),
+                output: usage_span_output.value().as_deref(),
+                start_unix_nano: usage_span_start,
+                usage: latest_usage.as_ref(),
+            });
             if let Some(notification) = ctx.normalizer.finish_turn(None)? {
                 if let ServerNotification::TurnCompleted(completed) = &notification {
                     completed_turn = Some(completed.turn.clone());
@@ -1330,7 +1450,8 @@ fn drain_active_blocks_input<H: HarnessServer, W: Write>(
     stdout: &mut W,
     thread_id: &str,
     active_blocks: &mut ActiveBlocksInput<'_>,
-) -> Result<()> {
+) -> Result<bool> {
+    let mut sent_to_child = false;
     while let Ok(raw) = active_blocks.input_rx.try_recv() {
         let line = raw?;
         let trimmed = line.trim();
@@ -1357,6 +1478,7 @@ fn drain_active_blocks_input<H: HarnessServer, W: Write>(
                 }
                 process.stdin.write_all(&harness.stdin_for_steer(&input)?)?;
                 process.stdin.flush()?;
+                sent_to_child = true;
                 for notification in normalizer.emit_user_message(client_user_message_id, input)? {
                     write_value(stdout, &notification_to_wire_value(&notification)?)?;
                 }
@@ -1381,10 +1503,12 @@ fn drain_active_blocks_input<H: HarnessServer, W: Write>(
                         "answers": if answers.is_object() { answers } else { json!({}) },
                     }),
                 )?;
+                sent_to_child = true;
                 write_question_resolved(stdout, &question_id, "answered")?;
             }
             Ok(BlocksCommand::Interrupt) => {
                 write_child_value(process, &json!({"type": "interrupt"}))?;
+                sent_to_child = true;
                 emit_questions_resolved(stdout, active_blocks.blocks_state, "cancelled")?;
             }
             Ok(BlocksCommand::AttachmentChunk) => {}
@@ -1394,7 +1518,7 @@ fn drain_active_blocks_input<H: HarnessServer, W: Write>(
             }
         }
     }
-    Ok(())
+    Ok(sent_to_child)
 }
 
 fn handle_harness_control_output<W: Write>(
@@ -1480,28 +1604,30 @@ fn write_question_resolved<W: Write>(
     )
 }
 
-fn export_harness_usage_if_available(
-    trace_context: Option<&TraceContext>,
+struct HarnessUsageExport<'a> {
+    trace_context: Option<&'a TraceContext>,
     harness: HarnessKind,
-    model: &str,
-    model_provider: &str,
-    turn_id: &str,
-    input: Option<&str>,
-    output: Option<&str>,
+    model: &'a str,
+    model_provider: &'a str,
+    turn_id: &'a str,
+    input: Option<&'a str>,
+    output: Option<&'a str>,
     start_unix_nano: u64,
-    usage: Option<&NormalizedTokenUsage>,
-) {
-    let (Some(trace_context), Some(usage)) = (trace_context, usage) else {
+    usage: Option<&'a NormalizedTokenUsage>,
+}
+
+fn export_harness_usage_if_available(export: HarnessUsageExport<'_>) {
+    let (Some(trace_context), Some(usage)) = (export.trace_context, export.usage) else {
         return;
     };
     let span = HarnessUsageSpan {
-        harness,
-        model,
-        model_provider,
-        turn_id,
-        input,
-        output,
-        start_unix_nano,
+        harness: export.harness,
+        model: export.model,
+        model_provider: export.model_provider,
+        turn_id: export.turn_id,
+        input: export.input,
+        output: export.output,
+        start_unix_nano: export.start_unix_nano,
         end_unix_nano: otel::unix_time_nanos(),
     };
     if let Err(error) = otel::export_harness_usage_span(trace_context, span, usage) {

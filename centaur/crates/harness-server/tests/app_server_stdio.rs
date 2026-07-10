@@ -83,6 +83,13 @@ impl Harness {
     }
 }
 
+struct RejectedInterruptRequestIds {
+    turn_start: i64,
+    wrong_thread_interrupt: i64,
+    wrong_turn_interrupt: i64,
+    valid_interrupt: i64,
+}
+
 #[test]
 fn fake_claude_app_server_streams_codex_v2_notifications() {
     let fake_claude = concat!(
@@ -104,6 +111,44 @@ fn fake_claude_app_server_streams_codex_v2_notifications() {
     assert_completed_turn(&run.turn);
     assert_eq!(run.turn.text_from_deltas, "hello");
     assert_codex_v2_turn(&run.turn);
+}
+
+#[test]
+fn fake_claude_trailing_result_settles_the_turn_and_does_not_poison_the_next() {
+    // The native `result` trails the message_delta stop reason in real CLI
+    // output. The stop must not complete the turn so eagerly that the result
+    // is left buffered, where the next turn would read it as its own instant
+    // terminal and complete with no content.
+    let fake_claude = concat!(
+        "printf '%s\\n' '{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"claude-session\"}'; ",
+        "IFS= read -r _; ",
+        "printf '%s\\n' ",
+        "'{\"type\":\"stream_event\",\"event\":{\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"stop_reason\":null,\"content\":[]}}}' ",
+        "'{\"type\":\"stream_event\",\"event\":{\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}}' ",
+        "'{\"type\":\"stream_event\",\"event\":{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"first answer\"}}}' ",
+        "'{\"type\":\"assistant\",\"message\":{\"id\":\"msg_1\",\"stop_reason\":null,\"content\":[{\"type\":\"text\",\"text\":\"first answer\"}]}}' ",
+        "'{\"type\":\"stream_event\",\"event\":{\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"}}}' ",
+        "'{\"type\":\"stream_event\",\"event\":{\"type\":\"message_stop\"}}' ",
+        "'{\"type\":\"result\",\"subtype\":\"success\",\"result\":\"first answer\"}'; ",
+        "IFS= read -r _; ",
+        "printf '%s\\n' ",
+        "'{\"type\":\"assistant\",\"is_partial\":false,\"message\":{\"id\":\"msg_2\",\"content\":[{\"type\":\"text\",\"text\":\"second answer\"}]}}' ",
+        "'{\"type\":\"result\",\"subtype\":\"success\",\"result\":\"second answer\"}'; ",
+        "sleep 60"
+    );
+
+    let run = run_bridge_two_turns(BridgeTwoTurnConfig {
+        harness: Harness::ClaudeCode,
+        command_override: Some(fake_claude.to_string()),
+        first_prompt: "first".to_string(),
+        second_prompt: "second".to_string(),
+        timeout: Duration::from_secs(10),
+    });
+
+    assert_completed_turn(&run.turns[0]);
+    assert_eq!(run.turns[0].text_from_deltas, "first answer");
+    assert_completed_turn(&run.turns[1]);
+    assert_eq!(run.turns[1].text_from_deltas, "second answer");
 }
 
 #[test]
@@ -1042,6 +1087,90 @@ fn fake_harness_process_is_started_once_across_two_turns() {
 }
 
 #[test]
+fn turn_interrupt_kills_harness_process_and_finishes_turn() {
+    let start_log = temp_path("harness-interrupt-starts.log");
+    let marker = temp_path("harness-interrupt-marker");
+    let command = format!(
+        "printf 'start\\n' >> {start_log}; \
+         printf '%s\\n' '{{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"fake-session\"}}'; \
+         while IFS= read -r _; do \
+           if [ -f {marker} ]; then \
+             printf '%s\\n' '{{\"type\":\"assistant\",\"is_partial\":false,\"message\":{{\"id\":\"msg_1\",\"content\":[{{\"type\":\"text\",\"text\":\"fresh turn\"}}]}}}}'; \
+             printf '%s\\n' '{{\"type\":\"result\",\"subtype\":\"success\",\"result\":\"fresh turn\"}}'; \
+           else \
+             sleep 60; \
+           fi; \
+         done",
+        start_log = shell_quote(start_log.as_path()),
+        marker = shell_quote(marker.as_path())
+    );
+    let mut bridge = BridgeProcess::spawn_harness(Harness::ClaudeCode, Some(command), None);
+    let thread_id =
+        bridge.initialize_and_start_thread(Harness::ClaudeCode, Duration::from_secs(10));
+
+    let interrupted = bridge.run_interrupted_turn(
+        &thread_id,
+        3,
+        4,
+        "hang until stopped",
+        Duration::from_secs(10),
+    );
+    assert_eq!(interrupted.terminal_status.as_deref(), Some("interrupted"));
+
+    std::fs::write(&marker, b"fresh turn ready").expect("write fresh-turn marker");
+    let fresh = bridge.run_turn(
+        &thread_id,
+        5,
+        "run after interrupt",
+        None,
+        Duration::from_secs(10),
+    );
+    assert_completed_turn(&fresh);
+    assert_eq!(fresh.text_from_deltas, "fresh turn");
+    let _ = bridge.child.kill();
+    let _ = bridge.child.wait();
+    let _ = std::fs::remove_file(start_log);
+    let _ = std::fs::remove_file(marker);
+}
+
+#[test]
+fn turn_interrupt_rejects_wrong_thread_and_turn_without_killing_process() {
+    let start_log = temp_path("harness-rejected-interrupt-starts.log");
+    let command = format!(
+        "printf 'start\\n' >> {start_log}; \
+         printf '%s\\n' '{{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"fake-session\"}}'; \
+         while IFS= read -r _; do sleep 60; done",
+        start_log = shell_quote(start_log.as_path()),
+    );
+    let mut bridge = BridgeProcess::spawn_harness(Harness::ClaudeCode, Some(command), None);
+    let thread_id =
+        bridge.initialize_and_start_thread(Harness::ClaudeCode, Duration::from_secs(10));
+
+    let interrupted = bridge.run_turn_with_rejected_interrupts(
+        &thread_id,
+        RejectedInterruptRequestIds {
+            turn_start: 3,
+            wrong_thread_interrupt: 4,
+            wrong_turn_interrupt: 5,
+            valid_interrupt: 6,
+        },
+        "hang until stopped",
+        Duration::from_secs(10),
+    );
+    assert_eq!(interrupted.terminal_status.as_deref(), Some("interrupted"));
+
+    let starts = std::fs::read_to_string(&start_log).expect("read start log");
+    assert_eq!(
+        starts.lines().count(),
+        1,
+        "rejected interrupts must not kill and restart the harness before the valid interrupt"
+    );
+    let _ = bridge.child.kill();
+    let _ = bridge.child.wait();
+    let _ = std::fs::remove_file(start_log);
+}
+
+#[test]
 #[ignore = "runs real Claude Code and Codex/Amp-style networked binaries"]
 fn real_claude_code_long_streaming_is_anchored_to_native_cli() {
     require_command("claude", &["--version"]);
@@ -1558,6 +1687,195 @@ impl BridgeProcess {
         capture
     }
 
+    fn run_interrupted_turn(
+        &mut self,
+        thread_id: &str,
+        request_id: i64,
+        interrupt_request_id: i64,
+        prompt: &str,
+        timeout: Duration,
+    ) -> TurnCapture {
+        self.send(json!({
+            "id": request_id,
+            "method": "turn/start",
+            "params": {
+                "threadId": thread_id,
+                "input": [{"type": "text", "text": prompt, "text_elements": []}],
+            },
+        }));
+
+        let deadline = Instant::now() + timeout;
+        let mut capture = TurnCapture::default();
+        let mut interrupt_sent = false;
+        let mut interrupt_acknowledged = false;
+
+        loop {
+            let value = self.read_json(deadline);
+            if let Some(id) = response_id(&value) {
+                if id == request_id {
+                    capture.turn_id = value
+                        .pointer("/result/turn/id")
+                        .and_then(Value::as_str)
+                        .unwrap_or_else(|| panic!("turn/start did not return turn id: {value}"))
+                        .to_string();
+                } else if id == interrupt_request_id {
+                    interrupt_acknowledged = true;
+                }
+                continue;
+            }
+
+            if let Some(method) = value.get("method").and_then(Value::as_str) {
+                assert_notification_thread_id(&value, thread_id);
+                capture.consume_notification(method, &value);
+                if method == "turn/started"
+                    && capture.turn_id.is_empty()
+                    && let Some(turn_id) = value.pointer("/params/turn/id").and_then(Value::as_str)
+                {
+                    capture.turn_id = turn_id.to_string();
+                }
+                if method == "turn/started" && !interrupt_sent {
+                    self.send(json!({
+                        "id": interrupt_request_id,
+                        "method": "turn/interrupt",
+                        "params": {
+                            "threadId": thread_id,
+                            "turnId": capture.turn_id,
+                        },
+                    }));
+                    interrupt_sent = true;
+                }
+                if method == "turn/completed" {
+                    assert!(
+                        interrupt_acknowledged,
+                        "turn completed before interrupt response"
+                    );
+                    break;
+                }
+            }
+        }
+
+        capture
+    }
+
+    fn run_turn_with_rejected_interrupts(
+        &mut self,
+        thread_id: &str,
+        request_ids: RejectedInterruptRequestIds,
+        prompt: &str,
+        timeout: Duration,
+    ) -> TurnCapture {
+        self.send(json!({
+            "id": request_ids.turn_start,
+            "method": "turn/start",
+            "params": {
+                "threadId": thread_id,
+                "input": [{"type": "text", "text": prompt, "text_elements": []}],
+            },
+        }));
+
+        let deadline = Instant::now() + timeout;
+        let mut capture = TurnCapture::default();
+        let mut wrong_thread_interrupt_sent = false;
+        let mut wrong_thread_interrupt_rejected = false;
+        let mut wrong_turn_interrupt_sent = false;
+        let mut wrong_turn_interrupt_rejected = false;
+        let mut valid_interrupt_sent = false;
+        let mut valid_interrupt_acknowledged = false;
+
+        loop {
+            let value = self.read_json_allowing_error(deadline);
+            if let Some(id) = response_id(&value) {
+                if id == request_ids.turn_start {
+                    capture.turn_id = value
+                        .pointer("/result/turn/id")
+                        .and_then(Value::as_str)
+                        .unwrap_or_else(|| panic!("turn/start did not return turn id: {value}"))
+                        .to_string();
+                } else if id == request_ids.wrong_thread_interrupt {
+                    assert!(
+                        value.get("error").is_some(),
+                        "wrong-thread interrupt should be rejected: {value}"
+                    );
+                    wrong_thread_interrupt_rejected = true;
+                    self.send(json!({
+                        "id": request_ids.wrong_turn_interrupt,
+                        "method": "turn/interrupt",
+                        "params": {
+                            "threadId": thread_id,
+                            "turnId": "wrong-turn",
+                        },
+                    }));
+                    wrong_turn_interrupt_sent = true;
+                } else if id == request_ids.wrong_turn_interrupt {
+                    assert!(
+                        value.get("error").is_some(),
+                        "wrong-turn interrupt should be rejected: {value}"
+                    );
+                    wrong_turn_interrupt_rejected = true;
+                    self.send(json!({
+                        "id": request_ids.valid_interrupt,
+                        "method": "turn/interrupt",
+                        "params": {
+                            "threadId": thread_id,
+                            "turnId": capture.turn_id,
+                        },
+                    }));
+                    valid_interrupt_sent = true;
+                } else if id == request_ids.valid_interrupt {
+                    assert!(
+                        value.get("error").is_none(),
+                        "valid interrupt should be acknowledged: {value}"
+                    );
+                    valid_interrupt_acknowledged = true;
+                }
+                continue;
+            }
+
+            if let Some(method) = value.get("method").and_then(Value::as_str) {
+                assert_notification_thread_id(&value, thread_id);
+                capture.consume_notification(method, &value);
+                if method == "turn/started"
+                    && capture.turn_id.is_empty()
+                    && let Some(turn_id) = value.pointer("/params/turn/id").and_then(Value::as_str)
+                {
+                    capture.turn_id = turn_id.to_string();
+                }
+                if method == "turn/started"
+                    && !wrong_thread_interrupt_sent
+                    && !capture.turn_id.is_empty()
+                {
+                    self.send(json!({
+                        "id": request_ids.wrong_thread_interrupt,
+                        "method": "turn/interrupt",
+                        "params": {
+                            "threadId": "wrong-thread",
+                            "turnId": capture.turn_id,
+                        },
+                    }));
+                    wrong_thread_interrupt_sent = true;
+                }
+                if method == "turn/completed" {
+                    assert!(
+                        wrong_thread_interrupt_rejected,
+                        "turn completed before wrong-thread interrupt rejection"
+                    );
+                    assert!(
+                        wrong_turn_interrupt_sent && wrong_turn_interrupt_rejected,
+                        "turn completed before wrong-turn interrupt rejection"
+                    );
+                    assert!(valid_interrupt_sent, "valid interrupt was never sent");
+                    assert!(
+                        valid_interrupt_acknowledged,
+                        "turn completed before valid interrupt response"
+                    );
+                    break;
+                }
+            }
+        }
+
+        capture
+    }
+
     fn run_blocks_user_turn(&mut self, prompt: &str, timeout: Duration) -> TurnCapture {
         self.run_blocks_user_turn_with_model(prompt, None, timeout)
     }
@@ -1675,6 +1993,10 @@ impl BridgeProcess {
 
     fn read_json(&mut self, deadline: Instant) -> Value {
         self.read_value(deadline, true)
+    }
+
+    fn read_json_allowing_error(&mut self, deadline: Instant) -> Value {
+        self.read_value(deadline, false)
     }
 
     fn read_any_json(&mut self, deadline: Instant) -> Value {

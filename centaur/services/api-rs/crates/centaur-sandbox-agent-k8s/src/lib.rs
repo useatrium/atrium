@@ -2166,8 +2166,7 @@ mod tests {
             .env
             .as_ref()
             .and_then(|env| env.iter().find(|env| env.name == "TOOL_DIRS"))
-            .map(|env| env.value.as_deref())
-            .flatten();
+            .and_then(|env| env.value.as_deref());
         assert_eq!(tool_dirs, Some("/opt/centaur/tools"));
         assert!(
             pod_spec

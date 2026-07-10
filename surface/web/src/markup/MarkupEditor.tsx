@@ -24,6 +24,8 @@ export interface MarkupEditorHandle {
   hasMarkup(): boolean;
 }
 
+type MarkupEditorDom = HTMLElement & { __atriumMarkupEditorView?: EditorView };
+
 export const MarkupEditor = forwardRef<MarkupEditorHandle, MarkupEditorProps>(function MarkupEditor(
   { initialMarkdown, commentAuthor = null, onDirtyChange, className },
   ref,
@@ -91,9 +93,15 @@ export const MarkupEditor = forwardRef<MarkupEditorHandle, MarkupEditorProps>(fu
     });
 
     viewRef.current = view;
+    if (import.meta.env.DEV) {
+      (view.dom as MarkupEditorDom).__atriumMarkupEditorView = view;
+    }
     updateDirty(view);
 
     return () => {
+      if (import.meta.env.DEV) {
+        delete (view.dom as MarkupEditorDom).__atriumMarkupEditorView;
+      }
       view.destroy();
       viewRef.current = null;
     };

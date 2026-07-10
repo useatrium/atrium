@@ -924,7 +924,10 @@ export default function SessionScreen() {
   const streamStatus = stream.status !== 'idle' ? normalizeExecutionStatus(stream.status) : null;
   const displayStatus = (streamStatus ?? session?.status ?? 'spawning') as SessionStatus;
   const terminal = isTerminalSessionStatus(displayStatus);
-  const isEnded = displayStatus === 'failed' || displayStatus === 'cancelled';
+  // Folded from the durable terminal event (reducer `stoppedByUser`) — same for
+  // every viewer, survives replay/reload, clears when a new turn starts.
+  const stoppedByUser = stream.stoppedByUser === true;
+  const isEnded = displayStatus === 'failed' || (displayStatus === 'cancelled' && !stoppedByUser);
   const now = useNow(!terminal);
   const stalled = session ? !terminal && isStalledSessionStatus(session, now) : false;
   const costUsd = Math.max(session?.costUsd ?? 0, stream.costUsd);
@@ -1209,16 +1212,13 @@ export default function SessionScreen() {
   const cancelErrorMessage =
     displayCancelAsk === 'failed'
       ? canStopTurn
-        ? 'Cancel turn failed. Tap retry.'
+        ? 'Stop turn failed. Tap retry.'
         : 'Cancel failed. Tap retry cancel.'
       : null;
   useModalAccessibilityFocus(effortTitleRef, effortOpen && canPickEffort);
   useAccessibilityAnnouncement(sessionLinkCopied ? 'Copied session link.' : null);
   useAccessibilityAnnouncement(cancelErrorMessage);
   useAccessibilityAnnouncement(visibleSteerError ? `Message did not send: ${visibleSteerError}` : null);
-  // Folded from the durable terminal event (reducer `stoppedByUser`) — same for
-  // every viewer, survives replay/reload, clears when a new turn starts.
-  const stoppedByUser = stream.stoppedByUser === true;
   const elapsedMsForHeader = session
     ? terminal
       ? sessionElapsedMs(session, now)
@@ -1695,8 +1695,8 @@ export default function SessionScreen() {
                   accessibilityLabel={
                     canStopTurn
                       ? displayCancelAsk === 'failed'
-                        ? 'Retry cancel turn'
-                        : 'Cancel current turn'
+                        ? 'Retry stop turn'
+                        : 'Stop current turn'
                       : displayCancelAsk === 'confirm'
                         ? 'Confirm cancel session'
                         : 'Cancel session'
@@ -1721,7 +1721,7 @@ export default function SessionScreen() {
                     {canStopTurn
                       ? displayCancelAsk === 'failed'
                         ? 'RETRY TURN'
-                        : 'CANCEL TURN'
+                        : 'STOP TURN'
                       : displayCancelAsk === 'confirm'
                         ? 'CONFIRM'
                         : displayCancelAsk === 'failed'
@@ -1906,7 +1906,7 @@ export default function SessionScreen() {
             effort={modelEffort}
             cancelLabel={
               canStopTurn
-                ? 'Cancel turn'
+                ? 'Stop'
                 : displayCancelAsk === 'confirm'
                   ? 'Confirm cancel'
                   : 'Cancel'
