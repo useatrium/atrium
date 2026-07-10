@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type Ref } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -65,6 +65,7 @@ import { MobileWorkSheet, type WorkSurfaceTab } from '../../../src/components/wo
 import { WorkStrips, type WorkStripItem } from '../../../src/components/work/WorkStrips';
 import { TurnsSheet } from '../../../src/components/work/TurnsSheet';
 import { TurnCard } from '../../../src/components/work/TurnCard';
+import { TranscriptActiveEntryFrame } from '../../../src/components/work/TranscriptEntryActions';
 import { SteerRow, type SteerRowProvenance } from '../../../src/components/work/SteerRow';
 import { deriveTurns } from '../../../src/components/work/turns';
 import { SeatRequestBanner, SeatFooter } from '../../../src/components/work/SeatControls';
@@ -78,6 +79,7 @@ import { SessionMarkdown } from '../../../src/components/Markdown';
 import { PlanPanel } from '../../../src/components/PlanPanel';
 import { ReasoningBlock } from '../../../src/components/ReasoningBlock';
 import { TurnStatusLine } from '../../../src/components/TurnStatusLine';
+import { MessageActionSheet, type MessageActionListItem } from '../../../src/components/MessageActions';
 import {
   createEntryReferenceQuery,
   type EntryReference,
@@ -86,7 +88,7 @@ import {
 } from '../../../src/lib/entryReferences';
 import { useRequiredSession, useSession } from '../../../src/lib/session';
 import { extractEntryLinkHandles, isEntryHandle } from '../../../src/lib/entryLinks';
-import { selectionHaptic } from '../../../src/lib/haptics';
+import { lightImpactHaptic, selectionHaptic } from '../../../src/lib/haptics';
 import {
   loadMarkupDraftFromEntry,
   putPendingMarkupDraft,
@@ -95,6 +97,10 @@ import {
 function transcriptEntryHandle(item: SessionItem): string | null {
   const handle = item.handle;
   return typeof handle === 'string' && isEntryHandle(handle) ? handle : null;
+}
+
+function canDiscussTranscriptHandle(handle: string | null): handle is string {
+  return typeof handle === 'string' && handle.startsWith('rec_');
 }
 
 function entryUrl(serverUrl: string, handle: string): string {
@@ -185,154 +191,12 @@ function TranscriptRowFrame({
 }
 
 type TranscriptActionTarget = {
+  id: string;
   handle: string | null;
-  text: string;
+  copyText: string | null;
   link: string | null;
+  canDiscuss: boolean;
 };
-
-function TranscriptActionsSheet({
-  target,
-  onClose,
-  onDiscuss,
-  onMarkupSteer,
-}: {
-  target: TranscriptActionTarget | null;
-  onClose: () => void;
-  onDiscuss: (handle: string) => void;
-  onMarkupSteer: (handle: string) => void;
-}) {
-  const { colors, reduceMotion } = useTheme();
-  const [copied, setCopied] = useState<'text' | 'link' | null>(null);
-  const firstActionRef = useRef<View>(null);
-  const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useModalAccessibilityFocus(firstActionRef, target != null);
-  useAccessibilityAnnouncement(
-    copied === 'text' ? 'Transcript text copied.' : copied === 'link' ? 'Transcript link copied.' : null,
-  );
-
-  useEffect(() => {
-    setCopied(null);
-    if (closeTimer.current) {
-      clearTimeout(closeTimer.current);
-      closeTimer.current = null;
-    }
-  }, [target]);
-
-  useEffect(() => {
-    return () => {
-      if (closeTimer.current) clearTimeout(closeTimer.current);
-    };
-  }, []);
-
-  const copy = (kind: 'text' | 'link', value: string) => {
-    selectionHaptic();
-    void Clipboard.setStringAsync(value)
-      .then(() => {
-        setCopied(kind);
-        if (closeTimer.current) clearTimeout(closeTimer.current);
-        closeTimer.current = setTimeout(() => {
-          closeTimer.current = null;
-          setCopied(null);
-          onClose();
-        }, 700);
-      })
-      .catch(() => onClose());
-  };
-
-  const Action = ({
-    label,
-    hint,
-    focusRef,
-    onPress,
-  }: {
-    label: string;
-    hint?: string;
-    focusRef?: Ref<View>;
-    onPress: () => void;
-  }) => (
-    <Pressable
-      ref={focusRef}
-      accessibilityRole="button"
-      accessibilityLabel={label}
-      accessibilityHint={hint}
-      onPress={onPress}
-      style={({ pressed }) => ({
-        minHeight: 44,
-        justifyContent: 'center',
-        paddingVertical: 13,
-        paddingHorizontal: space.lg,
-        backgroundColor: pressed ? colors.bgPressed : 'transparent',
-      })}
-    >
-      <Text style={{ color: colors.text, fontSize: font.md, fontWeight: '500' }}>{label}</Text>
-    </Pressable>
-  );
-
-  return (
-    <Modal visible={target != null} transparent animationType={reduceMotion ? 'none' : 'fade'} onRequestClose={onClose}>
-      <Pressable
-        accessible={false}
-        importantForAccessibility="no"
-        style={{ flex: 1, backgroundColor: colors.scrim, justifyContent: 'flex-end' }}
-        onPress={onClose}
-      >
-        <Pressable
-          accessible={false}
-          accessibilityViewIsModal
-          onPress={() => {}}
-          style={{
-            backgroundColor: colors.bgElevated,
-            borderTopLeftRadius: radius.lg,
-            borderTopRightRadius: radius.lg,
-            paddingBottom: 24,
-            paddingTop: space.md,
-          }}
-        >
-          <View style={{ height: 1, backgroundColor: colors.border }} />
-          {target ? (
-            <>
-              <Action
-                label={copied === 'text' ? 'Copied' : 'Copy text'}
-                hint="Copies the transcript text to the clipboard"
-                focusRef={firstActionRef}
-                onPress={() => copy('text', target.text)}
-              />
-              {target.link ? (
-                <Action
-                  label={copied === 'link' ? 'Copied link' : 'Copy link'}
-                  hint="Copies a link to this transcript entry to the clipboard"
-                  onPress={() => copy('link', target.link ?? '')}
-                />
-              ) : null}
-              {target.handle ? (
-                <Action
-                  label="Discuss in thread"
-                  hint="Opens a thread anchored to this transcript entry"
-                  onPress={() => {
-                    onClose();
-                    onDiscuss(target.handle ?? '');
-                  }}
-                />
-              ) : null}
-              {target.handle ? (
-                <Action
-                  label="Mark up & send to agent"
-                  hint="Opens markup for this transcript entry"
-                  onPress={() => {
-                    onClose();
-                    onMarkupSteer(target.handle ?? '');
-                  }}
-                />
-              ) : null}
-            </>
-          ) : null}
-          <Action label="Cancel" hint="Closes the action menu" onPress={onClose} />
-        </Pressable>
-      </Pressable>
-    </Modal>
-  );
-}
 
 function useNow(active: boolean): number {
   const [now, setNow] = useState(() => Date.now());
@@ -382,7 +246,7 @@ function StatusChip({ status, stalled }: { status: SessionStatus; stalled: boole
   );
 }
 
-function ToolCard({ item }: { item: ToolCallItem }) {
+function ToolCard({ item, onLongPress }: { item: ToolCallItem; onLongPress?: () => void }) {
   const { colors } = useTheme();
   const [open, setOpen] = useState(false);
   const descriptor = toolDisplay(item);
@@ -403,7 +267,10 @@ function ToolCard({ item }: { item: ToolCallItem }) {
     >
       <Pressable
         onPress={() => setOpen((value) => !value)}
+        onLongPress={onLongPress}
+        delayLongPress={250}
         accessibilityRole="button"
+        accessibilityLabel={onLongPress ? `Message actions: ${descriptor.title}` : descriptor.title}
         accessibilityState={{ expanded: open }}
         style={({ pressed }) => ({
           flexDirection: 'row',
@@ -502,13 +369,13 @@ function ToolCard({ item }: { item: ToolCallItem }) {
   );
 }
 
-function TranscriptTool({ item }: { item: ToolCallItem }) {
+function TranscriptTool({ item, onLongPress }: { item: ToolCallItem; onLongPress?: () => void }) {
   const fileChange = fileChangeFromToolCall(item);
   if (fileChange) {
     const status = item.result === undefined ? 'running' : item.result.is_error ? 'error' : 'done';
-    return <InlineFileChange change={fileChange} status={status} />;
+    return <InlineFileChange change={fileChange} status={status} onLongPress={onLongPress} />;
   }
-  return <ToolCard item={item} />;
+  return <ToolCard item={item} onLongPress={onLongPress} />;
 }
 
 function TextBlock({ item }: { item: TextItem }) {
@@ -566,17 +433,28 @@ function answerValueText(summary: SessionQuestionAnswerSummary): string {
 function MobileQuestionTranscriptCard({
   item,
   events,
+  onLongPress,
 }: {
   item: QuestionItem;
   events: SessionQuestionEvent[];
+  onLongPress?: () => void;
 }) {
   const { colors } = useTheme();
   const requested = latestQuestionEvent(events, 'requested');
   const prompts = item.questions.length > 0 ? item.questions : requested?.questions ?? [];
   const answerSummaries = answerByPromptId(events);
   const status = questionStatusLabel(item, events);
+  const Root = onLongPress ? Pressable : View;
   return (
-    <View
+    <Root
+      {...(onLongPress
+        ? {
+            accessibilityRole: 'button' as const,
+            accessibilityLabel: 'Message actions: Agent question',
+            onLongPress,
+            delayLongPress: 250,
+          }
+        : {})}
       style={{
         borderWidth: 1,
         borderColor: colors.warningBorder,
@@ -659,7 +537,7 @@ function MobileQuestionTranscriptCard({
       ) : (
         <Text style={{ color: colors.text, fontSize: font.sm }}>Agent asked a question.</Text>
       )}
-    </View>
+    </Root>
   );
 }
 
@@ -877,10 +755,13 @@ export default function SessionScreen() {
   const [references, setReferences] = useState<EntryReferenceMap>({});
   const [referenceFocusSeq, setReferenceFocusSeq] = useState(0);
   const [transcriptActionTarget, setTranscriptActionTarget] = useState<TranscriptActionTarget | null>(null);
+  const [activeTranscriptEntryId, setActiveTranscriptEntryId] = useState<string | null>(null);
+  const [transcriptCopied, setTranscriptCopied] = useState<'text' | 'link' | null>(null);
   const [sessionLinkCopied, setSessionLinkCopied] = useState(false);
   const referenceCache = useRef<Record<string, EntryReferenceMap>>({});
   const referenceFetchKeys = useRef<Set<string>>(new Set());
   const sessionLinkResetRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const transcriptCopyCloseRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const focusedForReferences = useRef(false);
   const scrollRef = useRef<ScrollView>(null);
   const effortTitleRef = useRef<Text>(null);
@@ -1217,6 +1098,13 @@ export default function SessionScreen() {
       : null;
   useModalAccessibilityFocus(effortTitleRef, effortOpen && canPickEffort);
   useAccessibilityAnnouncement(sessionLinkCopied ? 'Copied session link.' : null);
+  useAccessibilityAnnouncement(
+    transcriptCopied === 'text'
+      ? 'Transcript text copied.'
+      : transcriptCopied === 'link'
+        ? 'Transcript link copied.'
+        : null,
+  );
   useAccessibilityAnnouncement(cancelErrorMessage);
   useAccessibilityAnnouncement(visibleSteerError ? `Message did not send: ${visibleSteerError}` : null);
   const elapsedMsForHeader = session
@@ -1330,7 +1218,22 @@ export default function SessionScreen() {
     if (stickRef.current) scrollRef.current?.scrollToEnd({ animated: !reduceMotion });
   }, [pendingSteers.length, reduceMotion, stream.lastEventId, resultText]);
 
+  useEffect(() => {
+    setTranscriptCopied(null);
+    if (transcriptCopyCloseRef.current) {
+      clearTimeout(transcriptCopyCloseRef.current);
+      transcriptCopyCloseRef.current = null;
+    }
+  }, [transcriptActionTarget]);
+
+  useEffect(() => {
+    return () => {
+      if (transcriptCopyCloseRef.current) clearTimeout(transcriptCopyCloseRef.current);
+    };
+  }, []);
+
   const onScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    setActiveTranscriptEntryId(null);
     const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
     stickRef.current =
       contentSize.height - contentOffset.y - layoutMeasurement.height < 96;
@@ -1569,19 +1472,106 @@ export default function SessionScreen() {
     [chat.api, chat.fileHeaders, chat.serverUrl, id],
   );
 
+  const transcriptCopyTextForItem = useCallback((item: SessionItem): string | null => {
+    if (item.type === 'text' || item.type === 'reasoning' || item.type === 'user_message') {
+      const text = item.text.trim();
+      return text ? text : null;
+    }
+    return null;
+  }, []);
+
   const openTranscriptActions = useCallback(
-    (handle: string | null, text: string) => {
-      const copyText = text.trim();
-      if (!copyText) return;
-      const canLinkEntry = handle != null && sessionThreadRootEventId != null;
+    (item: SessionItem) => {
+      const handle = transcriptEntryHandle(item);
+      if (!handle) return;
+      setActiveTranscriptEntryId(null);
+      const canLinkEntry = sessionThreadRootEventId != null;
       setTranscriptActionTarget({
+        id: item.id,
         handle,
-        text: copyText,
+        copyText: transcriptCopyTextForItem(item),
         link: canLinkEntry ? entryLink(chat.serverUrl, handle) : null,
+        canDiscuss: canDiscussTranscriptHandle(handle),
       });
     },
-    [chat.serverUrl, sessionThreadRootEventId],
+    [chat.serverUrl, sessionThreadRootEventId, transcriptCopyTextForItem],
   );
+
+  const closeTranscriptActions = useCallback(() => {
+    setTranscriptActionTarget(null);
+  }, []);
+
+  const closeTranscriptActionsAfterCopy = useCallback(() => {
+    if (transcriptCopyCloseRef.current) clearTimeout(transcriptCopyCloseRef.current);
+    transcriptCopyCloseRef.current = setTimeout(() => {
+      transcriptCopyCloseRef.current = null;
+      setTranscriptCopied(null);
+      closeTranscriptActions();
+    }, 700);
+  }, [closeTranscriptActions]);
+
+  const copyTranscriptAction = useCallback(
+    (kind: 'text' | 'link', value: string) => {
+      selectionHaptic();
+      void Clipboard.setStringAsync(value)
+        .then(() => {
+          setTranscriptCopied(kind);
+          closeTranscriptActionsAfterCopy();
+        })
+        .catch(() => closeTranscriptActions());
+    },
+    [closeTranscriptActions, closeTranscriptActionsAfterCopy],
+  );
+
+  const transcriptActions = useMemo<MessageActionListItem[]>(() => {
+    const target = transcriptActionTarget;
+    if (!target) return [];
+    const actions: MessageActionListItem[] = [];
+    if (target.copyText) {
+      actions.push({
+        key: 'copy-text',
+        label: transcriptCopied === 'text' ? 'Copied' : 'Copy text',
+        hint: 'Copies the transcript text to the clipboard',
+        onSelect: () => copyTranscriptAction('text', target.copyText ?? ''),
+      });
+    }
+    if (target.link) {
+      actions.push({
+        key: 'copy-link',
+        label: transcriptCopied === 'link' ? 'Copied link' : 'Copy link',
+        hint: 'Copies a link to this transcript entry to the clipboard',
+        onSelect: () => copyTranscriptAction('link', target.link ?? ''),
+      });
+    }
+    if (target.canDiscuss && target.handle) {
+      actions.push({
+        key: 'discuss',
+        label: 'Discuss in thread',
+        hint: 'Opens a thread anchored to this transcript entry',
+        onSelect: () => {
+          closeTranscriptActions();
+          discussInThread(target.handle ?? '');
+        },
+      });
+      actions.push({
+        key: 'markup',
+        label: 'Mark up & send to agent',
+        hint: 'Opens markup for this transcript entry',
+        onSelect: () => {
+          closeTranscriptActions();
+          void openMarkupSteer(target.handle ?? '');
+        },
+      });
+    }
+    return actions;
+  }, [
+    closeTranscriptActions,
+    copyTranscriptAction,
+    discussInThread,
+    openMarkupSteer,
+    transcriptActionTarget,
+    transcriptCopied,
+  ]);
 
   // Answer proposals (driver-side resolution).
   const submitProposal = (proposalId: string) => {
@@ -1777,6 +1767,7 @@ export default function SessionScreen() {
         <ScrollView
           ref={scrollRef}
           onScroll={onScroll}
+          onTouchStart={() => setActiveTranscriptEntryId(null)}
           scrollEventThrottle={80}
           keyboardShouldPersistTaps="handled"
           contentContainerStyle={{ padding: space.md, gap: space.md }}
@@ -1822,6 +1813,22 @@ export default function SessionScreen() {
           {stream.items.map((item, index) => {
             const handle = transcriptEntryHandle(item);
             const reference = handle ? (references[handle] ?? null) : null;
+            const hasActions = handle != null;
+            const revealActions = item.type === 'text' || item.type === 'reasoning' || item.type === 'user_message';
+            const showReveal = revealActions && hasActions && activeTranscriptEntryId === item.id;
+            const openActionsWithHaptic = () => {
+              if (!hasActions) return;
+              lightImpactHaptic();
+              openTranscriptActions(item);
+            };
+            const revealOrMoveActions = () => {
+              if (!hasActions || !revealActions) return;
+              setActiveTranscriptEntryId(item.id);
+            };
+            const openActionsFromButton = () => {
+              if (!hasActions) return;
+              openTranscriptActions(item);
+            };
             return (
               <Fragment key={item.id}>
                 {codexChangesAt(index).map((anchored) => (
@@ -1836,38 +1843,66 @@ export default function SessionScreen() {
                     reference={reference}
                     onOpenReference={() => openReferenceSummary(reference)}
                   >
-                    {item.type === 'text' ? (
-                      <Pressable
-                        accessibilityRole="button"
-                        accessibilityLabel={
-                          item.text.trim() ? `Message actions: ${item.text}` : 'Message actions'
-                        }
-                        onLongPress={() => openTranscriptActions(handle, item.text)}
-                        delayLongPress={300}
-                        disabled={!item.text.trim()}
-                      >
-                        <TextBlock item={item} />
-                      </Pressable>
-                    ) : item.type === 'user_message' ? (
-                      <SteerRow
-                        text={item.text}
-                        ts={item.ts}
-                        provenance={steerProvenanceForMessage(item.id)}
-                        serverUrl={chat.serverUrl}
-                        resolveEntry={chat.resolveEntry}
-                        onOpenChannel={openEntryChannel}
-                        onOpenSession={openEntrySession}
-                      />
-                    ) : item.type === 'question' ? (
-                      <MobileQuestionTranscriptCard
-                        item={item}
-                        events={questionEventsByQuestion.get(item.questionId) ?? []}
-                      />
-                    ) : item.type === 'reasoning' ? (
-                      <ReasoningBlock item={item} />
-                    ) : item.type === 'tool_call' ? (
-                      <TranscriptTool item={item} />
-                    ) : null}
+                    <TranscriptActiveEntryFrame active={showReveal} onActions={openActionsFromButton}>
+                      {item.type === 'text' ? (
+                        hasActions ? (
+                          <Pressable
+                            testID={`transcript-entry-${item.type}`}
+                            accessibilityRole="button"
+                            accessibilityLabel={
+                              item.text.trim() ? `Message actions: ${item.text}` : 'Message actions'
+                            }
+                            onPress={revealOrMoveActions}
+                            onLongPress={openActionsWithHaptic}
+                            delayLongPress={250}
+                          >
+                            <TextBlock item={item} />
+                          </Pressable>
+                        ) : (
+                          <TextBlock item={item} />
+                        )
+                      ) : item.type === 'user_message' ? (
+                        <SteerRow
+                          text={item.text}
+                          ts={item.ts}
+                          provenance={steerProvenanceForMessage(item.id)}
+                          serverUrl={chat.serverUrl}
+                          resolveEntry={chat.resolveEntry}
+                          onOpenChannel={openEntryChannel}
+                          onOpenSession={openEntrySession}
+                          onPress={hasActions ? revealOrMoveActions : undefined}
+                          onLongPress={hasActions ? openActionsWithHaptic : undefined}
+                          delayLongPress={250}
+                        />
+                      ) : item.type === 'question' ? (
+                        <MobileQuestionTranscriptCard
+                          item={item}
+                          events={questionEventsByQuestion.get(item.questionId) ?? []}
+                          onLongPress={hasActions ? openActionsWithHaptic : undefined}
+                        />
+                      ) : item.type === 'reasoning' ? (
+                        hasActions ? (
+                          <Pressable
+                            testID={`transcript-entry-${item.type}`}
+                            accessibilityRole="button"
+                            accessibilityLabel={
+                              item.text.trim() ? `Message actions: ${item.text}` : 'Message actions'
+                            }
+                            onPress={revealOrMoveActions}
+                            onLongPress={openActionsWithHaptic}
+                            delayLongPress={250}
+                          >
+                            {/* Header long-press forwards too: the block's own
+                            expand Pressable wins the gesture over this wrapper. */}
+                            <ReasoningBlock item={item} onLongPress={openActionsWithHaptic} />
+                          </Pressable>
+                        ) : (
+                          <ReasoningBlock item={item} />
+                        )
+                      ) : item.type === 'tool_call' ? (
+                        <TranscriptTool item={item} onLongPress={hasActions ? openActionsWithHaptic : undefined} />
+                      ) : null}
+                    </TranscriptActiveEntryFrame>
                   </TranscriptRowFrame>
                 </View>
               </Fragment>
@@ -2263,11 +2298,10 @@ export default function SessionScreen() {
         onClose={() => setTurnsOpen(false)}
       />
 
-      <TranscriptActionsSheet
-        target={transcriptActionTarget}
-        onClose={() => setTranscriptActionTarget(null)}
-        onDiscuss={discussInThread}
-        onMarkupSteer={(handle) => void openMarkupSteer(handle)}
+      <MessageActionSheet
+        visible={transcriptActionTarget != null}
+        actions={transcriptActions}
+        onClose={closeTranscriptActions}
       />
     </View>
   );

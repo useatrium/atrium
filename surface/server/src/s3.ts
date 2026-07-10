@@ -16,15 +16,22 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import type { Readable } from 'node:stream';
 import { config } from './config.js';
 
-const client = new S3Client({
-  endpoint: config.s3Endpoint,
-  region: 'us-east-1',
-  forcePathStyle: true, // MinIO uses path-style addressing
-  credentials: {
-    accessKeyId: config.s3AccessKey,
-    secretAccessKey: config.s3SecretKey,
-  },
-});
+// Internal client handles server byte I/O; public client signs URLs handed to clients.
+// Keep construction identical except endpoint so presigned URL behavior stays unchanged.
+function makeS3Client(endpoint: string): S3Client {
+  return new S3Client({
+    endpoint,
+    region: 'us-east-1',
+    forcePathStyle: true, // MinIO uses path-style addressing
+    credentials: {
+      accessKeyId: config.s3AccessKey,
+      secretAccessKey: config.s3SecretKey,
+    },
+  });
+}
+
+export const internalClient = makeS3Client(config.s3InternalEndpoint);
+const publicClient = makeS3Client(config.s3Endpoint);
 
 let bucketReady = false;
 
@@ -62,10 +69,10 @@ export function isNoSuchBucketError(err: unknown): boolean {
 export async function ensureBucket(): Promise<void> {
   if (bucketReady) return;
   try {
-    await client.send(new HeadBucketCommand({ Bucket: config.s3Bucket }));
+    await internalClient.send(new HeadBucketCommand({ Bucket: config.s3Bucket }));
   } catch (err) {
     if (!isNoSuchBucketError(err)) throw err;
-    await client.send(new CreateBucketCommand({ Bucket: config.s3Bucket }));
+    await internalClient.send(new CreateBucketCommand({ Bucket: config.s3Bucket }));
   }
   bucketReady = true;
   storageReadyState = true;
@@ -117,7 +124,7 @@ export function startStorageBootstrap(
 
 export function presignPut(key: string, contentType: string): Promise<string> {
   return getSignedUrl(
-    client,
+    publicClient,
     new PutObjectCommand({ Bucket: config.s3Bucket, Key: key, ContentType: contentType }),
     { expiresIn: 600 },
   );
@@ -126,7 +133,7 @@ export function presignPut(key: string, contentType: string): Promise<string> {
 export function presignGet(key: string, filename: string, inline: boolean): Promise<string> {
   const disposition = `${inline ? 'inline' : 'attachment'}; filename="${filename.replace(/"/g, '')}"`;
   return getSignedUrl(
-    client,
+    publicClient,
     new GetObjectCommand({
       Bucket: config.s3Bucket,
       Key: key,
@@ -137,7 +144,7 @@ export function presignGet(key: string, filename: string, inline: boolean): Prom
 }
 
 export async function deleteObject(key: string): Promise<void> {
-  await client.send(new DeleteObjectCommand({ Bucket: config.s3Bucket, Key: key }));
+  await internalClient.send(new DeleteObjectCommand({ Bucket: config.s3Bucket, Key: key }));
 }
 
 /** Upload object bytes. The body is a Buffer/Uint8Array so the SDK can set
@@ -150,7 +157,7 @@ export async function uploadObject(
   contentType: string,
 ): Promise<void> {
   await ensureBucket();
-  await client.send(
+  await internalClient.send(
     new PutObjectCommand({
       Bucket: config.s3Bucket,
       Key: key,
@@ -167,7 +174,7 @@ export async function uploadObjectStream(
 ): Promise<void> {
   await ensureBucket();
   await new Upload({
-    client,
+    client: internalClient,
     params: {
       Bucket: config.s3Bucket,
       Key: key,
@@ -178,7 +185,7 @@ export async function uploadObjectStream(
 }
 
 export async function copyObject(srcKey: string, destKey: string): Promise<void> {
-  await client.send(
+  await internalClient.send(
     new CopyObjectCommand({
       Bucket: config.s3Bucket,
       Key: destKey,
@@ -195,7 +202,7 @@ function encodeCopySourceKey(key: string): string {
 export async function downloadObject(key: string, destinationPath: string): Promise<void> {
   const { createWriteStream } = await import('node:fs');
   const { pipeline } = await import('node:stream/promises');
-  const res = await client.send(new GetObjectCommand({ Bucket: config.s3Bucket, Key: key }));
+  const res = await internalClient.send(new GetObjectCommand({ Bucket: config.s3Bucket, Key: key }));
   if (!res.Body) throw new Error(`S3 object has no body: ${key}`);
   await pipeline(res.Body as NodeJS.ReadableStream, createWriteStream(destinationPath));
 }
@@ -206,7 +213,7 @@ export async function downloadObject(key: string, destinationPath: string): Prom
  * the blob's s3_key (which is the ledger's "this version is servable" signal). */
 export async function headObject(key: string): Promise<{ contentLength: number } | null> {
   try {
-    const res = await client.send(new HeadObjectCommand({ Bucket: config.s3Bucket, Key: key }));
+    const res = await internalClient.send(new HeadObjectCommand({ Bucket: config.s3Bucket, Key: key }));
     return { contentLength: Number(res.ContentLength ?? 0) };
   } catch (err) {
     const code = (err as { name?: string; $metadata?: { httpStatusCode?: number } });
@@ -216,7 +223,7 @@ export async function headObject(key: string): Promise<{ contentLength: number }
 }
 
 export async function getObjectBytes(key: string): Promise<Buffer> {
-  const res = await client.send(new GetObjectCommand({ Bucket: config.s3Bucket, Key: key }));
+  const res = await internalClient.send(new GetObjectCommand({ Bucket: config.s3Bucket, Key: key }));
   if (!res.Body) throw new Error(`S3 object has no body: ${key}`);
   const chunks: Buffer[] = [];
   for await (const chunk of res.Body as AsyncIterable<Buffer | Uint8Array | string>) {
@@ -234,7 +241,7 @@ export async function getObjectStream(
   contentRange: string | null;
   contentType: string | null;
 }> {
-  const res = await client.send(new GetObjectCommand({ Bucket: config.s3Bucket, Key: key, Range: range }));
+  const res = await internalClient.send(new GetObjectCommand({ Bucket: config.s3Bucket, Key: key, Range: range }));
   if (!res.Body) throw new Error(`S3 object has no body: ${key}`);
   return {
     stream: res.Body as NodeJS.ReadableStream,

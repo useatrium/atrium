@@ -4,7 +4,7 @@ import type { PreviewFile, MediaPreviewVariant } from '../types';
 export function AudioRenderer({ file, variant }: { file: PreviewFile; variant: MediaPreviewVariant }) {
   if (variant === 'tile') {
     return (
-      <div className="flex h-full min-h-32 flex-col items-center justify-center gap-2 bg-surface-raised/50 p-3">
+      <div className="flex h-full min-h-0 flex-col items-center justify-center gap-2 bg-surface-raised/50 p-3">
         <FileIcon size={26} className="text-fg-muted" />
         <div className="max-w-full truncate text-xs font-semibold text-fg">{file.name}</div>
         <div className="text-3xs uppercase tracking-wide text-fg-muted">Audio</div>

@@ -120,8 +120,13 @@ function canonicalSharedPath(path: string, ctx: WorkspaceArtifactPathContext): s
   const id = parts[2];
   if (!id) throw new InvalidArtifactPathError(`shared/${root} path must include an id`);
   if (parts.length < 4) throw new InvalidArtifactPathError(`shared/${root}/${id} path must include a file path`);
-  if (id !== ctx.channelId && !ctx.readableChannelIds?.includes(id)) {
-    throw new InvalidArtifactPathError('shared/channels paths must target the active channel');
+  // Shape guard only: any channel id is addressable here (writes follow
+  // reads — an agent may deliver files to other readable channels).
+  // AUTHORIZATION lives in the scope checks (writableRoots/readableRoots) at
+  // the route layer, which 403 unauthorized channels; rejecting here would
+  // surface them as 400 bad-path instead and mask the real verdict.
+  if (id !== ctx.channelId && !ctx.readableChannelIds?.includes(id) && !isUuidLike(id)) {
+    throw new InvalidArtifactPathError(`shared/${root} path must use a channel id`);
   }
   return path;
 }

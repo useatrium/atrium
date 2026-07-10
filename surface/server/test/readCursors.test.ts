@@ -157,4 +157,50 @@ describe('read cursors', () => {
     expect(channel.lastReadEventId).toBe(one.id);
     expect(channel.latestEventId).toBe(two.id);
   });
+
+  it('computes latestEventId from main-timeline-visible events only', async () => {
+    const { cookie } = await login('alice', 'Alice');
+    const root = await postMessage(pool, {
+      workspaceId: fx.workspaceId,
+      channelId: fx.channelId,
+      actorId: fx.userId,
+      text: 'root',
+    });
+    await postMessage(pool, {
+      workspaceId: fx.workspaceId,
+      channelId: fx.channelId,
+      actorId: fx.userId,
+      text: 'thread only',
+      threadRootEventId: root.id,
+    });
+
+    const afterThreadOnly = await app.inject({
+      method: 'GET',
+      url: '/api/channels',
+      headers: { cookie },
+    });
+    expect(afterThreadOnly.statusCode).toBe(200);
+    const channelAfterThreadOnly = afterThreadOnly
+      .json()
+      .channels.find((c: any) => c.id === fx.channelId);
+    expect(channelAfterThreadOnly.latestEventId).toBe(root.id);
+
+    const broadcast = await postMessage(pool, {
+      workspaceId: fx.workspaceId,
+      channelId: fx.channelId,
+      actorId: fx.userId,
+      text: 'broadcast reply',
+      threadRootEventId: root.id,
+      broadcast: true,
+    });
+
+    const afterBroadcast = await app.inject({
+      method: 'GET',
+      url: '/api/channels',
+      headers: { cookie },
+    });
+    expect(afterBroadcast.statusCode).toBe(200);
+    const channelAfterBroadcast = afterBroadcast.json().channels.find((c: any) => c.id === fx.channelId);
+    expect(channelAfterBroadcast.latestEventId).toBe(broadcast.id);
+  });
 });

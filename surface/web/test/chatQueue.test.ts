@@ -55,18 +55,17 @@ describe('chatQueue', () => {
     ).toBe('Could not validate GitHub repository access. Try again or reconnect GitHub.');
   });
 
-  it('resolves upload refs and voice metadata before posting a queued message', async () => {
+  it('resolves upload refs and forwards voice metadata and broadcast before posting a queued message', async () => {
     const postMessage = vi.fn().mockResolvedValue({ event: { id: 1 } });
     const registry = createChatOpRegistry();
-    const payload: MsgSendPayload & {
-      voice: { fileId: string; durationMs: 1200; waveform: number[] };
-    } = {
+    const payload: MsgSendPayload = {
       channelId: 'ch-1',
       text: 'voice note',
       clientMsgId: 'client-1',
       threadRootEventId: 42,
+      broadcast: true,
       attachmentRefs: [{ uploadKey: 'upload-1' }],
-      voice: { fileId: 'local-file-id', durationMs: 1200, waveform: [0, 1, 0.5] },
+      voice: { durationMs: 1200, waveform: [0, 1, 0.5] },
     };
 
     await registry['msg.send'].execute(
@@ -91,6 +90,7 @@ describe('chatQueue', () => {
       text: 'voice note',
       clientMsgId: 'client-1',
       threadRootEventId: 42,
+      broadcast: true,
       attachments: ['file-1'],
       voice: { durationMs: 1200, waveform: [0, 1, 0.5] },
       opId: 'op-1',

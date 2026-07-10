@@ -28,17 +28,28 @@ interface LightboxProps extends LightboxCallbacks {
   index: number;
   onIndexChange: (index: number) => void;
   onClose: () => void;
+  panel?: LightboxPanel | null;
+  onPanelChange?: (panel: LightboxPanel | null) => void;
   sessionId?: string;
   entryReferencesByFileId?: Record<string, EntryReferenceSummary | null>;
 }
 
+export type LightboxPanel = 'info' | 'history';
+
 const iconButtonClass =
   'grid size-8 max-md:size-11 place-items-center rounded-md border border-edge-strong bg-surface-overlay text-fg-secondary shadow-sm hover:bg-edge-strong hover:text-fg disabled:cursor-default disabled:text-fg-faint';
 
-function defaultOpenPanel(): 'info' | null {
+/** Viewport default for the side panel: info on desktop, closed on narrow
+ * screens. URL-controlled hosts write this into the URL on open so the
+ * address stays the source of truth for what's on screen. */
+export function defaultLightboxPanel(): LightboxPanel | null {
   if (typeof window === 'undefined') return 'info';
   if (typeof window.matchMedia !== 'function') return 'info';
   return window.matchMedia('(min-width: 768px)').matches ? 'info' : null;
+}
+
+function defaultOpenPanel(): LightboxPanel | null {
+  return defaultLightboxPanel();
 }
 
 function MessagePlusIcon({ size = 16, ...props }: SVGProps<SVGSVGElement> & { size?: number }) {
@@ -84,6 +95,8 @@ export function Lightbox({
   index,
   onIndexChange,
   onClose,
+  panel,
+  onPanelChange,
   onDownload,
   onCopyLink,
   onRename,
@@ -103,7 +116,16 @@ export function Lightbox({
   entryReferencesByFileId,
 }: LightboxProps) {
   const file = files[index];
-  const [openPanel, setOpenPanel] = useState<'info' | 'history' | null>(() => defaultOpenPanel());
+  const [localOpenPanel, setLocalOpenPanel] = useState<LightboxPanel | null>(() => defaultOpenPanel());
+  const openPanel = panel !== undefined ? panel : localOpenPanel;
+  const setOpenPanel = useCallback(
+    (next: LightboxPanel | null | ((panel: LightboxPanel | null) => LightboxPanel | null)) => {
+      const resolved = typeof next === 'function' ? next(openPanel) : next;
+      if (panel === undefined) setLocalOpenPanel(resolved);
+      onPanelChange?.(resolved);
+    },
+    [onPanelChange, openPanel, panel],
+  );
   const [renaming, setRenaming] = useState(false);
   const [draftName, setDraftName] = useState(file?.name ?? '');
   const [busy, setBusy] = useState(false);
@@ -118,6 +140,7 @@ export function Lightbox({
   const [historyRefreshKey, setHistoryRefreshKey] = useState(0);
   const dialogRef = useRef<HTMLDivElement | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
+  const activeFilmstripButtonRef = useRef<HTMLButtonElement | null>(null);
   const touchStartRef = useRef<number | null>(null);
   const canPrev = index > 0;
   const canNext = index < files.length - 1;
@@ -169,6 +192,14 @@ export function Lightbox({
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [canNext, canPrev, index, onIndexChange]);
+
+  useEffect(() => {
+    activeFilmstripButtonRef.current?.scrollIntoView?.({
+      block: 'nearest',
+      inline: 'nearest',
+      behavior: 'smooth',
+    });
+  }, [index]);
 
   useDialog({ open: true, containerRef: dialogRef, initialFocusRef: closeButtonRef, onClose });
 
@@ -623,12 +654,15 @@ export function Lightbox({
         </div>
       </main>
 
-      <footer className="flex h-20 shrink-0 items-center gap-2 overflow-x-auto border-t border-edge bg-surface-raised px-3">
+      <footer className="flex h-32 shrink-0 items-center gap-3 overflow-x-auto border-t border-edge bg-surface-raised px-3 py-2 max-md:h-28 max-md:gap-2 max-md:px-2">
         {files.map((item, itemIndex) => (
           <button
             type="button"
             key={item.id}
-            className={`h-14 w-20 shrink-0 overflow-hidden rounded-md border text-left transition-colors ${
+            ref={(node) => {
+              if (itemIndex === index) activeFilmstripButtonRef.current = node;
+            }}
+            className={`h-28 w-36 shrink-0 overflow-hidden rounded-md border-2 text-left transition-colors max-md:h-24 max-md:w-32 ${
               itemIndex === index ? 'border-accent-border bg-accent-tint' : 'border-edge bg-surface hover:border-edge-strong'
             }`}
             onClick={() => onIndexChange(itemIndex)}

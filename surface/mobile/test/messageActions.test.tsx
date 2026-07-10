@@ -4,7 +4,7 @@ import '@testing-library/jest-dom/vitest';
 import { act, cleanup, fireEvent, screen } from '@testing-library/react';
 import type { ChatMessage } from '@atrium/surface-client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { MessageActions } from '../src/components/MessageActions';
+import { MessageActions, MessageActionSheet } from '../src/components/MessageActions';
 import { renderWithTheme } from './rnTestUtils';
 
 const setStringAsync = vi.fn(async (_value: string) => {});
@@ -148,5 +148,31 @@ describe('MessageActions', () => {
     });
 
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('renders a transcript action list without reactions when reaction props are omitted', () => {
+    const onClose = vi.fn();
+    const onCopy = vi.fn();
+    const onDiscuss = vi.fn();
+
+    renderWithTheme(
+      <MessageActionSheet
+        visible
+        onClose={onClose}
+        actions={[
+          { key: 'copy-text', label: 'Copy text', onSelect: onCopy },
+          { key: 'discuss', label: 'Discuss in thread', onSelect: onDiscuss },
+        ]}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Copy text' }));
+
+    expect(onCopy).toHaveBeenCalledTimes(1);
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'Discuss in thread' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
+    expect(screen.queryByLabelText(/^React with /)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Open reaction picker' })).not.toBeInTheDocument();
   });
 });

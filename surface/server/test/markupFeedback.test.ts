@@ -207,8 +207,8 @@ async function versionText(artifactId: string, seq: number): Promise<string> {
 function lastSteerText(): string {
   const message = centaurRequests.find((request) => request.path.endsWith('/messages'));
   expect(message).toBeTruthy();
-  const messages = message!.body.messages as Array<{ parts: Array<{ text: string }> }>;
-  return messages[0]!.parts[0]!.text;
+  const messages = message!.body.messages as Array<{ parts: Array<{ type?: string; text: string }> }>;
+  return messages[0]!.parts.find((part) => part.type === 'text')!.text;
 }
 
 describe('composeFeedbackSteer', () => {

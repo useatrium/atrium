@@ -9,6 +9,7 @@ import {
 import { api, type Channel } from '../api';
 import {
   isTerminalSessionStatus,
+  type QueueSyncState,
   type SessionListItem,
 } from '@atrium/surface-client';
 import type { UnreadLevel, UserRef } from '@atrium/surface-client';
@@ -43,6 +44,7 @@ export function Sidebar({
   unread,
   me,
   wsStatus,
+  queueSync,
   onSelect,
   onSetMute,
   onCreateChannel,
@@ -67,6 +69,7 @@ export function Sidebar({
   unread: Record<string, UnreadLevel>;
   me: UserRef;
   wsStatus: 'connecting' | 'open' | 'closed';
+  queueSync: QueueSyncState;
   onSelect: (channelId: string) => void;
   onSetMute: (channelId: string, muted: boolean) => void;
   onCreateChannel: (name: string, isPrivate?: boolean) => Promise<void>;
@@ -101,6 +104,16 @@ export function Sidebar({
 
   const publicChannels = channels.filter((c) => c.kind !== 'dm' && c.kind !== 'gdm');
   const dms = channels.filter((c) => c.kind === 'dm' || c.kind === 'gdm');
+  const syncTitle = `Syncing — ${queueSync.queuedCount} ${queueSync.queuedCount === 1 ? 'change' : 'changes'} queued`;
+  const connectionDotTitle = wsStatus === 'open' && queueSync.syncStuck ? syncTitle : `connection: ${wsStatus}`;
+  const connectionDotClass =
+    wsStatus === 'open'
+      ? queueSync.syncStuck
+        ? 'animate-pulse bg-info'
+        : 'bg-transparent'
+      : wsStatus === 'connecting'
+        ? 'animate-pulse bg-warning'
+        : 'bg-danger';
 
   const loadPeople = useCallback(() => {
     if (people !== null) return;
@@ -208,14 +221,9 @@ export function Sidebar({
         </span>
         <span
           role="status"
-          title={`connection: ${wsStatus}`}
-          className={`ml-auto size-2 shrink-0 rounded-full ${
-            wsStatus === 'open'
-              ? 'bg-success'
-              : wsStatus === 'connecting'
-                ? 'animate-pulse bg-warning'
-                : 'bg-danger'
-          }`}
+          aria-label={`connection: ${wsStatus}`}
+          title={connectionDotTitle}
+          className={`ml-auto size-2 shrink-0 rounded-full ${connectionDotClass}`}
         >
           <span className="sr-only">connection: {wsStatus}</span>
         </span>

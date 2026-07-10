@@ -29,7 +29,6 @@ const chatMock = vi.hoisted(() => ({
     wsStatus: 'open' as const,
     sessions: {},
   },
-  queuedChangesCount: 0,
 }));
 
 vi.mock('expo-router', () => ({
@@ -63,7 +62,6 @@ beforeEach(() => {
   chatMock.api.getActivity.mockReset();
   chatMock.api.messages.mockReset();
   chatMock.state.sessions = {};
-  chatMock.queuedChangesCount = 0;
 });
 
 describe('mobile Activity screen', () => {

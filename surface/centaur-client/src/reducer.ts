@@ -1238,13 +1238,63 @@ function codexContentText(item: CodexItem): string {
   return item.content?.filter((content) => content.type === "text").map((content) => content.text).join("") ?? "";
 }
 
+const ATRIUM_CONTEXT_MARKER = "[atrium context]";
+const CONTEXT_OPEN = "<context>";
+const CONTEXT_CLOSE = "</context>";
+
 function stripInjectedContext(raw: string): string {
+  const steerStripped = stripSteerContextPrefix(raw);
   let end = raw.length;
+  const text = steerStripped ?? raw;
+  end = text.length;
   for (const marker of ["\n# Session Context", "\n\n---\nReferenced entries:"]) {
-    const index = raw.indexOf(marker);
+    const index = text.indexOf(marker);
     if (index !== -1 && index < end) end = index;
   }
-  return raw.slice(0, end).trim();
+  return text.slice(0, end);
+}
+
+function stripSteerContextPrefix(raw: string): string | null {
+  if (raw.startsWith(CONTEXT_OPEN)) {
+    const closeIndex = raw.indexOf(CONTEXT_CLOSE, CONTEXT_OPEN.length);
+    if (closeIndex === -1) return null;
+    const contextText = raw.slice(CONTEXT_OPEN.length, closeIndex);
+    if (!isSteerContextBlock(contextText)) return null;
+    return stripOneBlankSeparator(raw.slice(closeIndex + CONTEXT_CLOSE.length));
+  }
+
+  if (!raw.startsWith(ATRIUM_CONTEXT_MARKER)) return null;
+  const separator = firstBlankLineIndex(raw);
+  if (separator) {
+    const contextText = raw.slice(0, separator.index);
+    return isSteerContextBlock(contextText) ? raw.slice(separator.end) : null;
+  }
+  return isSteerContextBlock(raw) ? "" : null;
+}
+
+function isSteerContextBlock(text: string): boolean {
+  const normalized = text.replace(/\r\n/g, "\n").trim();
+  if (!normalized.startsWith(ATRIUM_CONTEXT_MARKER)) return false;
+  const lines = normalized.split("\n").map((line) => line.trimEnd());
+  return (
+    lines[0] === ATRIUM_CONTEXT_MARKER &&
+    lines.some((line) => line.startsWith("from: ")) &&
+    lines.some((line) => line.startsWith("sent: "))
+  );
+}
+
+function firstBlankLineIndex(text: string): { index: number; end: number } | null {
+  const lf = text.indexOf("\n\n");
+  const crlf = text.indexOf("\r\n\r\n");
+  if (lf === -1 && crlf === -1) return null;
+  if (crlf !== -1 && (lf === -1 || crlf <= lf)) return { index: crlf, end: crlf + 4 };
+  return { index: lf, end: lf + 2 };
+}
+
+function stripOneBlankSeparator(text: string): string {
+  if (text.startsWith("\r\n\r\n")) return text.slice(4);
+  if (text.startsWith("\n\n")) return text.slice(2);
+  return text;
 }
 
 function codexCommandInput(item: CodexItem): JsonObject {

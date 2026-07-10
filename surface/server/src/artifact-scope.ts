@@ -99,7 +99,12 @@ export async function readableArtifactRootsForSession(
     ...readableChannelIds.map((id) => ({
       prefix: `shared/channels/${id}`,
       kind: 'workspace' as const,
-      writable: id === row.channel_id,
+      // Writes follow reads: an agent may land artifacts in ANY channel its
+      // actor can read ("draft the plan in #testing"), not only the session's
+      // own channel. Before this, other channels hydrated as silently
+      // read-only mirrors — the sandbox FS accepted the write, capture 403'd
+      // forever, and the file never reached the channel.
+      writable: true,
     })),
   ];
   const deduped = dedupeRoots(readableRoots);

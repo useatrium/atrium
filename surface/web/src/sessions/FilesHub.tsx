@@ -5,7 +5,7 @@ import { MarkupPane, splitMarkdownFrontmatter, type MarkupPaneSource } from '../
 import { showErrorToast } from '../components/Toasts';
 import { Tooltip } from '../components/a11y';
 import { FileIcon, SearchIcon } from '../components/icons';
-import { Lightbox, MediaPreview } from '../components/media';
+import { Lightbox, MediaPreview, defaultLightboxPanel } from '../components/media';
 import type { LightboxCallbacks, MediaKind, PreviewFile } from '../components/media';
 import {
   EntryReferencesChip,
@@ -13,6 +13,7 @@ import {
   type EntryReferenceSummary,
 } from '../components/EntryReferencesChip';
 import { entryShareUrl } from '../lib/publicUrl';
+import { navigate, URL_PARAMS, useLocation } from '../router';
 import type { ArtifactConflict, ResolveChoice } from './ConflictSurface';
 import { EmptyState } from './EmptyState';
 import type { Session } from './types';
@@ -50,6 +51,30 @@ const mediaKindSet = new Set<MediaKind>(['image', 'video', 'audio', 'document', 
 
 function asMediaKind(value: string | null): MediaKind {
   return value && mediaKindSet.has(value as MediaKind) ? (value as MediaKind) : 'opaque';
+}
+
+function cleanId(value: string | null | undefined): string {
+  return value?.trim() ?? '';
+}
+
+function pathWithSearch(path: string, params: URLSearchParams): string {
+  const query = params.toString();
+  return query ? `${path}?${query}` : path;
+}
+
+function lightboxPanelFromSearch(search: string): 'info' | 'history' | null {
+  const value = new URLSearchParams(search).get(URL_PARAMS.panel);
+  return value === 'info' || value === 'history' ? value : null;
+}
+
+function dirFromSearch(search: string): string {
+  const value = new URLSearchParams(search).get(URL_PARAMS.dir);
+  if (!value) return '';
+  return value
+    .replace(/\\/g, '/')
+    .replace(/\/+/g, '/')
+    .replace(/^\/+/, '')
+    .replace(/\/+$/, '');
 }
 
 function contentUrl(artifactId: string): string {
@@ -713,6 +738,10 @@ export function FilesHub({
   onSeedChannelComposer?: (draft: string) => void;
   onStartAgentWithTask?: (task: string) => void;
 }): JSX.Element {
+  const location = useLocation();
+  const currentDir = useMemo(() => dirFromSearch(location.search), [location.search]);
+  const urlFileArtifactId = useMemo(() => cleanId(new URLSearchParams(location.search).get(URL_PARAMS.file)), [location.search]);
+  const urlPanel = useMemo(() => lightboxPanelFromSearch(location.search), [location.search]);
   const resolvedDefaultScope: FileHubScope =
     defaultScope === 'session' && sessionScope
       ? 'session'
@@ -749,9 +778,13 @@ export function FilesHub({
   const [applyMarkupCandidate, setApplyMarkupCandidate] = useState<{ artifactId: string; path: string; seq: number } | null>(null);
   const [markupNotice, setMarkupNotice] = useState<string | null>(null);
   const [artifactEntryReferences, setArtifactEntryReferences] = useState<Record<string, EntryReferenceSummary | null>>({});
+  const searchActive = search.trim().length > 0 || debouncedSearch.trim().length > 0;
   const artifactEntryReferencesFetchedAtRef = useRef(0);
   const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [currentDir, setCurrentDir] = useState('');
+  const handledLegacyInitialOpenRef = useRef<string | null>(null);
+  const scopeEffectInitializedRef = useRef(false);
+  const previousScopeRef = useRef<FileHubScope | null>(null);
+  const previousSearchActiveRef = useRef(searchActive);
 
   useEffect(() => {
     return () => {
@@ -778,7 +811,41 @@ export function FilesHub({
     () => (scopedChannelId ? { ...filters, channelId: scopedChannelId } : filters),
     [filters, scopedChannelId],
   );
-  const searchActive = search.trim().length > 0 || debouncedSearch.trim().length > 0;
+
+  const updateUrlParams = useCallback(
+    (
+      patch: { dir?: string | null; file?: string | null; panel?: 'info' | 'history' | null },
+      options: { replace?: boolean } = {},
+    ) => {
+      const params = new URLSearchParams(location.search);
+      if ('dir' in patch) {
+        const dir = patch.dir?.trim() ?? '';
+        if (dir) params.set(URL_PARAMS.dir, dir);
+        else params.delete(URL_PARAMS.dir);
+      }
+      if ('file' in patch) {
+        if (patch.file) params.set(URL_PARAMS.file, patch.file);
+        else {
+          params.delete(URL_PARAMS.file);
+          params.delete(URL_PARAMS.panel);
+        }
+      }
+      if ('panel' in patch) {
+        if (patch.panel) params.set(URL_PARAMS.panel, patch.panel);
+        else params.delete(URL_PARAMS.panel);
+      }
+      navigate(pathWithSearch(location.pathname, params), options);
+    },
+    [location.pathname, location.search],
+  );
+
+  const navigateToDir = useCallback(
+    (dir: string, options: { replace?: boolean } = {}) => {
+      setLightboxIndex(null);
+      updateUrlParams({ dir, file: null }, options);
+    },
+    [updateUrlParams],
+  );
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedSearch(search), 250);
@@ -786,15 +853,22 @@ export function FilesHub({
   }, [search]);
 
   useEffect(() => {
-    if (!searchActive) setCurrentDir('');
-    setLightboxIndex(null);
-  }, [searchActive]);
+    if (previousSearchActiveRef.current === searchActive) return;
+    previousSearchActiveRef.current = searchActive;
+    if (searchActive) navigateToDir('', { replace: true });
+  }, [navigateToDir, searchActive]);
 
   useEffect(() => {
-    setCurrentDir('');
-    setLightboxIndex(null);
+    if (!scopeEffectInitializedRef.current) {
+      scopeEffectInitializedRef.current = true;
+      previousScopeRef.current = scope;
+      return;
+    }
+    if (previousScopeRef.current === scope) return;
+    previousScopeRef.current = scope;
+    navigateToDir('', { replace: true });
     if (scope !== 'session') setLastBrowseScope(scope);
-  }, [scope]);
+  }, [navigateToDir, scope]);
 
   const loadFiles = useCallback(
     async ({ cursor, append }: { cursor?: string | null; append?: boolean } = {}) => {
@@ -867,11 +941,6 @@ export function FilesHub({
   }, [debouncedSearch, endpoint, effectiveFilters, filesEventSeq]);
 
   const replaceFile = useCallback((next: HubFile) => setFiles((current) => mergeFile(current, next)), []);
-
-  const navigateToDir = useCallback((dir: string) => {
-    setCurrentDir(dir);
-    setLightboxIndex(null);
-  }, []);
 
   const toggleStar = useCallback(
     async (file: HubFile) => {
@@ -998,6 +1067,7 @@ export function FilesHub({
       },
       onDiscuss: async (_file, draft) => {
         setLightboxIndex(null);
+        updateUrlParams({ file: null }, { replace: false });
         if (channelId && onSeedChannelComposer) {
           onSeedChannelComposer(draft);
           return;
@@ -1196,7 +1266,7 @@ export function FilesHub({
       },
       canManage: () => true,
     }),
-    [channelId, files, filters.includeDeleted, loadFiles, onSeedChannelComposer, replaceFile, sessionId, showMarkupNotice, workspaceId],
+    [channelId, files, filters.includeDeleted, loadFiles, onSeedChannelComposer, replaceFile, sessionId, showMarkupNotice, updateUrlParams, workspaceId],
   );
 
   const scopedFiles = useMemo(() => {
@@ -1206,6 +1276,35 @@ export function FilesHub({
   const { folders, filesHere } = useMemo(() => folderView(scopedFiles, currentDir), [currentDir, scopedFiles]);
   const visibleFiles = searchActive ? scopedFiles : filesHere;
   const visiblePreviews = useMemo(() => visibleFiles.map(hubFileToPreview), [visibleFiles]);
+  const openLightboxAtIndex = useCallback(
+    (index: number) => {
+      const file = visiblePreviews[index];
+      if (!file) return;
+      setLightboxIndex(index);
+      updateUrlParams({ file: file.id, panel: defaultLightboxPanel() }, { replace: false });
+    },
+    [updateUrlParams, visiblePreviews],
+  );
+  const changeLightboxIndex = useCallback(
+    (index: number) => {
+      const nextIndex = Math.max(0, Math.min(index, visiblePreviews.length - 1));
+      const file = visiblePreviews[nextIndex];
+      if (!file) return;
+      setLightboxIndex(nextIndex);
+      updateUrlParams({ file: file.id }, { replace: true });
+    },
+    [updateUrlParams, visiblePreviews],
+  );
+  const closeLightbox = useCallback(() => {
+    setLightboxIndex(null);
+    updateUrlParams({ file: null }, { replace: false });
+  }, [updateUrlParams]);
+  const changeLightboxPanel = useCallback(
+    (panel: 'info' | 'history' | null) => {
+      updateUrlParams({ panel }, { replace: true });
+    },
+    [updateUrlParams],
+  );
   const currentLightboxFile =
     lightboxIndex != null && visiblePreviews.length > 0
       ? visiblePreviews[Math.min(lightboxIndex, visiblePreviews.length - 1)]!
@@ -1246,25 +1345,34 @@ export function FilesHub({
       : 'Files matching the current filters will appear here.';
 
   useEffect(() => {
-    if (!initialOpenArtifactId || !loadedOnce) return;
-    const file = scopedFiles.find((item) => item.artifactId === initialOpenArtifactId);
+    if (!loadedOnce) return;
+    if (!urlFileArtifactId) {
+      setLightboxIndex(null);
+      return;
+    }
+    const file = scopedFiles.find((item) => item.artifactId === urlFileArtifactId);
     if (!file) {
-      onInitialOpenArtifactHandled?.(initialOpenArtifactId);
+      setLightboxIndex(null);
       return;
     }
     if (!searchActive) {
       const targetDir = dirname(file.path);
       if (currentDir !== targetDir) {
-        setCurrentDir(targetDir);
+        updateUrlParams({ dir: targetDir }, { replace: true });
         return;
       }
     }
-    const index = visibleFiles.findIndex((item) => item.artifactId === initialOpenArtifactId);
-    if (index >= 0) {
-      setLightboxIndex(index);
-      onInitialOpenArtifactHandled?.(initialOpenArtifactId);
-    }
-  }, [currentDir, initialOpenArtifactId, loadedOnce, onInitialOpenArtifactHandled, scopedFiles, searchActive, visibleFiles]);
+    const index = visibleFiles.findIndex((item) => item.artifactId === urlFileArtifactId);
+    setLightboxIndex(index >= 0 ? index : null);
+  }, [currentDir, loadedOnce, scopedFiles, searchActive, updateUrlParams, urlFileArtifactId, visibleFiles]);
+
+  useEffect(() => {
+    const legacyArtifactId = cleanId(initialOpenArtifactId);
+    if (!legacyArtifactId || urlFileArtifactId || handledLegacyInitialOpenRef.current === legacyArtifactId) return;
+    handledLegacyInitialOpenRef.current = legacyArtifactId;
+    updateUrlParams({ file: legacyArtifactId }, { replace: true });
+    onInitialOpenArtifactHandled?.(legacyArtifactId);
+  }, [initialOpenArtifactId, onInitialOpenArtifactHandled, updateUrlParams, urlFileArtifactId]);
 
   useEffect(() => {
     setApplyMarkupCandidate(null);
@@ -1426,7 +1534,7 @@ export function FilesHub({
                 file={file}
                 preview={visiblePreviews[index]!}
                 references={artifactEntryReferences[artifactEntryHandle(file.artifactId)]}
-                onOpen={() => setLightboxIndex(index)}
+                onOpen={() => openLightboxAtIndex(index)}
                 onToggleStar={() => void toggleStar(file)}
                 onAddLabel={() => void addLabel(file)}
                 onRemoveLabel={(label) => void removeLabel(file, label)}
@@ -1452,9 +1560,11 @@ export function FilesHub({
         <Lightbox
           files={visiblePreviews}
           index={Math.min(lightboxIndex, visiblePreviews.length - 1)}
-          onIndexChange={setLightboxIndex}
+          onIndexChange={changeLightboxIndex}
           sessionId={sessionId}
           entryReferencesByFileId={lightboxEntryReferencesByFileId}
+          panel={urlPanel}
+          onPanelChange={changeLightboxPanel}
           applyMarkupTarget={
             applyMarkupCandidate && channelId
               ? {
@@ -1465,9 +1575,7 @@ export function FilesHub({
                 }
               : null
           }
-          onClose={() => {
-            setLightboxIndex(null);
-          }}
+          onClose={closeLightbox}
           {...callbacks}
         />
       )}

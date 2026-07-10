@@ -4,7 +4,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import type pg from 'pg';
 import { buildApp } from '../src/app.js';
 import type { WsHub } from '../src/hub.js';
-import { emitSessionRecordChange } from '../src/session-record-changefeed.js';
+import { emitChannelChange, emitSessionRecordChange } from '../src/session-record-changefeed.js';
 import { registerInternalChangesRoutes } from '../src/routes/internal-changes.js';
 import { createTestPool, seedFixture, truncateAll, type Fixture } from './helpers.js';
 
@@ -301,6 +301,22 @@ describe('GET /api/internal/changes/stream', () => {
     }
   });
 
+  it('pushes keyed channel-dirty atrium events with channel ids only', async () => {
+    const known = await session();
+    const stream = await openSse(app);
+    try {
+      await stream.waitFor((frame) => frame.event === 'hello');
+
+      await emitChannelChange(pool, fx.channelId);
+      const changed = await stream.waitForChanged('atrium', known.key);
+
+      expect(changed.workspaceId).toBe(fx.workspaceId);
+      expect(changed.channels).toEqual([fx.channelId]);
+    } finally {
+      await stream.close();
+    }
+  });
+
   it('publishes debounced files.changed nudges for artifact notifications only', async () => {
     const known = await session();
     const publishToUsers = vi.fn();
@@ -343,6 +359,52 @@ describe('GET /api/internal/changes/stream', () => {
     } finally {
       await stream.close();
       await streamApp.close();
+    }
+  });
+
+  it('reconnects the LISTEN connection after its backend dies', async () => {
+    const known = await session();
+    const stream = await openSse(app);
+    try {
+      await stream.waitFor((frame) => frame.event === 'hello');
+
+      await emitChannelChange(pool, fx.channelId);
+      const before = await stream.waitForChanged('atrium', known.key);
+
+      // Kill the broadcaster's LISTEN backend out from under it — what a
+      // Postgres shutdown/restart does to the always-on listener connection.
+      const killed = await pool.query(
+        `SELECT pg_terminate_backend(pid)
+           FROM pg_stat_activity
+          WHERE datname = current_database()
+            AND pid <> pg_backend_pid()
+            AND query ILIKE 'LISTEN %'`,
+      );
+      expect(killed.rowCount).toBeGreaterThan(0);
+
+      // Notifications published while the listener is down are lost, so keep
+      // emitting until one lands on the SAME stream with a fresh seq — proof
+      // the broadcaster reconnected rather than serving a stale frame.
+      let reconnected = false;
+      const arrival = stream
+        .waitFor((frame) => {
+          if (frame.event !== 'changed' || !frame.data) return false;
+          const data = JSON.parse(frame.data) as { feed?: string; key?: string; seq?: number };
+          return data.feed === 'atrium' && data.key === known.key && (data.seq ?? 0) > before.seq;
+        }, 15_000)
+        .finally(() => {
+          reconnected = true;
+        });
+      // Keep a rejection (timeout) handled while the emit loop is sleeping;
+      // the `await arrival` below still surfaces it.
+      arrival.catch(() => {});
+      while (!reconnected) {
+        await emitChannelChange(pool, fx.channelId);
+        await new Promise((resolve) => setTimeout(resolve, 300));
+      }
+      await arrival;
+    } finally {
+      await stream.close();
     }
   });
 });
@@ -422,13 +484,19 @@ async function openSse(appToListen: FastifyInstance) {
     async waitForChanged(
       feed: string,
       key: string,
-    ): Promise<{ feed: string; key: string; workspaceId?: string; seq: number }> {
+    ): Promise<{ feed: string; key: string; workspaceId?: string; seq: number; channels?: string[] }> {
       const frame = await waitFor((candidate) => {
         if (candidate.event !== 'changed' || !candidate.data) return false;
         const data = JSON.parse(candidate.data) as { feed?: string; key?: string };
         return data.feed === feed && data.key === key;
       });
-      return JSON.parse(frame.data!) as { feed: string; key: string; workspaceId?: string; seq: number };
+      return JSON.parse(frame.data!) as {
+        feed: string;
+        key: string;
+        workspaceId?: string;
+        seq: number;
+        channels?: string[];
+      };
     },
     async close(): Promise<void> {
       await reader.cancel().catch(() => {});

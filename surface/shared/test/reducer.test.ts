@@ -5,6 +5,7 @@ import {
   appReducer,
   DEFAULT_PREFS,
   dispatchSyncResponse,
+  dispatchSyncSnapshot,
   emptyTimeline,
   initialAppState,
   markFailed,
@@ -210,6 +211,99 @@ describe('threads and reply counts', () => {
     expect(t.threads[1]!.map((m) => [m.id, m.text])).toEqual([[2, 'pending broadcast']]);
     expect(t.main[0]!.replyCount).toBe(1);
     expect(t.main[0]!.lastReplyId).toBe(2);
+  });
+
+  it('confirms optimistic broadcast thread replies in main and thread without duplicating main', () => {
+    let t = applyEvent(emptyTimeline, wire(1, 'root', { replyCount: 0, lastReplyId: 0 }));
+    t = mergeThread(t, 1, []);
+
+    t = addPending(t, pending('cm-b-ok', 'pending broadcast', 1, { broadcast: true }));
+    expect(t.main.map((m) => [m.clientMsgId, m.status])).toEqual([
+      [null, 'confirmed'],
+      ['cm-b-ok', 'pending'],
+    ]);
+    expect(t.threads[1]!.map((m) => [m.clientMsgId, m.status])).toEqual([['cm-b-ok', 'pending']]);
+
+    t = applyEvent(t, wire(2, 'pending broadcast', { clientMsgId: 'cm-b-ok', threadRoot: 1, broadcast: true }));
+
+    expect(t.main.filter((m) => m.clientMsgId === 'cm-b-ok')).toHaveLength(1);
+    expect(t.main.map((m) => [m.id, m.clientMsgId, m.status])).toEqual([
+      [1, null, 'confirmed'],
+      [2, 'cm-b-ok', 'confirmed'],
+    ]);
+    expect(t.threads[1]!.map((m) => [m.id, m.clientMsgId, m.status])).toEqual([
+      [2, 'cm-b-ok', 'confirmed'],
+    ]);
+    expect(t.main[0]!.replyCount).toBe(1);
+    expect(t.main[0]!.lastReplyId).toBe(2);
+  });
+
+  it('drops an optimistic main broadcast copy when the server echo is thread-only', () => {
+    let t = applyEvent(emptyTimeline, wire(1, 'root', { replyCount: 0, lastReplyId: 0 }));
+    t = mergeThread(t, 1, []);
+
+    t = addPending(t, pending('cm-strand', 'pending broadcast', 1, { broadcast: true }));
+    expect(t.main.map((m) => [m.clientMsgId, m.status])).toEqual([
+      [null, 'confirmed'],
+      ['cm-strand', 'pending'],
+    ]);
+    expect(t.threads[1]!.map((m) => [m.clientMsgId, m.status])).toEqual([['cm-strand', 'pending']]);
+    expect(t.main[0]!.replyCount).toBe(1);
+
+    t = applyEvent(t, wire(2, 'pending broadcast', { clientMsgId: 'cm-strand', threadRoot: 1 }));
+
+    expect(t.main.map((m) => [m.id, m.clientMsgId, m.status])).toEqual([[1, null, 'confirmed']]);
+    expect(t.main.some((m) => m.clientMsgId === 'cm-strand')).toBe(false);
+    expect(t.threads[1]!.map((m) => [m.id, m.clientMsgId, m.status])).toEqual([
+      [2, 'cm-strand', 'confirmed'],
+    ]);
+    expect(t.main[0]!.replyCount).toBe(1);
+    expect(t.main[0]!.lastReplyId).toBe(2);
+  });
+
+  it('folds a broadcast reply into main when the thread fetch lands before the history page', () => {
+    // Cold load with the thread panel open: mergeThread marks the reply seen,
+    // so the later history merge must not be the only path into main.
+    let t = mergeThread(emptyTimeline, 1, [
+      wire(2, 'broadcast reply', { threadRoot: 1, broadcast: true }),
+      wire(3, 'plain reply', { threadRoot: 1 }),
+    ]);
+    expect(t.main.map((m) => [m.id, m.text])).toEqual([[2, 'broadcast reply']]);
+
+    t = mergeHistory(
+      t,
+      [
+        wire(1, 'root', { replyCount: 2, lastReplyId: 3 }),
+        wire(2, 'broadcast reply', { threadRoot: 1, broadcast: true }),
+      ],
+      { hasMoreBefore: false },
+    );
+
+    expect(t.main.map((m) => [m.id, m.text])).toEqual([
+      [1, 'root'],
+      [2, 'broadcast reply'],
+    ]);
+    expect(t.main.filter((m) => m.id === 2)).toHaveLength(1);
+    expect(t.threads[1]!.map((m) => m.id)).toEqual([2, 3]);
+  });
+
+  it('does not duplicate a broadcast reply when the history page lands before the thread fetch', () => {
+    let t = mergeHistory(
+      emptyTimeline,
+      [
+        wire(1, 'root', { replyCount: 1, lastReplyId: 2 }),
+        wire(2, 'broadcast reply', { threadRoot: 1, broadcast: true }),
+      ],
+      { hasMoreBefore: false },
+    );
+    expect(t.main.map((m) => m.id)).toEqual([1, 2]);
+
+    t = mergeThread(t, 1, [wire(2, 'broadcast reply', { threadRoot: 1, broadcast: true })]);
+
+    expect(t.main.map((m) => m.id)).toEqual([1, 2]);
+    expect(t.main.filter((m) => m.id === 2)).toHaveLength(1);
+    expect(t.threads[1]!.map((m) => m.id)).toEqual([2]);
+    expect(t.main[0]!.replyCount).toBe(1);
   });
 
   it('thread fetch materializes a session question already seen by catch-up', () => {
@@ -820,6 +914,31 @@ describe('live cold-counter advancement (unread divider depends on it)', () => {
     expect(state.unread[CH]).toBe(true);
   });
 
+  it('a live non-broadcast thread reply does not bump latestEventId but still mentions', () => {
+    let state = appReducer(loadedWith(), { type: 'init-me', handle: alice.handle, id: alice.id });
+    state = appReducer(state, { type: 'select-channel', channelId: 'ch-active' });
+    state = appReducer(state, {
+      type: 'server-event',
+      event: wire(9, '@alice from a thread', { threadRoot: 2, author: bob }),
+    });
+    const ch = state.channels.find((c) => c.id === CH)!;
+    expect(ch.latestEventId).toBe(5);
+    expect(state.unread[CH]).toBe('mention');
+    expect(state.syncCursor).toBe(9);
+  });
+
+  it('broadcast thread replies and plain messages bump channels[].latestEventId', () => {
+    let state = appReducer(loadedWith(), { type: 'select-channel', channelId: 'ch-active' });
+    state = appReducer(state, {
+      type: 'server-event',
+      event: wire(8, 'broadcast reply', { threadRoot: 2, broadcast: true }),
+    });
+    expect(state.channels.find((c) => c.id === CH)!.latestEventId).toBe(8);
+
+    state = appReducer(state, { type: 'server-event', event: wire(9, 'fresh') });
+    expect(state.channels.find((c) => c.id === CH)!.latestEventId).toBe(9);
+  });
+
   it('mock events never advance the counter', () => {
     let state = appReducer(loadedWith(), { type: 'select-channel', channelId: 'ch-active' });
     state = appReducer(state, {
@@ -837,6 +956,84 @@ describe('live cold-counter advancement (unread divider depends on it)', () => {
     state = appReducer(state, { type: 'read-cursor', channelId: CH, lastReadEventId: 4 });
     expect(state.channels.find((c) => c.id === CH)!.lastReadEventId).toBe(8);
     expect(state.unread[CH]).toBe(false);
+  });
+
+  it('does not track a remote read-cursor echo equal to local state', () => {
+    const state = appReducer(loadedWith({ lastReadEventId: 8 }), {
+      type: 'read-cursor',
+      channelId: CH,
+      lastReadEventId: 8,
+      source: 'remote',
+    });
+
+    expect(state.remoteReadCursors[CH]).toBeUndefined();
+    expect(state.channels.find((c) => c.id === CH)!.lastReadEventId).toBe(8);
+  });
+
+  it('tracks remote read-cursors only when they advance past local state', () => {
+    const state = appReducer(loadedWith({ lastReadEventId: 5 }), {
+      type: 'read-cursor',
+      channelId: CH,
+      lastReadEventId: 8,
+      source: 'remote',
+    });
+
+    expect(state.remoteReadCursors[CH]).toBe(8);
+    expect(state.channels.find((c) => c.id === CH)!.lastReadEventId).toBe(8);
+  });
+
+  it('does not track self read-cursors even when they advance local state', () => {
+    const state = appReducer(loadedWith({ lastReadEventId: 5 }), {
+      type: 'read-cursor',
+      channelId: CH,
+      lastReadEventId: 8,
+      source: 'self',
+    });
+
+    expect(state.remoteReadCursors[CH]).toBeUndefined();
+    expect(state.channels.find((c) => c.id === CH)!.lastReadEventId).toBe(8);
+  });
+
+  const snapshotChannel = (lastReadEventId: number) => ({
+    id: CH,
+    workspaceId: 'ws-1',
+    name: 'general',
+    createdAt: new Date(0).toISOString(),
+    kind: 'public' as const,
+    latestEventId: 8,
+    lastReadEventId,
+  });
+
+  const applySnapshot = (start: ReturnType<typeof loadedWith>, lastReadEventId: number) => {
+    let state = start;
+    dispatchSyncSnapshot(
+      (action) => {
+        state = appReducer(state, action);
+      },
+      {
+        readCursors: { [CH]: lastReadEventId },
+        mutes: [],
+        prefs: DEFAULT_PREFS,
+        drafts: {},
+        draftDeletions: {},
+        channels: [snapshotChannel(lastReadEventId)],
+      },
+    );
+    return state;
+  };
+
+  it('sync snapshot reflecting another device’s read registers a remote advance', () => {
+    // Local sits at 5; the server snapshot says another device read to 8. The
+    // cursor dispatch must precede channels-loaded or the overwrite masks it.
+    const state = applySnapshot(loadedWith({ latestEventId: 8, lastReadEventId: 5 }), 8);
+    expect(state.remoteReadCursors[CH]).toBe(8);
+    expect(state.channels.find((c) => c.id === CH)!.lastReadEventId).toBe(8);
+  });
+
+  it('sync snapshot echoing this device’s own reads is not a remote advance', () => {
+    const state = applySnapshot(loadedWith({ latestEventId: 8, lastReadEventId: 8 }), 8);
+    expect(state.remoteReadCursors[CH]).toBeUndefined();
+    expect(state.channels.find((c) => c.id === CH)!.lastReadEventId).toBe(8);
   });
 });
 

@@ -24,6 +24,10 @@ Open:
 ## Notes
 
 - Prometheus retention is set to 30 days for dogfood.
+- Loki stores data in the named Docker volume `loki_data` and enforces 30-day
+  retention (`720h`). The cutover is a fresh start: pre-existing Loki data in the
+  old container writable layer is deliberately not migrated and is dropped when the
+  container is recreated.
 - Grafana Alloy tails local Docker container stdout through the Docker socket and
   writes logs to Loki. Labels are intentionally low-cardinality: `job`, `container`,
   `service`, and `compose_project`; Loki may also derive bounded labels such as
@@ -51,3 +55,27 @@ Centaur usually runs in Kubernetes, so its pod logs need an in-cluster collector
 `centaur-alloy-values.yaml` with the Grafana Alloy Helm chart as the starting point for
 dogfood clusters; it keeps labels bounded to `job`, `namespace`, `pod`, `container`,
 and `app`.
+
+Apply the in-cluster Loki Service/Endpoints bridge after the stack is listening on
+the host's k3s bridge address:
+
+```bash
+kubectl apply -f infra/observability/k8s/loki-service.yaml
+```
+
+This makes `loki.observability.svc.cluster.local:3100` resolve to the host Loki
+listener at `10.42.0.1:3100` for the k3s-side Alloy deployment.
+
+## Boot self-heal
+
+`deploy/boot-heal.service` is a box-specific systemd oneshot that runs
+`docker compose up -d` for the Surface production stack and this observability
+stack after Docker and networking are online. It heals boot-time Docker restore
+drift such as missing network endpoints, aliases, port publishes, or skipped
+containers; restart policies cannot detect that class of failure.
+
+Install it on the box as root:
+
+```bash
+sudo deploy/install-boot-heal.sh
+```

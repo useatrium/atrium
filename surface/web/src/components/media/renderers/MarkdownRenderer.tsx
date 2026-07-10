@@ -24,7 +24,7 @@ export function MarkdownRenderer({ file, variant }: { file: PreviewFile; variant
 
   if (variant === 'tile') {
     return (
-      <div className="h-full min-h-32 overflow-hidden bg-surface-raised/40 p-3">
+      <div className="h-full min-h-0 overflow-hidden bg-surface-raised/40 p-3">
         <div className="mb-2 truncate text-xs font-semibold text-fg">{file.name}</div>
         <div className="line-clamp-5 whitespace-pre-wrap text-xs leading-relaxed text-fg-muted">
           {state.status === 'ready' ? state.text : state.status === 'loading' ? 'Loading markdown...' : state.text}

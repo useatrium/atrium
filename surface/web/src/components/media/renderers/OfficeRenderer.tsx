@@ -57,7 +57,7 @@ function extractSlideLines(xml: string) {
 
 function OfficeThumbnail({ file }: { file: PreviewFile }) {
   if (file.thumbnailUrl) {
-    return <img src={file.thumbnailUrl} alt={file.name} loading="lazy" className="h-full min-h-32 w-full bg-surface-raised object-cover" />;
+    return <img src={file.thumbnailUrl} alt={file.name} loading="lazy" className="h-full min-h-0 w-full bg-surface-raised object-cover" />;
   }
   return null;
 }
@@ -67,7 +67,7 @@ function OfficeFallback({ file, variant, message }: { file: PreviewFile; variant
 
   if (variant === 'tile') {
     return (
-      <div className="flex h-full min-h-32 flex-col items-center justify-center gap-2 bg-surface-raised/50 p-3 text-center">
+      <div className="flex h-full min-h-0 flex-col items-center justify-center gap-2 bg-surface-raised/50 p-3 text-center">
         <FileIcon size={26} className="text-fg-muted" />
         <div className="max-w-full truncate text-xs font-semibold text-fg">{file.name}</div>
         <div className="text-3xs uppercase tracking-wide text-fg-muted">{extension}</div>
@@ -108,8 +108,14 @@ function OfficeFallback({ file, variant, message }: { file: PreviewFile; variant
   );
 }
 
-function LoadingState({ label }: { label: string }) {
-  return <div className="flex h-full min-h-32 items-center justify-center bg-surface-raised/35 p-3 text-sm text-fg-muted">{label}</div>;
+function LoadingState({ label, variant }: { label: string; variant?: MediaPreviewVariant }) {
+  return (
+    <div
+      className={`flex h-full ${variant === 'tile' ? 'min-h-0' : 'min-h-32'} items-center justify-center bg-surface-raised/35 p-3 text-sm text-fg-muted`}
+    >
+      {label}
+    </div>
+  );
 }
 
 export function OfficeRenderer({ file, variant }: { file: PreviewFile; variant: MediaPreviewVariant }) {
@@ -265,7 +271,7 @@ export function OfficeRenderer({ file, variant }: { file: PreviewFile; variant: 
   }
 
   if (officeKind === 'spreadsheet') {
-    if (state.status !== 'sheet-ready') return <LoadingState label="Loading spreadsheet..." />;
+    if (state.status !== 'sheet-ready') return <LoadingState label="Loading spreadsheet..." variant={variant} />;
     return (
       <div className="flex h-full min-h-0 flex-col bg-surface">
         {variant === 'full' && (
@@ -285,7 +291,7 @@ export function OfficeRenderer({ file, variant }: { file: PreviewFile; variant: 
   }
 
   if (officeKind === 'presentation') {
-    if (state.status !== 'slides-ready') return <LoadingState label="Loading presentation..." />;
+    if (state.status !== 'slides-ready') return <LoadingState label="Loading presentation..." variant={variant} />;
     return (
       <div className="flex h-full min-h-0 flex-col bg-surface">
         <div className="flex shrink-0 flex-col gap-1 border-b border-edge bg-surface-raised/45 px-3 py-2">
@@ -322,8 +328,8 @@ export function OfficeRenderer({ file, variant }: { file: PreviewFile; variant: 
 
   if (officeKind === 'word') {
     return (
-      <div className={variant === 'tile' ? 'h-full min-h-32 overflow-hidden bg-surface-raised/40 p-2' : 'h-full min-h-0 overflow-auto bg-surface p-4'}>
-        {state.status === 'loading' && <LoadingState label="Loading document..." />}
+      <div className={variant === 'tile' ? 'h-full min-h-0 overflow-hidden bg-surface-raised/40 p-2' : 'h-full min-h-0 overflow-auto bg-surface p-4'}>
+        {state.status === 'loading' && <LoadingState label="Loading document..." variant={variant} />}
         <div
           ref={containerRef}
           className={

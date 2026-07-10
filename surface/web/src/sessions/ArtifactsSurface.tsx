@@ -7,6 +7,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { Artifact, ArtifactPresentation } from '@atrium/centaur-client';
 import { XIcon } from '../components/icons';
+import { navigate, URL_PARAMS, useLocation } from '../router';
 import { EmptyState } from './EmptyState';
 
 const KIND_BADGE: Record<Artifact['kind'], string> = {
@@ -23,6 +24,11 @@ const KIND_LABEL: Record<Artifact['kind'], string> = {
 function basename(path: string): string {
   const parts = path.split('/');
   return parts[parts.length - 1] || path;
+}
+
+function pathWithSearch(path: string, params: URLSearchParams): string {
+  const query = params.toString();
+  return query ? `${path}?${query}` : path;
 }
 
 /** A short monochrome type label (PNG / PDF / CSV) from mime, falling back to the
@@ -271,6 +277,8 @@ export function ArtifactsSurface({
   /** Render body-only (no own header/overlay) — the WorkDrawer supplies the chrome. */
   embedded?: boolean;
 }) {
+  const location = useLocation();
+  const previewParam = useMemo(() => new URLSearchParams(location.search).get(URL_PARAMS.preview)?.trim() ?? '', [location.search]);
   const [preview, setPreview] = useState<Artifact | null>(null);
   const presentationByPath = useMemo(
     () => new Map(presentations.map((presentation) => [presentation.path, presentation])),
@@ -279,6 +287,23 @@ export function ArtifactsSurface({
   // One tile per path, newest-wins (mirrors the ledger's (session,path) chain),
   // newest activity first.
   const tiles = useMemo(() => latestArtifactsByPath(artifacts), [artifacts]);
+
+  const updatePreviewUrl = (value: string | null, options: { replace?: boolean } = {}) => {
+    const params = new URLSearchParams(location.search);
+    if (value) params.set(URL_PARAMS.preview, value);
+    else params.delete(URL_PARAMS.preview);
+    navigate(pathWithSearch(location.pathname, params), options);
+  };
+
+  const openPreview = (artifact: Artifact) => {
+    setPreview(artifact);
+    updatePreviewUrl(artifact.path);
+  };
+
+  const closePreview = () => {
+    setPreview(null);
+    updatePreviewUrl(null);
+  };
 
   useEffect(() => {
     if (embedded) return;
@@ -290,6 +315,15 @@ export function ArtifactsSurface({
     document.addEventListener('keydown', onDocumentKeyDown, true);
     return () => document.removeEventListener('keydown', onDocumentKeyDown, true);
   }, [embedded, onClose]);
+
+  useEffect(() => {
+    if (!previewParam) {
+      setPreview(null);
+      return;
+    }
+    const match = tiles.find(({ artifact }) => artifact.path === previewParam || artifact.id === previewParam)?.artifact ?? null;
+    setPreview(match);
+  }, [previewParam, tiles]);
 
   const body = (
     <div className="min-h-0 flex-1 overflow-y-auto p-3">
@@ -303,7 +337,7 @@ export function ArtifactsSurface({
               sessionId={sessionId}
               artifact={artifact}
               versions={versions}
-              onPreview={setPreview}
+              onPreview={openPreview}
               presentation={presentationByPath.get(artifact.path)}
             />
           ))}
@@ -314,7 +348,7 @@ export function ArtifactsSurface({
           sessionId={sessionId}
           artifact={preview}
           presentation={presentationByPath.get(preview.path)}
-          onClose={() => setPreview(null)}
+          onClose={closePreview}
         />
       )}
     </div>

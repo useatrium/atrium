@@ -1,11 +1,24 @@
 import { QUICK_REACTIONS } from '@atrium/surface-client/reactions';
-import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
+import { useCallback, useEffect, useRef, useState, type MouseEvent, type ReactNode, type RefObject } from 'react';
 import { useDialog } from '../useDialog';
 import { ReactionPicker } from './ReactionPicker';
 
 export type MessageActionMenuState =
   | { mode: 'sheet' }
   | { mode: 'popover'; anchor: { x: number; y: number } };
+
+export type MessageActionMenuAction = {
+  key: string;
+  label: string;
+  icon?: ReactNode;
+  onSelect: () => void;
+  variant?: 'default' | 'danger';
+  closeOnSelect?: boolean;
+};
+
+export type MessageActionMenuReactions = {
+  onSelect: (emoji: string) => void;
+};
 
 const POPOVER_WIDTH = 240;
 const POPOVER_MAX_HEIGHT = 360;
@@ -15,44 +28,19 @@ export function MessageActionMenu({
   state,
   onClose,
   restoreFocusRef,
-  canThread,
-  canEdit,
-  canDelete,
-  canReact,
-  canAnnotate,
-  canCopyMessageText,
-  canMarkupReply,
-  deleteConfirming,
-  onReact,
-  onReplyThread,
-  onMarkupReply,
-  onCopyLink,
-  onCopyText,
-  onEdit,
-  onDelete,
+  actions,
+  reactions,
 }: {
   state: MessageActionMenuState | null;
   onClose: () => void;
   restoreFocusRef?: RefObject<HTMLElement | null>;
-  canThread: boolean;
-  canEdit: boolean;
-  canDelete: boolean;
-  canReact: boolean;
-  canAnnotate: boolean;
-  canCopyMessageText: boolean;
-  canMarkupReply: boolean;
-  deleteConfirming: boolean;
-  onReact: (emoji: string) => void;
-  onReplyThread: () => void;
-  onMarkupReply: () => void;
-  onCopyLink: () => void;
-  onCopyText: () => void;
-  onEdit: () => void;
-  onDelete: () => void;
+  actions: MessageActionMenuAction[];
+  reactions?: MessageActionMenuReactions;
 }) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const addReactionButtonRef = useRef<HTMLButtonElement | null>(null);
+  const sheetHasFreshPointerDownRef = useRef(false);
   const mode = state?.mode;
   const open = state != null;
 
@@ -70,9 +58,18 @@ export function MessageActionMenu({
   });
 
   useEffect(() => {
-    if (open && canReact) return;
+    if (open && reactions) return;
     setPickerOpen(false);
-  }, [canReact, open]);
+  }, [open, reactions]);
+
+  useEffect(() => {
+    if (!open) {
+      sheetHasFreshPointerDownRef.current = false;
+      return;
+    }
+    sheetHasFreshPointerDownRef.current = mode !== 'sheet';
+    if (typeof window !== 'undefined') window.getSelection()?.removeAllRanges();
+  }, [mode, open]);
 
   if (!state) return null;
 
@@ -84,19 +81,26 @@ export function MessageActionMenu({
     ? 'flex min-h-9 w-full items-center rounded px-2.5 py-1.5 text-left text-sm text-danger-text hover:bg-danger-tint/70 focus:bg-danger-tint/70 focus:outline-none'
     : 'flex min-h-11 w-full items-center rounded-md px-3 py-2 text-left text-sm text-danger-text hover:bg-danger-tint/70 focus:bg-danger-tint/70 focus:outline-none';
 
+  const markFreshSheetPointerDown = () => {
+    if (mode !== 'sheet') return;
+    sheetHasFreshPointerDownRef.current = true;
+  };
+
+  const canActivateFromClick = (event: MouseEvent<HTMLElement>) => {
+    if (mode !== 'sheet' || sheetHasFreshPointerDownRef.current || event.detail === 0) return true;
+    event.preventDefault();
+    event.stopPropagation();
+    return false;
+  };
+
   const chooseReaction = (emoji: string) => {
-    onReact(emoji);
+    reactions?.onSelect(emoji);
     closeMenu();
   };
 
-  const runAction = (action: () => void) => {
-    action();
-    closeMenu();
-  };
-
-  const runDeleteAction = () => {
-    onDelete();
-    if (deleteConfirming) closeMenu();
+  const runAction = (action: MessageActionMenuAction) => {
+    action.onSelect();
+    if (action.closeOnSelect !== false) closeMenu();
   };
 
   const menu = (
@@ -111,13 +115,15 @@ export function MessageActionMenu({
           : 'fixed z-50 w-60 overflow-y-auto rounded-md border border-edge-strong bg-surface-overlay p-1.5 shadow-lg'
       }
     >
-      {canReact && (
+      {reactions && (
         <div className={compact ? 'mb-1 flex items-center gap-1 border-b border-edge pb-1' : 'mb-2 flex items-center gap-1 border-b border-edge pb-2'}>
           {QUICK_REACTIONS.map((emoji) => (
             <button
               type="button"
               key={emoji}
-              onClick={() => chooseReaction(emoji)}
+              onClick={(event) => {
+                if (canActivateFromClick(event)) chooseReaction(emoji);
+              }}
               aria-label={`React with ${emoji}`}
               className={
                 compact
@@ -131,7 +137,9 @@ export function MessageActionMenu({
           <button
             type="button"
             ref={addReactionButtonRef}
-            onClick={() => setPickerOpen((value) => !value)}
+            onClick={(event) => {
+              if (canActivateFromClick(event)) setPickerOpen((value) => !value);
+            }}
             aria-label="Add reaction"
             aria-expanded={pickerOpen}
             aria-haspopup="dialog"
@@ -145,7 +153,7 @@ export function MessageActionMenu({
           </button>
         </div>
       )}
-      {canReact && (
+      {reactions && (
         <ReactionPicker
           open={pickerOpen}
           onClose={() => setPickerOpen(false)}
@@ -157,38 +165,27 @@ export function MessageActionMenu({
         />
       )}
       <div className={compact ? 'space-y-0.5' : 'space-y-1'}>
-        {canThread && (
-          <button type="button" onClick={() => runAction(onReplyThread)} className={actionRowClass}>
-            Reply in thread
+        {actions.map((action) => (
+          <button
+            key={action.key}
+            type="button"
+            onClick={(event) => {
+              if (canActivateFromClick(event)) runAction(action);
+            }}
+            className={action.variant === 'danger' ? destructiveRowClass : actionRowClass}
+          >
+            {action.icon && <span className="mr-2 inline-flex shrink-0 items-center">{action.icon}</span>}
+            {action.label}
           </button>
-        )}
-        {canMarkupReply && (
-          <button type="button" onClick={() => runAction(onMarkupReply)} className={actionRowClass}>
-            Mark up & reply
-          </button>
-        )}
-        {canAnnotate && (
-          <button type="button" onClick={() => runAction(onCopyLink)} className={actionRowClass}>
-            Copy link
-          </button>
-        )}
-        {canAnnotate && canCopyMessageText && (
-          <button type="button" onClick={() => runAction(onCopyText)} className={actionRowClass}>
-            Copy text
-          </button>
-        )}
-        {canEdit && (
-          <button type="button" onClick={() => runAction(onEdit)} className={actionRowClass}>
-            Edit
-          </button>
-        )}
-        {canDelete && (
-          <button type="button" onClick={runDeleteAction} className={destructiveRowClass}>
-            {deleteConfirming ? 'Confirm delete' : 'Delete'}
-          </button>
-        )}
+        ))}
         {mode === 'sheet' && (
-          <button type="button" onClick={closeMenu} className={actionRowClass}>
+          <button
+            type="button"
+            onClick={(event) => {
+              if (canActivateFromClick(event)) closeMenu();
+            }}
+            className={actionRowClass}
+          >
             Cancel
           </button>
         )}
@@ -199,11 +196,13 @@ export function MessageActionMenu({
   if (mode === 'popover') return menu;
 
   return (
-    <div className="fixed inset-0 z-40">
+    <div className="fixed inset-0 z-40" onPointerDownCapture={markFreshSheetPointerDown}>
       <button
         type="button"
         aria-label="Close message actions"
-        onClick={closeMenu}
+        onClick={(event) => {
+          if (canActivateFromClick(event)) closeMenu();
+        }}
         className="absolute inset-0 h-full w-full cursor-default bg-black/35"
       />
       {menu}

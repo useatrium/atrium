@@ -13,6 +13,7 @@ import { startArtifactGcWorker, type ArtifactGcWorker } from './artifact-ledger-
 import { SttWorker } from './stt/worker.js';
 import { registerWhisperCppAdapter } from './stt/whispercpp.js';
 import { shutdownServerTelemetry } from './telemetry.js';
+import { startThumbnailBackfill } from './thumbnails.js';
 
 export async function main() {
   if ((process.env.STT_PROVIDER ?? 'noop') === 'whispercpp') {
@@ -55,6 +56,7 @@ export async function main() {
   // it does; /healthz stays 503 until the first success so the health-gated
   // deploy catches never-provisioned storage instead of shipping silent 500s.
   const storageBootstrap = startStorageBootstrap(app.log);
+  startThumbnailBackfill(pool, app.log);
 
   // === gc additions ===
   let artifactGc: ArtifactGcWorker | null = null;

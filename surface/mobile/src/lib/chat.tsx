@@ -35,7 +35,6 @@ import {
   randomId,
   reconcileDraftSnapshot,
   sessionFromWire,
-  useQueuedChangesCount,
   useWs,
   type Api,
   type AppState,
@@ -102,7 +101,6 @@ type SpawnSessionOptions = Pick<
 interface ChatContextValue {
   state: AppState;
   me: UserRef;
-  queuedChangesCount: number;
   serverUrl: string;
   api: Api;
   resolveEntry: EntryResolver;
@@ -203,9 +201,7 @@ type EnqueueOpOptions = {
   onStored?: () => void;
 };
 
-type MobileMsgSendPayload = MsgSendPayload & {
-  voice?: VoiceSendMeta;
-};
+type MobileMsgSendPayload = MsgSendPayload;
 
 function sanitizedFilename(name: string): string {
   const clean = name.replace(/[^a-z0-9._-]/gi, '_').slice(0, 100);
@@ -265,7 +261,6 @@ export function ChatProvider({ session, children }: { session: Session; children
   const [failedSessionCancels, setFailedSessionCancels] = useState<Record<string, true>>({});
   const flushOnWakeRef = useRef<() => void>(() => {});
   const [mentionUsers, setMentionUsers] = useState<UserRef[] | null>(null);
-  const [queueNudgeSeq, setQueueNudgeSeq] = useState(0);
   const loadingMentionUsersRef = useRef(false);
   const touchedDraftKeysRef = useRef<Set<string>>(new Set());
   const activeDraftKeysRef = useRef<Set<string>>(new Set());
@@ -383,31 +378,6 @@ export function ChatProvider({ session, children }: { session: Session; children
     const msgSend = registry['msg.send'];
     registry['msg.send'] = {
       ...msgSend,
-      execute: async (apiClient, payload, op, context) => {
-        const mobilePayload = payload as MobileMsgSendPayload;
-        let attachments = mobilePayload.attachments?.map((a) => a.id);
-        if (mobilePayload.attachmentRefs && mobilePayload.attachmentRefs.length > 0) {
-          const ops = await context.listOps();
-          attachments = mobilePayload.attachmentRefs.map((ref) => {
-            const uploadOp = ops.find((candidate) => candidate.queueKey === `upload:${ref.uploadKey}`);
-            const uploadPayload = uploadOp?.payload as Partial<UploadPayload> | undefined;
-            if (uploadOp?.status !== 'completed' || !uploadPayload?.uploaded || !uploadPayload.fileId) {
-              throw new TypeError(`upload ${ref.uploadKey} is not ready`);
-            }
-            return uploadPayload.fileId;
-          });
-        }
-        return apiClient.postMessage({
-          channelId: mobilePayload.channelId,
-          text: mobilePayload.text,
-          clientMsgId: mobilePayload.clientMsgId,
-          threadRootEventId: mobilePayload.threadRootEventId,
-          ...(mobilePayload.broadcast === true ? { broadcast: true } : {}),
-          attachments,
-          voice: mobilePayload.voice,
-          opId: op.opId,
-        });
-      },
       onConfirmed: async (dispatchFn, result, payload, op) => {
         await deleteUploadRefs(payload.attachmentRefs);
         await msgSend.onConfirmed(dispatchFn, result, payload, op);
@@ -472,10 +442,6 @@ export function ChatProvider({ session, children }: { session: Session; children
     [adoptPrefs, api, cacheMute, onApiError, opRegistry, queueDispatch, queuedFailureMessage],
   );
 
-  const markQueueNudged = useCallback(() => {
-    setQueueNudgeSeq((n) => n + 1);
-  }, []);
-
   const enqueueOp = useCallback(
     async <T extends OpType>(
       input: EnqueueOpInput<T>,
@@ -485,11 +451,10 @@ export function ChatProvider({ session, children }: { session: Session; children
       if (op) {
         options?.onStored?.();
         opQueue.nudge();
-        markQueueNudged();
       }
       return op;
     },
-    [markQueueNudged, opQueue],
+    [opQueue],
   );
 
   const clearFailedSessionSteer = useCallback((sessionId: string) => {
@@ -596,8 +561,6 @@ export function ChatProvider({ session, children }: { session: Session; children
     },
     [],
   );
-
-  const queuedChangesCount = useQueuedChangesCount(eventCache, state.wsStatus, queueNudgeSeq);
 
   const waitForUpload = useCallback(
     (uploadKey: string): Promise<{ fileId: string }> =>
@@ -1046,7 +1009,7 @@ export function ChatProvider({ session, children }: { session: Session; children
           lastReadSentRef.current[channelId] ?? 0,
           lastReadEventId,
         );
-        dispatch({ type: 'read-cursor', channelId, lastReadEventId });
+        dispatch({ type: 'read-cursor', channelId, lastReadEventId, source: 'remote' });
         cacheReadCursorAdvance(channelId, lastReadEventId, 'remote');
       },
       onMuted: (channelId, muted) => {
@@ -1717,7 +1680,6 @@ export function ChatProvider({ session, children }: { session: Session; children
     () => ({
       state,
       me,
-      queuedChangesCount,
       serverUrl,
       api,
       resolveEntry,
@@ -1777,7 +1739,6 @@ export function ChatProvider({ session, children }: { session: Session; children
     [
       state,
       me,
-      queuedChangesCount,
       serverUrl,
       api,
       resolveEntry,

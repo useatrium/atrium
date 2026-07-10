@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { Text, View } from 'react-native';
+import { Pressable, Text, View, type GestureResponderEvent } from 'react-native';
 import {
   containsCriticMarkup,
   formatTurnTime,
@@ -69,6 +69,10 @@ export function SteerRow({
   resolveEntry,
   onOpenChannel,
   onOpenSession,
+  onPress,
+  onLongPress,
+  delayLongPress,
+  accessibilityLabel,
 }: {
   text: string;
   ts?: string;
@@ -77,6 +81,10 @@ export function SteerRow({
   resolveEntry?: EntryResolver;
   onOpenChannel?: (channelId: string) => void;
   onOpenSession?: (sessionId: string) => void;
+  onPress?: (event: GestureResponderEvent) => void;
+  onLongPress?: (event: GestureResponderEvent) => void;
+  delayLongPress?: number;
+  accessibilityLabel?: string;
 }) {
   const { colors } = useTheme();
   const time = ts ? formatTurnTime(ts) : '';
@@ -85,13 +93,24 @@ export function SteerRow({
     () => (serverUrl ? { resolveEntry, onOpenChannel, onOpenSession } : {}),
     [onOpenChannel, onOpenSession, resolveEntry, serverUrl],
   );
+  const Root = onPress || onLongPress ? Pressable : View;
+  const rootProps = {
+    testID: 'steer-row',
+    style: { borderLeftWidth: 2, borderLeftColor: colors.border, paddingLeft: space.sm },
+    ...(onPress || onLongPress
+      ? {
+          accessibilityRole: 'button' as const,
+          accessibilityLabel: accessibilityLabel ?? (text.trim() ? `Message actions: ${text}` : 'Message actions'),
+          onPress,
+          onLongPress,
+          delayLongPress,
+        }
+      : {}),
+  };
 
   if (markupSteer || containsCriticMarkup(text)) {
     return (
-      <View
-        testID="steer-row"
-        style={{ borderLeftWidth: 2, borderLeftColor: colors.border, paddingLeft: space.sm }}
-      >
+      <Root {...rootProps}>
         {time ? (
           <TimestampText
             iso={ts!}
@@ -102,15 +121,12 @@ export function SteerRow({
         ) : null}
         {markupSteer ? <MarkupSteerCard steer={markupSteer} /> : <CriticMarkupText text={text} />}
         <SteerProvenanceByline provenance={provenance} />
-      </View>
+      </Root>
     );
   }
 
   return (
-    <View
-      testID="steer-row"
-      style={{ borderLeftWidth: 2, borderLeftColor: colors.border, paddingLeft: space.sm }}
-    >
+    <Root {...rootProps}>
       {time ? (
         <TimestampText
           iso={ts!}
@@ -123,6 +139,6 @@ export function SteerRow({
         <MessageText text={text} meHandle={null} />
       </EntryReferenceMarkdownProvider>
       <SteerProvenanceByline provenance={provenance} />
-    </View>
+    </Root>
   );
 }

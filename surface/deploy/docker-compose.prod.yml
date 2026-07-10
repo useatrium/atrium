@@ -1,6 +1,7 @@
 services:
   db:
     image: postgres:16
+    restart: unless-stopped
     environment:
       POSTGRES_DB: ${DB_NAME:-atrium}
       POSTGRES_USER: ${DB_USER:-atrium}
@@ -17,6 +18,7 @@ services:
 
   minio:
     image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-atrium}
@@ -36,6 +38,10 @@ services:
     build:
       context: ../..
       dockerfile: surface/deploy/Dockerfile.server
+    # The 2026-07-09 outage: the server crashed as Postgres stopped under it and
+    # nothing restarted it (and a box reboot didn't either). Every long-lived
+    # service here must carry a restart policy — new services included.
+    restart: unless-stopped
     depends_on:
       db:
         condition: service_healthy
@@ -47,6 +53,7 @@ services:
       DATABASE_URL: postgres://${DB_USER:-atrium}:${DB_PASSWORD:?set DB_PASSWORD in .env}@db:5432/${DB_NAME:-atrium}
       SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET in .env}
       S3_ENDPOINT: ${S3_ENDPOINT:?set S3_ENDPOINT to a phone-reachable URL}
+      S3_INTERNAL_ENDPOINT: ${S3_INTERNAL_ENDPOINT:-http://minio:9000}
       S3_BUCKET: ${S3_BUCKET:-atrium-files}
       S3_ACCESS_KEY: ${MINIO_ACCESS_KEY:-atrium}
       S3_SECRET_KEY: ${MINIO_PASSWORD:?set MINIO_PASSWORD in .env}
@@ -145,6 +152,7 @@ services:
   caddy:
     image: caddy:2-alpine
     profiles: ["caddy"]
+    restart: unless-stopped
     depends_on:
       server:
         condition: service_healthy

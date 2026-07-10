@@ -3,6 +3,7 @@ import {
   useCallback,
   useEffect,
   useId,
+  useMemo,
   useRef,
   useState,
   type KeyboardEvent,
@@ -20,10 +21,11 @@ import { Tooltip } from './a11y';
 import { CornerUpLeftIcon, FileIcon, SmilePlusIcon } from './icons';
 import { Lightbox } from './media';
 import type { PreviewFile } from './media';
-import { MessageActionMenu, type MessageActionMenuState } from './MessageActionMenu';
+import { MessageActionMenu, type MessageActionMenuAction, type MessageActionMenuState } from './MessageActionMenu';
 import { CompactMarkdownText, MessageText } from './MessageText';
 import { ReactionPicker } from './ReactionPicker';
 import { TimestampDisclosure } from './TimestampDisclosure';
+import { TimelineImage } from './TimelineImage';
 import { useLongPress } from './useLongPress';
 import { VoiceMessage } from '../VoiceMessage';
 import { entryShareUrl, fileShareUrl } from '../lib/publicUrl';
@@ -321,6 +323,77 @@ export const MessageRow = memo(function MessageRow({
     setDeleteAsk(false);
     onDelete!(m).catch(() => {});
   };
+  const actionMenuActions = useMemo<MessageActionMenuAction[]>(() => {
+    const actions: MessageActionMenuAction[] = [];
+    if (canThread) {
+      actions.push({
+        key: 'reply-thread',
+        label: 'Reply in thread',
+        onSelect: () => onOpenThread!(threadTargetEventId!),
+      });
+    }
+    if (canMarkupReply && entryHandle != null) {
+      actions.push({
+        key: 'markup-reply',
+        label: 'Mark up & reply',
+        onSelect: () => onMarkupEntry?.(entryHandle, m),
+      });
+    }
+    if (canAnnotate) {
+      actions.push({
+        key: 'copy-link',
+        label: 'Copy link',
+        onSelect: () => {
+          setPickerOpen(false);
+          copyEntryLink();
+        },
+      });
+    }
+    if (canAnnotate && canCopyMessageText) {
+      actions.push({
+        key: 'copy-text',
+        label: 'Copy text',
+        onSelect: () => {
+          setPickerOpen(false);
+          copyBlockText();
+        },
+      });
+    }
+    if (canEdit) {
+      actions.push({
+        key: 'edit',
+        label: 'Edit',
+        onSelect: startEdit,
+      });
+    }
+    if (canDelete) {
+      actions.push({
+        key: 'delete',
+        label: deleteAsk ? 'Confirm delete' : 'Delete',
+        onSelect: onDeleteClick,
+        variant: 'danger',
+        closeOnSelect: deleteAsk,
+      });
+    }
+    return actions;
+  }, [
+    canAnnotate,
+    canCopyMessageText,
+    canDelete,
+    canEdit,
+    canMarkupReply,
+    canThread,
+    copyBlockText,
+    copyEntryLink,
+    deleteAsk,
+    entryHandle,
+    m,
+    onDeleteClick,
+    onMarkupEntry,
+    onOpenThread,
+    startEdit,
+    threadTargetEventId,
+  ]);
 
   const actionMenuAllowed = (canThread || canEdit || canDelete || canReact || canAnnotate || canMarkupReply) && !editing;
   const closeActionMenu = useCallback(() => setActionMenu(null), []);
@@ -389,7 +462,10 @@ export const MessageRow = memo(function MessageRow({
       if (dx < 8 || dx < absDy * 1.2) return;
       swipe.dragging = true;
       setSwiping(true);
-      event.currentTarget.setPointerCapture(event.pointerId);
+      // No setPointerCapture here: touch pointers are already implicitly
+      // captured to their pointerdown target, and transferring the capture to
+      // this container fires a bubbling lostpointercapture that our own
+      // onLostPointerCapture handler treats as a cancel — killing the swipe.
     }
 
     event.preventDefault();
@@ -402,9 +478,6 @@ export const MessageRow = memo(function MessageRow({
       const swipe = swipeRef.current;
       if (!swipe || swipe.pointerId !== event.pointerId) return;
       const shouldReply = openThread && swipe.dragging && swipe.offset >= SWIPE_REPLY_THRESHOLD_PX && !!canThread;
-      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-        event.currentTarget.releasePointerCapture(event.pointerId);
-      }
       resetSwipe();
       if (shouldReply) onOpenThread!(threadTargetEventId!);
     },
@@ -486,10 +559,14 @@ export const MessageRow = memo(function MessageRow({
         onPointerCancel={onMessagePointerCancel}
         onLostPointerCapture={onMessagePointerCancel}
         onContextMenu={longPress.onContextMenu}
-        style={swipeOffset > 0 ? { transform: `translateX(${swipeOffset}px)` } : undefined}
-        className={`relative min-w-0 max-w-3xl flex-1 ${
-          longPress.pressing ? '[-webkit-touch-callout:none] select-none' : ''
-        } ${swiping ? 'transition-none' : 'transition-transform duration-150 ease-out'}`}
+        style={{
+          // pan-y keeps vertical scroll native while pointermove still sees the
+          // horizontal swipe-to-reply drag; pinch-zoom stays available (the
+          // viewport meta allows scaling and messages cover most of the screen).
+          touchAction: 'pan-y pinch-zoom',
+          ...(swipeOffset > 0 ? { transform: `translateX(${swipeOffset}px)` } : {}),
+        }}
+        className={`relative min-w-0 max-w-3xl flex-1 ${swiping ? 'transition-none' : 'transition-transform duration-150 ease-out'}`}
       >
         {!grouped && (
           <div className="flex items-baseline gap-2">
@@ -562,17 +639,16 @@ export const MessageRow = memo(function MessageRow({
                   <button
                     type="button"
                     onClick={() => openAttachment(index)}
-                    className="block text-left"
+                    className="block max-w-full min-w-0 text-left"
                   >
-                    <img
+                    <TimelineImage
                       src={`/api/files/${a.id}`}
                       alt={a.filename}
                       width={a.width}
                       height={a.height}
                       loading="lazy"
                       onError={() => markAttachmentRemoved(a.id)}
-                      className="max-h-72 w-auto max-w-sm rounded-md border border-edge object-contain"
-                      style={a.width && a.height ? { aspectRatio: `${a.width} / ${a.height}` } : undefined}
+                      className="max-h-72 rounded-md border border-edge object-contain"
                     />
                   </button>
                 </Tooltip>
@@ -581,7 +657,7 @@ export const MessageRow = memo(function MessageRow({
                   key={a.id}
                   type="button"
                   onClick={() => openAttachment(index)}
-                  className="flex items-center gap-2 rounded-md border border-edge bg-surface-raised/70 px-3 py-2 text-sm text-fg-body hover:border-edge-strong"
+                  className="flex max-w-full min-w-0 items-center gap-2 rounded-md border border-edge bg-surface-raised/70 px-3 py-2 text-sm text-fg-body hover:border-edge-strong"
                 >
                   <FileIcon />
                   <span className="max-w-56 truncate">{a.filename}</span>
@@ -802,29 +878,8 @@ export const MessageRow = memo(function MessageRow({
         state={actionMenu}
         onClose={closeActionMenu}
         restoreFocusRef={rowRef}
-        canThread={!!canThread}
-        canEdit={canEdit}
-        canDelete={canDelete}
-        canReact={canReact}
-        canAnnotate={canAnnotate}
-        canCopyMessageText={canCopyMessageText}
-        canMarkupReply={canMarkupReply && entryHandle != null}
-        deleteConfirming={deleteAsk}
-        onReact={react}
-        onReplyThread={() => onOpenThread!(threadTargetEventId!)}
-        onMarkupReply={() => {
-          if (entryHandle) onMarkupEntry?.(entryHandle, m);
-        }}
-        onCopyLink={() => {
-          setPickerOpen(false);
-          copyEntryLink();
-        }}
-        onCopyText={() => {
-          setPickerOpen(false);
-          copyBlockText();
-        }}
-        onEdit={startEdit}
-        onDelete={onDeleteClick}
+        actions={actionMenuActions}
+        reactions={canReact ? { onSelect: react } : undefined}
       />
     </div>
   );
@@ -862,7 +917,7 @@ function RemovedAttachmentPlaceholder({ filename }: { filename: string }) {
     <div
       role="status"
       aria-label={`${filename} file removed`}
-      className="flex min-h-12 items-center gap-2 rounded-md border border-dashed border-edge bg-surface-raised/35 px-3 py-2 text-sm text-fg-muted"
+      className="flex min-h-12 max-w-full min-w-0 items-center gap-2 rounded-md border border-dashed border-edge bg-surface-raised/35 px-3 py-2 text-sm text-fg-muted"
     >
       <FileIcon />
       <span className="max-w-56 truncate">File removed</span>

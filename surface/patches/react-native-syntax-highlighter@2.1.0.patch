@@ -1,0 +1,13 @@
+diff --git a/dist/index.js b/dist/index.js
+index 90406888c346fc03aac51f07397700c9030f634e..a94e902e28165f26138188a8ccd1dbcbf720a3db 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -22,7 +22,7 @@ var _prism = require('react-syntax-highlighter/prism');
+ 
+ var _prism2 = _interopRequireDefault(_prism);
+ 
+-var _createElement = require('react-syntax-highlighter/create-element');
++var _createElement = require('react-syntax-highlighter/dist/cjs/create-element');
+ 
+ var _hljs = require('react-syntax-highlighter/styles/hljs');
+ 

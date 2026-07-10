@@ -10,11 +10,12 @@ import {
 } from '@atrium/surface-client';
 import { Menu, MenuContent, MenuLabel, MenuSeparator, MenuTrigger, Tooltip } from '../components/a11y';
 import { SearchIcon } from '../components/icons';
-import { Lightbox } from '../components/media';
-import type { LightboxCallbacks } from '../components/media';
+import { Lightbox, MediaPreview, defaultLightboxPanel } from '../components/media';
+import type { LightboxCallbacks, PreviewFile } from '../components/media';
+import { effectiveMediaKind, isAppFile } from '../components/media/utils';
 import { showErrorToast } from '../components/Toasts';
 import { entryShareUrl } from '../lib/publicUrl';
-import { navigate, useLocation } from '../router';
+import { navigate, URL_PARAMS, useLocation } from '../router';
 import type { ArtifactConflict, ResolveChoice } from './ConflictSurface';
 import { EmptyState } from './EmptyState';
 import { hubFileToPreview } from './FilesHub';
@@ -42,7 +43,19 @@ export interface GalleryQueryState {
 }
 
 const PAGE_SIZE = 60;
+const TEXT_TILE_PREVIEW_SIZE_LIMIT_BYTES = 512 * 1024;
 const SORT_VALUES = new Set<GallerySort>(['recent', 'name', 'size']);
+const GALLERY_URL_PARAM_KEYS = [
+  'q',
+  'category',
+  'channelId',
+  'sessionId',
+  'sort',
+  'includeDeleted',
+  'includeScratch',
+  'starred',
+  'label',
+];
 
 function isFileCategory(value: string | null): value is FileCategory {
   return value != null && FILE_CATEGORIES.some((category) => category.key === value);
@@ -59,6 +72,11 @@ function cleanId(value: string | null | undefined): string {
 function pathWithSearch(path: string, params: URLSearchParams): string {
   const query = params.toString();
   return query ? `${path}?${query}` : path;
+}
+
+function lightboxPanelFromSearch(search: string): 'info' | 'history' | null {
+  const value = new URLSearchParams(search).get(URL_PARAMS.panel);
+  return value === 'info' || value === 'history' ? value : null;
 }
 
 export function galleryStateFromSearch(
@@ -200,6 +218,34 @@ function fileMeta(file: HubFile): string {
   return `${formatGalleryBytes(file.sizeBytes)} · ${relativeFileTime(file.createdAt)} · ${uploaderLabel(file)}`;
 }
 
+function shouldFetchTextForTilePreview(file: PreviewFile): boolean {
+  if (isAppFile(file)) return false;
+  const kind = effectiveMediaKind(file);
+  return kind === 'text' || kind === 'code' || kind === 'data';
+}
+
+function hasSafeTextTilePreviewSize(file: PreviewFile): boolean {
+  return typeof file.sizeBytes === 'number' && Number.isFinite(file.sizeBytes) && file.sizeBytes <= TEXT_TILE_PREVIEW_SIZE_LIMIT_BYTES;
+}
+
+function shouldUseTypeChipPreview(file: PreviewFile): boolean {
+  return shouldFetchTextForTilePreview(file) && !hasSafeTextTilePreviewSize(file);
+}
+
+function TypeChipPreview({ label }: { label: string }) {
+  return (
+    <div className="flex size-full items-center justify-center px-3">
+      <span className="max-w-full truncate rounded-md border border-edge-strong bg-surface-overlay px-2.5 py-1.5 text-xs font-semibold uppercase tracking-wide text-fg-secondary">
+        {label}
+      </span>
+    </div>
+  );
+}
+
+function GalleryCardPreview({ file, preview }: { file: HubFile; preview: PreviewFile }) {
+  return shouldUseTypeChipPreview(preview) ? <TypeChipPreview label={fileTypeLabel(file)} /> : <MediaPreview file={preview} variant="tile" />;
+}
+
 function mergeFile(files: HubFile[], next: HubFile): HubFile[] {
   return files.map((file) => (file.artifactId === next.artifactId ? next : file));
 }
@@ -215,8 +261,8 @@ function resolvedTextForChoice(conflict: ArtifactConflict, choice: ResolveChoice
 }
 
 function GalleryCard({ file, onOpen }: { file: HubFile; onOpen: () => void }) {
-  const imageThumbnail = file.mediaKind === 'image' && file.thumbnailUrl ? file.thumbnailUrl : null;
-  const type = fileTypeLabel(file);
+  const preview = hubFileToPreview(file);
+  const showPath = effectiveMediaKind(preview) !== 'image';
   return (
     <button
       type="button"
@@ -228,20 +274,9 @@ function GalleryCard({ file, onOpen }: { file: HubFile; onOpen: () => void }) {
       }`}
     >
       <div className="aspect-[4/3] w-full overflow-hidden border-b border-edge bg-surface">
-        {imageThumbnail ? (
-          <img
-            src={imageThumbnail}
-            alt=""
-            className="size-full object-cover transition-transform duration-200 ease-out group-hover:scale-[1.02]"
-            loading="lazy"
-          />
-        ) : (
-          <div className="flex size-full items-center justify-center px-3">
-            <span className="max-w-full truncate rounded-md border border-edge-strong bg-surface-overlay px-2.5 py-1.5 text-xs font-semibold uppercase tracking-wide text-fg-secondary">
-              {type}
-            </span>
-          </div>
-        )}
+        <div className="size-full transition-transform duration-200 ease-out group-hover:scale-[1.02] motion-reduce:transition-none motion-reduce:group-hover:scale-100">
+          <GalleryCardPreview file={file} preview={preview} />
+        </div>
       </div>
       <div className="flex min-h-20 min-w-0 flex-1 flex-col justify-between gap-2 px-2.5 py-2">
         <div className="min-w-0">
@@ -249,10 +284,10 @@ function GalleryCard({ file, onOpen }: { file: HubFile; onOpen: () => void }) {
             {file.name}
           </div>
           <div className="mt-1 truncate text-3xs text-fg-muted" title={fileMeta(file)}>
-            {imageThumbnail ? relativeFileTime(file.createdAt) : fileMeta(file)}
+            {fileMeta(file)}
           </div>
         </div>
-        {!imageThumbnail && (
+        {showPath && (
           <div className="truncate text-3xs text-fg-faint" title={file.path}>
             {file.path}
           </div>
@@ -430,6 +465,8 @@ export function Gallery({
 }): JSX.Element {
   const location = useLocation();
   const endpoint = `/api/workspaces/${encodeURIComponent(workspaceId)}/files`;
+  const urlFileArtifactId = useMemo(() => cleanId(new URLSearchParams(location.search).get(URL_PARAMS.file)), [location.search]);
+  const urlPanel = useMemo(() => lightboxPanelFromSearch(location.search), [location.search]);
   const parsedWithoutContext = useMemo(() => galleryStateFromSearch(location.search), [location.search]);
   const [rememberedScopeIds, setRememberedScopeIds] = useState(() => ({
     channelId: parsedWithoutContext.channelId || cleanId(channelId),
@@ -455,6 +492,7 @@ export function Gallery({
   const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
+  const handledLegacyInitialOpenRef = useRef<string | null>(null);
 
   const previews = useMemo(() => files.map(hubFileToPreview), [files]);
   const activeScope = queryState.scope === 'session' ? 'session' : queryState.scope === 'channel' ? 'channel' : 'everything';
@@ -496,9 +534,67 @@ export function Gallery({
       } else if (patch.scope === 'session' && !next.sessionId) {
         next.scope = 'everything';
       }
-      navigate(pathWithSearch('/files', galleryUrlSearchParams(next)), options);
+      const params = new URLSearchParams(location.search);
+      for (const key of GALLERY_URL_PARAM_KEYS) params.delete(key);
+      for (const [key, value] of galleryUrlSearchParams(next)) params.set(key, value);
+      navigate(pathWithSearch('/files', params), options);
     },
-    [queryState],
+    [location.search, queryState],
+  );
+
+  const updateLightboxSearch = useCallback(
+    (
+      patch: { file?: string | null; panel?: 'info' | 'history' | null },
+      options: { replace?: boolean } = {},
+    ) => {
+      const params = new URLSearchParams(location.search);
+      if ('file' in patch) {
+        if (patch.file) params.set(URL_PARAMS.file, patch.file);
+        else {
+          params.delete(URL_PARAMS.file);
+          params.delete(URL_PARAMS.panel);
+        }
+      }
+      if ('panel' in patch) {
+        if (patch.panel) params.set(URL_PARAMS.panel, patch.panel);
+        else params.delete(URL_PARAMS.panel);
+      }
+      navigate(pathWithSearch('/files', params), options);
+    },
+    [location.search],
+  );
+
+  const openLightboxAtIndex = useCallback(
+    (index: number) => {
+      const file = previews[index];
+      if (!file) return;
+      setLightboxIndex(index);
+      updateLightboxSearch({ file: file.id, panel: defaultLightboxPanel() }, { replace: false });
+    },
+    [previews, updateLightboxSearch],
+  );
+
+  const changeLightboxIndex = useCallback(
+    (index: number) => {
+      const nextIndex = Math.max(0, Math.min(index, previews.length - 1));
+      const file = previews[nextIndex];
+      if (!file) return;
+      setLightboxIndex(nextIndex);
+      updateLightboxSearch({ file: file.id }, { replace: true });
+    },
+    [previews, updateLightboxSearch],
+  );
+
+  const closeLightbox = useCallback(() => {
+    setLightboxIndex(null);
+    updateLightboxSearch({ file: null }, { replace: false });
+  }, [updateLightboxSearch]);
+
+  const changeLightboxPanel = useCallback(
+    (panel: 'info' | 'history' | null) => {
+      updateLightboxSearch({ panel }, { replace: true });
+    },
+    [updateLightboxSearch],
   );
 
   useEffect(() => {
@@ -572,11 +668,22 @@ export function Gallery({
   }, [loadFiles, loading, loadingMore, nextCursor]);
 
   useEffect(() => {
-    if (!initialOpenArtifactId || !loadedOnce) return;
-    const index = files.findIndex((file) => file.artifactId === initialOpenArtifactId);
-    if (index >= 0) setLightboxIndex(index);
-    onInitialOpenArtifactHandled?.(initialOpenArtifactId);
-  }, [files, initialOpenArtifactId, loadedOnce, onInitialOpenArtifactHandled]);
+    if (!loadedOnce) return;
+    if (!urlFileArtifactId) {
+      setLightboxIndex(null);
+      return;
+    }
+    const index = files.findIndex((file) => file.artifactId === urlFileArtifactId);
+    setLightboxIndex(index >= 0 ? index : null);
+  }, [files, loadedOnce, urlFileArtifactId]);
+
+  useEffect(() => {
+    const legacyArtifactId = cleanId(initialOpenArtifactId);
+    if (!legacyArtifactId || urlFileArtifactId || handledLegacyInitialOpenRef.current === legacyArtifactId) return;
+    handledLegacyInitialOpenRef.current = legacyArtifactId;
+    updateLightboxSearch({ file: legacyArtifactId }, { replace: true });
+    onInitialOpenArtifactHandled?.(legacyArtifactId);
+  }, [initialOpenArtifactId, onInitialOpenArtifactHandled, updateLightboxSearch, urlFileArtifactId]);
 
   const callbacks: LightboxCallbacks = useMemo(
     () => ({
@@ -592,7 +699,7 @@ export function Gallery({
         }
       },
       onDiscuss: async (_file, draft) => {
-        setLightboxIndex(null);
+        closeLightbox();
         if (channelId && onSeedChannelComposer) {
           onSeedChannelComposer(draft);
           return;
@@ -808,7 +915,7 @@ export function Gallery({
       },
       canManage: () => true,
     }),
-    [channelId, files, loadFiles, onSeedChannelComposer, queryState.includeDeleted, showNotice],
+    [channelId, closeLightbox, files, loadFiles, onSeedChannelComposer, queryState.includeDeleted, showNotice],
   );
 
   const empty = loadedOnce && !loading && !error && files.length === 0;
@@ -866,7 +973,7 @@ export function Gallery({
         {!error && files.length > 0 && (
           <div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(150px,1fr))]">
             {files.map((file, index) => (
-              <GalleryCard key={file.artifactId} file={file} onOpen={() => setLightboxIndex(index)} />
+              <GalleryCard key={file.artifactId} file={file} onOpen={() => openLightboxAtIndex(index)} />
             ))}
           </div>
         )}
@@ -888,8 +995,10 @@ export function Gallery({
         <Lightbox
           files={previews}
           index={Math.min(lightboxIndex, previews.length - 1)}
-          onIndexChange={setLightboxIndex}
-          onClose={() => setLightboxIndex(null)}
+          onIndexChange={changeLightboxIndex}
+          onClose={closeLightbox}
+          panel={urlPanel}
+          onPanelChange={changeLightboxPanel}
           {...callbacks}
         />
       )}

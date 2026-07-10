@@ -28,8 +28,9 @@ product state; Centaur owns sandboxed agent execution.
 - Postgres 16 in Docker on host port **5433** (db/user/password all `atrium`).
 - MinIO in Docker on **9000** (console **9001**, user `atrium` /
   `atrium-dev-secret`) for file uploads — presigned PUT/GET, bucket
-  auto-created on first upload. Override via `S3_ENDPOINT`/`S3_BUCKET`/
-  `S3_ACCESS_KEY`/`S3_SECRET_KEY`.
+  auto-created on first upload. `S3_ENDPOINT` is the public presign host;
+  `S3_INTERNAL_ENDPOINT` is optional for server byte I/O. Override via
+  `S3_BUCKET`/`S3_ACCESS_KEY`/`S3_SECRET_KEY`.
 - Auth is prototype-simple: `POST /auth/login {handle, displayName}` sets a
   signed (HMAC-SHA256) httpOnly cookie. No passwords.
 

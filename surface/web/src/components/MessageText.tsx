@@ -4,6 +4,7 @@ import rehypeHighlight from 'rehype-highlight';
 import remarkGfm from 'remark-gfm';
 import { findEntryLinkCandidates } from '../lib/entryLinks';
 import { EntryInlineChip, EntryQuoteCards } from './EntryQuoteCard';
+import { TimelineImage } from './TimelineImage';
 import '../sessions/Markdown.css';
 
 type MarkdownMode = 'message' | 'compact';
@@ -110,6 +111,11 @@ function safeUrlTransform(url: string) {
   if (url.startsWith(MENTION_URL_PREFIX)) return url;
   if (url.startsWith(ENTRY_URL_PREFIX)) return url;
   return defaultUrlTransform(url);
+}
+
+function markdownImageDimension(value: number | string | undefined): number | undefined {
+  const parsed = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : NaN;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
 }
 
 function standaloneEntryHandle(line: string): string | null {
@@ -310,6 +316,20 @@ function componentsFor(mode: MarkdownMode, meHandle?: string): Components {
         >
           {children}
         </a>
+      );
+    },
+    img: ({ src, alt, title, width, height, node: _node }) => {
+      if (!src) return null;
+      return (
+        <TimelineImage
+          src={src}
+          alt={alt ?? ''}
+          title={title}
+          width={markdownImageDimension(width)}
+          height={markdownImageDimension(height)}
+          loading="lazy"
+          className="my-2 max-h-72 rounded-md border border-edge object-contain"
+        />
       );
     },
     ul: ({ children, node: _node, ...props }) =>

@@ -402,6 +402,11 @@ function upsertPending(list: ChatMessage[], msg: ChatMessage): ChatMessage[] {
   return copy;
 }
 
+function dropUnconfirmedByClientMsgId(list: ChatMessage[], clientMsgId: string | null): ChatMessage[] {
+  if (clientMsgId == null) return list;
+  return list.filter((m) => !(m.status !== 'confirmed' && m.clientMsgId === clientMsgId));
+}
+
 function hasPendingReply(t: ChannelTimeline, msg: ChatMessage): boolean {
   if (msg.clientMsgId == null || msg.threadRootEventId == null) return false;
   const matches = (m: ChatMessage) =>
@@ -826,7 +831,10 @@ export function applyEvent(t: ChannelTimeline, ev: WireEvent): ChannelTimeline {
     const threads = { ...t.threads };
     const thread = threads[rootId];
     if (thread) threads[rootId] = upsertConfirmed(thread, msg);
-    const withBroadcast = msg.broadcast === true ? upsertConfirmed(main, msg) : main;
+    const withBroadcast =
+      msg.broadcast === true
+        ? upsertConfirmed(main, msg)
+        : dropUnconfirmedByClientMsgId(main, msg.clientMsgId);
     return bumpLastEvent({ ...t, main: withBroadcast, threads, seenIds }, ev.id);
   }
 
@@ -920,16 +928,25 @@ export function mergeThread(
 ): ChannelTimeline {
   const seenIds = new Set(t.seenIds);
   let thread = t.threads[rootEventId] ?? [];
+  let mainRows = t.main;
   for (const ev of events) {
     if (!isRowEvent(ev.type)) continue;
-    if (seenIds.has(ev.id) && thread.some((m) => m.id === ev.id)) continue;
-    seenIds.add(ev.id);
-    thread = upsertConfirmed(thread, messageFromEvent(ev));
+    const msg = messageFromEvent(ev);
+    if (!(seenIds.has(ev.id) && thread.some((m) => m.id === ev.id))) {
+      seenIds.add(ev.id);
+      thread = upsertConfirmed(thread, msg);
+    }
+    // A broadcast reply is a main-timeline row too (mirrors applyEvent). The
+    // thread fetch marks the id seen, so if it lands before the channel
+    // history page, mergeHistory would never fold the row into main.
+    if (ev.broadcast === true && !mainRows.some((m) => m.id === ev.id)) {
+      mainRows = upsertConfirmed(mainRows, msg);
+    }
   }
   // Thread fetch is authoritative for the root's count (tombstones excluded).
   const confirmedCount = thread.filter((m) => m.status === 'confirmed' && !m.deleted).length;
   const maxReplyId = thread.reduce((acc, m) => Math.max(acc, m.id ?? 0), 0);
-  const main = t.main.map((m) =>
+  const main = mainRows.map((m) =>
     m.id === rootEventId
       ? {
           ...m,

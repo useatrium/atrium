@@ -1,0 +1,28 @@
+# docker's restore after an unclean shutdown can drop a container's network
+# endpoint or skip a container entirely. compose up -d reconciles desired state
+# including attachments, aliases, and port publishes where restart policies cannot.
+#
+# Box-specific: these paths assume the production checkout lives at
+# /home/ubuntu/atrium and the deploy state lives next to it.
+[Unit]
+Description=Atrium boot-time compose reconciliation
+After=docker.service network-online.target k3s.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=root
+RemainAfterExit=yes
+TimeoutStartSec=600
+Environment=ATRIUM_REPO_DIR=/home/ubuntu/atrium
+Environment=ATRIUM_DEPLOY_STATE_DIR=/home/ubuntu/atrium-deploy
+Environment=LIVEKIT_WEBHOOK_URL=http://10.42.0.1:3001/api/calls/webhook
+Environment=LIVEKIT_CONFIG_FILE=/home/ubuntu/atrium-deploy/surface/livekit.yaml
+# Both stacks publish ports on 10.42.0.1 (the k3s flannel bridge), which only
+# exists once k3s networking is up — wait for it (bounded), then reconcile each
+# stack independently so one failed bind can't block the other stack's heal.
+ExecStart=/bin/bash -lc 'for i in $(seq 1 90); do ip -4 addr show | grep -q "10\\.42\\.0\\.1/" && break; sleep 2; done; /home/ubuntu/atrium/surface/deploy/prepare-livekit-config.sh >/dev/null || echo "warn: livekit config prep failed"; docker compose --env-file /home/ubuntu/atrium/surface/deploy/.env -f /home/ubuntu/atrium/surface/deploy/docker-compose.prod.yml -f /home/ubuntu/atrium/surface/deploy/docker-compose.tunnel.yml --profile livekit --profile caddy up -d --no-build || echo "warn: surface stack reconcile failed"; docker compose -f /home/ubuntu/atrium/infra/observability/docker-compose.yml up -d || echo "warn: observability stack reconcile failed"'
+
+[Install]
+WantedBy=multi-user.target

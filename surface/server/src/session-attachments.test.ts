@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { DomainError } from './events.js';
 import {
   agentTurnInputLine,
+  agentTurnMessageParts,
   parseAgentTurnAttachmentInputPayloads,
   parseAgentTurnAttachmentInputs,
   type AgentTurnAttachmentRef,
@@ -71,5 +72,18 @@ describe('agent turn attachments', () => {
       },
       reasoning: 'high',
     });
+  });
+
+  it('prepends exactly one context part to durable and execute message content', () => {
+    const contextBlock = '[atrium context]\nfrom: Alice (human · driver)\nchannel: #general\nsent: 2026-07-08T14:32:05Z';
+
+    expect(agentTurnMessageParts('review this', [], contextBlock)).toEqual([
+      { type: 'context', text: contextBlock },
+      { type: 'text', text: 'review this' },
+    ]);
+    expect(JSON.parse(agentTurnInputLine('review this', [], null, contextBlock)).message.content).toEqual([
+      { type: 'context', text: contextBlock },
+      { type: 'text', text: 'review this' },
+    ]);
   });
 });

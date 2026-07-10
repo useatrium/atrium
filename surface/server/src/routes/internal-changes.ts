@@ -8,7 +8,7 @@ import type { Db } from '../db.js';
 import { FilesChangedDebouncer } from '../files-nudge.js';
 import { isHarness, type Harness } from '../harness-transcript.js';
 import type { WsHub } from '../hub.js';
-import { workspaceMemberIds } from '../membership.js';
+import { workspaceMemberExists, workspaceMemberIds } from '../membership.js';
 import { CLAUDE_CODE_PROVIDER, CODEX_PROVIDER } from '../provider-credentials.js';
 import { listSessionProfileBundles } from '../profile-bundles.js';
 import {
@@ -39,6 +39,7 @@ type PendingChangeEvent = {
   feed: ChangeFeed;
   key?: string;
   workspaceId?: string;
+  channels?: string[];
 };
 
 type ChangeEvent = PendingChangeEvent & {
@@ -49,6 +50,8 @@ const ARTIFACT_ADVANCED_CHANNEL = 'artifact_advanced';
 const MAX_BATCH_SESSIONS = 200;
 const DEFAULT_HEARTBEAT_MS = 15_000;
 const MAX_QUEUED_SSE_FRAMES = 1000;
+const LISTEN_RECONNECT_MIN_MS = 1_000;
+const LISTEN_RECONNECT_MAX_MS = 30_000;
 
 export interface InternalChangesRouteDeps {
   pool: Db;
@@ -260,6 +263,9 @@ class InternalChangeBroadcaster {
   private processing: Promise<void> = Promise.resolve();
   private readonly subscribers = new Set<SseSubscriber>();
   private seq = 0;
+  private closed = false;
+  private reconnectTimer: NodeJS.Timeout | null = null;
+  private reconnectDelayMs = LISTEN_RECONNECT_MIN_MS;
 
   constructor(
     private readonly pool: Db,
@@ -268,11 +274,13 @@ class InternalChangeBroadcaster {
   ) {}
 
   async start(): Promise<void> {
+    if (this.closed) return;
     if (this.client) return;
     if (this.starting) return this.starting;
     this.starting = this.startListener();
     try {
       await this.starting;
+      this.reconnectDelayMs = LISTEN_RECONNECT_MIN_MS;
     } finally {
       this.starting = null;
     }
@@ -287,6 +295,11 @@ class InternalChangeBroadcaster {
   }
 
   async close(): Promise<void> {
+    this.closed = true;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
     for (const subscriber of [...this.subscribers]) subscriber.close();
     this.filesNudge?.close();
     if (!this.client) return;
@@ -294,6 +307,7 @@ class InternalChangeBroadcaster {
     this.client = null;
     client.removeAllListeners('notification');
     client.removeAllListeners('error');
+    client.removeAllListeners('end');
     await client.query('UNLISTEN *').catch(() => {});
     client.release();
   }
@@ -310,33 +324,74 @@ class InternalChangeBroadcaster {
     });
     client.on('error', (err) => {
       this.log.error({ err }, 'internal changes listener failed');
+      this.restartListener(client);
+    });
+    client.on('end', () => {
+      this.restartListener(client);
     });
     await client.query(`LISTEN ${ARTIFACT_ADVANCED_CHANNEL}`);
     await client.query(`LISTEN ${SESSION_RECORD_CHANGES_NOTIFY_CHANNEL}`);
     await client.query(`LISTEN ${PROFILE_BUNDLES_NOTIFY_CHANNEL}`);
   }
 
-  private async processNotification(notification: pg.Notification): Promise<void> {
-    const change = await this.mapNotification(notification);
-    if (!change) return;
-    if (change.feed === 'artifacts' && change.workspaceId) {
-      this.filesNudge?.nudge(change.workspaceId);
+  /** The LISTEN connection died under us: drop it and reconnect with backoff. */
+  private restartListener(client: pg.PoolClient): void {
+    if (this.client !== client) return;
+    this.client = null;
+    client.removeAllListeners('notification');
+    client.removeAllListeners('error');
+    client.removeAllListeners('end');
+    try {
+      // Release with an error so the pool destroys the dead connection.
+      client.release(new Error('internal changes listener connection lost'));
+    } catch {
+      // already released
     }
-    this.seq += 1;
-    this.broadcast({ ...change, seq: this.seq });
+    this.scheduleReconnect();
   }
 
-  private async mapNotification(notification: pg.Notification): Promise<PendingChangeEvent | null> {
+  private scheduleReconnect(): void {
+    if (this.closed || this.reconnectTimer) return;
+    const delay = this.reconnectDelayMs;
+    this.reconnectDelayMs = Math.min(this.reconnectDelayMs * 2, LISTEN_RECONNECT_MAX_MS);
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      this.start()
+        .then(() => {
+          this.log.info('internal changes listener reconnected');
+        })
+        .catch((err) => {
+          this.log.error({ err }, 'internal changes listener reconnect failed');
+          this.scheduleReconnect();
+        });
+    }, delay);
+    this.reconnectTimer.unref?.();
+  }
+
+  private async processNotification(notification: pg.Notification): Promise<void> {
+    const changes = await this.mapNotification(notification);
+    if (changes.length === 0) return;
+    for (const change of changes) {
+      if (change.feed === 'artifacts' && change.workspaceId) {
+        this.filesNudge?.nudge(change.workspaceId);
+      }
+      this.seq += 1;
+      this.broadcast({ ...change, seq: this.seq });
+    }
+  }
+
+  private async mapNotification(notification: pg.Notification): Promise<PendingChangeEvent[]> {
     const payload = parseJsonPayload(notification.payload);
     switch (notification.channel) {
       case ARTIFACT_ADVANCED_CHANNEL:
-        return this.mapArtifactAdvanced(payload);
+        return [await this.mapArtifactAdvanced(payload)];
       case SESSION_RECORD_CHANGES_NOTIFY_CHANNEL:
+        if (stringField(payload.channelId)) return this.mapChannelAdvanced(payload);
         return this.mapSessionAdvanced('atrium', payload);
       case PROFILE_BUNDLES_NOTIFY_CHANNEL:
         return this.mapSessionAdvanced('profile', payload);
       default:
-        return null;
+        return [];
     }
   }
 
@@ -365,14 +420,14 @@ class InternalChangeBroadcaster {
   private async mapSessionAdvanced(
     feed: Exclude<ChangeFeed, 'artifacts'>,
     payload: Record<string, unknown>,
-  ): Promise<PendingChangeEvent> {
+  ): Promise<PendingChangeEvent[]> {
     const sessionId = stringField(payload.sessionId);
     const payloadWorkspaceId = stringField(payload.workspaceId);
     if (!sessionId) {
-      return {
+      return [{
         feed,
         ...(payloadWorkspaceId ? { workspaceId: payloadWorkspaceId } : {}),
-      };
+      }];
     }
     const res = await this.pool.query<{
       workspace_id: string;
@@ -385,13 +440,44 @@ class InternalChangeBroadcaster {
       [sessionId],
     );
     const row = res.rows[0];
-    return {
+    return [{
       feed,
       ...(row?.centaur_thread_key ? { key: row.centaur_thread_key } : {}),
       ...(row?.workspace_id || payloadWorkspaceId
         ? { workspaceId: row?.workspace_id ?? payloadWorkspaceId }
         : {}),
-    };
+    }];
+  }
+
+  private async mapChannelAdvanced(payload: Record<string, unknown>): Promise<PendingChangeEvent[]> {
+    const channelId = stringField(payload.channelId);
+    if (!channelId) return [{ feed: 'atrium' }];
+    const res = await this.pool.query<{
+      workspace_id: string;
+      centaur_thread_key: string;
+    }>(
+      `SELECT DISTINCT c.workspace_id,
+              s.centaur_thread_key
+         FROM channels c
+         JOIN sessions s ON s.workspace_id = c.workspace_id
+        WHERE c.id = $1::uuid
+          AND s.centaur_thread_key IS NOT NULL
+          AND (
+            (c.kind = 'public' AND ${workspaceMemberExists('c.workspace_id', 's.spawned_by')})
+            OR EXISTS (SELECT 1 FROM channel_members cm
+                       WHERE cm.channel_id = c.id AND cm.user_id = s.spawned_by)
+            OR EXISTS (SELECT 1 FROM sessions own
+                       WHERE own.channel_id = c.id AND own.spawned_by = s.spawned_by)
+          )
+          AND (c.kind NOT IN ('dm', 'gdm') OR s.channel_id = c.id)`,
+      [channelId],
+    );
+    return res.rows.map((row) => ({
+      feed: 'atrium',
+      key: row.centaur_thread_key,
+      workspaceId: row.workspace_id,
+      channels: [channelId],
+    }));
   }
 
   private broadcast(event: ChangeEvent): void {

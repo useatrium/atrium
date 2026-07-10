@@ -65,10 +65,15 @@ export function dispatchSyncSnapshot(
   snapshot: SyncStateSnapshot,
   onPrefs?: (prefs: UserPrefs) => void,
 ): void {
-  dispatch({ type: 'channels-loaded', channels: snapshot.channels });
   for (const [channelId, lastReadEventId] of Object.entries(snapshot.readCursors)) {
-    dispatch({ type: 'read-cursor', channelId, lastReadEventId });
+    // A sync snapshot is server truth, which may reflect a read from another
+    // device/tab — mark it remote so a frozen divider can dissolve on catch-up.
+    // Dispatched BEFORE channels-loaded: the reducer counts a remote cursor only
+    // when it advances past the local one, and channels-loaded would overwrite
+    // the local cursor with this same server value first, masking the advance.
+    dispatch({ type: 'read-cursor', channelId, lastReadEventId, source: 'remote' });
   }
+  dispatch({ type: 'channels-loaded', channels: snapshot.channels });
   const muted = new Set(snapshot.mutes);
   for (const channel of snapshot.channels) {
     dispatch({ type: 'mute-changed', channelId: channel.id, muted: muted.has(channel.id) });

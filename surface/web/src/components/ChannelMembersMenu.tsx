@@ -17,12 +17,25 @@ export function ChannelMembersMenu({
   channel,
   meId,
   enqueueOp,
+  open: controlledOpen,
+  onOpenChange,
 }: {
   channel: Channel;
   meId: string;
   enqueueOp: (input: MemberOp) => Promise<unknown>;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }) {
-  const [open, setOpen] = useState(false);
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
+  const open = controlledOpen ?? uncontrolledOpen;
+  const setOpen = useCallback(
+    (next: boolean | ((current: boolean) => boolean)) => {
+      const value = typeof next === 'function' ? next(open) : next;
+      if (controlledOpen === undefined) setUncontrolledOpen(value);
+      onOpenChange?.(value);
+    },
+    [controlledOpen, onOpenChange, open],
+  );
   const [members, setMembers] = useState<UserRef[] | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [people, setPeople] = useState<UserRef[] | null>(null);
@@ -47,16 +60,20 @@ export function ChannelMembersMenu({
 
   useEffect(() => {
     setMembers(null);
-    setOpen(false);
     setPickerOpen(false);
     setLeaveAsk(false);
-  }, [channel.id]);
+    if (controlledOpen === undefined) setUncontrolledOpen(false);
+  }, [channel.id, controlledOpen]);
+
+  useEffect(() => {
+    if (open && !members) loadMembers();
+  }, [loadMembers, members, open]);
 
   const close = useCallback(() => {
     setOpen(false);
     setPickerOpen(false);
     setLeaveAsk(false);
-  }, []);
+  }, [setOpen]);
 
   useDialog({
     open,
@@ -148,7 +165,6 @@ export function ChannelMembersMenu({
         ref={buttonRef}
         onClick={() => {
           setOpen((v) => !v);
-          if (!members) loadMembers();
         }}
         aria-expanded={open}
         aria-haspopup="dialog"

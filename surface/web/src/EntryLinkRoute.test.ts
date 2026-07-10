@@ -67,7 +67,7 @@ describe('EntryLinkRoute helpers', () => {
 
   it('routes events to the channel shell with entry params', () => {
     expect(destinationForEntry(entry({ handle: 'evt_9' }))).toMatchObject({
-      pathname: '/',
+      pathname: '/c/ch_1',
       search: 'entry=evt_9',
       initialChannelId: 'ch_1',
       initialSessionId: null,
@@ -77,9 +77,9 @@ describe('EntryLinkRoute helpers', () => {
   it('routes artifacts to the channel files surface with file params', () => {
     expect(destinationForEntry(entry({ handle: 'art_00000000-0000-0000-0000-000000000001', targetType: 'artifact' })))
       .toMatchObject({
-        pathname: '/',
+        pathname: '/files',
         search: 'file=00000000-0000-0000-0000-000000000001',
-        initialChannelId: 'ch_1',
+        initialChannelId: null,
         initialSessionId: null,
         initialFileArtifactId: '00000000-0000-0000-0000-000000000001',
       });
@@ -101,8 +101,8 @@ describe('EntryLinkRoute helpers', () => {
         }),
       ),
     ).toMatchObject({
-      pathname: '/',
-      search: 'entry=evt_42&threadRoot=7',
+      pathname: '/c/ch_1/t/7',
+      search: 'entry=evt_42',
       initialChannelId: 'ch_1',
       initialThreadRootEventId: 7,
       initialEntryHandle: 'evt_42',

@@ -16,6 +16,7 @@ import {
 import { isTerminalExecutionStatus } from '@atrium/centaur-client';
 import type { Db, DbClient } from './db.js';
 import { withTx } from './db.js';
+import { stripSteerContextPrefix, type ParsedSteerContextBlock } from './steer-context.js';
 
 export type SessionRecordKind =
   | 'message'
@@ -65,6 +66,7 @@ interface MutableProjectionState {
   toolRecordById: Map<string, number>;
   lastToolRecordIndex: number | null;
   questionRecordById: Map<string, number>;
+  pendingUserMessageAuthor: JsonObject | null;
 }
 
 type RawFrameWithTs = CentaurEventFrame & {
@@ -339,6 +341,7 @@ function createProjectionState(opts: ProjectFramesOptions = {}): MutableProjecti
     toolRecordById: new Map(),
     lastToolRecordIndex: null,
     questionRecordById: new Map(),
+    pendingUserMessageAuthor: null,
   };
 }
 
@@ -788,7 +791,9 @@ function projectCodexCompletedItem(
   driver: SessionRecordDriver | null,
 ): void {
   if (item.type === 'userMessage') {
-    const text = stripInjectedContext(codexItemText(item));
+    const projected = projectUserMessageEcho(state, codexItemText(item));
+    if (!projected) return;
+    const { text, author } = projected;
     if (!text) return;
     pushRecord(state, {
       eventId,
@@ -798,7 +803,7 @@ function projectCodexCompletedItem(
       driver,
       viewTier: 'lean',
       text,
-      meta: compactJsonObject({ itemId: item.id, sourceEventIds: [eventId] }),
+      meta: compactJsonObject({ itemId: item.id, author, sourceEventIds: [eventId] }),
     });
     return;
   }
@@ -1299,13 +1304,42 @@ function codexToolName(item: CodexItem): string {
   );
 }
 
+function projectUserMessageEcho(
+  state: MutableProjectionState,
+  raw: string,
+): { text: string; author?: JsonObject } | null {
+  const prefixed = stripSteerContextPrefix(raw);
+  if (prefixed && prefixed.text.length === 0) {
+    state.pendingUserMessageAuthor = authorMetaFromContext(prefixed.context);
+    return null;
+  }
+
+  const author = prefixed
+    ? authorMetaFromContext(prefixed.context)
+    : (state.pendingUserMessageAuthor ?? undefined);
+  if (author) state.pendingUserMessageAuthor = null;
+
+  return {
+    text: stripInjectedContext(prefixed ? prefixed.text : raw),
+    ...(author ? { author } : {}),
+  };
+}
+
+function authorMetaFromContext(context: ParsedSteerContextBlock): JsonObject {
+  return compactJsonObject({
+    name: context.name,
+    handle: context.handle ?? undefined,
+    seat: context.seat ?? undefined,
+  });
+}
+
 function stripInjectedContext(raw: string): string {
   let end = raw.length;
   for (const marker of ['\n# Session Context', '\n\n---\nReferenced entries:']) {
     const index = raw.indexOf(marker);
     if (index !== -1 && index < end) end = index;
   }
-  return raw.slice(0, end).trim();
+  return raw.slice(0, end);
 }
 
 function commandFromInput(input: JsonObject): string | null {

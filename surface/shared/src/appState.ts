@@ -44,6 +44,13 @@ export interface AppState {
   /** The open pane's session couldn't be fetched (bad permalink, deleted). */
   openSessionError: boolean;
   unread: Record<string, UnreadLevel>;
+  /**
+   * Read cursors advanced by a REMOTE source — another device or browser tab of
+   * the same user, learned via the WS `read` event or a sync snapshot. Used to
+   * dissolve a frozen unread divider when you catch up elsewhere while viewing a
+   * channel here. Not persisted; rebuilt per session from onRead/sync.
+   */
+  remoteReadCursors: Record<string, number>;
   /** Current user's handle — drives @mention unread detection. */
   meHandle: string | null;
   meId: string | null;
@@ -63,6 +70,7 @@ export const initialAppState: AppState = {
   openSessionId: null,
   openSessionError: false,
   unread: {},
+  remoteReadCursors: {},
   meHandle: null,
   meId: null,
   syncCursor: 0,
@@ -72,7 +80,18 @@ export const initialAppState: AppState = {
 export type AppAction =
   | { type: 'init-me'; handle: string; id?: string }
   | { type: 'channels-loaded'; channels: Channel[] }
-  | { type: 'read-cursor'; channelId: string; lastReadEventId: number }
+  | {
+      type: 'read-cursor';
+      channelId: string;
+      lastReadEventId: number;
+      /**
+       * Where the advance came from. 'self' (default) = this client read; only
+       * bumps the channel's own cursor. 'remote' = another device/tab of the same
+       * user (WS `read` / sync) — additionally tracked in `remoteReadCursors` so a
+       * frozen divider can dissolve without a self-read moving it.
+       */
+      source?: 'self' | 'remote';
+    }
   | { type: 'mute-changed'; channelId: string; muted: boolean }
   | { type: 'channel-added'; channel: Channel }
   | { type: 'channel-removed'; channelId: string }
@@ -158,6 +177,10 @@ function coldUnreadLevel(ch: Channel): UnreadLevel {
   return ch.mentionedSinceRead || isDm ? 'mention' : true;
 }
 
+function isMainTimelineVisibleEvent(ev: WireEvent): boolean {
+  return ev.threadRootEventId == null || ev.broadcast === true || ev.payload?.broadcast === true;
+}
+
 export function appReducer(state: AppState, action: AppAction): AppState {
   switch (action.type) {
     case 'init-me':
@@ -187,12 +210,31 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     case 'read-cursor': {
       // Keep the cold counter current too — the unread divider and unmute
       // re-derivation compare against it long after channels-loaded.
+      const currentLastReadEventId =
+        state.channels.find((c) => c.id === action.channelId)?.lastReadEventId ?? 0;
       const channels = state.channels.map((c) =>
         c.id === action.channelId && (c.lastReadEventId ?? 0) < action.lastReadEventId
           ? { ...c, lastReadEventId: action.lastReadEventId }
           : c,
       );
-      return { ...state, channels, unread: { ...state.unread, [action.channelId]: false } };
+      // Track remote advances separately so a frozen unread divider can dissolve
+      // when another device/tab catches up — without a local self-read moving it.
+      // The server echoes your own reads to your own socket too; source-tagging
+      // cannot distinguish that echo from another device, but self-reads apply
+      // optimistically first, so only a cursor that advances past local state is
+      // a true remote advance.
+      const remoteReadCursors =
+        action.source === 'remote' &&
+        currentLastReadEventId < action.lastReadEventId &&
+        (state.remoteReadCursors[action.channelId] ?? 0) < action.lastReadEventId
+          ? { ...state.remoteReadCursors, [action.channelId]: action.lastReadEventId }
+          : state.remoteReadCursors;
+      return {
+        ...state,
+        channels,
+        remoteReadCursors,
+        unread: { ...state.unread, [action.channelId]: false },
+      };
     }
 
     case 'mute-changed': {
@@ -339,7 +381,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       }
       const isNewMessage =
         (ev.type === 'message.posted' || ev.type === 'session.spawned') && !alreadySeen;
-      if (isNewMessage && !ev.mock && typeof ev.id === 'number') {
+      if (isNewMessage && isMainTimelineVisibleEvent(ev) && !ev.mock && typeof ev.id === 'number') {
         // Live events must advance the cold counter — the unread divider and
         // unmute re-derivation compare latestEventId against lastReadEventId.
         next = {

@@ -96,6 +96,8 @@ export const config = {
   appsLaunchTtlSeconds: positiveIntEnv('APPS_LAUNCH_TTL_SECONDS', 300),
   // File uploads (MinIO in dev; any S3-compatible store in deployment).
   s3Endpoint: process.env.S3_ENDPOINT ?? 'http://127.0.0.1:9000',
+  s3InternalEndpoint:
+    process.env.S3_INTERNAL_ENDPOINT ?? process.env.S3_ENDPOINT ?? 'http://127.0.0.1:9000',
   s3Bucket: process.env.S3_BUCKET ?? 'atrium-files',
   s3AccessKey: process.env.S3_ACCESS_KEY ?? 'atrium',
   s3SecretKey: process.env.S3_SECRET_KEY ?? 'atrium-dev-secret',

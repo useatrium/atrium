@@ -140,10 +140,12 @@ impl SessionEvictionState {
     }
 
     pub fn should_probe(&self, now: Instant, recheck: Duration) -> bool {
-        self.is_evicted()
-            && self
-                .last_probe
-                .is_none_or(|last_probe| now.duration_since(last_probe) >= recheck)
+        self.is_evicted() && self.probe_interval_elapsed(now, recheck)
+    }
+
+    pub fn probe_interval_elapsed(&self, now: Instant, recheck: Duration) -> bool {
+        self.last_probe
+            .is_none_or(|last_probe| now.duration_since(last_probe) >= recheck)
     }
 
     pub fn mark_probe(&mut self, now: Instant) {
