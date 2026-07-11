@@ -1,4 +1,5 @@
 import { isValidElement, memo, useMemo, useState, type ReactNode } from 'react';
+import { compactMarkdownSource } from '@atrium/surface-client';
 import ReactMarkdown, { defaultUrlTransform, type Components } from 'react-markdown';
 import rehypeHighlight from 'rehype-highlight';
 import remarkGfm from 'remark-gfm';
@@ -146,24 +147,6 @@ function partitionEntryLinks(text: string): { bodyText: string; standaloneHandle
   }
 
   return { bodyText: bodyLines.join('\n'), standaloneHandles };
-}
-
-function compactMarkdownSource(text: string): string {
-  return text
-    .replace(/```[\s\S]*?```/g, (match) => {
-      const body = match
-        .replace(/^```[^\n]*\n?/, '')
-        .replace(/```$/, '')
-        .trim();
-      return body ? `\`${body.split(/\n/)[0]}\`` : '';
-    })
-    .replace(/^\s{0,3}#{1,6}\s+/gm, '')
-    .replace(/^\s{0,3}>\s?/gm, '')
-    .replace(/^\s*[-*+]\s+\[[ xX]\]\s+/gm, '')
-    .replace(/^\s*[-*+]\s+/gm, '')
-    .replace(/^\s*\d+\.\s+/gm, '')
-    .replace(/\s+/g, ' ')
-    .trim();
 }
 
 function mentionSpan(handle: string, meHandle?: string) {

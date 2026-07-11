@@ -1,5 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import { isStructuredTextForMarkup, splitMarkdownFrontmatter } from './markup';
+import { compactMarkdownSource, isStructuredTextForMarkup, splitMarkdownFrontmatter } from './markup';
+
+describe('compactMarkdownSource', () => {
+  it('flattens block markdown while preserving the first line of fenced code', () => {
+    expect(compactMarkdownSource('# Plan\n\n- [x] done\n- next\n\n```ts\nconst answer = 42;\nignored();\n```')).toBe(
+      'Plan done next `const answer = 42;`',
+    );
+  });
+
+  it('normalizes quotes, ordered lists, and whitespace', () => {
+    expect(compactMarkdownSource('> quoted\n\n1. first\n2. second')).toBe('quoted first second');
+  });
+});
 
 describe('isStructuredTextForMarkup', () => {
   it.each([

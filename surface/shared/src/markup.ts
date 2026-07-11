@@ -23,3 +23,21 @@ export function splitMarkdownFrontmatter(content: string): { frontmatter: string
       : frontmatterEnd;
   return { frontmatter: content.slice(0, frontmatterEnd), body: content.slice(bodyStart) };
 }
+
+export function compactMarkdownSource(text: string): string {
+  return text
+    .replace(/```[\s\S]*?```/g, (match) => {
+      const body = match
+        .replace(/^```[^\n]*\n?/, '')
+        .replace(/```$/, '')
+        .trim();
+      return body ? `\`${body.split(/\n/)[0]}\`` : '';
+    })
+    .replace(/^\s{0,3}#{1,6}\s+/gm, '')
+    .replace(/^\s{0,3}>\s?/gm, '')
+    .replace(/^\s*[-*+]\s+\[[ xX]\]\s+/gm, '')
+    .replace(/^\s*[-*+]\s+/gm, '')
+    .replace(/^\s*\d+\.\s+/gm, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
