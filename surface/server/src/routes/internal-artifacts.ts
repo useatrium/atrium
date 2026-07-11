@@ -63,6 +63,34 @@ export async function registerInternalArtifactRoutes(
     serializeArtifactRoots,
   } = deps;
 
+  async function resolveWritableArtifact(
+    reply: FastifyReply,
+    sessionRef: string,
+    path: unknown,
+  ): Promise<{ session: InternalSessionRef; path: string } | null> {
+    if (typeof path !== 'string' || path.length === 0) {
+      reply.code(400).send({ error: 'bad_query', message: 'valid path required' });
+      return null;
+    }
+    const session = await resolveInternalSessionRef(sessionRef);
+    if (!session) {
+      reply.code(404).send({ error: 'session_not_found' });
+      return null;
+    }
+    const access = await sessionArtifactAccess(session.id);
+    const canonicalPath = canonicalizeRouteArtifactPath(reply, path, {
+      sessionId: session.id,
+      channelId: session.channelId,
+      readableChannelIds: access.readableChannelIds,
+    });
+    if (!canonicalPath) return null;
+    if (!artifactPathInRoots(canonicalPath, access.writableRoots)) {
+      reply.code(403).send({ error: 'artifact_read_only', message: 'artifact path is not writable' });
+      return null;
+    }
+    return { session, path: canonicalPath };
+  }
+
   app.get('/api/internal/sessions/:id/artifacts/changes', async (req, reply) => {
     if (!requireCaptureKey(req, reply)) return;
     const { id } = req.params as { id: string };
@@ -142,22 +170,9 @@ export async function registerInternalArtifactRoutes(
     capture.post('/api/internal/sessions/:id/artifacts/capture', async (req, reply) => {
       if (!requireCaptureKey(req, reply)) return;
       const { id } = req.params as { id: string };
-      const path = (req.query as { path?: string }).path;
-      if (typeof path !== 'string' || path.length === 0) {
-        return reply.code(400).send({ error: 'bad_query', message: 'valid path required' });
-      }
-      const session = await resolveInternalSessionRef(id);
-      if (!session) return reply.code(404).send({ error: 'session_not_found' });
-      const access = await sessionArtifactAccess(session.id);
-      const canonicalPath = canonicalizeRouteArtifactPath(reply, path, {
-        sessionId: session.id,
-        channelId: session.channelId,
-        readableChannelIds: access.readableChannelIds,
-      });
-      if (!canonicalPath) return;
-      if (!artifactPathInRoots(canonicalPath, access.writableRoots)) {
-        return reply.code(403).send({ error: 'artifact_read_only', message: 'artifact path is not writable' });
-      }
+      const target = await resolveWritableArtifact(reply, id, (req.query as { path?: string }).path);
+      if (!target) return;
+      const { session, path: canonicalPath } = target;
 
       const baseSeq = parseBaseSeq(firstHeader(req.headers['x-artifact-base-seq']));
       if (baseSeq === false) {
@@ -203,22 +218,9 @@ export async function registerInternalArtifactRoutes(
     captureStream.post('/api/internal/sessions/:id/artifacts/capture-stream', async (req, reply) => {
       if (!requireCaptureKey(req, reply)) return;
       const { id } = req.params as { id: string };
-      const path = (req.query as { path?: string }).path;
-      if (typeof path !== 'string' || path.length === 0) {
-        return reply.code(400).send({ error: 'bad_query', message: 'valid path required' });
-      }
-      const session = await resolveInternalSessionRef(id);
-      if (!session) return reply.code(404).send({ error: 'session_not_found' });
-      const access = await sessionArtifactAccess(session.id);
-      const canonicalPath = canonicalizeRouteArtifactPath(reply, path, {
-        sessionId: session.id,
-        channelId: session.channelId,
-        readableChannelIds: access.readableChannelIds,
-      });
-      if (!canonicalPath) return;
-      if (!artifactPathInRoots(canonicalPath, access.writableRoots)) {
-        return reply.code(403).send({ error: 'artifact_read_only', message: 'artifact path is not writable' });
-      }
+      const target = await resolveWritableArtifact(reply, id, (req.query as { path?: string }).path);
+      if (!target) return;
+      const { session, path: canonicalPath } = target;
 
       const baseSeq = parseBaseSeq(firstHeader(req.headers['x-artifact-base-seq']));
       if (baseSeq === false) {
