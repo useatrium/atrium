@@ -43,7 +43,11 @@ RUN cd surface/server && pnpm exec esbuild src/index.ts \
   --external:@aws-sdk/* \
   --external:sharp \
   --external:pdf-to-img
-RUN cd surface && pnpm --filter @atrium/server deploy --prod --legacy /out
+# allow-unused-patches: patchedDependencies entries for mobile-only packages
+# (react-native-syntax-highlighter) are legitimately unused in the server's
+# pruned graph; only here — dev installs stay strict so a stale patch that
+# silently stops applying is still caught.
+RUN cd surface && pnpm --filter @atrium/server deploy --prod --legacy --config.allow-unused-patches=true /out
 
 FROM node:24-alpine AS runtime
 WORKDIR /app/surface/server
