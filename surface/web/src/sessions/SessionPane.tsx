@@ -110,6 +110,7 @@ import {
   type MessageActionMenuAction,
   type MessageActionMenuState,
 } from '../components/MessageActionMenu';
+import { SelectTextSheet } from '../components/SelectTextSheet';
 import { useLongPress } from '../components/useLongPress';
 import { entryParamFromSearch, stripEntryParamFromLocation } from '../EntryLinkRoute';
 import { entryShareUrl, sessionShareUrl } from '../lib/publicUrl';
@@ -2172,6 +2173,7 @@ export function AnnotatedTranscriptRow({
   const [textCopied, setTextCopied] = useState(false);
   const [hasCopyableText, setHasCopyableText] = useState(false);
   const [actionMenu, setActionMenu] = useState<MessageActionMenuState | null>(null);
+  const [selectTextContent, setSelectTextContent] = useState<string | null>(null);
   const suppressTapRevealUntilRef = useRef(0);
 
   const rowText = useCallback(() => {
@@ -2231,6 +2233,16 @@ export function AnnotatedTranscriptRow({
       .catch(() => {});
   }, [rowText]);
 
+  // Transcript rows have no raw-markdown string — capture the rendered DOM's
+  // innerText at open time (same source Copy block text uses) so the sheet
+  // stays stable even if the row re-renders underneath it.
+  const openSelectText = useCallback(() => {
+    const text = rowText();
+    if (!text) return;
+    setSelectTextContent(text);
+  }, [rowText]);
+  const closeSelectText = useCallback(() => setSelectTextContent(null), []);
+
   const discussEntry = useCallback(() => {
     if (!handle || !discussContext || !onDiscussEntry) return;
     onDiscussEntry({
@@ -2261,6 +2273,12 @@ export function AnnotatedTranscriptRow({
         label: 'Copy block text',
         onSelect: copyBlockText,
       });
+      actions.push({
+        key: 'select-text',
+        label: 'Select text…',
+        sheetOnly: true,
+        onSelect: openSelectText,
+      });
     }
     if (canDiscuss) {
       actions.push({
@@ -2288,6 +2306,7 @@ export function AnnotatedTranscriptRow({
     hasCopyableText,
     markupEntry,
     markupLoading,
+    openSelectText,
   ]);
   const actionMenuAllowed = transcriptActions.length > 0;
   const openSheetMenu = useCallback(() => {
@@ -2448,6 +2467,15 @@ export function AnnotatedTranscriptRow({
         restoreFocusRef={contentRef}
         actions={transcriptActions}
       />
+      <SelectTextSheet
+        open={selectTextContent != null}
+        onClose={closeSelectText}
+        restoreFocusRef={contentRef}
+      >
+        <div className="whitespace-pre-wrap break-words text-sm leading-relaxed text-fg-body">
+          {selectTextContent}
+        </div>
+      </SelectTextSheet>
     </div>
   );
 }

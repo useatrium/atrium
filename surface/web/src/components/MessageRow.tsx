@@ -22,6 +22,7 @@ import { CornerUpLeftIcon, FileIcon, SmilePlusIcon } from './icons';
 import { Lightbox } from './media';
 import type { PreviewFile } from './media';
 import { MessageActionMenu, type MessageActionMenuAction, type MessageActionMenuState } from './MessageActionMenu';
+import { SelectTextSheet } from './SelectTextSheet';
 import { CompactMarkdownText, MessageText } from './MessageText';
 import { ReactionPicker } from './ReactionPicker';
 import { TimestampDisclosure } from './TimestampDisclosure';
@@ -180,6 +181,8 @@ export const MessageRow = memo(function MessageRow({
   const reactionButtonRef = useRef<HTMLButtonElement | null>(null);
   const mouseOpenedPickerRef = useRef(false);
   const [actionMenu, setActionMenu] = useState<MessageActionMenuState | null>(null);
+  const [selectTextOpen, setSelectTextOpen] = useState(false);
+  const closeSelectText = useCallback(() => setSelectTextOpen(false), []);
   const swipeRef = useRef<SwipeState | null>(null);
   const [swipeOffset, setSwipeOffset] = useState(0);
   const [swiping, setSwiping] = useState(false);
@@ -356,6 +359,15 @@ export const MessageRow = memo(function MessageRow({
         onSelect: () => {
           setPickerOpen(false);
           copyBlockText();
+        },
+      });
+      actions.push({
+        key: 'select-text',
+        label: 'Select text…',
+        sheetOnly: true,
+        onSelect: () => {
+          setPickerOpen(false);
+          setSelectTextOpen(true);
         },
       });
     }
@@ -881,6 +893,13 @@ export const MessageRow = memo(function MessageRow({
         actions={actionMenuActions}
         reactions={canReact ? { onSelect: react } : undefined}
       />
+      <SelectTextSheet
+        open={selectTextOpen}
+        onClose={closeSelectText}
+        restoreFocusRef={rowRef}
+      >
+        <MessageText text={m.text} meHandle={meHandle} />
+      </SelectTextSheet>
     </div>
   );
 });
