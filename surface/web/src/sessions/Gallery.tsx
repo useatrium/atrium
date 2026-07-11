@@ -6,7 +6,6 @@ import {
   type FileCategory,
   type HubFile,
   type HubFileListResult,
-  type HubFileVersionsResponse,
 } from '@atrium/surface-client';
 import { Menu, MenuContent, MenuLabel, MenuSeparator, MenuTrigger, Tooltip } from '../components/a11y';
 import { SearchIcon } from '../components/icons';
@@ -21,7 +20,9 @@ import {
   artifactContentUrl as contentUrl,
   artifactEntryUrl as absoluteArtifactEntryUrl,
   cleanId,
+  fetchArtifactVersionContent,
   lightboxPanelFromSearch,
+  listArtifactVersions,
   mergeFile,
   pathWithSearch,
   resolvedConflictText as resolvedTextForChoice,
@@ -720,13 +721,7 @@ export function Gallery({
       },
       onListVersions: async (file, signal) => {
         try {
-          const response = await fetch(`/api/files/${file.id}/versions`, {
-            credentials: 'same-origin',
-            signal,
-          });
-          if (!response.ok) throw new Error(await responseError(response, 'Could not load version history'));
-          const body = (await response.json()) as HubFileVersionsResponse;
-          return body.versions;
+          return await listArtifactVersions(file.id, signal);
         } catch (err) {
           if (!(err instanceof DOMException && err.name === 'AbortError')) {
             showErrorToast(err instanceof Error ? err.message : 'Could not load version history');
@@ -735,16 +730,8 @@ export function Gallery({
         }
       },
       onFetchVersionContent: async (file, seq, signal) => {
-        const params = new URLSearchParams();
-        if (seq != null) params.set('at', String(seq));
-        const suffix = params.toString() ? `?${params.toString()}` : '';
         try {
-          const response = await fetch(`/api/files/artifact/${file.id}/content${suffix}`, {
-            credentials: 'same-origin',
-            signal,
-          });
-          if (!response.ok) throw new Error(await responseError(response, 'Could not load version content'));
-          return await response.blob();
+          return await fetchArtifactVersionContent(file.id, seq, signal);
         } catch (err) {
           if (!(err instanceof DOMException && err.name === 'AbortError')) {
             showErrorToast(err instanceof Error ? err.message : 'Could not load version content');

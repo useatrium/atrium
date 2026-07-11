@@ -1,4 +1,4 @@
-import type { HubFile } from '@atrium/surface-client';
+import type { HubFile, HubFileVersionsResponse } from '@atrium/surface-client';
 import { entryShareUrl } from '../lib/publicUrl';
 import { URL_PARAMS } from '../router';
 import type { ArtifactConflict, ResolveChoice } from './ConflictSurface';
@@ -41,6 +41,29 @@ export async function responseError(response: Response, fallback: string): Promi
       return fallback;
     }
   }
+}
+
+export async function listArtifactVersions(artifactId: string, signal?: AbortSignal) {
+  const response = await fetch(`/api/files/${artifactId}/versions`, {
+    credentials: 'same-origin',
+    signal,
+  });
+  if (!response.ok) throw new Error(await responseError(response, 'Could not load version history'));
+  return ((await response.json()) as HubFileVersionsResponse).versions;
+}
+
+export async function fetchArtifactVersionContent(
+  artifactId: string,
+  seq?: number | null,
+  signal?: AbortSignal,
+): Promise<Blob> {
+  const suffix = seq == null ? '' : `?at=${encodeURIComponent(seq)}`;
+  const response = await fetch(`${artifactContentUrl(artifactId)}${suffix}`, {
+    credentials: 'same-origin',
+    signal,
+  });
+  if (!response.ok) throw new Error(await responseError(response, 'Could not load version content'));
+  return response.blob();
 }
 
 export function mergeFile(files: HubFile[], next: HubFile): HubFile[] {
