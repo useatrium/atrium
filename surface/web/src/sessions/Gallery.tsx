@@ -14,10 +14,20 @@ import { Lightbox, MediaPreview, defaultLightboxPanel } from '../components/medi
 import type { LightboxCallbacks, PreviewFile } from '../components/media';
 import { effectiveMediaKind, isAppFile } from '../components/media/utils';
 import { showErrorToast } from '../components/Toasts';
-import { entryShareUrl } from '../lib/publicUrl';
 import { navigate, URL_PARAMS, useLocation } from '../router';
-import type { ArtifactConflict, ResolveChoice } from './ConflictSurface';
+import type { ArtifactConflict } from './ConflictSurface';
 import { EmptyState } from './EmptyState';
+import {
+  artifactContentUrl as contentUrl,
+  artifactEntryUrl as absoluteArtifactEntryUrl,
+  cleanId,
+  lightboxPanelFromSearch,
+  mergeFile,
+  pathWithSearch,
+  resolvedConflictText as resolvedTextForChoice,
+  responseError,
+  updateFile,
+} from './fileHubCore';
 import { hubFileToPreview } from './FilesHub';
 
 type GallerySort = 'recent' | 'name' | 'size';
@@ -63,20 +73,6 @@ function isFileCategory(value: string | null): value is FileCategory {
 
 function boolFromParam(params: URLSearchParams, key: string): boolean {
   return params.get(key) === 'true';
-}
-
-function cleanId(value: string | null | undefined): string {
-  return value?.trim() ?? '';
-}
-
-function pathWithSearch(path: string, params: URLSearchParams): string {
-  const query = params.toString();
-  return query ? `${path}?${query}` : path;
-}
-
-function lightboxPanelFromSearch(search: string): 'info' | 'history' | null {
-  const value = new URLSearchParams(search).get(URL_PARAMS.panel);
-  return value === 'info' || value === 'history' ? value : null;
 }
 
 export function galleryStateFromSearch(
@@ -184,28 +180,6 @@ export function relativeFileTime(value?: string): string {
   return formatter.format(diffSeconds, 'second');
 }
 
-async function responseError(response: Response, fallback: string): Promise<string> {
-  try {
-    const body = (await response.clone().json()) as { message?: string; error?: string };
-    return body.message ?? body.error ?? fallback;
-  } catch {
-    try {
-      const text = await response.text();
-      return text.trim() || fallback;
-    } catch {
-      return fallback;
-    }
-  }
-}
-
-function contentUrl(artifactId: string): string {
-  return `/api/files/artifact/${artifactId}/content`;
-}
-
-function absoluteArtifactEntryUrl(artifactId: string): string {
-  return entryShareUrl(`art_${artifactId}`);
-}
-
 function uploaderLabel(file: HubFile): string {
   if (file.uploader?.name) return file.uploader.name;
   if (file.uploader?.id) return file.uploader.id;
@@ -244,20 +218,6 @@ function TypeChipPreview({ label }: { label: string }) {
 
 function GalleryCardPreview({ file, preview }: { file: HubFile; preview: PreviewFile }) {
   return shouldUseTypeChipPreview(preview) ? <TypeChipPreview label={fileTypeLabel(file)} /> : <MediaPreview file={preview} variant="tile" />;
-}
-
-function mergeFile(files: HubFile[], next: HubFile): HubFile[] {
-  return files.map((file) => (file.artifactId === next.artifactId ? next : file));
-}
-
-function updateFile(files: HubFile[], artifactId: string, patch: Partial<HubFile>): HubFile[] {
-  return files.map((file) => (file.artifactId === artifactId ? { ...file, ...patch } : file));
-}
-
-function resolvedTextForChoice(conflict: ArtifactConflict, choice: ResolveChoice): string {
-  if (choice.kind === 'left') return conflict.left.text;
-  if (choice.kind === 'right') return conflict.right.text;
-  return choice.text;
 }
 
 function GalleryCard({ file, onOpen }: { file: HubFile; onOpen: () => void }) {

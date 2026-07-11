@@ -19,10 +19,21 @@ import {
   queryEntryReferencesForHandles,
   type EntryReferenceSummary,
 } from '../components/EntryReferencesChip';
-import { entryShareUrl } from '../lib/publicUrl';
 import { navigate, URL_PARAMS, useLocation } from '../router';
-import type { ArtifactConflict, ResolveChoice } from './ConflictSurface';
+import type { ArtifactConflict } from './ConflictSurface';
 import { EmptyState } from './EmptyState';
+import {
+  artifactContentUrl as contentUrl,
+  artifactEntryHandle,
+  artifactEntryUrl as absoluteArtifactEntryUrl,
+  cleanId,
+  lightboxPanelFromSearch,
+  mergeFile,
+  pathWithSearch,
+  resolvedConflictText as resolvedTextForChoice,
+  responseError,
+  updateFile,
+} from './fileHubCore';
 import type { Session } from './types';
 
 type SortMode = 'recent' | 'name' | 'size';
@@ -60,50 +71,10 @@ function asMediaKind(value: string | null): MediaKind {
   return value && mediaKindSet.has(value as MediaKind) ? (value as MediaKind) : 'opaque';
 }
 
-function cleanId(value: string | null | undefined): string {
-  return value?.trim() ?? '';
-}
-
-function pathWithSearch(path: string, params: URLSearchParams): string {
-  const query = params.toString();
-  return query ? `${path}?${query}` : path;
-}
-
-function lightboxPanelFromSearch(search: string): 'info' | 'history' | null {
-  const value = new URLSearchParams(search).get(URL_PARAMS.panel);
-  return value === 'info' || value === 'history' ? value : null;
-}
-
 function dirFromSearch(search: string): string {
   const value = new URLSearchParams(search).get(URL_PARAMS.dir);
   if (!value) return '';
   return value.replace(/\\/g, '/').replace(/\/+/g, '/').replace(/^\/+/, '').replace(/\/+$/, '');
-}
-
-function contentUrl(artifactId: string): string {
-  return `/api/files/artifact/${artifactId}/content`;
-}
-
-function artifactEntryHandle(artifactId: string): string {
-  return `art_${artifactId}`;
-}
-
-function absoluteArtifactEntryUrl(artifactId: string): string {
-  return entryShareUrl(artifactEntryHandle(artifactId));
-}
-
-async function responseError(response: Response, fallback: string): Promise<string> {
-  try {
-    const body = (await response.clone().json()) as { message?: string; error?: string };
-    return body.message ?? body.error ?? fallback;
-  } catch {
-    try {
-      const text = await response.text();
-      return text.trim() || fallback;
-    } catch {
-      return fallback;
-    }
-  }
 }
 
 function formatBytes(bytes?: number | null): string {
@@ -128,12 +99,6 @@ function fileLocation(file: HubFile): string {
 function fileBadge(file: HubFile): string {
   const uploader = file.uploader?.name ?? file.uploader?.id;
   return uploader ? `${file.origin} / ${uploader}` : file.origin;
-}
-
-function resolvedTextForChoice(conflict: ArtifactConflict, choice: ResolveChoice): string {
-  if (choice.kind === 'left') return conflict.left.text;
-  if (choice.kind === 'right') return conflict.right.text;
-  return choice.text;
 }
 
 export function hubFileToPreview(f: HubFile): PreviewFile {
@@ -174,14 +139,6 @@ function queryFor(filters: Filters, q: string, cursor?: string | null): URLSearc
   params.set('limit', String(PAGE_SIZE));
   if (cursor) params.set('cursor', cursor);
   return params;
-}
-
-function mergeFile(files: HubFile[], next: HubFile): HubFile[] {
-  return files.map((file) => (file.artifactId === next.artifactId ? next : file));
-}
-
-function updateFile(files: HubFile[], artifactId: string, patch: Partial<HubFile>): HubFile[] {
-  return files.map((file) => (file.artifactId === artifactId ? { ...file, ...patch } : file));
 }
 
 function pathSegments(path: string): string[] {
