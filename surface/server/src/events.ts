@@ -416,27 +416,38 @@ export async function editMessage(
   return withTx(pool, (client) => editMessageTx(client, args));
 }
 
+interface OwnedMessageTarget {
+  workspace_id: string;
+  channel_id: string | null;
+  thread_root_event_id: number | null;
+  actor_id: string | null;
+}
+
+async function ownedMessageTarget(
+  client: DbClient,
+  targetEventId: number,
+  actorId: string,
+  action: 'edit' | 'delete',
+): Promise<OwnedMessageTarget> {
+  const target = await client.query<OwnedMessageTarget & { type: string }>(
+    'SELECT workspace_id, channel_id, thread_root_event_id, type, actor_id FROM events WHERE id = $1',
+    [targetEventId],
+  );
+  const row = target.rows[0];
+  if (!row || row.type !== 'message.posted') {
+    throw new DomainError(404, 'message_not_found', 'message not found');
+  }
+  if (row.actor_id !== actorId) {
+    throw new DomainError(403, 'forbidden', `only the author may ${action} a message`);
+  }
+  return row;
+}
+
 export async function editMessageTx(
   client: DbClient,
   args: { targetEventId: number; actorId: string; text: string },
 ): Promise<WireEvent> {
-  const target = await client.query<{
-    workspace_id: string;
-    channel_id: string | null;
-    thread_root_event_id: number | null;
-    type: string;
-    actor_id: string | null;
-  }>(
-    'SELECT workspace_id, channel_id, thread_root_event_id, type, actor_id FROM events WHERE id = $1',
-    [args.targetEventId],
-  );
-  const t = target.rows[0];
-  if (!t || t.type !== 'message.posted') {
-    throw new DomainError(404, 'message_not_found', 'message not found');
-  }
-  if (t.actor_id !== args.actorId) {
-    throw new DomainError(403, 'forbidden', 'only the author may edit a message');
-  }
+  const t = await ownedMessageTarget(client, args.targetEventId, args.actorId, 'edit');
   const payload: Record<string, unknown> = { target: encodeEventHandle(args.targetEventId), text: args.text };
   const entryRefs = extractEntryRefs(args.text);
   if (entryRefs.length > 0) payload.entry_refs = entryRefs;
@@ -467,23 +478,7 @@ export async function deleteMessageTx(
   client: DbClient,
   args: { targetEventId: number; actorId: string },
 ): Promise<WireEvent> {
-  const target = await client.query<{
-    workspace_id: string;
-    channel_id: string | null;
-    thread_root_event_id: number | null;
-    type: string;
-    actor_id: string | null;
-  }>(
-    'SELECT workspace_id, channel_id, thread_root_event_id, type, actor_id FROM events WHERE id = $1',
-    [args.targetEventId],
-  );
-  const t = target.rows[0];
-  if (!t || t.type !== 'message.posted') {
-    throw new DomainError(404, 'message_not_found', 'message not found');
-  }
-  if (t.actor_id !== args.actorId) {
-    throw new DomainError(403, 'forbidden', 'only the author may delete a message');
-  }
+  const t = await ownedMessageTarget(client, args.targetEventId, args.actorId, 'delete');
   const ev = await insertEvent(client, {
     workspaceId: t.workspace_id,
     channelId: t.channel_id,
