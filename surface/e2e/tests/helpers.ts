@@ -141,7 +141,7 @@ export async function createTestChannel(prefix = 'room'): Promise<string> {
   }
 }
 
-export async function channels(ctx: APIRequestContext): Promise<Array<{ id: string; name: string }>> {
+async function channels(ctx: APIRequestContext): Promise<Array<{ id: string; name: string }>> {
   const res = await ctx.get('/api/channels');
   expect(res.ok()).toBeTruthy();
   const body = (await res.json()) as { channels: Array<{ id: string; name: string }> };

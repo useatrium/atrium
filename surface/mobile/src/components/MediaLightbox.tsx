@@ -541,14 +541,14 @@ function UnknownPane({ file, onOpenExternal }: { file: HubFile; onOpenExternal: 
 
 function InfoPanel({ file }: { file: HubFile }) {
   const { colors } = useTheme();
-  const createdAtText = formatRelativeTimestamp(file.createdAt) || file.createdAt;
+  const createdAtText = formatRelativeTimestamp(file.createdAt);
   const rows = [
     { label: 'Kind', value: normalizedKind(file) },
     { label: 'Size', value: file.sizeBytes != null ? formatBytes(file.sizeBytes) : 'Unknown' },
     { label: 'Origin', value: file.origin },
     { label: 'Uploader', value: file.uploader?.name ?? 'Unknown' },
-    { label: 'Created', value: createdAtText, iso: file.createdAt },
-    { label: 'Path', value: file.path },
+    createdAtText ? { label: 'Created', value: createdAtText, iso: file.createdAt } : { label: 'Created', value: 'Unknown' },
+    { label: 'Path', value: file.path || 'Unknown' },
   ];
   return (
     <View
@@ -878,8 +878,4 @@ export function mediaIconName(file: HubFile): ComponentProps<typeof Ionicons>['n
   if (kind === 'markdown' || kind === 'text') return 'reader-outline';
   if (kind === 'csv') return 'grid-outline';
   return 'document-outline';
-}
-
-export function mediaKindLabel(file: HubFile): string {
-  return normalizedKind(file);
 }

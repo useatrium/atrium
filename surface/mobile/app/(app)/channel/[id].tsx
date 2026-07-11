@@ -190,7 +190,7 @@ export default function ChannelScreen() {
     const attachments = message.attachments ?? [];
     if (index < 0 || index >= attachments.length) return;
     setAttachmentLightbox({
-      files: attachments.map(attachmentToHubFile),
+      files: attachments.map((attachment) => attachmentToHubFile(attachment, message)),
       initialIndex: index,
     });
   }, []);

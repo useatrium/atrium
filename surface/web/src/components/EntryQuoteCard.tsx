@@ -1,11 +1,8 @@
 import {
-  Suspense,
   createContext,
-  lazy,
   useContext,
   useEffect,
   useState,
-  type ComponentType,
   type ReactNode,
 } from 'react';
 import {
@@ -14,6 +11,7 @@ import {
   type CriticBlock,
 } from '@atrium/surface-client';
 import { resolveEntryQuote, type ResolvedEntryQuote } from '../lib/entryLinks';
+import { ApplyMarkupMenu } from './ApplyMarkupMenu';
 import { CriticMarkupView } from './CriticMarkupView';
 import { splitMarkdownFrontmatter } from './MarkupPane';
 
@@ -37,20 +35,6 @@ export function EntryQuoteApplyContextProvider({
 }) {
   return <EntryQuoteApplyContext.Provider value={value}>{children}</EntryQuoteApplyContext.Provider>;
 }
-
-type ApplyMarkupMenuProps = {
-  artifactId: string;
-  path: string;
-  channelId: string;
-  sessions?: Record<string, import('../sessions/types').Session>;
-  onSpawnNewAgent?: (task: string) => void;
-};
-
-// Static specifier so Vite bundles the menu as a lazy chunk.
-const ApplyMarkupMenu = lazy(async () => {
-  const mod = await import('./ApplyMarkupMenu');
-  return { default: mod.default as ComponentType<ApplyMarkupMenuProps> };
-});
 
 function EventIcon() {
   return (
@@ -362,15 +346,13 @@ export function EntryQuoteCard({
             {expanded ? 'Show fewer changes' : `Show all changes (${markup.changeCount})`}
           </button>
           {effectiveApplyContext ? (
-            <Suspense fallback={null}>
-              <ApplyMarkupMenu
-                artifactId={markup.artifactId}
-                path={markup.path}
-                channelId={effectiveApplyContext.channelId}
-                sessions={effectiveApplyContext.sessions}
-                onSpawnNewAgent={effectiveApplyContext.onSpawnNewAgent}
-              />
-            </Suspense>
+            <ApplyMarkupMenu
+              artifactId={markup.artifactId}
+              path={markup.path}
+              channelId={effectiveApplyContext.channelId}
+              sessions={effectiveApplyContext.sessions}
+              onSpawnNewAgent={effectiveApplyContext.onSpawnNewAgent}
+            />
           ) : null}
         </div>
         {context ? <div className="mt-1 text-xs text-fg-muted">{context}</div> : null}

@@ -110,14 +110,6 @@ export function TrashIcon(props: IconProps) {
   );
 }
 
-export function MessageIcon(props: IconProps) {
-  return (
-    <Icon {...props}>
-      <path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z" />
-    </Icon>
-  );
-}
-
 export function HighlighterIcon(props: IconProps) {
   return (
     <Icon {...props}>

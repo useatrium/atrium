@@ -103,7 +103,8 @@ async function waitForSessionPopoutCount(
     .toBe(count);
 }
 
-test('desktop shell menu, session popout dedup, and New Window', async (_fixtures, testInfo) => {
+test('desktop shell menu, session popout dedup, and New Window', async () => {
+  const testInfo = test.info();
   await assertBuiltMainEntry();
 
   const webDist = testInfo.outputPath('web-dist');

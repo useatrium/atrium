@@ -12,22 +12,22 @@ product state; Centaur owns sandboxed agent execution.
 
 ## Stack
 
-- `server/` — Node + TypeScript, Fastify + @fastify/websocket, `pg` (no ORM),
+- `server/`: Node + TypeScript, Fastify + @fastify/websocket, `pg` (no ORM),
   plain SQL migrations with a tiny built-in runner. Owns auth, workspaces,
   channels, messages, sessions, artifacts, calls, push, provider credentials,
   app serving, and internal Centaur-facing routes.
-- `web/` — Vite + React 19 + TypeScript + Tailwind 4.
-- `desktop/` — Electron shell around the web app, including macOS packaging.
-- `mobile/` — Expo app sharing the product protocol/state package.
-- `shared/` — `@atrium/surface-client`: shared protocol types, timeline/app
+- `web/`: Vite + React 19 + TypeScript + Tailwind 4.
+- `desktop/`: Electron shell around the web app, including macOS packaging.
+- `mobile/`: Expo app sharing the product protocol/state package.
+- `shared/`: `@atrium/surface-client`, shared protocol types, timeline/app
   state, API and WebSocket client code used by web/mobile.
-- `centaur-client/` — `@atrium/centaur-client`: typed Centaur control-plane
+- `centaur-client/`: `@atrium/centaur-client`, a typed Centaur control-plane
   client plus durable event-stream reducer used by server/web/mobile.
-- `mcp/` — Atrium MCP server exposing addressable entries as resources.
-- `e2e/` — Playwright tests for product flows.
+- `mcp/`: Atrium MCP server exposing addressable entries as resources.
+- `e2e/`: Playwright tests for product flows.
 - Postgres 16 in Docker on host port **5433** (db/user/password all `atrium`).
 - MinIO in Docker on **9000** (console **9001**, user `atrium` /
-  `atrium-dev-secret`) for file uploads — presigned PUT/GET, bucket
+  `atrium-dev-secret`) for file uploads, using presigned PUT/GET and a bucket
   auto-created on first upload. `S3_ENDPOINT` is the public presign host;
   `S3_INTERNAL_ENDPOINT` is optional for server byte I/O. Override via
   `S3_BUCKET`/`S3_ACCESS_KEY`/`S3_SECRET_KEY`.
@@ -95,12 +95,12 @@ parallelism.
 
 ## Two-browsers manual test script
 
-Use two different browsers (or one normal + one private window — sessions are
+Use two different browsers (or one normal + one private window; sessions are
 cookie-based, two tabs in the same profile share one login).
 
 1. Browser A: log in as `ana` / "Ana". Browser B: log in as `ben` / "Ben".
 2. Both land in **#general**. Header should show **2 here** with both initial
-   dots — presence is view-based (who has the channel open right now). When B
+   dots. Presence is view-based (who has the channel open right now). When B
    switches channels in step 6, A's #general header drops to **1 here**.
 3. B types "hello from ben" + Enter → appears instantly in A with author +
    time, no reload. A's message renders in B the same way.
@@ -126,11 +126,11 @@ cookie-based, two tabs in the same profile share one login).
 - `GET /auth/me`, `POST /auth/logout`
 - `GET /auth/methods`
 - `GET /api/workspaces`, `GET /api/channels`, `POST /api/channels {name}`
-- `GET /api/channels/:id/messages?before_id=&after_id=&limit=` — newest-last;
+- `GET /api/channels/:id/messages?before_id=&after_id=&limit=` returns newest-last;
   `before_id` pages history (root messages only); `after_id` is the reconnect
   catch-up read and includes thread replies so counts/threads stay correct
 - `GET /api/threads/:rootEventId/messages`
-- `POST /api/messages {channelId, text, clientMsgId?, threadRootEventId?}` —
+- `POST /api/messages {channelId, text, clientMsgId?, threadRootEventId?}`
   rejects empty and >8KB text; echoes `client_msg_id` in the event payload for
   optimistic reconciliation
 - `GET /api/sessions`, `POST /api/sessions`, `GET /api/sessions/:id`,
@@ -144,7 +144,7 @@ cookie-based, two tabs in the same profile share one login).
   `/by-path` for raw download/open flows.
 - `POST /api/uploads`, `GET /api/files/:id`, `GET /api/files/:id/url`
 - `POST /api/calls`, `POST /api/calls/:id/accept|decline|leave`
-- `WS /ws` — client sends `{type:"subscribe", channelIds:[...]}` (full
+- `WS /ws`: client sends `{type:"subscribe", channelIds:[...]}` (full
   replacement); server pushes `{type:"event", event}` for subscribed channels
   and `{type:"presence", channelId, users}` on join/leave. Protocol-level
   ping/pong heartbeat (30s) plus an app-level `{type:"ping"}` from the client.
@@ -171,10 +171,10 @@ a reply count, with edits folded through the latest `message.edited` event.
 Artifact identity is workspace-scoped by canonical path. The reserved prefixes
 are:
 
-- `scratch/<session-id>/...` — private durable files for one session.
-- `shared/global/...` — workspace-wide artifacts.
-- `shared/apps/...` — static app artifacts and app bundles.
-- `shared/channels/<channel-id>/...` — channel-scoped artifacts.
+- `scratch/<session-id>/...`: private durable files for one session.
+- `shared/global/...`: workspace-wide artifacts.
+- `shared/apps/...`: static app artifacts and app bundles.
+- `shared/channels/<channel-id>/...`: channel-scoped artifacts.
 
 A session can write its scratch, `shared/global`, `shared/apps`, and its active
 channel root. Other readable channel roots remain visible for context but are

@@ -139,5 +139,3 @@ export function ApplyMarkupMenu({
     </div>
   );
 }
-
-export default ApplyMarkupMenu;

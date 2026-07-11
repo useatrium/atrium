@@ -86,6 +86,14 @@ describe('optimistic send reconciliation', () => {
     expect(t.lastEventId).toBe(10);
   });
 
+  it('keeps a just-stored message single-row when queue hydration replays it', () => {
+    let t = addPending(emptyTimeline, pending('cm-1', 'hello'));
+    t = addPending(t, pending('cm-1', 'hello'));
+
+    expect(t.main).toHaveLength(1);
+    expect(t.main[0]!.clientMsgId).toBe('cm-1');
+  });
+
   it('is idempotent: POST response + WS event for the same id apply once', () => {
     let t = addPending(emptyTimeline, pending('cm-1', 'hello'));
     const ev = wire(10, 'hello', { clientMsgId: 'cm-1' });
@@ -166,6 +174,16 @@ describe('threads and reply counts', () => {
     expect(t.threads[1]!).toHaveLength(2);
     expect(t.threads[1]!.at(-1)!.id).toBe(3);
     expect(t.main[0]!.replyCount).toBe(2);
+  });
+
+  it('does not duplicate or double-count a rehydrated pending thread reply', () => {
+    let t = applyEvent(emptyTimeline, wire(1, 'root'));
+    t = mergeThread(t, 1, []);
+    t = addPending(t, pending('cm-r', 'my reply', 1));
+    t = addPending(t, pending('cm-r', 'my reply', 1));
+
+    expect(t.threads[1]).toHaveLength(1);
+    expect(t.main[0]!.replyCount).toBe(1);
   });
 
   it('broadcast replies land in main and loaded thread while bumping the root once', () => {
@@ -1022,15 +1040,6 @@ describe('live cold-counter advancement (unread divider depends on it)', () => {
 
     state = appReducer(state, { type: 'server-event', event: wire(9, 'fresh') });
     expect(state.channels.find((c) => c.id === CH)!.latestEventId).toBe(9);
-  });
-
-  it('mock events never advance the counter', () => {
-    let state = appReducer(loadedWith(), { type: 'select-channel', channelId: 'ch-active' });
-    state = appReducer(state, {
-      type: 'server-event',
-      event: { ...wire(9, 'mocked'), mock: true },
-    });
-    expect(state.channels.find((c) => c.id === CH)!.latestEventId).toBe(5);
   });
 
   it('read-cursor advances channels[].lastReadEventId monotonically', () => {

@@ -19,26 +19,26 @@ export function useChannelActions({
   dispatch,
   enqueueOp,
   getChannels,
-  selectChannel,
+  navigateToChannel,
 }: {
   client?: ChannelActionsApi;
   dispatch: DispatchAppAction;
   enqueueOp: MuteEnqueue;
   getChannels: () => readonly Channel[];
-  selectChannel: (channelId: string) => void;
+  navigateToChannel: (channelId: string) => void;
 }) {
   const createChannel = useCallback(
     async (name: string, isPrivate = false) => {
       try {
         const { channel } = await client.createChannel(name, { private: isPrivate });
         dispatch({ type: 'channel-added', channel });
-        selectChannel(channel.id);
+        navigateToChannel(channel.id);
       } catch (err) {
         showErrorToast("Couldn't create the channel — try again.");
         throw err;
       }
     },
-    [client, dispatch, selectChannel],
+    [client, dispatch, navigateToChannel],
   );
 
   const startDm = useCallback(
@@ -47,11 +47,11 @@ export function useChannelActions({
         .createDmWithUsers(userIds)
         .then(({ channel }) => {
           dispatch({ type: 'channel-added', channel });
-          selectChannel(channel.id);
+          navigateToChannel(channel.id);
         })
         .catch(() => showErrorToast("Couldn't start the conversation — try again."));
     },
-    [client, dispatch, selectChannel],
+    [client, dispatch, navigateToChannel],
   );
 
   const setMute = useCallback(

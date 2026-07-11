@@ -41,7 +41,6 @@ import { Sidebar } from './components/Sidebar';
 import { ThreadPanel } from './components/ThreadPanel';
 import { Timeline } from './components/Timeline';
 import { sessionsApi } from './sessions/api';
-import { sessionsMockBus } from './sessions/devMock';
 import { Gallery } from './sessions/Gallery';
 import { SessionPane, type TranscriptDiscussPayload } from './sessions/SessionPane';
 import { loadSessionPaneWidth, sessionPaneSizing } from './sessions/useSessionPaneWidth';
@@ -641,10 +640,6 @@ export function Chat({
         .catch(() => {}); // unreachable server — the stalled display covers it
     }
   }, [state.sessions]);
-
-  // ---- DEV MOCK (sessions): fold synthetic session.* events; no-op without
-  // VITE_SESSIONS_MOCK=1. Delete with src/sessions/devMock.ts. ----
-  useEffect(() => sessionsMockBus?.subscribe((event: WireEvent) => dispatch({ type: 'server-event', event })), []);
 
   const active = state.channels.find((c) => c.id === state.activeChannelId) ?? null;
   const timeline = (active && state.timelines[active.id]) || emptyTimeline;
@@ -1546,7 +1541,7 @@ export function Chat({
     dispatch,
     enqueueOp,
     getChannels: () => stateRef.current.channels,
-    selectChannel,
+    navigateToChannel: goToChannel,
   });
 
   const presentUsers = active ? (state.presence[active.id] ?? []) : [];

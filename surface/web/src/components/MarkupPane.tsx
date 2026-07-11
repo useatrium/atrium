@@ -1,15 +1,9 @@
-import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ApiError, api } from '../api';
-import type { MarkupEditorHandle } from './markupPaneTypes';
+import { MarkupEditor, type MarkupEditorHandle } from '../markup/MarkupEditor';
 import { useDialog } from '../useDialog';
 import { MarkupDivergenceBanner } from './MarkupDivergenceBanner';
 import { MarkupVersionHistory } from './MarkupVersionHistory';
-
-// Static specifier so Vite bundles the editor as a lazy chunk.
-const MarkupEditor = lazy(async () => {
-  const mod = await import('../markup/MarkupEditor');
-  return { default: mod.MarkupEditor };
-});
 
 export interface MarkupPaneSource {
   artifactId: string;
@@ -250,19 +244,13 @@ export function MarkupPane({
             onReset={() => switchMarkdownSource(true)}
             onBackToLatest={() => switchMarkdownSource(false)}
           />
-          <Suspense
-            fallback={
-              <div className="flex flex-1 items-center justify-center text-xs text-fg-muted">Loading editor...</div>
-            }
-          >
-            <MarkupEditor
-              key={showingSource ? 'source' : 'body'}
-              ref={editorRef}
-              initialMarkdown={activeMarkdown}
-              onDirtyChange={setDirty}
-              className="min-h-0 flex-1"
-            />
-          </Suspense>
+          <MarkupEditor
+            key={showingSource ? 'source' : 'body'}
+            ref={editorRef}
+            initialMarkdown={activeMarkdown}
+            onDirtyChange={setDirty}
+            className="min-h-0 flex-1"
+          />
           <input
             type="text"
             value={note}

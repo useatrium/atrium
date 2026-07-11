@@ -397,8 +397,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
 
     case 'server-event': {
       const ev = action.event;
-      const withEventCursor = (next: AppState) =>
-        ev.mock ? next : withSyncCursor(next, ev.id);
+      const withEventCursor = (next: AppState) => withSyncCursor(next, ev.id);
       if (ev.type === 'channel.created') {
         const ch = ev.payload?.channel as Channel | undefined;
         return withEventCursor(ch ? appReducer(state, { type: 'channel-added', channel: ch }) : state);
@@ -430,16 +429,11 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       // channels fetch their history on first open. But always track unread.
       const alreadySeen = t.seenIds.has(ev.id);
       if (t.loaded || t.main.length > 0) {
-        let folded = applyEvent(t, ev);
-        // DEV MOCK: synthetic events must not advance the catch-up cursor.
-        if (ev.mock && folded.lastEventId !== t.lastEventId) {
-          folded = { ...folded, lastEventId: t.lastEventId };
-        }
-        next = withTimeline(next, ev.channelId, folded);
+        next = withTimeline(next, ev.channelId, applyEvent(t, ev));
       }
       const isNewMessage =
         (ev.type === 'message.posted' || ev.type === 'session.spawned') && !alreadySeen;
-      if (isNewMessage && isMainTimelineVisibleEvent(ev) && !ev.mock && typeof ev.id === 'number') {
+      if (isNewMessage && isMainTimelineVisibleEvent(ev)) {
         // Live events must advance the cold counter — the unread divider and
         // unmute re-derivation compare latestEventId against lastReadEventId.
         next = {

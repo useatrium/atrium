@@ -4,7 +4,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { forwardRef, useImperativeHandle } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { MarkupPane, type MarkupPaneSource } from './MarkupPane';
-import type { MarkupEditorHandle } from './markupPaneTypes';
+import type { MarkupEditorHandle } from '../markup/MarkupEditor';
 
 vi.mock('../markup/MarkupEditor', () => ({
   MarkupEditor: forwardRef<

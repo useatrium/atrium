@@ -74,6 +74,24 @@ test('selecting a channel updates the URL and reload restores it', async ({ page
   await expect(page.getByRole('heading', { name: `# ${room}` })).toBeVisible();
 });
 
+test('creating a channel navigates to its URL and reload restores it', async ({ page }) => {
+  const room = unique('created-url');
+  await login(page, unique('created-channel'), 'Created Channel');
+
+  await page.getByRole('button', { name: 'Create channel' }).click();
+  await page.getByRole('textbox', { name: 'Channel name' }).fill(room);
+  await page.getByRole('textbox', { name: 'Channel name' }).press('Enter');
+
+  await expect(page).toHaveURL(/\/c\/[^/]+$/);
+  await expect(page.getByRole('heading', { name: `# ${room}` })).toBeVisible();
+  const roomId = new URL(page.url()).pathname.split('/').at(-1);
+  if (!roomId) throw new Error('created channel URL is missing an id');
+
+  await page.reload();
+  await expect(page).toHaveURL(new RegExp(`/c/${roomId}$`));
+  await expect(page.getByRole('heading', { name: `# ${room}` })).toBeVisible();
+});
+
 test('opening a session updates the URL and Back closes it without a document reload', async ({ page }) => {
   const room = await createTestChannel('urlsession');
   const handle = unique('url-session');

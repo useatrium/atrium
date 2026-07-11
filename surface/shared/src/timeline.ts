@@ -34,9 +34,6 @@ export interface WireEvent {
   lastReplyId?: number;
   // === foundation additions: thread broadcast ===
   broadcast?: boolean;
-  /** DEV MOCK only (sessions/devMock.ts): synthetic events that must not
-   * advance the catch-up cursor. Never set on real server events. */
-  mock?: boolean;
 }
 
 export const WireEventSchema = Schema.mutable(Schema.Struct({
@@ -52,7 +49,6 @@ export const WireEventSchema = Schema.mutable(Schema.Struct({
   replyCount: Schema.optionalWith(Schema.Number, { exact: true }),
   lastReplyId: Schema.optionalWith(Schema.Number, { exact: true }),
   broadcast: Schema.optionalWith(Schema.Boolean, { exact: true }),
-  mock: Schema.optionalWith(Schema.Boolean, { exact: true }),
 }));
 
 export const MessageHistoryResponseSchema = Schema.mutable(Schema.Struct({
@@ -435,15 +431,16 @@ function bumpRootReplyCount(
 
 export function addPending(t: ChannelTimeline, msg: ChatMessage): ChannelTimeline {
   if (msg.threadRootEventId != null) {
-    const main = bumpRootReplyCount(t.main, msg.threadRootEventId, null);
+    const alreadyPending = hasPendingReply(t, msg);
+    const main = alreadyPending ? t.main : bumpRootReplyCount(t.main, msg.threadRootEventId, null);
     const existing = t.threads[msg.threadRootEventId] ?? [];
     return {
       ...t,
       main: msg.broadcast === true ? upsertPending(main, msg) : main,
-      threads: { ...t.threads, [msg.threadRootEventId]: [...existing, msg] },
+      threads: { ...t.threads, [msg.threadRootEventId]: upsertPending(existing, msg) },
     };
   }
-  return { ...t, main: [...t.main, msg] };
+  return { ...t, main: upsertPending(t.main, msg) };
 }
 
 export function markFailed(t: ChannelTimeline, clientMsgId: string): ChannelTimeline {

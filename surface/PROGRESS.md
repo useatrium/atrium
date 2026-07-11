@@ -232,7 +232,7 @@ streaming, outbox wake-flush, sqlite cache.
   overlay (@agent pinned at message start, lazy user cache). Review fixes:
   lost-POST spawn reconciliation via client_spawn_id echo, attachments
   fall through to plain send, bare @agent prompts for a task.
-- **Mobile polish**: in-app ImageViewer (header-auth expo-image, pinch on
+- **Mobile polish**: in-app media lightbox (header-auth expo-image, pinch on
   iOS / double-tap both platforms — Android pan is a known P3 gap), copy
   text (expo-clipboard), bounded scrollToIndex retries for search jumps,
   centralized haptics.
