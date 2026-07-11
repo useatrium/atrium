@@ -17,7 +17,6 @@
     "package:mac": "pnpm run prepackage && electron-builder --mac --config electron-builder.yml"
   },
   "devDependencies": {
-    "@atrium/surface-client": "workspace:*",
     "@playwright/test": "1.60.0",
     "@types/node": "^25.9.3",
     "electron": "^42.4.0",
