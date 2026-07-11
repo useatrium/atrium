@@ -1,7 +1,8 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { Schema } from 'effect';
 import { EntryReferencesQueryBodySchema } from '@atrium/surface-client/entry-contracts';
-import type { Db, DbClient } from '../db.js';
+import type { AppMutationContext } from '../app-mutations.js';
+import type { Db } from '../db.js';
 import {
   foldAnnotations,
   REACTION_EMOJI,
@@ -46,22 +47,13 @@ export type EntryAnnotationRateLimit =
       keyGenerator(req: FastifyRequest): Promise<string>;
     };
 
-export interface EntryRouteDeps {
+export interface EntryRouteDeps extends AppMutationContext {
   pool: Db;
   hub: WsHub;
   entryAnnotationRateLimit: EntryAnnotationRateLimit;
   requireUser(req: FastifyRequest, reply: FastifyReply): UserRef | null;
-  optionalOpId(body: unknown): string | undefined;
   canViewFull(userId: string): Promise<boolean>;
   fullViewForbidden(reply: FastifyReply): FastifyReply;
-  runMutation<T>(args: {
-    userId: string;
-    opId?: string;
-    opType: string;
-    body: unknown;
-    fn: (client: DbClient) => Promise<T>;
-    onApplied?: (response: T) => void | Promise<void>;
-  }): Promise<T>;
 }
 
 export function registerEntryRoutes(app: FastifyInstance, deps: EntryRouteDeps): void {

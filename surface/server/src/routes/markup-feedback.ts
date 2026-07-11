@@ -1,9 +1,10 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { Schema } from 'effect';
 import { ArtifactLedger } from '../artifact-ledger.js';
+import type { AppMutationContext } from '../app-mutations.js';
 import { normalizeMime } from '../artifact-route-utils.js';
 import { writeBackArtifactById } from '../artifact-writeback.js';
-import type { Db, DbClient } from '../db.js';
+import type { Db } from '../db.js';
 import { DomainError, type UserRef, type WireEvent } from '../events.js';
 import {
   composeFeedbackSteer,
@@ -17,19 +18,10 @@ import { getObjectBytes, headObject, uploadObject } from '../s3.js';
 import { decodeRouteBody, decodeRouteParams } from '../route-schema.js';
 import type { SessionRuns } from '../session-runs.js';
 
-export interface MarkupFeedbackRouteDeps {
+export interface MarkupFeedbackRouteDeps extends AppMutationContext {
   pool: Db;
   sessionRuns: SessionRuns;
   requireUser(req: FastifyRequest, reply: FastifyReply): UserRef | null;
-  optionalOpId(body: unknown): string | undefined;
-  runMutation<T>(args: {
-    userId: string;
-    opId?: string;
-    opType: string;
-    body: unknown;
-    fn: (client: DbClient) => Promise<T>;
-    onApplied?: (response: T) => void | Promise<void>;
-  }): Promise<T>;
   publishEvent(event: WireEvent): void;
 }
 

@@ -9,7 +9,8 @@ import {
   SessionSuggestionResolveBodySchema,
   type SessionQuestionAnswers,
 } from '@atrium/surface-client/sessions';
-import type { Db, DbClient } from '../db.js';
+import type { AppMutationContext } from '../app-mutations.js';
+import type { Db } from '../db.js';
 import { DomainError, type UserRef, type WireEvent } from '../events.js';
 import { decodeRouteBody } from '../route-schema.js';
 import {
@@ -19,21 +20,12 @@ import {
 } from '../session-runs.js';
 import { parseAgentTurnAttachmentInputPayloads, resolveAgentTurnAttachments } from '../session-attachments.js';
 
-export interface SessionInteractionRouteDeps {
+export interface SessionInteractionRouteDeps extends AppMutationContext {
   pool: Db;
   sessionRuns: SessionRuns;
   maxMessageBytes: number;
   requireUser(req: FastifyRequest, reply: FastifyReply): UserRef | null;
   requireSessionAccess(req: FastifyRequest, reply: FastifyReply): Promise<UserRef | null>;
-  optionalOpId(body: unknown): string | undefined;
-  runMutation<T>(args: {
-    userId: string;
-    opId?: string;
-    opType: string;
-    body: unknown;
-    fn: (client: DbClient) => Promise<T>;
-    onApplied?: (response: T) => void | Promise<void>;
-  }): Promise<T>;
   publishEvent(event: WireEvent): void;
 }
 

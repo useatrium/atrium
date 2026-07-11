@@ -5,6 +5,7 @@ import {
   CallIdParamsSchema,
   StartCallBodySchema,
 } from '@atrium/surface-client/calls';
+import type { AppMutationContext } from '../app-mutations.js';
 import type { Db, DbClient } from '../db.js';
 import { withTx } from '../db.js';
 import { loadActiveCallWiresForUser, loadCallWire, type CallRow } from '../calls.js';
@@ -16,7 +17,7 @@ import { sendIncomingCallVoipPushes, type VoipPushSender } from '../voip.js';
 import { isUuid } from '../idempotency.js';
 import { decodeRouteBody, decodeRouteParams, decodeRouteQuery } from '../route-schema.js';
 
-export interface CallRouteDeps {
+export interface CallRouteDeps extends AppMutationContext {
   pool: Db;
   hub: WsHub;
   calls: CallTokenService | null;
@@ -24,15 +25,6 @@ export interface CallRouteDeps {
   livekitApiSecret?: string;
   voip: VoipPushSender;
   requireUser(req: FastifyRequest, reply: FastifyReply): UserRef | null;
-  optionalOpId(body: unknown): string | undefined;
-  runMutation<T>(args: {
-    userId: string;
-    opId?: string;
-    opType: string;
-    body: unknown;
-    fn: (client: DbClient) => Promise<T>;
-    onApplied?: (response: T) => void | Promise<void>;
-  }): Promise<T>;
 }
 
 function callsUnconfigured(reply: FastifyReply) {

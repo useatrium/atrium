@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { Schema } from 'effect';
-import type { Db, DbClient } from '../db.js';
+import type { AppMutationContext } from '../app-mutations.js';
+import type { Db } from '../db.js';
 import {
   addChannelMemberTx,
   appendEvent,
@@ -59,21 +60,12 @@ const ChannelOpBodySchema = Schema.Struct({
   opId: Schema.optional(Schema.Unknown),
 });
 
-export interface ChannelRouteDeps {
+export interface ChannelRouteDeps extends AppMutationContext {
   pool: Db;
   hub: WsHub;
   requireUser(req: FastifyRequest, reply: FastifyReply): UserRef | null;
-  optionalOpId(body: unknown): string | undefined;
   activeWorkspaceIdFor(userId: string): Promise<string | null>;
   noWorkspace(reply: FastifyReply): FastifyReply;
-  runMutation<T>(args: {
-    userId: string;
-    opId?: string;
-    opType: string;
-    body: unknown;
-    fn: (client: DbClient) => Promise<T>;
-    onApplied?: (response: T) => void | Promise<void>;
-  }): Promise<T>;
 }
 
 export function registerChannelRoutes(app: FastifyInstance, deps: ChannelRouteDeps): void {

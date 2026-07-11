@@ -5,7 +5,8 @@ import {
   SaveAgentProfileProposalToCurrentBodySchema,
 } from '@atrium/surface-client/agentProfiles';
 import { config } from '../config.js';
-import type { Db, DbClient } from '../db.js';
+import type { AppMutationContext } from '../app-mutations.js';
+import type { Db } from '../db.js';
 import { canAccessChannel, type UserRef } from '../events.js';
 import type { WsHub } from '../hub.js';
 import type { AgentProfiles } from '../agent-profiles.js';
@@ -81,7 +82,7 @@ const AppLaunchBodySchema = Schema.Struct({
   version: Schema.optional(Schema.Unknown),
 });
 
-export interface SessionRouteDeps {
+export interface SessionRouteDeps extends AppMutationContext {
   pool: Db;
   hub: WsHub;
   sessionRuns: SessionRuns;
@@ -91,15 +92,6 @@ export interface SessionRouteDeps {
   appRegistry: AppRegistry;
   requireUser(req: FastifyRequest, reply: FastifyReply): UserRef | null;
   requireSessionAccess(req: FastifyRequest, reply: FastifyReply): Promise<UserRef | null>;
-  optionalOpId(body: unknown): string | undefined;
-  runMutation<T>(args: {
-    userId: string;
-    opId?: string;
-    opType: string;
-    body: unknown;
-    fn: (client: DbClient) => Promise<T>;
-    onApplied?: (response: T) => void | Promise<void>;
-  }): Promise<T>;
 }
 
 export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDeps): void {
