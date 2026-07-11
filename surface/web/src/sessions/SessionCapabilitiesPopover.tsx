@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
+import type {
+  SessionCapabilityItem,
+  SessionCapabilityNamespace,
+  SessionCapabilitySnapshot,
+} from '@atrium/surface-client';
 import { useDialog } from '../useDialog';
 import { RefreshCwIcon, SearchIcon, XIcon } from '../components/icons';
 import { TimestampDisclosure } from '../components/TimestampDisclosure';
 import {
   sessionsApi,
-  type SessionCapabilityItem,
-  type SessionCapabilityNamespace,
-  type SessionCapabilitySnapshot,
 } from './api';
 
 export function SessionCapabilitiesPopover({

@@ -1,7 +1,11 @@
 // /api/sessions client + proxied Centaur SSE stream.
 
 import type { ArtifactPresentation, CentaurEventFrame } from '@atrium/centaur-client';
-import { decodeSessionListResponse, decodeSessionResponse } from '@atrium/surface-client';
+import {
+  decodeSessionListResponse,
+  decodeSessionResponse,
+  type SessionCapabilitiesResponse,
+} from '@atrium/surface-client';
 import type {
   SessionAnswerProposalResolveBody,
   SessionAnswerQuestionBody,
@@ -56,69 +60,6 @@ export interface AppListRow {
   currentVersion: number | null;
   entryPath: string | null;
   updatedAt: string;
-}
-
-export interface SessionCapabilityItem {
-  name: string;
-  sources: string[];
-  namespace?: string;
-  description?: string;
-  status?: 'available' | 'pending' | 'observed';
-  count?: number;
-}
-
-export interface SessionCapabilityNamespace {
-  name: string;
-  sources: string[];
-  description?: string;
-  count: number;
-}
-
-export interface SessionCapabilityChange {
-  seq: number;
-  line: number;
-  timestamp?: string;
-  source: string;
-  summary: string;
-  added?: string[];
-  removed?: string[];
-  readded?: string[];
-  counts?: Record<string, number>;
-  redacted?: boolean;
-}
-
-export interface SessionCapabilitySnapshot {
-  parserVersion: number;
-  sessionId: string;
-  harness: 'claude' | 'codex';
-  sourceSha256: string;
-  completeness: 'complete' | 'partial' | 'observed';
-  generatedAt: string;
-  runtime: Record<string, unknown>;
-  counts: {
-    tools: number;
-    toolNamespaces: number;
-    mcpServers: number;
-    agents: number;
-    skills: number;
-    observedToolCalls: number;
-    changes: number;
-  };
-  tools: SessionCapabilityItem[];
-  toolNamespaces: SessionCapabilityNamespace[];
-  mcpServers: SessionCapabilityItem[];
-  agents: SessionCapabilityItem[];
-  skills: SessionCapabilityItem[];
-  observedToolCalls: SessionCapabilityItem[];
-  pendingMcpServers: string[];
-  changes: SessionCapabilityChange[];
-  warnings: string[];
-  redactions: string[];
-}
-
-export interface SessionCapabilitiesResponse {
-  sessionId: string;
-  snapshots: SessionCapabilitySnapshot[];
 }
 
 /** Every event name the Centaur durable stream emits (docs/archive/notes/build-history/phase0/results/event-schema.md). */

@@ -14,7 +14,8 @@
     "./sessions": "./src/sessions.ts",
     "./agentProfiles": "./src/agentProfiles.ts",
     "./effort": "./src/effort.ts",
-    "./entry-contracts": "./src/entry-contracts.ts"
+    "./entry-contracts": "./src/entry-contracts.ts",
+    "./session-capabilities": "./src/sessionCapabilities.ts"
   },
   "scripts": {
     "test": "vitest run",
