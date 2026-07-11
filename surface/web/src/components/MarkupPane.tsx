@@ -20,23 +20,6 @@ export type MarkupPaneMode =
   | { kind: 'steer'; sessionId: string }
   | { kind: 'reply'; channelId: string; threadRootEventId: number };
 
-export function splitMarkdownFrontmatter(content: string): { frontmatter: string; body: string } {
-  if (!content.startsWith('---\n') && !content.startsWith('---\r\n')) {
-    return { frontmatter: '', body: content };
-  }
-  const newline = content.startsWith('---\r\n') ? '\r\n' : '\n';
-  const closeMarker = `${newline}---${newline}`;
-  const closeIndex = content.indexOf(closeMarker, 3);
-  if (closeIndex === -1) return { frontmatter: '', body: content };
-  const frontmatterEnd = closeIndex + closeMarker.length;
-  const frontmatter = content.slice(0, frontmatterEnd);
-  const body =
-    content.slice(frontmatterEnd, frontmatterEnd + newline.length) === newline
-      ? content.slice(frontmatterEnd + newline.length)
-      : content.slice(frontmatterEnd);
-  return { frontmatter, body };
-}
-
 function titleFromFrontmatter(frontmatter: string): string | null {
   const match = frontmatter.match(/(?:^|\r?\n)title:\s*(.+?)(?:\r?\n|$)/);
   if (!match) return null;
@@ -185,10 +168,7 @@ export function MarkupPane({
   };
 
   return (
-    <div
-      className="fixed inset-0 z-[80] flex bg-black/55 p-4 text-fg max-md:p-2"
-      role="presentation"
-    >
+    <div className="fixed inset-0 z-[80] flex bg-black/55 p-4 text-fg max-md:p-2" role="presentation">
       <section
         ref={dialogRef}
         role="dialog"
@@ -233,7 +213,11 @@ export function MarkupPane({
           </button>
         </header>
         {error && (
-          <div id={errorId} role="alert" className="border-b border-danger-border bg-danger-tint px-3 py-2 text-xs text-danger-text">
+          <div
+            id={errorId}
+            role="alert"
+            className="border-b border-danger-border bg-danger-tint px-3 py-2 text-xs text-danger-text"
+          >
             {error}
           </div>
         )}

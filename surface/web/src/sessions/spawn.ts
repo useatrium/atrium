@@ -26,7 +26,7 @@ export function trySpawnFromComposer(text: string, ctx: SpawnContext): boolean {
   return true;
 }
 
-export function spawnSession(task: string, ctx: SpawnContext): void {
+function spawnSession(task: string, ctx: SpawnContext): void {
   const { channelId, threadRootEventId, me, dispatch, enqueueSpawn } = ctx;
   const tempId = `${PENDING_SESSION_PREFIX}${randomId()}`;
   const now = new Date().toISOString();

@@ -11,7 +11,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type SVGProps,
 } from 'react';
-import type { ChatMessage, UserRef } from '@atrium/surface-client';
+import { isStructuredTextForMarkup, type ChatMessage, type UserRef } from '@atrium/surface-client';
 import { encodeEventHandle } from '@atrium/surface-client/handle';
 import { SessionCard } from '../sessions/SessionCard';
 import type { Session } from '../sessions/types';
@@ -59,15 +59,7 @@ function reactionUserName(user: UserRef | undefined): string {
   return 'Unknown';
 }
 
-function ReactionUsersPopover({
-  id,
-  emoji,
-  users,
-}: {
-  id: string;
-  emoji: string;
-  users: ReactionDisplayUser[];
-}) {
+function ReactionUsersPopover({ id, emoji, users }: { id: string; emoji: string; users: ReactionDisplayUser[] }) {
   return (
     <div
       id={id}
@@ -407,7 +399,8 @@ export const MessageRow = memo(function MessageRow({
     threadTargetEventId,
   ]);
 
-  const actionMenuAllowed = (canThread || canEdit || canDelete || canReact || canAnnotate || canMarkupReply) && !editing;
+  const actionMenuAllowed =
+    (canThread || canEdit || canDelete || canReact || canAnnotate || canMarkupReply) && !editing;
   const closeActionMenu = useCallback(() => setActionMenu(null), []);
   const openSheetMenu = useCallback(() => {
     if (!actionMenuAllowed) return;
@@ -748,7 +741,11 @@ export const MessageRow = memo(function MessageRow({
           </div>
         )}
         {failed && (
-          <button type="button" onClick={() => onRetry?.(m)} className="mt-0.5 text-xs font-medium text-danger hover:underline">
+          <button
+            type="button"
+            onClick={() => onRetry?.(m)}
+            className="mt-0.5 text-xs font-medium text-danger hover:underline"
+          >
             {isSessionRow ? 'Failed to spawn — click to retry' : 'Failed to send — click to retry'}
           </button>
         )}
@@ -893,26 +890,12 @@ export const MessageRow = memo(function MessageRow({
         actions={actionMenuActions}
         reactions={canReact ? { onSelect: react } : undefined}
       />
-      <SelectTextSheet
-        open={selectTextOpen}
-        onClose={closeSelectText}
-        restoreFocusRef={rowRef}
-      >
+      <SelectTextSheet open={selectTextOpen} onClose={closeSelectText} restoreFocusRef={rowRef}>
         <MessageText text={m.text} meHandle={meHandle} />
       </SelectTextSheet>
     </div>
   );
 });
-
-const MARKDOWN_BLOCK_RE = /(^|\n)\s{0,3}(#{1,6}\s+\S|([-*+]|\d+[.)])\s+\S|>\s+\S|```)/;
-
-export function isStructuredTextForMarkup(text: string): boolean {
-  const nonEmptyLines = text
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
-  return nonEmptyLines.length >= 2 || MARKDOWN_BLOCK_RE.test(text);
-}
 
 function mediaKindForContentType(contentType: string): PreviewFile['mediaKind'] {
   if (contentType.startsWith('image/')) return 'image';
@@ -928,7 +911,10 @@ function isTouchContextMenu(event: MouseEvent): boolean {
 }
 
 function isInteractiveTarget(target: EventTarget): boolean {
-  return target instanceof Element && target.closest('button,a,input,textarea,select,[role="button"],[contenteditable="true"]') != null;
+  return (
+    target instanceof Element &&
+    target.closest('button,a,input,textarea,select,[role="button"],[contenteditable="true"]') != null
+  );
 }
 
 function RemovedAttachmentPlaceholder({ filename }: { filename: string }) {

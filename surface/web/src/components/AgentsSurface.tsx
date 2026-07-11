@@ -326,7 +326,7 @@ export function AgentsSurface({
   );
 }
 
-export function AgentSessionListButton({
+function AgentSessionListButton({
   session,
   onOpenSession,
   onOpenMenu,

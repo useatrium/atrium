@@ -33,7 +33,8 @@ import { GitHubConnectionDialog } from './components/GitHubConnectionDialog';
 import { EntryQuoteApplyContextProvider } from './components/EntryQuoteCard';
 import { ShortcutsHelp, Tooltip } from './components/a11y';
 import { FileIcon, GearIcon, LockIcon, PhoneIcon, PlayIcon, PlusIcon, SearchIcon, XIcon } from './components/icons';
-import { MarkupPane, splitMarkdownFrontmatter, type MarkupPaneMode, type MarkupPaneSource } from './components/MarkupPane';
+import { splitMarkdownFrontmatter } from '@atrium/surface-client';
+import { MarkupPane, type MarkupPaneMode, type MarkupPaneSource } from './components/MarkupPane';
 import { showErrorToast } from './components/Toasts';
 import { QuickSwitcher, type QuickSwitcherCommand } from './components/QuickSwitcher';
 import { SettingsSurface } from './components/SettingsSurface';
@@ -75,13 +76,17 @@ import { useSessionPaneState } from './useSessionPaneState';
 import { useSessionQueueFailures } from './useSessionQueueFailures';
 import { useTypingIndicators } from './useTypingIndicators';
 import { useUploadQueue } from './useUploadQueue';
-import {
-  entryParamFromSearch,
-  stripEntryParamFromLocation,
-  threadRootParamFromSearch,
-} from './EntryLinkRoute';
+import { entryParamFromSearch, stripEntryParamFromLocation, threadRootParamFromSearch } from './EntryLinkRoute';
 import { SHORTCUTS, matchesChord } from './lib/shortcuts';
-import { URL_PARAMS, navigate, parseInAppRoute, routePath, useLocation, type InAppRoute, type MainSurface } from './router';
+import {
+  URL_PARAMS,
+  navigate,
+  parseInAppRoute,
+  routePath,
+  useLocation,
+  type InAppRoute,
+  type MainSurface,
+} from './router';
 
 const PAGE_SIZE = 50;
 const SYNC_LIMIT = 500;
@@ -703,9 +708,7 @@ export function Chat({
       })
       .catch((err: unknown) => {
         onApiError(err);
-        setChannelMemberCache((current) =>
-          current[channelId] ? current : { ...current, [channelId]: [] },
-        );
+        setChannelMemberCache((current) => (current[channelId] ? current : { ...current, [channelId]: [] }));
       });
   }, [activeChannelId, onApiError]);
   const activeUserMap = useMemo(() => {
@@ -1027,7 +1030,13 @@ export function Chat({
     if (!active) return;
     navigate(
       routePathWithSearch(
-        { surface: 'chat', channelId: active.id, sessionId: null, threadRootId: String(rootEventId), focusSession: false },
+        {
+          surface: 'chat',
+          channelId: active.id,
+          sessionId: null,
+          threadRootId: String(rootEventId),
+          focusSession: false,
+        },
         locationState.search,
         locationState.hash,
       ),
@@ -1065,11 +1074,14 @@ export function Chat({
     const sessionId = params.get('session') ?? undefined;
     const threadRootId = threadRootParamFromSearch(window.location.search);
     if (!channelId && !sessionId) return;
-    openNotificationTarget({
-      ...(channelId ? { channelId } : {}),
-      ...(sessionId ? { sessionId } : {}),
-      ...(threadRootId != null ? { threadRootId } : {}),
-    }, { replace: true });
+    openNotificationTarget(
+      {
+        ...(channelId ? { channelId } : {}),
+        ...(sessionId ? { sessionId } : {}),
+        ...(threadRootId != null ? { threadRootId } : {}),
+      },
+      { replace: true },
+    );
   }, [openNotificationTarget]);
 
   useEffect(() => {
@@ -2346,9 +2358,7 @@ export function Chat({
               spectators={spectators}
               meId={me.id}
               meHandle={me.handle}
-              onClose={() =>
-                goToRoute({ surface: 'chat', channelId: active.id, sessionId: null, focusSession: false })
-              }
+              onClose={() => goToRoute({ surface: 'chat', channelId: active.id, sessionId: null, focusSession: false })}
               onSend={(text, attachments, attachmentRefs, voice, broadcast) =>
                 send(active.id, text, openThreadRoot.id!, attachments, attachmentRefs, voice, broadcast)
               }

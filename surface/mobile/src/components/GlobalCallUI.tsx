@@ -64,7 +64,7 @@ function userForCall(call: CallWire, channels: Channel[], userId: string): UserR
  * transient notice — rendered once at the layout root so a call shows on ANY
  * screen, not just the channel it was started from. Renders nothing when idle.
  */
-export function GlobalCallUI() {
+function GlobalCallUI() {
   const { state, me, calls } = useChat();
   const insets = useSafeAreaInsets();
 

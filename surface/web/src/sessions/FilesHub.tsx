@@ -1,7 +1,14 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { JSX, KeyboardEvent } from 'react';
-import { containsCriticMarkup, type FileOrigin, type HubFile, type HubFileListResult, type HubFileVersionsResponse } from '@atrium/surface-client';
-import { MarkupPane, splitMarkdownFrontmatter, type MarkupPaneSource } from '../components/MarkupPane';
+import {
+  containsCriticMarkup,
+  splitMarkdownFrontmatter,
+  type FileOrigin,
+  type HubFile,
+  type HubFileListResult,
+  type HubFileVersionsResponse,
+} from '@atrium/surface-client';
+import { MarkupPane, type MarkupPaneSource } from '../components/MarkupPane';
 import { showErrorToast } from '../components/Toasts';
 import { Tooltip } from '../components/a11y';
 import { FileIcon, SearchIcon } from '../components/icons';
@@ -70,11 +77,7 @@ function lightboxPanelFromSearch(search: string): 'info' | 'history' | null {
 function dirFromSearch(search: string): string {
   const value = new URLSearchParams(search).get(URL_PARAMS.dir);
   if (!value) return '';
-  return value
-    .replace(/\\/g, '/')
-    .replace(/\/+/g, '/')
-    .replace(/^\/+/, '')
-    .replace(/\/+$/, '');
+  return value.replace(/\\/g, '/').replace(/\/+/g, '/').replace(/^\/+/, '').replace(/\/+$/, '');
 }
 
 function contentUrl(artifactId: string): string {
@@ -335,13 +338,7 @@ function FolderTile({ folder, onOpen }: { folder: FolderEntry; onOpen: () => voi
   );
 }
 
-function FolderBreadcrumb({
-  currentDir,
-  onNavigate,
-}: {
-  currentDir: string;
-  onNavigate: (dir: string) => void;
-}) {
+function FolderBreadcrumb({ currentDir, onNavigate }: { currentDir: string; onNavigate: (dir: string) => void }) {
   const segments = dirSegments(currentDir);
 
   return (
@@ -646,10 +643,10 @@ function FileTile({
               key={label}
               className="inline-flex max-w-full items-center gap-1 rounded bg-surface-overlay px-1.5 py-px text-3xs text-fg-secondary"
             >
-                <span className="truncate">{label}</span>
-                {/* biome-ignore lint/a11y/useSemanticElements: keyboard-activatable inline label control; a button would alter compact chip layout. */}
-                <span
-                  role="button"
+              <span className="truncate">{label}</span>
+              {/* biome-ignore lint/a11y/useSemanticElements: keyboard-activatable inline label control; a button would alter compact chip layout. */}
+              <span
+                role="button"
                 tabIndex={0}
                 aria-label={`Remove ${label} label`}
                 className="text-fg-faint hover:text-danger-text"
@@ -740,7 +737,10 @@ export function FilesHub({
 }): JSX.Element {
   const location = useLocation();
   const currentDir = useMemo(() => dirFromSearch(location.search), [location.search]);
-  const urlFileArtifactId = useMemo(() => cleanId(new URLSearchParams(location.search).get(URL_PARAMS.file)), [location.search]);
+  const urlFileArtifactId = useMemo(
+    () => cleanId(new URLSearchParams(location.search).get(URL_PARAMS.file)),
+    [location.search],
+  );
   const urlPanel = useMemo(() => lightboxPanelFromSearch(location.search), [location.search]);
   const resolvedDefaultScope: FileHubScope =
     defaultScope === 'session' && sessionScope
@@ -775,9 +775,15 @@ export function FilesHub({
   const [error, setError] = useState<string | null>(null);
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const [markupSource, setMarkupSource] = useState<MarkupPaneSource | null>(null);
-  const [applyMarkupCandidate, setApplyMarkupCandidate] = useState<{ artifactId: string; path: string; seq: number } | null>(null);
+  const [applyMarkupCandidate, setApplyMarkupCandidate] = useState<{
+    artifactId: string;
+    path: string;
+    seq: number;
+  } | null>(null);
   const [markupNotice, setMarkupNotice] = useState<string | null>(null);
-  const [artifactEntryReferences, setArtifactEntryReferences] = useState<Record<string, EntryReferenceSummary | null>>({});
+  const [artifactEntryReferences, setArtifactEntryReferences] = useState<Record<string, EntryReferenceSummary | null>>(
+    {},
+  );
   const searchActive = search.trim().length > 0 || debouncedSearch.trim().length > 0;
   const artifactEntryReferencesFetchedAtRef = useRef(0);
   const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -942,25 +948,22 @@ export function FilesHub({
 
   const replaceFile = useCallback((next: HubFile) => setFiles((current) => mergeFile(current, next)), []);
 
-  const toggleStar = useCallback(
-    async (file: HubFile) => {
-      const previous = file.starred;
-      setFiles((current) => updateFile(current, file.artifactId, { starred: !previous }));
-      try {
-        const response = await fetch(`/api/files/${file.artifactId}/star`, {
-          method: previous ? 'DELETE' : 'POST',
-          credentials: 'same-origin',
-        });
-        if (!response.ok) throw new Error(await responseError(response, 'Could not update star'));
-        const body = (await response.json()) as { artifactId: string; starred: boolean };
-        setFiles((current) => updateFile(current, body.artifactId, { starred: body.starred }));
-      } catch (err) {
-        setFiles((current) => updateFile(current, file.artifactId, { starred: previous }));
-        showErrorToast(err instanceof Error ? err.message : 'Could not update star');
-      }
-    },
-    [],
-  );
+  const toggleStar = useCallback(async (file: HubFile) => {
+    const previous = file.starred;
+    setFiles((current) => updateFile(current, file.artifactId, { starred: !previous }));
+    try {
+      const response = await fetch(`/api/files/${file.artifactId}/star`, {
+        method: previous ? 'DELETE' : 'POST',
+        credentials: 'same-origin',
+      });
+      if (!response.ok) throw new Error(await responseError(response, 'Could not update star'));
+      const body = (await response.json()) as { artifactId: string; starred: boolean };
+      setFiles((current) => updateFile(current, body.artifactId, { starred: body.starred }));
+    } catch (err) {
+      setFiles((current) => updateFile(current, file.artifactId, { starred: previous }));
+      showErrorToast(err instanceof Error ? err.message : 'Could not update star');
+    }
+  }, []);
 
   const addLabel = useCallback(async (file: HubFile) => {
     const label = window.prompt('Label this file')?.trim();
@@ -985,7 +988,9 @@ export function FilesHub({
 
   const removeLabel = useCallback(async (file: HubFile, label: string) => {
     const previous = file.labels;
-    setFiles((current) => updateFile(current, file.artifactId, { labels: previous.filter((value) => value !== label) }));
+    setFiles((current) =>
+      updateFile(current, file.artifactId, { labels: previous.filter((value) => value !== label) }),
+    );
     try {
       const response = await fetch(`/api/files/${file.artifactId}/labels/${encodeURIComponent(label)}`, {
         method: 'DELETE',
@@ -1036,7 +1041,13 @@ export function FilesHub({
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify({ name }),
           });
-          if (!response.ok) throw new Error(await responseError(response, response.status === 409 ? 'A file with that name already exists' : 'Could not rename file'));
+          if (!response.ok)
+            throw new Error(
+              await responseError(
+                response,
+                response.status === 409 ? 'A file with that name already exists' : 'Could not rename file',
+              ),
+            );
           const body = (await response.json()) as { artifactId: string; path: string; name: string };
           setFiles((current) => updateFile(current, body.artifactId, { name: body.name, path: body.path }));
         } catch (err) {
@@ -1053,7 +1064,8 @@ export function FilesHub({
         try {
           const response = await fetch(`/api/files/${file.id}`, { method: 'DELETE', credentials: 'same-origin' });
           if (!response.ok) {
-            const fallback = response.status === 403 ? 'You do not have permission to delete this file' : 'Could not delete file';
+            const fallback =
+              response.status === 403 ? 'You do not have permission to delete this file' : 'Could not delete file';
             throw new Error(await responseError(response, fallback));
           }
         } catch (err) {
@@ -1266,7 +1278,18 @@ export function FilesHub({
       },
       canManage: () => true,
     }),
-    [channelId, files, filters.includeDeleted, loadFiles, onSeedChannelComposer, replaceFile, sessionId, showMarkupNotice, updateUrlParams, workspaceId],
+    [
+      channelId,
+      files,
+      filters.includeDeleted,
+      loadFiles,
+      onSeedChannelComposer,
+      replaceFile,
+      sessionId,
+      showMarkupNotice,
+      updateUrlParams,
+      workspaceId,
+    ],
   );
 
   const scopedFiles = useMemo(() => {
@@ -1341,8 +1364,8 @@ export function FilesHub({
     : scope === 'session'
       ? 'Files touched by this session will appear here.'
       : currentDir
-      ? 'Files added to this folder will appear here.'
-      : 'Files matching the current filters will appear here.';
+        ? 'Files added to this folder will appear here.'
+        : 'Files matching the current filters will appear here.';
 
   useEffect(() => {
     if (!loadedOnce) return;
@@ -1512,9 +1535,7 @@ export function FilesHub({
         scopedChannel={scopedChannel}
       />
       <div className="min-h-0 flex-1 overflow-y-auto p-3">
-        {loading && visibleItemCount === 0 && (
-          <div className="px-1 py-2 text-2xs text-fg-muted">loading files...</div>
-        )}
+        {loading && visibleItemCount === 0 && <div className="px-1 py-2 text-2xs text-fg-muted">loading files...</div>}
         {error && (
           <div role="alert" className="px-1 py-2 text-2xs text-danger-text">
             {error}

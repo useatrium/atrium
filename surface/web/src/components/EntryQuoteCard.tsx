@@ -1,19 +1,13 @@
-import {
-  createContext,
-  useContext,
-  useEffect,
-  useState,
-  type ReactNode,
-} from 'react';
+import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import {
   containsCriticMarkup,
+  splitMarkdownFrontmatter,
   parseCriticMarkup,
   type CriticBlock,
 } from '@atrium/surface-client';
 import { resolveEntryQuote, type ResolvedEntryQuote } from '../lib/entryLinks';
 import { ApplyMarkupMenu } from './ApplyMarkupMenu';
 import { CriticMarkupView } from './CriticMarkupView';
-import { splitMarkdownFrontmatter } from './MarkupPane';
 
 const MAX_EXCERPT_LENGTH = 200;
 const MAX_MARKUP_CARD_BYTES = 64 * 1024;
@@ -212,10 +206,7 @@ function contextLine(entry: ResolvedEntryQuote): string | null {
   return parts.length > 0 ? parts.join(' - ') : null;
 }
 
-type EntryInlineChipState =
-  | { kind: 'loading' }
-  | { kind: 'resolved'; entry: ResolvedEntryQuote }
-  | { kind: 'failed' };
+type EntryInlineChipState = { kind: 'loading' } | { kind: 'resolved'; entry: ResolvedEntryQuote } | { kind: 'failed' };
 
 function shortExcerpt(text: string): string {
   const value = excerpt(text);

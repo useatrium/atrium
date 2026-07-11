@@ -1,6 +1,6 @@
 // Absolute base for links meant to be shared OUTSIDE the app (clipboard).
 // Prod build injects VITE_PUBLIC_URL via web/.env.production; dev leaves it unset -> window.origin.
-export function publicBaseUrl(): string {
+function publicBaseUrl(): string {
   const configured = import.meta.env.VITE_PUBLIC_URL?.trim();
   const base = configured || (typeof window === 'undefined' ? '' : window.location.origin);
   return base.replace(/\/+$/, '');

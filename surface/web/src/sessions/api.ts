@@ -122,7 +122,7 @@ export interface SessionCapabilitiesResponse {
 }
 
 /** Every event name the Centaur durable stream emits (docs/archive/notes/build-history/phase0/results/event-schema.md). */
-export const FRAME_EVENT_NAMES = [
+const FRAME_EVENT_NAMES = [
   'execution_state',
   'execution_started',
   'amp_raw_event',
@@ -203,7 +203,7 @@ async function doFetch(path: string, init?: RequestInit): Promise<Response> {
  * (`event: <name>` / `data: <json incl event_id>`); tolerate both
  * `{event_id, data}` envelopes and flat `{event_id, ...payload}` bodies.
  */
-export function parseFrame(name: string, raw: string): CentaurEventFrame | null {
+function parseFrame(name: string, raw: string): CentaurEventFrame | null {
   try {
     const parsed = JSON.parse(raw) as Record<string, unknown>;
     const data =

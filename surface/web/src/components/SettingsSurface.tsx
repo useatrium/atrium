@@ -125,7 +125,7 @@ export function SettingsSurface({
   );
 }
 
-export function SettingsControls({
+function SettingsControls({
   notify,
   setNotify,
   githubConnection,

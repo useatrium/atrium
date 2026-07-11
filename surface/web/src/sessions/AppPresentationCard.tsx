@@ -32,7 +32,7 @@ function displayTitle(presentation: ArtifactPresentation): string {
   return presentation.title?.trim() || presentation.appSlug || presentation.path.split('/').at(-2) || 'App preview';
 }
 
-export function AppPresentationCard({
+function AppPresentationCard({
   sessionId,
   presentation,
   surface = 'transcript',

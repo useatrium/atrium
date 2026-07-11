@@ -72,7 +72,7 @@ function syncThemeColor(scheme: Scheme): void {
   meta.content = THEME_META[scheme];
 }
 
-export function loadPrefs(): UserPrefs {
+function loadPrefs(): UserPrefs {
   if (!canUseDom()) return DEFAULT_PREFS;
   try {
     return normalizePrefs(JSON.parse(window.localStorage.getItem(PREFS_KEY) ?? 'null'));
@@ -81,7 +81,7 @@ export function loadPrefs(): UserPrefs {
   }
 }
 
-export function applyPrefs(prefs: UserPrefs): Scheme {
+function applyPrefs(prefs: UserPrefs): Scheme {
   const resolved = resolveScheme(prefs);
   if (!canUseDom()) return resolved;
   const root = document.documentElement;

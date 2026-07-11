@@ -54,7 +54,7 @@ export function DiffView({ diff }: { diff: string }) {
 }
 
 /** Path + kind badge + add/del counts. Shared header row for both surfaces. */
-export function FileChangeHeader({
+function FileChangeHeader({
   change,
   open,
   status = 'done',

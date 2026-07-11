@@ -28,7 +28,7 @@ function webPushSupported(): boolean {
   );
 }
 
-export function vapidKeyToUint8Array(key: string): Uint8Array<ArrayBuffer> {
+function vapidKeyToUint8Array(key: string): Uint8Array<ArrayBuffer> {
   const padding = '='.repeat((4 - (key.length % 4)) % 4);
   const base64 = `${key}${padding}`.replace(/-/g, '+').replace(/_/g, '/');
   const raw = window.atob(base64);

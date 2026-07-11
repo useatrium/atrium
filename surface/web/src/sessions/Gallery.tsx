@@ -126,7 +126,7 @@ export function galleryApiSearchParams(
   return params;
 }
 
-export function galleryUrlSearchParams(state: GalleryQueryState): URLSearchParams {
+function galleryUrlSearchParams(state: GalleryQueryState): URLSearchParams {
   const params = new URLSearchParams();
   const q = state.q.trim();
   const label = state.label.trim();

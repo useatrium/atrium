@@ -13,7 +13,7 @@ function referenceLabel(ref: EntryReference): string {
   return excerpt ? `${actor}: ${excerpt}` : actor;
 }
 
-export function openEntryReference(ref: EntryReference) {
+function openEntryReference(ref: EntryReference) {
   if (ref.threadRootEventId != null) {
     router.push({
       pathname: '/thread/[rootId]',

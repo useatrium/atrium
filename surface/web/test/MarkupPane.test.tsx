@@ -4,7 +4,8 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { forwardRef, useImperativeHandle, useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError, api } from '../src/api';
-import { MarkupPane, splitMarkdownFrontmatter, type MarkupPaneSource } from '../src/components/MarkupPane';
+import { splitMarkdownFrontmatter } from '@atrium/surface-client';
+import { MarkupPane, type MarkupPaneSource } from '../src/components/MarkupPane';
 
 vi.mock('../src/api', async () => {
   const actual = await vi.importActual<typeof import('../src/api')>('../src/api');
@@ -16,40 +17,37 @@ vi.mock('../src/api', async () => {
   };
 });
 
-vi.mock(
-  '/src/markup/MarkupEditor',
-  () => ({
-    MarkupEditor: forwardRef(function MockMarkupEditor(
-      {
-        initialMarkdown,
-        onDirtyChange,
-        className,
-      }: {
-        initialMarkdown: string;
-        onDirtyChange?: (dirty: boolean) => void;
-        className?: string;
-      },
-      ref,
-    ) {
-      const [value, setValue] = useState(initialMarkdown);
-      useImperativeHandle(ref, () => ({
-        serialize: () => value,
-        hasMarkup: () => value.includes('{++') || value.includes('{--'),
-      }));
-      return (
-        <textarea
-          aria-label="Mock markup editor"
-          className={className}
-          value={value}
-          onChange={(event) => {
-            setValue(event.target.value);
-            onDirtyChange?.(event.target.value !== initialMarkdown);
-          }}
-        />
-      );
-    }),
+vi.mock('/src/markup/MarkupEditor', () => ({
+  MarkupEditor: forwardRef(function MockMarkupEditor(
+    {
+      initialMarkdown,
+      onDirtyChange,
+      className,
+    }: {
+      initialMarkdown: string;
+      onDirtyChange?: (dirty: boolean) => void;
+      className?: string;
+    },
+    ref,
+  ) {
+    const [value, setValue] = useState(initialMarkdown);
+    useImperativeHandle(ref, () => ({
+      serialize: () => value,
+      hasMarkup: () => value.includes('{++') || value.includes('{--'),
+    }));
+    return (
+      <textarea
+        aria-label="Mock markup editor"
+        className={className}
+        value={value}
+        onChange={(event) => {
+          setValue(event.target.value);
+          onDirtyChange?.(event.target.value !== initialMarkdown);
+        }}
+      />
+    );
   }),
-);
+}));
 
 const source: MarkupPaneSource = {
   artifactId: 'art-1',
@@ -81,7 +79,7 @@ describe('MarkupPane', () => {
     render(<MarkupPane source={{ ...source, ...split }} onClose={() => {}} />);
 
     expect(await screen.findByRole('dialog', { name: 'Result Notes' })).toBeTruthy();
-    expect((await screen.findByLabelText('Mock markup editor') as HTMLTextAreaElement).value).toBe('# Body\n');
+    expect(((await screen.findByLabelText('Mock markup editor')) as HTMLTextAreaElement).value).toBe('# Body\n');
   });
 
   it('sends frontmatter plus serialized body with base seq, session id, note, and op id', async () => {
@@ -183,7 +181,7 @@ describe('MarkupPane', () => {
       />,
     );
 
-    const editor = await screen.findByLabelText('Mock markup editor') as HTMLTextAreaElement;
+    const editor = (await screen.findByLabelText('Mock markup editor')) as HTMLTextAreaElement;
     fireEvent.change(editor, {
       target: { value: '# Body\n{++new++}\n' },
     });

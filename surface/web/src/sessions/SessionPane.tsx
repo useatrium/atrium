@@ -49,7 +49,8 @@ import {
   queryEntryReferencesForHandles,
   type EntryReferenceSummary,
 } from '../components/EntryReferencesChip';
-import { MarkupPane, splitMarkdownFrontmatter, type MarkupPaneSource } from '../components/MarkupPane';
+import { splitMarkdownFrontmatter } from '@atrium/surface-client';
+import { MarkupPane, type MarkupPaneSource } from '../components/MarkupPane';
 import { MarkupSteerCard } from '../components/MarkupSteerCard';
 import { Tooltip } from '../components/a11y';
 import {
