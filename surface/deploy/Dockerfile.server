@@ -8,6 +8,9 @@ RUN corepack enable
 
 FROM base AS deps
 COPY surface/package.json surface/pnpm-lock.yaml surface/pnpm-workspace.yaml ./surface/
+# patchedDependencies is workspace-global config: pnpm hashes every patch file
+# at install even for a server-only filter, so the patches must be in the layer.
+COPY surface/patches ./surface/patches
 COPY surface/server/package.json ./surface/server/package.json
 COPY surface/shared/package.json ./surface/shared/package.json
 COPY surface/centaur-client/package.json ./surface/centaur-client/package.json
