@@ -199,3 +199,42 @@ test('transcript action sheet opens on touch without resting action-bar clutter'
     await cdp.detach();
   }
 });
+
+// "Select text…" (touch-only, #341 menu): transcript rows have no raw
+// markdown, so the sheet shows the rendered DOM's innerText — same source as
+// Copy block text.
+test('Select text opens a selectable sheet with the transcript entry text', async ({
+  context,
+  page,
+}) => {
+  const { entryHandle, entryText } = await gotoInjectedTranscript(page);
+  const transcriptRow = page.locator(`[data-entry-handle="${entryHandle}"]`);
+  await transcriptRow.evaluate((element) => element.scrollIntoView({ block: 'center', inline: 'nearest' }));
+  const box = await transcriptRow.boundingBox();
+  if (!box) throw new Error('transcript row did not lay out');
+  const cdp = await context.newCDPSession(page);
+  try {
+    await cdp.send('Input.dispatchTouchEvent', {
+      type: 'touchStart',
+      touchPoints: [{ x: box.x + 40, y: box.y + box.height / 2, id: 1 }],
+    });
+    await page.waitForTimeout(700);
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  } finally {
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] }).catch(() => {});
+    await cdp.detach();
+  }
+
+  const menu = page.getByRole('dialog', { name: 'Message actions' });
+  await expect(menu).toBeVisible();
+  await menu.getByRole('button', { name: 'Select text…' }).tap();
+
+  const sheet = page.getByRole('dialog', { name: 'Select text' });
+  await expect(sheet).toBeVisible();
+  await expect(sheet.getByText(entryText, { exact: true })).toBeVisible();
+  const content = sheet.getByTestId('select-text-content');
+  expect(await content.evaluate((el) => getComputedStyle(el).userSelect)).not.toBe('none');
+
+  await sheet.getByRole('button', { name: 'Done' }).tap();
+  await expect(sheet).toHaveCount(0);
+});

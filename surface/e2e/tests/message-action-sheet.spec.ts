@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { login, messageRow, sendMessage, unique } from './helpers.js';
+import { login, mainComposer, messageRow, sendMessage, unique } from './helpers.js';
 
 test.use({
   hasTouch: true,
@@ -117,4 +117,78 @@ test('exact-timestamp tooltip is hidden on touch until the timestamp is tapped',
   // Tapping the timestamp again unpins it.
   await row.getByRole('button', { name: /Exact timestamp:/ }).first().tap();
   await expect.poll(opacityOf).toBe('0');
+});
+
+// "Select text…" (touch-only): long-press is claimed by the action menu, so
+// this sheet is how touch users get partial text selection.
+test('Select text opens a selectable sheet with the rendered message', async ({
+  context,
+  page,
+}) => {
+  await login(page, unique('seltext'), 'Select Tester');
+  const marker = unique('select-me');
+  // Not sendMessage(): it asserts the raw text is visible, but markdown
+  // renders `**bold**` as <strong> so the raw form never appears.
+  await mainComposer(page).fill(`${marker} has **bold** and \`code\` to render`);
+  await mainComposer(page).press('Enter');
+  const row = messageRow(page, marker);
+  await expect(row).toBeVisible();
+  const box = await row.boundingBox();
+  if (!box) throw new Error('message row did not lay out');
+  const cdp = await context.newCDPSession(page);
+  try {
+    await cdp.send('Input.dispatchTouchEvent', {
+      type: 'touchStart',
+      touchPoints: [{ x: box.x + 60, y: box.y + box.height / 2, id: 1 }],
+    });
+    await page.waitForTimeout(700);
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  } finally {
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] }).catch(() => {});
+    await cdp.detach();
+  }
+  const menu = page.getByRole('dialog', { name: 'Message actions' });
+  await expect(menu).toBeVisible();
+  await menu.getByRole('button', { name: 'Select text…' }).tap();
+
+  const sheet = page.getByRole('dialog', { name: 'Select text' });
+  await expect(sheet).toBeVisible();
+  // Rendered markdown, not raw: bold renders as <strong>, no literal ** remains.
+  await expect(sheet.locator('strong', { hasText: 'bold' })).toBeVisible();
+  await expect(sheet.getByText('**bold**')).toHaveCount(0);
+
+  const content = sheet.getByTestId('select-text-content');
+  expect(await content.evaluate((el) => getComputedStyle(el).userSelect)).not.toBe('none');
+  // Programmatic selection stands in for the OS selection gesture.
+  const selected = await content.evaluate((el) => {
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    const selection = window.getSelection();
+    if (!selection) return '';
+    selection.removeAllRanges();
+    selection.addRange(range);
+    return selection.toString();
+  });
+  expect(selected).toContain(marker);
+  expect(selected).toContain('bold');
+
+  await sheet.getByRole('button', { name: 'Done' }).tap();
+  await expect(sheet).toHaveCount(0);
+});
+
+// Desktop pointer contexts never show the item — mouse selection works in place.
+test.describe('pointer devices', () => {
+  test.use({ hasTouch: false, isMobile: false, viewport: { width: 1280, height: 800 } });
+
+  test('Select text is absent from the right-click popover', async ({ page }) => {
+    await login(page, unique('seltext-desk'), 'Select Desk');
+    const text = unique('desktop-popover');
+    await sendMessage(page, text);
+
+    await messageRow(page, text).click({ button: 'right' });
+    const menu = page.getByRole('dialog', { name: 'Message actions' });
+    await expect(menu).toBeVisible();
+    await expect(menu.getByRole('button', { name: 'Copy text' })).toBeVisible();
+    await expect(menu.getByRole('button', { name: 'Select text…' })).toHaveCount(0);
+  });
 });

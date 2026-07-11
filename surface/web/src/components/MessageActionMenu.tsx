@@ -14,6 +14,8 @@ export type MessageActionMenuAction = {
   onSelect: () => void;
   variant?: 'default' | 'danger';
   closeOnSelect?: boolean;
+  /** Only rendered in the touch bottom sheet — for affordances that are redundant with a mouse (e.g. Select text). */
+  sheetOnly?: boolean;
 };
 
 export type MessageActionMenuReactions = {
@@ -165,7 +167,7 @@ export function MessageActionMenu({
         />
       )}
       <div className={compact ? 'space-y-0.5' : 'space-y-1'}>
-        {actions.map((action) => (
+        {actions.filter((action) => mode === 'sheet' || !action.sheetOnly).map((action) => (
           <button
             key={action.key}
             type="button"
