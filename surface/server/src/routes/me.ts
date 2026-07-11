@@ -8,9 +8,10 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { Schema } from 'effect';
 import { githubConnectionAuditMetadata } from '../connection-audit.js';
+import type { AppMutationContext } from '../app-mutations.js';
 import { config } from '../config.js';
 import type { Connections, ConnectionStatusJson } from '../connections.js';
-import type { Db, DbClient } from '../db.js';
+import type { Db } from '../db.js';
 import { exchangeClaudeCode, startClaudeOauth } from '../claude-oauth.js';
 import { pollCodexDevice, startCodexDevice } from '../codex-oauth.js';
 import type { UserRef } from '../events.js';
@@ -38,24 +39,15 @@ import { PendingOAuthStore } from '../provider-oauth.js';
 import type { SessionRuns } from '../session-runs.js';
 import { decodeRouteBody, decodeRouteParams, decodeRouteQuery } from '../route-schema.js';
 
-export interface MeRouteDeps {
+export interface MeRouteDeps extends AppMutationContext {
   hub: WsHub;
   pool: Db;
   requireUser(req: FastifyRequest, reply: FastifyReply): UserRef | null;
-  optionalOpId(body: unknown): string | undefined;
   connections: Connections;
   ironControl: IronControlAdminClient;
   providerCredentials: ProviderCredentials;
   agentProfiles: AgentProfiles;
   sessionRuns: Pick<SessionRuns, 'clearClaudeAuthRequired' | 'clearProviderAuthRequired'>;
-  runMutation<T>(args: {
-    userId: string;
-    opId?: string;
-    opType: string;
-    body: unknown;
-    fn: (client: DbClient) => Promise<T>;
-    onApplied?: (response: T) => void | Promise<void>;
-  }): Promise<T>;
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
