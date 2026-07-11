@@ -40,49 +40,82 @@ function jsonNumberArray(value: unknown): number[] {
 export async function registerArtifactRoutes(app: FastifyInstance, deps: ArtifactRouteDeps): Promise<void> {
   const { pool, sessionRuns, requireSessionAccess, sessionArtifactAccess, serializeArtifactRoots } = deps;
 
+  async function resolveServableArtifact(
+    reply: FastifyReply,
+    args: { sessionId: string; userId: string; rawPath: unknown; at?: string },
+  ) {
+    if (typeof args.rawPath !== 'string' || args.rawPath.length === 0) {
+      reply.code(400).send({ error: 'bad_query', message: 'path is required' });
+      return null;
+    }
+    const access = await sessionArtifactAccess(args.sessionId, args.userId);
+    const channelId = access.channelId;
+    const sharedChannelId = args.rawPath
+      .trim()
+      .replace(/\\/g, '/')
+      .match(/^shared\/channels\/([^/]+)\//)?.[1];
+    if (sharedChannelId && sharedChannelId !== channelId && !access.readableChannelIds.includes(sharedChannelId)) {
+      reply.code(404).send({ error: 'artifact_not_found', message: 'artifact not found' });
+      return null;
+    }
+    const path = canonicalizeRouteArtifactPath(reply, args.rawPath, {
+      sessionId: args.sessionId,
+      channelId,
+      readableChannelIds: access.readableChannelIds,
+    });
+    if (!path) return null;
+    if (!artifactPathInRoots(path, access.readableRoots)) {
+      reply.code(404).send({ error: 'artifact_not_found', message: 'artifact not found' });
+      return null;
+    }
+
+    const ledger = new ArtifactLedger(pool);
+    const at = args.at ?? 'latest';
+    let ref: { seq: number } | { pointer: string };
+    if (at === 'latest') {
+      const resolution = await ledger.serveResolution(args.sessionId, path, {
+        readableChannelIds: access.readableChannelIds,
+      });
+      if (!resolution || resolution.servedSeq == null) {
+        reply.code(404).send({ error: 'artifact_not_found', message: 'artifact not found' });
+        return null;
+      }
+      reply.header('X-Artifact-Seq', String(resolution.servedSeq));
+      reply.header('X-Artifact-Conflicted', resolution.conflicted ? 'true' : 'false');
+      if (resolution.conflictSeq != null) {
+        reply.header('X-Artifact-Conflict-Seq', String(resolution.conflictSeq));
+      }
+      ref = { seq: resolution.servedSeq };
+    } else {
+      ref = /^\d+$/.test(at) ? { seq: Number(at) } : { pointer: at };
+    }
+    const options = { readableChannelIds: access.readableChannelIds };
+    const [plan, version] = await Promise.all([
+      sessionRuns.getLedgerServePlan(args.sessionId, path, ref, options),
+      ledger.resolveVersion(args.sessionId, path, ref, options),
+    ]);
+    return {
+      path,
+      plan,
+      version,
+      scope: classifyScope(path),
+      displayPath: displaySessionArtifactPath(path, { sessionId: args.sessionId, channelId }),
+    };
+  }
+
   app.get('/api/sessions/:id/artifacts/by-path', async (req, reply) => {
     const user = await requireSessionAccess(req, reply);
     if (!user) return;
     const { id } = req.params as { id: string };
     const q = req.query as { path?: string; at?: string };
-    const rawPath = q.path;
-    if (typeof rawPath !== 'string' || rawPath.length === 0) {
-      return reply.code(400).send({ error: 'bad_query', message: 'path is required' });
-    }
-    const access = await sessionArtifactAccess(id, user.id);
-    const channelId = access.channelId;
-    const path = canonicalizeRouteArtifactPath(reply, rawPath, {
+    const resolved = await resolveServableArtifact(reply, {
       sessionId: id,
-      channelId,
-      readableChannelIds: access.readableChannelIds,
+      userId: user.id,
+      rawPath: q.path,
+      at: q.at,
     });
-    if (!path) return;
-    const scope = classifyScope(path);
-    if (!artifactPathInRoots(path, access.readableRoots)) {
-      return reply.code(404).send({ error: 'artifact_not_found', message: 'artifact not found' });
-    }
-    const displayPath = displaySessionArtifactPath(path, { sessionId: id, channelId });
-    const at = q.at ?? 'latest';
-    let ref: { seq: number } | { pointer: string };
-    const ledger = new ArtifactLedger(pool);
-    if (at === 'latest') {
-      const res = await ledger.serveResolution(id, path, { readableChannelIds: access.readableChannelIds });
-      if (!res || res.servedSeq == null) {
-        return reply.code(404).send({ error: 'artifact_not_found', message: 'artifact not found' });
-      }
-      reply.header('X-Artifact-Seq', String(res.servedSeq));
-      reply.header('X-Artifact-Conflicted', res.conflicted ? 'true' : 'false');
-      if (res.conflictSeq != null) reply.header('X-Artifact-Conflict-Seq', String(res.conflictSeq));
-      ref = { seq: res.servedSeq };
-    } else {
-      ref = /^\d+$/.test(at) ? { seq: Number(at) } : { pointer: at };
-    }
-    const plan = await sessionRuns.getLedgerServePlan(id, path, ref, {
-      readableChannelIds: access.readableChannelIds,
-    });
-    const version = await ledger.resolveVersion(id, path, ref, {
-      readableChannelIds: access.readableChannelIds,
-    });
+    if (!resolved) return;
+    const { displayPath, path, plan, scope, version } = resolved;
     reply.header('X-Artifact-Scope', scope);
     reply.header('X-Artifact-Canonical-Path', path);
     reply.header('X-Artifact-Display-Path', displayPath);
@@ -220,51 +253,14 @@ export async function registerArtifactRoutes(app: FastifyInstance, deps: Artifac
     }
     const { id } = req.params as { id: string };
     const q = req.query as { path?: string; at?: string; renderer?: string };
-    const rawPath = q.path;
-    if (typeof rawPath !== 'string' || rawPath.length === 0) {
-      return reply.code(400).send({ error: 'bad_query', message: 'path is required' });
-    }
-    const access = await sessionArtifactAccess(id, user.id);
-    const channelId = access.channelId;
-    const sharedChannelId = rawPath
-      .trim()
-      .replace(/\\/g, '/')
-      .match(/^shared\/channels\/([^/]+)\//)?.[1];
-    if (sharedChannelId && sharedChannelId !== channelId && !access.readableChannelIds.includes(sharedChannelId)) {
-      return reply.code(404).send({ error: 'artifact_not_found', message: 'artifact not found' });
-    }
-    const path = canonicalizeRouteArtifactPath(reply, rawPath, {
+    const resolved = await resolveServableArtifact(reply, {
       sessionId: id,
-      channelId,
-      readableChannelIds: access.readableChannelIds,
+      userId: user.id,
+      rawPath: q.path,
+      at: q.at,
     });
-    if (!path) return;
-    const scope = classifyScope(path);
-    if (!artifactPathInRoots(path, access.readableRoots)) {
-      return reply.code(404).send({ error: 'artifact_not_found', message: 'artifact not found' });
-    }
-    const displayPath = displaySessionArtifactPath(path, { sessionId: id, channelId });
-    const at = q.at ?? 'latest';
-    let ref: { seq: number } | { pointer: string };
-    const ledger = new ArtifactLedger(pool);
-    if (at === 'latest') {
-      const res = await ledger.serveResolution(id, path, { readableChannelIds: access.readableChannelIds });
-      if (!res || res.servedSeq == null) {
-        return reply.code(404).send({ error: 'artifact_not_found', message: 'artifact not found' });
-      }
-      reply.header('X-Artifact-Seq', String(res.servedSeq));
-      reply.header('X-Artifact-Conflicted', res.conflicted ? 'true' : 'false');
-      if (res.conflictSeq != null) reply.header('X-Artifact-Conflict-Seq', String(res.conflictSeq));
-      ref = { seq: res.servedSeq };
-    } else {
-      ref = /^\d+$/.test(at) ? { seq: Number(at) } : { pointer: at };
-    }
-    const plan = await sessionRuns.getLedgerServePlan(id, path, ref, {
-      readableChannelIds: access.readableChannelIds,
-    });
-    const version = await ledger.resolveVersion(id, path, ref, {
-      readableChannelIds: access.readableChannelIds,
-    });
+    if (!resolved) return;
+    const { displayPath, path, plan, scope, version } = resolved;
     const bytes = await artifactPreviewBytes(plan);
     return sendArtifactPreview(reply, {
       bytes,
