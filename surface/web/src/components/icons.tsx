@@ -1,10 +1,10 @@
 import type { ReactNode, SVGProps } from 'react';
 
-type IconProps = Omit<SVGProps<SVGSVGElement>, 'children'> & {
+export type IconProps = Omit<SVGProps<SVGSVGElement>, 'children'> & {
   size?: number;
 };
 
-function Icon({ size = 16, className, children, ...props }: IconProps & { children: ReactNode }) {
+export function Icon({ size = 16, className, children, ...props }: IconProps & { children: ReactNode }) {
   return (
     <svg
       aria-hidden="true"

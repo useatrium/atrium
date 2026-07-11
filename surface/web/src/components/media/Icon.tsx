@@ -1,28 +1,4 @@
-import type { ReactNode, SVGProps } from 'react';
-
-type IconProps = Omit<SVGProps<SVGSVGElement>, 'children'> & {
-  size?: number;
-};
-
-function Icon({ size = 16, className, children, ...props }: IconProps & { children: ReactNode }) {
-  return (
-    <svg
-      aria-hidden="true"
-      viewBox="0 0 24 24"
-      width={size}
-      height={size}
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={2}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
-      {...props}
-    >
-      {children}
-    </svg>
-  );
-}
+import { Icon, type IconProps } from '../icons';
 
 export function ChevronLeftIcon(props: IconProps) {
   return (
