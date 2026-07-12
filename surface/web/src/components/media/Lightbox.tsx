@@ -370,7 +370,13 @@ export function Lightbox({
     >
       <header className="flex shrink-0 flex-wrap items-center gap-2 border-b border-edge bg-surface-raised px-3 py-2 md:h-12 md:flex-nowrap md:py-0">
         <Tooltip content="Close">
-          <button ref={closeButtonRef} type="button" className={iconButtonClass} onClick={onClose} aria-label="Close lightbox">
+          <button
+            ref={closeButtonRef}
+            type="button"
+            className={iconButtonClass}
+            onClick={onClose}
+            aria-label="Close lightbox"
+          >
             <CloseIcon size={16} />
           </button>
         </Tooltip>
@@ -400,7 +406,10 @@ export function Lightbox({
                   // biome-ignore lint/a11y/noAutofocus: lightbox rename dialog intentionally focuses the editable filename; useDialog manages focus containment and restore.
                   autoFocus
                 />
-                <button type="submit" className="rounded-md bg-accent px-2.5 py-1 text-xs font-semibold text-on-accent disabled:bg-surface-overlay disabled:text-fg-muted">
+                <button
+                  type="submit"
+                  className="rounded-md bg-accent px-2.5 py-1 text-xs font-semibold text-on-accent disabled:bg-surface-overlay disabled:text-fg-muted"
+                >
                   Save
                 </button>
                 <button
@@ -417,7 +426,9 @@ export function Lightbox({
             </>
           ) : (
             <>
-              <h2 id="lightbox-title" className="truncate text-sm font-semibold text-fg">{file.name}</h2>
+              <h2 id="lightbox-title" className="truncate text-sm font-semibold text-fg">
+                {file.name}
+              </h2>
               <div className="truncate text-2xs text-fg-muted">
                 {index + 1} of {files.length} · {kindLabel(effectiveMediaKind(file))}
               </div>
@@ -529,7 +540,10 @@ export function Lightbox({
             {editing && conflict ? (
               <div className="flex min-h-0 flex-1 flex-col">
                 {editError && (
-                  <div role="alert" className="border-b border-danger-border bg-danger-tint px-3 py-2 text-2xs text-danger-text">
+                  <div
+                    role="alert"
+                    className="border-b border-danger-border bg-danger-tint px-3 py-2 text-2xs text-danger-text"
+                  >
                     {editError}
                   </div>
                 )}
@@ -545,7 +559,9 @@ export function Lightbox({
               </div>
             ) : editing ? (
               editLoading ? (
-                <div className="flex flex-1 items-center justify-center text-2xs text-fg-muted">Loading editable content...</div>
+                <div className="flex flex-1 items-center justify-center text-2xs text-fg-muted">
+                  Loading editable content...
+                </div>
               ) : editBaseSeq != null && editText != null ? (
                 <TextEditorPane
                   file={file}
@@ -663,7 +679,9 @@ export function Lightbox({
               if (itemIndex === index) activeFilmstripButtonRef.current = node;
             }}
             className={`h-28 w-36 shrink-0 overflow-hidden rounded-md border-2 text-left transition-colors max-md:h-24 max-md:w-32 ${
-              itemIndex === index ? 'border-accent-border bg-accent-tint' : 'border-edge bg-surface hover:border-edge-strong'
+              itemIndex === index
+                ? 'border-accent-border bg-accent-tint'
+                : 'border-edge bg-surface hover:border-edge-strong'
             }`}
             onClick={() => onIndexChange(itemIndex)}
             aria-label={`Open ${item.name}`}

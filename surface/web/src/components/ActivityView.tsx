@@ -122,10 +122,7 @@ export function ActivityView({
                       <span className="flex min-w-0 items-center gap-2">
                         <span className="truncate text-sm font-semibold text-fg">{titleFor(item)}</span>
                         {relativeTimestamp && (
-                          <span
-                            className="shrink-0 text-2xs text-fg-faint"
-                            title={exactTimestamp || undefined}
-                          >
+                          <span className="shrink-0 text-2xs text-fg-faint" title={exactTimestamp || undefined}>
                             {relativeTimestamp}
                           </span>
                         )}

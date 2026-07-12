@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CentaurEventFrame } from '@atrium/centaur-client';
 import rawB from '../../centaur-client/test/fixtures/B_tooltest.json';
 import { appReducer, initialAppState, type AppState } from '@atrium/surface-client';
-import { hiddenWorkRunLength, SessionPane } from '../src/sessions/SessionPane';
+import { SessionPane } from '../src/sessions/SessionPane';
 import { api } from '../src/api';
 import { sessionsApi } from '../src/sessions/api';
 import type { Session } from '../src/sessions/types';
@@ -49,18 +49,6 @@ const B = rawB as unknown as CentaurEventFrame[];
 const me = { id: 'u-me', handle: 'me', displayName: 'Me' };
 const bob = { id: 'u-bob', handle: 'bob', displayName: 'Bob' };
 const alice = { id: 'u-alice', handle: 'alice', displayName: 'Alice' };
-
-it('counts only the contiguous reasoning/tool run', () => {
-  const items = [
-    { type: 'reasoning' },
-    { type: 'tool_call' },
-    { type: 'tool_call' },
-    { type: 'text' },
-    { type: 'reasoning' },
-  ];
-  expect(hiddenWorkRunLength(items, 0)).toBe(3);
-  expect(hiddenWorkRunLength(items, 4)).toBe(1);
-});
 
 function bSession(overrides: Partial<Session> = {}): Session {
   return {
@@ -1565,6 +1553,77 @@ describe('inline file changes (Phase 4)', () => {
     expect(within(card).queryByText('+const x = 2;')).toBeNull();
     fireEvent.click(within(card).getByRole('button'));
     expect(within(card).getByText('+const x = 2;')).toBeTruthy();
+  });
+
+  it('groups a codex file change anchored inside hidden work into one correctly counted chip', async () => {
+    const frames = [
+      {
+        event: 'execution_state',
+        event_id: 1,
+        data: { type: 'execution.state', status: 'running', execution_id: 'exe_focus' },
+      },
+      {
+        event: 'amp_raw_event',
+        event_id: 2,
+        data: { type: 'item.completed', item: { id: 'before', type: 'agentMessage', text: 'before work' } },
+      },
+      {
+        event: 'amp_raw_event',
+        event_id: 3,
+        data: { type: 'item.completed', item: { id: 'think', type: 'reasoning', text: 'thinking' } },
+      },
+      {
+        event: 'amp_raw_event',
+        event_id: 4,
+        data: {
+          type: 'item.completed',
+          item: { id: 'cmd-1', type: 'commandExecution', command: 'pwd', output: '/tmp\n', exit_code: 0 },
+        },
+      },
+      {
+        event: 'amp_raw_event',
+        event_id: 5,
+        data: {
+          type: 'item.completed',
+          item: {
+            id: 'focus-change',
+            type: 'fileChange',
+            changes: [{ path: '/home/agent/workspace/src/focus.ts', kind: 'update', diff: '@@\n-old\n+new' }],
+          },
+        },
+      },
+      {
+        event: 'amp_raw_event',
+        event_id: 6,
+        data: {
+          type: 'item.completed',
+          item: { id: 'cmd-2', type: 'commandExecution', command: 'date', output: 'today\n', exit_code: 0 },
+        },
+      },
+      {
+        event: 'amp_raw_event',
+        event_id: 7,
+        data: { type: 'item.completed', item: { id: 'after', type: 'agentMessage', text: 'after work' } },
+      },
+    ] as unknown as CentaurEventFrame[];
+
+    render(
+      <SessionPane session={bSession()} me={me} watchers={[]} onClose={() => {}} onAnswerQuestion={async () => {}} />,
+    );
+    const es = FakeEventSource.last();
+    await act(async () => {
+      es.open();
+      es.emitAll(frames);
+      await new Promise((r) => setTimeout(r, 60));
+    });
+
+    const chips = screen.getAllByTestId('hidden-work-chip');
+    expect(chips).toHaveLength(1);
+    expect(chips[0]!.textContent).toContain('4 work steps');
+
+    fireEvent.click(chips[0]!);
+    expect(screen.getAllByTestId('tool-card')).toHaveLength(2);
+    expect(screen.getByTestId('inline-file-change')).toBeTruthy();
   });
 });
 

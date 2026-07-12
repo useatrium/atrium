@@ -110,12 +110,7 @@ describe('SteerRow (mobile)', () => {
     const onPress = vi.fn();
     const onLongPress = vi.fn();
     renderWithTheme(
-      <SteerRow
-        text="fix the parser"
-        onPress={onPress}
-        onLongPress={onLongPress}
-        delayLongPress={250}
-      />,
+      <SteerRow text="fix the parser" onPress={onPress} onLongPress={onLongPress} delayLongPress={250} />,
     );
 
     const row = screen.getByRole('button', { name: 'Message actions: fix the parser' });
@@ -166,8 +161,7 @@ describe('SteerRow (mobile)', () => {
   });
 
   it('renders entry links as inline chips in plain steer text', async () => {
-    const resolveEntry = vi.fn<(handle: string) => Promise<ResolvedEntry | null>>()
-      .mockResolvedValue(referencedEntry);
+    const resolveEntry = vi.fn<(handle: string) => Promise<ResolvedEntry | null>>().mockResolvedValue(referencedEntry);
     const onOpenChannel = vi.fn();
 
     renderWithTheme(

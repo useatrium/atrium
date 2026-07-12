@@ -41,7 +41,16 @@ import {
   type SteerProvenance,
 } from '@atrium/surface-client';
 import { HARNESS_EFFORT_PICKER_OPTIONS } from '@atrium/surface-client/effort';
-import type { QuestionItem, SessionItem, TextItem, ToolCallItem, UserMessageItem } from '@atrium/centaur-client';
+import {
+  focusTranscriptRows,
+  fullTranscriptRows,
+  toolDefaultOpen,
+  type QuestionItem,
+  type SessionItem,
+  type TextItem,
+  type ToolCallItem,
+  type UserMessageItem,
+} from '@atrium/centaur-client';
 import { useChat } from '../../../src/lib/chat';
 import { useAccessibilityAnnouncement, useModalAccessibilityFocus } from '../../../src/lib/accessibility';
 import { font, radius, space, useTheme, type Colors } from '../../../src/lib/theme';
@@ -72,10 +81,7 @@ import { TranscriptActiveEntryFrame } from '../../../src/components/work/Transcr
 import { SteerRow, type SteerRowProvenance } from '../../../src/components/work/SteerRow';
 import { deriveTurns } from '../../../src/components/work/turns';
 import { SeatRequestBanner, SeatFooter } from '../../../src/components/work/SeatControls';
-import {
-  SuggestionsStrip,
-  type OptimisticSuggestionSend,
-} from '../../../src/components/work/SuggestionsStrip';
+import { SuggestionsStrip, type OptimisticSuggestionSend } from '../../../src/components/work/SuggestionsStrip';
 import { AnswerProposals } from '../../../src/components/work/AnswerProposals';
 import { EntryInlineChip } from '../../../src/components/EntryQuoteCards';
 import { SessionMarkdown } from '../../../src/components/Markdown';
@@ -93,16 +99,8 @@ import {
 import { useRequiredSession, useSession } from '../../../src/lib/session';
 import { extractEntryLinkHandles, isEntryHandle } from '../../../src/lib/entryLinks';
 import { lightImpactHaptic, selectionHaptic } from '../../../src/lib/haptics';
-import {
-  loadTranscriptView,
-  persistTranscriptView,
-  type TranscriptView,
-} from '../../../src/lib/prefsStorage';
-import { focusTranscriptRows, fullTranscriptRows, toolDefaultOpen } from '../../../src/lib/transcriptView';
-import {
-  loadMarkupDraftFromEntry,
-  putPendingMarkupDraft,
-} from '../../../src/lib/markupAuthoring';
+import { loadTranscriptView, persistTranscriptView, type TranscriptView } from '../../../src/lib/prefsStorage';
+import { loadMarkupDraftFromEntry, putPendingMarkupDraft } from '../../../src/lib/markupAuthoring';
 
 function transcriptEntryHandle(item: SessionItem): string | null {
   const handle = item.handle;
@@ -139,13 +137,7 @@ function referenceLabel(ref: EntryReference): string {
   return excerpt ? `${actor}: ${excerpt}` : actor;
 }
 
-function DiscussedChip({
-  count,
-  onPress,
-}: {
-  count: number;
-  onPress: () => void;
-}) {
+function DiscussedChip({ count, onPress }: { count: number; onPress: () => void }) {
   const { colors } = useTheme();
   return (
     <Pressable
@@ -162,9 +154,7 @@ function DiscussedChip({
         paddingVertical: 3,
       })}
     >
-      <Text style={{ color: colors.textSecondary, fontSize: font.xs, fontWeight: '900' }}>
-        ↗ {count}
-      </Text>
+      <Text style={{ color: colors.textSecondary, fontSize: font.xs, fontWeight: '900' }}>↗ {count}</Text>
     </Pressable>
   );
 }
@@ -286,9 +276,7 @@ export function ToolCard({ item, onLongPress }: { item: ToolCallItem; onLongPres
           backgroundColor: pressed ? colors.bgPressed : 'transparent',
         })}
       >
-        <Text style={{ color: colors.textMuted, fontSize: font.xs, width: 10 }}>
-          {open ? '▾' : '▸'}
-        </Text>
+        <Text style={{ color: colors.textMuted, fontSize: font.xs, width: 10 }}>{open ? '▾' : '▸'}</Text>
         <Text
           numberOfLines={1}
           style={{
@@ -358,21 +346,18 @@ export function ToolCard({ item, onLongPress }: { item: ToolCallItem; onLongPres
             </Text>
           ) : null}
           {item.result ? (
-            <ScrollView
-              style={{ maxHeight: 288 }}
-              nestedScrollEnabled
-              showsVerticalScrollIndicator
-            >
-            <Text selectable
-              style={{
-                color: isError ? colors.danger : colors.textSecondary,
-                fontSize: font.xs,
-                fontFamily: 'monospace',
-                lineHeight: 16,
-              }}
-            >
-              {item.result.content}
-            </Text>
+            <ScrollView style={{ maxHeight: 288 }} nestedScrollEnabled showsVerticalScrollIndicator>
+              <Text
+                selectable
+                style={{
+                  color: isError ? colors.danger : colors.textSecondary,
+                  fontSize: font.xs,
+                  fontFamily: 'monospace',
+                  lineHeight: 16,
+                }}
+              >
+                {item.result.content}
+              </Text>
             </ScrollView>
           ) : null}
         </View>
@@ -402,7 +387,10 @@ function groupQuestionEventsByQuestion(events: SessionQuestionEvent[]): Map<stri
     grouped.set(event.questionId, current);
   }
   for (const [questionId, current] of grouped) {
-    grouped.set(questionId, [...current].sort((a, b) => a.id - b.id));
+    grouped.set(
+      questionId,
+      [...current].sort((a, b) => a.id - b.id),
+    );
   }
   return grouped;
 }
@@ -448,7 +436,7 @@ function MobileQuestionTranscriptCard({
 }) {
   const { colors } = useTheme();
   const requested = latestQuestionEvent(events, 'requested');
-  const prompts = item.questions.length > 0 ? item.questions : requested?.questions ?? [];
+  const prompts = item.questions.length > 0 ? item.questions : (requested?.questions ?? []);
   const answerSummaries = answerByPromptId(events);
   const status = questionStatusLabel(item, events);
   const Root = onLongPress ? Pressable : View;
@@ -472,12 +460,8 @@ function MobileQuestionTranscriptCard({
       }}
     >
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 6 }}>
-        <Text style={{ color: colors.text, fontSize: font.xs, fontWeight: '900' }}>
-          AGENT QUESTION
-        </Text>
-        <Text style={{ color: colors.warning, fontSize: font.xs, fontWeight: '800' }}>
-          {status.toUpperCase()}
-        </Text>
+        <Text style={{ color: colors.text, fontSize: font.xs, fontWeight: '900' }}>AGENT QUESTION</Text>
+        <Text style={{ color: colors.warning, fontSize: font.xs, fontWeight: '800' }}>{status.toUpperCase()}</Text>
       </View>
       {prompts.length > 0 ? (
         prompts.map((question) => {
@@ -485,16 +469,10 @@ function MobileQuestionTranscriptCard({
           return (
             <View key={question.id} style={{ gap: 6 }}>
               <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
-                <Text style={{ color: colors.textMuted, fontSize: font.xs, fontWeight: '800' }}>
-                  {question.header}
-                </Text>
-                {question.isSecret ? (
-                  <Text style={{ color: colors.textMuted, fontSize: font.xs }}>secret</Text>
-                ) : null}
+                <Text style={{ color: colors.textMuted, fontSize: font.xs, fontWeight: '800' }}>{question.header}</Text>
+                {question.isSecret ? <Text style={{ color: colors.textMuted, fontSize: font.xs }}>secret</Text> : null}
               </View>
-              <Text style={{ color: colors.text, fontSize: font.sm, lineHeight: 20 }}>
-                {question.question}
-              </Text>
+              <Text style={{ color: colors.text, fontSize: font.sm, lineHeight: 20 }}>{question.question}</Text>
               {question.options?.length ? (
                 <View style={{ gap: 6 }}>
                   {question.options.map((option) => (
@@ -509,12 +487,8 @@ function MobileQuestionTranscriptCard({
                         gap: 2,
                       }}
                     >
-                      <Text style={{ color: colors.text, fontSize: font.sm, fontWeight: '800' }}>
-                        {option.label}
-                      </Text>
-                      <Text style={{ color: colors.textMuted, fontSize: font.xs }}>
-                        {option.description}
-                      </Text>
+                      <Text style={{ color: colors.text, fontSize: font.sm, fontWeight: '800' }}>{option.label}</Text>
+                      <Text style={{ color: colors.textMuted, fontSize: font.xs }}>{option.description}</Text>
                     </View>
                   ))}
                 </View>
@@ -530,9 +504,7 @@ function MobileQuestionTranscriptCard({
                     gap: 3,
                   }}
                 >
-                  <Text style={{ color: colors.accent, fontSize: font.xs, fontWeight: '900' }}>
-                    ANSWER
-                  </Text>
+                  <Text style={{ color: colors.accent, fontSize: font.xs, fontWeight: '900' }}>ANSWER</Text>
                   <Text style={{ color: colors.text, fontSize: font.sm, lineHeight: 20 }}>
                     {questionAnswerSummaryText(summary)}
                   </Text>
@@ -570,12 +542,7 @@ function MobileQuestionBanner({
   useAccessibilityAnnouncement(error);
   const toggleOption = (q: QuestionPrompt, label: string) => {
     const current = answerArrayValue(values[q.id]);
-    setValue(
-      q.id,
-      current.includes(label)
-        ? current.filter((selected) => selected !== label)
-        : [...current, label],
-    );
+    setValue(q.id, current.includes(label) ? current.filter((selected) => selected !== label) : [...current, label]);
   };
   return (
     <View
@@ -588,17 +555,11 @@ function MobileQuestionBanner({
         gap: space.sm,
       }}
     >
-      <Text style={{ color: colors.warning, fontSize: font.xs, fontWeight: '900' }}>
-        NEEDS INPUT
-      </Text>
+      <Text style={{ color: colors.warning, fontSize: font.xs, fontWeight: '900' }}>NEEDS INPUT</Text>
       {pending.questions.map((q) => (
         <View key={q.id} style={{ gap: 6 }}>
-          <Text style={{ color: colors.textMuted, fontSize: font.xs, fontWeight: '800' }}>
-            {q.header}
-          </Text>
-          <Text style={{ color: colors.text, fontSize: font.sm, lineHeight: 20 }}>
-            {q.question}
-          </Text>
+          <Text style={{ color: colors.textMuted, fontSize: font.xs, fontWeight: '800' }}>{q.header}</Text>
+          <Text style={{ color: colors.text, fontSize: font.sm, lineHeight: 20 }}>{q.question}</Text>
           {q.options?.length ? (
             <View style={{ gap: 6 }}>
               {q.options.map((option) => {
@@ -623,12 +584,8 @@ function MobileQuestionBanner({
                       opacity: submitting ? 0.6 : 1,
                     }}
                   >
-                    <Text style={{ color: colors.text, fontSize: font.sm, fontWeight: '800' }}>
-                      {option.label}
-                    </Text>
-                    <Text style={{ color: colors.textMuted, fontSize: font.xs }}>
-                      {option.description}
-                    </Text>
+                    <Text style={{ color: colors.text, fontSize: font.sm, fontWeight: '800' }}>{option.label}</Text>
+                    <Text style={{ color: colors.textMuted, fontSize: font.xs }}>{option.description}</Text>
                     {option.preview ? (
                       <Text
                         style={{
@@ -694,13 +651,7 @@ function MobileQuestionBanner({
         }}
       >
         <Text style={{ color: complete ? colors.onAccent : colors.textFaint, fontSize: font.sm, fontWeight: '900' }}>
-          {isDriver
-            ? submitting
-              ? 'Answering...'
-              : 'Submit answer'
-            : submitting
-              ? 'Proposing...'
-              : 'Propose answer'}
+          {isDriver ? (submitting ? 'Answering...' : 'Submit answer') : submitting ? 'Proposing...' : 'Propose answer'}
         </Text>
       </Pressable>
     </View>
@@ -783,7 +734,9 @@ export default function SessionScreen() {
     void loadTranscriptView().then((view) => {
       if (active) setTranscriptViewState(view);
     });
-    return () => { active = false; };
+    return () => {
+      active = false;
+    };
   }, []);
 
   const setTranscriptView = useCallback((view: TranscriptView) => {
@@ -1021,18 +974,16 @@ export default function SessionScreen() {
   // web — Changes · Side-effects · Artifacts. Each non-empty surface gets a strip
   // chip + a full-screen sheet tab.
   const fileChanges = useMemo(() => collectFileChanges(stream), [stream.items, stream.fileChanges]);
-  const inlineCodexChanges = useMemo(
-    () => codexInlineFileChanges(stream),
-    [stream.items, stream.fileChanges],
-  );
+  const inlineCodexChanges = useMemo(() => codexInlineFileChanges(stream), [stream.items, stream.fileChanges]);
   const codexChangesAt = useCallback(
     (index: number) => inlineCodexChanges.filter((change) => change.index === index),
     [inlineCodexChanges],
   );
   const transcriptRows = useMemo(
-    () => transcriptView === 'focus'
-      ? focusTranscriptRows(stream.items, codexChangesAt)
-      : fullTranscriptRows(stream.items, codexChangesAt),
+    () =>
+      transcriptView === 'focus'
+        ? focusTranscriptRows(stream.items, codexChangesAt)
+        : fullTranscriptRows(stream.items, codexChangesAt),
     [codexChangesAt, stream.items, transcriptView],
   );
   const changedFileCount = useMemo(() => changedPaths(fileChanges).length, [fileChanges]);
@@ -1086,17 +1037,7 @@ export default function SessionScreen() {
       });
     }
     return tabs;
-  }, [
-    fileChanges,
-    changedFileCount,
-    sideEffects,
-    sideEffectsN,
-    sideEffectsDanger,
-    artifacts,
-    artifactsN,
-    chat,
-    id,
-  ]);
+  }, [fileChanges, changedFileCount, sideEffects, sideEffectsN, sideEffectsDanger, artifacts, artifactsN, chat, id]);
   const workStripItems = useMemo<WorkStripItem[]>(
     () => workTabs.map((t) => ({ key: t.key, label: t.label, count: t.count, danger: t.danger })),
     [workTabs],
@@ -1136,17 +1077,10 @@ export default function SessionScreen() {
   );
   useAccessibilityAnnouncement(cancelErrorMessage);
   useAccessibilityAnnouncement(visibleSteerError ? `Message did not send: ${visibleSteerError}` : null);
-  const elapsedMsForHeader = session
-    ? terminal
-      ? sessionElapsedMs(session, now)
-      : turnStatus.elapsedMs
-    : 0;
+  const elapsedMsForHeader = session ? (terminal ? sessionElapsedMs(session, now) : turnStatus.elapsedMs) : 0;
   const elapsed = elapsedMsForHeader > 0 ? formatElapsed(elapsedMsForHeader) : '';
   const questionEvents = session?.questionEvents ?? [];
-  const questionEventsByQuestion = useMemo(
-    () => groupQuestionEventsByQuestion(questionEvents),
-    [questionEvents],
-  );
+  const questionEventsByQuestion = useMemo(() => groupQuestionEventsByQuestion(questionEvents), [questionEvents]);
 
   // Control loop (Phase 4 parity): seat hand-off, suggestion queue, answer
   // proposals — read off the WS-folded entity (mergeSpawnResponse keeps the live
@@ -1162,12 +1096,9 @@ export default function SessionScreen() {
         starting,
         headline: turnStatus.headline,
         openTool: turnStatus.openTool,
-        waitingLabel:
-          driverId === me.id ? 'Waiting for your reply' : `Waiting for ${waitingDriverName}`,
+        waitingLabel: driverId === me.id ? 'Waiting for your reply' : `Waiting for ${waitingDriverName}`,
       });
-  const visibleSeatRequests = (session?.pendingSeatRequests ?? []).filter(
-    (r) => !ignoredSeatRequests.has(r.userId),
-  );
+  const visibleSeatRequests = (session?.pendingSeatRequests ?? []).filter((r) => !ignoredSeatRequests.has(r.userId));
   const firstSeatRequest = visibleSeatRequests[0] ?? null;
   const iRequestedSeat = (session?.pendingSeatRequests ?? []).some((r) => r.userId === me.id);
   const seatFooterMode: 'request' | 'take' | 'confirm' | 'waiting' = iRequestedSeat
@@ -1264,8 +1195,7 @@ export default function SessionScreen() {
   const onScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
     setActiveTranscriptEntryId(null);
     const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
-    stickRef.current =
-      contentSize.height - contentOffset.y - layoutMeasurement.height < 96;
+    stickRef.current = contentSize.height - contentOffset.y - layoutMeasurement.height < 96;
   };
 
   // The server re-attaches the recorded effort to effort-less steers; the
@@ -1408,16 +1338,17 @@ export default function SessionScreen() {
     setSeatAsk('idle');
     api.takeSeat(id).catch((err) => {
       if (err instanceof ApiError && err.status === 409) {
-        api.requestSeat(id).catch((requestErr: unknown) =>
-          reportSessionActionError(requestErr, "Couldn't request the seat."),
-        );
+        api
+          .requestSeat(id)
+          .catch((requestErr: unknown) => reportSessionActionError(requestErr, "Couldn't request the seat."));
         return;
       }
       reportSessionActionError(err, "Couldn't take the seat.");
     });
   };
   const grantSeatAction = (userId: string) => {
-    if (id) api.grantSeat(id, userId).catch((err: unknown) => reportSessionActionError(err, "Couldn't grant the seat."));
+    if (id)
+      api.grantSeat(id, userId).catch((err: unknown) => reportSessionActionError(err, "Couldn't grant the seat."));
   };
   const ignoreSeatRequest = (userId: string) =>
     setIgnoredSeatRequests((prev) => {
@@ -1471,17 +1402,13 @@ export default function SessionScreen() {
         openReference(latest[0]!);
         return;
       }
-      Alert.alert(
-        'Discussed in',
-        undefined,
-        [
-          ...latest.slice(0, 6).map((ref) => ({
-            text: referenceLabel(ref),
-            onPress: () => openReference(ref),
-          })),
-          { text: 'Cancel', style: 'cancel' as const },
-        ],
-      );
+      Alert.alert('Discussed in', undefined, [
+        ...latest.slice(0, 6).map((ref) => ({
+          text: referenceLabel(ref),
+          onPress: () => openReference(ref),
+        })),
+        { text: 'Cancel', style: 'cancel' as const },
+      ]);
     },
     [openReference],
   );
@@ -1674,9 +1601,7 @@ export default function SessionScreen() {
     return (
       <View style={{ flex: 1, backgroundColor: colors.bg, padding: space.lg, gap: space.md }}>
         <Stack.Screen options={{ title: 'Session' }} />
-        <Text style={{ color: colors.text, fontSize: font.lg, fontWeight: '800' }}>
-          Session unavailable
-        </Text>
+        <Text style={{ color: colors.text, fontSize: font.lg, fontWeight: '800' }}>Session unavailable</Text>
         <Text style={{ color: colors.textSecondary, fontSize: font.sm }}>
           {loadError ?? 'This session could not be loaded.'}
         </Text>
@@ -1790,13 +1715,8 @@ export default function SessionScreen() {
         }}
       />
       {cancelErrorMessage && (
-        <View
-          accessibilityLiveRegion="polite"
-          style={{ backgroundColor: colors.dangerSurface, padding: space.sm }}
-        >
-          <Text style={{ color: colors.danger, fontSize: font.xs, textAlign: 'center' }}>
-            {cancelErrorMessage}
-          </Text>
+        <View accessibilityLiveRegion="polite" style={{ backgroundColor: colors.dangerSurface, padding: space.sm }}>
+          <Text style={{ color: colors.danger, fontSize: font.xs, textAlign: 'center' }}>{cancelErrorMessage}</Text>
         </View>
       )}
       {session.archivedAt != null && (
@@ -1822,9 +1742,7 @@ export default function SessionScreen() {
             hitSlop={8}
             style={{ minHeight: 32, justifyContent: 'center' }}
           >
-            <Text style={{ color: colors.textSecondary, fontSize: font.xs, fontWeight: '700' }}>
-              UNARCHIVE
-            </Text>
+            <Text style={{ color: colors.textSecondary, fontSize: font.xs, fontWeight: '700' }}>UNARCHIVE</Text>
           </Pressable>
         </View>
       )}
@@ -1867,9 +1785,7 @@ export default function SessionScreen() {
         >
           <PlanPanel todos={stream.todos} plan={stream.plan} />
 
-          {terminal ? (
-            <TurnCard status={displayStatus} resultText={resultText} costUsd={costUsd} />
-          ) : null}
+          {terminal ? <TurnCard status={displayStatus} resultText={resultText} costUsd={costUsd} /> : null}
 
           {pendingQuestion && pendingQuestion.questionId !== questionCleared && !terminal ? (
             <MobileQuestionBanner
@@ -1942,19 +1858,14 @@ export default function SessionScreen() {
                     itemOffsets.current[item.id] = e.nativeEvent.layout.y;
                   }}
                 >
-                  <TranscriptRowFrame
-                    reference={reference}
-                    onOpenReference={() => openReferenceSummary(reference)}
-                  >
+                  <TranscriptRowFrame reference={reference} onOpenReference={() => openReferenceSummary(reference)}>
                     <TranscriptActiveEntryFrame active={showReveal} onActions={openActionsFromButton}>
                       {item.type === 'text' ? (
                         hasActions ? (
                           <Pressable
                             testID={`transcript-entry-${item.type}`}
                             accessibilityRole="button"
-                            accessibilityLabel={
-                              item.text.trim() ? `Message actions: ${item.text}` : 'Message actions'
-                            }
+                            accessibilityLabel={item.text.trim() ? `Message actions: ${item.text}` : 'Message actions'}
                             onPress={revealOrMoveActions}
                             onLongPress={openActionsWithHaptic}
                             delayLongPress={250}
@@ -1988,9 +1899,7 @@ export default function SessionScreen() {
                           <Pressable
                             testID={`transcript-entry-${item.type}`}
                             accessibilityRole="button"
-                            accessibilityLabel={
-                              item.text.trim() ? `Message actions: ${item.text}` : 'Message actions'
-                            }
+                            accessibilityLabel={item.text.trim() ? `Message actions: ${item.text}` : 'Message actions'}
                             onPress={revealOrMoveActions}
                             onLongPress={openActionsWithHaptic}
                             delayLongPress={250}
@@ -2039,13 +1948,7 @@ export default function SessionScreen() {
             costUsd={costUsd}
             models={stream.models}
             effort={modelEffort}
-            cancelLabel={
-              canStopTurn
-                ? 'Stop'
-                : displayCancelAsk === 'confirm'
-                  ? 'Confirm cancel'
-                  : 'Cancel'
-            }
+            cancelLabel={canStopTurn ? 'Stop' : displayCancelAsk === 'confirm' ? 'Confirm cancel' : 'Cancel'}
             onCancel={isSpawner || isDriver ? cancel : undefined}
           />
         ) : null}
@@ -2162,9 +2065,7 @@ export default function SessionScreen() {
                     paddingHorizontal: space.xs,
                   }}
                 >
-                  <Text style={{ color: colors.textMuted, fontSize: font.xs, fontWeight: '700' }}>
-                    referencing:
-                  </Text>
+                  <Text style={{ color: colors.textMuted, fontSize: font.xs, fontWeight: '700' }}>referencing:</Text>
                   {steerEntryLinkHandles.map((handle) => (
                     <EntryInlineChip
                       key={handle}
@@ -2341,9 +2242,7 @@ export default function SessionScreen() {
                   backgroundColor: pressed ? colors.bgPressed : colors.bg,
                 })}
               >
-                <Text style={{ color: colors.text, fontSize: font.sm, fontWeight: '700' }}>
-                  default
-                </Text>
+                <Text style={{ color: colors.text, fontSize: font.sm, fontWeight: '700' }}>default</Text>
               </Pressable>
             ) : null}
             {(effortOptions ?? []).map((level) => (
@@ -2360,12 +2259,7 @@ export default function SessionScreen() {
                 style={({ pressed }) => ({
                   paddingHorizontal: space.md,
                   paddingVertical: space.md,
-                  backgroundColor:
-                    effortSelection === level
-                      ? colors.accentBg
-                      : pressed
-                        ? colors.bgPressed
-                        : colors.bg,
+                  backgroundColor: effortSelection === level ? colors.accentBg : pressed ? colors.bgPressed : colors.bg,
                 })}
               >
                 <Text
@@ -2391,12 +2285,7 @@ export default function SessionScreen() {
         onClose={() => setWorkTab(null)}
       />
 
-      <TurnsSheet
-        visible={turnsOpen}
-        turns={turns}
-        onJump={jumpToItem}
-        onClose={() => setTurnsOpen(false)}
-      />
+      <TurnsSheet visible={turnsOpen} turns={turns} onJump={jumpToItem} onClose={() => setTurnsOpen(false)} />
 
       <MessageActionSheet
         visible={transcriptActionTarget != null}

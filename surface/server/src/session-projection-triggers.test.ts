@@ -35,9 +35,7 @@ describe('session projection triggers', () => {
     ]);
 
     await expect(projectIncrementalAndEmit(pool, sessionId)).resolves.toBe(1);
-    await expect(readRecordTexts(sessionId)).resolves.toEqual([
-      'Please inspect live projection.',
-    ]);
+    await expect(readRecordTexts(sessionId)).resolves.toEqual(['Please inspect live projection.']);
     await expect(readChangeCount(sessionId)).resolves.toBe(1);
 
     await expect(projectIncrementalAndEmit(pool, sessionId)).resolves.toBe(0);
@@ -46,9 +44,7 @@ describe('session projection triggers', () => {
   });
 
   it('recognizes completed item frames without treating deltas as completed', () => {
-    expect(isCompletedItemFrame(completedItemFrame(1, 'typed', 'userMessage', 'typed'))).toBe(
-      true,
-    );
+    expect(isCompletedItemFrame(completedItemFrame(1, 'typed', 'userMessage', 'typed'))).toBe(true);
     expect(
       isCompletedItemFrame({
         event: 'amp_raw_event',
@@ -99,10 +95,7 @@ describe('session projection triggers', () => {
 
     await runPrivateTailer(runs, sessionId);
 
-    await expect(readRecordTexts(sessionId)).resolves.toEqual([
-      'First projected item.',
-      'Second projected item.',
-    ]);
+    await expect(readRecordTexts(sessionId)).resolves.toEqual(['First projected item.', 'Second projected item.']);
     await expect(readChangeCount(sessionId)).resolves.toBe(2);
     releaseSessionProjectionState(sessionId);
   });
@@ -117,14 +110,9 @@ describe('session projection triggers', () => {
 
     await runPrivateTailer(runs, sessionId);
 
-    await expect(readRecordTexts(sessionId)).resolves.toEqual([
-      'Usage: gpt-test, cost $0.5, 15 tokens',
-    ]);
+    await expect(readRecordTexts(sessionId)).resolves.toEqual(['Usage: gpt-test, cost $0.5, 15 tokens']);
     await expect(readChangeCount(sessionId)).resolves.toBe(1);
-    const status = await pool.query<{ status: string }>(
-      `SELECT status FROM sessions WHERE id = $1`,
-      [sessionId],
-    );
+    const status = await pool.query<{ status: string }>(`SELECT status FROM sessions WHERE id = $1`, [sessionId]);
     expect(status.rows[0]?.status).toBe('failed');
     releaseSessionProjectionState(sessionId);
   });
@@ -174,10 +162,7 @@ async function insertSession(): Promise<string> {
   return res.rows[0]!.id;
 }
 
-async function insertSessionEvents(
-  sessionId: string,
-  frames: CentaurEventFrame[],
-): Promise<void> {
+async function insertSessionEvents(sessionId: string, frames: CentaurEventFrame[]): Promise<void> {
   for (const frame of frames) {
     await pool.query(
       `INSERT INTO session_events
@@ -253,9 +238,11 @@ function centaurTail(frames: CentaurEventFrame[], error?: Error): CentaurClient 
 }
 
 async function runPrivateTailer(runs: SessionRuns, sessionId: string): Promise<void> {
-  await (runs as unknown as {
-    runTailer(id: string, controller: AbortController): Promise<void>;
-  }).runTailer(sessionId, new AbortController());
+  await (
+    runs as unknown as {
+      runTailer(id: string, controller: AbortController): Promise<void>;
+    }
+  ).runTailer(sessionId, new AbortController());
 }
 
 async function readRecordTexts(sessionId: string): Promise<string[]> {

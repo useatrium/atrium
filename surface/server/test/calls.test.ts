@@ -221,9 +221,7 @@ describe('call routes', () => {
     const gdmCallId = gdmStart.json().call.id as string;
 
     const aliceVisible = await activeCalls(aliceCookie);
-    expect(aliceVisible.map((call) => call.id).sort()).toEqual(
-      [privateCallId, dmCallId, gdmCallId].sort(),
-    );
+    expect(aliceVisible.map((call) => call.id).sort()).toEqual([privateCallId, dmCallId, gdmCallId].sort());
     for (const call of aliceVisible) {
       expectParticipantIds(call, [alice.id]);
     }
@@ -367,9 +365,7 @@ describe('call routes', () => {
     const accepted = accept.json();
     expect(accepted.token).toBe(`token:call:${started.call.id}:${ben.id}`);
     expect(accepted.call.status).toBe('active'); // ringing → active on first accept
-    expect(accepted.call.participants.map((p: any) => p.id).sort()).toEqual(
-      [alice.id, ben.id].sort(),
-    );
+    expect(accepted.call.participants.map((p: any) => p.id).sort()).toEqual([alice.id, ben.id].sort());
     for (const socket of [aliceSocket, benSocket]) {
       expect(socket.received).toContainEqual(
         expect.objectContaining({ type: 'call.accepted', callId: started.call.id, user: ben }),
@@ -425,9 +421,7 @@ describe('call routes', () => {
     expect(finalState.ended_at).toBeTruthy();
     expect(finalState.joined).toBe(0);
     expect(finalState.left).toBe(2);
-    expect(benSocket.received).toContainEqual(
-      expect.objectContaining({ type: 'call.ended', callId: started.call.id }),
-    );
+    expect(benSocket.received).toContainEqual(expect.objectContaining({ type: 'call.ended', callId: started.call.id }));
   });
 
   it('rejects non-members starting or accepting private-channel calls', async () => {
@@ -529,10 +523,10 @@ describe('call routes', () => {
        VALUES ($1, $2, $3, $4, $5, 'active')`,
       [callId, fx.workspaceId, fx.channelId, user.id, `call:${callId}`],
     );
-    await pool.query(
-      'INSERT INTO call_participants (call_id, user_id, joined_at) VALUES ($1, $2, now())',
-      [callId, user.id],
-    );
+    await pool.query('INSERT INTO call_participants (call_id, user_id, joined_at) VALUES ($1, $2, now())', [
+      callId,
+      user.id,
+    ]);
 
     const active = await activeCalls(cookie);
     expect(active.map((call) => call.id)).toEqual([callId]);

@@ -1,11 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  applyEvent,
-  emptyTimeline,
-  mergeHistory,
-  messageFromEvent,
-  type WireEvent,
-} from '../src/index';
+import { applyEvent, emptyTimeline, mergeHistory, messageFromEvent, type WireEvent } from '../src/index';
 
 const alice = { id: 'u-alice', handle: 'alice', displayName: 'Alice' };
 

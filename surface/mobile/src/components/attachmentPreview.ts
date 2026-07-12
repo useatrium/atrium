@@ -10,7 +10,10 @@ function mediaKindFor(contentType: string): HubFile['mediaKind'] {
   return 'opaque';
 }
 
-export function attachmentToHubFile(attachment: AttachmentMeta, message: Pick<ChatMessage, 'author' | 'channelId' | 'createdAt' | 'id'>): HubFile {
+export function attachmentToHubFile(
+  attachment: AttachmentMeta,
+  message: Pick<ChatMessage, 'author' | 'channelId' | 'createdAt' | 'id'>,
+): HubFile {
   const mediaKind = mediaKindFor(attachment.contentType);
   return {
     artifactId: attachment.id,

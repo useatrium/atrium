@@ -133,7 +133,11 @@ function languageFor(file: HubFile): string {
   return ext || 'text';
 }
 
-function sourceFor(file: HubFile, fileContentUrl: (artifactId: string) => string, fileHeaders?: Record<string, string>) {
+function sourceFor(
+  file: HubFile,
+  fileContentUrl: (artifactId: string) => string,
+  fileHeaders?: Record<string, string>,
+) {
   return { uri: fileContentUrl(file.artifactId), headers: fileHeaders };
 }
 
@@ -216,7 +220,8 @@ function useTextContent(
         if (!cancelled) setState({ loading: false, text, error: null });
       })
       .catch((err: unknown) => {
-        if (!cancelled) setState({ loading: false, text: '', error: err instanceof Error ? err.message : 'Could not load file' });
+        if (!cancelled)
+          setState({ loading: false, text: '', error: err instanceof Error ? err.message : 'Could not load file' });
       });
     return () => {
       cancelled = true;
@@ -290,7 +295,12 @@ function ImagePane({
           if (now - lastTapRef.current < 280) setZoomed((value) => !value);
           lastTapRef.current = now;
         }}
-        style={{ width: imageWidth * scale, height: imageHeight * scale, alignItems: 'center', justifyContent: 'center' }}
+        style={{
+          width: imageWidth * scale,
+          height: imageHeight * scale,
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}
       >
         <Image
           source={sourceFor(file, fileContentUrl, fileHeaders)}
@@ -367,7 +377,10 @@ function AudioPane({
         >
           <Ionicons name="musical-notes" size={34} color={colors.accent} />
         </View>
-        <Text style={{ color: colors.text, fontSize: font.lg, fontWeight: '800', textAlign: 'center' }} numberOfLines={2}>
+        <Text
+          style={{ color: colors.text, fontSize: font.lg, fontWeight: '800', textAlign: 'center' }}
+          numberOfLines={2}
+        >
           {file.name}
         </Text>
       </View>
@@ -522,7 +535,8 @@ function UnknownPane({ file, onOpenExternal }: { file: HubFile; onOpenExternal: 
         {file.name}
       </Text>
       <Text style={{ color: colors.textMuted, fontSize: font.sm, textAlign: 'center' }}>
-        {file.mime ?? file.mediaKind ?? 'Unknown file'}{file.sizeBytes != null ? `, ${formatBytes(file.sizeBytes)}` : ''}
+        {file.mime ?? file.mediaKind ?? 'Unknown file'}
+        {file.sizeBytes != null ? `, ${formatBytes(file.sizeBytes)}` : ''}
       </Text>
       <Pressable
         accessibilityRole="button"
@@ -547,7 +561,9 @@ function InfoPanel({ file }: { file: HubFile }) {
     { label: 'Size', value: file.sizeBytes != null ? formatBytes(file.sizeBytes) : 'Unknown' },
     { label: 'Origin', value: file.origin },
     { label: 'Uploader', value: file.uploader?.name ?? 'Unknown' },
-    createdAtText ? { label: 'Created', value: createdAtText, iso: file.createdAt } : { label: 'Created', value: 'Unknown' },
+    createdAtText
+      ? { label: 'Created', value: createdAtText, iso: file.createdAt }
+      : { label: 'Created', value: 'Unknown' },
     { label: 'Path', value: file.path || 'Unknown' },
   ];
   return (
@@ -603,7 +619,8 @@ function FilePane({
   if (api && isAppFile(file)) return <AppPreviewPane file={file} api={api} fileHeaders={fileHeaders} />;
   if (isPptxFile(file)) return <PptxPane file={file} fileContentUrl={fileContentUrl} fileHeaders={fileHeaders} />;
   const kind = normalizedKind(file);
-  if (kind === 'image') return <ImagePane file={file} fileContentUrl={fileContentUrl} fileHeaders={fileHeaders} onClose={onClose} />;
+  if (kind === 'image')
+    return <ImagePane file={file} fileContentUrl={fileContentUrl} fileHeaders={fileHeaders} onClose={onClose} />;
   if (kind === 'video') return <VideoPane file={file} fileContentUrl={fileContentUrl} fileHeaders={fileHeaders} />;
   if (kind === 'audio') return <AudioPane file={file} fileContentUrl={fileContentUrl} fileHeaders={fileHeaders} />;
   if (kind === 'pdf') return <PdfPane file={file} fileContentUrl={fileContentUrl} fileHeaders={fileHeaders} />;
@@ -722,130 +739,138 @@ export function MediaLightbox({
           context reads 0 — a fresh provider measures the modal window itself,
           keeping the toolbar out of the status-bar band. */}
       <SafeAreaProvider>
-      <View accessibilityViewIsModal style={{ flex: 1, backgroundColor: colors.letterbox }}>
-        <View
-          style={{
-            paddingTop: 4,
-            paddingHorizontal: space.sm,
-            paddingBottom: space.xs,
-            borderBottomWidth: 1,
-            borderBottomColor: colors.border,
-            backgroundColor: colors.bg,
-            zIndex: 2,
-          }}
-        >
-          <ModalTopInset />
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.xs }}>
-            <ChromeButton
-              icon="close"
-              label="Close lightbox"
-              focusRef={closeButtonRef}
-              onPress={onClose}
-            />
-            <View style={{ flex: 1, minWidth: 0 }}>
-              <Text style={{ color: colors.text, fontSize: font.sm, fontWeight: '800' }} numberOfLines={1}>
-                {current.name}
-              </Text>
-              <Text style={{ color: colors.textMuted, fontSize: font.xs }} numberOfLines={1}>
-                {index + 1} of {files.length} · {normalizedKind(current)}
-              </Text>
+        <View accessibilityViewIsModal style={{ flex: 1, backgroundColor: colors.letterbox }}>
+          <View
+            style={{
+              paddingTop: 4,
+              paddingHorizontal: space.sm,
+              paddingBottom: space.xs,
+              borderBottomWidth: 1,
+              borderBottomColor: colors.border,
+              backgroundColor: colors.bg,
+              zIndex: 2,
+            }}
+          >
+            <ModalTopInset />
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.xs }}>
+              <ChromeButton icon="close" label="Close lightbox" focusRef={closeButtonRef} onPress={onClose} />
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Text style={{ color: colors.text, fontSize: font.sm, fontWeight: '800' }} numberOfLines={1}>
+                  {current.name}
+                </Text>
+                <Text style={{ color: colors.textMuted, fontSize: font.xs }} numberOfLines={1}>
+                  {index + 1} of {files.length} · {normalizedKind(current)}
+                </Text>
+              </View>
+              {currentReference && currentReference.count > 0 && onOpenReferences ? (
+                <EntryReferencesChip
+                  count={currentReference.count}
+                  onPress={() => onOpenReferences(currentReference)}
+                />
+              ) : null}
+              <ChromeButton
+                icon="chevron-back"
+                label="Previous file"
+                disabled={index === 0}
+                onPress={() => jump(index - 1)}
+              />
+              <ChromeButton
+                icon="chevron-forward"
+                label="Next file"
+                disabled={index >= files.length - 1}
+                onPress={() => jump(index + 1)}
+              />
+              <ChromeButton
+                icon="share-outline"
+                label="Share or open file"
+                hint="Opens this file externally when possible, otherwise opens the share sheet"
+                onPress={() => {
+                  void onOpenExternal(current).catch(() => {
+                    void Share.share({ message: current.name }).catch(() => {});
+                  });
+                }}
+              />
+              {api && isEditableText(current) ? (
+                <ChromeButton
+                  icon={editing ? 'create' : 'create-outline'}
+                  label="Edit file"
+                  hint="Opens the file editor"
+                  onPress={() => setEditing(true)}
+                />
+              ) : null}
+              {api ? (
+                <ChromeButton
+                  icon="git-branch-outline"
+                  label="Version history"
+                  hint="Opens previous versions for this file"
+                  onPress={() => setHistoryOpen(true)}
+                />
+              ) : null}
+              <ChromeButton
+                icon={infoOpen ? 'information-circle' : 'information-circle-outline'}
+                label={infoOpen ? 'Hide file info' : 'Show file info'}
+                hint="Toggles file details"
+                onPress={() => setInfoOpen((value) => !value)}
+              />
             </View>
-            {currentReference && currentReference.count > 0 && onOpenReferences ? (
-              <EntryReferencesChip count={currentReference.count} onPress={() => onOpenReferences(currentReference)} />
-            ) : null}
-            <ChromeButton icon="chevron-back" label="Previous file" disabled={index === 0} onPress={() => jump(index - 1)} />
-            <ChromeButton icon="chevron-forward" label="Next file" disabled={index >= files.length - 1} onPress={() => jump(index + 1)} />
-            <ChromeButton
-              icon="share-outline"
-              label="Share or open file"
-              hint="Opens this file externally when possible, otherwise opens the share sheet"
-              onPress={() => {
-                void onOpenExternal(current).catch(() => {
-                  void Share.share({ message: current.name }).catch(() => {});
-                });
-              }}
-            />
-            {api && isEditableText(current) ? (
-              <ChromeButton
-                icon={editing ? 'create' : 'create-outline'}
-                label="Edit file"
-                hint="Opens the file editor"
-                onPress={() => setEditing(true)}
-              />
-            ) : null}
-            {api ? (
-              <ChromeButton
-                icon="git-branch-outline"
-                label="Version history"
-                hint="Opens previous versions for this file"
-                onPress={() => setHistoryOpen(true)}
-              />
-            ) : null}
-            <ChromeButton
-              icon={infoOpen ? 'information-circle' : 'information-circle-outline'}
-              label={infoOpen ? 'Hide file info' : 'Show file info'}
-              hint="Toggles file details"
-              onPress={() => setInfoOpen((value) => !value)}
-            />
           </View>
-        </View>
-        {editing && current && api ? (
-          <View style={{ flex: 1, backgroundColor: colors.bg }}>
-            <TextEditorPane
+          {editing && current && api ? (
+            <View style={{ flex: 1, backgroundColor: colors.bg }}>
+              <TextEditorPane
+                file={current}
+                api={api}
+                fileContentUrl={fileContentUrl}
+                fileHeaders={fileHeaders}
+                onClose={() => setEditing(false)}
+                onSaved={() => {
+                  setEditing(false);
+                  handleFileChanged();
+                }}
+              />
+            </View>
+          ) : (
+            <FlatList
+              ref={listRef}
+              data={files}
+              keyExtractor={(item) => item.artifactId}
+              horizontal
+              pagingEnabled
+              showsHorizontalScrollIndicator={false}
+              initialScrollIndex={Math.max(0, Math.min(initialIndex, files.length - 1))}
+              getItemLayout={(_, itemIndex) => ({ index: itemIndex, length: width, offset: width * itemIndex })}
+              onMomentumScrollEnd={handleMomentumEnd}
+              onScrollToIndexFailed={({ index: failedIndex }) => {
+                setTimeout(() => jump(failedIndex), 50);
+              }}
+              renderItem={({ item }) => (
+                <View style={{ width, flex: 1, backgroundColor: colors.bg }}>
+                  <FilePane
+                    // Remount the current pane after an in-place edit so it refetches.
+                    key={item.artifactId === current?.artifactId ? `cur-${reloadKey}` : item.artifactId}
+                    file={item}
+                    fileContentUrl={fileContentUrl}
+                    fileHeaders={fileHeaders}
+                    onClose={onClose}
+                    onOpenExternal={onOpenExternal}
+                    api={api}
+                  />
+                </View>
+              )}
+            />
+          )}
+          {infoOpen ? <InfoPanel file={current} /> : null}
+          {historyOpen && current && api ? (
+            <VersionHistoryPanel
               file={current}
               api={api}
               fileContentUrl={fileContentUrl}
               fileHeaders={fileHeaders}
-              onClose={() => setEditing(false)}
-              onSaved={() => {
-                setEditing(false);
-                handleFileChanged();
-              }}
+              canManage
+              onClose={() => setHistoryOpen(false)}
+              onChanged={handleFileChanged}
             />
-          </View>
-        ) : (
-          <FlatList
-            ref={listRef}
-            data={files}
-            keyExtractor={(item) => item.artifactId}
-            horizontal
-            pagingEnabled
-            showsHorizontalScrollIndicator={false}
-            initialScrollIndex={Math.max(0, Math.min(initialIndex, files.length - 1))}
-            getItemLayout={(_, itemIndex) => ({ index: itemIndex, length: width, offset: width * itemIndex })}
-            onMomentumScrollEnd={handleMomentumEnd}
-            onScrollToIndexFailed={({ index: failedIndex }) => {
-              setTimeout(() => jump(failedIndex), 50);
-            }}
-            renderItem={({ item }) => (
-              <View style={{ width, flex: 1, backgroundColor: colors.bg }}>
-                <FilePane
-                  // Remount the current pane after an in-place edit so it refetches.
-                  key={item.artifactId === current?.artifactId ? `cur-${reloadKey}` : item.artifactId}
-                  file={item}
-                  fileContentUrl={fileContentUrl}
-                  fileHeaders={fileHeaders}
-                  onClose={onClose}
-                  onOpenExternal={onOpenExternal}
-                  api={api}
-                />
-              </View>
-            )}
-          />
-        )}
-        {infoOpen ? <InfoPanel file={current} /> : null}
-        {historyOpen && current && api ? (
-          <VersionHistoryPanel
-            file={current}
-            api={api}
-            fileContentUrl={fileContentUrl}
-            fileHeaders={fileHeaders}
-            canManage
-            onClose={() => setHistoryOpen(false)}
-            onChanged={handleFileChanged}
-          />
-        ) : null}
-      </View>
+          ) : null}
+        </View>
       </SafeAreaProvider>
     </Modal>
   );

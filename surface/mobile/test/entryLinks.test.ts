@@ -29,10 +29,7 @@ describe('entry link extraction', () => {
       '/e/art_not-a-uuid',
     ].join(' ');
 
-    expect(extractEntryLinkHandles(text, SERVER_URL)).toEqual([
-      'evt_12',
-      'art_123e4567-e89b-12d3-a456-426614174000',
-    ]);
+    expect(extractEntryLinkHandles(text, SERVER_URL)).toEqual(['evt_12', 'art_123e4567-e89b-12d3-a456-426614174000']);
   });
 
   it('partitions standalone entry links from inline body text', () => {

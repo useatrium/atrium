@@ -34,8 +34,7 @@ afterEach(cleanup);
 
 describe('EntryQuoteCards', () => {
   it('renders nothing until resolve completes, then opens record links in-app to sessions', async () => {
-    const resolveEntry = vi.fn<(handle: string) => Promise<ResolvedEntry | null>>()
-      .mockResolvedValue(baseEntry);
+    const resolveEntry = vi.fn<(handle: string) => Promise<ResolvedEntry | null>>().mockResolvedValue(baseEntry);
     const onOpenSession = vi.fn();
     const onOpenChannel = vi.fn();
 
@@ -61,14 +60,13 @@ describe('EntryQuoteCards', () => {
   });
 
   it('opens event and artifact links to channels', async () => {
-    const resolveEntry = vi.fn<(handle: string) => Promise<ResolvedEntry | null>>()
-      .mockResolvedValue({
-        ...baseEntry,
-        handle: 'evt_8',
-        kind: 'message',
-        targetType: 'event',
-        location: { ...baseEntry.location, sessionId: null, sessionTitle: null },
-      });
+    const resolveEntry = vi.fn<(handle: string) => Promise<ResolvedEntry | null>>().mockResolvedValue({
+      ...baseEntry,
+      handle: 'evt_8',
+      kind: 'message',
+      targetType: 'event',
+      location: { ...baseEntry.location, sessionId: null, sessionTitle: null },
+    });
     const onOpenChannel = vi.fn();
 
     renderWithTheme(
@@ -96,10 +94,12 @@ describe('EntryQuoteCards', () => {
       text: 'Fallback excerpt',
       location: { ...baseEntry.location, sessionId: null, sessionTitle: null },
     };
-    const resolveEntry = vi.fn<(handle: string) => Promise<ResolvedEntry | null>>()
-      .mockResolvedValue(artifactEntry);
-    const resolveArtifactContent = vi.fn<(artifactId: string) => Promise<string | null>>()
-      .mockResolvedValue('---\ntitle: Draft\n---\nKeep {--old--} {++new++} {~~rough~>clear~~} {==claim==}{>>Needs source.<<}.');
+    const resolveEntry = vi.fn<(handle: string) => Promise<ResolvedEntry | null>>().mockResolvedValue(artifactEntry);
+    const resolveArtifactContent = vi
+      .fn<(artifactId: string) => Promise<string | null>>()
+      .mockResolvedValue(
+        '---\ntitle: Draft\n---\nKeep {--old--} {++new++} {~~rough~>clear~~} {==claim==}{>>Needs source.<<}.',
+      );
 
     renderWithTheme(
       <EntryQuoteCards

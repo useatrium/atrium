@@ -701,22 +701,17 @@ describe('upload op dependencies', () => {
       return { event: eventFor(payload) };
     });
 
-    await registry['msg.send'].execute(
-      { postMessage } as unknown as Api,
-      payload,
-      op,
-      {
-        listOps: async () => [
-          {
-            ...upload('upload-1', { fileId: 'file-1', uploaded: true }),
-            status: 'completed',
-          },
-        ],
-        putOp: async () => {},
-        uploadFetch: async () => new Response(),
-        readUploadBody: async () => new Blob(),
-      },
-    );
+    await registry['msg.send'].execute({ postMessage } as unknown as Api, payload, op, {
+      listOps: async () => [
+        {
+          ...upload('upload-1', { fileId: 'file-1', uploaded: true }),
+          status: 'completed',
+        },
+      ],
+      putOp: async () => {},
+      uploadFetch: async () => new Response(),
+      readUploadBody: async () => new Blob(),
+    });
 
     expect(posted).toEqual([
       {

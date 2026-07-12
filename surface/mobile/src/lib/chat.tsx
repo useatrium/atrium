@@ -2,16 +2,7 @@
 // for native (absolute base URL, bearer token, ?token= on the WS upgrade).
 // Mirrors web/src/Chat.tsx's glue so the two clients behave identically.
 
-import {
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useMemo,
-  useReducer,
-  useRef,
-  useState,
-} from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { Alert, AppState as RNAppState, Linking } from 'react-native';
 import * as Crypto from 'expo-crypto';
 import * as FileSystem from 'expo-file-system/legacy';
@@ -128,12 +119,7 @@ interface ChatContextValue {
     voice?: VoiceSendMeta,
     broadcast?: boolean,
   ) => void;
-  spawnSession: (
-    channelId: string,
-    task: string,
-    threadRootEventId?: number,
-    opts?: SpawnSessionOptions,
-  ) => void;
+  spawnSession: (channelId: string, task: string, threadRootEventId?: number, opts?: SpawnSessionOptions) => void;
   /** Spawn the zero-setup scripted demo agent into a channel (harness "demo"). */
   startDemoSession: (channelId: string) => void;
   retry: (m: ChatMessage) => void;
@@ -245,10 +231,7 @@ export function ChatProvider({ session, children }: { session: Session; children
   const { adoptPrefs } = useTheme();
   const { serverUrl, token, user: me } = session;
 
-  const api = useMemo(
-    () => createApi({ baseUrl: serverUrl, getToken: () => token }),
-    [serverUrl, token],
-  );
+  const api = useMemo(() => createApi({ baseUrl: serverUrl, getToken: () => token }), [serverUrl, token]);
   const resolveEntry = useMemo(() => createEntryResolver(session), [session]);
   const resolveArtifactContent = useMemo(() => createArtifactContentResolver(session), [session]);
 
@@ -277,9 +260,7 @@ export function ChatProvider({ session, children }: { session: Session; children
   const refreshedCallsAfterChannelsLoadRef = useRef(false);
 
   const cacheMute = useCallback((channelId: string, muted: boolean) => {
-    const channels = stateRef.current.channels.map((c) =>
-      c.id === channelId ? { ...c, muted } : c,
-    );
+    const channels = stateRef.current.channels.map((c) => (c.id === channelId ? { ...c, muted } : c));
     void eventCache.saveChannels(channels).catch((err: unknown) => {
       console.warn('failed to cache mute change', err);
     });
@@ -291,21 +272,14 @@ export function ChatProvider({ session, children }: { session: Session; children
     });
   }, []);
 
-  const cacheReadCursorAdvance = useCallback(
-    (channelId: string, lastReadEventId: number, reason: string) => {
-      const channels = channelsAfterReadCursorAdvance(
-        stateRef.current,
-        channelId,
-        lastReadEventId,
-      );
-      if (!channels) return false;
-      void eventCache.saveChannels(channels).catch((err: unknown) => {
-        console.warn(`failed to cache ${reason} read cursor`, err);
-      });
-      return true;
-    },
-    [],
-  );
+  const cacheReadCursorAdvance = useCallback((channelId: string, lastReadEventId: number, reason: string) => {
+    const channels = channelsAfterReadCursorAdvance(stateRef.current, channelId, lastReadEventId);
+    if (!channels) return false;
+    void eventCache.saveChannels(channels).catch((err: unknown) => {
+      console.warn(`failed to cache ${reason} read cursor`, err);
+    });
+    return true;
+  }, []);
 
   // A dead token can't recover — kick back to login instead of error-looping.
   const onApiError = useCallback(
@@ -457,10 +431,7 @@ export function ChatProvider({ session, children }: { session: Session; children
   );
 
   const enqueueOp = useCallback(
-    async <T extends OpType>(
-      input: EnqueueOpInput<T>,
-      options?: EnqueueOpOptions,
-    ): Promise<QueuedOp | null> => {
+    async <T extends OpType>(input: EnqueueOpInput<T>, options?: EnqueueOpOptions): Promise<QueuedOp | null> => {
       const op = await opQueue.enqueue(input);
       if (op) {
         options?.onStored?.();
@@ -576,32 +547,27 @@ export function ChatProvider({ session, children }: { session: Session; children
     else activeDraftKeysRef.current.delete(key);
   }, []);
 
-  const reconcileDraftsFromSnapshot = useCallback(
-    (snapshot: DraftSnapshot, deletions: DraftDeletionSnapshot = {}) => {
-      void eventCache
-        .listDrafts()
-        .then(async (local) => {
-          const { hydrate, remove } = reconcileDraftSnapshot({
-            snapshot,
-            deletions,
-            local,
-            touchedThisSession: touchedDraftKeysRef.current,
-            activeDraftKeys: activeDraftKeysRef.current,
-          });
-          await Promise.all(
-            Object.entries(hydrate)
-              .map(([draftKey, draft]) =>
-                eventCache.setDraft(draftKey, draft.text, draft.updatedAt),
-              )
-              .concat(remove.map((draftKey) => eventCache.setDraft(draftKey, ''))),
-          );
-        })
-        .catch((err: unknown) => {
-          console.warn('failed to reconcile draft snapshot', err);
+  const reconcileDraftsFromSnapshot = useCallback((snapshot: DraftSnapshot, deletions: DraftDeletionSnapshot = {}) => {
+    void eventCache
+      .listDrafts()
+      .then(async (local) => {
+        const { hydrate, remove } = reconcileDraftSnapshot({
+          snapshot,
+          deletions,
+          local,
+          touchedThisSession: touchedDraftKeysRef.current,
+          activeDraftKeys: activeDraftKeysRef.current,
         });
-    },
-    [],
-  );
+        await Promise.all(
+          Object.entries(hydrate)
+            .map(([draftKey, draft]) => eventCache.setDraft(draftKey, draft.text, draft.updatedAt))
+            .concat(remove.map((draftKey) => eventCache.setDraft(draftKey, ''))),
+        );
+      })
+      .catch((err: unknown) => {
+        console.warn('failed to reconcile draft snapshot', err);
+      });
+  }, []);
 
   const waitForUpload = useCallback(
     (uploadKey: string): Promise<{ fileId: string }> =>
@@ -795,11 +761,7 @@ export function ChatProvider({ session, children }: { session: Session; children
           channelId: payload.channelId,
           lastReadEventId: payload.lastReadEventId,
         });
-        cacheReadCursorAdvance(
-          payload.channelId,
-          payload.lastReadEventId,
-          'queued read.mark',
-        );
+        cacheReadCursorAdvance(payload.channelId, payload.lastReadEventId, 'queued read.mark');
       }
     },
     [cacheReadCursorAdvance, pendingMessageFromSendPayload, pendingSpawnFromPayload],
@@ -885,11 +847,9 @@ export function ChatProvider({ session, children }: { session: Session; children
           events: latest.events,
           hasMore: latest.hasMore,
         });
-        void eventCache.saveTimeline(channelId, latest.events, latest.hasMore).catch(
-          (err: unknown) => {
-            console.warn('failed to cache sync repair history', err);
-          },
-        );
+        void eventCache.saveTimeline(channelId, latest.events, latest.hasMore).catch((err: unknown) => {
+          console.warn('failed to cache sync repair history', err);
+        });
       }),
     );
   }, [api]);
@@ -900,10 +860,7 @@ export function ChatProvider({ session, children }: { session: Session; children
       const response = await api.sync(cursor, { limit: SYNC_LIMIT });
       if (response.limited) {
         dispatchSyncSnapshot(dispatch, response.state, adoptPrefs);
-        reconcileDraftsFromSnapshot(
-          response.state.drafts ?? {},
-          response.state.draftDeletions ?? {},
-        );
+        reconcileDraftsFromSnapshot(response.state.drafts ?? {}, response.state.draftDeletions ?? {});
         void eventCache.saveChannels(response.state.channels).catch((err: unknown) => {
           console.warn('failed to cache sync channels', err);
         });
@@ -919,10 +876,7 @@ export function ChatProvider({ session, children }: { session: Session; children
           cacheSyncCursor(event.id);
         },
       });
-      reconcileDraftsFromSnapshot(
-        response.state.drafts ?? {},
-        response.state.draftDeletions ?? {},
-      );
+      reconcileDraftsFromSnapshot(response.state.drafts ?? {}, response.state.draftDeletions ?? {});
       void eventCache.saveChannels(response.state.channels).catch((err: unknown) => {
         console.warn('failed to cache sync channels', err);
       });
@@ -1048,10 +1002,7 @@ export function ChatProvider({ session, children }: { session: Session; children
       onTyping,
       onCall: calls.handleCallEvent,
       onRead: (channelId, lastReadEventId) => {
-        lastReadSentRef.current[channelId] = Math.max(
-          lastReadSentRef.current[channelId] ?? 0,
-          lastReadEventId,
-        );
+        lastReadSentRef.current[channelId] = Math.max(lastReadSentRef.current[channelId] ?? 0, lastReadEventId);
         dispatch({ type: 'read-cursor', channelId, lastReadEventId, source: 'remote' });
         cacheReadCursorAdvance(channelId, lastReadEventId, 'remote');
       },
@@ -1221,11 +1172,7 @@ export function ChatProvider({ session, children }: { session: Session; children
       const harness = opts?.harness?.trim() || 'codex';
       const repo = opts?.repo?.trim();
       const branch = opts?.branch?.trim();
-      const repos = opts?.repos?.length
-        ? opts.repos
-        : repo
-          ? [{ repo, ...(branch ? { ref: branch } : {}) }]
-          : [];
+      const repos = opts?.repos?.length ? opts.repos : repo ? [{ repo, ...(branch ? { ref: branch } : {}) }] : [];
       const payload: SessionSpawnPayload = {
         channelId,
         task,
@@ -1570,8 +1517,7 @@ export function ChatProvider({ session, children }: { session: Session; children
 
   const setChannelArchived = useCallback(
     (channelId: string, archived: boolean) => {
-      const previousArchivedAt =
-        stateRef.current.channels.find((c) => c.id === channelId)?.archivedAt ?? null;
+      const previousArchivedAt = stateRef.current.channels.find((c) => c.id === channelId)?.archivedAt ?? null;
       dispatch({
         type: 'channel-archive-changed',
         channelId,
@@ -1606,11 +1552,7 @@ export function ChatProvider({ session, children }: { session: Session; children
   );
 
   const answerSessionQuestion = useCallback(
-    async (
-      sessionId: string,
-      questionId: string,
-      answers: Record<string, { answers: string[] }>,
-    ) => {
+    async (sessionId: string, questionId: string, answers: Record<string, { answers: string[] }>) => {
       await enqueueOp({
         opId: randomId(),
         opType: 'session.answer',
@@ -1693,10 +1635,7 @@ export function ChatProvider({ session, children }: { session: Session; children
 
   const setDraft = useCallback((key: string, text: string) => eventCache.setDraft(key, text), []);
 
-  const fileUrl = useCallback(
-    (fileId: string) => `${serverUrl}/api/files/${fileId}`,
-    [serverUrl],
-  );
+  const fileUrl = useCallback((fileId: string) => `${serverUrl}/api/files/${fileId}`, [serverUrl]);
 
   const artifactUrl = useCallback(
     (sessionId: string, artifact: Artifact) =>

@@ -1,14 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { JSX } from 'react';
-import {
-  ActivityIndicator,
-  FlatList,
-  Modal,
-  Pressable,
-  ScrollView,
-  Text,
-  View,
-} from 'react-native';
+import { ActivityIndicator, FlatList, Modal, Pressable, ScrollView, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
@@ -49,11 +41,7 @@ function VersionBadge({ version }: { version: HubFileVersion }) {
         borderWidth: 1,
         borderColor: conflict ? colors.dangerBorder : version.isLatest ? colors.accent : colors.border,
         borderRadius: radius.sm,
-        backgroundColor: conflict
-          ? colors.dangerSurface
-          : version.isLatest
-            ? colors.accentBg
-            : colors.bgPressed,
+        backgroundColor: conflict ? colors.dangerSurface : version.isLatest ? colors.accentBg : colors.bgPressed,
         paddingHorizontal: space.sm,
         paddingVertical: 2,
       }}
@@ -198,15 +186,10 @@ function DiffViewer({
   if (error) return <InlineNotice tone="error" message={error} />;
 
   return (
-    <ScrollView
-      horizontal
-      style={{ borderWidth: 1, borderColor: colors.border, borderRadius: radius.md }}
-    >
+    <ScrollView horizontal style={{ borderWidth: 1, borderColor: colors.border, borderRadius: radius.md }}>
       <View style={{ minWidth: '100%', backgroundColor: colors.bg }}>
         {lines.length === 0 ? (
-          <Text style={{ color: colors.textMuted, fontSize: font.sm, padding: space.md }}>
-            No text changes.
-          </Text>
+          <Text style={{ color: colors.textMuted, fontSize: font.sm, padding: space.md }}>No text changes.</Text>
         ) : (
           lines.slice(0, 600).map((line, index) => {
             const added = line.kind === 'add';
@@ -216,11 +199,7 @@ function DiffViewer({
                 key={`${index}-${line.kind}`}
                 style={{
                   flexDirection: 'row',
-                  backgroundColor: added
-                    ? 'rgba(52, 211, 153, 0.14)'
-                    : removed
-                      ? colors.dangerSurface
-                      : colors.bg,
+                  backgroundColor: added ? 'rgba(52, 211, 153, 0.14)' : removed ? colors.dangerSurface : colors.bg,
                   borderBottomWidth: 1,
                   borderBottomColor: colors.borderSoft,
                 }}
@@ -282,11 +261,7 @@ function VersionRow({
 }) {
   const { colors } = useTheme();
   const revertable =
-    canManage &&
-    !fileTombstoned &&
-    !version.isLatest &&
-    version.kind !== 'deleted' &&
-    version.status === 'normal';
+    canManage && !fileTombstoned && !version.isLatest && version.kind !== 'deleted' && version.status === 'normal';
   const createdAtText = formatRelativeTimestamp(version.createdAt) || version.createdAt;
 
   return (
@@ -303,9 +278,7 @@ function VersionRow({
       <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: space.sm }}>
         <View style={{ flex: 1, minWidth: 0 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm }}>
-            <Text style={{ color: colors.text, fontSize: font.sm, fontWeight: '800' }}>
-              v{version.seq}
-            </Text>
+            <Text style={{ color: colors.text, fontSize: font.sm, fontWeight: '800' }}>v{version.seq}</Text>
             <VersionBadge version={version} />
           </View>
           <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: space.xs, minWidth: 0 }}>
@@ -341,9 +314,7 @@ function VersionRow({
               paddingHorizontal: space.md,
             })}
           >
-            <Text style={{ color: colors.textSecondary, fontSize: font.xs, fontWeight: '800' }}>
-              Compare
-            </Text>
+            <Text style={{ color: colors.textSecondary, fontSize: font.xs, fontWeight: '800' }}>Compare</Text>
           </Pressable>
         ) : null}
         {revertable ? (
@@ -396,10 +367,7 @@ export function VersionHistoryPanel(props: {
   const [restoringFile, setRestoringFile] = useState(false);
   const [compareSeq, setCompareSeq] = useState<number | null>(null);
 
-  const latestVersion = useMemo(
-    () => versions.find((version) => version.isLatest) ?? versions[0] ?? null,
-    [versions],
-  );
+  const latestVersion = useMemo(() => versions.find((version) => version.isLatest) ?? versions[0] ?? null, [versions]);
   const selectedVersion = useMemo(
     () => versions.find((version) => version.seq === compareSeq) ?? null,
     [compareSeq, versions],
@@ -479,12 +447,7 @@ export function VersionHistoryPanel(props: {
   }, [api, busySeq, file.artifactId, loadVersions, onChanged, restoringFile]);
 
   return (
-    <Modal
-      visible
-      transparent
-      animationType={reduceMotion ? 'none' : 'fade'}
-      onRequestClose={onClose}
-    >
+    <Modal visible transparent animationType={reduceMotion ? 'none' : 'fade'} onRequestClose={onClose}>
       <Pressable
         accessible={false}
         importantForAccessibility="no"
@@ -600,14 +563,10 @@ export function VersionHistoryPanel(props: {
                 {loading ? (
                   <>
                     <ActivityIndicator color={colors.textMuted} />
-                    <Text style={{ color: colors.textMuted, fontSize: font.sm }}>
-                      Loading versions...
-                    </Text>
+                    <Text style={{ color: colors.textMuted, fontSize: font.sm }}>Loading versions...</Text>
                   </>
                 ) : (
-                  <Text style={{ color: colors.textMuted, fontSize: font.sm }}>
-                    No versions found.
-                  </Text>
+                  <Text style={{ color: colors.textMuted, fontSize: font.sm }}>No versions found.</Text>
                 )}
               </View>
             }
@@ -636,9 +595,7 @@ export function VersionHistoryPanel(props: {
             }}
           >
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm }}>
-              <Text style={{ flex: 1, color: colors.text, fontSize: font.sm, fontWeight: '800' }}>
-                Diff
-              </Text>
+              <Text style={{ flex: 1, color: colors.text, fontSize: font.sm, fontWeight: '800' }}>Diff</Text>
               {selectedVersion && latestVersion ? (
                 <Text style={{ color: colors.textMuted, fontSize: font.xs }}>
                   v{selectedVersion.seq} {'->'} v{latestVersion.seq}

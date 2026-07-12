@@ -34,9 +34,7 @@ export function loadSession(): DesktopSession | null {
     const file = sessionFile();
     if (!existsSync(file)) return null;
     const raw = readFileSync(file);
-    const json = safeStorage.isEncryptionAvailable()
-      ? safeStorage.decryptString(raw)
-      : raw.toString('utf8');
+    const json = safeStorage.isEncryptionAvailable() ? safeStorage.decryptString(raw) : raw.toString('utf8');
     const parsed = JSON.parse(json) as unknown;
     return isValid(parsed) ? parsed : null;
   } catch {
@@ -47,9 +45,7 @@ export function loadSession(): DesktopSession | null {
 export function saveSession(session: DesktopSession): void {
   if (!isValid(session)) return;
   const json = JSON.stringify(session);
-  const data = safeStorage.isEncryptionAvailable()
-    ? safeStorage.encryptString(json)
-    : Buffer.from(json, 'utf8');
+  const data = safeStorage.isEncryptionAvailable() ? safeStorage.encryptString(json) : Buffer.from(json, 'utf8');
   writeFileSync(sessionFile(), data, { mode: 0o600 });
 }
 

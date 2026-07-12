@@ -114,9 +114,7 @@ export function SideEffectsSurface({ effects }: { effects: SideEffect[] }) {
               backgroundColor: colors.bgElevated,
             }}
           >
-            <Text style={{ color: colors.textMuted, fontSize: font.xs, fontWeight: '800' }}>
-              {labelFor(category)}
-            </Text>
+            <Text style={{ color: colors.textMuted, fontSize: font.xs, fontWeight: '800' }}>{labelFor(category)}</Text>
             <Text style={{ color: colors.textFaint, fontSize: font.xs, fontVariant: ['tabular-nums'] }}>
               · {list.length}
             </Text>

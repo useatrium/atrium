@@ -27,10 +27,7 @@ export interface ClientErrorReport {
   createdAt: Date;
 }
 
-export async function recordClientErrorReport(
-  pool: Db,
-  args: RecordClientErrorReportArgs,
-): Promise<ClientErrorReport> {
+export async function recordClientErrorReport(pool: Db, args: RecordClientErrorReportArgs): Promise<ClientErrorReport> {
   const message = cleanText(args.message);
   const stack = cleanText(args.stack);
   const res = await pool.query<ClientErrorReportRow>(

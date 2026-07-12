@@ -1,10 +1,6 @@
 import { Platform, ScrollView, Text, View } from 'react-native';
 import type { ReactNode } from 'react';
-import {
-  parseCriticMarkup,
-  type CriticBlock,
-  type CriticSegment,
-} from '@atrium/surface-client';
+import { parseCriticMarkup, type CriticBlock, type CriticSegment } from '@atrium/surface-client';
 import { font, radius, space, useTheme, type Colors } from '../lib/theme';
 
 const monoFont = Platform.select({ ios: 'Menlo', android: 'monospace', default: 'monospace' });
@@ -57,15 +53,7 @@ export function countCriticMarkupChanges(blocks: CriticBlock[]): number {
   }, 0);
 }
 
-export function NoteRow({
-  label = 'Note',
-  text,
-  warning,
-}: {
-  label?: string;
-  text: string;
-  warning?: boolean;
-}) {
+export function NoteRow({ label = 'Note', text, warning }: { label?: string; text: string; warning?: boolean }) {
   const { colors } = useTheme();
   const authorPrefix = parseAuthorPrefix(text);
   return (
@@ -98,8 +86,7 @@ export function NoteRow({
 function InlineCriticSegment({ segment }: { segment: Exclude<CriticSegment, { kind: 'comment' }> }) {
   const { colors } = useTheme();
   const change = changeColors(colors);
-  const highlightCommentAuthor =
-    segment.kind === 'highlight' ? parseAuthorPrefix(segment.comment) : null;
+  const highlightCommentAuthor = segment.kind === 'highlight' ? parseAuthorPrefix(segment.comment) : null;
 
   switch (segment.kind) {
     case 'text':
@@ -155,10 +142,7 @@ function ProseBlock({ segments }: { segments: CriticSegment[] }) {
     if (inline.length === 0) return;
     const run = inline;
     rows.push(
-      <Text
-        key={`prose-${inlineIndex}`}
-        style={{ color: colors.text, fontSize: font.sm, lineHeight: 20 }}
-      >
+      <Text key={`prose-${inlineIndex}`} style={{ color: colors.text, fontSize: font.sm, lineHeight: 20 }}>
         {run.map((segment, index) => (
           <InlineCriticSegment key={`seg-${index}`} segment={segment} />
         ))}
@@ -181,11 +165,7 @@ function ProseBlock({ segments }: { segments: CriticSegment[] }) {
   return <View style={{ gap: space.xs }}>{rows}</View>;
 }
 
-function CodeBlock({
-  block,
-}: {
-  block: Extract<CriticBlock, { type: 'code' | 'commented-code' }>;
-}) {
+function CodeBlock({ block }: { block: Extract<CriticBlock, { type: 'code' | 'commented-code' }> }) {
   const { colors } = useTheme();
   const fenceLabel = block.fence.replace(/^`+/, '').trim();
   return (

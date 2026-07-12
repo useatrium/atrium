@@ -152,9 +152,7 @@
       "engine": "claude-code",
       "harness": "claude-code",
       "tool_name": "Bash",
-      "input_keys": [
-        "command"
-      ],
+      "input_keys": ["command"],
       "persona_id": null,
       "prompt_ref": "harness:claude-code",
       "prompt_sha": "512feedd906cafad59009ed56b8491d282ab1b5dc5132ac354927e7064c08208",
@@ -374,9 +372,7 @@
     "data": {
       "type": "obs.execution_summary",
       "engine": "claude-code",
-      "models": [
-        "claude-fable-5"
-      ],
+      "models": ["claude-fable-5"],
       "status": "completed",
       "harness": "claude-code",
       "ttft_ms": 160.0,

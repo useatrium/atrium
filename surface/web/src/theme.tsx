@@ -7,14 +7,7 @@ import {
   randomId,
   type UserPrefs,
 } from '@atrium/surface-client';
-import {
-  createContext,
-  useContext,
-  useEffect,
-  useMemo,
-  useState,
-  type ReactNode,
-} from 'react';
+import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { api } from './api';
 import { eventCache } from './cacheIdb';
 import { showErrorToast } from './components/Toasts';

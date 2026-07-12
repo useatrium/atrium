@@ -33,10 +33,7 @@ export function SuggestionStrip({
   onActionError?: (err: unknown) => void;
 }) {
   return (
-    <div
-      data-testid="suggestion-strip"
-      className="shrink-0 border-t border-edge bg-surface-raised/40 px-3 py-2"
-    >
+    <div data-testid="suggestion-strip" className="shrink-0 border-t border-edge bg-surface-raised/40 px-3 py-2">
       <div className="mb-1.5 text-3xs font-semibold uppercase tracking-wider text-fg-muted">
         Suggestions · {suggestions.length}
       </div>
@@ -122,16 +119,10 @@ function SuggestionRow({
   const errorId = `suggestion-${suggestion.id}-error`;
 
   return (
-    <div
-      data-testid="suggestion-row"
-      aria-busy={busy ? 'true' : undefined}
-      className="text-xs"
-    >
+    <div data-testid="suggestion-row" aria-busy={busy ? 'true' : undefined} className="text-xs">
       <div className="leading-relaxed">
         <span className="font-semibold text-fg">{authorName}</span>{' '}
-        {mode !== 'editing' && (
-          <span className="whitespace-pre-wrap break-words text-fg-body">{suggestion.text}</span>
-        )}
+        {mode !== 'editing' && <span className="whitespace-pre-wrap break-words text-fg-body">{suggestion.text}</span>}
       </div>
 
       {mode === 'editing' ? (

@@ -95,15 +95,7 @@ function LoadingState() {
   );
 }
 
-function EmptyState({
-  file,
-  downloadUrl,
-  message,
-}: {
-  file: HubFile;
-  downloadUrl: string;
-  message: string;
-}) {
+function EmptyState({ file, downloadUrl, message }: { file: HubFile; downloadUrl: string; message: string }) {
   const { colors } = useTheme();
   return (
     <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: space.xl, gap: space.md }}>
@@ -113,9 +105,7 @@ function EmptyState({
       <Text style={{ color: colors.textMuted, fontSize: font.sm, textAlign: 'center' }}>
         {file.mime ?? 'PowerPoint presentation'}, {formatSize(file.sizeBytes)}
       </Text>
-      <Text style={{ color: colors.textMuted, fontSize: font.sm, lineHeight: 20, textAlign: 'center' }}>
-        {message}
-      </Text>
+      <Text style={{ color: colors.textMuted, fontSize: font.sm, lineHeight: 20, textAlign: 'center' }}>{message}</Text>
       <Pressable
         accessibilityRole="button"
         accessibilityLabel="Download presentation"
@@ -149,7 +139,8 @@ export function PptxPane(props: {
     setState({ status: 'loading', slides: null, message: null });
     fetch(downloadUrl, { headers: fileHeaders })
       .then(async (res) => {
-        if (!res.ok) throw new Error(`Presentation unavailable (${res.status}${res.statusText ? ` ${res.statusText}` : ''}).`);
+        if (!res.ok)
+          throw new Error(`Presentation unavailable (${res.status}${res.statusText ? ` ${res.statusText}` : ''}).`);
         return res.arrayBuffer();
       })
       .then((buffer) => extractSlides(buffer))
@@ -222,7 +213,10 @@ export function PptxPane(props: {
           <View style={{ gap: space.xs }}>
             {slide.lines.length > 0 ? (
               slide.lines.map((line, index) => (
-                <Text key={`${slide.number}-${index}`} style={{ color: colors.text, fontSize: font.sm, lineHeight: 20 }}>
+                <Text
+                  key={`${slide.number}-${index}`}
+                  style={{ color: colors.text, fontSize: font.sm, lineHeight: 20 }}
+                >
                   {line}
                 </Text>
               ))

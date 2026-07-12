@@ -1981,25 +1981,27 @@ export function Chat({
                 </>
               )}
             </h1>
-            {!showNonChatSurface && active && (membersRouteOpen || active.kind === 'private' || active.kind === 'gdm') && (
-              <ChannelMembersMenu
-                channel={active}
-                meId={me.id}
-                enqueueOp={enqueueOp}
-                onSetArchived={setArchived}
-                onSetPinned={setPinned}
-                open={membersRouteOpen}
-                onOpenChange={(open) => {
-                  goToRoute({
-                    surface: 'chat',
-                    channelId: active.id,
-                    sessionId: null,
-                    membersOpen: open,
-                    focusSession: false,
-                  });
-                }}
-              />
-            )}
+            {!showNonChatSurface &&
+              active &&
+              (membersRouteOpen || active.kind === 'private' || active.kind === 'gdm') && (
+                <ChannelMembersMenu
+                  channel={active}
+                  meId={me.id}
+                  enqueueOp={enqueueOp}
+                  onSetArchived={setArchived}
+                  onSetPinned={setPinned}
+                  open={membersRouteOpen}
+                  onOpenChange={(open) => {
+                    goToRoute({
+                      surface: 'chat',
+                      channelId: active.id,
+                      sessionId: null,
+                      membersOpen: open,
+                      focusSession: false,
+                    });
+                  }}
+                />
+              )}
             {showNonChatSurface ? (
               <button
                 type="button"

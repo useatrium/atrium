@@ -3,18 +3,17 @@
 import { act, cleanup, renderHook } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { QueuedOp } from '@atrium/surface-client';
-import {
-  sessionQueueFailureFromOp,
-  useSessionQueueFailures,
-} from '../src/useSessionQueueFailures';
+import { sessionQueueFailureFromOp, useSessionQueueFailures } from '../src/useSessionQueueFailures';
 
 afterEach(cleanup);
 
 describe('sessionQueueFailureFromOp', () => {
   it('extracts failed steer and cancel metadata from queued ops', () => {
-    expect(
-      sessionQueueFailureFromOp(queuedOp('session.steer', { sessionId: 's-1', text: 'try this' })),
-    ).toEqual({ type: 'steer', sessionId: 's-1', text: 'try this' });
+    expect(sessionQueueFailureFromOp(queuedOp('session.steer', { sessionId: 's-1', text: 'try this' }))).toEqual({
+      type: 'steer',
+      sessionId: 's-1',
+      text: 'try this',
+    });
 
     expect(sessionQueueFailureFromOp(queuedOp('session.cancel', { sessionId: 's-2' }))).toEqual({
       type: 'cancel',
@@ -36,9 +35,7 @@ describe('useSessionQueueFailures', () => {
     const { result } = renderHook(() => useSessionQueueFailures());
 
     act(() => {
-      result.current.rememberRejectedSessionOp(
-        queuedOp('session.steer', { sessionId: 's-1', text: 'retry me' }),
-      );
+      result.current.rememberRejectedSessionOp(queuedOp('session.steer', { sessionId: 's-1', text: 'retry me' }));
       result.current.rememberRejectedSessionOp(queuedOp('session.cancel', { sessionId: 's-2' }));
     });
 

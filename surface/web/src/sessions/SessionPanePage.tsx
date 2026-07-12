@@ -27,22 +27,16 @@ type LoadState = 'loading' | 'ready' | 'not-found';
 // Same WS routing as Chat: desktop shell → absolute server origin with a fresh
 // bearer token per attempt; e2e may override; browsers keep same-origin /ws.
 const browserWsUrl = import.meta.env.VITE_ATRIUM_WS_URL?.trim();
-const wsOptions = isDesktop
-  ? { url: () => desktopWsUrl() ?? '' }
-  : browserWsUrl
-    ? { url: browserWsUrl }
-    : undefined;
+const wsOptions = isDesktop ? { url: () => desktopWsUrl() ?? '' } : browserWsUrl ? { url: browserWsUrl } : undefined;
 
 const TITLE_STATUS_LABELS: Partial<Record<SessionStatus, string>> = { spawning: 'starting' };
 
-export function sessionPaneDocumentTitle(
-  session: Session,
-  opts: { now?: number; unseen?: boolean } = {},
-): string {
+export function sessionPaneDocumentTitle(session: Session, opts: { now?: number; unseen?: boolean } = {}): string {
   const now = opts.now ?? Date.now();
-  const status = !isTerminalSessionStatus(session.status) && isStalledSessionStatus(session, now)
-    ? 'stalled'
-    : (TITLE_STATUS_LABELS[session.status] ?? session.status);
+  const status =
+    !isTerminalSessionStatus(session.status) && isStalledSessionStatus(session, now)
+      ? 'stalled'
+      : (TITLE_STATUS_LABELS[session.status] ?? session.status);
   return `${opts.unseen ? '● ' : ''}${session.title} · ${status}`;
 }
 
@@ -294,13 +288,7 @@ export function SessionPanePage({ sessionId, me }: { sessionId: string; me: User
   );
 }
 
-function SessionPanePagePlaceholder({
-  notFound,
-  sessionId,
-}: {
-  notFound: boolean;
-  sessionId: string;
-}) {
+function SessionPanePagePlaceholder({ notFound, sessionId }: { notFound: boolean; sessionId: string }) {
   return (
     <aside className="flex min-w-0 flex-1 flex-col border-l border-edge bg-surface">
       <header className="flex h-12 shrink-0 items-center justify-between border-b border-edge px-4">
@@ -324,9 +312,7 @@ function SessionPanePagePlaceholder({
           </a>
         </div>
       ) : (
-        <div className="flex flex-1 items-center justify-center text-sm text-fg-muted">
-          Loading session…
-        </div>
+        <div className="flex flex-1 items-center justify-center text-sm text-fg-muted">Loading session…</div>
       )}
     </aside>
   );

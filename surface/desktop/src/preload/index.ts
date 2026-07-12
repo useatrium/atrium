@@ -25,8 +25,7 @@ contextBridge.exposeInMainWorld('atrium', {
   serverUrl: boot.serverUrl,
   /** Persisted login, or null when signed out. */
   session: boot.session,
-  setSession: (value: DesktopSession): Promise<void> =>
-    ipcRenderer.invoke('atrium:session:set', value),
+  setSession: (value: DesktopSession): Promise<void> => ipcRenderer.invoke('atrium:session:set', value),
   clearSession: (): Promise<void> => ipcRenderer.invoke('atrium:session:clear'),
   /** Set the dock/taskbar unread badge (0 clears it). */
   setBadge: (count: number): Promise<void> => ipcRenderer.invoke('atrium:badge', count),

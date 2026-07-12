@@ -55,12 +55,7 @@ describe('AnswerProposals (mobile)', () => {
   it('fires onSubmit with the proposal id', () => {
     const onSubmit = vi.fn();
     renderUI(
-      <AnswerProposals
-        proposals={[proposal()]}
-        prompts={[prompt()]}
-        onSubmit={onSubmit}
-        onDismiss={() => {}}
-      />,
+      <AnswerProposals proposals={[proposal()]} prompts={[prompt()]} onSubmit={onSubmit} onDismiss={() => {}} />,
     );
 
     fireEvent.click(screen.getByLabelText('Submit proposal from Riley'));
@@ -70,12 +65,7 @@ describe('AnswerProposals (mobile)', () => {
   it('fires onDismiss with the proposal id', () => {
     const onDismiss = vi.fn();
     renderUI(
-      <AnswerProposals
-        proposals={[proposal()]}
-        prompts={[prompt()]}
-        onSubmit={() => {}}
-        onDismiss={onDismiss}
-      />,
+      <AnswerProposals proposals={[proposal()]} prompts={[prompt()]} onSubmit={() => {}} onDismiss={onDismiss} />,
     );
 
     fireEvent.click(screen.getByLabelText('Dismiss proposal from Riley'));

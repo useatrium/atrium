@@ -60,24 +60,20 @@ export function useSessionPaneState({
       dispatch({ type: 'open-session', sessionId });
       client
         .get(sessionId)
-        .then(({ session }) =>
-          dispatch({ type: 'session-upsert', session: sessionFromWire(session) }),
-        )
+        .then(({ session }) => dispatch({ type: 'session-upsert', session: sessionFromWire(session) }))
         .catch(() => dispatch({ type: 'session-load-failed', sessionId }));
     },
     [client, dispatch],
   );
 
-  const paneSession: Session | null = openSessionId ? sessions[openSessionId] ?? null : null;
+  const paneSession: Session | null = openSessionId ? (sessions[openSessionId] ?? null) : null;
 
   const hasChannelSessions = useMemo(
-    () =>
-      activeChannel != null &&
-      Object.values(sessions).some((session) => session.channelId === activeChannel.id),
+    () => activeChannel != null && Object.values(sessions).some((session) => session.channelId === activeChannel.id),
     [activeChannel, sessions],
   );
 
-  const paneWatchers = paneSession ? presence[`session:${paneSession.id}`] ?? NO_WATCHERS : NO_WATCHERS;
+  const paneWatchers = paneSession ? (presence[`session:${paneSession.id}`] ?? NO_WATCHERS) : NO_WATCHERS;
 
   const spectators = useMemo(() => sessionSpectatorCounts(presence), [presence]);
 

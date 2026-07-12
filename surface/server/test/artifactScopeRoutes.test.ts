@@ -19,11 +19,7 @@ const mockedS3 = vi.hoisted(() => {
       this.objects.set(key, { body: Buffer.from(body), contentType });
     };
 
-    uploadObjectStream = async (
-      key: string,
-      stream: NodeJS.ReadableStream,
-      contentType: string,
-    ): Promise<void> => {
+    uploadObjectStream = async (key: string, stream: NodeJS.ReadableStream, contentType: string): Promise<void> => {
       const chunks: Buffer[] = [];
       for await (const chunk of stream as AsyncIterable<Buffer | Uint8Array | string>) {
         chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
@@ -128,7 +124,9 @@ async function session(channelId = fx.channelId): Promise<string> {
 }
 
 async function commit(sessionId: string, path: string, bytes: string) {
-  const sessionRow = await pool.query<{ channel_id: string }>('SELECT channel_id FROM sessions WHERE id = $1', [sessionId]);
+  const sessionRow = await pool.query<{ channel_id: string }>('SELECT channel_id FROM sessions WHERE id = $1', [
+    sessionId,
+  ]);
   const channelId = sessionRow.rows[0]!.channel_id;
   const payload = Buffer.from(bytes);
   const sha = createHash('sha256').update(payload).digest('hex');

@@ -5,9 +5,7 @@ export type SessionQueueFailure =
   | { type: 'steer'; sessionId: string; text: string }
   | { type: 'cancel'; sessionId: string };
 
-export function sessionQueueFailureFromOp(
-  op: Pick<QueuedOp, 'opType' | 'payload'>,
-): SessionQueueFailure | null {
+export function sessionQueueFailureFromOp(op: Pick<QueuedOp, 'opType' | 'payload'>): SessionQueueFailure | null {
   if (typeof op.payload !== 'object' || op.payload === null) return null;
   if (op.opType === 'session.steer') {
     const payload = op.payload as { sessionId?: unknown; text?: unknown };

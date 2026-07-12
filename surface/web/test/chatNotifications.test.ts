@@ -77,12 +77,7 @@ describe('notificationForWireEvent', () => {
 
   it('notifies for DMs without a mention', () => {
     expect(
-      notificationForWireEvent(
-        event({ payload: { text: 'hello there' } }),
-        me,
-        [channel({ kind: 'dm' })],
-        {},
-      ),
+      notificationForWireEvent(event({ payload: { text: 'hello there' } }), me, [channel({ kind: 'dm' })], {}),
     ).toMatchObject({
       kind: 'message',
       title: 'Ada Lovelace (direct message)',
@@ -92,9 +87,7 @@ describe('notificationForWireEvent', () => {
 
   it('ignores self-authored, unmentioned, and muted channel messages', () => {
     expect(notificationForWireEvent(event({ actorId: me.id }), me, [channel()], {})).toBeNull();
-    expect(
-      notificationForWireEvent(event({ payload: { text: 'hello there' } }), me, [channel()], {}),
-    ).toBeNull();
+    expect(notificationForWireEvent(event({ payload: { text: 'hello there' } }), me, [channel()], {})).toBeNull();
     expect(notificationForWireEvent(event(), me, [channel({ muted: true })], {})).toBeNull();
   });
 
@@ -112,11 +105,17 @@ describe('notificationForWireEvent', () => {
       body: 'hello everyone',
     });
     expect(
-      notificationForWireEvent(event(), me, [channel()], {}, {
-        messages: 'off',
-        sessions: true,
-        calls: true,
-      }),
+      notificationForWireEvent(
+        event(),
+        me,
+        [channel()],
+        {},
+        {
+          messages: 'off',
+          sessions: true,
+          calls: true,
+        },
+      ),
     ).toBeNull();
   });
 

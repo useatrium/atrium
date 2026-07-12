@@ -40,9 +40,7 @@ if (!config.resolver.assetExts.includes('wasm')) {
 // pnpm's isolated layout: react-syntax-highlighter is only resolvable through
 // its consumer, so hop via react-native-syntax-highlighter.
 const rnshBase = path.dirname(require.resolve('react-native-syntax-highlighter/package.json'));
-const rshBase = path.dirname(
-  require.resolve('react-syntax-highlighter/package.json', { paths: [rnshBase] }),
-);
+const rshBase = path.dirname(require.resolve('react-syntax-highlighter/package.json', { paths: [rnshBase] }));
 const RSH_LEGACY_SUBPATHS = {
   'react-syntax-highlighter/prism': path.join(rshBase, 'dist/cjs/prism.js'),
   'react-syntax-highlighter/styles/hljs': path.join(rshBase, 'dist/cjs/styles/hljs/index.js'),

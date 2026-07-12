@@ -83,9 +83,7 @@ export function useSessionStream(sessionId: string | null, active = false): Sess
       if (flushScheduled) return;
       flushScheduled = true;
       const raf =
-        typeof requestAnimationFrame === 'function'
-          ? requestAnimationFrame
-          : (cb: () => void) => setTimeout(cb, 16);
+        typeof requestAnimationFrame === 'function' ? requestAnimationFrame : (cb: () => void) => setTimeout(cb, 16);
       raf(() => {
         flushScheduled = false;
         if (disposed) return;

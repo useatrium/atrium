@@ -38,7 +38,9 @@ function extension(file: Pick<HubFile, 'name' | 'path'>): string {
   return dot >= 0 ? name.slice(dot + 1).toLowerCase() : '';
 }
 
-function normalizedSnippetKind(file: Pick<HubFile, 'isText' | 'mediaKind' | 'mime' | 'name' | 'path'>): 'text' | 'markdown' | 'code' | 'other' {
+function normalizedSnippetKind(
+  file: Pick<HubFile, 'isText' | 'mediaKind' | 'mime' | 'name' | 'path'>,
+): 'text' | 'markdown' | 'code' | 'other' {
   const ext = extension(file);
   const mime = file.mime?.toLowerCase() ?? '';
   if (mime === 'text/markdown' || ext === 'md' || ext === 'markdown') return 'markdown';

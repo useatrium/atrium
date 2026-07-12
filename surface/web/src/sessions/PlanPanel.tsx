@@ -5,13 +5,7 @@ import { SessionMarkdown } from './Markdown';
 
 type PlanState = NonNullable<SessionState['plan']>;
 
-export const PlanPanel = memo(function PlanPanel({
-  todos,
-  plan,
-}: {
-  todos?: TodoEntry[];
-  plan?: PlanState | null;
-}) {
+export const PlanPanel = memo(function PlanPanel({ todos, plan }: { todos?: TodoEntry[]; plan?: PlanState | null }) {
   const [open, setOpen] = useState(false);
   const hasTodos = (todos?.length ?? 0) > 0;
   const hasPlan = plan != null;
@@ -36,9 +30,7 @@ export const PlanPanel = memo(function PlanPanel({
         aria-expanded={open}
         className="flex w-full items-center gap-2 px-3.5 py-2 text-left text-xs text-fg-secondary hover:bg-surface-overlay/50"
       >
-        <span className="text-fg-muted">
-          {open ? <ChevronDownIcon size={14} /> : <ChevronRightIcon size={14} />}
-        </span>
+        <span className="text-fg-muted">{open ? <ChevronDownIcon size={14} /> : <ChevronRightIcon size={14} />}</span>
         <span className="min-w-0 flex-1 truncate font-semibold">{summary}</span>
       </button>
       {open && (
@@ -46,10 +38,7 @@ export const PlanPanel = memo(function PlanPanel({
           {hasTodos && (
             <ul className="space-y-2">
               {todos!.map((todo, index) => (
-                <li
-                  key={`${index}:${todo.content}`}
-                  className="flex min-w-0 items-start gap-2 text-sm leading-relaxed"
-                >
+                <li key={`${index}:${todo.content}`} className="flex min-w-0 items-start gap-2 text-sm leading-relaxed">
                   <TodoStatusIcon status={todo.status} />
                   <span
                     className={`min-w-0 flex-1 break-words ${
@@ -67,11 +56,7 @@ export const PlanPanel = memo(function PlanPanel({
             </ul>
           )}
           {plan?.text ? (
-            <div
-              className={`max-w-none text-sm text-fg-body ${
-                hasTodos ? 'mt-3 border-t border-edge pt-3' : ''
-              }`}
-            >
+            <div className={`max-w-none text-sm text-fg-body ${hasTodos ? 'mt-3 border-t border-edge pt-3' : ''}`}>
               <SessionMarkdown text={plan.text} />
             </div>
           ) : null}
@@ -101,9 +86,6 @@ function TodoStatusIcon({ status }: { status: TodoEntry['status'] }) {
     );
   }
   return (
-    <span
-      aria-hidden="true"
-      className="mt-1 h-3 w-3 shrink-0 rounded-full border border-edge-strong bg-surface"
-    />
+    <span aria-hidden="true" className="mt-1 h-3 w-3 shrink-0 rounded-full border border-edge-strong bg-surface" />
   );
 }

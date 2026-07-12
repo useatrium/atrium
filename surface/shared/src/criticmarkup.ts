@@ -449,7 +449,5 @@ function isEscaped(source: string, index: number): boolean {
 }
 
 function unescapeCriticText(value: string): string {
-  return value
-    .replace(/\\\{(?=(?:\+\+|--|~~|==|>>))/g, '{')
-    .replace(/(\+\+|--|~~|==|>>|<<)\\\}/g, '$1}');
+  return value.replace(/\\\{(?=(?:\+\+|--|~~|==|>>))/g, '{').replace(/(\+\+|--|~~|==|>>|<<)\\\}/g, '$1}');
 }

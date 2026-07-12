@@ -15,15 +15,7 @@ import { MobileHeader } from '../../../src/components/MobileHeader';
 
 type IoniconName = ComponentProps<typeof Ionicons>['name'];
 
-function HeaderButton({
-  icon,
-  label,
-  onPress,
-}: {
-  icon: IoniconName;
-  label: string;
-  onPress: () => void;
-}) {
+function HeaderButton({ icon, label, onPress }: { icon: IoniconName; label: string; onPress: () => void }) {
   const { colors } = useTheme();
   return (
     <Pressable
@@ -93,15 +85,13 @@ export default function ChannelList() {
   }, [state.channels]);
 
   const row = (c: Channel) => {
-    const unread = c.muted ? false : state.unread[c.id] ?? false;
+    const unread = c.muted ? false : (state.unread[c.id] ?? false);
     const partner = dmPartner(c, me.id);
     const label = channelLabel(c, me.id);
     const isArchived = c.archivedAt != null;
     const openActions = () => {
       Alert.alert(label, undefined, [
-        ...(isArchived
-          ? []
-          : [{ text: c.pinned ? 'Unpin' : 'Pin', onPress: () => setChannelPinned(c.id, !c.pinned) }]),
+        ...(isArchived ? [] : [{ text: c.pinned ? 'Unpin' : 'Pin', onPress: () => setChannelPinned(c.id, !c.pinned) }]),
         {
           text: isArchived ? 'Unarchive' : 'Archive',
           onPress: () => setChannelArchived(c.id, !isArchived),
@@ -134,9 +124,7 @@ export default function ChannelList() {
           <Avatar name={channelAvatarName(c, me.id)} seed={partner.id} size={28} />
         ) : c.kind === 'gdm' ? (
           <View style={{ width: 28, alignItems: 'center' }}>
-            <Text style={{ color: colors.textMuted, fontSize: font.md, fontWeight: '700' }}>
-              @
-            </Text>
+            <Text style={{ color: colors.textMuted, fontSize: font.md, fontWeight: '700' }}>@</Text>
           </View>
         ) : (
           <View style={{ width: 28, alignItems: 'center' }}>
@@ -174,15 +162,11 @@ export default function ChannelList() {
       : []),
     { key: 'channels-header', kind: 'header' as const, title: 'Channels' },
     ...channels.map((channel) => ({ key: channel.id, kind: 'channel' as const, channel })),
-    ...(channelsError && state.channels.length === 0
-      ? [{ key: 'channels-error', kind: 'error' as const }]
-      : []),
+    ...(channelsError && state.channels.length === 0 ? [{ key: 'channels-error', kind: 'error' as const }] : []),
     ...(state.channels.length === 0 && !channelsLoaded && !channelsError
       ? [{ key: 'channels-loading', kind: 'loading' as const }]
       : []),
-    ...(channels.length === 0 && channelsLoaded
-      ? [{ key: 'channels-empty', kind: 'empty' as const }]
-      : []),
+    ...(channels.length === 0 && channelsLoaded ? [{ key: 'channels-empty', kind: 'empty' as const }] : []),
     ...(dms.length > 0
       ? [
           { key: 'dms-header', kind: 'header' as const, title: 'Direct messages' },
@@ -192,9 +176,7 @@ export default function ChannelList() {
     ...(archived.length > 0
       ? [
           { key: 'archived-toggle', kind: 'archived-toggle' as const },
-          ...(archivedOpen
-            ? archived.map((channel) => ({ key: channel.id, kind: 'channel' as const, channel }))
-            : []),
+          ...(archivedOpen ? archived.map((channel) => ({ key: channel.id, kind: 'channel' as const, channel })) : []),
         ]
       : []),
   ];
@@ -241,11 +223,7 @@ export default function ChannelList() {
                   paddingBottom: space.sm,
                 }}
               >
-                <Ionicons
-                  name={archivedOpen ? 'chevron-down' : 'chevron-forward'}
-                  size={14}
-                  color={colors.textMuted}
-                />
+                <Ionicons name={archivedOpen ? 'chevron-down' : 'chevron-forward'} size={14} color={colors.textMuted} />
                 <Text
                   style={{
                     color: colors.textMuted,
@@ -276,9 +254,7 @@ export default function ChannelList() {
                 onPress={refreshChannels}
                 style={{ minHeight: 44, justifyContent: 'center', paddingHorizontal: space.lg }}
               >
-                <Text style={{ color: colors.danger, fontSize: font.sm }}>
-                  Channels failed — tap to retry
-                </Text>
+                <Text style={{ color: colors.danger, fontSize: font.sm }}>Channels failed — tap to retry</Text>
               </Pressable>
             );
           }

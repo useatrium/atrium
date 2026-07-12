@@ -6,10 +6,10 @@
 // into state.fileChanges; collectFileChanges merges both for the drawer, and
 // codexInlineFileChanges anchors them for inline transcript rendering.
 
-import type { JsonObject } from "./types.js";
-import type { FileChange, FileChangeKind, SessionItem, SessionState, ToolCallItem } from "./reducer.js";
+import type { JsonObject } from './types.js';
+import type { FileChange, FileChangeKind, SessionItem, SessionState, ToolCallItem } from './reducer.js';
 
-export type { FileChange, FileChangeKind } from "./reducer.js";
+export type { FileChange, FileChangeKind } from './reducer.js';
 
 /** Earliest event a transcript item / change was sourced from — its position in
  * the stream. Items are pushed in event order, so across items this is
@@ -20,10 +20,10 @@ function startEventId(sourceEventIds: number[]): number {
 
 // Claude Code's Edit + the Anthropic text-editor tool (whose str_replace command
 // uses old_str/new_str, not old_string/new_string).
-const EDIT_TOOLS = new Set(["Edit", "str_replace_editor", "str_replace_based_edit_tool"]);
-const WRITE_TOOLS = new Set(["Write", "create_file"]);
-const MULTI_EDIT_TOOLS = new Set(["MultiEdit"]);
-const NOTEBOOK_TOOLS = new Set(["NotebookEdit"]);
+const EDIT_TOOLS = new Set(['Edit', 'str_replace_editor', 'str_replace_based_edit_tool']);
+const WRITE_TOOLS = new Set(['Write', 'create_file']);
+const MULTI_EDIT_TOOLS = new Set(['MultiEdit']);
+const NOTEBOOK_TOOLS = new Set(['NotebookEdit']);
 
 /** Strip sandbox/canonical prefixes so work surfaces show the path the agent sees. */
 export function displayPath(path: string): string {
@@ -35,18 +35,18 @@ export function displayPath(path: string): string {
   if (workspace) return workspace[1]!;
   const home = /^\/home\/agent\/(.+)$/.exec(path);
   if (home) return home[1]!;
-  return path.replace(/^\.\//, "");
+  return path.replace(/^\.\//, '');
 }
 
 function str(value: unknown): string | null {
-  return typeof value === "string" ? value : null;
+  return typeof value === 'string' ? value : null;
 }
 
 /** Split into lines, dropping a single trailing empty from a terminal newline
  * (old_string/content frequently end with "\n", which would emit a ghost line). */
 function splitLines(text: string): string[] {
-  const parts = text.split("\n");
-  if (parts.length > 1 && parts[parts.length - 1] === "") parts.pop();
+  const parts = text.split('\n');
+  if (parts.length > 1 && parts[parts.length - 1] === '') parts.pop();
   return parts;
 }
 
@@ -56,16 +56,11 @@ function synthDiff(oldText: string | null, newText: string | null): string {
   const lines: string[] = [];
   if (oldText) for (const l of splitLines(oldText)) lines.push(`- ${l}`);
   if (newText) for (const l of splitLines(newText)) lines.push(`+ ${l}`);
-  return lines.join("\n");
+  return lines.join('\n');
 }
 
 function pathFrom(input: JsonObject): string | null {
-  return (
-    str(input["file_path"]) ??
-    str(input["path"]) ??
-    str(input["notebook_path"]) ??
-    str(input["filePath"])
-  );
+  return str(input['file_path']) ?? str(input['path']) ?? str(input['notebook_path']) ?? str(input['filePath']);
 }
 
 /** Map a single Claude/amp edit tool_call to a FileChange, or null if it is not
@@ -78,27 +73,27 @@ export function fileChangeFromToolCall(item: ToolCallItem): FileChange | null {
   let diff: string;
 
   if (EDIT_TOOLS.has(item.name)) {
-    kind = "update";
-    const oldText = str(item.input["old_string"]) ?? str(item.input["old_str"]);
-    const newText = str(item.input["new_string"]) ?? str(item.input["new_str"]);
+    kind = 'update';
+    const oldText = str(item.input['old_string']) ?? str(item.input['old_str']);
+    const newText = str(item.input['new_string']) ?? str(item.input['new_str']);
     diff = synthDiff(oldText, newText);
   } else if (WRITE_TOOLS.has(item.name)) {
-    kind = "add";
-    diff = synthDiff(null, str(item.input["content"]) ?? str(item.input["file_text"]));
+    kind = 'add';
+    diff = synthDiff(null, str(item.input['content']) ?? str(item.input['file_text']));
   } else if (MULTI_EDIT_TOOLS.has(item.name)) {
-    kind = "update";
-    const edits = Array.isArray(item.input["edits"]) ? (item.input["edits"] as unknown[]) : [];
+    kind = 'update';
+    const edits = Array.isArray(item.input['edits']) ? (item.input['edits'] as unknown[]) : [];
     diff = edits
       .map((e) =>
-        e && typeof e === "object" && !Array.isArray(e)
-          ? synthDiff(str((e as JsonObject)["old_string"]), str((e as JsonObject)["new_string"]))
-          : "",
+        e && typeof e === 'object' && !Array.isArray(e)
+          ? synthDiff(str((e as JsonObject)['old_string']), str((e as JsonObject)['new_string']))
+          : '',
       )
       .filter(Boolean)
-      .join("\n");
+      .join('\n');
   } else if (NOTEBOOK_TOOLS.has(item.name)) {
-    kind = "update";
-    diff = synthDiff(null, str(item.input["new_source"]));
+    kind = 'update';
+    diff = synthDiff(null, str(item.input['new_source']));
   } else {
     return null;
   }
@@ -118,7 +113,7 @@ export function fileChangeFromToolCall(item: ToolCallItem): FileChange | null {
 export function fileChangesFromItems(items: SessionItem[]): FileChange[] {
   const out: FileChange[] = [];
   for (const item of items) {
-    if (item.type !== "tool_call") continue;
+    if (item.type !== 'tool_call') continue;
     const change = fileChangeFromToolCall(item);
     if (change) out.push(change);
   }
@@ -138,8 +133,11 @@ export function normalizeCodexFileChange(change: FileChange): FileChange {
     ...change,
     path: displayPath(change.path),
     diff:
-      change.kind === "add" && change.diff
-        ? change.diff.split("\n").map((l) => `+ ${l}`).join("\n")
+      change.kind === 'add' && change.diff
+        ? change.diff
+            .split('\n')
+            .map((l) => `+ ${l}`)
+            .join('\n')
         : change.diff,
   };
 }

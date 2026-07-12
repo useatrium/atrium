@@ -12,13 +12,7 @@ function hasCallBanner(calls: CallState): boolean {
   return !!(calls.notice || calls.incomingCall || calls.activeCall || calls.recoverableCall);
 }
 
-function CallBannerSafeArea({
-  children,
-  hasBanner,
-}: {
-  children: ReactNode;
-  hasBanner: boolean;
-}) {
+function CallBannerSafeArea({ children, hasBanner }: { children: ReactNode; hasBanner: boolean }) {
   return (
     <SafeAreaInsetsContext.Consumer>
       {(insets) => (
@@ -75,12 +69,8 @@ function GlobalCallUI() {
   const incomingCaller = calls.incomingCall
     ? userForCall(calls.incomingCall, state.channels, calls.incomingCall.initiatorId)
     : null;
-  const incomingChannelName = calls.incomingCall
-    ? labelForCallChannel(calls.incomingCall, state.channels, me.id)
-    : '';
-  const activeChannelName = calls.activeCall
-    ? labelForCallChannel(calls.activeCall.call, state.channels, me.id)
-    : '';
+  const incomingChannelName = calls.incomingCall ? labelForCallChannel(calls.incomingCall, state.channels, me.id) : '';
+  const activeChannelName = calls.activeCall ? labelForCallChannel(calls.activeCall.call, state.channels, me.id) : '';
   const recoverableChannelName = calls.recoverableCall
     ? labelForCallChannel(calls.recoverableCall, state.channels, me.id)
     : '';

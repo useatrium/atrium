@@ -195,9 +195,7 @@ function parseActorLine(
   };
 }
 
-function parseSuggestionLine(
-  line: string,
-): Pick<ParsedSteerContextBlock, 'suggestedBy' | 'acceptedBy'> | null {
+function parseSuggestionLine(line: string): Pick<ParsedSteerContextBlock, 'suggestedBy' | 'acceptedBy'> | null {
   const parts = line.split(SUGGESTION_SEPARATOR);
   if (parts.length !== 2) return null;
   const suggestedBy = parseActorLine(parts[0]!, 'suggested by: ');
@@ -228,11 +226,7 @@ function parseActorKind(value: string | undefined): SteerContextActorKind | null
   return value === 'human' || value === 'agent' ? value : null;
 }
 
-function actorLabel(
-  handle: string | null | undefined,
-  kind: SteerContextActorKind,
-  seat?: string | null,
-): string {
+function actorLabel(handle: string | null | undefined, kind: SteerContextActorKind, seat?: string | null): string {
   const cleanSeat = oneLine(seat ?? '');
   return handleLabelParts(handle, cleanSeat ? `${kind}${ACTOR_SEAT_SEPARATOR}${cleanSeat}` : kind);
 }

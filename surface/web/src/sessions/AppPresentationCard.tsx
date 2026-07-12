@@ -64,9 +64,7 @@ function AppPresentationCard({
         title={`${title} preview`}
         src={src}
         sandbox="allow-scripts allow-forms allow-popups allow-modals"
-        className={`block w-full border-0 bg-white ${
-          timeline ? 'h-[28rem] max-h-[70vh]' : 'h-72 max-h-[48vh]'
-        }`}
+        className={`block w-full border-0 bg-white ${timeline ? 'h-[28rem] max-h-[70vh]' : 'h-72 max-h-[48vh]'}`}
       />
     </div>
   );

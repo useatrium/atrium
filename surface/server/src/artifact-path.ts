@@ -20,10 +20,7 @@ const EXCLUDED_ROOTS = new Set(['repo', 'repos', 'context']);
 const EXCLUDED_DOT_ROOTS = new Set(['.claude', '.codex', '.state']);
 const SHARED_ROOTS = new Set(['global', 'channels', 'apps']);
 
-export function canonicalizeSessionArtifactPath(
-  input: string,
-  ctx: SessionArtifactPathContext,
-): string {
+export function canonicalizeSessionArtifactPath(input: string, ctx: SessionArtifactPathContext): string {
   const path = normalizeArtifactPathInput(input);
   if (path.startsWith('scratch/')) {
     const rest = path.slice('scratch/'.length);
@@ -42,10 +39,7 @@ export function canonicalizeSessionArtifactPath(
   return canonicalizeWorkspaceArtifactPath(path, ctx);
 }
 
-export function canonicalizeWorkspaceArtifactPath(
-  input: string,
-  ctx: WorkspaceArtifactPathContext,
-): string {
+export function canonicalizeWorkspaceArtifactPath(input: string, ctx: WorkspaceArtifactPathContext): string {
   const path = normalizeArtifactPathInput(input);
   if (path === 'scratch' || path.startsWith('scratch/')) {
     throw new InvalidArtifactPathError('scratch paths require a session context');
@@ -54,10 +48,7 @@ export function canonicalizeWorkspaceArtifactPath(
   return `shared/channels/${ctx.channelId}/${path}`;
 }
 
-export function displaySessionArtifactPath(
-  path: string,
-  ctx: SessionArtifactPathContext,
-): string {
+export function displaySessionArtifactPath(path: string, ctx: SessionArtifactPathContext): string {
   const activePrefix = `shared/channels/${ctx.channelId}/`;
   if (path.startsWith(activePrefix)) return path.slice(activePrefix.length);
 
@@ -67,10 +58,7 @@ export function displaySessionArtifactPath(
   return path;
 }
 
-export function sessionArtifactPathAliases(
-  path: string,
-  ctx: SessionArtifactPathContext,
-): string[] {
+export function sessionArtifactPathAliases(path: string, ctx: SessionArtifactPathContext): string[] {
   const activePrefix = `shared/channels/${ctx.channelId}/`;
   if (path.startsWith(activePrefix)) {
     const displayPath = path.slice(activePrefix.length);

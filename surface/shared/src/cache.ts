@@ -75,10 +75,7 @@ export function mergeEvents(
   });
 }
 
-export function createEventCache(
-  storage: CacheStorage,
-  flushMs = DEFAULT_CACHE_FLUSH_MS,
-): EventCache {
+export function createEventCache(storage: CacheStorage, flushMs = DEFAULT_CACHE_FLUSH_MS): EventCache {
   let channels: Channel[] | null = null;
   let timelines: Record<string, CachedTimeline> = {};
   let syncCursor = 0;
@@ -120,10 +117,7 @@ export function createEventCache(
       persistedCursor = snapshot.syncCursor;
       pendingCursor = null;
       timelines = Object.fromEntries(
-        Object.entries(snapshot.timelines).map(([channelId, timeline]) => [
-          channelId,
-          normalizeTimeline(timeline),
-        ]),
+        Object.entries(snapshot.timelines).map(([channelId, timeline]) => [channelId, normalizeTimeline(timeline)]),
       );
       return { channels, timelines, syncCursor };
     },

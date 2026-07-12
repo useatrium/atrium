@@ -225,12 +225,8 @@ describe('searchSessionRecords', () => {
     });
     const bobId = await insertUser('bob', 'Bob');
 
-    await expect(
-      searchSessionRecords(pool, { query: 'sprocket', userId: bobId }),
-    ).resolves.toEqual([]);
-    await expect(
-      searchSessionRecords(pool, { query: 'sprocket', userId: fx.userId }),
-    ).resolves.toHaveLength(1);
+    await expect(searchSessionRecords(pool, { query: 'sprocket', userId: bobId })).resolves.toEqual([]);
+    await expect(searchSessionRecords(pool, { query: 'sprocket', userId: fx.userId })).resolves.toHaveLength(1);
   });
 
   it('shows private session records to a channel member (opt-in via membership)', async () => {
@@ -257,17 +253,10 @@ describe('searchSessionRecords', () => {
     });
     const carolId = await insertUser('carol', 'Carol');
     // a non-member sees nothing…
-    await expect(
-      searchSessionRecords(pool, { query: 'grommet', userId: carolId }),
-    ).resolves.toEqual([]);
+    await expect(searchSessionRecords(pool, { query: 'grommet', userId: carolId })).resolves.toEqual([]);
     // …but adding her to the private channel opts her in.
-    await pool.query('INSERT INTO channel_members (channel_id, user_id) VALUES ($1, $2)', [
-      channel.id,
-      carolId,
-    ]);
-    await expect(
-      searchSessionRecords(pool, { query: 'grommet', userId: carolId }),
-    ).resolves.toHaveLength(1);
+    await pool.query('INSERT INTO channel_members (channel_id, user_id) VALUES ($1, $2)', [channel.id, carolId]);
+    await expect(searchSessionRecords(pool, { query: 'grommet', userId: carolId })).resolves.toHaveLength(1);
   });
 });
 
@@ -308,10 +297,7 @@ describe('GET /api/search/sessions', () => {
       headers: { cookie },
     });
     expect(lean.statusCode).toBe(200);
-    expect(lean.json<{ results: { kind: string }[] }>().results.map((hit) => hit.kind)).toEqual([
-      'command',
-      'message',
-    ]);
+    expect(lean.json<{ results: { kind: string }[] }>().results.map((hit) => hit.kind)).toEqual(['command', 'message']);
   });
 
   it('allows full search when the flag is enabled and the user has raw access', async () => {

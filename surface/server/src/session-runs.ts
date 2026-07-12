@@ -1106,8 +1106,7 @@ export class SessionRuns {
     attachments: readonly AgentTurnAttachmentRef[] = [],
     contextBlock?: string,
   ): Promise<void> {
-    const turnContextBlock =
-      contextBlock ?? (await this.buildUserTurnContextBlock(client, row, userId, 'driver'));
+    const turnContextBlock = contextBlock ?? (await this.buildUserTurnContextBlock(client, row, userId, 'driver'));
     text = await appendReferencedEntriesAppendix(client, { sessionId: row.id, userId, text });
     // Stickiness is enforced HERE, at the single authoritative send point:
     // harness effort is per-turn (an omitted field reverts codex to its config
@@ -1176,10 +1175,9 @@ export class SessionRuns {
       });
     } catch (err) {
       if (isCentaurCode(err, 'execution_already_active')) {
-        await client.query(
-          'UPDATE sessions SET centaur_execute_id = NULL, centaur_message_id = NULL WHERE id = $1',
-          [row.id],
-        );
+        await client.query('UPDATE sessions SET centaur_execute_id = NULL, centaur_message_id = NULL WHERE id = $1', [
+          row.id,
+        ]);
         return;
       }
       throw err;
@@ -1959,9 +1957,7 @@ export class SessionRuns {
       return;
     }
     if (frame.event !== 'execution_state') return;
-    const status = isUserStoppedExecutionState(frame.data)
-      ? 'completed'
-      : normalizeStatus(frame.data.status);
+    const status = isUserStoppedExecutionState(frame.data) ? 'completed' : normalizeStatus(frame.data.status);
     if (isTerminalExecutionStatus(frame.data.status)) {
       const resultText = typeof frame.data.result_text === 'string' ? frame.data.result_text : null;
       const terminalAuthFailureEventId = providerAuthFailureTextForFrame(frame)
@@ -2360,9 +2356,7 @@ export class SessionRuns {
         this.hub,
         completedEvent,
         this.questionPushFetchImpl ? { fetchImpl: this.questionPushFetchImpl } : undefined,
-      ).catch((err) =>
-        console.warn('session completed push fanout failed', { id, err }),
-      );
+      ).catch((err) => console.warn('session completed push fanout failed', { id, err }));
     }
     if (events.length > 0) this.scheduleRelease(id);
   }
@@ -2635,10 +2629,9 @@ export class SessionRuns {
     actorId: string,
   ): Promise<{ row: SessionRow; event: WireEvent | null }> {
     if (!row.archived_at) return { row, event: null };
-    const updated = await client.query<SessionRow>(
-      'UPDATE sessions SET archived_at = NULL WHERE id = $1 RETURNING *',
-      [row.id],
-    );
+    const updated = await client.query<SessionRow>('UPDATE sessions SET archived_at = NULL WHERE id = $1 RETURNING *', [
+      row.id,
+    ]);
     const next = updated.rows[0]!;
     const event = await appendEvent(client, {
       workspaceId: next.workspace_id,

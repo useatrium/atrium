@@ -68,7 +68,7 @@ export const DEFAULT_PREFS: UserPrefs = {
 };
 
 function objectRecord(input: unknown): Record<string, unknown> {
-  return typeof input === 'object' && input !== null && !Array.isArray(input) ? input as Record<string, unknown> : {};
+  return typeof input === 'object' && input !== null && !Array.isArray(input) ? (input as Record<string, unknown>) : {};
 }
 
 function decodeOr<A>(schema: Schema.Schema<A>, input: unknown, fallback: A): A {
@@ -79,11 +79,7 @@ function decodeOr<A>(schema: Schema.Schema<A>, input: unknown, fallback: A): A {
 export function normalizeNotificationPrefs(input: unknown): NotificationPrefs {
   const raw = objectRecord(input);
   return {
-    messages: decodeOr(
-      NotificationMessagePrefSchema,
-      raw.messages,
-      DEFAULT_PREFS.notifications.messages,
-    ),
+    messages: decodeOr(NotificationMessagePrefSchema, raw.messages, DEFAULT_PREFS.notifications.messages),
     sessions: decodeOr(Schema.Boolean, raw.sessions, DEFAULT_PREFS.notifications.sessions),
     calls: decodeOr(Schema.Boolean, raw.calls, DEFAULT_PREFS.notifications.calls),
   };
@@ -123,8 +119,7 @@ export function normalizePrefsPatch(input: unknown): Partial<UserPrefs> {
       continue;
     }
     if (Object.is(normalizePrefs({ [key]: value })[key], value)) {
-      (patch as Record<keyof UserPrefs, UserPrefs[keyof UserPrefs]>)[key] =
-        value as UserPrefs[keyof UserPrefs];
+      (patch as Record<keyof UserPrefs, UserPrefs[keyof UserPrefs]>)[key] = value as UserPrefs[keyof UserPrefs];
     }
   }
   return patch;

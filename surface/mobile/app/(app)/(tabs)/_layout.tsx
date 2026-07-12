@@ -11,10 +11,7 @@ import { GlassBar, GlassTabButton } from '../../../src/components/GlassTabBar';
 export default function TabsLayout() {
   const { state } = useChat();
   const activeAgents = useMemo(
-    () =>
-      Object.values(state.sessions ?? {}).filter(
-        (s) => s && s.status && !isTerminalSessionStatus(s.status),
-      ).length,
+    () => Object.values(state.sessions ?? {}).filter((s) => s && s.status && !isTerminalSessionStatus(s.status)).length,
     [state.sessions],
   );
 

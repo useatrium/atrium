@@ -96,10 +96,7 @@ export function TurnsSheet({
                     backgroundColor: pressed ? colors.bgPressed : colors.bg,
                   })}
                 >
-                  <Text
-                    numberOfLines={1}
-                    style={{ color: colors.text, fontSize: font.sm, fontWeight: '600' }}
-                  >
+                  <Text numberOfLines={1} style={{ color: colors.text, fontSize: font.sm, fontWeight: '600' }}>
                     {turn.label}
                   </Text>
                 </Pressable>

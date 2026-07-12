@@ -2,8 +2,7 @@ import { expect, test, type Page } from '@playwright/test';
 import { Pool } from 'pg';
 import { baseURL, channelId, createTestChannel, login, sendMessage, unique } from './helpers.js';
 
-const e2eDatabaseUrl =
-  process.env.E2E_DATABASE_URL ?? 'postgres://atrium:atrium@localhost:5433/atrium_e2e';
+const e2eDatabaseUrl = process.env.E2E_DATABASE_URL ?? 'postgres://atrium:atrium@localhost:5433/atrium_e2e';
 
 async function injectSession(args: {
   handle: string;
@@ -19,13 +18,10 @@ async function injectSession(args: {
   const entryText = 'Browser E2E transcript copy target.';
   try {
     await client.query('BEGIN');
-    const user = await client.query<{ id: string }>('SELECT id FROM users WHERE handle = $1', [
-      args.handle,
+    const user = await client.query<{ id: string }>('SELECT id FROM users WHERE handle = $1', [args.handle]);
+    const channel = await client.query<{ workspace_id: string }>('SELECT workspace_id FROM channels WHERE id = $1', [
+      args.channelId,
     ]);
-    const channel = await client.query<{ workspace_id: string }>(
-      'SELECT workspace_id FROM channels WHERE id = $1',
-      [args.channelId],
-    );
     if (!user.rows[0] || !channel.rows[0]) throw new Error('missing e2e user or channel');
 
     const userId = user.rows[0].id;
@@ -59,12 +55,7 @@ async function injectSession(args: {
       `INSERT INTO session_records
          (session_id, event_id, seq, entry_uid, kind, actor, driver, view_tier, text, meta, ts)
        VALUES ($1, 2, 1, $2, 'message', 'agent', 'codex', 'lean', $3, $4::jsonb, now())`,
-      [
-        sessionId,
-        entryUid,
-        entryText,
-        JSON.stringify({ itemId, messageId: itemId }),
-      ],
+      [sessionId, entryUid, entryText, JSON.stringify({ itemId, messageId: itemId })],
     );
     await client.query('COMMIT');
     return { sessionId, entryHandle, entryText };

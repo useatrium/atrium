@@ -273,9 +273,7 @@ describe('session card transitions across session.* events', () => {
     expect(screen.queryByText('html-app')).toBeNull();
     expect(screen.queryByText('v2')).toBeNull();
     const frame = screen.getByTitle('Support Triage Console preview') as HTMLIFrameElement;
-    expect(frame.getAttribute('src')).toContain(
-      'path=shared%2Fapps%2Fsupport-triage-console%2Fpreview.html',
-    );
+    expect(frame.getAttribute('src')).toContain('path=shared%2Fapps%2Fsupport-triage-console%2Fpreview.html');
     expect(frame.getAttribute('src')).toContain('preview=1');
     expect(frame.className).toContain('h-[28rem]');
   });

@@ -61,7 +61,8 @@ class FakeDb {
 
   async getAllAsync<T>(sql: string): Promise<T[]> {
     if (sql.includes('FROM send_outbox')) return [...(this.sendOutbox ?? [])] as T[];
-    if (sql.includes('FROM client_ops')) return [...this.clientOps].sort((a, b) => a.inserted_at - b.inserted_at) as T[];
+    if (sql.includes('FROM client_ops'))
+      return [...this.clientOps].sort((a, b) => a.inserted_at - b.inserted_at) as T[];
     return [];
   }
 
@@ -113,34 +114,30 @@ describe('SQLite client op migration', () => {
     vi.clearAllMocks();
   });
 
-  it(
-    'migrates legacy send_outbox rows into msg.send client_ops and drops the old table',
-    async () => {
-      const fakeDb = new FakeDb();
-      vi.doMock('expo-sqlite', () => ({
-        openDatabaseAsync: vi.fn(async () => fakeDb),
-      }));
+  it('migrates legacy send_outbox rows into msg.send client_ops and drops the old table', async () => {
+    const fakeDb = new FakeDb();
+    vi.doMock('expo-sqlite', () => ({
+      openDatabaseAsync: vi.fn(async () => fakeDb),
+    }));
 
-      const { eventCache } = await import('../src/lib/cacheSqlite');
-      const ops = await eventCache.listOps();
+    const { eventCache } = await import('../src/lib/cacheSqlite');
+    const ops = await eventCache.listOps();
 
-      expect(fakeDb.sendOutbox).toBeNull();
-      expect(ops.map((op) => op.opType)).toEqual(['msg.send', 'msg.send']);
-      expect(ops.map((op) => op.queueKey)).toEqual(['msg:ch-1', 'msg:ch-1']);
-      expect(ops[0]!.opId).not.toBe('client-a');
-      expect(ops[0]!.payload).toMatchObject({
-        clientMsgId: 'client-a',
-        channelId: 'ch-1',
-        text: 'queued one',
-      });
-      expect(ops[1]!.payload).toMatchObject({
-        clientMsgId: 'client-b',
-        threadRootEventId: 5,
-        attachments: [{ id: 'file-1', filename: 'a.txt' }],
-      });
-    },
-    15_000,
-  );
+    expect(fakeDb.sendOutbox).toBeNull();
+    expect(ops.map((op) => op.opType)).toEqual(['msg.send', 'msg.send']);
+    expect(ops.map((op) => op.queueKey)).toEqual(['msg:ch-1', 'msg:ch-1']);
+    expect(ops[0]!.opId).not.toBe('client-a');
+    expect(ops[0]!.payload).toMatchObject({
+      clientMsgId: 'client-a',
+      channelId: 'ch-1',
+      text: 'queued one',
+    });
+    expect(ops[1]!.payload).toMatchObject({
+      clientMsgId: 'client-b',
+      threadRootEventId: 5,
+      attachments: [{ id: 'file-1', filename: 'a.txt' }],
+    });
+  }, 15_000);
 
   it('drops corrupted client_ops rows instead of returning them to the queue', async () => {
     const fakeDb = new FakeDb();
@@ -179,9 +176,6 @@ describe('SQLite client op migration', () => {
 
     expect(ops.map((op) => op.opId)).toEqual(['good-op']);
     expect(fakeDb.clientOps.map((op) => op.op_id)).toEqual(['good-op']);
-    expect(warn).toHaveBeenCalledWith(
-      'dropping invalid SQLite queued op',
-      expect.any(Error),
-    );
+    expect(warn).toHaveBeenCalledWith('dropping invalid SQLite queued op', expect.any(Error));
   });
 });

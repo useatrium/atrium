@@ -28,10 +28,7 @@ export interface ArtifactConflict {
   right: ConflictSide;
   markers: string;
 }
-export type ResolveChoice =
-  | { kind: 'left' }
-  | { kind: 'right' }
-  | { kind: 'merged'; text: string };
+export type ResolveChoice = { kind: 'left' } | { kind: 'right' } | { kind: 'merged'; text: string };
 
 /** A minimal line diff (base → side) for the side-by-side view. */
 function lineDiff(base: string, side: string): string {
@@ -122,7 +119,10 @@ export function ConflictSurface({
               {conflictDisplayPath(conflict)}
             </span>
             {conflictCanonicalPath(conflict) && (
-              <span className="truncate font-mono text-3xs text-fg-muted" title={conflictCanonicalPath(conflict) ?? undefined}>
+              <span
+                className="truncate font-mono text-3xs text-fg-muted"
+                title={conflictCanonicalPath(conflict) ?? undefined}
+              >
                 {conflictCanonicalPath(conflict)}
               </span>
             )}
@@ -204,7 +204,10 @@ export function ConflictSurface({
               {conflictDisplayPath(conflict)}
             </span>
             {conflictCanonicalPath(conflict) && (
-              <span className="truncate font-mono text-3xs text-fg-muted" title={conflictCanonicalPath(conflict) ?? undefined}>
+              <span
+                className="truncate font-mono text-3xs text-fg-muted"
+                title={conflictCanonicalPath(conflict) ?? undefined}
+              >
                 {conflictCanonicalPath(conflict)}
               </span>
             )}

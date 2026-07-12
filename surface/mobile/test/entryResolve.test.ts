@@ -42,7 +42,10 @@ describe('createEntryResolver', () => {
         sessionTitle: null,
       },
     };
-    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(jsonResponse(entry))));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(jsonResponse(entry))),
+    );
     const resolve = createEntryResolver(session);
     const resolved = await resolve(entry.handle);
     expect(resolved?.handle).toBe(entry.handle);

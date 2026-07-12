@@ -22,9 +22,7 @@ function notificationClickMessage(data: unknown): NotificationClickMessage | nul
   return {
     type: 'notification-click',
     ...(typeof raw.channelId === 'string' ? { channelId: raw.channelId } : {}),
-    ...(typeof raw.eventId === 'string' || typeof raw.eventId === 'number'
-      ? { eventId: raw.eventId }
-      : {}),
+    ...(typeof raw.eventId === 'string' || typeof raw.eventId === 'number' ? { eventId: raw.eventId } : {}),
     ...(typeof raw.sessionId === 'string' ? { sessionId: raw.sessionId } : {}),
     ...(typeof raw.threadRootId === 'string' || typeof raw.threadRootId === 'number'
       ? { threadRootId: raw.threadRootId }

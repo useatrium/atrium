@@ -96,18 +96,21 @@ export function useLongPress({
     [clear, removeTouchEndGuard],
   );
 
-  const applySelectionSuppression = useCallback((element: HTMLElement) => {
-    restoreSelectionStyles();
-    selectionStyleRef.current = {
-      element,
-      userSelect: element.style.userSelect,
-      webkitUserSelect: (element.style as WebkitUserSelectStyle).webkitUserSelect ?? '',
-      webkitTouchCallout: element.style.getPropertyValue('-webkit-touch-callout'),
-    };
-    element.style.userSelect = 'none';
-    (element.style as WebkitUserSelectStyle).webkitUserSelect = 'none';
-    element.style.setProperty('-webkit-touch-callout', 'none');
-  }, [restoreSelectionStyles]);
+  const applySelectionSuppression = useCallback(
+    (element: HTMLElement) => {
+      restoreSelectionStyles();
+      selectionStyleRef.current = {
+        element,
+        userSelect: element.style.userSelect,
+        webkitUserSelect: (element.style as WebkitUserSelectStyle).webkitUserSelect ?? '',
+        webkitTouchCallout: element.style.getPropertyValue('-webkit-touch-callout'),
+      };
+      element.style.userSelect = 'none';
+      (element.style as WebkitUserSelectStyle).webkitUserSelect = 'none';
+      element.style.setProperty('-webkit-touch-callout', 'none');
+    },
+    [restoreSelectionStyles],
+  );
 
   const onPointerUp = useCallback(() => {
     clear({ keepTouchEndGuard: suppressNextTouchEndRef.current });
@@ -175,5 +178,8 @@ function canListenForTouchEnd(): boolean {
 }
 
 function isInteractiveTarget(target: EventTarget): boolean {
-  return target instanceof Element && target.closest('button,a,input,textarea,select,[role="button"],[contenteditable="true"]') != null;
+  return (
+    target instanceof Element &&
+    target.closest('button,a,input,textarea,select,[role="button"],[contenteditable="true"]') != null
+  );
 }

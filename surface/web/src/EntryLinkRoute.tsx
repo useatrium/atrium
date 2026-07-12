@@ -120,9 +120,7 @@ export function EntryLinkRoute({
   children: (destination: EntryLinkDestination) => ReactNode;
 }) {
   const [state, setState] = useState<
-    | { kind: 'loading' }
-    | { kind: 'ready'; destination: EntryLinkDestination }
-    | { kind: 'not-found' }
+    { kind: 'loading' } | { kind: 'ready'; destination: EntryLinkDestination } | { kind: 'not-found' }
   >({ kind: 'loading' });
 
   useEffect(() => {

@@ -48,11 +48,7 @@ function isFallbackUser(user: UserRef): boolean {
 
 function mergeUser(existing: UserRef, next: UserRef): UserRef {
   if (isFallbackUser(next) && !isFallbackUser(existing)) return existing;
-  if (
-    existing.handle === next.handle &&
-    existing.displayName === next.displayName &&
-    existing.id === next.id
-  ) {
+  if (existing.handle === next.handle && existing.displayName === next.displayName && existing.id === next.id) {
     return existing;
   }
   return next;
@@ -85,29 +81,16 @@ function userFromIdentity(
     ?.members?.find((u) => u.id === identity);
   const callParticipant = call.participants.find((u) => u.id === identity);
   const knownUser = knownUsers.find((u) => u.id === identity);
-  const candidates = [channelMember, callParticipant, knownUser].filter(
-    (user): user is UserRef => user != null,
-  );
-  return (
-    candidates.find((user) => !isFallbackUser(user)) ??
-    candidates[0] ??
-    fallbackUser(identity)
-  );
+  const candidates = [channelMember, callParticipant, knownUser].filter((user): user is UserRef => user != null);
+  return candidates.find((user) => !isFallbackUser(user)) ?? candidates[0] ?? fallbackUser(identity);
 }
 
-function enrichParticipants(
-  users: UserRef[],
-  call: CallWire,
-  me: UserRef,
-  channels: Channel[],
-): UserRef[] {
+function enrichParticipants(users: UserRef[], call: CallWire, me: UserRef, channels: Channel[]): UserRef[] {
   return dedupeUsers(users.map((user) => userFromIdentity(user.id, call, me, channels, users)));
 }
 
 function participantsFor(call: CallWire, me: UserRef, channels: Channel[]): UserRef[] {
-  const participants = call.participants.some((u) => u.id === me.id)
-    ? call.participants
-    : [me, ...call.participants];
+  const participants = call.participants.some((u) => u.id === me.id) ? call.participants : [me, ...call.participants];
   return enrichParticipants(participants, call, me, channels);
 }
 
@@ -117,10 +100,7 @@ function upsertIdentityParticipant(
   me: UserRef,
   channels: Channel[],
 ): UserRef[] {
-  return upsertUser(
-    current.participants,
-    userFromIdentity(identity, current.call, me, channels, current.participants),
-  );
+  return upsertUser(current.participants, userFromIdentity(identity, current.call, me, channels, current.participants));
 }
 
 function upsertIdentityParticipants(
@@ -145,9 +125,7 @@ function isLiveCall(call: CallWire): boolean {
 }
 
 function sortLiveCalls(calls: CallWire[]): CallWire[] {
-  return [...calls].sort(
-    (a, b) => a.startedAt.localeCompare(b.startedAt) || a.id.localeCompare(b.id),
-  );
+  return [...calls].sort((a, b) => a.startedAt.localeCompare(b.startedAt) || a.id.localeCompare(b.id));
 }
 
 function normalizeCall(call: CallWire, me: UserRef, channels: Channel[]): CallWire {
@@ -161,12 +139,7 @@ function normalizeLiveCalls(calls: CallWire[], me: UserRef, channels: Channel[])
   return sortLiveCalls(calls.filter(isLiveCall).map((call) => normalizeCall(call, me, channels)));
 }
 
-function upsertLiveCall(
-  calls: CallWire[],
-  call: CallWire,
-  me: UserRef,
-  channels: Channel[],
-): CallWire[] {
+function upsertLiveCall(calls: CallWire[], call: CallWire, me: UserRef, channels: Channel[]): CallWire[] {
   if (!isLiveCall(call)) return calls.filter((current) => current.id !== call.id);
   const next = normalizeCall(call, me, channels);
   const index = calls.findIndex((current) => current.id === next.id);
@@ -226,12 +199,7 @@ export function useCall(me: UserRef, channels: Channel[]) {
       current
         ? {
             ...current,
-            participants: enrichParticipants(
-              current.participants,
-              current.call,
-              me,
-              channels,
-            ),
+            participants: enrichParticipants(current.participants, current.call, me, channels),
           }
         : current,
     );
@@ -290,24 +258,15 @@ export function useCall(me: UserRef, channels: Channel[]) {
       const onParticipantConnected = (participant: RemoteParticipant) => {
         updateActiveCall((current) => ({
           ...current,
-          participants: upsertIdentityParticipant(
-            current,
-            participant.identity,
-            me,
-            currentChannels(),
-          ),
+          participants: upsertIdentityParticipant(current, participant.identity, me, currentChannels()),
         }));
       };
       const onParticipantDisconnected = (participant: RemoteParticipant) => {
         updateActiveCall((current) => ({
           ...current,
           participants: removeUser(current.participants, participant.identity),
-          activeSpeakerIds: new Set(
-            [...current.activeSpeakerIds].filter((id) => id !== participant.identity),
-          ),
-          remoteAudioTracks: current.remoteAudioTracks.filter(
-            (t) => !t.key.startsWith(`${participant.identity}:`),
-          ),
+          activeSpeakerIds: new Set([...current.activeSpeakerIds].filter((id) => id !== participant.identity)),
+          remoteAudioTracks: current.remoteAudioTracks.filter((t) => !t.key.startsWith(`${participant.identity}:`)),
         }));
       };
       const onTrackSubscribed = (
@@ -399,12 +358,7 @@ export function useCall(me: UserRef, channels: Channel[]) {
           for (const participant of room.remoteParticipants.values()) {
             updateActiveCall((active) => ({
               ...active,
-              participants: upsertIdentityParticipant(
-                active,
-                participant.identity,
-                me,
-                currentChannels(),
-              ),
+              participants: upsertIdentityParticipant(active, participant.identity, me, currentChannels()),
             }));
             for (const publication of participant.trackPublications.values()) {
               const track = publication.track;
@@ -489,12 +443,8 @@ export function useCall(me: UserRef, channels: Channel[]) {
 
   const liveCallForChannel = useCallback(
     (channelId: string): CallWire | null =>
-      liveCalls.find(
-        (call) =>
-          call.channelId === channelId &&
-          isLiveCall(call) &&
-          !dismissedCallIds.has(call.id),
-      ) ?? null,
+      liveCalls.find((call) => call.channelId === channelId && isLiveCall(call) && !dismissedCallIds.has(call.id)) ??
+      null,
     [dismissedCallIds, liveCalls],
   );
 
@@ -503,11 +453,7 @@ export function useCall(me: UserRef, channels: Channel[]) {
       if (event.type === 'call.ringing') {
         const nextCall = normalizeCall(event.call, me, currentChannels());
         setLiveCalls((calls) => upsertLiveCall(calls, nextCall, me, currentChannels()));
-        if (
-          nextCall.initiatorId !== me.id &&
-          !activeCallRef.current &&
-          !dismissedCallIdsRef.current.has(nextCall.id)
-        ) {
+        if (nextCall.initiatorId !== me.id && !activeCallRef.current && !dismissedCallIdsRef.current.has(nextCall.id)) {
           setIncomingCall(nextCall);
         }
         setActiveCall((current) =>
@@ -558,9 +504,7 @@ export function useCall(me: UserRef, channels: Channel[]) {
       }
 
       if (event.type === 'call.declined') {
-        setIncomingCall((call) =>
-          call?.id === event.callId && event.userId === me.id ? null : call,
-        );
+        setIncomingCall((call) => (call?.id === event.callId && event.userId === me.id ? null : call));
         if (event.userId === me.id) {
           setDismissedCallIds((ids) => new Set(ids).add(event.callId));
         }
@@ -585,12 +529,8 @@ export function useCall(me: UserRef, channels: Channel[]) {
             ? {
                 ...current,
                 participants: removeUser(current.participants, event.userId),
-                activeSpeakerIds: new Set(
-                  [...current.activeSpeakerIds].filter((id) => id !== event.userId),
-                ),
-                remoteAudioTracks: current.remoteAudioTracks.filter(
-                  (t) => !t.key.startsWith(`${event.userId}:`),
-                ),
+                activeSpeakerIds: new Set([...current.activeSpeakerIds].filter((id) => id !== event.userId)),
+                remoteAudioTracks: current.remoteAudioTracks.filter((t) => !t.key.startsWith(`${event.userId}:`)),
               }
             : current,
         );
@@ -636,31 +576,34 @@ export function useCall(me: UserRef, channels: Channel[]) {
     [connectToCall, starting],
   );
 
-  const joinCall = useCallback(async (callId: string) => {
-    if (answering) return;
-    const current = activeCallRef.current;
-    if (current?.call.id === callId && (roomRef.current || connectPromiseRef.current)) {
-      return connectPromiseRef.current ?? Promise.resolve();
-    }
-    if (current && current.call.id !== callId) {
-      setNotice('Leave the current call before joining another.');
-      return;
-    }
-    setAnswering(true);
-    setNotice(null);
-    try {
-      const join = await api.acceptCall(callId);
-      await connectToCall(join);
-    } catch (err) {
-      if (callUnavailable(err)) {
-        setNotice("Calls aren't available.");
-      } else {
-        setNotice("Couldn't join the call.");
+  const joinCall = useCallback(
+    async (callId: string) => {
+      if (answering) return;
+      const current = activeCallRef.current;
+      if (current?.call.id === callId && (roomRef.current || connectPromiseRef.current)) {
+        return connectPromiseRef.current ?? Promise.resolve();
       }
-    } finally {
-      setAnswering(false);
-    }
-  }, [answering, connectToCall]);
+      if (current && current.call.id !== callId) {
+        setNotice('Leave the current call before joining another.');
+        return;
+      }
+      setAnswering(true);
+      setNotice(null);
+      try {
+        const join = await api.acceptCall(callId);
+        await connectToCall(join);
+      } catch (err) {
+        if (callUnavailable(err)) {
+          setNotice("Calls aren't available.");
+        } else {
+          setNotice("Couldn't join the call.");
+        }
+      } finally {
+        setAnswering(false);
+      }
+    },
+    [answering, connectToCall],
+  );
 
   const acceptIncomingCall = useCallback(async () => {
     const call = incomingCall;
@@ -766,14 +709,8 @@ export function useCall(me: UserRef, channels: Channel[]) {
 
     const timeout = window.setTimeout(() => {
       const current = activeCallRef.current;
-      const remoteCount = current
-        ? current.participants.filter((participant) => participant.id !== me.id).length
-        : 0;
-      if (
-        current?.call.id !== activeCallId ||
-        current.call.status !== 'ringing' ||
-        remoteCount !== 0
-      ) {
+      const remoteCount = current ? current.participants.filter((participant) => participant.id !== me.id).length : 0;
+      if (current?.call.id !== activeCallId || current.call.status !== 'ringing' || remoteCount !== 0) {
         return;
       }
       setNotice('No answer.');

@@ -1010,7 +1010,7 @@ export function createDefaultOpRegistry(): OpRegistry {
           type: 'session-spawn-failed',
           channelId: payload.channelId,
           tempId: payload.clientSpawnId,
-      }),
+        }),
     },
     'session.archive': {
       execute: (api, payload, op) => api.setSessionArchived(payload.sessionId, payload.archived, { opId: op.opId }),

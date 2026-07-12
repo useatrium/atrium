@@ -10,10 +10,7 @@ export function cachedTimelineLastEventId(timeline: CachedTimeline): number {
   return timeline.events.reduce((max, event) => Math.max(max, event.id), 0);
 }
 
-export function cachedTimelineNeedsCursorRepair(
-  timeline: CachedTimeline,
-  syncCursor: number,
-): boolean {
+export function cachedTimelineNeedsCursorRepair(timeline: CachedTimeline, syncCursor: number): boolean {
   return syncCursor > 0 && cachedTimelineLastEventId(timeline) < syncCursor;
 }
 
@@ -63,10 +60,7 @@ export async function hydrateCachedTimelines({
 }): Promise<void> {
   for (const [channelId, timeline] of Object.entries(timelines)) {
     if (isDisposed?.()) return;
-    if (
-      !cachedTimelineNeedsCursorRepair(timeline, syncCursor) &&
-      !cachedTimelineNeedsStructuralRepair(timeline)
-    ) {
+    if (!cachedTimelineNeedsCursorRepair(timeline, syncCursor) && !cachedTimelineNeedsStructuralRepair(timeline)) {
       dispatch({
         type: 'history-loaded',
         channelId,

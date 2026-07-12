@@ -14,9 +14,7 @@ type VapidResponse = {
 };
 
 function notificationApi(): typeof Notification | null {
-  return typeof window !== 'undefined' && typeof window.Notification !== 'undefined'
-    ? window.Notification
-    : null;
+  return typeof window !== 'undefined' && typeof window.Notification !== 'undefined' ? window.Notification : null;
 }
 
 function webPushSupported(): boolean {
@@ -106,9 +104,7 @@ export function notificationState(): NotifyState {
   if (!NotificationApi) return 'unsupported';
   if (NotificationApi.permission === 'denied') return 'denied';
   try {
-    return NotificationApi.permission === 'granted' && window.localStorage.getItem(PREF_KEY) === 'on'
-      ? 'on'
-      : 'off';
+    return NotificationApi.permission === 'granted' && window.localStorage.getItem(PREF_KEY) === 'on' ? 'on' : 'off';
   } catch {
     return 'off';
   }
@@ -123,22 +119,14 @@ export async function toggleNotifications(): Promise<NotifyState> {
     await disableWebPush();
     return 'off';
   }
-  const perm =
-    NotificationApi.permission === 'granted'
-      ? 'granted'
-      : await NotificationApi.requestPermission();
+  const perm = NotificationApi.permission === 'granted' ? 'granted' : await NotificationApi.requestPermission();
   if (perm !== 'granted') return 'denied';
   window.localStorage.setItem(PREF_KEY, 'on');
   await enableWebPush();
   return 'on';
 }
 
-export function showNotification(
-  title: string,
-  body: string,
-  tag: string,
-  onClick: () => void,
-): void {
+export function showNotification(title: string, body: string, tag: string, onClick: () => void): void {
   const NotificationApi = notificationApi();
   if (!NotificationApi || notificationState() !== 'on' || !window.document.hidden) return;
   try {

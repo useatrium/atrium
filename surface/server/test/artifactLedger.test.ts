@@ -65,7 +65,13 @@ describe('ArtifactLedger foundation', () => {
     expect(res).toMatchObject({ ok: true, seq: 1, idempotent: false });
 
     const latest = await ledger.resolveVersion(sessionId, 'report.md', { pointer: 'latest' });
-    expect(latest).toMatchObject({ seq: 1, blobSha: 'a'.repeat(64), kind: 'created', mime: 'text/markdown', s3Key: null });
+    expect(latest).toMatchObject({
+      seq: 1,
+      blobSha: 'a'.repeat(64),
+      kind: 'created',
+      mime: 'text/markdown',
+      s3Key: null,
+    });
   });
 
   it('chains v2 and retains history', async () => {

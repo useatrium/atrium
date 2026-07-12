@@ -246,11 +246,7 @@ function optionalString(value: unknown, field: string): string | undefined {
   return value;
 }
 
-function parseCursor<T extends { xid: string; id: string }>(
-  value: string | undefined,
-  zero: T,
-  field: string,
-): T {
+function parseCursor<T extends { xid: string; id: string }>(value: string | undefined, zero: T, field: string): T {
   if (value == null || value.length === 0) return zero;
   const match = /^(\d+)\.(\d+)$/.exec(value);
   if (!match) throw new BadBatchRequest(`${field} must be "<xid>.<id>"`);
@@ -424,10 +420,12 @@ class InternalChangeBroadcaster {
     const sessionId = stringField(payload.sessionId);
     const payloadWorkspaceId = stringField(payload.workspaceId);
     if (!sessionId) {
-      return [{
-        feed,
-        ...(payloadWorkspaceId ? { workspaceId: payloadWorkspaceId } : {}),
-      }];
+      return [
+        {
+          feed,
+          ...(payloadWorkspaceId ? { workspaceId: payloadWorkspaceId } : {}),
+        },
+      ];
     }
     const res = await this.pool.query<{
       workspace_id: string;
@@ -440,13 +438,13 @@ class InternalChangeBroadcaster {
       [sessionId],
     );
     const row = res.rows[0];
-    return [{
-      feed,
-      ...(row?.centaur_thread_key ? { key: row.centaur_thread_key } : {}),
-      ...(row?.workspace_id || payloadWorkspaceId
-        ? { workspaceId: row?.workspace_id ?? payloadWorkspaceId }
-        : {}),
-    }];
+    return [
+      {
+        feed,
+        ...(row?.centaur_thread_key ? { key: row.centaur_thread_key } : {}),
+        ...(row?.workspace_id || payloadWorkspaceId ? { workspaceId: row?.workspace_id ?? payloadWorkspaceId } : {}),
+      },
+    ];
   }
 
   private async mapChannelAdvanced(payload: Record<string, unknown>): Promise<PendingChangeEvent[]> {
@@ -541,7 +539,7 @@ function parseJsonPayload(payload: string | undefined): Record<string, unknown> 
   if (!payload) return {};
   try {
     const parsed = JSON.parse(payload);
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
   } catch {
     return {};
   }

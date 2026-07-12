@@ -31,13 +31,7 @@ function steerableSession(session: Session, channelId: string): boolean {
   return session.channelId === channelId && (session.status === 'running' || session.status === 'completed');
 }
 
-export function ApplyMarkupMenu({
-  artifactId,
-  path,
-  channelId,
-  sessions = {},
-  onSpawnNewAgent,
-}: ApplyMarkupMenuProps) {
+export function ApplyMarkupMenu({ artifactId, path, channelId, sessions = {}, onSpawnNewAgent }: ApplyMarkupMenuProps) {
   const [open, setOpen] = useState(false);
   const [busySessionId, setBusySessionId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -132,7 +126,10 @@ export function ApplyMarkupMenu({
         </MenuContent>
       </Menu>
       {notice && (
-        <div role="status" className="absolute right-0 top-9 z-[80] w-56 rounded-md border border-success/30 bg-surface-overlay px-3 py-2 text-xs text-success-text shadow-lg">
+        <div
+          role="status"
+          className="absolute right-0 top-9 z-[80] w-56 rounded-md border border-success/30 bg-surface-overlay px-3 py-2 text-xs text-success-text shadow-lg"
+        >
           {notice}
         </div>
       )}

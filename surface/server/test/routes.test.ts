@@ -54,11 +54,11 @@ describe('extracted routes', () => {
 
     expect(registered.statusCode).toBe(200);
     expect(registered.json()).toEqual({ ok: true });
-    await expect(
-      pool.query('SELECT platform, kind FROM push_tokens WHERE token = $1', [token]),
-    ).resolves.toMatchObject({
-      rows: [{ platform: 'android', kind: 'expo' }],
-    });
+    await expect(pool.query('SELECT platform, kind FROM push_tokens WHERE token = $1', [token])).resolves.toMatchObject(
+      {
+        rows: [{ platform: 'android', kind: 'expo' }],
+      },
+    );
 
     const unregistered = await app.inject({
       method: 'POST',
@@ -83,8 +83,7 @@ describe('extracted routes', () => {
     const subscription = {
       endpoint: 'https://push.example.test/subscriptions/route-webpush',
       keys: {
-        p256dh:
-          'BCVxsr7N_eNgVRqvHtD0zTZsEc6-VV-JvLexhqUzORcxaOzi6-AYWXvTBHm4bjyPjs7Vd8pZGH6SRpkNtoIAiw4',
+        p256dh: 'BCVxsr7N_eNgVRqvHtD0zTZsEc6-VV-JvLexhqUzORcxaOzi6-AYWXvTBHm4bjyPjs7Vd8pZGH6SRpkNtoIAiw4',
         auth: 'BTBZMqHH6r4Tts7J_aSIgg', // gitleaks:allow — public RFC 8291 Appendix A test vector
       },
     };
@@ -103,9 +102,7 @@ describe('extracted routes', () => {
 
     expect(registered.statusCode).toBe(200);
     await expect(
-      pool.query('SELECT platform, kind, subscription FROM push_tokens WHERE token = $1', [
-        subscription.endpoint,
-      ]),
+      pool.query('SELECT platform, kind, subscription FROM push_tokens WHERE token = $1', [subscription.endpoint]),
     ).resolves.toMatchObject({
       rows: [{ platform: 'web', kind: 'webpush', subscription }],
     });
@@ -128,11 +125,11 @@ describe('extracted routes', () => {
 
     expect(registered.statusCode).toBe(200);
     expect(registered.json()).toEqual({ ok: true });
-    await expect(
-      pool.query('SELECT platform, kind FROM push_tokens WHERE token = $1', [token]),
-    ).resolves.toMatchObject({
-      rows: [{ platform: 'ios', kind: 'expo' }],
-    });
+    await expect(pool.query('SELECT platform, kind FROM push_tokens WHERE token = $1', [token])).resolves.toMatchObject(
+      {
+        rows: [{ platform: 'ios', kind: 'expo' }],
+      },
+    );
   });
 
   it('rejects unauthenticated push registration', async () => {

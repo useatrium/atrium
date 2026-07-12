@@ -1,9 +1,5 @@
 import * as SQLite from 'expo-sqlite';
-import {
-  createEventCache,
-  type CacheSnapshot,
-  type CacheStorage,
-} from './cache';
+import { createEventCache, type CacheSnapshot, type CacheStorage } from './cache';
 import {
   makeQueuedOp,
   parseQueuedOp,
@@ -110,9 +106,7 @@ async function migrateSendOutbox(database: SQLite.SQLiteDatabase): Promise<void>
       clientMsgId: row.client_msg_id,
       channelId: row.channel_id,
       text: row.text,
-      ...(row.thread_root_event_id != null
-        ? { threadRootEventId: row.thread_root_event_id }
-        : {}),
+      ...(row.thread_root_event_id != null ? { threadRootEventId: row.thread_root_event_id } : {}),
       ...(attachments.length > 0 ? { attachments } : {}),
       createdAt: row.created_at,
     };
@@ -145,10 +139,7 @@ async function migrateSendOutbox(database: SQLite.SQLiteDatabase): Promise<void>
 const storage: CacheStorage = {
   loadSnapshot: async (): Promise<CacheSnapshot> => {
     const database = await db();
-    const channelsRow = await database.getFirstAsync<JsonRow>(
-      'SELECT value FROM cache_meta WHERE key = ?',
-      'channels',
-    );
+    const channelsRow = await database.getFirstAsync<JsonRow>('SELECT value FROM cache_meta WHERE key = ?', 'channels');
     const syncCursorRow = await database.getFirstAsync<JsonRow>(
       'SELECT value FROM cache_meta WHERE key = ?',
       'syncCursor',
@@ -279,14 +270,9 @@ const storage: CacheStorage = {
 
   listDrafts: async (): Promise<DraftSnapshot> => {
     const database = await db();
-    const rows = await database.getAllAsync<DraftRow>(
-      'SELECT draft_key, text, updated_at FROM composer_drafts',
-    );
+    const rows = await database.getAllAsync<DraftRow>('SELECT draft_key, text, updated_at FROM composer_drafts');
     return Object.fromEntries(
-      rows.map((row) => [
-        row.draft_key,
-        { text: row.text, updatedAt: new Date(row.updated_at).toISOString() },
-      ]),
+      rows.map((row) => [row.draft_key, { text: row.text, updatedAt: new Date(row.updated_at).toISOString() }]),
     );
   },
 

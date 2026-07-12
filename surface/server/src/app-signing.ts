@@ -13,12 +13,7 @@ export function appLaunchSignature(grant: AppGrant, secret: string): string {
     .digest('base64url');
 }
 
-export function verifyAppLaunchSignature(
-  grant: AppGrant,
-  sig: string,
-  secret: string,
-  nowMs = Date.now(),
-): boolean {
+export function verifyAppLaunchSignature(grant: AppGrant, sig: string, secret: string, nowMs = Date.now()): boolean {
   if (!Number.isSafeInteger(grant.version) || grant.version <= 0) return false;
   if (!Number.isFinite(grant.expires) || grant.expires * 1000 < nowMs) return false;
   const expected = Buffer.from(appLaunchSignature(grant, secret));

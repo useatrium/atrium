@@ -85,10 +85,9 @@ async function session(harness = 'codex', channelId = fx.channelId): Promise<str
 }
 
 async function sessionThreadKey(sessionId: string): Promise<string> {
-  const r = await pool.query<{ centaur_thread_key: string }>(
-    'SELECT centaur_thread_key FROM sessions WHERE id = $1',
-    [sessionId],
-  );
+  const r = await pool.query<{ centaur_thread_key: string }>('SELECT centaur_thread_key FROM sessions WHERE id = $1', [
+    sessionId,
+  ]);
   return r.rows[0]!.centaur_thread_key;
 }
 
@@ -277,18 +276,22 @@ describe('agent profile candidate ingest', () => {
             [secret]: 'not secret by value, but unsafe as metadata',
           },
           warnings: [`blocked ${secret}`],
-          excluded: [{
-            source_path: `.codex/${secret}.toml`,
-            key_path: `settings.${secret}`,
-            reason: `Bearer ${secret}`,
-          }],
-          bundles: [{
-            path: `skills/${secret}.md`,
-            role: secret,
-            sha256: SHA,
-            sizeBytes: 10,
-            warnings: [`bundle ${secret}`],
-          }],
+          excluded: [
+            {
+              source_path: `.codex/${secret}.toml`,
+              key_path: `settings.${secret}`,
+              reason: `Bearer ${secret}`,
+            },
+          ],
+          bundles: [
+            {
+              path: `skills/${secret}.md`,
+              role: secret,
+              sha256: SHA,
+              sizeBytes: 10,
+              warnings: [`bundle ${secret}`],
+            },
+          ],
         },
         riskSummary: { warnings: [`risk ${secret}`] },
       },
@@ -534,10 +537,7 @@ describe('agent profile candidate ingest', () => {
       [fx.workspaceId, `profile-private-${randomUUID()}`, fx.userId],
     );
     const channelId = channel.rows[0]!.id;
-    await pool.query('INSERT INTO channel_members (channel_id, user_id) VALUES ($1, $2)', [
-      channelId,
-      fx.userId,
-    ]);
+    await pool.query('INSERT INTO channel_members (channel_id, user_id) VALUES ($1, $2)', [channelId, fx.userId]);
     const sid = await session('codex', channelId);
     const ingest = await app.inject({
       method: 'PUT',
@@ -548,10 +548,7 @@ describe('agent profile candidate ingest', () => {
     expect(ingest.statusCode).toBe(200);
     const cookie = await loginCookie();
 
-    await pool.query('DELETE FROM channel_members WHERE channel_id = $1 AND user_id = $2', [
-      channelId,
-      fx.userId,
-    ]);
+    await pool.query('DELETE FROM channel_members WHERE channel_id = $1 AND user_id = $2', [channelId, fx.userId]);
 
     const listed = await app.inject({
       method: 'GET',
@@ -772,7 +769,12 @@ describe('#97 fix-forward: thread-key resolution + real producer payload shapes'
         adapterVersion: 'centaur-test',
         manifest: {
           files: [
-            { path: '.codex/sessions/2026/06/25/rollout-thread.jsonl', sha256: SHA, sizeBytes: 120, role: 'transcript' },
+            {
+              path: '.codex/sessions/2026/06/25/rollout-thread.jsonl',
+              sha256: SHA,
+              sizeBytes: 120,
+              role: 'transcript',
+            },
           ],
         },
       },

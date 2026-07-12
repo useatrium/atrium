@@ -198,16 +198,15 @@ export async function createChannel(
         name: string;
         created_at: Date;
         kind: 'public' | 'private';
-      }>(
-        'INSERT INTO channels (workspace_id, name, kind, created_by) VALUES ($1, $2, $3, $4) RETURNING *',
-        [args.workspaceId, args.name, args.private ? 'private' : 'public', args.actorId ?? null],
-      );
+      }>('INSERT INTO channels (workspace_id, name, kind, created_by) VALUES ($1, $2, $3, $4) RETURNING *', [
+        args.workspaceId,
+        args.name,
+        args.private ? 'private' : 'public',
+        args.actorId ?? null,
+      ]);
       const row = ch.rows[0]!;
       if (row.kind === 'private' && args.actorId) {
-        await client.query('INSERT INTO channel_members (channel_id, user_id) VALUES ($1, $2)', [
-          row.id,
-          args.actorId,
-        ]);
+        await client.query('INSERT INTO channel_members (channel_id, user_id) VALUES ($1, $2)', [row.id, args.actorId]);
       }
       const ev = await insertEvent(client, {
         workspaceId: args.workspaceId,
@@ -311,10 +310,7 @@ export async function postMessage(
           channel_id: string | null;
           thread_root_event_id: number | null;
           type: string;
-        }>(
-          'SELECT channel_id, thread_root_event_id, type FROM events WHERE id = $1',
-          [args.threadRootEventId],
-        );
+        }>('SELECT channel_id, thread_root_event_id, type FROM events WHERE id = $1', [args.threadRootEventId]);
         const r = root.rows[0];
         if (!r || (r.type !== 'message.posted' && r.type !== 'session.spawned')) {
           throw new DomainError(404, 'thread_root_not_found', 'thread root message not found');
@@ -467,10 +463,7 @@ export async function editMessageTx(
  * fold it by stripping the text and flagging deleted=true; clients hide the
  * row (or render a tombstone when the message anchors a thread).
  */
-export async function deleteMessage(
-  pool: Db,
-  args: { targetEventId: number; actorId: string },
-): Promise<WireEvent> {
+export async function deleteMessage(pool: Db, args: { targetEventId: number; actorId: string }): Promise<WireEvent> {
   return withTx(pool, (client) => deleteMessageTx(client, args));
 }
 
@@ -493,14 +486,70 @@ export async function deleteMessageTx(
 /** Emojis a message can be reacted with — keep in sync with the web client's
  * REACTION_EMOJI (components/MessageRow.tsx). */
 export const REACTION_EMOJI = [
-  '👍', '👎', '✅', '❌', '👀', '🎉', '❤️', '😂',
-  '😄', '😅', '😊', '😍', '🤔', '🤯', '😱', '😢',
-  '😭', '😡', '🙏', '👏', '🙌', '💪', '🤝', '👋',
-  '🫡', '🤷', '🤦', '💀', '🔥', '✨', '⭐', '💯',
-  '🚀', '🐛', '🔧', '🛠️', '⚙️', '💡', '📌', '📎',
-  '📝', '✏️', '🔍', '⏳', '⏰', '📅', '☕', '🍕',
-  '🎯', '🏁', '🚧', '⚠️', '🚨', '❓', '❗', '➕',
-  '💬', '🧵', '🤖', '🧠', '💸', '📈', '📉', '🎂',
+  '👍',
+  '👎',
+  '✅',
+  '❌',
+  '👀',
+  '🎉',
+  '❤️',
+  '😂',
+  '😄',
+  '😅',
+  '😊',
+  '😍',
+  '🤔',
+  '🤯',
+  '😱',
+  '😢',
+  '😭',
+  '😡',
+  '🙏',
+  '👏',
+  '🙌',
+  '💪',
+  '🤝',
+  '👋',
+  '🫡',
+  '🤷',
+  '🤦',
+  '💀',
+  '🔥',
+  '✨',
+  '⭐',
+  '💯',
+  '🚀',
+  '🐛',
+  '🔧',
+  '🛠️',
+  '⚙️',
+  '💡',
+  '📌',
+  '📎',
+  '📝',
+  '✏️',
+  '🔍',
+  '⏳',
+  '⏰',
+  '📅',
+  '☕',
+  '🍕',
+  '🎯',
+  '🏁',
+  '🚧',
+  '⚠️',
+  '🚨',
+  '❓',
+  '❗',
+  '➕',
+  '💬',
+  '🧵',
+  '🤖',
+  '🧠',
+  '💸',
+  '📈',
+  '📉',
+  '🎂',
 ] as const;
 
 export type ReactionAction = 'add' | 'remove';
@@ -525,10 +574,7 @@ interface EntryAnnotationScope {
   threadRootEventId: number | null;
 }
 
-async function resolveAnnotationScopeTx(
-  client: DbClient,
-  handle: string,
-): Promise<EntryAnnotationScope> {
+async function resolveAnnotationScopeTx(client: DbClient, handle: string): Promise<EntryAnnotationScope> {
   const decoded = tryDecodeHandle(handle);
   if (!decoded) {
     throw new DomainError(400, 'bad_handle', 'invalid entry handle');
@@ -539,10 +585,7 @@ async function resolveAnnotationScopeTx(
         workspace_id: string;
         channel_id: string | null;
         thread_root_event_id: number | null;
-      }>(
-        'SELECT workspace_id, channel_id, thread_root_event_id FROM events WHERE id = $1',
-        [decoded.eventId],
-      );
+      }>('SELECT workspace_id, channel_id, thread_root_event_id FROM events WHERE id = $1', [decoded.eventId]);
       const row = res.rows[0];
       if (!row?.channel_id) {
         throw new DomainError(404, 'entry_not_found', 'entry not found');
@@ -718,10 +761,7 @@ export async function appendVoiceTranscribedEventTx(
     channel_id: string | null;
     thread_root_event_id: number | null;
     type: string;
-  }>(
-    'SELECT workspace_id, channel_id, thread_root_event_id, type FROM events WHERE id = $1',
-    [args.targetEventId],
-  );
+  }>('SELECT workspace_id, channel_id, thread_root_event_id, type FROM events WHERE id = $1', [args.targetEventId]);
   const t = target.rows[0];
   if (!t || t.type !== 'message.posted') {
     throw new DomainError(404, 'message_not_found', 'message not found');
@@ -856,9 +896,8 @@ function foldEdit(
     row.payload = { ...row.payload, reactions: row.reactions };
   }
   if (row.payload.voice && typeof row.payload.voice === 'object' && !Array.isArray(row.payload.voice)) {
-    const status = row.transcript_status === 'done' || row.transcript_status === 'failed'
-      ? row.transcript_status
-      : 'pending';
+    const status =
+      row.transcript_status === 'done' || row.transcript_status === 'failed' ? row.transcript_status : 'pending';
     const transcript: Record<string, unknown> = { status };
     if (row.transcript_text != null) transcript.text = row.transcript_text;
     if (row.transcript_lang != null) transcript.lang = row.transcript_lang;
@@ -927,10 +966,7 @@ export async function listChannelMessages(
 }
 
 /** All replies in a thread, oldest-first. */
-export async function listThreadMessages(
-  pool: Db,
-  args: { rootEventId: number },
-): Promise<{ events: WireEvent[] }> {
+export async function listThreadMessages(pool: Db, args: { rootEventId: number }): Promise<{ events: WireEvent[] }> {
   const res = await pool.query<EventDbRow>(
     `${MESSAGE_SELECT}
      WHERE e.thread_root_event_id = $1 AND e.type IN ${TIMELINE_EVENT_TYPES}
@@ -1084,11 +1120,7 @@ export async function listWorkspaces(pool: Db): Promise<Workspace[]> {
   }));
 }
 
-export async function listChannels(
-  pool: Db,
-  userId: string,
-  workspaceId?: string,
-): Promise<Channel[]> {
+export async function listChannels(pool: Db, userId: string, workspaceId?: string): Promise<Channel[]> {
   const res = workspaceId
     ? await pool.query(
         `SELECT c.* FROM channels c
@@ -1353,10 +1385,9 @@ export async function addChannelMemberTx(
   );
   const member = { id: u.id, handle: u.handle, displayName: u.display_name };
   const members = row.kind === 'gdm' ? await membersForChannel(client, args.channelId) : undefined;
-  const count = await client.query<{ count: string }>(
-    'SELECT COUNT(*) FROM channel_members WHERE channel_id = $1',
-    [args.channelId],
-  );
+  const count = await client.query<{ count: string }>('SELECT COUNT(*) FROM channel_members WHERE channel_id = $1', [
+    args.channelId,
+  ]);
   const ev = await insertEvent(client, {
     workspaceId: row.workspace_id,
     channelId: row.id,
@@ -1447,10 +1478,7 @@ export async function getOrCreateDm(
       );
       const channelId = ch.rows[0]!.id;
       for (const userId of new Set(pair)) {
-        await client.query(
-          'INSERT INTO channel_members (channel_id, user_id) VALUES ($1, $2)',
-          [channelId, userId],
-        );
+        await client.query('INSERT INTO channel_members (channel_id, user_id) VALUES ($1, $2)', [channelId, userId]);
       }
     });
   } catch (err) {
@@ -1469,9 +1497,7 @@ export async function getOrCreateGdm(
   if (memberIds.length < 3 || memberIds.length > 9) {
     throw new DomainError(400, 'bad_request', 'group DMs require 3-9 total members');
   }
-  const users = await pool.query<{ id: string }>('SELECT id FROM users WHERE id = ANY($1::uuid[])', [
-    memberIds,
-  ]);
+  const users = await pool.query<{ id: string }>('SELECT id FROM users WHERE id = ANY($1::uuid[])', [memberIds]);
   if (users.rows.length !== memberIds.length) {
     throw new DomainError(404, 'user_not_found', 'user not found');
   }
@@ -1499,10 +1525,7 @@ export async function getOrCreateGdm(
       );
       const channelId = ch.rows[0]!.id;
       for (const userId of memberIds) {
-        await client.query('INSERT INTO channel_members (channel_id, user_id) VALUES ($1, $2)', [
-          channelId,
-          userId,
-        ]);
+        await client.query('INSERT INTO channel_members (channel_id, user_id) VALUES ($1, $2)', [channelId, userId]);
       }
     });
   } catch (err) {

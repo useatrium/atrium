@@ -1058,9 +1058,7 @@ function SessionEventCard({
                 {answer.header}
               </div>
               <div className="mt-0.5 whitespace-pre-wrap break-words text-fg-body">
-                <CompactMarkdownText
-                  text={questionAnswerSummaryText(answer)}
-                />
+                <CompactMarkdownText text={questionAnswerSummaryText(answer)} />
               </div>
             </div>
           ))}

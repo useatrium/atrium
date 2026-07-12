@@ -123,9 +123,12 @@ describe('read cursors', () => {
       payload: { userId: benUser.id },
     });
     expect(dmRes.statusCode).toBe(201);
-    expect(dmRes.json().channel.members.map((m: any) => m.id).sort()).toEqual(
-      [aliceUser.id, benUser.id].sort(),
-    );
+    expect(
+      dmRes
+        .json()
+        .channel.members.map((m: any) => m.id)
+        .sort(),
+    ).toEqual([aliceUser.id, benUser.id].sort());
 
     const denied = await app.inject({
       method: 'POST',
@@ -180,9 +183,7 @@ describe('read cursors', () => {
       headers: { cookie },
     });
     expect(afterThreadOnly.statusCode).toBe(200);
-    const channelAfterThreadOnly = afterThreadOnly
-      .json()
-      .channels.find((c: any) => c.id === fx.channelId);
+    const channelAfterThreadOnly = afterThreadOnly.json().channels.find((c: any) => c.id === fx.channelId);
     expect(channelAfterThreadOnly.latestEventId).toBe(root.id);
 
     const broadcast = await postMessage(pool, {
