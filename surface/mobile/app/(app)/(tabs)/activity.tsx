@@ -5,7 +5,7 @@ import {
   type ActivityItem,
   formatExactTimestamp,
   formatRelativeTimestamp,
-  isTerminalSessionStatus,
+  sessionAttentionKind,
   type Session,
   type SessionListItem,
   type SessionStatus,
@@ -15,6 +15,7 @@ import { font, space, useTheme, type Colors } from '../../../src/lib/theme';
 import { ConnectionBanner } from '../../../src/components/bits';
 import { MobileHeader } from '../../../src/components/MobileHeader';
 import { MarkdownText } from '../../../src/components/Markdown';
+import { navigationTargetSize } from '../../../src/components/PlatformTabBar';
 
 interface DisplaySession extends SessionListItem {
   live?: Session;
@@ -82,14 +83,22 @@ export default function ActivityScreen() {
     void load('initial');
   }, [load]);
 
-  // "Needs attention": non-terminal sessions (running / queued / awaiting input),
-  // newest first. Live state overrides the fetched snapshot.
+  // Only unresolved agent states belong in Attention. Healthy progress stays
+  // visible on Agents, while completion/mention/DM/question activity comes from
+  // the server feed (which owns its read semantics).
   const rows = useMemo<ActivityRow[]>(() => {
     const merged = sessions.map((s) => ({ ...s, live: state.sessions[s.id] }));
     const attention = merged
       .filter((s) => {
-        const status = s.live?.status ?? s.status;
-        return !isTerminalSessionStatus(status);
+        if (s.live) return sessionAttentionKind(s.live) !== null;
+        return (
+          sessionAttentionKind({
+            status: s.status,
+            pendingQuestion: null,
+            providerAuthRequired: null,
+            pendingSeatRequests: [],
+          }) !== null
+        );
       })
       .map((session): ActivityRow => ({ rowType: 'session', session }));
     const feedRows = activityItems.map((activity): ActivityRow => ({ rowType: 'activity', activity }));
@@ -217,7 +226,7 @@ export default function ActivityScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg }}>
-      <MobileHeader title="Inbox" />
+      <MobileHeader title="Attention" />
       <ConnectionBanner status={state.wsStatus} />
       {loading ? (
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
@@ -254,7 +263,7 @@ export default function ActivityScreen() {
                   Needs your attention
                 </Text>
                 <Text style={{ color: colors.textMuted, fontSize: font.sm, lineHeight: 20 }}>
-                  Mentions, DMs, agent questions, and live agent work that may need you.
+                  Mentions, DMs, agent questions, failed work, and recent completions.
                 </Text>
               </View>
             ) : null
@@ -268,7 +277,12 @@ export default function ActivityScreen() {
                 accessibilityRole="button"
                 accessibilityLabel="Activity failed. Tap to retry."
                 onPress={() => void load()}
-                style={{ alignItems: 'center', justifyContent: 'center', padding: space.xl, minHeight: 44 }}
+                style={{
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  padding: space.xl,
+                  minHeight: navigationTargetSize,
+                }}
               >
                 <Text style={{ color: colors.danger, fontSize: font.sm }}>Activity failed — tap to retry</Text>
               </Pressable>
@@ -278,7 +292,7 @@ export default function ActivityScreen() {
               >
                 <Text style={{ color: colors.text, fontSize: font.md, fontWeight: '700' }}>You're all caught up</Text>
                 <Text style={{ color: colors.textMuted, fontSize: font.sm, textAlign: 'center', lineHeight: 20 }}>
-                  Mentions, DMs, agent questions, and live agent work will appear here when they need you.
+                  Mentions, DMs, agent questions, failed work, and recent completions will appear here.
                 </Text>
               </View>
             )
@@ -294,7 +308,7 @@ export default function ActivityScreen() {
                   disabled={loadingMore}
                   style={({ pressed }) => ({
                     alignSelf: 'flex-start',
-                    minHeight: 36,
+                    minHeight: navigationTargetSize,
                     justifyContent: 'center',
                     borderRadius: 8,
                     paddingHorizontal: space.md,

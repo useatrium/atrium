@@ -1,14 +1,38 @@
-import { useEffect, useMemo, useCallback, useRef, useState, type FormEvent, type MouseEvent } from 'react';
+import {
+  useEffect,
+  useMemo,
+  useCallback,
+  useRef,
+  useState,
+  type CSSProperties,
+  type FormEvent,
+  type MouseEvent,
+} from 'react';
 import { api, type Channel } from '../api';
 import { MessageActionMenu, type MessageActionMenuState } from './MessageActionMenu';
-import { isTerminalSessionStatus, type QueueSyncState, type SessionListItem } from '@atrium/surface-client';
+import type { QueueSyncState } from '@atrium/surface-client';
 import type { UnreadLevel, UserRef } from '@atrium/surface-client';
 import { channelAvatarName, channelLabel, dmPartner } from '@atrium/surface-client';
-import { sessionsApi } from '../sessions/api';
-import { StatusChip } from '../sessions/SessionCard';
 import { Avatar } from './Avatar';
 import { Tooltip } from './a11y';
-import { BellIcon, BellOffIcon, FileIcon, GearIcon, LockIcon } from './icons';
+import {
+  ArchiveIcon,
+  ArchiveRestoreIcon,
+  BellIcon,
+  BellOffIcon,
+  FileIcon,
+  GearIcon,
+  LockIcon,
+  PinIcon,
+  PinOffIcon,
+} from './icons';
+import {
+  SIDEBAR_FALLBACK_WIDTH,
+  SIDEBAR_MAX_VW,
+  SIDEBAR_MIN_WIDTH,
+  sidebarSizing,
+  useSidebarWidth,
+} from '../sessions/useSessionPaneWidth';
 const SIDEBAR_GROUP_TITLE_CLASS = 'px-2 pb-1 text-2xs font-semibold uppercase tracking-wider text-fg-muted';
 const SIDEBAR_PANEL_CLASS = 'rounded-md border border-edge bg-surface-raised py-1';
 const SIDEBAR_SUBHEAD_CLASS = 'flex items-center justify-between px-3 pb-1 pt-1 text-2xs font-semibold text-fg-muted';
@@ -41,14 +65,12 @@ export function Sidebar({
   onSetPinned,
   onCreateChannel,
   onStartDm,
-  onOpenSession,
   activeSurface = 'chat',
   onOpenFiles,
   onOpenAgents,
   // === mentions-activity additions ===
   onOpenActivity,
   onOpenSettings,
-  sessionEventSeq,
   onLogout,
   isOpen = false,
   onClose,
@@ -70,20 +92,24 @@ export function Sidebar({
   onSetPinned?: (channelId: string, pinned: boolean) => void;
   onCreateChannel: (name: string, isPrivate?: boolean) => Promise<void>;
   onStartDm: (userIds: string[]) => void;
-  onOpenSession: (sessionId: string) => void;
   activeSurface?: 'chat' | 'files' | 'activity' | 'agents' | 'settings';
   onOpenFiles?: () => void;
   onOpenAgents?: () => void;
   // === mentions-activity additions ===
   onOpenActivity?: () => void;
   onOpenSettings?: () => void;
-  sessionEventSeq: number;
   onLogout: () => void;
   isOpen?: boolean;
   onClose?: () => void;
   createChannelRequestSeq?: number;
   startDmRequestSeq?: number;
 }) {
+  const { width: sidebarWidth, resizing, startResize, resetWidth } = useSidebarWidth();
+  const sizing = sidebarSizing(sidebarWidth);
+  const sidebarMaxWidth =
+    typeof window === 'undefined'
+      ? SIDEBAR_FALLBACK_WIDTH
+      : Math.max(SIDEBAR_MIN_WIDTH, Math.round((window.innerWidth * SIDEBAR_MAX_VW) / 100));
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState('');
   const [privateChannel, setPrivateChannel] = useState(false);
@@ -191,6 +217,7 @@ export function Sidebar({
     const isDm = c.kind === 'dm' || c.kind === 'gdm';
     const label = isDm ? channelLabel(c, me.id) : c.name;
     const partner = isDm ? dmPartner(c, me.id) : null;
+    const isArchived = c.archivedAt != null;
     return (
       <li
         key={c.id}
@@ -208,6 +235,30 @@ export function Sidebar({
           <span className="truncate">{label}</span>
           {unreadBadge(c.id, active)}
         </button>
+        {onSetPinned && !isArchived && (
+          <Tooltip content={c.pinned ? `Unpin ${label}` : `Pin ${label}`}>
+            <button
+              type="button"
+              onClick={() => onSetPinned(c.id, !c.pinned)}
+              aria-label={c.pinned ? `Unpin ${label}` : `Pin ${label}`}
+              className="hidden shrink-0 px-1 py-1 text-xs text-fg-faint opacity-0 hover:text-fg-body group-hover:opacity-100 focus-visible:opacity-100 @[12rem]:block max-md:opacity-100 [@media(hover:none)]:opacity-100"
+            >
+              {c.pinned ? <PinOffIcon /> : <PinIcon />}
+            </button>
+          </Tooltip>
+        )}
+        {onSetArchived && (
+          <Tooltip content={isArchived ? `Unarchive ${label}` : `Archive ${label}`}>
+            <button
+              type="button"
+              onClick={() => onSetArchived(c.id, !isArchived)}
+              aria-label={isArchived ? `Unarchive ${label}` : `Archive ${label}`}
+              className="hidden shrink-0 px-1 py-1 text-xs text-fg-faint opacity-0 hover:text-fg-body group-hover:opacity-100 focus-visible:opacity-100 @[15.5rem]:block max-md:opacity-100 [@media(hover:none)]:opacity-100"
+            >
+              {isArchived ? <ArchiveRestoreIcon /> : <ArchiveIcon />}
+            </button>
+          </Tooltip>
+        )}
         <Tooltip content={c.muted ? `Unmute ${label}` : `Mute ${label}`}>
           <button
             type="button"
@@ -282,10 +333,28 @@ export function Sidebar({
         }`}
       />
       <nav
-        className={`fixed inset-y-0 left-0 z-40 flex w-72 max-w-[85vw] shrink-0 flex-col border-r border-edge bg-surface-raised shadow-2xl motion-safe:transition-transform motion-reduce:transition-none md:static md:z-auto md:w-56 md:max-w-none md:translate-x-0 md:bg-surface-raised md:shadow-none md:transition-none ${
+        className={`fixed inset-y-0 left-0 z-40 flex w-72 max-w-[85vw] shrink-0 flex-col border-r border-edge bg-surface-raised shadow-2xl motion-safe:transition-transform motion-reduce:transition-none md:relative md:z-auto md:w-(--sidebar-w) md:max-w-none md:translate-x-0 md:bg-surface-raised md:shadow-none md:transition-none ${
           isOpen ? 'translate-x-0' : '-translate-x-full'
-        }`}
+        } ${sizing.className}`}
+        style={{ '--sidebar-w': '224px', ...sizing.style } as CSSProperties}
       >
+        {/* biome-ignore lint/a11y/useSemanticElements: resizable pane separator uses a div for pointer capture and custom sizing. */}
+        <div
+          role="separator"
+          tabIndex={0}
+          aria-orientation="vertical"
+          aria-label="Resize sidebar"
+          aria-valuemin={SIDEBAR_MIN_WIDTH}
+          aria-valuemax={sidebarMaxWidth}
+          aria-valuenow={sidebarWidth ?? SIDEBAR_FALLBACK_WIDTH}
+          title="Drag to resize · double-click to reset"
+          data-testid="sidebar-resize-handle"
+          onPointerDown={startResize}
+          onDoubleClick={resetWidth}
+          className={`absolute inset-y-0 -right-0.5 z-20 w-1.5 cursor-col-resize touch-none transition-colors hover:bg-accent/50 max-md:hidden ${
+            resizing ? 'bg-accent/50' : ''
+          }`}
+        />
         <header className="flex h-12 shrink-0 items-center gap-2 border-b border-edge px-4">
           <span className="truncate text-sm font-bold tracking-tight text-fg">{workspaceName}</span>
           <span
@@ -298,7 +367,7 @@ export function Sidebar({
           </span>
         </header>
 
-        <div className="flex-1 overflow-y-auto px-2 py-3">
+        <div className="@container flex-1 overflow-y-auto px-2 py-3">
           <section>
             <h2 className={SIDEBAR_GROUP_TITLE_CLASS}>Workspace</h2>
             <div className={SIDEBAR_PANEL_CLASS}>
@@ -345,7 +414,7 @@ export function Sidebar({
                 }`}
               >
                 <span className="grid w-[15px] shrink-0 place-items-center text-xs font-bold text-fg-muted">@</span>
-                <span className="truncate">Inbox</span>
+                <span className="truncate">Attention</span>
               </button>
             </div>
           </section>
@@ -506,12 +575,6 @@ export function Sidebar({
               )}
             </div>
           </section>
-
-          <SessionSidebarSection
-            refreshKey={sessionEventSeq}
-            onOpenSession={onOpenSession}
-            onOpenAgents={onOpenAgents}
-          />
         </div>
 
         <footer className="relative flex items-center gap-1 border-t border-edge px-4 py-2.5">
@@ -544,128 +607,6 @@ export function Sidebar({
         actions={channelMenuActions}
         label="Channel actions"
       />
-    </>
-  );
-}
-
-const SESSION_SIDEBAR_PREVIEW_LIMIT = 5;
-
-type SessionListItemAttentionFields = {
-  needsAttention?: unknown;
-};
-
-function sessionNeedsAttention(session: SessionListItem): boolean {
-  return (session as SessionListItem & SessionListItemAttentionFields).needsAttention === true;
-}
-
-function sessionSidebarBucket(session: SessionListItem): number {
-  if (sessionNeedsAttention(session)) return 0;
-  return isTerminalSessionStatus(session.status) ? 2 : 1;
-}
-
-function sessionSidebarFreshness(session: SessionListItem): number {
-  const timestamp = session.completedAt ?? session.createdAt;
-  const parsed = Date.parse(timestamp);
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
-export function sessionSidebarPreview(
-  sessions: readonly SessionListItem[],
-  limit = SESSION_SIDEBAR_PREVIEW_LIMIT,
-): SessionListItem[] {
-  return sessions
-    .map((session, index) => ({ session, index }))
-    .sort((a, b) => {
-      const bucketDelta = sessionSidebarBucket(a.session) - sessionSidebarBucket(b.session);
-      if (bucketDelta !== 0) return bucketDelta;
-      const freshnessDelta = sessionSidebarFreshness(b.session) - sessionSidebarFreshness(a.session);
-      if (freshnessDelta !== 0) return freshnessDelta;
-      return a.index - b.index;
-    })
-    .slice(0, Math.max(0, limit))
-    .map(({ session }) => session);
-}
-
-function SessionSidebarSection({
-  refreshKey,
-  onOpenSession,
-  onOpenAgents,
-}: {
-  refreshKey: number;
-  onOpenSession: (sessionId: string) => void;
-  onOpenAgents?: () => void;
-}) {
-  const [sessions, setSessions] = useState<SessionListItem[]>([]);
-
-  useEffect(() => {
-    let disposed = false;
-    const load = () => {
-      sessionsApi
-        .list({ status: 'all', limit: 50 })
-        .then(({ sessions }) => {
-          if (!disposed) setSessions(sessions);
-        })
-        .catch(() => {
-          if (!disposed) setSessions([]);
-        });
-    };
-    load();
-    const poll = setInterval(load, 30_000);
-    return () => {
-      disposed = true;
-      clearInterval(poll);
-    };
-  }, []);
-
-  useEffect(() => {
-    const t = setTimeout(() => {
-      sessionsApi
-        .list({ status: 'all', limit: 50 })
-        .then(({ sessions }) => setSessions(sessions))
-        .catch(() => {});
-    }, 180);
-    return () => clearTimeout(t);
-  }, [refreshKey]);
-
-  const preview = useMemo(() => sessionSidebarPreview(sessions), [sessions]);
-  const open = (id: string) => {
-    onOpenSession(id);
-  };
-
-  return (
-    <>
-      <section className="mt-3">
-        <h2 className={SIDEBAR_GROUP_TITLE_CLASS}>Agents</h2>
-        <div className={SIDEBAR_PANEL_CLASS}>
-          <ul>
-            {preview.length === 0 && <li className="px-3 py-2 text-xs text-fg-muted">No agents yet</li>}
-            {preview.map((session) => (
-              <li key={session.id} className="mx-1">
-                <button
-                  type="button"
-                  onClick={() => open(session.id)}
-                  className="flex min-h-9 w-full min-w-0 flex-col gap-1 rounded-md px-2 py-1.5 text-left hover:bg-surface-overlay/70"
-                >
-                  <span className="flex min-w-0 items-center gap-1.5">
-                    <StatusChip status={session.status} />
-                    <span className="min-w-0 flex-1 truncate text-xs font-medium text-fg-body">{session.title}</span>
-                  </span>
-                  <span className="truncate pl-1 text-2xs text-fg-faint">#{session.channelName}</span>
-                </button>
-              </li>
-            ))}
-            <li className="mx-1">
-              <button
-                type="button"
-                onClick={onOpenAgents}
-                className="flex min-h-7 w-full items-center rounded-md px-2 py-1 text-left text-xs font-medium text-accent-text hover:bg-surface-overlay/70"
-              >
-                View all agents
-              </button>
-            </li>
-          </ul>
-        </div>
-      </section>
     </>
   );
 }

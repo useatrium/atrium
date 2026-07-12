@@ -6,6 +6,7 @@ import {
   questionAnswerSummaryText,
   questionPayloadAnswers,
   questionPayloadPrompts,
+  sessionAttentionKind,
   sessionQuestionEventLabel,
   steerProvenanceKey,
   type SessionSuggestion,
@@ -23,6 +24,59 @@ describe('maxSessionStatus', () => {
 
   it('ranks completed ahead of running', () => {
     expect(maxSessionStatus('running', 'completed')).toBe('completed');
+  });
+});
+
+describe('sessionAttentionKind', () => {
+  const base = {
+    status: 'running' as const,
+    pendingQuestion: null,
+    providerAuthRequired: null,
+    pendingSeatRequests: [],
+  };
+
+  it('does not treat normal running work as attention', () => {
+    expect(sessionAttentionKind(base)).toBeNull();
+  });
+
+  it('classifies actionable live states by priority', () => {
+    expect(
+      sessionAttentionKind({
+        ...base,
+        pendingQuestion: { questionId: 'q-1', questions: [] },
+        providerAuthRequired: {
+          provider: 'codex',
+          userId: 'u-1',
+          reason: 'missing_token',
+          message: 'Connect Codex',
+          at: '2026-07-11T00:00:00.000Z',
+        },
+      }),
+    ).toBe('question');
+    expect(
+      sessionAttentionKind({
+        ...base,
+        providerAuthRequired: {
+          provider: 'github',
+          userId: 'u-1',
+          reason: 'invalid_token',
+          message: 'Reconnect GitHub',
+          at: '2026-07-11T00:00:00.000Z',
+        },
+      }),
+    ).toBe('authentication');
+    expect(
+      sessionAttentionKind({
+        ...base,
+        pendingSeatRequests: [{ userId: 'u-2', displayName: 'Morgan' }],
+      }),
+    ).toBe('seat-request');
+    expect(sessionAttentionKind({ ...base, status: 'failed' })).toBe('failed');
+  });
+
+  it('does not keep terminal success or cancellation in Attention', () => {
+    expect(sessionAttentionKind({ ...base, status: 'completed' })).toBeNull();
+    expect(sessionAttentionKind({ ...base, status: 'cancelled' })).toBeNull();
   });
 });
 

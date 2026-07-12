@@ -1,0 +1,17 @@
+appId: chat.atrium.app
+name: Android first run and top-level navigation
+tags:
+  - android
+  - first-run
+env:
+  SCREENSHOT_PREFIX: android-first-run
+---
+- runFlow: ../common/authenticated-launch.yml
+- takeScreenshot: "${SCREENSHOT_PREFIX}-01-chat-orientation"
+- runFlow: ../common/top-level-navigation.yml
+- runFlow: ../common/settings-controls.yml
+# This is the OS Back action, not an in-app selector. It proves the Settings
+# stack pops back to the previously selected top-level destination.
+- pressKey: Back
+- assertVisible: "Chat"
+- takeScreenshot: "${SCREENSHOT_PREFIX}-08-system-back"

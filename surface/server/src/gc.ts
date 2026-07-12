@@ -1,5 +1,5 @@
 import type { Db } from './db.js';
-import { deleteObject } from './s3.js';
+import type { deleteObject } from './s3.js';
 
 export interface FileStorageGc {
   deleteObject: typeof deleteObject;
