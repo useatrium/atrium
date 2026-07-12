@@ -531,7 +531,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           </Tooltip>
         ) : agentHint ? (
           <span className="rounded-full bg-accent-hover/15 px-2 py-0.5 font-medium text-accent-text-strong">
-            @agent — spawns an agent session
+            @agent — spawns an agent
           </span>
         ) : footer !== undefined ? (
           footer

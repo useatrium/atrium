@@ -8,6 +8,8 @@ function seed(lastRead = 10, latest = 20): AppState {
     workspaceId: 'w1',
     name: 'general',
     createdAt: '2026-01-01T00:00:00Z',
+    archivedAt: null,
+    pinned: false,
     lastReadEventId: lastRead,
     latestEventId: latest,
   };

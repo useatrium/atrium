@@ -25,6 +25,8 @@ const channel: Channel = {
   muted: false,
   createdAt: '2026-01-01T00:00:00.000Z',
   members: [me],
+  archivedAt: null,
+  pinned: false,
 };
 
 describe('ChannelMembersMenu', () => {

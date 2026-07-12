@@ -14,7 +14,7 @@ function titleFor(item: ActivityItem): string {
   if (item.kind === 'mention') return `${item.actorName ?? 'Someone'} mentioned you`;
   if (item.kind === 'dm') return `${item.actorName ?? 'Someone'} sent a DM`;
   if (item.kind === 'agent_question') return 'Agent needs your input';
-  return 'Agent session completed';
+  return 'Agent completed';
 }
 
 function activityAriaLabel(item: ActivityItem, exactTimestamp: string): string {

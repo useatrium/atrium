@@ -56,6 +56,8 @@ export function pendingSpawnFromPayload(
       id: payload.clientSpawnId,
       workspaceId: '',
       channelId: payload.channelId,
+      archivedAt: null,
+      pinned: false,
       threadRootEventId: payload.threadRootEventId ?? null,
       title: payload.task.slice(0, 80),
       status: 'spawning',

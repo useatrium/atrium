@@ -84,6 +84,8 @@ describe('websocket frame decoding', () => {
     ['session typing', { type: 'typing', sessionId: 's1', user }],
     ['read', { type: 'read', channelId: 'c1', lastReadEventId: 4 }],
     ['muted', { type: 'muted', channelId: 'c1', muted: true }],
+    ['channel pinned', { type: 'channel-pinned', channelId: 'c1', pinned: true }],
+    ['session pinned', { type: 'session-pinned', sessionId: 's1', pinned: true }],
     ['channel-left', { type: 'channel-left', channelId: 'c1' }],
     ['prefs', { type: 'prefs', prefs: { theme: 'dark' } }],
     ['pong', { type: 'pong', t: 123 }],

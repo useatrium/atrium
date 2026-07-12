@@ -456,7 +456,7 @@ function SessionCard({
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`Open session transcript: ${session?.title ?? message.text}`}
+      accessibilityLabel={`Open agent transcript: ${session?.title ?? message.text}`}
       accessibilityState={{ disabled: !message.sessionId || !onOpen }}
       disabled={!message.sessionId || !onOpen}
       onPress={() => {
@@ -474,7 +474,7 @@ function SessionCard({
     >
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
         <Ionicons name="hardware-chip-outline" size={13} color={colors.textMuted} />
-        <Text style={{ fontSize: font.xs, color: colors.textMuted, fontWeight: '700' }}>AGENT SESSION</Text>
+        <Text style={{ fontSize: font.xs, color: colors.textMuted, fontWeight: '700' }}>AGENT</Text>
         <Text style={{ fontSize: font.xs, color: statusColor, fontWeight: '700' }}>
           {needsInput ? 'NEEDS INPUT' : status.toUpperCase()}
         </Text>

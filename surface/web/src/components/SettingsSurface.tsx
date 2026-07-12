@@ -350,10 +350,10 @@ export function SettingsControls({
                   </select>
                 </SettingRow>
 
-                <SettingRow label="Agent sessions">
+                <SettingRow label="Agents">
                   <button
                     type="button"
-                    aria-label="Agent sessions notifications"
+                    aria-label="Agent notifications"
                     aria-pressed={prefs.notifications.sessions}
                     onClick={() => setNotificationSessions(!prefs.notifications.sessions)}
                     className={toggleButton(prefs.notifications.sessions)}

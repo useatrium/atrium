@@ -18,10 +18,10 @@ describe('chatQueue', () => {
     expect(queuedFailureMessage('reaction.set')).toBe("Couldn't update the reaction.");
     expect(queuedFailureMessage('read.mark')).toBe("Couldn't mark the channel read.");
     expect(queuedFailureMessage('mute.set')).toBe("Couldn't update the mute setting.");
-    expect(queuedFailureMessage('session.spawn')).toBe("Couldn't start the agent session.");
+    expect(queuedFailureMessage('session.spawn')).toBe("Couldn't start the agent.");
     expect(queuedFailureMessage('session.answer')).toBe("Couldn't submit the answer.");
-    expect(queuedFailureMessage('session.steer')).toBe("Couldn't send the session message.");
-    expect(queuedFailureMessage('session.cancel')).toBe("Couldn't cancel the session.");
+    expect(queuedFailureMessage('session.steer')).toBe("Couldn't send the agent message.");
+    expect(queuedFailureMessage('session.cancel')).toBe("Couldn't cancel the agent.");
     expect(queuedFailureMessage('prefs.set')).toBe("Couldn't sync settings.");
     expect(queuedFailureMessage('draft.set')).toBe("Couldn't sync the draft.");
     expect(queuedFailureMessage('channel.join')).toBe("Couldn't add the person.");
@@ -34,13 +34,13 @@ describe('chatQueue', () => {
         'session.spawn',
         new ApiError(409, 'github_connection_required', 'server message'),
       ),
-    ).toBe('Connect GitHub before starting a session with private repositories.');
+    ).toBe('Connect GitHub before starting an agent with private repositories.');
     expect(
       queuedFailureMessage(
         'session.spawn',
         new ApiError(409, 'github_repo_access_unverified', 'server message'),
       ),
-    ).toBe('Reconnect GitHub before starting a session with private repositories.');
+    ).toBe('Reconnect GitHub before starting an agent with private repositories.');
     expect(
       queuedFailureMessage(
         'session.spawn',

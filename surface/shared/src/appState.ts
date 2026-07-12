@@ -31,6 +31,13 @@ import {
 /** 'mention' outranks plain unread — it renders as a red @ badge. */
 export type UnreadLevel = false | true | 'mention';
 
+/** Older cached channel snapshots predate archive/pin. Normalize them at the
+ * reducer boundary while keeping live `Channel` entities fully typed. */
+type ChannelSnapshot = Omit<Channel, 'archivedAt' | 'pinned'> & {
+  archivedAt?: string | null;
+  pinned?: boolean;
+};
+
 export interface AppState {
   channels: Channel[];
   timelines: Record<string, ChannelTimeline>;
@@ -79,7 +86,7 @@ export const initialAppState: AppState = {
 
 export type AppAction =
   | { type: 'init-me'; handle: string; id?: string }
-  | { type: 'channels-loaded'; channels: Channel[] }
+  | { type: 'channels-loaded'; channels: ChannelSnapshot[] }
   | {
       type: 'read-cursor';
       channelId: string;
@@ -91,9 +98,12 @@ export type AppAction =
        * frozen divider can dissolve without a self-read moving it.
        */
       source?: 'self' | 'remote';
-    }
+  }
   | { type: 'mute-changed'; channelId: string; muted: boolean }
-  | { type: 'channel-added'; channel: Channel }
+  | { type: 'channel-archive-changed'; channelId: string; archivedAt: string | null }
+  | { type: 'channel-pin-changed'; channelId: string; pinned: boolean }
+  | { type: 'session-pin-changed'; sessionId: string; pinned: boolean }
+  | { type: 'channel-added'; channel: ChannelSnapshot }
   | { type: 'channel-removed'; channelId: string }
   | { type: 'select-channel'; channelId: string | null }
   | {
@@ -187,7 +197,13 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       return { ...state, meHandle: action.handle, meId: action.id ?? state.meId };
 
     case 'channels-loaded': {
-      const channels = [...action.channels].sort((a, b) => a.name.localeCompare(b.name));
+      const channels = action.channels
+        .map((channel) => ({
+          ...channel,
+          archivedAt: channel.archivedAt ?? null,
+          pinned: channel.pinned ?? false,
+        }))
+        .sort((a, b) => a.name.localeCompare(b.name));
       const activeChannelId =
         state.activeChannelId ??
         channels.find((c) => c.name === 'general')?.id ??
@@ -252,9 +268,40 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       return { ...state, channels, unread: { ...state.unread, [action.channelId]: level } };
     }
 
+    case 'channel-archive-changed': {
+      const channels = state.channels.map((channel) =>
+        channel.id === action.channelId ? { ...channel, archivedAt: action.archivedAt } : channel,
+      );
+      return { ...state, channels };
+    }
+
+    case 'channel-pin-changed': {
+      const channels = state.channels.map((channel) =>
+        channel.id === action.channelId ? { ...channel, pinned: action.pinned } : channel,
+      );
+      return { ...state, channels };
+    }
+
+    case 'session-pin-changed': {
+      const session = state.sessions[action.sessionId];
+      if (!session || session.pinned === action.pinned) return state;
+      return {
+        ...state,
+        sessions: {
+          ...state.sessions,
+          [action.sessionId]: { ...session, pinned: action.pinned },
+        },
+      };
+    }
+
     case 'channel-added': {
       if (state.channels.some((c) => c.id === action.channel.id)) return state;
-      const channels = [...state.channels, action.channel].sort((a, b) =>
+      const channel = {
+        ...action.channel,
+        archivedAt: action.channel.archivedAt ?? null,
+        pinned: action.channel.pinned ?? false,
+      };
+      const channels = [...state.channels, channel].sort((a, b) =>
         a.name.localeCompare(b.name),
       );
       return { ...state, channels };
@@ -355,6 +402,17 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       if (ev.type === 'channel.created') {
         const ch = ev.payload?.channel as Channel | undefined;
         return withEventCursor(ch ? appReducer(state, { type: 'channel-added', channel: ch }) : state);
+      }
+      if (ev.type === 'channel.archived' || ev.type === 'channel.unarchived') {
+        const channelId = typeof ev.payload?.channelId === 'string' ? ev.payload.channelId : ev.channelId;
+        if (!channelId) return withEventCursor(state);
+        const archivedAt =
+          ev.type === 'channel.archived'
+            ? typeof ev.payload?.archivedAt === 'string'
+              ? ev.payload.archivedAt
+              : ev.createdAt
+            : null;
+        return withEventCursor(appReducer(state, { type: 'channel-archive-changed', channelId, archivedAt }));
       }
       if (ev.type === 'channel.member_left' && ev.payload?.userId === state.meId) {
         return withEventCursor(

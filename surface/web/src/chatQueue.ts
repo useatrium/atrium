@@ -52,13 +52,13 @@ export function queuedFailureMessage(opType: OpType, err?: unknown): string {
     case 'mute.set':
       return "Couldn't update the mute setting.";
     case 'session.spawn':
-      return "Couldn't start the agent session.";
+      return "Couldn't start the agent.";
     case 'session.answer':
       return "Couldn't submit the answer.";
     case 'session.steer':
-      return "Couldn't send the session message.";
+      return "Couldn't send the agent message.";
     case 'session.cancel':
-      return "Couldn't cancel the session.";
+      return "Couldn't cancel the agent.";
     case 'session.stop_turn':
       return "Couldn't stop the turn.";
     case 'prefs.set':
@@ -69,6 +69,12 @@ export function queuedFailureMessage(opType: OpType, err?: unknown): string {
       return "Couldn't add the person.";
     case 'channel.leave':
       return "Couldn't leave the channel.";
+    case 'channel.archive':
+    case 'session.archive':
+      return "Couldn't update the archive setting.";
+    case 'channel.pin':
+    case 'session.pin':
+      return "Couldn't update the pin setting.";
   }
 }
 
@@ -76,9 +82,9 @@ function githubSpawnFailureMessage(err: unknown): string | null {
   if (!(err instanceof ApiError)) return null;
   switch (err.code) {
     case 'github_connection_required':
-      return 'Connect GitHub before starting a session with private repositories.';
+      return 'Connect GitHub before starting an agent with private repositories.';
     case 'github_repo_access_unverified':
-      return 'Reconnect GitHub before starting a session with private repositories.';
+      return 'Reconnect GitHub before starting an agent with private repositories.';
     case 'github_repo_inaccessible':
       return err.message || 'Connected GitHub credentials cannot access one or more private repositories.';
     case 'github_repo_validation_unconfigured':

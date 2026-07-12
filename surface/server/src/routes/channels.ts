@@ -3,6 +3,7 @@ import { Schema } from 'effect';
 import type { Db, DbClient } from '../db.js';
 import {
   addChannelMemberTx,
+  appendEvent,
   canAccessChannel,
   createChannel,
   getOrCreateDm,
@@ -36,6 +37,16 @@ const ReadChannelBodySchema = Schema.Struct({
 
 const MuteChannelBodySchema = Schema.Struct({
   muted: Schema.optional(Schema.Unknown),
+  opId: Schema.optional(Schema.Unknown),
+});
+
+const ArchiveChannelBodySchema = Schema.Struct({
+  archived: Schema.optional(Schema.Unknown),
+  opId: Schema.optional(Schema.Unknown),
+});
+
+const PinChannelBodySchema = Schema.Struct({
+  pinned: Schema.optional(Schema.Unknown),
   opId: Schema.optional(Schema.Unknown),
 });
 
@@ -262,6 +273,103 @@ export function registerChannelRoutes(app: FastifyInstance, deps: ChannelRouteDe
       },
       onApplied: (response) => {
         hub.sendToUsers([user.id], { type: 'muted', channelId: id, muted: response.muted });
+      },
+    });
+  });
+
+  app.post('/api/channels/:id/archive', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    const { id } = req.params as { id: string };
+    const body = decodeRouteBody(ArchiveChannelBodySchema, req.body);
+    const opId = optionalOpId(body);
+    if (typeof body.archived !== 'boolean') {
+      return reply.code(400).send({ error: 'bad_request', message: 'archived must be boolean' });
+    }
+    if (!(await canAccessChannel(pool, user.id, id))) {
+      return reply.code(404).send({ error: 'channel_not_found', message: 'channel not found' });
+    }
+    const response = await runMutation({
+      userId: user.id,
+      opId,
+      opType: 'channel.archive',
+      body: { channelId: id, archived: body.archived },
+      fn: async (client) => {
+        const current = await client.query<{
+          workspace_id: string;
+          archived_at: Date | null;
+        }>('SELECT workspace_id, archived_at FROM channels WHERE id = $1 FOR UPDATE', [id]);
+        const row = current.rows[0];
+        if (!row) return null;
+        const alreadyArchived = row.archived_at !== null;
+        if (alreadyArchived === body.archived) {
+          return {
+            archived: body.archived,
+            archivedAt: row.archived_at ? row.archived_at.toISOString() : null,
+            event: null,
+          };
+        }
+        const updated = await client.query<{ archived_at: Date | null }>(
+          `UPDATE channels
+           SET archived_at = CASE WHEN $1 THEN now() ELSE NULL END
+           WHERE id = $2
+           RETURNING archived_at`,
+          [body.archived, id],
+        );
+        const archivedAt = updated.rows[0]!.archived_at;
+        const event = await appendEvent(client, {
+          workspaceId: row.workspace_id,
+          channelId: id,
+          type: body.archived ? 'channel.archived' : 'channel.unarchived',
+          actorId: user.id,
+          payload: { channelId: id, archivedAt: archivedAt ? archivedAt.toISOString() : null },
+        });
+        return {
+          archived: body.archived,
+          archivedAt: archivedAt ? archivedAt.toISOString() : null,
+          event,
+        };
+      },
+      onApplied: (result) => {
+        if (result?.event) hub.publishEvent(result.event);
+      },
+    });
+    if (!response) return reply.code(404).send({ error: 'channel_not_found', message: 'channel not found' });
+    return { archived: response.archived, archivedAt: response.archivedAt };
+  });
+
+  app.post('/api/channels/:id/pin', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    const { id } = req.params as { id: string };
+    const body = decodeRouteBody(PinChannelBodySchema, req.body);
+    const opId = optionalOpId(body);
+    if (typeof body.pinned !== 'boolean') {
+      return reply.code(400).send({ error: 'bad_request', message: 'pinned must be boolean' });
+    }
+    if (!(await canAccessChannel(pool, user.id, id))) {
+      return reply.code(404).send({ error: 'channel_not_found', message: 'channel not found' });
+    }
+    return runMutation({
+      userId: user.id,
+      opId,
+      opType: 'channel.pin',
+      body: { channelId: id, pinned: body.pinned },
+      fn: async (client) => {
+        if (body.pinned) {
+          await client.query(
+            `INSERT INTO channel_pins (user_id, channel_id)
+             VALUES ($1, $2)
+             ON CONFLICT (user_id, channel_id) DO NOTHING`,
+            [user.id, id],
+          );
+        } else {
+          await client.query('DELETE FROM channel_pins WHERE user_id = $1 AND channel_id = $2', [user.id, id]);
+        }
+        return { pinned: body.pinned as boolean };
+      },
+      onApplied: (response) => {
+        hub.sendToUsers([user.id], { type: 'channel-pinned', channelId: id, pinned: response.pinned });
       },
     });
   });

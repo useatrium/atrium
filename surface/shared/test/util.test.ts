@@ -32,6 +32,8 @@ describe('channelLabel', () => {
           workspaceId: 'ws-1',
           name: 'internal',
           createdAt: new Date(0).toISOString(),
+          archivedAt: null,
+          pinned: false,
           kind: 'gdm',
           members: [
             { id: 'u1', handle: 'alice', displayName: 'Alice' },
@@ -54,6 +56,8 @@ describe('channelAvatarName', () => {
           workspaceId: 'ws-1',
           name: 'dm-self',
           createdAt: new Date(0).toISOString(),
+          archivedAt: null,
+          pinned: false,
           kind: 'dm',
           members: [{ id: 'u1', handle: 'alice', displayName: 'Alice Example' }],
         },
@@ -70,6 +74,8 @@ describe('channelAvatarName', () => {
           workspaceId: 'ws-1',
           name: 'internal',
           createdAt: new Date(0).toISOString(),
+          archivedAt: null,
+          pinned: false,
           kind: 'gdm',
           members: [
             { id: 'u1', handle: 'alice', displayName: 'Alice' },

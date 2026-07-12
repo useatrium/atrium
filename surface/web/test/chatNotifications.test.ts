@@ -16,6 +16,8 @@ function channel(overrides: Partial<Channel> = {}): Channel {
     kind: 'public',
     members: [me, ada],
     muted: false,
+    archivedAt: null,
+    pinned: false,
     ...overrides,
   };
 }
@@ -46,6 +48,8 @@ function session(overrides: Partial<Session> = {}): Session {
     harness: 'codex',
     spawnedBy: me.id,
     driverId: null,
+    archivedAt: null,
+    pinned: false,
     pendingSeatRequests: [],
     suggestions: [],
     answerProposals: [],
@@ -135,7 +139,7 @@ describe('notificationForWireEvent', () => {
       ),
     ).toEqual({
       kind: 'session-completed',
-      title: 'Agent session failed: Write the report',
+      title: 'Agent failed: Write the report',
       body: 'The command failed because the token expired.',
       tag: 'evt-101',
       sessionId: 's-1',

@@ -4983,6 +4983,7 @@ describe('session access control', () => {
       completedOld,
     ]);
     expect(Object.keys(allSessions[0]).sort()).toEqual([
+      'archivedAt',
       'channelId',
       'channelName',
       'completedAt',
@@ -4990,6 +4991,7 @@ describe('session access control', () => {
       'createdAt',
       'harness',
       'id',
+      'pinned',
       'spawnedBy',
       'spawnerName',
       'status',

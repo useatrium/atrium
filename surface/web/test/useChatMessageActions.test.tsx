@@ -15,6 +15,8 @@ const channel: Channel = {
   members: [me],
   latestEventId: 0,
   lastReadEventId: 0,
+  archivedAt: null,
+  pinned: false,
 };
 
 type TestEnqueueOp = <T extends OpType>(

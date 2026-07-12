@@ -21,6 +21,8 @@ function channel(overrides: Partial<Channel> = {}): Channel {
     name: 'general',
     createdAt,
     kind: 'public',
+    archivedAt: null,
+    pinned: false,
     ...overrides,
   };
 }
@@ -46,6 +48,8 @@ function session(overrides: Partial<Session> = {}): Session {
     completedAt: null,
     lastEventId: 1,
     permalink: '/s/s-1',
+    archivedAt: null,
+    pinned: false,
     ...overrides,
   };
 }
@@ -67,6 +71,8 @@ function wire(overrides: Partial<SessionWire> = {}): SessionWire {
     completedAt: null,
     lastEventId: 2,
     permalink: '/s/s-2',
+    archivedAt: null,
+    pinned: false,
     ...overrides,
   };
 }

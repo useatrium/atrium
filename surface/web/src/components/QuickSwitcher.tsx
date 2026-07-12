@@ -69,7 +69,10 @@ export function QuickSwitcher({
   const channelMatches = useMemo(() => {
     const q = query.trim().toLowerCase();
     const label = (c: Channel) => channelLabel(c, meId).toLowerCase();
-    const list = q ? channels.filter((c) => label(c).includes(q)) : channels;
+    // Archived channels stay reachable from the sidebar's Archived section,
+    // not the switcher's default jump list.
+    const visible = channels.filter((c) => c.archivedAt == null);
+    const list = q ? visible.filter((c) => label(c).includes(q)) : visible;
     return [...list].sort((a, b) => Number(label(b).startsWith(q)) - Number(label(a).startsWith(q)));
   }, [channels, query, meId]);
 
@@ -338,11 +341,11 @@ export function QuickSwitcher({
               </ul>
 
               <div className="flex items-center gap-2 px-3 pb-1 pt-2">
-                <span className="text-3xs font-semibold uppercase tracking-wider text-fg-muted">Sessions</span>
+                <span className="text-3xs font-semibold uppercase tracking-wider text-fg-muted">Agents</span>
                 {searchingSessions && <span className="text-3xs text-fg-muted">searching…</span>}
               </div>
               {!searchingSessions && sessionHits.length === 0 && (
-                <div className="px-3 py-2 text-xs text-fg-muted">No matching sessions</div>
+                <div className="px-3 py-2 text-xs text-fg-muted">No matching agents</div>
               )}
               <ul role="presentation">
                 {sessionHits.map((hit, j) => {

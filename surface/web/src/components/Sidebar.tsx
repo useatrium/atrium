@@ -5,8 +5,10 @@ import {
   useRef,
   useState,
   type FormEvent,
+  type MouseEvent,
 } from 'react';
 import { api, type Channel } from '../api';
+import { MessageActionMenu, type MessageActionMenuState } from './MessageActionMenu';
 import {
   isTerminalSessionStatus,
   type QueueSyncState,
@@ -47,6 +49,8 @@ export function Sidebar({
   queueSync,
   onSelect,
   onSetMute,
+  onSetArchived,
+  onSetPinned,
   onCreateChannel,
   onStartDm,
   onOpenSession,
@@ -72,6 +76,10 @@ export function Sidebar({
   queueSync: QueueSyncState;
   onSelect: (channelId: string) => void;
   onSetMute: (channelId: string, muted: boolean) => void;
+  /** Global channel archive toggle; omit to hide the affordance. */
+  onSetArchived?: (channelId: string, archived: boolean) => void;
+  /** Per-user channel pin toggle; omit to hide the affordance. */
+  onSetPinned?: (channelId: string, pinned: boolean) => void;
   onCreateChannel: (name: string, isPrivate?: boolean) => Promise<void>;
   onStartDm: (userIds: string[]) => void;
   onOpenSession: (sessionId: string) => void;
@@ -102,8 +110,39 @@ export function Sidebar({
   const dmPickerInputRef = useRef<HTMLInputElement | null>(null);
   const createChannelErrorId = 'sidebar-create-channel-error';
 
-  const publicChannels = channels.filter((c) => c.kind !== 'dm' && c.kind !== 'gdm');
-  const dms = channels.filter((c) => c.kind === 'dm' || c.kind === 'gdm');
+  const activeChannels = channels.filter((c) => c.archivedAt == null);
+  const pinnedChannels = activeChannels.filter((c) => c.pinned);
+  const publicChannels = activeChannels.filter((c) => !c.pinned && c.kind !== 'dm' && c.kind !== 'gdm');
+  const dms = activeChannels.filter((c) => !c.pinned && (c.kind === 'dm' || c.kind === 'gdm'));
+  const archivedChannels = channels.filter((c) => c.archivedAt != null);
+  const [archivedOpen, setArchivedOpen] = useState(false);
+  const [channelMenu, setChannelMenu] = useState<{ channel: Channel; state: MessageActionMenuState } | null>(null);
+
+  const openChannelMenu = useCallback((channel: Channel, event: MouseEvent) => {
+    event.preventDefault();
+    setChannelMenu({ channel, state: { mode: 'popover', anchor: { x: event.clientX, y: event.clientY } } });
+  }, []);
+
+  const channelMenuActions = useMemo(() => {
+    if (!channelMenu) return [];
+    const c = channelMenu.channel;
+    const isArchived = c.archivedAt != null;
+    return [
+      ...(onSetPinned && !isArchived
+        ? [{ key: 'pin', label: c.pinned ? 'Unpin' : 'Pin', onSelect: () => onSetPinned(c.id, !c.pinned) }]
+        : []),
+      ...(onSetArchived
+        ? [
+            {
+              key: 'archive',
+              label: isArchived ? 'Unarchive' : 'Archive',
+              onSelect: () => onSetArchived(c.id, !isArchived),
+            },
+          ]
+        : []),
+      { key: 'mute', label: c.muted ? 'Unmute' : 'Mute', onSelect: () => onSetMute(c.id, !c.muted) },
+    ];
+  }, [channelMenu, onSetArchived, onSetMute, onSetPinned]);
   const syncTitle = `Syncing — ${queueSync.queuedCount} ${queueSync.queuedCount === 1 ? 'change' : 'changes'} queued`;
   const connectionDotTitle = wsStatus === 'open' && queueSync.syncStuck ? syncTitle : `connection: ${wsStatus}`;
   const connectionDotClass =
@@ -153,6 +192,47 @@ export function Sidebar({
       );
     }
     return null;
+  };
+
+  const renderChannelRow = (c: Channel) => {
+    const active = c.id === activeChannelId;
+    const level = c.muted || active ? false : unread[c.id] ?? false;
+    const isDm = c.kind === 'dm' || c.kind === 'gdm';
+    const label = isDm ? channelLabel(c, me.id) : c.name;
+    const partner = isDm ? dmPartner(c, me.id) : null;
+    return (
+      <li
+        key={c.id}
+        className={sidebarItemClass(active, level, c.muted)}
+        onContextMenu={(event) => openChannelMenu(c, event)}
+      >
+        <button type="button" onClick={() => onSelect(c.id)} className={SIDEBAR_ROW_BUTTON_CLASS}>
+          {isDm ? (
+            <Avatar name={channelAvatarName(c, me.id)} seed={partner?.id ?? c.id} size={16} />
+          ) : (
+            <span className="grid w-4 shrink-0 place-items-center text-fg-muted">
+              {c.kind === 'private' ? <LockIcon size={14} /> : '#'}
+            </span>
+          )}
+          <span className="truncate">{label}</span>
+          {unreadBadge(c.id, active)}
+        </button>
+        <Tooltip content={c.muted ? `Unmute ${label}` : `Mute ${label}`}>
+          <button
+            type="button"
+            onClick={() => onSetMute(c.id, !c.muted)}
+            aria-label={c.muted ? `Unmute ${label}` : `Mute ${label}`}
+            className={`shrink-0 px-2 py-1 text-xs hover:text-fg-body ${
+              c.muted
+                ? 'text-fg-muted'
+                : 'text-fg-faint opacity-0 group-hover:opacity-100 focus-visible:opacity-100 max-md:opacity-100 [@media(hover:none)]:opacity-100'
+            }`}
+          >
+            {c.muted ? <BellOffIcon /> : <BellIcon />}
+          </button>
+        </Tooltip>
+      </li>
+    );
   };
 
   const submit = async (e: FormEvent) => {
@@ -283,7 +363,15 @@ export function Sidebar({
         <section className="mt-3">
           <h2 className={SIDEBAR_GROUP_TITLE_CLASS}>Conversations</h2>
           <div className={SIDEBAR_PANEL_CLASS}>
-            <div className={SIDEBAR_SUBHEAD_CLASS}>
+            {pinnedChannels.length > 0 && (
+              <>
+                <div className={SIDEBAR_SUBHEAD_CLASS}>
+                  <span>Pinned</span>
+                </div>
+                <ul className="pb-1">{pinnedChannels.map(renderChannelRow)}</ul>
+              </>
+            )}
+            <div className={`${SIDEBAR_SUBHEAD_CLASS}${pinnedChannels.length > 0 ? ' mt-2 border-t border-edge pt-2' : ''}`}>
               <span>Channels</span>
               <Tooltip content="Create channel">
                 <button
@@ -330,37 +418,7 @@ export function Sidebar({
               </form>
             )}
 
-            <ul className="max-h-80 overflow-y-auto pb-1">
-              {publicChannels.map((c) => {
-                const active = c.id === activeChannelId;
-                const level = c.muted || active ? false : unread[c.id] ?? false;
-                return (
-                  <li key={c.id} className={sidebarItemClass(active, level, c.muted)}>
-                    <button type="button" onClick={() => onSelect(c.id)} className={SIDEBAR_ROW_BUTTON_CLASS}>
-                      <span className="grid w-4 shrink-0 place-items-center text-fg-muted">
-                        {c.kind === 'private' ? <LockIcon size={14} /> : '#'}
-                      </span>
-                      <span className="truncate">{c.name}</span>
-                      {unreadBadge(c.id, active)}
-                    </button>
-                    <Tooltip content={c.muted ? `Unmute ${c.name}` : `Mute ${c.name}`}>
-                      <button
-                        type="button"
-                        onClick={() => onSetMute(c.id, !c.muted)}
-                        aria-label={c.muted ? `Unmute ${c.name}` : `Mute ${c.name}`}
-                        className={`shrink-0 px-2 py-1 text-xs hover:text-fg-body ${
-                          c.muted
-                            ? 'text-fg-muted'
-                            : 'text-fg-faint opacity-0 group-hover:opacity-100 focus-visible:opacity-100 max-md:opacity-100 [@media(hover:none)]:opacity-100'
-                        }`}
-                      >
-                        {c.muted ? <BellOffIcon /> : <BellIcon />}
-                      </button>
-                    </Tooltip>
-                  </li>
-                );
-              })}
-            </ul>
+            <ul className="max-h-80 overflow-y-auto pb-1">{publicChannels.map(renderChannelRow)}</ul>
 
             <div className={`${SIDEBAR_SUBHEAD_CLASS} mt-2 border-t border-edge pt-2`}>
               <span>Direct messages</span>
@@ -431,38 +489,23 @@ export function Sidebar({
               </div>
             )}
 
-            <ul>
-              {dms.map((c) => {
-                const active = c.id === activeChannelId;
-                const level = c.muted || active ? false : unread[c.id] ?? false;
-                const label = channelLabel(c, me.id);
-                const partner = dmPartner(c, me.id);
-                const avatarName = channelAvatarName(c, me.id);
-                return (
-                  <li key={c.id} className={sidebarItemClass(active, level, c.muted)}>
-                    <button type="button" onClick={() => onSelect(c.id)} className={SIDEBAR_ROW_BUTTON_CLASS}>
-                      <Avatar name={avatarName} seed={partner?.id ?? c.id} size={16} />
-                      <span className="truncate">{label}</span>
-                      {unreadBadge(c.id, active)}
-                    </button>
-                    <Tooltip content={c.muted ? `Unmute ${label}` : `Mute ${label}`}>
-                      <button
-                        type="button"
-                        onClick={() => onSetMute(c.id, !c.muted)}
-                        aria-label={c.muted ? `Unmute ${label}` : `Mute ${label}`}
-                        className={`shrink-0 px-2 py-1 text-xs hover:text-fg-body ${
-                          c.muted
-                            ? 'text-fg-muted'
-                            : 'text-fg-faint opacity-0 group-hover:opacity-100 focus-visible:opacity-100 max-md:opacity-100 [@media(hover:none)]:opacity-100'
-                        }`}
-                      >
-                        {c.muted ? <BellOffIcon /> : <BellIcon />}
-                      </button>
-                    </Tooltip>
-                  </li>
-                );
-              })}
-            </ul>
+            <ul>{dms.map(renderChannelRow)}</ul>
+
+            {archivedChannels.length > 0 && (
+              <div className="mt-2 border-t border-edge pt-1">
+                <button
+                  type="button"
+                  onClick={() => setArchivedOpen((open) => !open)}
+                  aria-expanded={archivedOpen}
+                  className="flex w-full items-center gap-1.5 px-3 py-1 text-2xs font-semibold text-fg-muted hover:text-fg-secondary"
+                >
+                  <span aria-hidden className="inline-block w-2.5 text-center">{archivedOpen ? '▾' : '▸'}</span>
+                  <span>Archived</span>
+                  <span className="tabular-nums text-fg-faint">{archivedChannels.length}</span>
+                </button>
+                {archivedOpen && <ul className="pb-1">{archivedChannels.map(renderChannelRow)}</ul>}
+              </div>
+            )}
           </div>
         </section>
 
@@ -497,6 +540,12 @@ export function Sidebar({
         </button>
       </footer>
       </nav>
+      <MessageActionMenu
+        state={channelMenu?.state ?? null}
+        onClose={() => setChannelMenu(null)}
+        actions={channelMenuActions}
+        label="Channel actions"
+      />
     </>
   );
 }
@@ -592,7 +641,7 @@ function SessionSidebarSection({
         <div className={SIDEBAR_PANEL_CLASS}>
           <ul>
             {preview.length === 0 && (
-              <li className="px-3 py-2 text-xs text-fg-muted">No agent sessions yet</li>
+              <li className="px-3 py-2 text-xs text-fg-muted">No agents yet</li>
             )}
             {preview.map((session) => (
               <li key={session.id} className="mx-1">
@@ -617,7 +666,7 @@ function SessionSidebarSection({
                 onClick={onOpenAgents}
                 className="flex min-h-7 w-full items-center rounded-md px-2 py-1 text-left text-xs font-medium text-accent-text hover:bg-surface-overlay/70"
               >
-                View all agent sessions
+                View all agents
               </button>
             </li>
           </ul>

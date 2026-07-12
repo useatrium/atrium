@@ -17,12 +17,18 @@ export function ChannelMembersMenu({
   channel,
   meId,
   enqueueOp,
+  onSetArchived,
+  onSetPinned,
   open: controlledOpen,
   onOpenChange,
 }: {
   channel: Channel;
   meId: string;
   enqueueOp: (input: MemberOp) => Promise<unknown>;
+  /** Global channel archive toggle; omit to hide the affordance. */
+  onSetArchived?: (channelId: string, archived: boolean) => void;
+  /** Per-user channel pin toggle; omit to hide the affordance. */
+  onSetPinned?: (channelId: string, pinned: boolean) => void;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
 }) {
@@ -225,6 +231,34 @@ export function ChannelMembersMenu({
               </li>
             ))}
           </ul>
+          {(onSetPinned || onSetArchived) && (
+            <div className="mt-2 flex gap-1.5 border-t border-edge pt-2">
+              {onSetPinned && channel.archivedAt == null && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onSetPinned(channel.id, !channel.pinned);
+                    close();
+                  }}
+                  className="flex-1 rounded border border-edge px-2 py-1 text-xs text-fg-secondary hover:bg-surface-overlay max-md:min-h-11"
+                >
+                  {channel.pinned ? 'Unpin' : 'Pin'}
+                </button>
+              )}
+              {onSetArchived && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onSetArchived(channel.id, channel.archivedAt == null);
+                    close();
+                  }}
+                  className="flex-1 rounded border border-edge px-2 py-1 text-xs text-fg-secondary hover:bg-surface-overlay max-md:min-h-11"
+                >
+                  {channel.archivedAt != null ? 'Unarchive' : 'Archive'}
+                </button>
+              )}
+            </div>
+          )}
           <button
             type="button"
             onClick={leaveChannel}

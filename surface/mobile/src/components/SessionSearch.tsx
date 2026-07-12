@@ -301,9 +301,9 @@ export function SessionSearch() {
         <TextInput
           value={q}
           onChangeText={setQ}
-          placeholder="Search sessions"
+          placeholder="Search agents"
           placeholderTextColor={colors.textFaint}
-          accessibilityLabel="Search sessions"
+          accessibilityLabel="Search agents"
           autoFocus
           autoCorrect={false}
           autoCapitalize="none"

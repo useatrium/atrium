@@ -246,7 +246,7 @@ export const sessionsApi = {
     return reqJson<{ session: SessionWire }>(`/api/sessions/${id}`, undefined, decodeSessionResponse);
   },
 
-  list(opts: { status?: 'running' | 'recent' | 'all'; limit?: number } = {}): Promise<{
+  list(opts: { status?: 'running' | 'recent' | 'all' | 'archived'; limit?: number } = {}): Promise<{
     sessions: SessionListItem[];
   }> {
     const q = new URLSearchParams();

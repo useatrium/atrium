@@ -304,7 +304,7 @@ function SessionPanePagePlaceholder({
   return (
     <aside className="flex min-w-0 flex-1 flex-col border-l border-edge bg-surface">
       <header className="flex h-12 shrink-0 items-center justify-between border-b border-edge px-4">
-        <h2 className="text-sm font-semibold text-fg">Session</h2>
+        <h2 className="text-sm font-semibold text-fg">Agent</h2>
         <a
           href={`/s/${sessionId}`}
           className="rounded-md px-2 py-1 text-2xs text-fg-tertiary hover:bg-surface-overlay hover:text-fg"
@@ -314,7 +314,7 @@ function SessionPanePagePlaceholder({
       </header>
       {notFound ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-1.5 px-6 text-center">
-          <div className="text-sm font-medium text-fg-secondary">Session not found</div>
+          <div className="text-sm font-medium text-fg-secondary">Agent not found</div>
           <div className="text-xs text-fg-muted">It may have been removed, or the link is wrong.</div>
           <a
             href={`/s/${sessionId}`}

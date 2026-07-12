@@ -38,6 +38,8 @@ function session(overrides: Partial<SessionListItem> = {}): SessionListItem {
     costUsd: 0,
     createdAt: '2026-07-03T10:00:00.000Z',
     completedAt: null,
+    archivedAt: null,
+    pinned: false,
     ...overrides,
   };
 }
@@ -123,6 +125,28 @@ describe('sessionSidebarPreview', () => {
 });
 
 describe('Sidebar', () => {
+  it('splits pinned channels into a Pinned section and hides archived behind a disclosure', () => {
+    const base = {
+      workspaceId: 'ws-1',
+      kind: 'public' as const,
+      muted: false,
+      createdAt: '2026-01-01T00:00:00.000Z',
+    };
+    renderSidebar([
+      { ...base, id: 'ch-general', name: 'general', archivedAt: null, pinned: false },
+      { ...base, id: 'ch-pinned', name: 'pinned-chan', archivedAt: null, pinned: true },
+      { ...base, id: 'ch-archived', name: 'old-chan', archivedAt: '2026-07-01T00:00:00.000Z', pinned: false },
+    ]);
+
+    expect(screen.getByText('Pinned')).toBeTruthy();
+    expect(screen.getByText('pinned-chan')).toBeTruthy();
+    expect(screen.getByText('general')).toBeTruthy();
+    // Archived channels are collapsed by default and appear on expand.
+    expect(screen.queryByText('old-chan')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /Archived/ }));
+    expect(screen.getByText('old-chan')).toBeTruthy();
+  });
+
   it('keeps the connection status accessible but invisible when healthy', () => {
     renderSidebar([
       {
@@ -131,6 +155,8 @@ describe('Sidebar', () => {
         name: 'general',
         kind: 'public',
         muted: false,
+        archivedAt: null,
+        pinned: false,
         createdAt: '2026-01-01T00:00:00.000Z',
       },
     ]);
@@ -150,6 +176,8 @@ describe('Sidebar', () => {
           name: 'general',
           kind: 'public',
           muted: false,
+          archivedAt: null,
+          pinned: false,
           createdAt: '2026-01-01T00:00:00.000Z',
         },
       ],
@@ -172,6 +200,8 @@ describe('Sidebar', () => {
           name: 'general',
           kind: 'public',
           muted: false,
+          archivedAt: null,
+          pinned: false,
           createdAt: '2026-01-01T00:00:00.000Z',
         },
       ],
@@ -190,6 +220,8 @@ describe('Sidebar', () => {
       name: 'general',
       kind: 'public' as const,
       muted: false,
+      archivedAt: null,
+      pinned: false,
       createdAt: '2026-01-01T00:00:00.000Z',
     };
 
@@ -215,6 +247,8 @@ describe('Sidebar', () => {
           name: 'general',
           kind: 'public',
           muted: false,
+          archivedAt: null,
+          pinned: false,
           createdAt: '2026-01-01T00:00:00.000Z',
         },
         {
@@ -223,6 +257,8 @@ describe('Sidebar', () => {
           name: 'dm-self',
           kind: 'dm',
           muted: false,
+          archivedAt: null,
+          pinned: false,
           createdAt: '2026-01-01T00:00:00.000Z',
           members: [me],
         },
@@ -243,6 +279,8 @@ describe('Sidebar', () => {
           name: 'general',
           kind: 'public',
           muted: false,
+          archivedAt: null,
+          pinned: false,
           createdAt: '2026-01-01T00:00:00.000Z',
         },
       ],
@@ -265,6 +303,8 @@ describe('Sidebar', () => {
           name: 'general',
           kind: 'public',
           muted: false,
+          archivedAt: null,
+          pinned: false,
           createdAt: '2026-01-01T00:00:00.000Z',
         },
       ],
@@ -285,6 +325,8 @@ describe('Sidebar', () => {
         name: 'general',
         kind: 'public',
         muted: false,
+        archivedAt: null,
+        pinned: false,
         createdAt: '2026-01-01T00:00:00.000Z',
       },
     ]);
@@ -348,6 +390,8 @@ describe('Sidebar', () => {
         name: 'general',
         kind: 'public',
         muted: false,
+        archivedAt: null,
+        pinned: false,
         createdAt: '2026-01-01T00:00:00.000Z',
       },
     ]);
@@ -363,7 +407,7 @@ describe('Sidebar', () => {
     expect(buttons[2]).toContain('Newest cancelled');
     expect(buttons[3]).toContain('Fresh completed');
     expect(buttons[4]).toContain('Recent failed');
-    expect(buttons[5]).toContain('View all agent sessions');
+    expect(buttons[5]).toContain('View all agents');
     expect(within(agentsSection!).queryByText('Dropped completed')).toBeNull();
     expect(within(agentsSection!).queryByText('2')).toBeNull();
   });
@@ -389,6 +433,8 @@ describe('Sidebar', () => {
           name: 'general',
           kind: 'public',
           muted: false,
+          archivedAt: null,
+          pinned: false,
           createdAt: '2026-01-01T00:00:00.000Z',
         },
       ],
@@ -396,7 +442,7 @@ describe('Sidebar', () => {
     );
 
     await screen.findByText('Active session');
-    fireEvent.click(screen.getByRole('button', { name: 'View all agent sessions' }));
+    fireEvent.click(screen.getByRole('button', { name: 'View all agents' }));
     expect(onOpenAgents).toHaveBeenCalledOnce();
   });
 
@@ -410,6 +456,8 @@ describe('Sidebar', () => {
           name: 'general',
           kind: 'public',
           muted: false,
+          archivedAt: null,
+          pinned: false,
           createdAt: '2026-01-01T00:00:00.000Z',
         },
       ],

@@ -145,7 +145,7 @@ export default function AppLayout() {
           <Stack.Screen name="thread/[rootId]" options={{ title: 'Thread' }} />
           <Stack.Screen
             name="session-search"
-            options={{ title: 'Search sessions', presentation: 'modal' }}
+            options={{ title: 'Search agents', presentation: 'modal' }}
           />
           <Stack.Screen
             name="new-dm"

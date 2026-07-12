@@ -839,6 +839,91 @@ describe('channel removal', () => {
     expect(state.activeChannelId).toBeNull();
   });
 });
+
+describe('archive and pin reducer actions', () => {
+  it('folds global channel archive events and per-user pin changes', () => {
+    let state = appReducer(initialAppState, {
+      type: 'channels-loaded',
+      channels: [
+        {
+          id: CH,
+          workspaceId: 'ws-1',
+          name: 'general',
+          createdAt: new Date(0).toISOString(),
+          kind: 'public',
+        },
+      ],
+    });
+    const archivedAt = '2026-07-11T12:00:00.000Z';
+    state = appReducer(state, {
+      type: 'server-event',
+      event: {
+        id: 41,
+        workspaceId: 'ws-1',
+        channelId: CH,
+        threadRootEventId: null,
+        type: 'channel.archived',
+        actorId: alice.id,
+        payload: { channelId: CH, archivedAt },
+        createdAt: archivedAt,
+        author: alice,
+      },
+    });
+    expect(state.channels[0]!.archivedAt).toBe(archivedAt);
+
+    state = appReducer(state, { type: 'channel-pin-changed', channelId: CH, pinned: true });
+    expect(state.channels[0]!.pinned).toBe(true);
+
+    state = appReducer(state, {
+      type: 'server-event',
+      event: {
+        id: 42,
+        workspaceId: 'ws-1',
+        channelId: CH,
+        threadRootEventId: null,
+        type: 'channel.unarchived',
+        actorId: bob.id,
+        payload: { channelId: CH, archivedAt: null },
+        createdAt: '2026-07-11T12:01:00.000Z',
+        author: bob,
+      },
+    });
+    expect(state.channels[0]!.archivedAt).toBeNull();
+  });
+
+  it('updates an already-folded session pin without changing global archive state', () => {
+    const session: Session = {
+      id: 'sess-pin',
+      workspaceId: 'ws-1',
+      channelId: CH,
+      threadRootEventId: null,
+      title: 'task',
+      status: 'completed',
+      harness: 'codex',
+      spawnedBy: alice.id,
+      driverId: alice.id,
+      pendingSeatRequests: [],
+      suggestions: [],
+      answerProposals: [],
+      pendingQuestion: null,
+      seatEvents: [],
+      costUsd: 0,
+      resultText: null,
+      createdAt: new Date(0).toISOString(),
+      completedAt: new Date(1).toISOString(),
+      archivedAt: new Date(2).toISOString(),
+      pinned: false,
+      lastEventId: 1,
+      permalink: '/s/sess-pin',
+    };
+    const state = appReducer(
+      appReducer(initialAppState, { type: 'session-upsert', session }),
+      { type: 'session-pin-changed', sessionId: session.id, pinned: true },
+    );
+    expect(state.sessions[session.id]).toMatchObject({ pinned: true, archivedAt: session.archivedAt });
+  });
+});
+
 describe('session spawn reconciliation', () => {
   it('session.spawned with client_spawn_id reconciles the optimistic row when the POST response was lost', () => {
     const tempId = 'pending:lost-post';
@@ -999,6 +1084,8 @@ describe('live cold-counter advancement (unread divider depends on it)', () => {
     workspaceId: 'ws-1',
     name: 'general',
     createdAt: new Date(0).toISOString(),
+    archivedAt: null,
+    pinned: false,
     kind: 'public' as const,
     latestEventId: 8,
     lastReadEventId,
@@ -1076,6 +1163,8 @@ describe('unified sync application', () => {
             workspaceId: 'ws-1',
             name: 'general',
             createdAt: new Date(0).toISOString(),
+            archivedAt: null,
+            pinned: false,
             kind: 'public',
             latestEventId: 9,
             lastReadEventId: 9,
@@ -1085,6 +1174,8 @@ describe('unified sync application', () => {
             workspaceId: 'ws-1',
             name: 'muted',
             createdAt: new Date(0).toISOString(),
+            archivedAt: null,
+            pinned: false,
             kind: 'public',
             muted: true,
           },
@@ -1128,6 +1219,8 @@ describe('unified sync application', () => {
       resultText: null,
       createdAt: new Date(0).toISOString(),
       completedAt: null,
+      archivedAt: null,
+      pinned: false,
       lastEventId: 1,
       permalink: '/s/sess-1',
     };

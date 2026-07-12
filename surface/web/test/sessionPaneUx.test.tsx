@@ -26,6 +26,8 @@ const running: Session = {
   spawnerName: 'Alice',
   driverId: 'u-alice',
   driverName: 'Alice',
+  archivedAt: null,
+  pinned: false,
   pendingSeatRequests: [],
   suggestions: [],
   answerProposals: [],

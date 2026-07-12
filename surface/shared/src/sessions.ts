@@ -261,6 +261,8 @@ export interface SessionWire {
   resultText: string | null;
   createdAt: string;
   completedAt: string | null;
+  archivedAt: string | null;
+  pinned: boolean;
   lastEventId: number;
   permalink: string;
 }
@@ -277,6 +279,8 @@ export interface SessionListItem {
   costUsd: number;
   createdAt: string;
   completedAt: string | null;
+  archivedAt: string | null;
+  pinned: boolean;
 }
 
 /** Client-side session entity (wire shape + display-only extras). */
@@ -320,6 +324,8 @@ export interface Session {
   resultText: string | null;
   createdAt: string;
   completedAt: string | null;
+  archivedAt: string | null;
+  pinned: boolean;
   lastEventId: number;
   permalink: string;
 }
@@ -459,6 +465,9 @@ export const SessionWireSchema = Schema.mutable(Schema.Struct({
   resultText: NullableStringSchema,
   createdAt: Schema.String,
   completedAt: NullableStringSchema,
+  // Decode-with-default so an old server (deploy skew) can't fail the decode.
+  archivedAt: Schema.optionalWith(NullableStringSchema, { default: () => null }),
+  pinned: Schema.optionalWith(Schema.Boolean, { default: () => false }),
   lastEventId: Schema.Number,
   permalink: Schema.String,
 }));
@@ -475,6 +484,8 @@ export const SessionListItemSchema = Schema.mutable(Schema.Struct({
   costUsd: Schema.Number,
   createdAt: Schema.String,
   completedAt: NullableStringSchema,
+  archivedAt: Schema.optionalWith(NullableStringSchema, { default: () => null }),
+  pinned: Schema.optionalWith(Schema.Boolean, { default: () => false }),
 }));
 
 export const SessionResponseSchema = Schema.mutable(Schema.Struct({
@@ -596,6 +607,11 @@ export function isTerminalSessionStatus(s: SessionStatus): boolean {
   return s === 'completed' || s === 'failed' || s === 'cancelled';
 }
 
+/** Shared archive grouping definition for all client surfaces. */
+export function isArchivedSession(session: Pick<Session, 'archivedAt'>): boolean {
+  return session.archivedAt !== null;
+}
+
 /**
  * A session still claiming spawning/queued this long after creation has almost
  * certainly been lost by the control plane — render it as stalled (static, no
@@ -678,6 +694,8 @@ export function sessionFromWire(w: SessionWire): Session {
     resultText: w.resultText ?? null,
     createdAt: w.createdAt,
     completedAt: w.completedAt ?? null,
+    archivedAt: w.archivedAt ?? null,
+    pinned: w.pinned ?? false,
     lastEventId: w.lastEventId ?? 0,
     permalink: w.permalink || `/s/${w.id}`,
   };
@@ -708,6 +726,8 @@ export function mergeSpawnResponse(live: Session | undefined, resp: Session): Se
     costUsd: Math.max(live.costUsd, resp.costUsd),
     resultText: live.resultText ?? resp.resultText,
     completedAt: live.completedAt ?? resp.completedAt,
+    archivedAt: live.archivedAt ?? resp.archivedAt,
+    pinned: live.pinned ?? resp.pinned,
     ...optionalProp('spawnerName', spawnerName),
     // Seat state that moved via WS while the POST was in flight wins over the
     // insert-time snapshot (which always says driver = spawner, no requests).
@@ -770,6 +790,8 @@ export function applySessionEvent(
       resultText: null,
       createdAt: ev.createdAt,
       completedAt: null,
+      archivedAt: null,
+      pinned: false,
       lastEventId: 0,
       permalink: `/s/${sessionId}`,
     };
@@ -798,6 +820,17 @@ export function applySessionEvent(
   }
 
   if (!prev) return sessions; // status for a session we never saw spawn — ignore
+
+  if (ev.type === 'session.archived') {
+    const archivedAt = typeof p.archivedAt === 'string' ? p.archivedAt : ev.createdAt;
+    if (prev.archivedAt === archivedAt) return sessions;
+    return { ...sessions, [sessionId]: { ...prev, archivedAt } };
+  }
+
+  if (ev.type === 'session.unarchived') {
+    if (prev.archivedAt === null) return sessions;
+    return { ...sessions, [sessionId]: { ...prev, archivedAt: null } };
+  }
 
   if (ev.type === 'session.effort_changed') {
     const effort = typeof p.effort === 'string' ? p.effort : null;

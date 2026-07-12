@@ -74,6 +74,8 @@ function bSession(overrides: Partial<Session> = {}): Session {
     spawnedBy: me.id,
     spawnerName: me.displayName,
     driverId: null,
+    archivedAt: null,
+    pinned: false,
     pendingSeatRequests: [],
     suggestions: [],
     answerProposals: [],
@@ -121,7 +123,7 @@ describe('session pane folds the B_tooltest stream', () => {
       <SessionPane session={bSession()} me={me} watchers={[]} onClose={() => {}} onAnswerQuestion={async () => {}} />,
     );
 
-    const link = screen.getByRole('link', { name: 'Open session in a new tab' });
+    const link = screen.getByRole('link', { name: 'Open agent in a new tab' });
     expect(link.getAttribute('href')).toBe('/s/s-b/pane');
     expect(link.getAttribute('target')).toBe('_blank');
     expect(link.getAttribute('rel')).toBe('noopener noreferrer');
@@ -1150,7 +1152,7 @@ describe('focus + detach controls', () => {
     );
 
     // Detach is a new-tab link to the lean standalone pane.
-    const detach = screen.getByRole('link', { name: /open session in a new tab/i });
+    const detach = screen.getByRole('link', { name: /open agent in a new tab/i });
     expect(detach.getAttribute('href')).toBe('/s/s-b/pane');
     expect(detach.getAttribute('target')).toBe('_blank');
 
@@ -1187,7 +1189,7 @@ describe('focus + detach controls', () => {
       />,
     );
     expect(screen.queryByRole('button', { name: /expand to focus/i })).toBeNull();
-    expect(screen.queryByRole('link', { name: /open session in a new tab/i })).toBeNull();
+    expect(screen.queryByRole('link', { name: /open agent in a new tab/i })).toBeNull();
   });
 });
 

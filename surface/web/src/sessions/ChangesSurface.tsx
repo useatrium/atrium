@@ -77,7 +77,7 @@ export function ChangesSurface({
   const body = (
     <div className="min-h-0 flex-1 overflow-y-auto">
       {groups.length === 0 ? (
-        <EmptyState title="No files changed" hint="This run didn't edit any files in the repo." />
+        <EmptyState title="No files changed" hint="This agent didn't edit any files in the repo." />
       ) : (
         groups.map(([path, fileChanges]) => (
           <ChangeFileRow key={path} path={path} changes={fileChanges} />

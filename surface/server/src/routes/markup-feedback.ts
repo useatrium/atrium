@@ -176,11 +176,11 @@ export async function registerMarkupFeedbackRoutes(
               sourceEntryHandle,
               status: 'normal',
             });
-            const event = await sessionRuns.postUserMessageInTx(client, sessionId, user.id, text);
-            return { seq: current.seq, event };
+            const events = await sessionRuns.postUserMessageInTx(client, sessionId, user.id, text);
+            return { seq: current.seq, events };
           },
           onApplied: (result) => {
-            if (result.event) publishEvent(result.event);
+            for (const event of result.events) publishEvent(event);
             sessionRuns.afterPostUserMessage(sessionId);
           },
         });
@@ -250,16 +250,16 @@ export async function registerMarkupFeedbackRoutes(
             note: typeof body.note === 'string' ? body.note : undefined,
             status: write.status,
           });
-          const event = await sessionRuns.postUserMessageInTx(client, sessionId, user.id, text);
+          const events = await sessionRuns.postUserMessageInTx(client, sessionId, user.id, text);
           return {
             seq: write.seq,
             status: write.status as 'normal' | 'conflict',
             steered: true as const,
-            event,
+            events,
           };
         },
         onApplied: (result) => {
-          if (result.event) publishEvent(result.event);
+          for (const event of result.events) publishEvent(event);
           sessionRuns.afterPostUserMessage(sessionId);
         },
       });

@@ -279,13 +279,19 @@ export default function ChannelScreen() {
   }, [chat, id]);
 
   const openHeaderMenu = useCallback(() => {
+    if (!id) return;
+    const isArchived = channel?.archivedAt != null;
     Alert.alert(title, undefined, [
       { text: 'Members', onPress: () => void showMembers() },
       { text: 'Add person', onPress: () => void addPerson() },
+      ...(isArchived
+        ? []
+        : [{ text: channel?.pinned ? 'Unpin' : 'Pin', onPress: () => chat.setChannelPinned(id, !channel?.pinned) }]),
+      { text: isArchived ? 'Unarchive' : 'Archive', onPress: () => chat.setChannelArchived(id, !isArchived) },
       { text: 'Leave', style: 'destructive', onPress: leave },
       { text: 'Cancel', style: 'cancel' },
     ]);
-  }, [addPerson, leave, showMembers, title]);
+  }, [addPerson, channel?.archivedAt, channel?.pinned, chat, id, leave, showMembers, title]);
 
   const loadAgentProfiles = useCallback(
     () => chat.api.agentProfiles().then(({ profiles }) => profiles),
