@@ -18,8 +18,9 @@ one PR/CI run instead of two coordinated PRs across two repos.
 - **Merge method — load-bearing:** the nest and every upstream-pull PR **must land as a
   MERGE COMMIT, never squash.** Squashing flattens the centaur ancestry → the next
   `subtree pull` fails with "refusing to merge unrelated histories." This is why
-  `master` allows merge commits and no longer requires linear history. Normal atrium PRs
-  still squash by convention.
+  `master` allows merge commits and no longer requires linear history. After approval
+  and green CI, land the sync PR with `gh pr merge --admin --merge`; `--admin` bypasses
+  the squash-only merge queue. Normal Atrium and Centaur feature PRs still use the queue.
 - **Migrations:** keep centaur DB migrations in the `1000+` range (collision-free vs upstream).
 
 ## Deploy

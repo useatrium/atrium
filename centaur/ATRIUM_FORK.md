@@ -25,6 +25,9 @@ the Atrium repo (not a separate `gbasin/centaur`) is the source of truth.
   `centaur-upstream` as needed, and runs the non-squash subtree pull there so the
   checkout you launched it from is not disturbed.
   - **Never `--squash`** — it silently drops our diverged edits with no conflict shown.
+  - After review and green CI, land the upstream-sync PR with
+    `gh pr merge --admin --merge`. This is the only merge-queue bypass: the merge commit
+    preserves the upstream parent needed by the next subtree pull.
   - Conflicts land on the files we've changed (resolve keeping our edits). The `1000+`
     migration discipline below is what keeps DB migrations conflict-free across pulls.
 

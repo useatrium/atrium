@@ -83,8 +83,8 @@ if git subtree pull --prefix="$PREFIX" "$REMOTE" "$REF" -m "Pull upstream Centau
     git push -u origin $BRANCH
     gh pr create --base master --head $BRANCH \\
       --title "chore(centaur): sync upstream ${STAMP}" --body "Routine upstream pull."
-    # REVIEW, then land as a MERGE COMMIT (never squash):
-    gh pr merge $BRANCH --merge
+    # REVIEW, wait for green CI, then bypass the squash queue and preserve the merge:
+    gh pr merge $BRANCH --admin --merge
 EOF
 else
   cat <<EOF
@@ -102,7 +102,7 @@ $(git diff --name-only --diff-filter=U | sed 's/^/    /')
     cd centaur && just <test target>    # verify the runtime still builds/tests
     git push -u origin $BRANCH
     gh pr create --base master --head $BRANCH --title "chore(centaur): sync upstream ${STAMP}"
-    gh pr merge $BRANCH --merge          # MERGE COMMIT, never squash
+    gh pr merge $BRANCH --admin --merge  # bypass queue; MERGE COMMIT, never squash
 EOF
   exit 1
 fi
