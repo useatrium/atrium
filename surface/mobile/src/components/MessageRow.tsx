@@ -67,7 +67,12 @@ type AnimatedViewComponent = ComponentType<{
 type ReanimatedRuntime = {
   default: { View: AnimatedViewComponent };
   Extrapolation: { CLAMP: string | number };
-  interpolate: (value: number, input: readonly number[], output: readonly number[], extrapolate?: string | number) => number;
+  interpolate: (
+    value: number,
+    input: readonly number[],
+    output: readonly number[],
+    extrapolate?: string | number,
+  ) => number;
   runOnJS: <T extends () => void>(fn: T) => T;
   useAnimatedStyle: <T>(updater: () => T) => T;
   useSharedValue: <T>(initialValue: T) => SharedValue<T>;
@@ -532,10 +537,7 @@ function SessionEventLine({ message, onOpen }: { message: ChatMessage; onOpen?: 
           }}
         >
           <Text style={{ color: colors.accent, fontSize: font.xs, fontWeight: '900' }}>{answer.header}</Text>
-          <MarkdownText
-            text={questionAnswerSummaryText(answer)}
-            variant="compact"
-          />
+          <MarkdownText text={questionAnswerSummaryText(answer)} variant="compact" />
         </View>
       ))}
       {message.sessionId && onOpen ? (
@@ -569,9 +571,7 @@ function sessionEventVisibleText(message: ChatMessage): string {
   if (message.sessionEventType === 'question_requested') lines.push(questionText);
   for (const answer of answers) {
     lines.push(answer.header);
-    lines.push(
-      questionAnswerSummaryText(answer),
-    );
+    lines.push(questionAnswerSummaryText(answer));
   }
   return compactLines(lines);
 }
@@ -600,7 +600,9 @@ function entryHandleForAction(message: ChatMessage): string | null {
 
 function actionTargetForMessage(message: ChatMessage, copyText: string | null, copyLink: string | null): ChatMessage {
   const target =
-    copyText == null || copyText === message.text ? message : ({ ...message, actionCopyText: copyText } as MessageActionTarget);
+    copyText == null || copyText === message.text
+      ? message
+      : ({ ...message, actionCopyText: copyText } as MessageActionTarget);
   if (copyLink == null) return target;
   return { ...target, actionCopyLink: copyLink } as MessageActionTarget;
 }
@@ -639,7 +641,11 @@ export const MessageRow = memo(function MessageRow({
     ? m.attachments.map((a) => `attachment ${a.filename}`).join(', ')
     : '';
   const blockRowText =
-    m.sessionEventType != null ? sessionEventVisibleText(m) : m.sessionId != null ? sessionCardVisibleText(m, session) : '';
+    m.sessionEventType != null
+      ? sessionEventVisibleText(m)
+      : m.sessionId != null
+        ? sessionCardVisibleText(m, session)
+        : '';
   const rowText = tombstone
     ? 'Message deleted'
     : (sessionBlock ? blockRowText : m.text.trim()) ||
@@ -694,12 +700,7 @@ export const MessageRow = memo(function MessageRow({
   });
   const replyRevealStyle = useAnimatedStyle(() => {
     'worklet';
-    const progress = interpolate(
-      swipeTranslateX.value,
-      [0, SWIPE_REPLY_THRESHOLD],
-      [0, 1],
-      Extrapolation.CLAMP,
-    );
+    const progress = interpolate(swipeTranslateX.value, [0, SWIPE_REPLY_THRESHOLD], [0, 1], Extrapolation.CLAMP);
     return {
       opacity: progress,
       transform: [
@@ -720,9 +721,7 @@ export const MessageRow = memo(function MessageRow({
   }, [canSwipeReply, resetSwipe]);
   const accessibilityActions = [
     ...(failed ? [{ name: 'retry', label: 'Retry sending' }] : []),
-    ...(!tombstone && !sessionBlock && onOpenThread && !inThread
-      ? [{ name: 'reply', label: 'Reply in thread' }]
-      : []),
+    ...(!tombstone && !sessionBlock && onOpenThread && !inThread ? [{ name: 'reply', label: 'Reply in thread' }] : []),
     ...(!tombstone && !sessionBlock ? [{ name: 'react', label: 'React' }] : []),
     ...(copyText != null ? [{ name: 'copy', label: 'Copy text' }] : []),
     ...(copyLink != null ? [{ name: 'copy_link', label: 'Copy link' }] : []),

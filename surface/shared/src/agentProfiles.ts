@@ -43,11 +43,7 @@ export type SaveAgentProfileProposalAsNewBody = {
   name: string;
 };
 
-export type AgentProfileRiskLabel =
-  | 'safe'
-  | 'needs-secret-ref'
-  | 'policy-capped'
-  | 'unsupported';
+export type AgentProfileRiskLabel = 'safe' | 'needs-secret-ref' | 'policy-capped' | 'unsupported';
 
 export interface AgentProfileExcludedItem {
   path?: string;
@@ -104,11 +100,7 @@ export interface AgentProfileProposalPayload {
   diff?: AgentProfileDiff;
 }
 
-export type AgentProfileProposalStatus =
-  | 'pending'
-  | 'discarded'
-  | 'applied_to_lineage'
-  | 'saved_profile';
+export type AgentProfileProposalStatus = 'pending' | 'discarded' | 'applied_to_lineage' | 'saved_profile';
 
 export interface AgentProfileProposal {
   id: string;

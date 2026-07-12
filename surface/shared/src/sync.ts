@@ -8,37 +8,43 @@ import { UserRefSchema, WireEventSchema, type WireEvent } from './timeline';
 const ChannelKindSchema = Schema.Literal('public', 'private', 'dm', 'gdm');
 const NullableStringSchema = Schema.Union(Schema.String, Schema.Null);
 
-export const ChannelSchema = Schema.mutable(Schema.Struct({
-  id: Schema.String,
-  workspaceId: Schema.String,
-  name: Schema.String,
-  createdAt: Schema.String,
-  // Decode-with-default: an old server (deploy skew) or cached snapshot may
-  // omit these; failing the whole channel-list decode would blank the sidebar.
-  archivedAt: Schema.optionalWith(NullableStringSchema, { default: () => null }),
-  pinned: Schema.optionalWith(Schema.Boolean, { default: () => false }),
-  lastReadEventId: Schema.optionalWith(Schema.Number, { exact: true }),
-  latestEventId: Schema.optionalWith(Schema.Number, { exact: true }),
-  muted: Schema.optionalWith(Schema.Boolean, { exact: true }),
-  mentionedSinceRead: Schema.optionalWith(Schema.Boolean, { exact: true }),
-  kind: Schema.optionalWith(ChannelKindSchema, { exact: true }),
-  members: Schema.optionalWith(Schema.mutable(Schema.Array(UserRefSchema)), { exact: true }),
-  memberCount: Schema.optionalWith(Schema.Number, { exact: true }),
-}));
+export const ChannelSchema = Schema.mutable(
+  Schema.Struct({
+    id: Schema.String,
+    workspaceId: Schema.String,
+    name: Schema.String,
+    createdAt: Schema.String,
+    // Decode-with-default: an old server (deploy skew) or cached snapshot may
+    // omit these; failing the whole channel-list decode would blank the sidebar.
+    archivedAt: Schema.optionalWith(NullableStringSchema, { default: () => null }),
+    pinned: Schema.optionalWith(Schema.Boolean, { default: () => false }),
+    lastReadEventId: Schema.optionalWith(Schema.Number, { exact: true }),
+    latestEventId: Schema.optionalWith(Schema.Number, { exact: true }),
+    muted: Schema.optionalWith(Schema.Boolean, { exact: true }),
+    mentionedSinceRead: Schema.optionalWith(Schema.Boolean, { exact: true }),
+    kind: Schema.optionalWith(ChannelKindSchema, { exact: true }),
+    members: Schema.optionalWith(Schema.mutable(Schema.Array(UserRefSchema)), { exact: true }),
+    memberCount: Schema.optionalWith(Schema.Number, { exact: true }),
+  }),
+);
 
-const DraftSnapshotEntrySchema = Schema.mutable(Schema.Struct({
-  text: Schema.String,
-  updatedAt: Schema.String,
-}));
+const DraftSnapshotEntrySchema = Schema.mutable(
+  Schema.Struct({
+    text: Schema.String,
+    updatedAt: Schema.String,
+  }),
+);
 
-export const SyncStateSnapshotSchema = Schema.mutable(Schema.Struct({
-  readCursors: Schema.mutable(Schema.Record({ key: Schema.String, value: Schema.Number })),
-  mutes: Schema.mutable(Schema.Array(Schema.String)),
-  prefs: UserPrefsSchema,
-  drafts: Schema.mutable(Schema.Record({ key: Schema.String, value: DraftSnapshotEntrySchema })),
-  draftDeletions: Schema.mutable(Schema.Record({ key: Schema.String, value: Schema.String })),
-  channels: Schema.mutable(Schema.Array(ChannelSchema)),
-}));
+export const SyncStateSnapshotSchema = Schema.mutable(
+  Schema.Struct({
+    readCursors: Schema.mutable(Schema.Record({ key: Schema.String, value: Schema.Number })),
+    mutes: Schema.mutable(Schema.Array(Schema.String)),
+    prefs: UserPrefsSchema,
+    drafts: Schema.mutable(Schema.Record({ key: Schema.String, value: DraftSnapshotEntrySchema })),
+    draftDeletions: Schema.mutable(Schema.Record({ key: Schema.String, value: Schema.String })),
+    channels: Schema.mutable(Schema.Array(ChannelSchema)),
+  }),
+);
 
 export interface SyncStateSnapshot {
   readCursors: Record<string, number>;
@@ -56,12 +62,14 @@ export interface SyncResponse {
   state: SyncStateSnapshot;
 }
 
-export const SyncResponseSchema = Schema.mutable(Schema.Struct({
-  events: Schema.mutable(Schema.Array(WireEventSchema)),
-  nextCursor: Schema.Number,
-  limited: Schema.Boolean,
-  state: SyncStateSnapshotSchema,
-}));
+export const SyncResponseSchema = Schema.mutable(
+  Schema.Struct({
+    events: Schema.mutable(Schema.Array(WireEventSchema)),
+    nextCursor: Schema.Number,
+    limited: Schema.Boolean,
+    state: SyncStateSnapshotSchema,
+  }),
+);
 
 export type AppDispatch = (action: AppAction) => void;
 

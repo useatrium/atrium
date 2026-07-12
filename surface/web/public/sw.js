@@ -4,11 +4,7 @@ function cacheable(request) {
   if (request.method !== 'GET') return false;
   const url = new URL(request.url);
   if (url.origin !== location.origin) return false;
-  return !(
-    url.pathname.startsWith('/api/') ||
-    url.pathname.startsWith('/auth/') ||
-    url.pathname.startsWith('/ws')
-  );
+  return !(url.pathname.startsWith('/api/') || url.pathname.startsWith('/auth/') || url.pathname.startsWith('/ws'));
 }
 
 self.addEventListener('install', (event) => {
@@ -49,10 +45,7 @@ self.addEventListener('fetch', (event) => {
 });
 
 function appBadge(value) {
-  const badge =
-    typeof value === 'number' && Number.isFinite(value)
-      ? Math.max(0, Math.floor(value))
-      : null;
+  const badge = typeof value === 'number' && Number.isFinite(value) ? Math.max(0, Math.floor(value)) : null;
   if (badge === null || !self.navigator) return Promise.resolve();
   if (badge > 0 && typeof self.navigator.setAppBadge === 'function') {
     return self.navigator.setAppBadge(badge).catch(() => {});
@@ -90,10 +83,7 @@ self.addEventListener('push', (event) => {
 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
-  const data =
-    event.notification.data && typeof event.notification.data === 'object'
-      ? event.notification.data
-      : {};
+  const data = event.notification.data && typeof event.notification.data === 'object' ? event.notification.data : {};
   const message = { type: 'notification-click', ...data };
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(async (clients) => {

@@ -7,10 +7,7 @@ import { config } from './config.js';
 const here = dirname(fileURLToPath(import.meta.url));
 export const defaultMigrationsDir = join(here, '..', 'migrations');
 
-export async function runMigrations(
-  pool: pg.Pool,
-  dir: string = defaultMigrationsDir,
-): Promise<string[]> {
+export async function runMigrations(pool: pg.Pool, dir: string = defaultMigrationsDir): Promise<string[]> {
   await pool.query(
     `CREATE TABLE IF NOT EXISTS schema_migrations (
        name text PRIMARY KEY,
@@ -24,10 +21,7 @@ export async function runMigrations(
     // Serialize concurrent migrators (e.g. two dev servers booting).
     await client.query('SELECT pg_advisory_lock(727271)');
     for (const file of files) {
-      const seen = await client.query(
-        'SELECT 1 FROM schema_migrations WHERE name = $1',
-        [file],
-      );
+      const seen = await client.query('SELECT 1 FROM schema_migrations WHERE name = $1', [file]);
       if (seen.rowCount) continue;
       const sql = await readFile(join(dir, file), 'utf8');
       try {

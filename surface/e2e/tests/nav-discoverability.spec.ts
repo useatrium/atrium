@@ -7,9 +7,7 @@
 import { expect, test } from '@playwright/test';
 import { apiAs, createChannel, login, postMessage, unique } from './helpers.js';
 
-test('web header exposes a visible Search control and a keyboard-shortcuts button', async ({
-  page,
-}) => {
+test('web header exposes a visible Search control and a keyboard-shortcuts button', async ({ page }) => {
   const handle = unique('navuser');
   await login(page, handle);
   // The command palette entry is now labelled/aria'd for search discoverability,

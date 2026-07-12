@@ -163,8 +163,10 @@ function containsDeniedHarnessPath(value: unknown): boolean {
 
 function deniedHarnessPath(value: string): boolean {
   const parts = value.replaceAll('\\', '/').toLowerCase().split('/');
-  return parts.some((part) => part === '.ssh' || part === '.aws' || part === '.git')
-    || parts.some((part) => part.includes('credentials'))
-    || ['auth.json', '.credentials.json', '.netrc', '.git-credentials'].includes(parts.at(-1) ?? '')
-    || /\.(pem|key)$/.test(parts.at(-1) ?? '');
+  return (
+    parts.some((part) => part === '.ssh' || part === '.aws' || part === '.git') ||
+    parts.some((part) => part.includes('credentials')) ||
+    ['auth.json', '.credentials.json', '.netrc', '.git-credentials'].includes(parts.at(-1) ?? '') ||
+    /\.(pem|key)$/.test(parts.at(-1) ?? '')
+  );
 }

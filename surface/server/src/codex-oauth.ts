@@ -171,10 +171,7 @@ function isAuthorizationPending(body: JsonObject): boolean {
     stringField(nested, 'type'),
     stringField(nested, 'error'),
   ];
-  const text = candidates
-    .filter(Boolean)
-    .join(' ')
-    .toLowerCase();
+  const text = candidates.filter(Boolean).join(' ').toLowerCase();
   return (
     text.includes('authorization_pending') ||
     text.includes('pending') ||

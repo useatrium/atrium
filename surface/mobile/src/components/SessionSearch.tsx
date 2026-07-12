@@ -1,12 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  ActivityIndicator,
-  FlatList,
-  Pressable,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
+import { ActivityIndicator, FlatList, Pressable, Text, TextInput, View } from 'react-native';
 import { router } from 'expo-router';
 import { formatTime, type Api } from '@atrium/surface-client';
 import { useChat } from '../lib/chat';
@@ -195,9 +188,7 @@ export function SessionSearch() {
           onPress={retry}
           style={{ minHeight: 44, justifyContent: 'center' }}
         >
-          <Text style={{ color: colors.danger, fontSize: font.sm }}>
-            Session search failed — tap to retry
-          </Text>
+          <Text style={{ color: colors.danger, fontSize: font.sm }}>Session search failed — tap to retry</Text>
         </Pressable>
       );
     }
@@ -216,10 +207,7 @@ export function SessionSearch() {
             gap: 2,
           }}
         >
-          <Text
-            style={{ color: colors.text, fontSize: font.md, fontWeight: '800' }}
-            numberOfLines={1}
-          >
+          <Text style={{ color: colors.text, fontSize: font.md, fontWeight: '800' }} numberOfLines={1}>
             {item.title}
           </Text>
           <Text style={{ color: colors.textMuted, fontSize: font.xs }} numberOfLines={1}>
@@ -259,14 +247,9 @@ export function SessionSearch() {
               paddingVertical: 3,
             }}
           >
-            <Text style={{ color: colors.accent, fontSize: font.xs, fontWeight: '800' }}>
-              {kindLabel(hit.kind)}
-            </Text>
+            <Text style={{ color: colors.accent, fontSize: font.xs, fontWeight: '800' }}>{kindLabel(hit.kind)}</Text>
           </View>
-          <Text
-            style={{ flex: 1, minWidth: 0, color: colors.textMuted, fontSize: font.xs }}
-            numberOfLines={1}
-          >
+          <Text style={{ flex: 1, minWidth: 0, color: colors.textMuted, fontSize: font.xs }} numberOfLines={1}>
             {meta}
           </Text>
           <Text style={{ color: colors.textFaint, fontSize: font.xs }}>{time}</Text>

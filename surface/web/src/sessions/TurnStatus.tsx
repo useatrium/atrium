@@ -14,8 +14,6 @@ export function Spinner({ className = '' }: { className?: string }) {
   );
 }
 
-
-
 // Phase/liveness are computed by the shared deriveTurnStatus (centaur-client
 // turnStatus.ts) so web and mobile agree; re-exported here for existing imports.
 export type { TurnLiveness, TurnPhase } from '@atrium/centaur-client';
@@ -97,9 +95,7 @@ export function TurnStatusLine({
 }) {
   const active = phase === 'thinking' || phase === 'tool';
   const showMeta = Boolean(tokens) || costUsd > 0 || models.length > 0;
-  const clock = elapsedMs >= 1000 && (
-    <span className="tabular-nums text-fg-faint">{formatElapsed(elapsedMs)}</span>
-  );
+  const clock = elapsedMs >= 1000 && <span className="tabular-nums text-fg-faint">{formatElapsed(elapsedMs)}</span>;
   return (
     <div
       data-testid="turn-status"
@@ -112,9 +108,7 @@ export function TurnStatusLine({
             <span className="min-w-0 truncate font-medium">{label}</span>
             {/* How long the agent has been blocked on a human — quietMs works
                 because the question is the stream's last frame before silence. */}
-            {quietMs >= 1000 && (
-              <span className="tabular-nums text-fg-faint">{formatElapsed(quietMs)}</span>
-            )}
+            {quietMs >= 1000 && <span className="tabular-nums text-fg-faint">{formatElapsed(quietMs)}</span>}
           </>
         ) : (
           <>
@@ -133,9 +127,7 @@ export function TurnStatusLine({
       ) : liveness === 'stuck' ? (
         <>
           <HeartbeatDot pulse={pulse} parked />
-          <span className="min-w-0 truncate font-medium">
-            Still working? No output for {formatElapsed(quietMs)}
-          </span>
+          <span className="min-w-0 truncate font-medium">Still working? No output for {formatElapsed(quietMs)}</span>
           {onCancel && (
             <button
               type="button"

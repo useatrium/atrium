@@ -43,9 +43,7 @@ export function ReasoningBlock({
           backgroundColor: pressed ? colors.bgPressed : 'transparent',
         })}
       >
-        <Text style={{ color: colors.textMuted, fontSize: font.xs, width: 10 }}>
-          {open ? '▾' : '▸'}
-        </Text>
+        <Text style={{ color: colors.textMuted, fontSize: font.xs, width: 10 }}>{open ? '▾' : '▸'}</Text>
         <Text
           style={{
             color: colors.textMuted,
@@ -79,13 +77,9 @@ export function ReasoningBlock({
           }}
         >
           {hasSummary ? (
-            <Text style={{ color: colors.textMuted, fontSize: font.xs, lineHeight: 16 }}>
-              {item.summary}
-            </Text>
+            <Text style={{ color: colors.textMuted, fontSize: font.xs, lineHeight: 16 }}>{item.summary}</Text>
           ) : null}
-          <Text style={{ color: colors.textMuted, fontSize: font.xs, lineHeight: 16 }}>
-            {item.text}
-          </Text>
+          <Text style={{ color: colors.textMuted, fontSize: font.xs, lineHeight: 16 }}>{item.text}</Text>
         </View>
       ) : null}
     </View>

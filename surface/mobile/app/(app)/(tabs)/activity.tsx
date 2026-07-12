@@ -136,7 +136,9 @@ export default function ActivityScreen() {
     return (
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={item.kind === 'dm' ? `${title}, ${exactTime}` : `${title}, #${item.channelName}, ${exactTime}`}
+        accessibilityLabel={
+          item.kind === 'dm' ? `${title}, ${exactTime}` : `${title}, #${item.channelName}, ${exactTime}`
+        }
         onPress={() => void openActivity(item)}
         style={({ pressed }) => ({
           flexDirection: 'row',
@@ -170,9 +172,7 @@ export default function ActivityScreen() {
           </View>
           <Text style={{ color: colors.textMuted, fontSize: font.xs }} numberOfLines={1}>
             {/* DM channel names are internal keys; the title already names the sender. */}
-            {item.kind === 'dm'
-              ? time
-              : `#${item.channelName} · ${time}`}
+            {item.kind === 'dm' ? time : `#${item.channelName} · ${time}`}
           </Text>
         </View>
       </Pressable>
@@ -276,9 +276,7 @@ export default function ActivityScreen() {
               <View
                 style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: space.xl, gap: space.sm }}
               >
-                <Text style={{ color: colors.text, fontSize: font.md, fontWeight: '700' }}>
-                  You're all caught up
-                </Text>
+                <Text style={{ color: colors.text, fontSize: font.md, fontWeight: '700' }}>You're all caught up</Text>
                 <Text style={{ color: colors.textMuted, fontSize: font.sm, textAlign: 'center', lineHeight: 20 }}>
                   Mentions, DMs, agent questions, and live agent work will appear here when they need you.
                 </Text>

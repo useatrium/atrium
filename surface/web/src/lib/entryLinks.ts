@@ -59,9 +59,7 @@ function isValidEntryHandle(handle: string): boolean {
 export function handleFromEntryUrl(candidate: string, origin = currentOrigin()): string | null {
   let url: URL;
   try {
-    url = candidate.startsWith('/e/')
-      ? new URL(candidate, origin)
-      : new URL(candidate);
+    url = candidate.startsWith('/e/') ? new URL(candidate, origin) : new URL(candidate);
   } catch {
     return null;
   }

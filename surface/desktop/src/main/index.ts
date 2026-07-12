@@ -14,23 +14,12 @@ import {
   session,
   shell,
 } from 'electron';
-import {
-  APP_ORIGIN,
-  APP_SCHEME,
-  RENDERER_DEV_URL,
-  SERVER_URL,
-  TRAY_ICON,
-  WEB_DIST,
-} from './config.js';
+import { APP_ORIGIN, APP_SCHEME, RENDERER_DEV_URL, SERVER_URL, TRAY_ICON, WEB_DIST } from './config.js';
 import { buildAppMenu } from './appMenu.js';
 import { clearSession, loadSession, saveSession, type DesktopSession } from './session.js';
 import { DEEP_LINK_SCHEME, deepLinkToRoute } from './deepLink.js';
 import { setupAutoUpdate } from './updater.js';
-import {
-  resolveSessionPopoutOpen,
-  resolveWindowOpen,
-  sessionIdFromPanePath,
-} from './windowOpenPolicy.js';
+import { resolveSessionPopoutOpen, resolveWindowOpen, sessionIdFromPanePath } from './windowOpenPolicy.js';
 
 // Must run before app `ready`: marks `app://` as a standard, secure origin so
 // the bundled UI gets a secure context (required for getUserMedia / WebRTC).
@@ -341,11 +330,7 @@ function flushPendingDeepLinks(): void {
 /** Popout windows are real BrowserWindows and can open links of their own, so
  * the policy attaches recursively — otherwise a child falls back to Electron's
  * default `allow` and external links open inside the shell. */
-function attachWindowOpenPolicy(
-  contents: Electron.WebContents,
-  preload: string,
-  devOrigin: string | null,
-): void {
+function attachWindowOpenPolicy(contents: Electron.WebContents, preload: string, devOrigin: string | null): void {
   contents.on('did-create-window', (childWindow, details) => {
     const sessionId = sessionIdFromWindowOpenUrl(details.url);
     if (sessionId) {
@@ -436,13 +421,7 @@ function createTray(): void {
     ]),
   );
   tray.on('click', () => toggleWindow());
-  console.log(
-    '[atrium] tray created (iconEmpty:',
-    icon.isEmpty(),
-    ', notifications:',
-    Notification.isSupported(),
-    ')',
-  );
+  console.log('[atrium] tray created (iconEmpty:', icon.isEmpty(), ', notifications:', Notification.isSupported(), ')');
 }
 
 function createDockMenu(): void {

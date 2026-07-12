@@ -1,10 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import {
-  ActiveCallsQuerySchema,
-  CallIdParamsSchema,
-  StartCallBodySchema,
-} from '@atrium/surface-client/calls';
+import { ActiveCallsQuerySchema, CallIdParamsSchema, StartCallBodySchema } from '@atrium/surface-client/calls';
 import type { AppMutationContext } from '../app-mutations.js';
 import type { Db, DbClient } from '../db.js';
 import { withTx } from '../db.js';
@@ -28,9 +24,7 @@ export interface CallRouteDeps extends AppMutationContext {
 }
 
 function callsUnconfigured(reply: FastifyReply) {
-  return reply
-    .code(503)
-    .send({ error: 'calls_unconfigured', message: 'voice calls are not configured' });
+  return reply.code(503).send({ error: 'calls_unconfigured', message: 'voice calls are not configured' });
 }
 
 async function channelRecipientIds(client: DbClient, channelId: string): Promise<string[]> {
@@ -43,18 +37,13 @@ async function channelRecipientIds(client: DbClient, channelId: string): Promise
   if (row.kind === 'public') {
     return workspaceMemberIds(client, row.workspace_id);
   }
-  const members = await client.query<{ user_id: string }>(
-    'SELECT user_id FROM channel_members WHERE channel_id = $1',
-    [channelId],
-  );
+  const members = await client.query<{ user_id: string }>('SELECT user_id FROM channel_members WHERE channel_id = $1', [
+    channelId,
+  ]);
   return members.rows.map((member) => member.user_id);
 }
 
-async function canAccessChannelInTx(
-  client: DbClient,
-  userId: string,
-  channelId: string,
-): Promise<boolean> {
+async function canAccessChannelInTx(client: DbClient, userId: string, channelId: string): Promise<boolean> {
   const res = await client.query<{ member: boolean }>(
     `SELECT CASE WHEN c.kind = 'public' THEN ${workspaceMemberExists('c.workspace_id', '$2')}
                  ELSE EXISTS (SELECT 1 FROM channel_members m
@@ -191,9 +180,7 @@ async function markParticipantLeft(
 async function endCall(client: DbClient, callId: string): Promise<EndCallResult | null> {
   const call = await activeCallById(client, callId);
   if (!call) return null;
-  await client.query('UPDATE call_participants SET left_at = now() WHERE call_id = $1 AND left_at IS NULL', [
-    call.id,
-  ]);
+  await client.query('UPDATE call_participants SET left_at = now() WHERE call_id = $1 AND left_at IS NULL', [call.id]);
   const ended = await client.query(
     `UPDATE calls
      SET status = 'ended', ended_at = COALESCE(ended_at, now())
@@ -238,11 +225,7 @@ export function registerCallRoutes(app: FastifyInstance, deps: CallRouteDeps): v
   });
 
   if (livekitWebhookReceiver) {
-    app.addContentTypeParser(
-      'application/webhook+json',
-      { parseAs: 'string' },
-      (_req, body, done) => done(null, body),
-    );
+    app.addContentTypeParser('application/webhook+json', { parseAs: 'string' }, (_req, body, done) => done(null, body));
 
     app.post('/api/calls/webhook', async (req, reply) => {
       const rawBody = typeof req.body === 'string' ? req.body : '';
@@ -251,9 +234,7 @@ export function registerCallRoutes(app: FastifyInstance, deps: CallRouteDeps): v
         event = await livekitWebhookReceiver.receive(rawBody, req.headers.authorization);
       } catch (err) {
         app.log.warn({ err }, 'livekit webhook verification failed');
-        return reply
-          .code(401)
-          .send({ error: 'unauthorized', message: 'invalid LiveKit webhook signature' });
+        return reply.code(401).send({ error: 'unauthorized', message: 'invalid LiveKit webhook signature' });
       }
 
       const result = await withTx(pool, (client) => reconcileLiveKitWebhookEvent(client, event));
@@ -353,9 +334,7 @@ export function registerCallRoutes(app: FastifyInstance, deps: CallRouteDeps): v
         return { join: { call: wire, token, url: calls.url }, created, joinedNow };
       },
       onApplied: async (result) => {
-        const recipients = await withTx(pool, (client) =>
-          channelRecipientIds(client, result.join.call.channelId),
-        );
+        const recipients = await withTx(pool, (client) => channelRecipientIds(client, result.join.call.channelId));
         if (result.created) {
           const ringRecipients = recipients.filter((id) => id !== user.id);
           hub.publishCallToUsers(ringRecipients, { type: 'call.ringing', call: result.join.call });
@@ -432,10 +411,9 @@ export function registerCallRoutes(app: FastifyInstance, deps: CallRouteDeps): v
       // with no GC). Group/public declines just dismiss the ring locally.
       const shouldEnd = call.channel_kind === 'dm';
       if (shouldEnd) {
-        await client.query(
-          "UPDATE calls SET status = 'ended', ended_at = COALESCE(ended_at, now()) WHERE id = $1",
-          [call.id],
-        );
+        await client.query("UPDATE calls SET status = 'ended', ended_at = COALESCE(ended_at, now()) WHERE id = $1", [
+          call.id,
+        ]);
       }
       return { callId: call.id, recipients, ended: shouldEnd };
     });

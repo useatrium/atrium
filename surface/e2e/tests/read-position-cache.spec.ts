@@ -11,20 +11,13 @@ import {
   unique,
 } from './helpers.js';
 
-const e2eDatabaseUrl =
-  process.env.E2E_DATABASE_URL ?? 'postgres://atrium:atrium@localhost:5433/atrium_e2e';
+const e2eDatabaseUrl = process.env.E2E_DATABASE_URL ?? 'postgres://atrium:atrium@localhost:5433/atrium_e2e';
 
-async function setReadCursor(args: {
-  handle: string;
-  channelId: string;
-  lastReadEventId: number;
-}): Promise<void> {
+async function setReadCursor(args: { handle: string; channelId: string; lastReadEventId: number }): Promise<void> {
   const pool = new Pool({ connectionString: e2eDatabaseUrl });
   const client = await pool.connect();
   try {
-    const user = await client.query<{ id: string }>('SELECT id FROM users WHERE handle = $1', [
-      args.handle,
-    ]);
+    const user = await client.query<{ id: string }>('SELECT id FROM users WHERE handle = $1', [args.handle]);
     const userId = user.rows[0]?.id;
     if (!userId) throw new Error(`missing e2e user: ${args.handle}`);
     await client.query(
@@ -93,9 +86,7 @@ async function expectDividerInTimelineViewport(divider: Locator): Promise<void> 
     .toBe(true);
 }
 
-test('read cursor persisted locally prevents first-unread relanding after refresh', async ({
-  page,
-}) => {
+test('read cursor persisted locally prevents first-unread relanding after refresh', async ({ page }) => {
   test.slow();
   const room = await createTestChannel('readcache');
   const readerHandle = unique('reader');

@@ -48,10 +48,7 @@ describe('notification settings', () => {
 
     expect(screen.getByText('Notifications')).toBeTruthy();
     expect(screen.getByRole('button', { name: /Device notifications off/ })).toBeTruthy();
-    expect(screen.getByRole('combobox', { name: 'Message notifications' })).toHaveProperty(
-      'value',
-      'dm_mention',
-    );
+    expect(screen.getByRole('combobox', { name: 'Message notifications' })).toHaveProperty('value', 'dm_mention');
     expect(screen.getByRole('button', { name: 'Agent notifications' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Call notifications' })).toBeTruthy();
   });

@@ -55,8 +55,7 @@ export function setRegisteredVoipPushToken(token: string | null): void {
 }
 
 function easProjectId(): string | null {
-  const id = (Constants.expoConfig?.extra as { eas?: { projectId?: string } } | undefined)?.eas
-    ?.projectId;
+  const id = (Constants.expoConfig?.extra as { eas?: { projectId?: string } } | undefined)?.eas?.projectId;
   return typeof id === 'string' && id ? id : null;
 }
 
@@ -70,14 +69,10 @@ function hasPushPermission(perm: Notifications.NotificationPermissionsStatus): b
   );
 }
 
-function pushPermissionStatus(
-  perm: Notifications.NotificationPermissionsStatus,
-): PushPermissionStatus {
+function pushPermissionStatus(perm: Notifications.NotificationPermissionsStatus): PushPermissionStatus {
   if (hasPushPermission(perm)) return 'granted';
   if (Platform.OS === 'ios') {
-    return perm.ios?.status === Notifications.IosAuthorizationStatus.DENIED
-      ? 'denied'
-      : 'undetermined';
+    return perm.ios?.status === Notifications.IosAuthorizationStatus.DENIED ? 'denied' : 'undetermined';
   }
   return perm.status === 'denied' ? 'denied' : 'undetermined';
 }

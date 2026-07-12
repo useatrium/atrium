@@ -30,10 +30,9 @@ export function useConflicts(
     if (!sessionId) return;
     try {
       // 1. Drain new change rows; a path's newest row decides if it's conflicted.
-      const feed = await fetch(
-        `/api/sessions/${sessionId}/artifacts/changes?since=${cursorRef.current}`,
-        { credentials: 'same-origin' },
-      );
+      const feed = await fetch(`/api/sessions/${sessionId}/artifacts/changes?since=${cursorRef.current}`, {
+        credentials: 'same-origin',
+      });
       if (!feed.ok) return;
       const { rows, next_cursor } = (await feed.json()) as { rows: ChangeRow[]; next_cursor: string };
       cursorRef.current = next_cursor;
@@ -44,10 +43,9 @@ export function useConflicts(
       // 2. Hydrate detail for each still-conflicted path; drop any that 404 (raced-resolved).
       const details = await Promise.all(
         [...pathsRef.current].map(async (path) => {
-          const r = await fetch(
-            `/api/sessions/${sessionId}/artifacts/conflict?path=${encodeURIComponent(path)}`,
-            { credentials: 'same-origin' },
-          );
+          const r = await fetch(`/api/sessions/${sessionId}/artifacts/conflict?path=${encodeURIComponent(path)}`, {
+            credentials: 'same-origin',
+          });
           if (!r.ok) {
             pathsRef.current.delete(path);
             return null;
@@ -78,12 +76,12 @@ export function useConflicts(
     async (artifactId: string, choice: ResolveChoice) => {
       if (!sessionId) return;
       const conflict = conflicts.find((c) => c.artifactId === artifactId);
-      const side =
-        choice.kind === 'left' ? conflict?.left : choice.kind === 'right' ? conflict?.right : null;
+      const side = choice.kind === 'left' ? conflict?.left : choice.kind === 'right' ? conflict?.right : null;
       const headers: Record<string, string> = { 'content-type': 'text/plain' };
       let body = '';
       if (choice.kind === 'merged') body = choice.text;
-      else if (side && side.sha === null) headers['x-artifact-delete'] = 'true'; // stay-deleted
+      else if (side && side.sha === null)
+        headers['x-artifact-delete'] = 'true'; // stay-deleted
       else body = side?.text ?? '';
       await fetch(`/api/sessions/${sessionId}/artifacts/${artifactId}/resolve`, {
         method: 'POST',

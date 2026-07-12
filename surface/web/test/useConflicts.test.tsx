@@ -50,9 +50,7 @@ describe('useConflicts', () => {
     await act(async () => {
       await result.current.resolve('art-1', { kind: 'left' });
     });
-    const post = fetchMock.mock.calls.find(
-      (c) => typeof c[0] === 'string' && c[0].includes('/resolve'),
-    );
+    const post = fetchMock.mock.calls.find((c) => typeof c[0] === 'string' && c[0].includes('/resolve'));
     expect(post).toBeTruthy();
     expect(post![1]).toMatchObject({ method: 'POST', body: 'a\nLEFT\n' });
   });
@@ -101,9 +99,7 @@ describe('useConflicts', () => {
     await act(async () => {
       await result.current.resolve('art-1', { kind: 'left' });
     });
-    const post = fetchMock.mock.calls.find(
-      (c) => typeof c[0] === 'string' && c[0].includes('/resolve'),
-    );
+    const post = fetchMock.mock.calls.find((c) => typeof c[0] === 'string' && c[0].includes('/resolve'));
     expect((post![1] as RequestInit).headers).toMatchObject({ 'x-artifact-delete': 'true' });
   });
 });

@@ -17,11 +17,11 @@ import type {
   JsonObject,
   QuestionPrompt,
   QuestionResolved,
-} from "./types.js";
-import { isTerminalExecutionStatus, isUserStoppedExecutionState } from "./types.js";
+} from './types.js';
+import { isTerminalExecutionStatus, isUserStoppedExecutionState } from './types.js';
 
 export interface TextItem {
-  type: "text";
+  type: 'text';
   id: string;
   text: string;
   messageId?: string;
@@ -33,7 +33,7 @@ export interface TextItem {
 }
 
 export interface ToolCallItem {
-  type: "tool_call";
+  type: 'tool_call';
   id: string;
   name: string;
   input: JsonObject;
@@ -47,7 +47,7 @@ export interface ToolCallItem {
 }
 
 export interface ReasoningItem {
-  type: "reasoning";
+  type: 'reasoning';
   id: string;
   text: string;
   summary?: string;
@@ -58,20 +58,20 @@ export interface ReasoningItem {
 }
 
 export interface QuestionItem {
-  type: "question";
+  type: 'question';
   id: string;
   questionId: string;
   turnId?: string;
   questions: QuestionPrompt[];
-  status: "pending" | "resolved";
-  reason?: QuestionResolved["reason"];
+  status: 'pending' | 'resolved';
+  reason?: QuestionResolved['reason'];
   handle?: string | null;
   ts?: string;
   sourceEventIds: number[];
 }
 
 export interface UserMessageItem {
-  type: "user_message";
+  type: 'user_message';
   id: string;
   text: string;
   handle?: string | null;
@@ -79,16 +79,11 @@ export interface UserMessageItem {
   sourceEventIds: number[];
 }
 
-export type SessionItem =
-  | TextItem
-  | ReasoningItem
-  | ToolCallItem
-  | QuestionItem
-  | UserMessageItem;
+export type SessionItem = TextItem | ReasoningItem | ToolCallItem | QuestionItem | UserMessageItem;
 
 export interface TodoEntry {
   content: string;
-  status: "pending" | "in_progress" | "completed";
+  status: 'pending' | 'in_progress' | 'completed';
   activeForm?: string;
 }
 
@@ -99,7 +94,7 @@ interface RecordHandleHint {
   meta: JsonObject;
 }
 
-export type FileChangeKind = "add" | "update" | "delete";
+export type FileChangeKind = 'add' | 'update' | 'delete';
 
 /** A file edit a session made — the unit of the Changes work-surface. Sourced
  * from Claude/amp edit tool_calls (derived) and codex `fileChange` frames (here).
@@ -113,7 +108,7 @@ export interface FileChange {
   sourceEventIds: number[];
 }
 
-export type ArtifactKind = "created" | "modified" | "deleted";
+export type ArtifactKind = 'created' | 'modified' | 'deleted';
 
 /** A work-product file surfaced in the Artifacts work-surface. `ref` is legacy
  * transcript metadata; current bytes are served by Atrium's by-path CAS route.
@@ -153,7 +148,7 @@ export interface ArtifactPresentation {
 }
 
 export interface SessionState {
-  status: ExecutionStatus | "idle";
+  status: ExecutionStatus | 'idle';
   /** Server-stamped start of the current turn — `turn/started` when the harness
    * emits it, else the execution_state frame that flipped us into running. */
   turnStartTs?: string;
@@ -172,7 +167,7 @@ export interface SessionState {
    * the liveness instrument; the UI marks the estimate with ≈. */
   deltaChars: number;
   /** Sandbox stdout pipe health, from api-rs `session.stdout_pump_*` events. */
-  transport: "ok" | "reattaching";
+  transport: 'ok' | 'reattaching';
   items: SessionItem[];
   /** Codex `fileChange` edits (claude/amp edits are derived from items instead). */
   fileChanges: FileChange[];
@@ -202,14 +197,14 @@ export interface SessionState {
 
 export function initialSessionState(): SessionState {
   return {
-    status: "idle",
+    status: 'idle',
     frameSeq: 0,
     deltaChars: 0,
-    transport: "ok",
+    transport: 'ok',
     items: [],
     fileChanges: [],
     artifacts: [],
-    resultText: "",
+    resultText: '',
     models: [],
     costUsd: 0,
     lastEventId: 0,
@@ -251,8 +246,8 @@ function reduceSessionFrame(state: SessionState, frame: CentaurEventFrame): Sess
   };
   const recordHandles = recordHandleHints(frame);
 
-  if (frame.event === "execution_state") {
-    const wasActive = state.status !== "idle" && !isTerminalExecutionStatus(state.status);
+  if (frame.event === 'execution_state') {
+    const wasActive = state.status !== 'idle' && !isTerminalExecutionStatus(state.status);
     next.status = frame.data.status;
     if (frame.data.result_text) {
       next.resultText = frame.data.result_text;
@@ -261,7 +256,7 @@ function reduceSessionFrame(state: SessionState, frame: CentaurEventFrame): Sess
       next.pendingQuestion = null;
       if (frame.ts && next.turnEndTs === undefined) next.turnEndTs = frame.ts;
       if (isUserStoppedExecutionState(frame.data)) next.stoppedByUser = true;
-      resolveOpenQuestions(next, frame.event_id, "cancelled");
+      resolveOpenQuestions(next, frame.event_id, 'cancelled');
     } else if (!wasActive) {
       // A fresh execution began (first turn, or a steer after completion).
       // `turn/started` refines this anchor when the harness emits one.
@@ -273,20 +268,17 @@ function reduceSessionFrame(state: SessionState, frame: CentaurEventFrame): Sess
     return next;
   }
 
-  if (frame.event === "system_event_observed") {
+  if (frame.event === 'system_event_observed') {
     const subtype = (frame.data as { subtype?: unknown }).subtype;
-    if (subtype === "session.stdout_pump_failed") {
-      next.transport = "reattaching";
-    } else if (
-      subtype === "session.stdout_pump_reattached" ||
-      subtype === "session.stdout_pump_recovered"
-    ) {
-      next.transport = "ok";
+    if (subtype === 'session.stdout_pump_failed') {
+      next.transport = 'reattaching';
+    } else if (subtype === 'session.stdout_pump_reattached' || subtype === 'session.stdout_pump_recovered') {
+      next.transport = 'ok';
     }
     return next;
   }
 
-  if (frame.event === "question_requested") {
+  if (frame.event === 'question_requested') {
     next.pendingQuestion = {
       questionId: frame.data.question_id,
       ...(frame.data.turn_id !== undefined ? { turnId: frame.data.turn_id } : {}),
@@ -296,7 +288,7 @@ function reduceSessionFrame(state: SessionState, frame: CentaurEventFrame): Sess
     return next;
   }
 
-  if (frame.event === "question_resolved") {
+  if (frame.event === 'question_resolved') {
     next.pendingQuestion = null;
     resolveQuestionItem(
       next,
@@ -308,115 +300,115 @@ function reduceSessionFrame(state: SessionState, frame: CentaurEventFrame): Sess
     return next;
   }
 
-  if (frame.event === "artifact.captured") {
+  if (frame.event === 'artifact.captured') {
     reduceArtifactCaptured(next, frame.event_id, frame.data);
     return next;
   }
 
-  if (frame.event === "execution_summary") {
+  if (frame.event === 'execution_summary') {
     next.status = frame.data.status;
     next.models = mergeModels(next.models, frame.data.models);
     return next;
   }
 
-  if (frame.event === "usage_observed") {
-    next.costUsd += typeof frame.data.cost_usd === "number" ? frame.data.cost_usd : 0;
-    if (typeof frame.data.output_tokens === "number") {
+  if (frame.event === 'usage_observed') {
+    next.costUsd += typeof frame.data.cost_usd === 'number' ? frame.data.cost_usd : 0;
+    if (typeof frame.data.output_tokens === 'number') {
       next.tokensUsed = (next.tokensUsed ?? 0) + frame.data.output_tokens;
     }
     next.models = mergeModels(next.models, [frame.data.model]);
     return next;
   }
 
-  if (frame.event !== "amp_raw_event") {
+  if (frame.event !== 'amp_raw_event') {
     return next;
   }
 
   // Real harness output on the wire proves the sandbox pipe is healthy.
-  next.transport = "ok";
+  next.transport = 'ok';
 
   const raw = normalizeRawEvent(frame.data);
-  if (raw.type === "turn.started") {
+  if (raw.type === 'turn.started') {
     if (frame.ts) next.turnStartTs = frame.ts;
     delete next.turnEndTs;
-  } else if (raw.type === "thread.tokenUsage") {
+  } else if (raw.type === 'thread.tokenUsage') {
     reduceThreadTokenUsage(next, raw);
-  } else if (raw.type === "turn.completed") {
+  } else if (raw.type === 'turn.completed') {
     if (frame.ts) next.turnEndTs = frame.ts;
-  } else if (raw.type === "assistant") {
+  } else if (raw.type === 'assistant') {
     reduceAssistant(next, frame.event_id, raw, recordHandles);
-  } else if (raw.type === "tool") {
+  } else if (raw.type === 'tool') {
     reduceToolResult(next, frame.event_id, raw);
-  } else if (raw.type === "result") {
+  } else if (raw.type === 'result') {
     next.resultText = raw.text;
-  } else if (raw.type === "item.agentMessage.delta") {
+  } else if (raw.type === 'item.agentMessage.delta') {
     reduceCodexAgentMessageDelta(next, frame.event_id, raw);
-  } else if (raw.type === "item.started") {
+  } else if (raw.type === 'item.started') {
     reduceCodexItemStarted(next, frame.event_id, raw);
-  } else if (raw.type === "item.commandExecution.outputDelta") {
+  } else if (raw.type === 'item.commandExecution.outputDelta') {
     reduceCodexCommandOutputDelta(next, frame.event_id, raw);
-  } else if (raw.type === "item.reasoning.textDelta") {
+  } else if (raw.type === 'item.reasoning.textDelta') {
     reduceReasoningTextDelta(next, frame.event_id, raw);
-  } else if (raw.type === "item.reasoning.summaryTextDelta") {
+  } else if (raw.type === 'item.reasoning.summaryTextDelta') {
     reduceReasoningSummaryTextDelta(next, frame.event_id, raw);
-  } else if (raw.type === "item.completed") {
+  } else if (raw.type === 'item.completed') {
     reduceCodexItemCompleted(next, frame.event_id, raw, recordHandles);
   }
 
   return next;
 }
 
-function normalizeRawEvent(event: CentaurEventFrame["data"]): CentaurEventFrame["data"] {
-  if (typeof event.type === "string") return event;
+function normalizeRawEvent(event: CentaurEventFrame['data']): CentaurEventFrame['data'] {
+  if (typeof event.type === 'string') return event;
   const raw = event as unknown as JsonObject;
-  if (typeof raw.method !== "string" || !isJsonObject(raw.params)) return event;
+  if (typeof raw.method !== 'string' || !isJsonObject(raw.params)) return event;
   const params = raw.params;
   switch (raw.method) {
-    case "turn/started":
-      return { type: "turn.started", ...params } as CentaurEventFrame["data"];
-    case "turn/completed":
-      return { type: "turn.completed", ...params } as CentaurEventFrame["data"];
-    case "thread/tokenUsage/updated":
-      return { type: "thread.tokenUsage", ...params } as CentaurEventFrame["data"];
-    case "item/started":
-      return { type: "item.started", ...params } as CentaurEventFrame["data"];
-    case "item/completed":
-      return { type: "item.completed", ...params } as CentaurEventFrame["data"];
-    case "item/agentMessage/delta":
+    case 'turn/started':
+      return { type: 'turn.started', ...params } as CentaurEventFrame['data'];
+    case 'turn/completed':
+      return { type: 'turn.completed', ...params } as CentaurEventFrame['data'];
+    case 'thread/tokenUsage/updated':
+      return { type: 'thread.tokenUsage', ...params } as CentaurEventFrame['data'];
+    case 'item/started':
+      return { type: 'item.started', ...params } as CentaurEventFrame['data'];
+    case 'item/completed':
+      return { type: 'item.completed', ...params } as CentaurEventFrame['data'];
+    case 'item/agentMessage/delta':
       return {
-        type: "item.agentMessage.delta",
+        type: 'item.agentMessage.delta',
         ...params,
         itemId: stringValue(params.itemId) ?? stringValue(params.item_id),
-      } as CentaurEventFrame["data"];
-    case "item/commandExecution/outputDelta":
+      } as CentaurEventFrame['data'];
+    case 'item/commandExecution/outputDelta':
       return {
-        type: "item.commandExecution.outputDelta",
+        type: 'item.commandExecution.outputDelta',
         ...params,
         itemId: stringValue(params.itemId) ?? stringValue(params.item_id),
-      } as CentaurEventFrame["data"];
-    case "item/reasoning/textDelta":
+      } as CentaurEventFrame['data'];
+    case 'item/reasoning/textDelta':
       return {
-        type: "item.reasoning.textDelta",
+        type: 'item.reasoning.textDelta',
         ...params,
         itemId: stringValue(params.itemId) ?? stringValue(params.item_id),
-      } as CentaurEventFrame["data"];
-    case "item/reasoning/summaryTextDelta":
+      } as CentaurEventFrame['data'];
+    case 'item/reasoning/summaryTextDelta':
       return {
-        type: "item.reasoning.summaryTextDelta",
+        type: 'item.reasoning.summaryTextDelta',
         ...params,
         itemId: stringValue(params.itemId) ?? stringValue(params.item_id),
-      } as CentaurEventFrame["data"];
+      } as CentaurEventFrame['data'];
     default:
       return event;
   }
 }
 
 function isJsonObject(value: unknown): value is JsonObject {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
 function stringValue(value: unknown): string | undefined {
-  return typeof value === "string" ? value : undefined;
+  return typeof value === 'string' ? value : undefined;
 }
 
 function recordHandleHints(frame: CentaurEventFrame): RecordHandleHint[] {
@@ -429,8 +421,8 @@ function recordHandleHints(frame: CentaurEventFrame): RecordHandleHint[] {
       if (!handle) return null;
       return {
         handle,
-        ...(typeof entry.kind === "string" ? { kind: entry.kind } : {}),
-        ...(typeof entry.actor === "string" ? { actor: entry.actor } : {}),
+        ...(typeof entry.kind === 'string' ? { kind: entry.kind } : {}),
+        ...(typeof entry.actor === 'string' ? { actor: entry.actor } : {}),
         meta: isJsonObject(entry.meta) ? entry.meta : {},
       };
     })
@@ -438,19 +430,17 @@ function recordHandleHints(frame: CentaurEventFrame): RecordHandleHint[] {
 }
 
 function handleForQuestion(hints: RecordHandleHint[], questionId: string): string | undefined {
-  return handleForRecord(hints, (hint) =>
-    hint.kind === "question" && stringValue(hint.meta.questionId) === questionId,
-  );
+  return handleForRecord(hints, (hint) => hint.kind === 'question' && stringValue(hint.meta.questionId) === questionId);
 }
 
 function handleForAmpMessage(
   hints: RecordHandleHint[],
-  actor: "agent" | "user",
+  actor: 'agent' | 'user',
   messageId: string | undefined,
   uuid: string | undefined,
 ): string | undefined {
   return handleForRecord(hints, (hint) => {
-    if (hint.kind !== "message" || hint.actor !== actor) return false;
+    if (hint.kind !== 'message' || hint.actor !== actor) return false;
     const metaMessageId = stringValue(hint.meta.messageId);
     const metaUuid = stringValue(hint.meta.uuid);
     return (
@@ -472,13 +462,13 @@ function handleForCodexItem(
   hints: RecordHandleHint[],
   itemId: string | undefined,
   kind: string,
-  actor?: "agent" | "user" | "system",
+  actor?: 'agent' | 'user' | 'system',
 ): string | undefined {
   if (!itemId) return undefined;
-  return handleForRecord(hints, (hint) =>
-    hint.kind === kind &&
-    (actor === undefined || hint.actor === actor) &&
-    stringValue(hint.meta.itemId) === itemId,
+  return handleForRecord(
+    hints,
+    (hint) =>
+      hint.kind === kind && (actor === undefined || hint.actor === actor) && stringValue(hint.meta.itemId) === itemId,
   );
 }
 
@@ -512,7 +502,7 @@ function upsertQuestionItem(
   handle?: string,
 ): void {
   const existing = state.items.find(
-    (item): item is QuestionItem => item.type === "question" && item.questionId === event.question_id,
+    (item): item is QuestionItem => item.type === 'question' && item.questionId === event.question_id,
   );
 
   if (existing) {
@@ -522,7 +512,7 @@ function upsertQuestionItem(
       delete existing.turnId;
     }
     existing.questions = event.questions;
-    existing.status = "pending";
+    existing.status = 'pending';
     delete existing.reason;
     assignHandle(existing, handle);
     pushSourceEventId(existing, eventId);
@@ -530,12 +520,12 @@ function upsertQuestionItem(
   }
 
   state.items.push({
-    type: "question",
+    type: 'question',
     id: `question:${event.question_id}`,
     questionId: event.question_id,
     ...(event.turn_id !== undefined ? { turnId: event.turn_id } : {}),
     questions: event.questions,
-    status: "pending",
+    status: 'pending',
     ...(handle ? { handle } : {}),
     sourceEventIds: [eventId],
   });
@@ -545,14 +535,14 @@ function resolveQuestionItem(
   state: SessionState,
   eventId: number,
   questionId: string,
-  reason: QuestionResolved["reason"],
+  reason: QuestionResolved['reason'],
   handle?: string,
 ): void {
   const existing = state.items.find(
-    (item): item is QuestionItem => item.type === "question" && item.questionId === questionId,
+    (item): item is QuestionItem => item.type === 'question' && item.questionId === questionId,
   );
   if (existing) {
-    existing.status = "resolved";
+    existing.status = 'resolved';
     existing.reason = reason;
     assignHandle(existing, handle);
     pushSourceEventId(existing, eventId);
@@ -560,25 +550,21 @@ function resolveQuestionItem(
   }
 
   state.items.push({
-    type: "question",
+    type: 'question',
     id: `question:${questionId}`,
     questionId,
     questions: [],
-    status: "resolved",
+    status: 'resolved',
     reason,
     ...(handle ? { handle } : {}),
     sourceEventIds: [eventId],
   });
 }
 
-function resolveOpenQuestions(
-  state: SessionState,
-  eventId: number,
-  reason: QuestionResolved["reason"],
-): void {
+function resolveOpenQuestions(state: SessionState, eventId: number, reason: QuestionResolved['reason']): void {
   for (const item of state.items) {
-    if (item.type !== "question" || item.status !== "pending") continue;
-    item.status = "resolved";
+    if (item.type !== 'question' || item.status !== 'pending') continue;
+    item.status = 'resolved';
     item.reason = reason;
     pushSourceEventId(item, eventId);
   }
@@ -599,15 +585,15 @@ function reduceAssistant(
   const text = event.message.content
     .filter(isTextBlock)
     .map((block) => block.text)
-    .join("");
+    .join('');
   const toolBlocks = event.message.content.filter(isToolUseBlock);
   const thinkingBlocks = event.message.content.filter(isThinkingBlock);
   const messageKey = event.message.id ?? event.uuid;
-  const messageHandle = handleForAmpMessage(handles, "agent", event.message.id, event.uuid);
+  const messageHandle = handleForAmpMessage(handles, 'agent', event.message.id, event.uuid);
 
   if (messageKey) {
     thinkingBlocks.forEach((block, index) => {
-      const thinking = block.thinking ?? block.text ?? "";
+      const thinking = block.thinking ?? block.text ?? '';
       if (thinking.trim()) {
         upsertClaudeReasoningItem(state, eventId, messageKey, index, thinking, event, messageHandle);
       }
@@ -616,14 +602,7 @@ function reduceAssistant(
 
   if (event.uuid) {
     if (text) {
-      reconcileCompleteText(
-        state,
-        eventId,
-        event.uuid,
-        event.message.id,
-        text,
-        messageHandle,
-      );
+      reconcileCompleteText(state, eventId, event.uuid, event.message.id, text, messageHandle);
     }
     for (const block of toolBlocks) {
       applyToolDerivedState(state, eventId, upsertToolCall(state, eventId, block, handleForToolUse(handles, block.id)));
@@ -632,12 +611,7 @@ function reduceAssistant(
   }
 
   if (text) {
-    appendStreamingText(
-      state,
-      eventId,
-      text,
-      messageHandle,
-    );
+    appendStreamingText(state, eventId, text, messageHandle);
   }
   for (const block of toolBlocks) {
     applyToolDerivedState(state, eventId, upsertToolCall(state, eventId, block, handleForToolUse(handles, block.id)));
@@ -654,9 +628,7 @@ function upsertClaudeReasoningItem(
   handle?: string,
 ): void {
   const id = `reasoning:claude:${messageKey}:${blockIndex}`;
-  const existing = state.items.find(
-    (item): item is ReasoningItem => item.type === "reasoning" && item.id === id,
-  );
+  const existing = state.items.find((item): item is ReasoningItem => item.type === 'reasoning' && item.id === id);
   if (existing) {
     existing.text = text;
     assignHandle(existing, handle);
@@ -665,7 +637,7 @@ function upsertClaudeReasoningItem(
   }
 
   const created: ReasoningItem = {
-    type: "reasoning",
+    type: 'reasoning',
     id,
     text,
     messageId: messageKey,
@@ -673,7 +645,7 @@ function upsertClaudeReasoningItem(
     sourceEventIds: [eventId],
   };
   const textIndex = state.items.findIndex(
-    (item) => item.type === "text" && (item.uuid === event.uuid || item.messageId === event.message.id),
+    (item) => item.type === 'text' && (item.uuid === event.uuid || item.messageId === event.message.id),
   );
   if (textIndex === -1) {
     state.items.push(created);
@@ -682,15 +654,10 @@ function upsertClaudeReasoningItem(
   }
 }
 
-function appendStreamingText(
-  state: SessionState,
-  eventId: number,
-  text: string,
-  handle?: string,
-): void {
+function appendStreamingText(state: SessionState, eventId: number, text: string, handle?: string): void {
   state.deltaChars += text.length;
   const last = state.items[state.items.length - 1];
-  if (last?.type === "text" && !last.uuid) {
+  if (last?.type === 'text' && !last.uuid) {
     last.text += text;
     assignHandle(last, handle);
     last.sourceEventIds.push(eventId);
@@ -698,7 +665,7 @@ function appendStreamingText(
   }
 
   state.items.push({
-    type: "text",
+    type: 'text',
     id: `text:${eventId}`,
     text,
     ...(handle ? { handle } : {}),
@@ -714,8 +681,8 @@ function reconcileCompleteText(
   text: string,
   handle?: string,
 ): void {
-  const existing = state.items.find((item) =>
-    item.type === "text" && (item.uuid === uuid || item.messageId === messageId),
+  const existing = state.items.find(
+    (item) => item.type === 'text' && (item.uuid === uuid || item.messageId === messageId),
   ) as TextItem | undefined;
   if (existing) {
     existing.text = text;
@@ -727,7 +694,7 @@ function reconcileCompleteText(
   }
 
   const last = state.items[state.items.length - 1];
-  if (last?.type === "text" && !last.uuid) {
+  if (last?.type === 'text' && !last.uuid) {
     last.id = messageId ? `text:${messageId}` : `text:${uuid}`;
     last.text = text;
     last.uuid = uuid;
@@ -738,11 +705,11 @@ function reconcileCompleteText(
   }
 
   state.items.push({
-    type: "text",
+    type: 'text',
     id: messageId ? `text:${messageId}` : `text:${uuid}`,
     text,
     uuid,
-    ...optionalProp("messageId", messageId),
+    ...optionalProp('messageId', messageId),
     ...(handle ? { handle } : {}),
     sourceEventIds: [eventId],
   });
@@ -754,9 +721,9 @@ function upsertToolCall(
   block: AnthropicToolUseBlock,
   handle?: string,
 ): ToolCallItem {
-  const existing = state.items.find((item) =>
-    item.type === "tool_call" && item.id === block.id,
-  ) as ToolCallItem | undefined;
+  const existing = state.items.find((item) => item.type === 'tool_call' && item.id === block.id) as
+    | ToolCallItem
+    | undefined;
 
   if (existing) {
     existing.name = block.name;
@@ -767,7 +734,7 @@ function upsertToolCall(
   }
 
   const created: ToolCallItem = {
-    type: "tool_call",
+    type: 'tool_call',
     id: block.id,
     name: block.name,
     input: block.input,
@@ -780,11 +747,11 @@ function upsertToolCall(
 
 function applyToolDerivedState(state: SessionState, eventId: number, item: ToolCallItem): void {
   const name = item.name.toLowerCase();
-  if (name === "todowrite") {
+  if (name === 'todowrite') {
     state.todos = parseTodoEntries(item.input.todos);
-  } else if (name === "exitplanmode") {
+  } else if (name === 'exitplanmode') {
     state.plan = {
-      text: typeof item.input.plan === "string" ? item.input.plan : "",
+      text: typeof item.input.plan === 'string' ? item.input.plan : '',
       sourceEventIds: [eventId],
     };
   }
@@ -796,7 +763,7 @@ function parseTodoEntries(value: unknown): TodoEntry[] {
   }
 
   return value.flatMap((entry): TodoEntry[] => {
-    if (!isJsonObject(entry) || typeof entry.content !== "string") {
+    if (!isJsonObject(entry) || typeof entry.content !== 'string') {
       return [];
     }
     const status = parseTodoStatus(entry.status);
@@ -804,23 +771,23 @@ function parseTodoEntries(value: unknown): TodoEntry[] {
       {
         content: entry.content,
         status,
-        ...(typeof entry.activeForm === "string" ? { activeForm: entry.activeForm } : {}),
+        ...(typeof entry.activeForm === 'string' ? { activeForm: entry.activeForm } : {}),
       },
     ];
   });
 }
 
-function parseTodoStatus(value: unknown): TodoEntry["status"] {
-  return value === "in_progress" || value === "completed" || value === "pending" ? value : "pending";
+function parseTodoStatus(value: unknown): TodoEntry['status'] {
+  return value === 'in_progress' || value === 'completed' || value === 'pending' ? value : 'pending';
 }
 
 function reduceToolResult(state: SessionState, eventId: number, event: AmpToolEvent): void {
   for (const result of event.content) {
     const item = result.tool_use_id
-      ? state.items.find((candidate) => candidate.type === "tool_call" && candidate.id === result.tool_use_id)
-      : [...state.items].reverse().find((candidate) => candidate.type === "tool_call");
+      ? state.items.find((candidate) => candidate.type === 'tool_call' && candidate.id === result.tool_use_id)
+      : [...state.items].reverse().find((candidate) => candidate.type === 'tool_call');
 
-    if (!item || item.type !== "tool_call") {
+    if (!item || item.type !== 'tool_call') {
       continue;
     }
 
@@ -843,20 +810,15 @@ function reduceThreadTokenUsage(state: SessionState, raw: { tokenUsage?: unknown
   if (!isJsonObject(raw.tokenUsage)) return;
   const total = raw.tokenUsage.total;
   if (!isJsonObject(total)) return;
-  const num = (value: unknown): number => (typeof value === "number" ? value : 0);
+  const num = (value: unknown): number => (typeof value === 'number' ? value : 0);
   const output =
-    num(total.outputTokens ?? total.output_tokens) +
-    num(total.reasoningOutputTokens ?? total.reasoning_output_tokens);
+    num(total.outputTokens ?? total.output_tokens) + num(total.reasoningOutputTokens ?? total.reasoning_output_tokens);
   if (output > 0) {
     state.tokensUsed = Math.max(state.tokensUsed ?? 0, output);
   }
 }
 
-function reduceCodexAgentMessageDelta(
-  state: SessionState,
-  eventId: number,
-  event: CodexAgentMessageDeltaEvent,
-): void {
+function reduceCodexAgentMessageDelta(state: SessionState, eventId: number, event: CodexAgentMessageDeltaEvent): void {
   if (!event.delta) {
     return;
   }
@@ -865,7 +827,7 @@ function reduceCodexAgentMessageDelta(
 }
 
 function reduceCodexItemStarted(state: SessionState, eventId: number, event: CodexItemStartedEvent): void {
-  if (event.item.type !== "commandExecution") {
+  if (event.item.type !== 'commandExecution') {
     return;
   }
   upsertCodexCommandExecution(state, eventId, event.item);
@@ -876,7 +838,7 @@ function reduceCodexCommandOutputDelta(
   eventId: number,
   event: CodexCommandExecutionOutputDeltaEvent,
 ): void {
-  const delta = typeof event.delta === "string" ? event.delta : typeof event.output === "string" ? event.output : "";
+  const delta = typeof event.delta === 'string' ? event.delta : typeof event.output === 'string' ? event.output : '';
   if (!delta) {
     return;
   }
@@ -887,17 +849,13 @@ function reduceCodexCommandOutputDelta(
   }
 
   item.result = {
-    content: `${item.result?.content ?? ""}${delta}`,
+    content: `${item.result?.content ?? ''}${delta}`,
     is_error: item.result?.is_error ?? false,
   };
   item.sourceEventIds.push(eventId);
 }
 
-function reduceReasoningTextDelta(
-  state: SessionState,
-  eventId: number,
-  event: CodexReasoningTextDeltaEvent,
-): void {
+function reduceReasoningTextDelta(state: SessionState, eventId: number, event: CodexReasoningTextDeltaEvent): void {
   if (!event.delta) {
     return;
   }
@@ -923,22 +881,22 @@ function reduceCodexItemCompleted(
   event: CodexItemCompletedEvent,
   handles: RecordHandleHint[],
 ): void {
-  if (event.item.type === "agentMessage") {
-    const text = typeof event.item.text === "string" ? event.item.text : codexContentText(event.item);
+  if (event.item.type === 'agentMessage') {
+    const text = typeof event.item.text === 'string' ? event.item.text : codexContentText(event.item);
     if (text) {
       reconcileCodexCompleteText(
         state,
         eventId,
         event.item.id,
         text,
-        handleForCodexItem(handles, event.item.id, "message", "agent"),
+        handleForCodexItem(handles, event.item.id, 'message', 'agent'),
       );
     }
     return;
   }
 
-  if (event.item.type === "userMessage") {
-    const raw = typeof event.item.text === "string" ? event.item.text : codexContentText(event.item);
+  if (event.item.type === 'userMessage') {
+    const raw = typeof event.item.text === 'string' ? event.item.text : codexContentText(event.item);
     const text = stripInjectedContext(raw, Array.isArray(event.item.content));
     if (text) {
       upsertUserMessage(
@@ -946,19 +904,17 @@ function reduceCodexItemCompleted(
         eventId,
         event.item.id,
         text,
-        handleForCodexItem(handles, event.item.id, "message", "user"),
+        handleForCodexItem(handles, event.item.id, 'message', 'user'),
       );
     }
     return;
   }
 
-  if (event.item.type === "reasoning") {
-    const text = typeof event.item.text === "string" ? event.item.text : codexContentText(event.item);
+  if (event.item.type === 'reasoning') {
+    const text = typeof event.item.text === 'string' ? event.item.text : codexContentText(event.item);
     const summary = codexReasoningSummary(event.item.summary);
     const id = `reasoning:${event.item.id}`;
-    const existing = state.items.find(
-      (item): item is ReasoningItem => item.type === "reasoning" && item.id === id,
-    );
+    const existing = state.items.find((item): item is ReasoningItem => item.type === 'reasoning' && item.id === id);
     if (!text.trim() && !summary?.trim() && !reasoningHasContent(existing)) {
       return;
     }
@@ -968,71 +924,65 @@ function reduceCodexItemCompleted(
       event.item.id,
       text,
       summary,
-      handleForCodexItem(handles, event.item.id, "reasoning", "agent"),
+      handleForCodexItem(handles, event.item.id, 'reasoning', 'agent'),
       Boolean(text.trim()),
     );
     return;
   }
 
-  if (event.item.type === "plan") {
-    setPlanFromText(state, eventId, typeof event.item.text === "string" ? event.item.text : codexContentText(event.item));
+  if (event.item.type === 'plan') {
+    setPlanFromText(
+      state,
+      eventId,
+      typeof event.item.text === 'string' ? event.item.text : codexContentText(event.item),
+    );
     return;
   }
 
-  if (event.item.type === "commandExecution") {
+  if (event.item.type === 'commandExecution') {
     upsertCodexCommandExecution(
       state,
       eventId,
       event.item,
-      handleForCodexItem(handles, event.item.id, "command", "agent"),
+      handleForCodexItem(handles, event.item.id, 'command', 'agent'),
     );
     completeCodexCommandExecution(state, eventId, event.item);
     return;
   }
 
-  if (event.item.type === "fileChange") {
+  if (event.item.type === 'fileChange') {
     captureCodexFileChange(state, eventId, event.item);
   }
 }
 
 function codexReasoningSummary(value: unknown): string | undefined {
-  if (typeof value === "string") {
+  if (typeof value === 'string') {
     return value;
   }
   if (!Array.isArray(value)) {
     return undefined;
   }
   const parts = value.flatMap((part): string[] => {
-    if (typeof part === "string") return part.trim() ? [part] : [];
-    if (!isJsonObject(part) || typeof part.text !== "string" || !part.text.trim()) return [];
+    if (typeof part === 'string') return part.trim() ? [part] : [];
+    if (!isJsonObject(part) || typeof part.text !== 'string' || !part.text.trim()) return [];
     return [part.text];
   });
-  return parts.length ? parts.join("\n\n") : undefined;
+  return parts.length ? parts.join('\n\n') : undefined;
 }
 
 function reasoningHasContent(item: ReasoningItem | undefined): boolean {
   return Boolean(item && (item.text.trim() || item.summary?.trim()));
 }
 
-function appendReasoningText(
-  state: SessionState,
-  eventId: number,
-  itemId: string | undefined,
-  delta: string,
-): void {
-  const item = upsertReasoningItem(state, eventId, itemId, "");
+function appendReasoningText(state: SessionState, eventId: number, itemId: string | undefined, delta: string): void {
+  const item = upsertReasoningItem(state, eventId, itemId, '');
   item.text += delta;
   pushSourceEventId(item, eventId);
 }
 
-function appendReasoningSummary(
-  state: SessionState,
-  eventId: number,
-  itemId: string | undefined,
-  delta: string,
-): void {
-  const item = upsertReasoningItem(state, eventId, itemId, "");
-  item.summary = `${item.summary ?? ""}${delta}`;
+function appendReasoningSummary(state: SessionState, eventId: number, itemId: string | undefined, delta: string): void {
+  const item = upsertReasoningItem(state, eventId, itemId, '');
+  item.summary = `${item.summary ?? ''}${delta}`;
   pushSourceEventId(item, eventId);
 }
 
@@ -1046,9 +996,9 @@ function upsertReasoningItem(
   replaceText = false,
 ): ReasoningItem {
   const id = itemId ? `reasoning:${itemId}` : `reasoning:${eventId}`;
-  const existing = state.items.find((candidate) =>
-    candidate.type === "reasoning" && candidate.id === id,
-  ) as ReasoningItem | undefined;
+  const existing = state.items.find((candidate) => candidate.type === 'reasoning' && candidate.id === id) as
+    | ReasoningItem
+    | undefined;
 
   if (existing) {
     if (replaceText) {
@@ -1066,7 +1016,7 @@ function upsertReasoningItem(
   }
 
   const created: ReasoningItem = {
-    type: "reasoning",
+    type: 'reasoning',
     id,
     text,
     ...(summary !== undefined ? { summary } : {}),
@@ -1083,16 +1033,16 @@ function setPlanFromText(state: SessionState, eventId: number, text: string): vo
 }
 
 const CODEX_KIND: Record<string, FileChangeKind> = {
-  add: "add",
-  create: "add",
-  added: "add",
-  update: "update",
-  modify: "update",
-  modified: "update",
-  edit: "update",
-  delete: "delete",
-  deleted: "delete",
-  remove: "delete",
+  add: 'add',
+  create: 'add',
+  added: 'add',
+  update: 'update',
+  modify: 'update',
+  modified: 'update',
+  edit: 'update',
+  delete: 'delete',
+  deleted: 'delete',
+  remove: 'delete',
 };
 
 /** Fold a codex `fileChange` item.completed — `changes[].{path,kind,diff}` —
@@ -1102,19 +1052,19 @@ function captureCodexFileChange(state: SessionState, eventId: number, item: Code
   const changesField = (item as { changes?: unknown }).changes;
   if (!Array.isArray(changesField)) return; // verified shape is always changes[]
   changesField.forEach((entry, idx) => {
-    if (!entry || typeof entry !== "object") return;
+    if (!entry || typeof entry !== 'object') return;
     const e = entry as Record<string, unknown>;
-    const path = typeof e["path"] === "string" ? e["path"] : null;
+    const path = typeof e['path'] === 'string' ? e['path'] : null;
     if (!path) return;
     const id = `${item.id ?? `fc:${eventId}`}:${idx}`;
     if (state.fileChanges.some((c) => c.id === id)) return;
-    const kindRaw = typeof e["kind"] === "string" ? e["kind"].toLowerCase() : "";
+    const kindRaw = typeof e['kind'] === 'string' ? e['kind'].toLowerCase() : '';
     state.fileChanges.push({
       id,
       path,
-      kind: CODEX_KIND[kindRaw] ?? "update",
-      diff: typeof e["diff"] === "string" ? e["diff"] : "",
-      toolName: "fileChange",
+      kind: CODEX_KIND[kindRaw] ?? 'update',
+      diff: typeof e['diff'] === 'string' ? e['diff'] : '',
+      toolName: 'fileChange',
       sourceEventIds: [eventId],
     });
   });
@@ -1146,7 +1096,7 @@ function appendCodexStreamingText(
   text: string,
 ): void {
   const existing = itemId
-    ? (state.items.find((item) => item.type === "text" && item.messageId === itemId) as TextItem | undefined)
+    ? (state.items.find((item) => item.type === 'text' && item.messageId === itemId) as TextItem | undefined)
     : undefined;
   if (existing) {
     existing.text += text;
@@ -1154,9 +1104,9 @@ function appendCodexStreamingText(
     return;
   }
 
-  const lastCodexText = [...state.items]
-    .reverse()
-    .find((item) => item.type === "text" && isOpenCodexTextItem(item)) as TextItem | undefined;
+  const lastCodexText = [...state.items].reverse().find((item) => item.type === 'text' && isOpenCodexTextItem(item)) as
+    | TextItem
+    | undefined;
   if (!itemId && lastCodexText) {
     lastCodexText.text += text;
     lastCodexText.sourceEventIds.push(eventId);
@@ -1164,10 +1114,10 @@ function appendCodexStreamingText(
   }
 
   state.items.push({
-    type: "text",
+    type: 'text',
     id: itemId ? `text:codex:${itemId}` : `text:codex:${eventId}`,
     text,
-    ...optionalProp("messageId", itemId),
+    ...optionalProp('messageId', itemId),
     sourceEventIds: [eventId],
   });
 }
@@ -1180,7 +1130,7 @@ function reconcileCodexCompleteText(
   handle?: string,
 ): void {
   const existing = itemId
-    ? (state.items.find((item) => item.type === "text" && item.messageId === itemId) as TextItem | undefined)
+    ? (state.items.find((item) => item.type === 'text' && item.messageId === itemId) as TextItem | undefined)
     : undefined;
   if (existing) {
     existing.text = text;
@@ -1189,9 +1139,9 @@ function reconcileCodexCompleteText(
     return;
   }
 
-  const lastCodexText = [...state.items]
-    .reverse()
-    .find((item) => item.type === "text" && isOpenCodexTextItem(item)) as TextItem | undefined;
+  const lastCodexText = [...state.items].reverse().find((item) => item.type === 'text' && isOpenCodexTextItem(item)) as
+    | TextItem
+    | undefined;
   if (lastCodexText) {
     lastCodexText.id = itemId ? `text:codex:${itemId}` : lastCodexText.id;
     assignMessageId(lastCodexText, itemId);
@@ -1202,10 +1152,10 @@ function reconcileCodexCompleteText(
   }
 
   state.items.push({
-    type: "text",
+    type: 'text',
     id: itemId ? `text:codex:${itemId}` : `text:codex:${eventId}`,
     text,
-    ...optionalProp("messageId", itemId),
+    ...optionalProp('messageId', itemId),
     ...(handle ? { handle } : {}),
     sourceEventIds: [eventId],
   });
@@ -1219,12 +1169,12 @@ function upsertCodexCommandExecution(
 ): ToolCallItem {
   const id = item.id ? `tool:codex:${item.id}` : `tool:codex:${eventId}`;
   const input = codexCommandInput(item);
-  const existing = state.items.find((candidate) =>
-    candidate.type === "tool_call" && candidate.id === id,
-  ) as ToolCallItem | undefined;
+  const existing = state.items.find((candidate) => candidate.type === 'tool_call' && candidate.id === id) as
+    | ToolCallItem
+    | undefined;
 
   if (existing) {
-    existing.name = "command";
+    existing.name = 'command';
     if (hasCodexCommandInput(item)) {
       existing.input = input;
     }
@@ -1234,9 +1184,9 @@ function upsertCodexCommandExecution(
   }
 
   const created: ToolCallItem = {
-    type: "tool_call",
+    type: 'tool_call',
     id,
-    name: "command",
+    name: 'command',
     input,
     ...(handle ? { handle } : {}),
     sourceEventIds: [eventId],
@@ -1251,12 +1201,12 @@ function completeCodexCommandExecution(state: SessionState, eventId: number, ite
     return;
   }
 
-  const content = codexCommandOutput(item, tool.result?.content ?? "");
-  const exitCode = typeof item.exit_code === "number" ? item.exit_code : item.exitCode;
-  const status = typeof item.status === "string" ? item.status : "";
+  const content = codexCommandOutput(item, tool.result?.content ?? '');
+  const exitCode = typeof item.exit_code === 'number' ? item.exit_code : item.exitCode;
+  const status = typeof item.status === 'string' ? item.status : '';
   tool.result = {
     content,
-    is_error: exitCodeIsError(exitCode) || status === "failed" || status === "error",
+    is_error: exitCodeIsError(exitCode) || status === 'failed' || status === 'error',
   };
   tool.sourceEventIds.push(eventId);
 }
@@ -1269,9 +1219,9 @@ function upsertUserMessage(
   handle?: string,
 ): UserMessageItem {
   const id = itemId ?? `user:${eventId}`;
-  const existing = state.items.find((candidate) =>
-    candidate.type === "user_message" && candidate.id === id,
-  ) as UserMessageItem | undefined;
+  const existing = state.items.find((candidate) => candidate.type === 'user_message' && candidate.id === id) as
+    | UserMessageItem
+    | undefined;
 
   if (existing) {
     existing.text = text;
@@ -1281,7 +1231,7 @@ function upsertUserMessage(
   }
 
   const created: UserMessageItem = {
-    type: "user_message",
+    type: 'user_message',
     id,
     text,
     ...(handle ? { handle } : {}),
@@ -1294,13 +1244,15 @@ function upsertUserMessage(
 function findCodexToolCall(state: SessionState, itemId: string | undefined): ToolCallItem | undefined {
   if (itemId) {
     const id = `tool:codex:${itemId}`;
-    return state.items.find((candidate) => candidate.type === "tool_call" && candidate.id === id) as
+    return state.items.find((candidate) => candidate.type === 'tool_call' && candidate.id === id) as
       | ToolCallItem
       | undefined;
   }
-  return [...state.items].reverse().find((candidate) =>
-    candidate.type === "tool_call" && candidate.id.startsWith("tool:codex:"),
-  ) as ToolCallItem | undefined;
+  return [...state.items]
+    .reverse()
+    .find((candidate) => candidate.type === 'tool_call' && candidate.id.startsWith('tool:codex:')) as
+    | ToolCallItem
+    | undefined;
 }
 
 function codexItemId(event: {
@@ -1313,19 +1265,24 @@ function codexItemId(event: {
 }
 
 function codexContentText(item: CodexItem): string {
-  return item.content?.filter((content) => content.type === "text").map((content) => content.text).join("") ?? "";
+  return (
+    item.content
+      ?.filter((content) => content.type === 'text')
+      .map((content) => content.text)
+      .join('') ?? ''
+  );
 }
 
-const ATRIUM_CONTEXT_MARKER = "[atrium context]";
-const CONTEXT_OPEN = "<context>";
-const CONTEXT_CLOSE = "</context>";
+const ATRIUM_CONTEXT_MARKER = '[atrium context]';
+const CONTEXT_OPEN = '<context>';
+const CONTEXT_CLOSE = '</context>';
 
 function stripInjectedContext(raw: string, canMergeContextPart = false): string {
   const steerStripped = canMergeContextPart ? stripSteerContextPrefix(raw) : null;
   let end = raw.length;
   const text = steerStripped ?? raw;
   end = text.length;
-  for (const marker of ["\n# Session Context", "\n\n---\nReferenced entries:"]) {
+  for (const marker of ['\n# Session Context', '\n\n---\nReferenced entries:']) {
     const index = text.indexOf(marker);
     if (index !== -1 && index < end) end = index;
   }
@@ -1347,7 +1304,7 @@ function stripSteerContextPrefix(raw: string): string | null {
     const contextText = raw.slice(0, separator.index);
     return isSteerContextBlock(contextText) ? raw.slice(separator.end) : null;
   }
-  return isSteerContextBlock(raw) ? "" : null;
+  return isSteerContextBlock(raw) ? '' : null;
 }
 
 function isSteerContextBlock(text: string): boolean {
@@ -1362,37 +1319,41 @@ interface ParsedSteerContextBlock {
 }
 
 function parseSteerContextBlock(text: string): ParsedSteerContextBlock | null {
-  const normalized = text.replace(/\r\n/g, "\n").trim();
+  const normalized = text.replace(/\r\n/g, '\n').trim();
   if (!normalized.startsWith(ATRIUM_CONTEXT_MARKER)) return null;
-  const lines = normalized.split("\n").map((line) => line.trimEnd());
+  const lines = normalized.split('\n').map((line) => line.trimEnd());
   if (
     lines[0] !== ATRIUM_CONTEXT_MARKER ||
-    !lines.some((line) => line.startsWith("from: ")) ||
-    !lines.some((line) => line.startsWith("sent: "))
-  ) return null;
+    !lines.some((line) => line.startsWith('from: ')) ||
+    !lines.some((line) => line.startsWith('sent: '))
+  )
+    return null;
   const value = (prefix: string): string | null =>
-    lines.find((line) => line.startsWith(prefix))?.slice(prefix.length).trim() || null;
-  const channelValue = value("channel: ")?.replace(/^#/, "") ?? null;
+    lines
+      .find((line) => line.startsWith(prefix))
+      ?.slice(prefix.length)
+      .trim() || null;
+  const channelValue = value('channel: ')?.replace(/^#/, '') ?? null;
   const channelMatch = channelValue ? /^(.*?) \(id: ([^)]+)\)$/.exec(channelValue) : null;
   return {
-    you: value("you: "),
+    you: value('you: '),
     channel: channelMatch ? channelMatch[1]!.trim() || null : channelValue,
     channelId: channelMatch ? channelMatch[2]!.trim() || null : null,
-    thread: value("thread: "),
+    thread: value('thread: '),
   };
 }
 
 function firstBlankLineIndex(text: string): { index: number; end: number } | null {
-  const lf = text.indexOf("\n\n");
-  const crlf = text.indexOf("\r\n\r\n");
+  const lf = text.indexOf('\n\n');
+  const crlf = text.indexOf('\r\n\r\n');
   if (lf === -1 && crlf === -1) return null;
   if (crlf !== -1 && (lf === -1 || crlf <= lf)) return { index: crlf, end: crlf + 4 };
   return { index: lf, end: lf + 2 };
 }
 
 function stripOneBlankSeparator(text: string): string {
-  if (text.startsWith("\r\n\r\n")) return text.slice(4);
-  if (text.startsWith("\n\n")) return text.slice(2);
+  if (text.startsWith('\r\n\r\n')) return text.slice(4);
+  if (text.startsWith('\n\n')) return text.slice(2);
   return text;
 }
 
@@ -1400,32 +1361,34 @@ function codexCommandInput(item: CodexItem): JsonObject {
   if (item.input) {
     return item.input;
   }
-  return typeof item.command === "string" ? { command: item.command } : {};
+  return typeof item.command === 'string' ? { command: item.command } : {};
 }
 
 function hasCodexCommandInput(item: CodexItem): boolean {
-  return item.input !== undefined || typeof item.command === "string";
+  return item.input !== undefined || typeof item.command === 'string';
 }
 
 function codexCommandOutput(item: CodexItem, fallback: string): string {
-  if (typeof item.output === "string") {
+  if (typeof item.output === 'string') {
     return item.output;
   }
-  if (typeof item.stdout === "string" || typeof item.stderr === "string") {
-    return [item.stdout, item.stderr].filter((part): part is string => typeof part === "string" && part.length > 0).join("");
+  if (typeof item.stdout === 'string' || typeof item.stderr === 'string') {
+    return [item.stdout, item.stderr]
+      .filter((part): part is string => typeof part === 'string' && part.length > 0)
+      .join('');
   }
-  if (typeof item.text === "string") {
+  if (typeof item.text === 'string') {
     return item.text;
   }
   return fallback;
 }
 
 function exitCodeIsError(exitCode: unknown): boolean {
-  return typeof exitCode === "number" && exitCode !== 0;
+  return typeof exitCode === 'number' && exitCode !== 0;
 }
 
 function isOpenCodexTextItem(item: SessionItem): item is TextItem {
-  return item.type === "text" && item.uuid === undefined && item.id.startsWith("text:codex:");
+  return item.type === 'text' && item.uuid === undefined && item.id.startsWith('text:codex:');
 }
 
 function mergeModels(current: string[], incoming: string[]): string[] {
@@ -1440,13 +1403,13 @@ function mergeModels(current: string[], incoming: string[]): string[] {
 }
 
 function isTextBlock(block: { type: string }): block is AnthropicTextBlock {
-  return block.type === "text";
+  return block.type === 'text';
 }
 
 function isThinkingBlock(block: { type: string }): block is AnthropicThinkingBlock {
-  return block.type === "thinking";
+  return block.type === 'thinking';
 }
 
 function isToolUseBlock(block: { type: string }): block is AnthropicToolUseBlock {
-  return block.type === "tool_use";
+  return block.type === 'tool_use';
 }

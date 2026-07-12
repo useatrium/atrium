@@ -71,9 +71,7 @@ describe('useReadMarks', () => {
     const enqueueOp = vi.fn(async (_input: EnqueueOpInput<'read.mark'>) => ({ opId: 'op-1' }));
     const onApiError = vi.fn();
 
-    const { result } = renderHook(() =>
-      useReadMarks({ dispatch, enqueueOp, onApiError, throttleMs: 0 }),
-    );
+    const { result } = renderHook(() => useReadMarks({ dispatch, enqueueOp, onApiError, throttleMs: 0 }));
 
     act(() => {
       result.current.noteReadCursor('ch-1', 10);
@@ -92,9 +90,7 @@ describe('useReadMarks', () => {
       .mockResolvedValueOnce({ opId: 'op-2' });
     const onApiError = vi.fn();
 
-    const { result } = renderHook(() =>
-      useReadMarks({ dispatch, enqueueOp, onApiError, throttleMs: 0 }),
-    );
+    const { result } = renderHook(() => useReadMarks({ dispatch, enqueueOp, onApiError, throttleMs: 0 }));
 
     act(() => result.current.markRead('ch-1', 5));
     await waitFor(() => expect(onApiError).toHaveBeenCalledOnce());

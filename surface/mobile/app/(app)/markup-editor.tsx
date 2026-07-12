@@ -54,12 +54,11 @@ export default function MarkupEditorScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      const handler = (BackHandler as unknown as {
-        addEventListener?: (
-          eventName: 'hardwareBackPress',
-          handler: () => boolean,
-        ) => { remove: () => void };
-      }).addEventListener?.('hardwareBackPress', () => {
+      const handler = (
+        BackHandler as unknown as {
+          addEventListener?: (eventName: 'hardwareBackPress', handler: () => boolean) => { remove: () => void };
+        }
+      ).addEventListener?.('hardwareBackPress', () => {
         requestClose();
         return true;
       });
@@ -153,7 +152,15 @@ export default function MarkupEditorScreen() {
 
   if (!draft) {
     return (
-      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.bg, padding: space.xl }}>
+      <View
+        style={{
+          flex: 1,
+          alignItems: 'center',
+          justifyContent: 'center',
+          backgroundColor: colors.bg,
+          padding: space.xl,
+        }}
+      >
         <Stack.Screen options={{ title: 'Markup', headerBackButtonDisplayMode: 'minimal' }} />
         <Text style={{ color: colors.textMuted, fontSize: font.sm, textAlign: 'center' }}>
           Markup draft is no longer available.
@@ -208,7 +215,14 @@ export default function MarkupEditorScreen() {
         keyboardVerticalOffset={headerHeight}
       >
         {error ? (
-          <View style={{ borderBottomWidth: 1, borderBottomColor: colors.dangerBorder, backgroundColor: colors.dangerSurface, padding: space.md }}>
+          <View
+            style={{
+              borderBottomWidth: 1,
+              borderBottomColor: colors.dangerBorder,
+              backgroundColor: colors.dangerSurface,
+              padding: space.md,
+            }}
+          >
             <Text style={{ color: colors.danger, fontSize: font.sm }}>{error}</Text>
           </View>
         ) : null}

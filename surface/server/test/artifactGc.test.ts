@@ -21,11 +21,7 @@ async function seedSession(channelId = fx.channelId): Promise<string> {
   return r.rows[0]!.id;
 }
 
-function capture(
-  path: string,
-  blobSha: string | null,
-  kind: 'created' | 'modified' | 'deleted',
-) {
+function capture(path: string, blobSha: string | null, kind: 'created' | 'modified' | 'deleted') {
   return ledger.commitVersion({
     sessionId,
     channelId: fx.channelId,
@@ -39,24 +35,21 @@ function capture(
 }
 
 async function blobExists(sha256: string): Promise<boolean> {
-  const res = await pool.query<{ exists: boolean }>(
-    'SELECT EXISTS (SELECT 1 FROM cas_blobs WHERE sha256 = $1)',
-    [sha256],
-  );
+  const res = await pool.query<{ exists: boolean }>('SELECT EXISTS (SELECT 1 FROM cas_blobs WHERE sha256 = $1)', [
+    sha256,
+  ]);
   return res.rows[0]!.exists;
 }
 
 function storedPath(path: string): string {
-  return path.startsWith('shared/') || path.startsWith('scratch/')
-    ? path
-    : `shared/channels/${fx.channelId}/${path}`;
+  return path.startsWith('shared/') || path.startsWith('scratch/') ? path : `shared/channels/${fx.channelId}/${path}`;
 }
 
 async function artifactIdForPath(path: string): Promise<string> {
-  const res = await pool.query<{ id: string }>(
-    'SELECT id FROM artifacts WHERE workspace_id = $1 AND path = $2',
-    [fx.workspaceId, storedPath(path)],
-  );
+  const res = await pool.query<{ id: string }>('SELECT id FROM artifacts WHERE workspace_id = $1 AND path = $2', [
+    fx.workspaceId,
+    storedPath(path),
+  ]);
   return res.rows[0]!.id;
 }
 
@@ -496,10 +489,14 @@ describe('artifact ledger GC', () => {
       sizeCapBytes: 1024 * 1024,
       batchLimit: 10,
     });
-    const swept = await sweepUnreferencedBlobs(pool, { deleteObject: vi.fn(async (_key: string) => {}) }, {
-      graceMs: 0,
-      limit: 10,
-    });
+    const swept = await sweepUnreferencedBlobs(
+      pool,
+      { deleteObject: vi.fn(async (_key: string) => {}) },
+      {
+        graceMs: 0,
+        limit: 10,
+      },
+    );
 
     expect(evicted).toEqual({ evicted: 1 });
     expect(swept).toEqual({ swept: 0, failed: 0 });

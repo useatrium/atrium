@@ -7,19 +7,44 @@ import type { Artifact, ArtifactPresentation, FileChange, SideEffect } from '@at
 import { WorkDrawer, type WorkTab } from '../src/sessions/WorkDrawer';
 
 vi.mock('../src/sessions/AppsSurface', () => ({
-  AppsSurface: ({ sessionId }: { sessionId: string }) => (
-    <div data-testid="apps-surface">Apps for {sessionId}</div>
-  ),
+  AppsSurface: ({ sessionId }: { sessionId: string }) => <div data-testid="apps-surface">Apps for {sessionId}</div>,
 }));
 
 function fc(over: Partial<FileChange>): FileChange {
-  return { id: 'c1', path: 'src/a.ts', kind: 'update', diff: '- old\n+ new', toolName: 'Edit', sourceEventIds: [1], ...over };
+  return {
+    id: 'c1',
+    path: 'src/a.ts',
+    kind: 'update',
+    diff: '- old\n+ new',
+    toolName: 'Edit',
+    sourceEventIds: [1],
+    ...over,
+  };
 }
 function se(over: Partial<SideEffect>): SideEffect {
-  return { id: 's1', command: 'npm install', category: 'package', risk: 'caution', toolName: 'Bash', sourceEventIds: [2], ...over };
+  return {
+    id: 's1',
+    command: 'npm install',
+    category: 'package',
+    risk: 'caution',
+    toolName: 'Bash',
+    sourceEventIds: [2],
+    ...over,
+  };
 }
 function art(over: Partial<Artifact>): Artifact {
-  return { id: 'a1', path: '/tmp/out.png', kind: 'created', mime: 'image/png', size: 2048, sha256: 'x', ref: 'b1', executionId: null, sourceEventIds: [3], ...over };
+  return {
+    id: 'a1',
+    path: '/tmp/out.png',
+    kind: 'created',
+    mime: 'image/png',
+    size: 2048,
+    sha256: 'x',
+    ref: 'b1',
+    executionId: null,
+    sourceEventIds: [3],
+    ...over,
+  };
 }
 function presentation(over: Partial<ArtifactPresentation>): ArtifactPresentation {
   return {

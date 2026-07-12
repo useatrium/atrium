@@ -58,9 +58,7 @@ describe('signature primitives', () => {
     expect(verifyFileSignature('file-a', exp + 1, sig, 's3cret')).toBe(false);
     expect(verifyFileSignature('file-a', exp, sig, 'other')).toBe(false);
     const past = Math.floor(Date.now() / 1000) - 1;
-    expect(
-      verifyFileSignature('file-a', past, fileSignature('file-a', past, 's3cret'), 's3cret'),
-    ).toBe(false);
+    expect(verifyFileSignature('file-a', past, fileSignature('file-a', past, 's3cret'), 's3cret')).toBe(false);
   });
 });
 

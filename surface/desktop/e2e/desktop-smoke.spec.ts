@@ -91,11 +91,7 @@ async function waitForWindowCount(app: ElectronApp, count: number): Promise<void
     .toBe(count);
 }
 
-async function waitForSessionPopoutCount(
-  app: ElectronApp,
-  sessionId: string,
-  count: number,
-): Promise<void> {
+async function waitForSessionPopoutCount(app: ElectronApp, sessionId: string, count: number): Promise<void> {
   await expect
     .poll(async () => sessionPopoutCount(await browserWindows(app), sessionId), {
       message: `session ${sessionId} popout count reaches ${count}`,
@@ -135,11 +131,12 @@ test('desktop shell menu, session popout dedup, and New Window', async () => {
       .toBe(true);
     await waitForWindowCount(app, 1);
 
-    const menu = await app.evaluate(({ Menu }) =>
-      Menu.getApplicationMenu()?.items.map((item) => ({
-        label: item.label,
-        submenuLabels: item.submenu?.items.map((submenuItem) => submenuItem.label) ?? [],
-      })) ?? [],
+    const menu = await app.evaluate(
+      ({ Menu }) =>
+        Menu.getApplicationMenu()?.items.map((item) => ({
+          label: item.label,
+          submenuLabels: item.submenu?.items.map((submenuItem) => submenuItem.label) ?? [],
+        })) ?? [],
     );
     const menuLabels = menu.map((item) => item.label);
     expect(menuLabels).toEqual(expect.arrayContaining(['File', 'Edit', 'View', 'Window', 'Help']));

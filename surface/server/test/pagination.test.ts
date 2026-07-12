@@ -113,10 +113,7 @@ describe('channel message pagination', () => {
       beforeId: latest.events[0]!.id,
       limit: 2,
     });
-    expect(earlier.events.map((event) => event.type)).toEqual([
-      'message.posted',
-      'session.question_requested',
-    ]);
+    expect(earlier.events.map((event) => event.type)).toEqual(['message.posted', 'session.question_requested']);
     expect(earlier.events[0]!.id).toBe(before.id);
     expect(earlier.events[1]!.id).toBe(
       Number(inserted.rows.find((event) => event.type === 'session.question_requested')!.id),

@@ -98,11 +98,16 @@ describe('session capability snapshots', () => {
     ]);
     expect(snapshot.mcpServers.map((server) => server.name)).toEqual(['claude.ai Figma', 'deepwiki']);
     expect(snapshot.pendingMcpServers).toEqual([]);
-    expect(snapshot.agents[0]).toMatchObject({ name: 'Explore', description: 'Read-only search agent. (Tools: Read, Grep)' });
+    expect(snapshot.agents[0]).toMatchObject({
+      name: 'Explore',
+      description: 'Read-only search agent. (Tools: Read, Grep)',
+    });
     expect(snapshot.skills[0]).toMatchObject({ name: 'stress-test' });
     expect(snapshot.changes.some((change) => change.removed?.includes('Read'))).toBe(true);
     expect(JSON.stringify(snapshot)).not.toContain('SECRET_DO_NOT_LEAK');
-    expect(snapshot.redactions).toContain('Claude MCP instruction blocks are captured in raw transcript and redacted here.');
+    expect(snapshot.redactions).toContain(
+      'Claude MCP instruction blocks are captured in raw transcript and redacted here.',
+    );
   });
 
   it('derives partial Codex capabilities from runtime context, developer tool text, lazy search, and observed calls', () => {

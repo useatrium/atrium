@@ -106,10 +106,7 @@ export function deriveSessionCapabilitySnapshot(input: SnapshotInput): SessionCa
   return snapshot;
 }
 
-export async function storeSessionCapabilitySnapshot(
-  pool: Pool,
-  snapshot: SessionCapabilitySnapshot,
-): Promise<void> {
+export async function storeSessionCapabilitySnapshot(pool: Pool, snapshot: SessionCapabilitySnapshot): Promise<void> {
   await pool.query(
     `INSERT INTO session_capability_snapshots (
        session_id, harness, source_sha256, parser_version, snapshot_json, updated_at
@@ -120,13 +117,7 @@ export async function storeSessionCapabilitySnapshot(
                      parser_version = EXCLUDED.parser_version,
                      snapshot_json = EXCLUDED.snapshot_json,
                      updated_at = now()`,
-    [
-      snapshot.sessionId,
-      snapshot.harness,
-      snapshot.sourceSha256,
-      snapshot.parserVersion,
-      JSON.stringify(snapshot),
-    ],
+    [snapshot.sessionId, snapshot.harness, snapshot.sourceSha256, snapshot.parserVersion, JSON.stringify(snapshot)],
   );
 }
 
@@ -417,7 +408,11 @@ function parseCodexRecord(state: ParserState, entry: JsonLine): void {
   if (payloadType === 'function_call' || payloadType === 'custom_tool_call') {
     const name = stringValue(payload.name);
     if (name) {
-      incrementObservedTool(state, name, payloadType === 'custom_tool_call' ? 'codex.custom_tool_call' : 'codex.function_call');
+      incrementObservedTool(
+        state,
+        name,
+        payloadType === 'custom_tool_call' ? 'codex.custom_tool_call' : 'codex.function_call',
+      );
       addChange(state, entry, {
         timestamp,
         source: payloadType === 'custom_tool_call' ? 'codex.custom_tool_call' : 'codex.function_call',
@@ -429,12 +424,7 @@ function parseCodexRecord(state: ParserState, entry: JsonLine): void {
   }
 }
 
-function parseCodexDeveloperText(
-  state: ParserState,
-  text: string,
-  entry: JsonLine,
-  timestamp?: string,
-): void {
+function parseCodexDeveloperText(state: ParserState, text: string, entry: JsonLine, timestamp?: string): void {
   const toolAdded: string[] = [];
   const namespaceMatches = [...text.matchAll(/^## Namespace: ([A-Za-z0-9_.:-]+)/gm)];
   for (let i = 0; i < namespaceMatches.length; i++) {
@@ -507,13 +497,7 @@ function parseCodexToolSearchOutput(
   }
 }
 
-function updateRuntime(
-  state: ParserState,
-  key: string,
-  value: unknown,
-  entry: JsonLine,
-  source: string,
-): void {
+function updateRuntime(state: ParserState, key: string, value: unknown, entry: JsonLine, source: string): void {
   if (value == null || value === '') return;
   if (state.runtime[key] === value) return;
   state.runtime[key] = value;
@@ -572,13 +556,7 @@ function incrementObservedTool(state: ParserState, name: string, source: string)
   });
 }
 
-function putNamespace(
-  state: ParserState,
-  name: string,
-  source: string,
-  count: number,
-  description?: string,
-): void {
+function putNamespace(state: ParserState, name: string, source: string, count: number, description?: string): void {
   const existing = state.namespaces.get(name);
   state.namespaces.set(name, {
     name,
@@ -616,11 +594,7 @@ function clearRemovedPendingMcpServers(state: ParserState, nextPending: Set<stri
   }
 }
 
-function addChange(
-  state: ParserState,
-  entry: JsonLine,
-  change: Omit<SessionCapabilityChange, 'seq' | 'line'>,
-): void {
+function addChange(state: ParserState, entry: JsonLine, change: Omit<SessionCapabilityChange, 'seq' | 'line'>): void {
   const useful =
     (change.added?.length ?? 0) > 0 ||
     (change.removed?.length ?? 0) > 0 ||
@@ -637,10 +611,7 @@ function addChange(
   });
 }
 
-function buildToolNamespaces(
-  state: ParserState,
-  tools: SessionCapabilityItem[],
-): SessionCapabilityNamespace[] {
+function buildToolNamespaces(state: ParserState, tools: SessionCapabilityItem[]): SessionCapabilityNamespace[] {
   for (const tool of tools) {
     const namespace = tool.namespace ?? toolNamespace(tool.name);
     const existing = state.namespaces.get(namespace);
@@ -650,7 +621,9 @@ function buildToolNamespaces(
       description: existing?.description,
       count:
         (existing?.count ?? 0) +
-        (existing ? 0 : tools.filter((candidate) => (candidate.namespace ?? toolNamespace(candidate.name)) === namespace).length),
+        (existing
+          ? 0
+          : tools.filter((candidate) => (candidate.namespace ?? toolNamespace(candidate.name)) === namespace).length),
     });
   }
   return [...state.namespaces.values()].sort((a, b) => compareNames(a.name, b.name));

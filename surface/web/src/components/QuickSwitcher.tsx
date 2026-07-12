@@ -198,12 +198,12 @@ export function QuickSwitcher({
         ref={dialogRef}
         onClick={(e) => e.stopPropagation()}
         className="flex max-h-[min(82dvh,38rem)] w-full flex-col overflow-hidden rounded-t-xl border border-edge-strong bg-surface-raised shadow-2xl md:mt-20 md:w-[min(560px,calc(100vw-2rem))] md:rounded-lg"
-        >
-          <input
-            ref={inputRef}
-            // biome-ignore lint/a11y/noAutofocus: dialog primary search field is intentionally focused on open; useDialog manages focus containment and restore.
-            autoFocus
-            value={query}
+      >
+        <input
+          ref={inputRef}
+          // biome-ignore lint/a11y/noAutofocus: dialog primary search field is intentionally focused on open; useDialog manages focus containment and restore.
+          autoFocus
+          value={query}
           role="combobox"
           aria-expanded={total > 0}
           aria-controls={listboxId}
@@ -284,11 +284,13 @@ export function QuickSwitcher({
                       }`}
                     >
                       <span className="text-fg-muted">
-                        {c.kind === 'dm' || c.kind === 'gdm'
-                          ? '@'
-                          : c.kind === 'private'
-                            ? <LockIcon size={14} />
-                            : '#'}
+                        {c.kind === 'dm' || c.kind === 'gdm' ? (
+                          '@'
+                        ) : c.kind === 'private' ? (
+                          <LockIcon size={14} />
+                        ) : (
+                          '#'
+                        )}
                       </span>
                       <span className="truncate">{channelLabel(c, meId)}</span>
                       {c.id === activeChannelId && <span className="ml-auto text-3xs text-fg-muted">current</span>}
@@ -386,7 +388,9 @@ export function QuickSwitcher({
           )}
 
           {total === 0 && query.trim().length < 2 && (
-            <div className="px-4 py-3 text-xs text-fg-muted md:px-3 md:py-2">No commands or channels match "{query}"</div>
+            <div className="px-4 py-3 text-xs text-fg-muted md:px-3 md:py-2">
+              No commands or channels match "{query}"
+            </div>
           )}
         </div>
       </div>

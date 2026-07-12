@@ -14,8 +14,8 @@ interface VoiceMessageProps {
 }
 
 const DEFAULT_BARS = [
-  0.28, 0.48, 0.34, 0.68, 0.4, 0.56, 0.32, 0.74, 0.46, 0.62, 0.3, 0.52,
-  0.36, 0.7, 0.42, 0.58, 0.26, 0.5, 0.38, 0.64, 0.44, 0.72, 0.34, 0.54,
+  0.28, 0.48, 0.34, 0.68, 0.4, 0.56, 0.32, 0.74, 0.46, 0.62, 0.3, 0.52, 0.36, 0.7, 0.42, 0.58, 0.26, 0.5, 0.38, 0.64,
+  0.44, 0.72, 0.34, 0.54,
 ];
 
 export function VoiceMessage({ voice, api, fileUrl, fileHeaders }: VoiceMessageProps) {
@@ -29,8 +29,7 @@ export function VoiceMessage({ voice, api, fileUrl, fileHeaders }: VoiceMessageP
   const player = useAudioPlayer(source, { updateInterval: 150 });
   const status = useAudioPlayerStatus(player);
   const durationMs = voice.durationMs > 0 ? voice.durationMs : Math.round(status.duration * 1000);
-  const progress =
-    durationMs > 0 ? Math.max(0, Math.min(1, (status.currentTime * 1000) / durationMs)) : 0;
+  const progress = durationMs > 0 ? Math.max(0, Math.min(1, (status.currentTime * 1000) / durationMs)) : 0;
   const bars = voice.waveform && voice.waveform.length > 0 ? voice.waveform : DEFAULT_BARS;
 
   useEffect(() => {
@@ -154,9 +153,7 @@ export function VoiceMessage({ voice, api, fileUrl, fileHeaders }: VoiceMessageP
         </Text>
       </View>
       {voice.transcript.status === 'pending' ? (
-        <Text style={{ color: colors.textMuted, fontSize: font.xs, fontStyle: 'italic' }}>
-          Transcribing…
-        </Text>
+        <Text style={{ color: colors.textMuted, fontSize: font.xs, fontStyle: 'italic' }}>Transcribing…</Text>
       ) : voice.transcript.status === 'failed' ? (
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.xs }}>
           <Text style={{ color: colors.textMuted, fontSize: font.xs }}>
@@ -171,18 +168,12 @@ export function VoiceMessage({ voice, api, fileUrl, fileHeaders }: VoiceMessageP
             hitSlop={8}
             style={{ minHeight: 28, justifyContent: 'center', opacity: retrying ? 0.6 : 1 }}
           >
-            <Text style={{ color: colors.accent, fontSize: font.xs, fontWeight: '700' }}>
-              Retry
-            </Text>
+            <Text style={{ color: colors.accent, fontSize: font.xs, fontWeight: '700' }}>Retry</Text>
           </Pressable>
-          {retryError ? (
-            <Text style={{ color: colors.danger, fontSize: font.xs }}>Failed</Text>
-          ) : null}
+          {retryError ? <Text style={{ color: colors.danger, fontSize: font.xs }}>Failed</Text> : null}
         </View>
       ) : voice.transcript.text?.trim() ? (
-        <Text style={{ color: colors.textSecondary, fontSize: font.sm, lineHeight: 19 }}>
-          {voice.transcript.text}
-        </Text>
+        <Text style={{ color: colors.textSecondary, fontSize: font.sm, lineHeight: 19 }}>{voice.transcript.text}</Text>
       ) : null}
     </View>
   );

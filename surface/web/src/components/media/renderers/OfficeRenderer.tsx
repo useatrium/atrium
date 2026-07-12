@@ -57,12 +57,27 @@ function extractSlideLines(xml: string) {
 
 function OfficeThumbnail({ file }: { file: PreviewFile }) {
   if (file.thumbnailUrl) {
-    return <img src={file.thumbnailUrl} alt={file.name} loading="lazy" className="h-full min-h-0 w-full bg-surface-raised object-cover" />;
+    return (
+      <img
+        src={file.thumbnailUrl}
+        alt={file.name}
+        loading="lazy"
+        className="h-full min-h-0 w-full bg-surface-raised object-cover"
+      />
+    );
   }
   return null;
 }
 
-function OfficeFallback({ file, variant, message }: { file: PreviewFile; variant: MediaPreviewVariant; message?: string }) {
+function OfficeFallback({
+  file,
+  variant,
+  message,
+}: {
+  file: PreviewFile;
+  variant: MediaPreviewVariant;
+  message?: string;
+}) {
   const extension = fileExtension(file.name).toUpperCase() || 'Office';
 
   if (variant === 'tile') {
@@ -210,7 +225,10 @@ export function OfficeRenderer({ file, variant }: { file: PreviewFile; variant: 
       })
       .catch((error: unknown) => {
         if (!controller.signal.aborted && !cancelled) {
-          setState({ status: 'error', message: error instanceof Error ? error.message : 'Failed to render presentation' });
+          setState({
+            status: 'error',
+            message: error instanceof Error ? error.message : 'Failed to render presentation',
+          });
         }
       });
 
@@ -239,14 +257,22 @@ export function OfficeRenderer({ file, variant }: { file: PreviewFile; variant: 
         if (!sheetName) throw new Error('Workbook has no sheets');
         const sheet = workbook.Sheets[sheetName];
         if (!sheet) throw new Error('First sheet is unavailable');
-        const rawRows = XLSX.utils.sheet_to_json<unknown[]>(sheet, { blankrows: false, defval: '', header: 1, raw: false });
+        const rawRows = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
+          blankrows: false,
+          defval: '',
+          header: 1,
+          raw: false,
+        });
         const rows = rawRows.map((row) => row.map(cellText)).filter((row) => row.some((cell) => cell.length > 0));
         if (!rows.length) throw new Error('First sheet is empty');
         setState({ status: 'sheet-ready', rows, sheetName, sheetCount: workbook.SheetNames.length });
       })
       .catch((error: unknown) => {
         if (!controller.signal.aborted && !cancelled) {
-          setState({ status: 'error', message: error instanceof Error ? error.message : 'Failed to render spreadsheet' });
+          setState({
+            status: 'error',
+            message: error instanceof Error ? error.message : 'Failed to render spreadsheet',
+          });
         }
       });
 
@@ -259,7 +285,8 @@ export function OfficeRenderer({ file, variant }: { file: PreviewFile; variant: 
   if (variant === 'tile') {
     const thumbnail = <OfficeThumbnail file={file} />;
     if (file.thumbnailUrl) return thumbnail;
-    if (officeKind === 'presentation') return <OfficeFallback file={file} variant={variant} message={unsupportedMessage} />;
+    if (officeKind === 'presentation')
+      return <OfficeFallback file={file} variant={variant} message={unsupportedMessage} />;
   }
 
   if (!officeKind || unsupportedMessage) {
@@ -328,7 +355,13 @@ export function OfficeRenderer({ file, variant }: { file: PreviewFile; variant: 
 
   if (officeKind === 'word') {
     return (
-      <div className={variant === 'tile' ? 'h-full min-h-0 overflow-hidden bg-surface-raised/40 p-2' : 'h-full min-h-0 overflow-auto bg-surface p-4'}>
+      <div
+        className={
+          variant === 'tile'
+            ? 'h-full min-h-0 overflow-hidden bg-surface-raised/40 p-2'
+            : 'h-full min-h-0 overflow-auto bg-surface p-4'
+        }
+      >
         {state.status === 'loading' && <LoadingState label="Loading document..." variant={variant} />}
         <div
           ref={containerRef}

@@ -1,23 +1,13 @@
 import { expect, test } from '@playwright/test';
 import { Pool } from 'pg';
-import {
-  apiAs,
-  createChannel,
-  login,
-  openChannel,
-  unique,
-  uniqueChannel,
-} from './helpers.js';
+import { apiAs, createChannel, login, openChannel, unique, uniqueChannel } from './helpers.js';
 
-const e2eDatabaseUrl =
-  process.env.E2E_DATABASE_URL ?? 'postgres://atrium:atrium@localhost:5433/atrium_e2e';
+const e2eDatabaseUrl = process.env.E2E_DATABASE_URL ?? 'postgres://atrium:atrium@localhost:5433/atrium_e2e';
 
 async function userIdFor(handle: string): Promise<string> {
   const pool = new Pool({ connectionString: e2eDatabaseUrl });
   try {
-    const user = await pool.query<{ id: string }>('SELECT id FROM users WHERE handle = $1', [
-      handle,
-    ]);
+    const user = await pool.query<{ id: string }>('SELECT id FROM users WHERE handle = $1', [handle]);
     const id = user.rows[0]?.id;
     if (!id) throw new Error(`missing e2e user: ${handle}`);
     return id;
@@ -36,10 +26,9 @@ async function seedCall(args: {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const channel = await client.query<{ workspace_id: string }>(
-      'SELECT workspace_id FROM channels WHERE id = $1',
-      [args.channelId],
-    );
+    const channel = await client.query<{ workspace_id: string }>('SELECT workspace_id FROM channels WHERE id = $1', [
+      args.channelId,
+    ]);
     const workspaceId = channel.rows[0]?.workspace_id;
     if (!workspaceId) throw new Error(`missing e2e channel: ${args.channelId}`);
 
@@ -51,10 +40,7 @@ async function seedCall(args: {
     );
     const callId = call.rows[0]!.id;
     for (const userId of args.participantIds) {
-      await client.query('INSERT INTO call_participants (call_id, user_id) VALUES ($1, $2)', [
-        callId,
-        userId,
-      ]);
+      await client.query('INSERT INTO call_participants (call_id, user_id) VALUES ($1, $2)', [callId, userId]);
     }
     await client.query('COMMIT');
     return callId;
@@ -82,9 +68,7 @@ async function activateCall(callId: string, participantId: string): Promise<void
   }
 }
 
-test('active call recovery shows ringing and rejoin affordances after navigation and reload', async ({
-  page,
-}) => {
+test('active call recovery shows ringing and rejoin affordances after navigation and reload', async ({ page }) => {
   const aliceHandle = unique('call-alice');
   const bobHandle = unique('call-bob');
   const room = uniqueChannel('calls');

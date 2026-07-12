@@ -179,9 +179,7 @@ export function routePath(route: InAppRoute): string {
   if (route.surface === 'activity') return '/activity';
   if (route.surface === 'agents') return '/agents';
   if (route.surface === 'settings') {
-    return route.settingsSection
-      ? `/settings/${encodeURIComponent(route.settingsSection)}`
-      : '/settings';
+    return route.settingsSection ? `/settings/${encodeURIComponent(route.settingsSection)}` : '/settings';
   }
   if (!route.channelId) return route.sessionId ? `/s/${encodeURIComponent(route.sessionId)}` : '/';
   const channelPath = `/c/${encodeURIComponent(route.channelId)}`;

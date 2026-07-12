@@ -116,9 +116,12 @@ describe('PUT /api/sessions/:id/files', () => {
 
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({ backing: 'ledger', seq: 1 });
-    const blob = await pool.query<{ detected_mime: string; media_kind: string; is_text: boolean; text_encoding: string | null }>(
-      'SELECT detected_mime, media_kind, is_text, text_encoding FROM cas_blobs ORDER BY created_at DESC LIMIT 1',
-    );
+    const blob = await pool.query<{
+      detected_mime: string;
+      media_kind: string;
+      is_text: boolean;
+      text_encoding: string | null;
+    }>('SELECT detected_mime, media_kind, is_text, text_encoding FROM cas_blobs ORDER BY created_at DESC LIMIT 1');
     expect(blob.rows[0]).toMatchObject({
       detected_mime: 'text/markdown',
       media_kind: 'text',

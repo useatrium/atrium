@@ -27,9 +27,7 @@ function isUuid(value: string): boolean {
 }
 
 function uploadContentType(value: unknown): string {
-  return typeof value === 'string' && /^[\w.+-]+\/[\w.+-]+$/.test(value)
-    ? value
-    : 'application/octet-stream';
+  return typeof value === 'string' && /^[\w.+-]+\/[\w.+-]+$/.test(value) ? value : 'application/octet-stream';
 }
 
 function optionalSha256(value: unknown): string | null | false {
@@ -56,13 +54,14 @@ export function registerUploadRoutes(app: FastifyInstance, deps: UploadRouteDeps
       height?: number;
       contentHash?: string;
     };
-    const filename = String(body.filename ?? '').trim().slice(0, 200) || 'file';
+    const filename =
+      String(body.filename ?? '')
+        .trim()
+        .slice(0, 200) || 'file';
     const contentType = uploadContentType(body.contentType);
     const contentHash = optionalSha256(body.contentHash);
     if (contentHash === false) {
-      return reply
-        .code(400)
-        .send({ error: 'bad_request', message: 'contentHash must be sha-256 hex' });
+      return reply.code(400).send({ error: 'bad_request', message: 'contentHash must be sha-256 hex' });
     }
     const size = Number(body.size);
     if (!Number.isFinite(size) || size <= 0) {
@@ -79,9 +78,7 @@ export function registerUploadRoutes(app: FastifyInstance, deps: UploadRouteDeps
     try {
       await fileStorage.ensureBucket();
     } catch {
-      return reply
-        .code(503)
-        .send({ error: 'storage_unavailable', message: 'file storage is not running' });
+      return reply.code(503).send({ error: 'storage_unavailable', message: 'file storage is not running' });
     }
 
     if (contentHash != null) {
@@ -140,9 +137,7 @@ export function registerUploadRoutes(app: FastifyInstance, deps: UploadRouteDeps
     try {
       await fileStorage.ensureBucket();
     } catch {
-      return reply
-        .code(503)
-        .send({ error: 'storage_unavailable', message: 'file storage is not running' });
+      return reply.code(503).send({ error: 'storage_unavailable', message: 'file storage is not running' });
     }
     const uploadUrl = await fileStorage.presignPut(file.s3_key, file.content_type);
     return reply.send({ uploadUrl });
@@ -217,8 +212,7 @@ export function registerUploadRoutes(app: FastifyInstance, deps: UploadRouteDeps
         return reply.code(410).send({ error: 'artifact_deleted', message: 'artifact was deleted' });
       }
     }
-    const inline =
-      file.content_type.startsWith('image/') || file.content_type === 'application/pdf';
+    const inline = file.content_type.startsWith('image/') || file.content_type === 'application/pdf';
     const url = await fileStorage.presignGet(file.s3_key, file.filename, inline);
     return reply.redirect(url, 302);
   });

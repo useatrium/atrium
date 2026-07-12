@@ -1,10 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Db } from './db.js';
-import {
-  ARCHIVE_STALE_SESSIONS_SQL,
-  archiveStaleSessions,
-  isSessionAutoArchiveEnabled,
-} from './session-archive.js';
+import { ARCHIVE_STALE_SESSIONS_SQL, archiveStaleSessions, isSessionAutoArchiveEnabled } from './session-archive.js';
 
 describe('archiveStaleSessions', () => {
   it('targets only unarchived terminal sessions older than the configured window', async () => {

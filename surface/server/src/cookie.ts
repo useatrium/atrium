@@ -10,10 +10,7 @@ export function signSession(sessionId: string, secret: string): string {
  * Verify a signed cookie value. Returns the session id on success, null on
  * any failure (missing, malformed, bad signature). Constant-time compare.
  */
-export function verifySession(
-  value: string | undefined | null,
-  secret: string,
-): string | null {
+export function verifySession(value: string | undefined | null, secret: string): string | null {
   if (!value) return null;
   const dot = value.lastIndexOf('.');
   if (dot <= 0 || dot === value.length - 1) return null;

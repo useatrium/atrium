@@ -32,9 +32,7 @@ describe('SessionMarkdown', () => {
 
     expect(screen.getByRole('heading', { name: 'Plan' })).toBeTruthy();
     expect(screen.getByText('Ship')).toBeTruthy();
-    expect((screen.getByRole('checkbox', { checked: true }) as HTMLInputElement).disabled).toBe(
-      true,
-    );
+    expect((screen.getByRole('checkbox', { checked: true }) as HTMLInputElement).disabled).toBe(true);
     expect(screen.getByRole('table')).toBeTruthy();
     expect(screen.getByText('streamed text')).toBeTruthy();
 

@@ -57,26 +57,20 @@ describe('withIdempotency', () => {
 
   it('rejects opId reuse with a different operation type or body hash', async () => {
     const opId = randomUUID();
-    await withIdempotency(
-      pool,
-      { userId: fx.userId, opId, opType: 'test.once', body: { value: 1 } },
-      async () => ({ ok: true }),
-    );
+    await withIdempotency(pool, { userId: fx.userId, opId, opType: 'test.once', body: { value: 1 } }, async () => ({
+      ok: true,
+    }));
 
     await expect(
-      withIdempotency(
-        pool,
-        { userId: fx.userId, opId, opType: 'test.once', body: { value: 2 } },
-        async () => ({ ok: true }),
-      ),
+      withIdempotency(pool, { userId: fx.userId, opId, opType: 'test.once', body: { value: 2 } }, async () => ({
+        ok: true,
+      })),
     ).rejects.toMatchObject({ statusCode: 409, code: 'op_id_reuse' });
 
     await expect(
-      withIdempotency(
-        pool,
-        { userId: fx.userId, opId, opType: 'test.other', body: { value: 1 } },
-        async () => ({ ok: true }),
-      ),
+      withIdempotency(pool, { userId: fx.userId, opId, opType: 'test.other', body: { value: 1 } }, async () => ({
+        ok: true,
+      })),
     ).rejects.toMatchObject({ statusCode: 409, code: 'op_id_reuse' });
   });
 });

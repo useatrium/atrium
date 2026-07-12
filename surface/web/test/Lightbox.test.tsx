@@ -21,13 +21,7 @@ describe('Lightbox markup action', () => {
   it('shows Mark up for text artifacts only when session id is available', () => {
     const onMarkup = vi.fn();
     const { rerender } = render(
-      <Lightbox
-        files={[textFile]}
-        index={0}
-        onIndexChange={() => {}}
-        onClose={() => {}}
-        onMarkup={onMarkup}
-      />,
+      <Lightbox files={[textFile]} index={0} onIndexChange={() => {}} onClose={() => {}} onMarkup={onMarkup} />,
     );
 
     expect(screen.queryByRole('button', { name: 'Mark up' })).toBeNull();

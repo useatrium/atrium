@@ -1,11 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type {
-  Api,
-  MsgSendPayload,
-  OpExecuteContext,
-  QueuedOp,
-  UploadPayload,
-} from '@atrium/surface-client';
+import type { Api, MsgSendPayload, OpExecuteContext, QueuedOp, UploadPayload } from '@atrium/surface-client';
 import { ApiError } from '@atrium/surface-client';
 import { createChatOpRegistry, queuedFailureMessage } from '../src/chatQueue';
 
@@ -30,16 +24,10 @@ describe('chatQueue', () => {
 
   it('surfaces actionable GitHub repo validation failures for queued spawns', () => {
     expect(
-      queuedFailureMessage(
-        'session.spawn',
-        new ApiError(409, 'github_connection_required', 'server message'),
-      ),
+      queuedFailureMessage('session.spawn', new ApiError(409, 'github_connection_required', 'server message')),
     ).toBe('Connect GitHub before starting an agent with private repositories.');
     expect(
-      queuedFailureMessage(
-        'session.spawn',
-        new ApiError(409, 'github_repo_access_unverified', 'server message'),
-      ),
+      queuedFailureMessage('session.spawn', new ApiError(409, 'github_repo_access_unverified', 'server message')),
     ).toBe('Reconnect GitHub before starting an agent with private repositories.');
     expect(
       queuedFailureMessage(
@@ -48,10 +36,7 @@ describe('chatQueue', () => {
       ),
     ).toBe('Connected GitHub credentials cannot access: acme/private');
     expect(
-      queuedFailureMessage(
-        'session.spawn',
-        new ApiError(502, 'github_repo_validation_failed', 'server message'),
-      ),
+      queuedFailureMessage('session.spawn', new ApiError(502, 'github_repo_validation_failed', 'server message')),
     ).toBe('Could not validate GitHub repository access. Try again or reconnect GitHub.');
   });
 

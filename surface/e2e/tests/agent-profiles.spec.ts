@@ -2,8 +2,7 @@ import { expect, request, test } from '@playwright/test';
 import pg from 'pg';
 import { apiURL, login, unique } from './helpers.js';
 
-const databaseUrl =
-  process.env.E2E_DATABASE_URL ?? 'postgres://atrium:atrium@localhost:5433/atrium_e2e';
+const databaseUrl = process.env.E2E_DATABASE_URL ?? 'postgres://atrium:atrium@localhost:5433/atrium_e2e';
 const SHA = 'b'.repeat(64);
 
 test('profile proposal review applies session lineage', async ({ page }) => {

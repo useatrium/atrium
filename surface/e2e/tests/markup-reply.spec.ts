@@ -2,8 +2,7 @@ import { expect, test, type APIRequestContext, type Page } from '@playwright/tes
 import { Pool } from 'pg';
 import { channelId, createTestChannel, login, mainComposer, messageRow, openChannel, unique } from './helpers.js';
 
-const e2eDatabaseUrl =
-  process.env.E2E_DATABASE_URL ?? 'postgres://atrium:atrium@localhost:5433/atrium_e2e';
+const e2eDatabaseUrl = process.env.E2E_DATABASE_URL ?? 'postgres://atrium:atrium@localhost:5433/atrium_e2e';
 const centaurStubUrl = `http://127.0.0.1:${Number(process.env.E2E_CENTAUR_PORT ?? 18100)}`;
 
 type TestMarkupEditorView = {
@@ -28,13 +27,10 @@ async function injectSession(args: {
   const threadKey = `thread-${unique('markup-reply')}`;
   try {
     await client.query('BEGIN');
-    const user = await client.query<{ id: string }>('SELECT id FROM users WHERE handle = $1', [
-      args.handle,
+    const user = await client.query<{ id: string }>('SELECT id FROM users WHERE handle = $1', [args.handle]);
+    const channel = await client.query<{ workspace_id: string }>('SELECT workspace_id FROM channels WHERE id = $1', [
+      args.channelId,
     ]);
-    const channel = await client.query<{ workspace_id: string }>(
-      'SELECT workspace_id FROM channels WHERE id = $1',
-      [args.channelId],
-    );
     if (!user.rows[0] || !channel.rows[0]) throw new Error('missing e2e user or channel');
     const userId = user.rows[0].id;
     const workspaceId = channel.rows[0].workspace_id;
@@ -123,9 +119,9 @@ async function selectWordInMarkupEditor(page: Page, word: string): Promise<void>
   if (!selected) throw new Error(`word not found in markup editor: ${word}`);
 }
 
-async function centaurRequests(request: APIRequestContext): Promise<
-  Array<{ method: string; path: string; body: unknown }>
-> {
+async function centaurRequests(
+  request: APIRequestContext,
+): Promise<Array<{ method: string; path: string; body: unknown }>> {
   const response = await request.get(`${centaurStubUrl}/__requests`);
   expect(response.ok()).toBeTruthy();
   return (await response.json()) as Array<{ method: string; path: string; body: unknown }>;
@@ -136,10 +132,7 @@ function threadMessagePosts(
   threadKey: string,
 ): Array<{ method: string; path: string; body: unknown }> {
   return requests.filter(
-    (entry) =>
-      entry.method === 'POST' &&
-      entry.path.includes(threadKey) &&
-      /\/messages$/.test(entry.path),
+    (entry) => entry.method === 'POST' && entry.path.includes(threadKey) && /\/messages$/.test(entry.path),
   );
 }
 
@@ -165,10 +158,7 @@ function artifactIdFromHref(href: string): string {
   return match[1]!;
 }
 
-test('markup reply creates a thread card and can apply the markup with an agent', async ({
-  page,
-  request,
-}) => {
+test('markup reply creates a thread card and can apply the markup with an agent', async ({ page, request }) => {
   const room = await createTestChannel('markup-reply');
   const handle = unique('markup-replier');
   await login(page, handle, 'Markup Replier');
@@ -191,8 +181,8 @@ test('markup reply creates a thread card and can apply the markup with an agent'
 
   const row = messageRow(page, 'The launch plan keeps the careful wording.');
   await row.hover();
-  const extractResponse = page.waitForResponse((response) =>
-    response.request().method() === 'POST' && /\/api\/entries\/[^/]+\/extract$/.test(response.url()),
+  const extractResponse = page.waitForResponse(
+    (response) => response.request().method() === 'POST' && /\/api\/entries\/[^/]+\/extract$/.test(response.url()),
   );
   const markupButton =
     (await row.getByTestId('markup-reply').count()) > 0

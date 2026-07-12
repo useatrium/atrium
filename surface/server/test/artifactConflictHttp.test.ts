@@ -38,7 +38,11 @@ afterEach(async () => {
 });
 
 async function loginCookie(): Promise<string> {
-  const login = await app.inject({ method: 'POST', url: '/auth/login', payload: { handle: 'alice', displayName: 'Alice' } });
+  const login = await app.inject({
+    method: 'POST',
+    url: '/auth/login',
+    payload: { handle: 'alice', displayName: 'Alice' },
+  });
   await addWorkspaceMember(pool, fx.workspaceId, login.json().user.id);
   return login.headers['set-cookie'] as string;
 }
@@ -102,7 +106,11 @@ describe('GET /api/sessions/:id/artifacts/conflict', () => {
   it('400s without a path', async () => {
     const cookie = await loginCookie();
     const sid = await insertSession();
-    const res = await app.inject({ method: 'GET', url: `/api/sessions/${sid}/artifacts/conflict`, headers: { cookie } });
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/sessions/${sid}/artifacts/conflict`,
+      headers: { cookie },
+    });
     expect(res.statusCode).toBe(400);
   });
 });

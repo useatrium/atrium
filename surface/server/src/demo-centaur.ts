@@ -20,8 +20,7 @@ const PROMPT_SHA = 'demo-scripted-transcript';
 const TOOL_USE_ID = 'toolu_demo_first_run';
 const AGENT_THREAD_ID = 'demo-agent-thread';
 const MODEL = 'atrium-demo';
-const RESULT_TEXT =
-  "Demo complete: the agent ran a shell command and streamed the result back to Atrium.";
+const RESULT_TEXT = 'Demo complete: the agent ran a shell command and streamed the result back to Atrium.';
 
 type TailOptions = Parameters<CentaurClient['tailEvents']>[1];
 
@@ -62,12 +61,7 @@ export class DemoCentaurClient extends CentaurClient {
     return this.wrapped.postMessage(threadKey, generation, parts, meta, opts);
   }
 
-  execute(
-    threadKey: string,
-    generation: number,
-    harness: string,
-    opts: ExecuteOptions = {},
-  ): Promise<ExecuteResponse> {
+  execute(threadKey: string, generation: number, harness: string, opts: ExecuteOptions = {}): Promise<ExecuteResponse> {
     if (isDemoHarness(harness) || this.isDemo(threadKey)) {
       this.demoThreads.add(threadKey);
       void generation;

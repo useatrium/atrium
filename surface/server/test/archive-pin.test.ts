@@ -51,7 +51,10 @@ async function login() {
     payload: { handle: 'alice', displayName: 'Alice' },
   });
   expect(result.statusCode).toBe(200);
-  return { cookie: result.headers['set-cookie'] as string, user: result.json().user as { id: string; handle: string; displayName: string } };
+  return {
+    cookie: result.headers['set-cookie'] as string,
+    user: result.json().user as { id: string; handle: string; displayName: string },
+  };
 }
 
 async function insertSession(): Promise<string> {
@@ -84,7 +87,10 @@ describe('archive and pin routes', () => {
     expect(socket.received).toContainEqual(
       expect.objectContaining({
         type: 'event',
-        event: expect.objectContaining({ type: 'channel.archived', payload: expect.objectContaining({ channelId: fixture.channelId }) }),
+        event: expect.objectContaining({
+          type: 'channel.archived',
+          payload: expect.objectContaining({ channelId: fixture.channelId }),
+        }),
       }),
     );
 
@@ -149,7 +155,9 @@ describe('archive and pin routes', () => {
       url: '/api/sessions?status=all',
       headers: { cookie },
     });
-    expect(activeSessions.json().sessions).not.toEqual(expect.arrayContaining([expect.objectContaining({ id: sessionId })]));
+    expect(activeSessions.json().sessions).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: sessionId })]),
+    );
 
     const message = await app.inject({
       method: 'POST',

@@ -7,9 +7,7 @@ import type {
 import { useDialog } from '../useDialog';
 import { RefreshCwIcon, SearchIcon, XIcon } from '../components/icons';
 import { TimestampDisclosure } from '../components/TimestampDisclosure';
-import {
-  sessionsApi,
-} from './api';
+import { sessionsApi } from './api';
 
 export function SessionCapabilitiesPopover({
   sessionId,
@@ -112,7 +110,11 @@ export function SessionCapabilitiesPopover({
       </header>
       <div className="min-h-0 overflow-y-auto p-3 text-xs">
         {error && (
-          <div id={errorId} role="alert" className="mb-3 rounded-md border border-danger-border bg-danger-tint/30 px-3 py-2 text-danger-text">
+          <div
+            id={errorId}
+            role="alert"
+            className="mb-3 rounded-md border border-danger-border bg-danger-tint/30 px-3 py-2 text-danger-text"
+          >
             {error}
           </div>
         )}
@@ -172,9 +174,7 @@ function SnapshotSection({
           <div className="min-w-0 flex-1">
             <div className="flex min-w-0 items-center gap-2">
               <h4 className="text-xs font-semibold capitalize text-fg">{snapshot.harness}</h4>
-              <Badge tone={snapshot.completeness === 'partial' ? 'warning' : 'neutral'}>
-                {snapshot.completeness}
-              </Badge>
+              <Badge tone={snapshot.completeness === 'partial' ? 'warning' : 'neutral'}>{snapshot.completeness}</Badge>
               <span className="font-mono text-3xs text-fg-muted">{shortSha(snapshot.sourceSha256)}</span>
             </div>
             <p className="mt-1 text-2xs text-fg-secondary">{summaryLine(snapshot)}</p>
@@ -399,11 +399,7 @@ function Badge({ children, tone = 'neutral' }: { children: string; tone?: 'neutr
 }
 
 function StatusBadge({ status }: { status: NonNullable<SessionCapabilityItem['status']> }) {
-  return (
-    <span className="shrink-0 rounded bg-surface-overlay px-1 py-px text-3xs text-fg-muted">
-      {status}
-    </span>
-  );
+  return <span className="shrink-0 rounded bg-surface-overlay px-1 py-px text-3xs text-fg-muted">{status}</span>;
 }
 
 function summaryLine(snapshot: SessionCapabilitySnapshot): string {

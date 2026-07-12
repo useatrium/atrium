@@ -19,8 +19,7 @@ const webServerTimeout = Number(process.env.E2E_WEBSERVER_TIMEOUT ?? 60_000);
 // Local runs keep the dev server for fast iteration; override either way with
 // E2E_WEB_SERVE=built|dev.
 const builtWeb = (process.env.E2E_WEB_SERVE ?? (process.env.CI ? 'built' : 'dev')) === 'built';
-const databaseUrl =
-  process.env.E2E_DATABASE_URL ?? 'postgres://atrium:atrium@localhost:5433/atrium_e2e';
+const databaseUrl = process.env.E2E_DATABASE_URL ?? 'postgres://atrium:atrium@localhost:5433/atrium_e2e';
 const baseURL = `http://127.0.0.1:${webPort}`;
 const apiTarget = `http://127.0.0.1:${serverPort}`;
 

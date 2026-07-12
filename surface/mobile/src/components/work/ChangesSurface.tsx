@@ -10,7 +10,10 @@ function FileRow({ path, changes }: { path: string; changes: FileChange[] }) {
   const { colors } = useTheme();
   const [open, setOpen] = useState(false);
   const kind = changes[changes.length - 1]!.kind;
-  const diff = changes.map((change) => change.diff).filter(Boolean).join('\n');
+  const diff = changes
+    .map((change) => change.diff)
+    .filter(Boolean)
+    .join('\n');
   const { adds, dels } = diffStats(diff);
   const accent = kindColor(kind, colors);
 

@@ -51,13 +51,21 @@ describe('SessionWorkPage', () => {
 
   it('renders the What changed surface full-page from the live stream (codex edit)', async () => {
     await renderPage('changes', [
-      { event: 'execution_state', event_id: 1, data: { type: 'execution.state', status: 'running', execution_id: 'exe_c' } },
+      {
+        event: 'execution_state',
+        event_id: 1,
+        data: { type: 'execution.state', status: 'running', execution_id: 'exe_c' },
+      },
       {
         event: 'amp_raw_event',
         event_id: 2,
         data: {
           type: 'item.completed',
-          item: { id: 'cfc1', type: 'fileChange', changes: [{ path: '/home/agent/workspace/src/config.ts', kind: 'update', diff: '@@\n-x\n+y' }] },
+          item: {
+            id: 'cfc1',
+            type: 'fileChange',
+            changes: [{ path: '/home/agent/workspace/src/config.ts', kind: 'update', diff: '@@\n-x\n+y' }],
+          },
         },
       },
     ] as unknown as CentaurEventFrame[]);
@@ -65,7 +73,11 @@ describe('SessionWorkPage', () => {
     const page = screen.getByTestId('session-work-page');
     // Header: title + count + a link back to the full session.
     expect(within(page).getByText('What changed')).toBeTruthy();
-    expect(within(page).getByRole('link', { name: /full session/i }).getAttribute('href')).toBe('/s/s-x');
+    expect(
+      within(page)
+        .getByRole('link', { name: /full session/i })
+        .getAttribute('href'),
+    ).toBe('/s/s-x');
     // Body: the edited file from the codex fileChange.
     expect(within(page).getByText('Edited in repo')).toBeTruthy();
     expect(within(page).getByText('src/config.ts')).toBeTruthy();
@@ -73,7 +85,11 @@ describe('SessionWorkPage', () => {
 
   it('renders artifacts inside the What changed surface, serving bytes via the session route', async () => {
     await renderPage('artifacts', [
-      { event: 'execution_state', event_id: 1, data: { type: 'execution.state', status: 'running', execution_id: 'exe_a' } },
+      {
+        event: 'execution_state',
+        event_id: 1,
+        data: { type: 'execution.state', status: 'running', execution_id: 'exe_a' },
+      },
       {
         event: 'artifact.captured',
         event_id: 2,
@@ -113,7 +129,11 @@ describe('SessionWorkPage', () => {
     });
 
     await renderPage('changes', [
-      { event: 'execution_state', event_id: 1, data: { type: 'execution.state', status: 'running', execution_id: 'exe_a' } },
+      {
+        event: 'execution_state',
+        event_id: 1,
+        data: { type: 'execution.state', status: 'running', execution_id: 'exe_a' },
+      },
       {
         event: 'artifact.captured',
         event_id: 2,

@@ -160,11 +160,7 @@ function createApnsSender(config: ApnsConfig): VoipPushSender {
   function providerJwt(): { jwt: string; iat: number } {
     if (cachedJwt && Date.now() < cachedUntil) return { jwt: cachedJwt, iat: cachedJwtIat };
     cachedJwtIat = Math.floor(Date.now() / 1000);
-    cachedJwt = jwtEs256(
-      { alg: 'ES256', kid: config.keyId },
-      { iss: config.teamId, iat: cachedJwtIat },
-      authKey,
-    );
+    cachedJwt = jwtEs256({ alg: 'ES256', kid: config.keyId }, { iss: config.teamId, iat: cachedJwtIat }, authKey);
     cachedUntil = Date.now() + 50 * 60 * 1000;
     return { jwt: cachedJwt, iat: cachedJwtIat };
   }
@@ -313,9 +309,7 @@ function createFcmSender(
     if (typeof data.access_token !== 'string') throw new Error('fcm_oauth_missing_access_token');
     accessToken = data.access_token;
     const expiresInMs =
-      typeof data.expires_in === 'number' && Number.isFinite(data.expires_in)
-        ? data.expires_in * 1000
-        : 3600 * 1000;
+      typeof data.expires_in === 'number' && Number.isFinite(data.expires_in) ? data.expires_in * 1000 : 3600 * 1000;
     tokenUntil = Date.now() + Math.max(60_000, expiresInMs - 60_000);
     return accessToken;
   }
@@ -326,28 +320,25 @@ function createFcmSender(
       if (token.platform !== 'android') return { status: 'skipped' };
       try {
         const bearer = await getAccessToken();
-        const res = await fetchImpl(
-          `https://fcm.googleapis.com/v1/projects/${projectId}/messages:send`,
-          {
-            method: 'POST',
-            headers: {
-              authorization: `Bearer ${bearer}`,
-              'content-type': 'application/json',
-            },
-            body: JSON.stringify({
-              message: {
-                token: token.token,
-                android: { priority: 'high' },
-                // FCM data values must all be strings; the device parses the
-                // nested incomingCall object from this string.
-                data: {
-                  messageType: 'incomingCall',
-                  incomingCall: JSON.stringify(toIncomingCallObject(payload)),
-                },
-              },
-            }),
+        const res = await fetchImpl(`https://fcm.googleapis.com/v1/projects/${projectId}/messages:send`, {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${bearer}`,
+            'content-type': 'application/json',
           },
-        );
+          body: JSON.stringify({
+            message: {
+              token: token.token,
+              android: { priority: 'high' },
+              // FCM data values must all be strings; the device parses the
+              // nested incomingCall object from this string.
+              data: {
+                messageType: 'incomingCall',
+                incomingCall: JSON.stringify(toIncomingCallObject(payload)),
+              },
+            },
+          }),
+        });
         if (res.ok) return { status: 'sent' };
         const error = await parseFcmError(res);
         if (isDeadFcmError(error)) return { status: 'dead', error: error.code || error.status };
@@ -381,10 +372,7 @@ function isDeadFcmError(error: { status: string; code: string }): boolean {
 
 export function getVoipSender(config: VoipConfig): VoipPushSender {
   const apns =
-    config.apnsTeamId.trim() &&
-    config.apnsKeyId.trim() &&
-    config.apnsAuthKeyP8.trim() &&
-    config.apnsBundleId.trim()
+    config.apnsTeamId.trim() && config.apnsKeyId.trim() && config.apnsAuthKeyP8.trim() && config.apnsBundleId.trim()
       ? createApnsSender({
           teamId: config.apnsTeamId.trim(),
           keyId: config.apnsKeyId.trim(),
@@ -393,9 +381,7 @@ export function getVoipSender(config: VoipConfig): VoipPushSender {
           sandbox: config.apnsSandbox,
         })
       : null;
-  const serviceAccount = config.fcmServiceAccountJson.trim()
-    ? parseServiceAccount(config.fcmServiceAccountJson)
-    : null;
+  const serviceAccount = config.fcmServiceAccountJson.trim() ? parseServiceAccount(config.fcmServiceAccountJson) : null;
   const fcmProjectId = config.fcmProjectId.trim() || serviceAccount?.project_id?.trim() || '';
   const fcm = fcmProjectId && serviceAccount ? createFcmSender(fcmProjectId, serviceAccount) : null;
 
@@ -424,10 +410,9 @@ export async function sendIncomingCallVoipPushes(
   const room = `call:${args.callId}`;
   const prefRows =
     requestedRecipientIds.length > 0
-      ? await pool.query<{ id: string; prefs: unknown }>(
-          'SELECT id, prefs FROM users WHERE id = ANY($1::uuid[])',
-          [requestedRecipientIds],
-        )
+      ? await pool.query<{ id: string; prefs: unknown }>('SELECT id, prefs FROM users WHERE id = ANY($1::uuid[])', [
+          requestedRecipientIds,
+        ])
       : { rows: [] as Array<{ id: string; prefs: unknown }> };
   const callsEnabled = new Set(
     prefRows.rows

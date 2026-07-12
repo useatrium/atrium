@@ -53,10 +53,10 @@ function activePath(path: string): string {
 }
 
 async function markMergeable(path: string): Promise<void> {
-  await pool.query(
-    `UPDATE artifacts SET merge_class = 'mergeable-doc' WHERE workspace_id = $1 AND path = $2`,
-    [fx.workspaceId, activePath(path)],
-  );
+  await pool.query(`UPDATE artifacts SET merge_class = 'mergeable-doc' WHERE workspace_id = $1 AND path = $2`, [
+    fx.workspaceId,
+    activePath(path),
+  ]);
 }
 
 async function latestText(path: string): Promise<string> {

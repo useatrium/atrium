@@ -141,11 +141,7 @@ describe('AppsSurface', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Launch' }));
 
     await waitFor(() => expect(sessionsApi.launchApp).toHaveBeenCalledWith('app-9'));
-    expect(window.open).toHaveBeenCalledWith(
-      'https://apps.example/demo',
-      '_blank',
-      'noopener,noreferrer',
-    );
+    expect(window.open).toHaveBeenCalledWith('https://apps.example/demo', '_blank', 'noopener,noreferrer');
   });
 
   it('keeps preview available after a generated app is published', async () => {

@@ -31,10 +31,7 @@ function isEventShapedRejection(reason: unknown): boolean {
   const r = reason as { type?: unknown };
   return (
     typeof r.type === 'string' &&
-    ('isTrusted' in reason ||
-      'bubbles' in reason ||
-      'currentTarget' in reason ||
-      'composed' in reason)
+    ('isTrusted' in reason || 'bubbles' in reason || 'currentTarget' in reason || 'composed' in reason)
   );
 }
 

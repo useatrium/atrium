@@ -5,11 +5,7 @@ import remarkGfm from 'remark-gfm';
 import './Markdown.css';
 
 function plainTextFallback(text: string) {
-  return (
-    <div className="whitespace-pre-wrap break-words py-1 text-sm leading-relaxed text-fg-body">
-      {text}
-    </div>
-  );
+  return <div className="whitespace-pre-wrap break-words py-1 text-sm leading-relaxed text-fg-body">{text}</div>;
 }
 
 class MarkdownBoundary extends Component<
@@ -22,10 +18,7 @@ class MarkdownBoundary extends Component<
     return { hasError: true };
   }
 
-  static getDerivedStateFromProps(
-    props: { resetKey: string },
-    state: { hasError: boolean; resetKey: string },
-  ) {
+  static getDerivedStateFromProps(props: { resetKey: string }, state: { hasError: boolean; resetKey: string }) {
     if (props.resetKey !== state.resetKey) return { hasError: false, resetKey: props.resetKey };
     return null;
   }
@@ -126,10 +119,7 @@ const components: Components = {
       );
     }
     return (
-      <code
-        className="rounded bg-surface-overlay/70 px-1 py-0.5 font-mono text-[0.8125em] text-code"
-        {...props}
-      >
+      <code className="rounded bg-surface-overlay/70 px-1 py-0.5 font-mono text-[0.8125em] text-code" {...props}>
         {children}
       </code>
     );
@@ -165,11 +155,7 @@ export const SessionMarkdown = memo(function SessionMarkdown({ text }: { text: s
   return (
     <MarkdownBoundary fallback={plainTextFallback(text)} resetKey={text}>
       <div className="atrium-session-markdown break-words py-1 text-sm leading-relaxed text-fg-body">
-        <ReactMarkdown
-          remarkPlugins={[remarkGfm]}
-          rehypePlugins={[rehypeHighlight]}
-          components={components}
-        >
+        <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]} components={components}>
           {text}
         </ReactMarkdown>
       </div>

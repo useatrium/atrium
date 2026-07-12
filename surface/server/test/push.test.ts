@@ -15,12 +15,7 @@ import {
   sendSessionCompletedPush,
 } from '../src/push.js';
 import { mentionedHandles } from '../src/mentions.js';
-import type {
-  WebPushPayload,
-  WebPushSender,
-  WebPushSubscription,
-  WebPushUrgency,
-} from '../src/webpush.js';
+import type { WebPushPayload, WebPushSender, WebPushSubscription, WebPushUrgency } from '../src/webpush.js';
 import { createTestPool, seedFixture, truncateAll, type Fixture } from './helpers.js';
 
 let pool: pg.Pool;
@@ -52,10 +47,7 @@ function fakeSocket(): HubSocket {
 }
 
 async function registerToken(userId: string, token: string) {
-  await pool.query(
-    `INSERT INTO push_tokens (token, user_id, platform) VALUES ($1, $2, 'ios')`,
-    [token, userId],
-  );
+  await pool.query(`INSERT INTO push_tokens (token, user_id, platform) VALUES ($1, $2, 'ios')`, [token, userId]);
 }
 
 async function registerWebPushToken(userId: string, endpoint: string, subscription: WebPushSubscription) {
@@ -70,8 +62,7 @@ function webPushSubscription(endpoint: string): WebPushSubscription {
   return {
     endpoint,
     keys: {
-      p256dh:
-        'BCVxsr7N_eNgVRqvHtD0zTZsEc6-VV-JvLexhqUzORcxaOzi6-AYWXvTBHm4bjyPjs7Vd8pZGH6SRpkNtoIAiw4',
+      p256dh: 'BCVxsr7N_eNgVRqvHtD0zTZsEc6-VV-JvLexhqUzORcxaOzi6-AYWXvTBHm4bjyPjs7Vd8pZGH6SRpkNtoIAiw4',
       auth: 'BTBZMqHH6r4Tts7J_aSIgg', // gitleaks:allow — public RFC 8291 Appendix A test vector
     },
   };
@@ -172,10 +163,7 @@ describe('pushRecipientsFor', () => {
   });
 
   it('skips users who muted the channel', async () => {
-    await pool.query('INSERT INTO channel_mutes (user_id, channel_id) VALUES ($1, $2)', [
-      benId,
-      fx.channelId,
-    ]);
+    await pool.query('INSERT INTO channel_mutes (user_id, channel_id) VALUES ($1, $2)', [benId, fx.channelId]);
     const mention = await postInChannel(fx.channelId, 'ping @ben');
     const recipients = await pushRecipientsFor(pool, mention);
     expect(recipients.userIds).toEqual([]);
@@ -226,10 +214,10 @@ describe('sendMessagePush', () => {
   });
 
   it('fans out mentioned messages to webpush tokens with badge counts', async () => {
-    await pool.query(
-      'INSERT INTO workspace_members (workspace_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
-      [fx.workspaceId, benId],
-    );
+    await pool.query('INSERT INTO workspace_members (workspace_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [
+      fx.workspaceId,
+      benId,
+    ]);
     await postInChannel(fx.otherChannelId, 'unread elsewhere');
     const subscription = webPushSubscription('https://push.example.test/subscriptions/ben');
     await registerWebPushToken(benId, subscription.endpoint, subscription);
@@ -300,10 +288,10 @@ describe('sendMessagePush', () => {
   });
 
   it('adds unread-channel badge counts to Expo pushes', async () => {
-    await pool.query(
-      'INSERT INTO workspace_members (workspace_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
-      [fx.workspaceId, benId],
-    );
+    await pool.query('INSERT INTO workspace_members (workspace_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [
+      fx.workspaceId,
+      benId,
+    ]);
     await postInChannel(fx.otherChannelId, 'unread elsewhere');
     await registerToken(benId, 'ExponentPushToken[ben-badge]');
     const hub = new WsHub();
@@ -334,9 +322,7 @@ describe('sendMessagePush', () => {
   it('prunes tokens Expo reports as DeviceNotRegistered', async () => {
     await registerToken(benId, 'ExponentPushToken[dead]');
     const hub = new WsHub();
-    const fetchImpl = okFetch([
-      { status: 'error', message: 'gone', details: { error: 'DeviceNotRegistered' } },
-    ]);
+    const fetchImpl = okFetch([{ status: 'error', message: 'gone', details: { error: 'DeviceNotRegistered' } }]);
     const ev = await postInChannel(fx.channelId, 'ping @ben');
     await sendMessagePush(pool, hub, ev, fetchImpl);
     const left = await pool.query('SELECT token FROM push_tokens');
@@ -371,9 +357,7 @@ describe('sendMessagePush', () => {
       'ExponentPushToken[root]',
     ]);
     expect(sent.every((m: { title: string }) => m.title === 'Cara replied in #general')).toBe(true);
-    expect(
-      sent.every((m: { data: Record<string, unknown> }) => m.data.threadRootId === String(root.id)),
-    ).toBe(true);
+    expect(sent.every((m: { data: Record<string, unknown> }) => m.data.threadRootId === String(root.id))).toBe(true);
     expect(records).toHaveLength(1);
     expect(records[0]!.payload.data).toMatchObject({
       channelId: fx.channelId,
@@ -401,10 +385,14 @@ describe('sendMessagePush', () => {
       } as Response;
     }) as unknown as typeof fetch & ReturnType<typeof vi.fn>;
 
-    await checkExpoPushReceipts(pool, [
-      { id: 'okTicket', token: 'ExponentPushToken[ok]' },
-      { id: 'deadTicket', token: 'ExponentPushToken[dead]' },
-    ], fetchImpl);
+    await checkExpoPushReceipts(
+      pool,
+      [
+        { id: 'okTicket', token: 'ExponentPushToken[ok]' },
+        { id: 'deadTicket', token: 'ExponentPushToken[dead]' },
+      ],
+      fetchImpl,
+    );
 
     const left = await pool.query<{ token: string }>('SELECT token FROM push_tokens ORDER BY token');
     expect(left.rows).toEqual([{ token: 'ExponentPushToken[ok]' }]);
@@ -434,18 +422,20 @@ describe('sendMessagePush', () => {
 
 describe('sendQuestionPush', () => {
   async function questionEvent(text = 'Which deployment path should I take?'): Promise<WireEvent> {
-    return withTx(pool, (client) => appendEvent(client, {
-      workspaceId: fx.workspaceId,
-      channelId: fx.channelId,
-      type: 'session.question_requested',
-      actorId: fx.userId,
-      payload: {
-        sessionId: 'session-1',
-        questionId: 'q-main',
-        permalink: '/s/session-1',
-        questions: [{ id: 'choice', header: 'Decision', question: text }],
-      },
-    }));
+    return withTx(pool, (client) =>
+      appendEvent(client, {
+        workspaceId: fx.workspaceId,
+        channelId: fx.channelId,
+        type: 'session.question_requested',
+        actorId: fx.userId,
+        payload: {
+          sessionId: 'session-1',
+          questionId: 'q-main',
+          permalink: '/s/session-1',
+          questions: [{ id: 'choice', header: 'Decision', question: text }],
+        },
+      }),
+    );
   }
 
   it('pushes question requests to the session creator', async () => {
@@ -492,10 +482,7 @@ describe('sendQuestionPush', () => {
 
   it('skips the creator when the channel is muted', async () => {
     await registerToken(fx.userId, 'ExponentPushToken[creator-1]');
-    await pool.query('INSERT INTO channel_mutes (user_id, channel_id) VALUES ($1, $2)', [
-      fx.userId,
-      fx.channelId,
-    ]);
+    await pool.query('INSERT INTO channel_mutes (user_id, channel_id) VALUES ($1, $2)', [fx.userId, fx.channelId]);
     const hub = new WsHub();
     const fetchImpl = okFetch();
     const ev = await questionEvent();
@@ -589,10 +576,7 @@ describe('private-channel push membership', () => {
       [fx.workspaceId, fx.userId],
     );
     const channelId = priv.rows[0]!.id;
-    await pool.query('INSERT INTO channel_members (channel_id, user_id) VALUES ($1, $2)', [
-      channelId,
-      fx.userId,
-    ]);
+    await pool.query('INSERT INTO channel_members (channel_id, user_id) VALUES ($1, $2)', [channelId, fx.userId]);
     // ben is NOT a member but is @mentioned and has a push token.
     await registerToken(benId, 'ExponentPushToken[ben-nonmember]');
     const hub = new WsHub();

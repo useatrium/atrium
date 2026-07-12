@@ -1,10 +1,4 @@
-import {
-  useMemo,
-  useState,
-  type CSSProperties,
-  type ImgHTMLAttributes,
-  type SyntheticEvent,
-} from 'react';
+import { useMemo, useState, type CSSProperties, type ImgHTMLAttributes, type SyntheticEvent } from 'react';
 
 const MAX_DISPLAY_WIDTH_PX = 384;
 const MAX_DISPLAY_HEIGHT_PX = 288;
@@ -21,10 +15,7 @@ function positiveDimension(value: number | null | undefined): number | null {
   return Number.isFinite(value) && Number(value) > 0 ? Number(value) : null;
 }
 
-export function getTimelineImageDisplayBox(
-  width?: number | null,
-  height?: number | null,
-): TimelineImageDisplayBox {
+export function getTimelineImageDisplayBox(width?: number | null, height?: number | null): TimelineImageDisplayBox {
   const intrinsicWidth = positiveDimension(width);
   const intrinsicHeight = positiveDimension(height);
 
@@ -55,16 +46,7 @@ type TimelineImageProps = Omit<ImgHTMLAttributes<HTMLImageElement>, 'alt' | 'hei
   height?: number | null;
 };
 
-export function TimelineImage({
-  src,
-  alt,
-  width,
-  height,
-  className,
-  onLoad,
-  style,
-  ...props
-}: TimelineImageProps) {
+export function TimelineImage({ src, alt, width, height, className, onLoad, style, ...props }: TimelineImageProps) {
   const initialBox = useMemo(() => getTimelineImageDisplayBox(width, height), [width, height]);
   const [naturalSize, setNaturalSize] = useState<{ src: string; width: number; height: number } | null>(null);
   const naturalBox = useMemo(() => {

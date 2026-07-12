@@ -1,14 +1,8 @@
 import { createHash } from 'node:crypto';
-import type {
-  AgentProfileManifest,
-  AgentProfileProvider,
-} from '@atrium/surface-client/agentProfiles';
+import type { AgentProfileManifest, AgentProfileProvider } from '@atrium/surface-client/agentProfiles';
 import type { Db } from './db.js';
 import { loadCasBlob, persistCasBlob, type CasStorage } from './cas-storage.js';
-import {
-  isDeniedAgentProfilePath,
-  normalizeAgentProfilePath,
-} from './agent-profiles.js';
+import { isDeniedAgentProfilePath, normalizeAgentProfilePath } from './agent-profiles.js';
 import { DomainError } from './events.js';
 
 export const MAX_PROFILE_BUNDLE_BLOB_BYTES = 256 * 1024;

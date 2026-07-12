@@ -42,11 +42,7 @@ function postedEvent(
   };
 }
 
-function pendingReply(
-  clientMsgId: string,
-  rootId: number,
-  opts: { broadcast?: boolean } = {},
-): ChatMessage {
+function pendingReply(clientMsgId: string, rootId: number, opts: { broadcast?: boolean } = {}): ChatMessage {
   return {
     id: null,
     clientMsgId,
@@ -72,9 +68,7 @@ function rootRow(t: ChannelTimeline, rootId: number): ChatMessage {
 function rowsWithClientMsgId(t: ChannelTimeline, clientMsgId: string): ChatMessage[] {
   return [
     ...t.main.filter((m) => m.clientMsgId === clientMsgId),
-    ...Object.values(t.threads).flatMap((list) =>
-      list.filter((m) => m.clientMsgId === clientMsgId),
-    ),
+    ...Object.values(t.threads).flatMap((list) => list.filter((m) => m.clientMsgId === clientMsgId)),
   ];
 }
 
@@ -126,14 +120,15 @@ describe('queued send restored after its confirmation landed', () => {
     let t = mergeHistory(emptyTimeline, [rootEvent], { hasMoreBefore: false });
     t = addPending(t, pendingReply('cm-1', 10));
     expect(rootRow(t, 10).replyCount).toBe(2); // phantom bump while queued
-    const confirmed = applyEvent(t, postedEvent(11, 'pending cm-1', {
-      clientMsgId: 'cm-1',
-      threadRootEventId: 10,
-    }));
-    expect(rootRow(confirmed, 10).replyCount).toBe(1);
-    expect(rowsWithClientMsgId(confirmed, 'cm-1').every((m) => m.status === 'confirmed')).toBe(
-      true,
+    const confirmed = applyEvent(
+      t,
+      postedEvent(11, 'pending cm-1', {
+        clientMsgId: 'cm-1',
+        threadRootEventId: 10,
+      }),
     );
+    expect(rootRow(confirmed, 10).replyCount).toBe(1);
+    expect(rowsWithClientMsgId(confirmed, 'cm-1').every((m) => m.status === 'confirmed')).toBe(true);
   });
 });
 
@@ -144,20 +139,26 @@ describe('fresh optimistic reply counting', () => {
     let t = mergeHistory(emptyTimeline, [rootEvent], { hasMoreBefore: false });
     t = addPending(t, pendingReply('cm-2', 10));
     expect(rootRow(t, 10).replyCount).toBe(1);
-    const confirmed = applyEvent(t, postedEvent(12, 'pending cm-2', {
-      clientMsgId: 'cm-2',
-      threadRootEventId: 10,
-    }));
+    const confirmed = applyEvent(
+      t,
+      postedEvent(12, 'pending cm-2', {
+        clientMsgId: 'cm-2',
+        threadRootEventId: 10,
+      }),
+    );
     expect(rootRow(confirmed, 10).replyCount).toBe(1);
     expect(rootRow(confirmed, 10).lastReplyId).toBe(12);
   });
 
   it('counts a reply whose overlay never materialized', () => {
     const t = mergeHistory(emptyTimeline, [rootEvent], { hasMoreBefore: false });
-    const confirmed = applyEvent(t, postedEvent(12, 'someone else', {
-      clientMsgId: 'cm-3',
-      threadRootEventId: 10,
-    }));
+    const confirmed = applyEvent(
+      t,
+      postedEvent(12, 'someone else', {
+        clientMsgId: 'cm-3',
+        threadRootEventId: 10,
+      }),
+    );
     expect(rootRow(confirmed, 10).replyCount).toBe(1);
   });
 });
@@ -167,9 +168,7 @@ describe('mergeThread count authority', () => {
     const rootEvent = postedEvent(10, 'root', { replyCount: 2, lastReplyId: 11 });
     const t = mergeHistory(emptyTimeline, [rootEvent], { hasMoreBefore: false });
     // Server says the thread truly has one reply.
-    const healed = mergeThread(t, 10, [
-      postedEvent(11, 'only reply', { clientMsgId: 'cm-4', threadRootEventId: 10 }),
-    ]);
+    const healed = mergeThread(t, 10, [postedEvent(11, 'only reply', { clientMsgId: 'cm-4', threadRootEventId: 10 })]);
     expect(rootRow(healed, 10).replyCount).toBe(1);
   });
 
@@ -179,10 +178,13 @@ describe('mergeThread count authority', () => {
     t = addPending(t, pendingReply('cm-5', 10));
     const fetched = mergeThread(t, 10, []);
     expect(rootRow(fetched, 10).replyCount).toBe(1); // the pending overlay
-    const confirmed = applyEvent(fetched, postedEvent(13, 'pending cm-5', {
-      clientMsgId: 'cm-5',
-      threadRootEventId: 10,
-    }));
+    const confirmed = applyEvent(
+      fetched,
+      postedEvent(13, 'pending cm-5', {
+        clientMsgId: 'cm-5',
+        threadRootEventId: 10,
+      }),
+    );
     expect(rootRow(confirmed, 10).replyCount).toBe(1);
   });
 });

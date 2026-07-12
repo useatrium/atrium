@@ -42,22 +42,16 @@ export function registerPushRoutes(app: FastifyInstance, deps: PushRouteDeps): v
       return reply.code(400).send({ error: 'bad_request', message: 'token required' });
     }
     if (!isPushKind(kind)) {
-      return reply
-        .code(400)
-        .send({ error: 'bad_request', message: 'kind must be expo, voip, or webpush' });
+      return reply.code(400).send({ error: 'bad_request', message: 'kind must be expo, voip, or webpush' });
     }
     let subscription: WebPushSubscription | null = null;
     if (kind === 'webpush') {
       const raw = body.subscription;
       if (!isWebPushSubscription(raw)) {
-        return reply
-          .code(400)
-          .send({ error: 'bad_request', message: 'valid webpush subscription required' });
+        return reply.code(400).send({ error: 'bad_request', message: 'valid webpush subscription required' });
       }
       if (raw.endpoint !== token) {
-        return reply
-          .code(400)
-          .send({ error: 'bad_request', message: 'token must match subscription endpoint' });
+        return reply.code(400).send({ error: 'bad_request', message: 'token must match subscription endpoint' });
       }
       if (platform !== 'web') {
         return reply.code(400).send({ error: 'bad_request', message: 'webpush platform must be web' });
@@ -84,10 +78,7 @@ export function registerPushRoutes(app: FastifyInstance, deps: PushRouteDeps): v
     if (!body.token) {
       return reply.code(400).send({ error: 'bad_request', message: 'token required' });
     }
-    await pool.query('DELETE FROM push_tokens WHERE token = $1 AND user_id = $2', [
-      body.token,
-      user.id,
-    ]);
+    await pool.query('DELETE FROM push_tokens WHERE token = $1 AND user_id = $2', [body.token, user.id]);
     return { ok: true };
   });
 }

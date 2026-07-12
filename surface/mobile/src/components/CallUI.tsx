@@ -38,10 +38,7 @@ export function IncomingCallBanner({
     >
       <Avatar name={caller.displayName} seed={caller.id} size={32} />
       <View style={{ flex: 1, minWidth: 0 }}>
-        <Text
-          numberOfLines={1}
-          style={{ color: colors.text, fontSize: font.sm, fontWeight: '800' }}
-        >
+        <Text numberOfLines={1} style={{ color: colors.text, fontSize: font.sm, fontWeight: '800' }}>
           {caller.displayName} is calling
         </Text>
         <Text numberOfLines={1} style={{ color: colors.textMuted, fontSize: font.xs }}>
@@ -135,8 +132,7 @@ export function JoinCallStrip({
   const rejoin = call.participants.some((participant) => participant.id === meId);
   const action = rejoin ? 'Rejoin' : 'Join';
   const participantCount = call.participants.length;
-  const participantLabel =
-    participantCount === 1 ? '1 participant' : `${participantCount} participants`;
+  const participantLabel = participantCount === 1 ? '1 participant' : `${participantCount} participants`;
   return (
     <View
       accessibilityLiveRegion="polite"
@@ -195,11 +191,7 @@ export function JoinCallStrip({
           opacity: joining ? 0.65 : 1,
         }}
       >
-        <Ionicons
-          name="enter-outline"
-          size={15}
-          color={joining ? colors.textMuted : colors.onAccent}
-        />
+        <Ionicons name="enter-outline" size={15} color={joining ? colors.textMuted : colors.onAccent} />
         <Text
           numberOfLines={1}
           style={{
@@ -252,17 +244,13 @@ export function InCallPanel({
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.md }}>
         <View style={{ flex: 1, minWidth: 0 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm }}>
-            <Text style={{ color: colors.text, fontSize: font.sm, fontWeight: '800' }}>
-              {label}
-            </Text>
+            <Text style={{ color: colors.text, fontSize: font.sm, fontWeight: '800' }}>{label}</Text>
             <Text numberOfLines={1} style={{ flex: 1, color: colors.textMuted, fontSize: font.xs }}>
               {channelName}
             </Text>
           </View>
           {call.error ? (
-            <Text style={{ marginTop: 2, color: colors.danger, fontSize: font.xs }}>
-              {call.error}
-            </Text>
+            <Text style={{ marginTop: 2, color: colors.danger, fontSize: font.xs }}>{call.error}</Text>
           ) : (
             <View style={{ marginTop: space.xs, flexDirection: 'row', flexWrap: 'wrap', gap: space.xs }}>
               {call.participants.map((participant) => {

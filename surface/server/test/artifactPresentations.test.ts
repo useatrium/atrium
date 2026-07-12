@@ -94,7 +94,9 @@ async function session(channelId = fx.channelId, spawnedBy = fx.userId): Promise
 }
 
 async function commitArtifact(sessionId: string, path: string, bytes: string, mime = 'text/html') {
-  const sessionRow = await pool.query<{ channel_id: string }>('SELECT channel_id FROM sessions WHERE id = $1', [sessionId]);
+  const sessionRow = await pool.query<{ channel_id: string }>('SELECT channel_id FROM sessions WHERE id = $1', [
+    sessionId,
+  ]);
   const payload = Buffer.from(bytes);
   const sha = createHash('sha256').update(payload).digest('hex');
   const s3Key = casBlobKey(sha);
@@ -119,7 +121,9 @@ async function commitArtifact(sessionId: string, path: string, bytes: string, mi
 }
 
 async function deleteArtifact(sessionId: string, path: string) {
-  const sessionRow = await pool.query<{ channel_id: string }>('SELECT channel_id FROM sessions WHERE id = $1', [sessionId]);
+  const sessionRow = await pool.query<{ channel_id: string }>('SELECT channel_id FROM sessions WHERE id = $1', [
+    sessionId,
+  ]);
   await ledger.commitVersion({
     sessionId,
     channelId: sessionRow.rows[0]!.channel_id,
@@ -262,7 +266,12 @@ describe('artifact presentations route', () => {
     const cookie = await loginCookie();
     const sid = await session();
     // a manifest but no index.html (or other entry) → nothing to preview, skip.
-    await commitArtifact(sid, 'shared/apps/empty/atrium.app.json', JSON.stringify({ title: 'Empty' }), 'application/json');
+    await commitArtifact(
+      sid,
+      'shared/apps/empty/atrium.app.json',
+      JSON.stringify({ title: 'Empty' }),
+      'application/json',
+    );
 
     const res = await app.inject({
       method: 'GET',
@@ -307,7 +316,12 @@ describe('artifact presentations route', () => {
     const cookie = await loginCookie();
     const sid = await session();
     await commitArtifact(sid, 'shared/apps/defaulted/index.html', '<h1>Default</h1>');
-    await commitArtifact(sid, 'shared/apps/defaulted/atrium.app.json', JSON.stringify({ title: 'Default' }), 'application/json');
+    await commitArtifact(
+      sid,
+      'shared/apps/defaulted/atrium.app.json',
+      JSON.stringify({ title: 'Default' }),
+      'application/json',
+    );
 
     const res = await app.inject({
       method: 'GET',

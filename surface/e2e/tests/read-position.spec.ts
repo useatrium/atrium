@@ -23,20 +23,13 @@ function liveUnreadMarker(page: Parameters<typeof channelButton>[0], channelName
     .filter({ hasText: /^unread$/ });
 }
 
-const e2eDatabaseUrl =
-  process.env.E2E_DATABASE_URL ?? 'postgres://atrium:atrium@localhost:5433/atrium_e2e';
+const e2eDatabaseUrl = process.env.E2E_DATABASE_URL ?? 'postgres://atrium:atrium@localhost:5433/atrium_e2e';
 
-async function setReadCursor(args: {
-  handle: string;
-  channelId: string;
-  lastReadEventId: number;
-}): Promise<void> {
+async function setReadCursor(args: { handle: string; channelId: string; lastReadEventId: number }): Promise<void> {
   const pool = new Pool({ connectionString: e2eDatabaseUrl });
   const client = await pool.connect();
   try {
-    const user = await client.query<{ id: string }>('SELECT id FROM users WHERE handle = $1', [
-      args.handle,
-    ]);
+    const user = await client.query<{ id: string }>('SELECT id FROM users WHERE handle = $1', [args.handle]);
     const userId = user.rows[0]?.id;
     if (!userId) throw new Error(`missing e2e user: ${args.handle}`);
     await client.query(
@@ -121,9 +114,7 @@ async function expectDividerInTimelineViewport(divider: Locator): Promise<void> 
     .toBe(true);
 }
 
-test('channel read position lands on first unread and marks read only at bottom', async ({
-  page,
-}) => {
+test('channel read position lands on first unread and marks read only at bottom', async ({ page }) => {
   // Heavy scenario: two channels, 78 seeded messages, two reloads, and a
   // scroll-to-bottom-marks-read round-trip. On a saturated CI runner sharing
   // one server, the full flow can brush the 60s test budget — the mark-read

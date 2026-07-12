@@ -7,10 +7,7 @@ import { useUploadQueue, waitForQueuedUpload } from '../src/useUploadQueue';
 
 const createdAt = '2026-06-28T16:00:00.000Z';
 
-function uploadOp(
-  status: QueuedOp['status'],
-  payload: Partial<UploadPayload> = {},
-): QueuedOp {
+function uploadOp(status: QueuedOp['status'], payload: Partial<UploadPayload> = {}): QueuedOp {
   return {
     opId: 'upload-op',
     opType: 'upload',

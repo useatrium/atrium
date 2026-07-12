@@ -6,6 +6,8 @@ const ROOT_README: &str = r#"# Atrium Context Mount
 
 This read-only mount is the local context map for the Atrium channel and its sessions. It refreshes within a few seconds of server-side changes.
 
+If a listed path is missing, it is still materializing — wait a few seconds and retry. `.atrium-context-ready` appears here once the initial seed (this guide, the channel index, and the active channel's docs) is complete; you can otherwise ignore it.
+
 ## Tree
 
 - `README.md`: this guide.
@@ -516,6 +518,8 @@ mod tests {
         }
         let readme = std::fs::read_to_string(temp.path().join("README.md")).unwrap();
         assert!(readme.contains("Atrium Context Mount"));
+        assert!(readme.contains("still materializing"));
+        assert!(readme.contains(".atrium-context-ready"));
         let index = std::fs::read_to_string(temp.path().join("sessions").join("index.md")).unwrap();
         assert!(index.contains("| Session s1 | running | general | Codex |"));
         assert!(index.contains("`s1`"));

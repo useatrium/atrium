@@ -1,10 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import {
-  ApiError,
-  api,
-  type ConnectionProvider,
-  type ConnectionStatus,
-} from './api';
+import { ApiError, api, type ConnectionProvider, type ConnectionStatus } from './api';
 
 export type ConnectionMap = Record<string, ConnectionStatus | undefined>;
 
@@ -36,25 +31,28 @@ export function useConnections() {
     void loadConnections();
   }, [loadConnections]);
 
-  const connectGitHub = useCallback(async (body: Record<string, unknown> = {}) => {
-    try {
-      const { connection, authorizeUrl } = await api.connectGitHub(body);
-      setAvailable(true);
-      setConnections((prev) => ({ ...prev, [connection.provider]: connection }));
-      if (authorizeUrl) {
-        window.location.assign(authorizeUrl);
-        return;
+  const connectGitHub = useCallback(
+    async (body: Record<string, unknown> = {}) => {
+      try {
+        const { connection, authorizeUrl } = await api.connectGitHub(body);
+        setAvailable(true);
+        setConnections((prev) => ({ ...prev, [connection.provider]: connection }));
+        if (authorizeUrl) {
+          window.location.assign(authorizeUrl);
+          return;
+        }
+        await loadConnections();
+      } catch (err) {
+        if (isMissingConnectionsEndpoint(err)) {
+          setAvailable(false);
+          setConnections({});
+          return;
+        }
+        throw err;
       }
-      await loadConnections();
-    } catch (err) {
-      if (isMissingConnectionsEndpoint(err)) {
-        setAvailable(false);
-        setConnections({});
-        return;
-      }
-      throw err;
-    }
-  }, [loadConnections]);
+    },
+    [loadConnections],
+  );
 
   const disconnectGitHub = useCallback(async () => {
     try {
@@ -73,23 +71,26 @@ export function useConnections() {
     }
   }, []);
 
-  const activateGitHubIdentity = useCallback(async (identityId: string) => {
-    try {
-      const workspaceId = connections.github?.workspaceId;
-      const { connection } = await api.activateGitHubIdentity({
-        identityId,
-        ...(workspaceId ? { workspaceId } : {}),
-      });
-      setConnections((prev) => ({ ...prev, github: connection }));
-    } catch (err) {
-      if (isMissingConnectionsEndpoint(err)) {
-        setAvailable(false);
-        setConnections({});
-        return;
+  const activateGitHubIdentity = useCallback(
+    async (identityId: string) => {
+      try {
+        const workspaceId = connections.github?.workspaceId;
+        const { connection } = await api.activateGitHubIdentity({
+          identityId,
+          ...(workspaceId ? { workspaceId } : {}),
+        });
+        setConnections((prev) => ({ ...prev, github: connection }));
+      } catch (err) {
+        if (isMissingConnectionsEndpoint(err)) {
+          setAvailable(false);
+          setConnections({});
+          return;
+        }
+        throw err;
       }
-      throw err;
-    }
-  }, [connections.github?.workspaceId]);
+    },
+    [connections.github?.workspaceId],
+  );
 
   return useMemo(
     () => ({

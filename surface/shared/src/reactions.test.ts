@@ -1,11 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  QUICK_REACTIONS,
-  REACTION_EMOJI,
-  REACTION_GROUPS,
-  REACTION_KEYWORDS,
-  searchReactions,
-} from './reactions';
+import { QUICK_REACTIONS, REACTION_EMOJI, REACTION_GROUPS, REACTION_KEYWORDS, searchReactions } from './reactions';
 
 describe('reactions', () => {
   it('has a unique allowlist', () => {

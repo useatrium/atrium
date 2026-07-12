@@ -20,18 +20,7 @@ class WhisperCppAdapter implements SttAdapter {
     const outputBase = join(dir, 'transcript');
     try {
       await downloadObject(input.s3Key, sourcePath);
-      await runProcess('ffmpeg', [
-        '-y',
-        '-i',
-        sourcePath,
-        '-ar',
-        '16000',
-        '-ac',
-        '1',
-        '-c:a',
-        'pcm_s16le',
-        wavPath,
-      ]);
+      await runProcess('ffmpeg', ['-y', '-i', sourcePath, '-ar', '16000', '-ac', '1', '-c:a', 'pcm_s16le', wavPath]);
       const whisper = await runProcess(process.env.WHISPER_BIN ?? 'whisper-cli', [
         '-m',
         modelPath,
@@ -62,7 +51,9 @@ export function registerWhisperCppAdapter(): void {
 }
 
 function safeFilename(filename: string): string {
-  const trimmed = basename(filename).replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 120);
+  const trimmed = basename(filename)
+    .replace(/[^a-zA-Z0-9._-]/g, '_')
+    .slice(0, 120);
   return trimmed || 'audio';
 }
 
@@ -92,7 +83,10 @@ export function parseWhisperCppJson(json: string): Pick<SttResult, 'text' | 'lan
   const text =
     typeof parsed.text === 'string'
       ? parsed.text.trim()
-      : (segments ?? []).map((segment) => segment.text).join(' ').trim();
+      : (segments ?? [])
+          .map((segment) => segment.text)
+          .join(' ')
+          .trim();
   const lang =
     typeof parsed.result?.language === 'string'
       ? parsed.result.language
@@ -118,10 +112,7 @@ function secondsFromWhisperTimestamp(timestamp: unknown, offset: unknown): numbe
   return Number(hours) * 3600 + Number(minutes) * 60 + Number(seconds) + millis / 1000;
 }
 
-function runProcess(
-  command: string,
-  args: string[],
-): Promise<{ stdout: string; stderr: string }> {
+function runProcess(command: string, args: string[]): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'] });
     const stdout: Buffer[] = [];

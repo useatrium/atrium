@@ -85,7 +85,9 @@ function proposal(overrides: Partial<AgentProfileProposal> = {}): AgentProfilePr
   return { ...base, ...overrides };
 }
 
-function riskSummary(overrides: Partial<AgentProfileProposal['riskSummary']> = {}): AgentProfileProposal['riskSummary'] {
+function riskSummary(
+  overrides: Partial<AgentProfileProposal['riskSummary']> = {},
+): AgentProfileProposal['riskSummary'] {
   return {
     labels: [],
     blockedSecrets: 0,

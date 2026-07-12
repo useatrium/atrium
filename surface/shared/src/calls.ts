@@ -12,38 +12,46 @@ import { Schema } from 'effect';
 export const CallStatusSchema = Schema.Literal('ringing', 'active', 'ended');
 export type CallStatus = Schema.Schema.Type<typeof CallStatusSchema>;
 
-export const CallUserRefSchema = Schema.mutable(Schema.Struct({
-  id: Schema.String,
-  handle: Schema.String,
-  displayName: Schema.String,
-}));
+export const CallUserRefSchema = Schema.mutable(
+  Schema.Struct({
+    id: Schema.String,
+    handle: Schema.String,
+    displayName: Schema.String,
+  }),
+);
 type UserRef = Schema.Schema.Type<typeof CallUserRefSchema>;
 
-export const CallWireSchema = Schema.mutable(Schema.Struct({
-  id: Schema.String,
-  channelId: Schema.String,
-  initiatorId: Schema.String,
-  status: CallStatusSchema,
-  startedAt: Schema.String,
-  /** Users currently joined (joined and not yet left). */
-  participants: Schema.mutable(Schema.Array(CallUserRefSchema)),
-}));
+export const CallWireSchema = Schema.mutable(
+  Schema.Struct({
+    id: Schema.String,
+    channelId: Schema.String,
+    initiatorId: Schema.String,
+    status: CallStatusSchema,
+    startedAt: Schema.String,
+    /** Users currently joined (joined and not yet left). */
+    participants: Schema.mutable(Schema.Array(CallUserRefSchema)),
+  }),
+);
 export type CallWire = Schema.Schema.Type<typeof CallWireSchema>;
 
 /** Credentials returned from start/accept so the client can join the room. */
-export const CallJoinSchema = Schema.mutable(Schema.Struct({
-  call: CallWireSchema,
-  /** LiveKit access token (JWT) scoped to this room + the caller's identity. */
-  token: Schema.String,
-  /** LiveKit server ws(s):// URL the client connects to. */
-  url: Schema.String,
-}));
+export const CallJoinSchema = Schema.mutable(
+  Schema.Struct({
+    call: CallWireSchema,
+    /** LiveKit access token (JWT) scoped to this room + the caller's identity. */
+    token: Schema.String,
+    /** LiveKit server ws(s):// URL the client connects to. */
+    url: Schema.String,
+  }),
+);
 export type CallJoin = Schema.Schema.Type<typeof CallJoinSchema>;
 
 /** Recoverable snapshot of currently live calls visible to the viewer. */
-export const ActiveCallSnapshotSchema = Schema.mutable(Schema.Struct({
-  calls: Schema.mutable(Schema.Array(CallWireSchema)),
-}));
+export const ActiveCallSnapshotSchema = Schema.mutable(
+  Schema.Struct({
+    calls: Schema.mutable(Schema.Array(CallWireSchema)),
+  }),
+);
 export type ActiveCallSnapshot = Schema.Schema.Type<typeof ActiveCallSnapshotSchema>;
 
 // Loose on purpose: the server preserves route-specific channelId/id

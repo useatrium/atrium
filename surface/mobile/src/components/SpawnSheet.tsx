@@ -1,14 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import {
-  KeyboardAvoidingView,
-  Modal,
-  Platform,
-  Pressable,
-  ScrollView,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
+import { KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import type { AgentProfile } from '@atrium/surface-client';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -174,16 +165,8 @@ export function SpawnSheet({
   };
 
   return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType={reduceMotion ? 'none' : 'slide'}
-      onRequestClose={onClose}
-    >
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        style={{ flex: 1 }}
-      >
+    <Modal visible={visible} transparent animationType={reduceMotion ? 'none' : 'slide'} onRequestClose={onClose}>
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
         <View style={{ flex: 1, backgroundColor: colors.scrim, justifyContent: 'flex-end' }}>
           <Pressable
             accessible={false}
@@ -259,9 +242,7 @@ export function SpawnSheet({
               }}
             >
               <View style={{ gap: space.sm }}>
-                <Text style={{ color: colors.textMuted, fontSize: font.xs, fontWeight: '800' }}>
-                  Task
-                </Text>
+                <Text style={{ color: colors.textMuted, fontSize: font.xs, fontWeight: '800' }}>Task</Text>
                 <TextInput
                   ref={taskInputRef}
                   autoFocus
@@ -289,9 +270,7 @@ export function SpawnSheet({
               </View>
 
               <View style={{ gap: space.sm }}>
-                <Text style={{ color: colors.textMuted, fontSize: font.xs, fontWeight: '800' }}>
-                  Harness
-                </Text>
+                <Text style={{ color: colors.textMuted, fontSize: font.xs, fontWeight: '800' }}>Harness</Text>
                 <View style={{ gap: space.sm }}>
                   {HARNESSES.map((item) => {
                     const selected = harness === item.value;
@@ -310,9 +289,7 @@ export function SpawnSheet({
 
               {matchingProfiles.length > 0 ? (
                 <View style={{ gap: space.sm }}>
-                  <Text style={{ color: colors.textMuted, fontSize: font.xs, fontWeight: '800' }}>
-                    Profile
-                  </Text>
+                  <Text style={{ color: colors.textMuted, fontSize: font.xs, fontWeight: '800' }}>Profile</Text>
                   <View style={{ gap: space.sm }}>
                     <SelectionCard
                       label="Default"
@@ -341,9 +318,7 @@ export function SpawnSheet({
               ) : null}
 
               <View style={{ gap: space.sm }}>
-                <Text style={{ color: colors.textMuted, fontSize: font.xs, fontWeight: '800' }}>
-                  Repo optional
-                </Text>
+                <Text style={{ color: colors.textMuted, fontSize: font.xs, fontWeight: '800' }}>Repo optional</Text>
                 <TextInput
                   accessibilityLabel="Repository"
                   accessibilityHint="Optionally enter a repository for the agent session."

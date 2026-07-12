@@ -115,10 +115,7 @@ export function buildAppMenu({
         { label: 'Atrium Documentation', click: openDocs },
         ...(isMac
           ? []
-          : ([
-              { type: 'separator' },
-              { label: 'Learn More', click: openDocs },
-            ] satisfies MenuItemConstructorOptions[])),
+          : ([{ type: 'separator' }, { label: 'Learn More', click: openDocs }] satisfies MenuItemConstructorOptions[])),
       ],
     },
   );

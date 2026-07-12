@@ -4,10 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const sessionScreenSource = readFileSync(
-  resolve(__dirname, '../app/(app)/session/[id].tsx'),
-  'utf8',
-);
+const sessionScreenSource = readFileSync(resolve(__dirname, '../app/(app)/session/[id].tsx'), 'utf8');
 
 describe('session transcript action wiring', () => {
   it('wires long-press actions for every transcript entry type', () => {

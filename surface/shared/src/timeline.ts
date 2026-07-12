@@ -6,11 +6,13 @@ import { eventIdFromTarget } from './handle';
 const NullableNumberSchema = Schema.Union(Schema.Number, Schema.Null);
 const NullableStringSchema = Schema.Union(Schema.String, Schema.Null);
 
-export const UserRefSchema = Schema.mutable(Schema.Struct({
-  id: Schema.String,
-  handle: Schema.String,
-  displayName: Schema.String,
-}));
+export const UserRefSchema = Schema.mutable(
+  Schema.Struct({
+    id: Schema.String,
+    handle: Schema.String,
+    displayName: Schema.String,
+  }),
+);
 
 export interface UserRef {
   id: string;
@@ -36,29 +38,35 @@ export interface WireEvent {
   broadcast?: boolean;
 }
 
-export const WireEventSchema = Schema.mutable(Schema.Struct({
-  id: Schema.Number,
-  workspaceId: Schema.String,
-  channelId: NullableStringSchema,
-  threadRootEventId: NullableNumberSchema,
-  type: Schema.String,
-  actorId: NullableStringSchema,
-  payload: Schema.mutable(Schema.Record({ key: Schema.String, value: Schema.Unknown })),
-  createdAt: Schema.String,
-  author: Schema.Union(UserRefSchema, Schema.Null),
-  replyCount: Schema.optionalWith(Schema.Number, { exact: true }),
-  lastReplyId: Schema.optionalWith(Schema.Number, { exact: true }),
-  broadcast: Schema.optionalWith(Schema.Boolean, { exact: true }),
-}));
+export const WireEventSchema = Schema.mutable(
+  Schema.Struct({
+    id: Schema.Number,
+    workspaceId: Schema.String,
+    channelId: NullableStringSchema,
+    threadRootEventId: NullableNumberSchema,
+    type: Schema.String,
+    actorId: NullableStringSchema,
+    payload: Schema.mutable(Schema.Record({ key: Schema.String, value: Schema.Unknown })),
+    createdAt: Schema.String,
+    author: Schema.Union(UserRefSchema, Schema.Null),
+    replyCount: Schema.optionalWith(Schema.Number, { exact: true }),
+    lastReplyId: Schema.optionalWith(Schema.Number, { exact: true }),
+    broadcast: Schema.optionalWith(Schema.Boolean, { exact: true }),
+  }),
+);
 
-export const MessageHistoryResponseSchema = Schema.mutable(Schema.Struct({
-  events: Schema.mutable(Schema.Array(WireEventSchema)),
-  hasMore: Schema.Boolean,
-}));
+export const MessageHistoryResponseSchema = Schema.mutable(
+  Schema.Struct({
+    events: Schema.mutable(Schema.Array(WireEventSchema)),
+    hasMore: Schema.Boolean,
+  }),
+);
 
-export const ThreadMessagesResponseSchema = Schema.mutable(Schema.Struct({
-  events: Schema.mutable(Schema.Array(WireEventSchema)),
-}));
+export const ThreadMessagesResponseSchema = Schema.mutable(
+  Schema.Struct({
+    events: Schema.mutable(Schema.Array(WireEventSchema)),
+  }),
+);
 
 export function filesChangedWorkspaceId(ev: WireEvent): string | null {
   if (ev.type !== FILES_CHANGED_EVENT_TYPE) return null;
@@ -225,13 +233,9 @@ function isModifierEvent(type: string): boolean {
 export function messageFromEvent(ev: WireEvent): ChatMessage {
   const payload = ev.payload ?? {};
   const sessionId =
-    ev.type.startsWith('session.') && typeof payload.sessionId === 'string'
-      ? payload.sessionId
-      : undefined;
+    ev.type.startsWith('session.') && typeof payload.sessionId === 'string' ? payload.sessionId : undefined;
   const spawnClientId =
-    ev.type === 'session.spawned' && typeof payload.client_spawn_id === 'string'
-      ? payload.client_spawn_id
-      : undefined;
+    ev.type === 'session.spawned' && typeof payload.client_spawn_id === 'string' ? payload.client_spawn_id : undefined;
   const text =
     typeof payload.text === 'string'
       ? payload.text
@@ -243,7 +247,7 @@ export function messageFromEvent(ev: WireEvent): ChatMessage {
             ? 'Question answered'
             : ev.type === 'session.question_resolved'
               ? 'Question resolved'
-        : '';
+              : '';
   const sessionEventType =
     ev.type === 'session.question_requested'
       ? 'question_requested'
@@ -338,12 +342,7 @@ function parseReactions(v: unknown): MessageReaction[] | undefined {
 }
 
 /** Toggle one user's emoji on a message (pure; used by the reaction fold). */
-export function foldReaction(
-  m: ChatMessage,
-  emoji: string,
-  userId: string,
-  add: boolean,
-): ChatMessage {
+export function foldReaction(m: ChatMessage, emoji: string, userId: string, add: boolean): ChatMessage {
   const list = m.reactions ?? [];
   const i = list.findIndex((r) => r.emoji === emoji);
   if (add) {
@@ -362,9 +361,7 @@ export function foldReaction(
 
 /** Confirmed messages sorted by id asc; pending/failed keep send order at the end. */
 function resort(list: ChatMessage[]): ChatMessage[] {
-  const confirmed = list
-    .filter((m) => m.status === 'confirmed')
-    .sort((a, b) => (a.id ?? 0) - (b.id ?? 0));
+  const confirmed = list.filter((m) => m.status === 'confirmed').sort((a, b) => (a.id ?? 0) - (b.id ?? 0));
   const rest = list.filter((m) => m.status !== 'confirmed');
   return [...confirmed, ...rest];
 }
@@ -412,17 +409,14 @@ function dropUnconfirmedByClientMsgId(list: ChatMessage[], clientMsgId: string |
 function findPendingReply(t: ChannelTimeline, msg: ChatMessage): ChatMessage | null {
   if (msg.clientMsgId == null || msg.threadRootEventId == null) return null;
   const matches = (m: ChatMessage) =>
-    m.status !== 'confirmed' &&
-    m.clientMsgId === msg.clientMsgId &&
-    m.threadRootEventId === msg.threadRootEventId;
+    m.status !== 'confirmed' && m.clientMsgId === msg.clientMsgId && m.threadRootEventId === msg.threadRootEventId;
   // Thread copy first: mergeThread stamps countedInRoot there.
   return t.threads[msg.threadRootEventId]?.find(matches) ?? t.main.find(matches) ?? null;
 }
 
 function hasConfirmedByClientMsgId(t: ChannelTimeline, msg: ChatMessage): boolean {
   if (msg.clientMsgId == null) return false;
-  const matches = (m: ChatMessage) =>
-    m.status === 'confirmed' && m.clientMsgId === msg.clientMsgId;
+  const matches = (m: ChatMessage) => m.status === 'confirmed' && m.clientMsgId === msg.clientMsgId;
   if (t.main.some(matches)) return true;
   if (msg.threadRootEventId == null) return false;
   return t.threads[msg.threadRootEventId]?.some(matches) ?? false;
@@ -447,8 +441,7 @@ export function addPending(t: ChannelTimeline, msg: ChatMessage): ChannelTimelin
       ...msg,
       countedInRoot: bumped || existingPending?.countedInRoot === true,
     };
-    const main =
-      existingPending != null ? t.main : bumpRootReplyCount(t.main, msg.threadRootEventId);
+    const main = existingPending != null ? t.main : bumpRootReplyCount(t.main, msg.threadRootEventId);
     const existing = t.threads[msg.threadRootEventId] ?? [];
     return {
       ...t,
@@ -462,9 +455,7 @@ export function addPending(t: ChannelTimeline, msg: ChatMessage): ChannelTimelin
 export function markFailed(t: ChannelTimeline, clientMsgId: string): ChannelTimeline {
   const mark = (list: ChatMessage[]) =>
     list.map((m) =>
-      m.clientMsgId === clientMsgId && m.status === 'pending'
-        ? { ...m, status: 'failed' as const }
-        : m,
+      m.clientMsgId === clientMsgId && m.status === 'pending' ? { ...m, status: 'failed' as const } : m,
     );
   const threads: Record<number, ChatMessage[]> = {};
   for (const [k, v] of Object.entries(t.threads)) threads[Number(k)] = mark(v);
@@ -477,13 +468,8 @@ export function markFailed(t: ChannelTimeline, clientMsgId: string): ChannelTime
  * the response, in which case the confirmed row already exists and the
  * optimistic one is dropped.
  */
-export function resolveSpawn(
-  t: ChannelTimeline,
-  tempId: string,
-  sessionId: string,
-): ChannelTimeline {
-  const hasConfirmed = (list: ChatMessage[]) =>
-    list.some((m) => m.status === 'confirmed' && m.sessionId === sessionId);
+export function resolveSpawn(t: ChannelTimeline, tempId: string, sessionId: string): ChannelTimeline {
+  const hasConfirmed = (list: ChatMessage[]) => list.some((m) => m.status === 'confirmed' && m.sessionId === sessionId);
   const confirmed = hasConfirmed(t.main) || Object.values(t.threads).some(hasConfirmed);
   const fix = (list: ChatMessage[]) =>
     confirmed
@@ -572,10 +558,7 @@ function rematerializeAll(t: ChannelTimeline): ChannelTimeline {
   return next;
 }
 
-function rebaseTextSnapshot(
-  previous: TextOverlaySnapshot,
-  ev: WireEvent,
-): TextOverlaySnapshot {
+function rebaseTextSnapshot(previous: TextOverlaySnapshot, ev: WireEvent): TextOverlaySnapshot {
   if (ev.type === 'message.deleted') return { ...previous, text: '', deleted: true };
   if (ev.type === 'message.edited') {
     return { ...previous, text: String((ev.payload ?? {}).text ?? previous.text), edited: true };
@@ -588,8 +571,7 @@ function reconcileLocalOverlays(t: ChannelTimeline, ev: WireEvent, targetEventId
   const text = typeof (ev.payload ?? {}).text === 'string' ? String((ev.payload ?? {}).text) : null;
   const emoji = typeof (ev.payload ?? {}).emoji === 'string' ? String((ev.payload ?? {}).emoji) : '';
   const userId = ev.actorId;
-  const action =
-    ev.type === 'reaction.added' ? 'add' : ev.type === 'reaction.removed' ? 'remove' : null;
+  const action = ev.type === 'reaction.added' ? 'add' : ev.type === 'reaction.removed' ? 'remove' : null;
 
   const localOverlays = t.localOverlays.flatMap((overlay): TimelineOverlay[] => {
     if (overlay.targetEventId !== targetEventId) return [overlay];
@@ -641,19 +623,13 @@ export function applyLocalEditOverlay(
     previous: existing?.previous ?? textSnapshot(target),
   };
   const localOverlays = [
-    ...t.localOverlays.filter(
-      (current) => !(current.kind === 'edit' && current.targetEventId === targetEventId),
-    ),
+    ...t.localOverlays.filter((current) => !(current.kind === 'edit' && current.targetEventId === targetEventId)),
     overlay,
   ];
   return rematerializeTarget({ ...t, localOverlays }, targetEventId);
 }
 
-export function applyLocalDeleteOverlay(
-  t: ChannelTimeline,
-  opId: string,
-  targetEventId: number,
-): ChannelTimeline {
+export function applyLocalDeleteOverlay(t: ChannelTimeline, opId: string, targetEventId: number): ChannelTimeline {
   const target = findTargetMessage(t, targetEventId);
   if (!target) return t;
   const previousEdit = t.localOverlays.find(
@@ -670,9 +646,7 @@ export function applyLocalDeleteOverlay(
   };
   const localOverlays = [
     ...t.localOverlays.filter(
-      (current) =>
-        current.targetEventId !== targetEventId ||
-        (current.kind !== 'edit' && current.kind !== 'delete'),
+      (current) => current.targetEventId !== targetEventId || (current.kind !== 'edit' && current.kind !== 'delete'),
     ),
     overlay,
   ];
@@ -772,9 +746,7 @@ export function applyEvent(t: ChannelTimeline, ev: WireEvent): ChannelTimeline {
           const rootId = msg.threadRootEventId;
           next = {
             ...next,
-            main: next.main.map((m) =>
-              m.id === rootId ? { ...m, replyCount: Math.max(0, m.replyCount - 1) } : m,
-            ),
+            main: next.main.map((m) => (m.id === rootId ? { ...m, replyCount: Math.max(0, m.replyCount - 1) } : m)),
           };
         }
         return bumpLastEvent(next, ev.id);
@@ -801,20 +773,9 @@ export function applyEvent(t: ChannelTimeline, ev: WireEvent): ChannelTimeline {
     let main = fold(t.main);
     // Deleting a thread reply: the root's visible reply count shrinks by one.
     if (ev.type === 'message.deleted' && ev.threadRootEventId != null) {
-      main = main.map((m) =>
-        m.id === ev.threadRootEventId
-          ? { ...m, replyCount: Math.max(0, m.replyCount - 1) }
-          : m,
-      );
+      main = main.map((m) => (m.id === ev.threadRootEventId ? { ...m, replyCount: Math.max(0, m.replyCount - 1) } : m));
     }
-    return bumpLastEvent(
-      reconcileLocalOverlays(
-        { ...t, main, threads, seenIds },
-        ev,
-        targetId,
-      ),
-      ev.id,
-    );
+    return bumpLastEvent(reconcileLocalOverlays({ ...t, main, threads, seenIds }, ev, targetId), ev.id);
   }
 
   if (ev.type === 'reaction.added' || ev.type === 'reaction.removed') {
@@ -827,14 +788,10 @@ export function applyEvent(t: ChannelTimeline, ev: WireEvent): ChannelTimeline {
       return bumpLastEvent({ ...t, seenIds }, ev.id);
     }
     const add = ev.type === 'reaction.added';
-    const fold = (list: ChatMessage[]) =>
-      list.map((m) => (m.id === targetId ? foldReaction(m, emoji, uid, add) : m));
+    const fold = (list: ChatMessage[]) => list.map((m) => (m.id === targetId ? foldReaction(m, emoji, uid, add) : m));
     const threads: Record<number, ChatMessage[]> = {};
     for (const [k, v] of Object.entries(t.threads)) threads[Number(k)] = fold(v);
-    return bumpLastEvent(
-      reconcileLocalOverlays({ ...t, main: fold(t.main), threads, seenIds }, ev, targetId),
-      ev.id,
-    );
+    return bumpLastEvent(reconcileLocalOverlays({ ...t, main: fold(t.main), threads, seenIds }, ev, targetId), ev.id);
   }
 
   if (ev.type === 'voice.transcribed') {
@@ -846,9 +803,7 @@ export function applyEvent(t: ChannelTimeline, ev: WireEvent): ChannelTimeline {
       return bumpLastEvent({ ...t, seenIds }, ev.id);
     }
     const fold = (list: ChatMessage[]) =>
-      list.map((m) =>
-        m.id === targetId && m.voice ? { ...m, voice: { ...m.voice, transcript } } : m,
-      );
+      list.map((m) => (m.id === targetId && m.voice ? { ...m, voice: { ...m.voice, transcript } } : m));
     const threads: Record<number, ChatMessage[]> = {};
     for (const [k, v] of Object.entries(t.threads)) threads[Number(k)] = fold(v);
     return bumpLastEvent({ ...t, main: fold(t.main), threads, seenIds }, ev.id);
@@ -873,9 +828,7 @@ export function applyEvent(t: ChannelTimeline, ev: WireEvent): ChannelTimeline {
     const main = t.main.map((m) => {
       if (m.id !== rootId) return m;
       if (ev.id <= m.lastReplyId) {
-        return optimisticallyCounted
-          ? { ...m, replyCount: Math.max(0, m.replyCount - 1) }
-          : m;
+        return optimisticallyCounted ? { ...m, replyCount: Math.max(0, m.replyCount - 1) } : m;
       }
       return {
         ...m,
@@ -887,9 +840,7 @@ export function applyEvent(t: ChannelTimeline, ev: WireEvent): ChannelTimeline {
     const thread = threads[rootId];
     if (thread) threads[rootId] = upsertConfirmed(thread, msg);
     const withBroadcast =
-      msg.broadcast === true
-        ? upsertConfirmed(main, msg)
-        : dropUnconfirmedByClientMsgId(main, msg.clientMsgId);
+      msg.broadcast === true ? upsertConfirmed(main, msg) : dropUnconfirmedByClientMsgId(main, msg.clientMsgId);
     return bumpLastEvent({ ...t, main: withBroadcast, threads, seenIds }, ev.id);
   }
 
@@ -989,11 +940,7 @@ export function resetToLatest(
 }
 
 /** Merge a fetched thread (replies oldest-first). */
-export function mergeThread(
-  t: ChannelTimeline,
-  rootEventId: number,
-  events: WireEvent[],
-): ChannelTimeline {
+export function mergeThread(t: ChannelTimeline, rootEventId: number, events: WireEvent[]): ChannelTimeline {
   const seenIds = new Set(t.seenIds);
   let thread = t.threads[rootEventId] ?? [];
   let mainRows = t.main;
@@ -1020,9 +967,7 @@ export function mergeThread(
   // The recomputed count includes those overlays — stamp them so their
   // confirms don't bump again.
   thread = thread.map((m) =>
-    m.status !== 'confirmed' && !m.deleted && m.countedInRoot !== true
-      ? { ...m, countedInRoot: true }
-      : m,
+    m.status !== 'confirmed' && !m.deleted && m.countedInRoot !== true ? { ...m, countedInRoot: true } : m,
   );
   const maxReplyId = thread.reduce((acc, m) => Math.max(acc, m.id ?? 0), 0);
   const main = mainRows.map((m) =>

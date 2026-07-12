@@ -37,11 +37,7 @@ export function MobileWorkSheet({
 
   return (
     <Modal visible={visible && tabs.length > 0} animationType="slide" onRequestClose={onClose}>
-      <View
-        testID="mobile-work-sheet"
-        accessibilityViewIsModal
-        style={{ flex: 1, backgroundColor: colors.bg }}
-      >
+      <View testID="mobile-work-sheet" accessibilityViewIsModal style={{ flex: 1, backgroundColor: colors.bg }}>
         <View
           style={{
             flexDirection: 'row',

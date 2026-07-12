@@ -18,11 +18,7 @@ const mockedS3 = vi.hoisted(() => {
       this.objects.set(key, { body: Buffer.from(body), contentType });
     };
 
-    uploadObjectStream = async (
-      key: string,
-      stream: NodeJS.ReadableStream,
-      contentType: string,
-    ): Promise<void> => {
+    uploadObjectStream = async (key: string, stream: NodeJS.ReadableStream, contentType: string): Promise<void> => {
       const chunks: Buffer[] = [];
       for await (const chunk of stream as AsyncIterable<Buffer | Uint8Array | string>) {
         chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));

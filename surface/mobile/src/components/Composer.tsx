@@ -43,12 +43,7 @@ import { createDraftChangeDebouncer } from '../lib/outbox';
 import { Avatar } from './Avatar';
 import { EntryInlineChip } from './EntryQuoteCards';
 import { lightImpactHaptic } from '../lib/haptics';
-import {
-  downsamplePeaks,
-  formatVoiceDuration,
-  normalizeMetering,
-  type VoiceSendMeta,
-} from '../lib/voice';
+import { downsamplePeaks, formatVoiceDuration, normalizeMetering, type VoiceSendMeta } from '../lib/voice';
 
 interface PendingAttachment {
   key: string;
@@ -117,30 +112,33 @@ type PickedAttachment = {
   height?: number;
 };
 
-export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Composer({
-  placeholder,
-  onSend,
-  onTyping,
-  editingText,
-  onSubmitEdit,
-  onCancelEdit,
-  draftKey,
-  initialDraft,
-  onDraftChange,
-  onDraftPersisted,
-  onDraftTouched,
-  mentionUsers,
-  onMentionTrigger,
-  allowAttachments,
-  showBroadcastToggle,
-  previewEntryLinks,
-  serverUrl,
-  resolveEntry,
-  onOpenChannel,
-  onOpenSession,
-  uploadFile,
-  onConfigureAgent,
-}: ComposerProps, ref) {
+export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Composer(
+  {
+    placeholder,
+    onSend,
+    onTyping,
+    editingText,
+    onSubmitEdit,
+    onCancelEdit,
+    draftKey,
+    initialDraft,
+    onDraftChange,
+    onDraftPersisted,
+    onDraftTouched,
+    mentionUsers,
+    onMentionTrigger,
+    allowAttachments,
+    showBroadcastToggle,
+    previewEntryLinks,
+    serverUrl,
+    resolveEntry,
+    onOpenChannel,
+    onOpenSession,
+    uploadFile,
+    onConfigureAgent,
+  }: ComposerProps,
+  ref,
+) {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const [text, setText] = useState('');
@@ -225,10 +223,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     if (!uploadFile) return;
     const key = `${Date.now()}-${file.name}-${Math.random()}`;
     const isImage = file.mimeType.startsWith('image/');
-    setAttachments((prev) => [
-      ...prev,
-      { key, previewUri: isImage ? file.uri : null, meta: null, failed: false },
-    ]);
+    setAttachments((prev) => [...prev, { key, previewUri: isImage ? file.uri : null, meta: null, failed: false }]);
     try {
       const meta = await uploadFile(file);
       setAttachments((prev) => prev.map((a) => (a.key === key ? { ...a, meta } : a)));
@@ -261,9 +256,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     return info.exists ? (info.size ?? 0) : 0;
   };
 
-  const attachmentFromImageAsset = async (
-    asset: ImagePicker.ImagePickerAsset,
-  ): Promise<PickedAttachment> => ({
+  const attachmentFromImageAsset = async (asset: ImagePicker.ImagePickerAsset): Promise<PickedAttachment> => ({
     uri: asset.uri,
     name: asset.fileName ?? 'photo.jpg',
     mimeType: asset.mimeType ?? 'image/jpeg',
@@ -301,12 +294,14 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     const res = await DocumentPicker.getDocumentAsync({ copyToCacheDirectory: true });
     if (res.canceled) return;
     addPickedAttachments(
-      await Promise.all(res.assets.map(async (asset) => ({
-        uri: asset.uri,
-        name: asset.name,
-        mimeType: asset.mimeType ?? 'application/octet-stream',
-        size: await sizeForUri(asset.uri, asset.size),
-      }))),
+      await Promise.all(
+        res.assets.map(async (asset) => ({
+          uri: asset.uri,
+          name: asset.name,
+          mimeType: asset.mimeType ?? 'application/octet-stream',
+          size: await sizeForUri(asset.uri, asset.size),
+        })),
+      ),
     );
   };
 
@@ -332,8 +327,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 
   const uploading = attachments.some((a) => !a.meta && !a.failed);
   const ready = attachments.filter(
-    (a): a is PendingAttachment & { meta: AttachmentMeta & { uploadKey: string; localUri: string } } =>
-      a.meta != null,
+    (a): a is PendingAttachment & { meta: AttachmentMeta & { uploadKey: string; localUri: string } } => a.meta != null,
   );
   const readyMeta = ready.map(({ meta }) => ({
     id: meta.id,
@@ -345,14 +339,12 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   }));
   const readyRefs = ready.map(({ meta }) => ({ uploadKey: meta.uploadKey }));
   const canSend = !uploading && (text.trim().length > 0 || readyMeta.length > 0);
-  const showConfigureAgentChip =
-    !editing && onConfigureAgent != null && looksLikeAgentCommand(text);
+  const showConfigureAgentChip = !editing && onConfigureAgent != null && looksLikeAgentCommand(text);
   const mentionMatch = !editing ? matchMentionPrefix(text) : null;
   const mentionPrefix = mentionMatch?.prefix.toLowerCase() ?? '';
   // @agent only spawns when the whole message starts with it — don't offer
   // the suggestion for mid-text mentions.
-  const agentMatches =
-    mentionMatch != null && mentionMatch.start === 0 && 'agent'.startsWith(mentionPrefix);
+  const agentMatches = mentionMatch != null && mentionMatch.start === 0 && 'agent'.startsWith(mentionPrefix);
   const matchedUsers = useMemo(() => {
     if (!mentionMatch || !mentionUsers) return [];
     return mentionUsers
@@ -401,13 +393,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     if (!canSend) return;
     lightImpactHaptic();
     const broadcast = showBroadcastToggle && alsoSendToChannel;
-    onSend(
-      trimmed,
-      readyMeta,
-      readyRefs.length > 0 ? readyRefs : undefined,
-      undefined,
-      broadcast ? true : undefined,
-    );
+    onSend(trimmed, readyMeta, readyRefs.length > 0 ? readyRefs : undefined, undefined, broadcast ? true : undefined);
     if (draftKey) {
       onDraftTouched?.(draftKey);
       draftWriter.saveNow(draftKey, '');
@@ -450,10 +436,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       await setAudioModeAsync({ allowsRecording: false }).catch(() => {});
       const status = audioRecorder.getStatus();
       const uri = audioRecorder.uri ?? status.url;
-      const durationMs = Math.max(
-        status.durationMillis,
-        Math.round(audioRecorder.currentTime * 1000),
-      );
+      const durationMs = Math.max(status.durationMillis, Math.round(audioRecorder.currentTime * 1000));
       if (!sendVoice) {
         if (uri) await FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
         return;
@@ -519,9 +502,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     >
       {editing && (
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm }}>
-          <Text style={{ color: colors.accent, fontSize: font.xs, fontWeight: '700' }}>
-            Editing message
-          </Text>
+          <Text style={{ color: colors.accent, fontSize: font.xs, fontWeight: '700' }}>Editing message</Text>
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Cancel edit"
@@ -537,9 +518,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 
       {showBroadcastToggle && !editing && (
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-          <Text style={{ color: colors.textSecondary, fontSize: font.sm }}>
-            Also send to channel
-          </Text>
+          <Text style={{ color: colors.textSecondary, fontSize: font.sm }}>Also send to channel</Text>
           <Switch
             accessibilityLabel="Also send to channel"
             value={alsoSendToChannel}
@@ -587,9 +566,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                 <Text style={{ color: colors.accent, fontSize: font.sm, fontWeight: '800' }}>@</Text>
               </View>
               <View style={{ flex: 1 }}>
-                <Text style={{ color: colors.text, fontSize: font.sm, fontWeight: '700' }}>
-                  @agent
-                </Text>
+                <Text style={{ color: colors.text, fontSize: font.sm, fontWeight: '700' }}>@agent</Text>
                 <Text style={{ color: colors.textMuted, fontSize: font.xs }}>run an agent task</Text>
               </View>
             </Pressable>
@@ -611,9 +588,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             >
               <Avatar name={u.displayName} seed={u.id} size={28} />
               <View style={{ flex: 1 }}>
-                <Text style={{ color: colors.text, fontSize: font.sm, fontWeight: '700' }}>
-                  {u.displayName}
-                </Text>
+                <Text style={{ color: colors.text, fontSize: font.sm, fontWeight: '700' }}>{u.displayName}</Text>
                 <Text style={{ color: colors.textMuted, fontSize: font.xs }}>@{u.handle}</Text>
               </View>
             </Pressable>
@@ -645,8 +620,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                     backgroundColor: colors.bgElevated,
                     alignItems: 'center',
                     justifyContent: 'center',
-                }}
-              >
+                  }}
+                >
                   <Ionicons
                     name={a.failed ? 'alert-circle-outline' : 'attach-outline'}
                     size={21}
@@ -737,9 +712,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                 hitSlop={8}
                 style={{ minHeight: 36, justifyContent: 'center' }}
               >
-                <Text style={{ color: colors.textMuted, fontSize: font.xs, fontWeight: '700' }}>
-                  Cancel
-                </Text>
+                <Text style={{ color: colors.textMuted, fontSize: font.xs, fontWeight: '700' }}>Cancel</Text>
               </Pressable>
               <Pressable
                 accessibilityRole="button"
@@ -774,9 +747,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             paddingHorizontal: space.xs,
           }}
         >
-          <Text style={{ color: colors.textMuted, fontSize: font.xs, fontWeight: '700' }}>
-            referencing:
-          </Text>
+          <Text style={{ color: colors.textMuted, fontSize: font.xs, fontWeight: '700' }}>referencing:</Text>
           {entryLinkHandles.map((handle) => (
             <EntryInlineChip
               key={handle}
@@ -808,10 +779,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               paddingVertical: space.xs,
             })}
           >
-            <Text
-              maxFontSizeMultiplier={2}
-              style={{ color: colors.accent, fontSize: font.sm, fontWeight: '800' }}
-            >
+            <Text maxFontSizeMultiplier={2} style={{ color: colors.accent, fontSize: font.sm, fontWeight: '800' }}>
               ✦ Start an agent · Configure ▸
             </Text>
           </Pressable>
@@ -844,9 +812,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             accessibilityRole="button"
             accessibilityLabel={recording ? 'Stop and send voice message' : 'Record voice message'}
             accessibilityHint={
-              recording
-                ? 'Stops recording and sends the voice message'
-                : 'Starts recording a voice message'
+              recording ? 'Stops recording and sends the voice message' : 'Starts recording a voice message'
             }
             accessibilityState={{ disabled: recordingBusy || uploading }}
             onPress={() => {
@@ -921,9 +887,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             minWidth: 44,
             minHeight: 44,
             borderRadius: 22,
-            backgroundColor: (editing ? text.trim().length > 0 : canSend)
-              ? colors.accent
-              : colors.bgElevated,
+            backgroundColor: (editing ? text.trim().length > 0 : canSend) ? colors.accent : colors.bgElevated,
             alignItems: 'center',
             justifyContent: 'center',
             marginBottom: 2,

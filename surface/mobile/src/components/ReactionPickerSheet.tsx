@@ -31,13 +31,7 @@ function ReactionButton({ emoji, onSelect }: { emoji: string; onSelect: (emoji: 
  * Modal over the actions Modal fails to present on iOS, so we swap content in
  * place instead.
  */
-export function ReactionPickerBody({
-  onSelect,
-  onBack,
-}: {
-  onSelect: (emoji: string) => void;
-  onBack: () => void;
-}) {
+export function ReactionPickerBody({ onSelect, onBack }: { onSelect: (emoji: string) => void; onBack: () => void }) {
   const { colors } = useTheme();
   const searchRef = useRef<TextInput>(null);
   const [query, setQuery] = useState('');

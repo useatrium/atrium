@@ -151,11 +151,7 @@ export async function deleteObject(key: string): Promise<void> {
  * Content-Length without buffering a stream itself. Ensures the bucket first
  * (memoized no-op after the first success): the CAS capture path reaches here
  * without going through the upload routes' ensureBucket (#215). */
-export async function uploadObject(
-  key: string,
-  body: Buffer | Uint8Array,
-  contentType: string,
-): Promise<void> {
+export async function uploadObject(key: string, body: Buffer | Uint8Array, contentType: string): Promise<void> {
   await ensureBucket();
   await internalClient.send(
     new PutObjectCommand({
@@ -167,11 +163,7 @@ export async function uploadObject(
   );
 }
 
-export async function uploadObjectStream(
-  key: string,
-  stream: Readable,
-  contentType: string,
-): Promise<void> {
+export async function uploadObjectStream(key: string, stream: Readable, contentType: string): Promise<void> {
   await ensureBucket();
   await new Upload({
     client: internalClient,
@@ -216,7 +208,7 @@ export async function headObject(key: string): Promise<{ contentLength: number }
     const res = await internalClient.send(new HeadObjectCommand({ Bucket: config.s3Bucket, Key: key }));
     return { contentLength: Number(res.ContentLength ?? 0) };
   } catch (err) {
-    const code = (err as { name?: string; $metadata?: { httpStatusCode?: number } });
+    const code = err as { name?: string; $metadata?: { httpStatusCode?: number } };
     if (code.name === 'NotFound' || code.$metadata?.httpStatusCode === 404) return null;
     throw err;
   }

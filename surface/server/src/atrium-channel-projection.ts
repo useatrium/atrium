@@ -230,10 +230,7 @@ export function renderChannelMarkdown(info: ChannelDocInfo): string {
   return `${lines.join('\n')}\n`;
 }
 
-export function renderChannelChatMarkdown(
-  messages: ChannelChatMessage[],
-  maxBytes = CHANNEL_CHAT_MAX_BYTES,
-): string {
+export function renderChannelChatMarkdown(messages: ChannelChatMessage[], maxBytes = CHANNEL_CHAT_MAX_BYTES): string {
   const groups = groupThreadedMessages(messages).map(renderMessageGroup);
   let bytes = 0;
   let firstIncluded = groups.length;
@@ -277,10 +274,7 @@ function groupThreadedMessages(messages: ChannelChatMessage[]): ChannelChatMessa
 function renderMessageGroup(group: ChannelChatMessage[]): string {
   const [root, ...replies] = group;
   if (!root) return '';
-  const lines = [
-    `${authorLine(root, formatFullMinute(root.createdAt))}`,
-    ...formatBody(root.text, ''),
-  ];
+  const lines = [`${authorLine(root, formatFullMinute(root.createdAt))}`, ...formatBody(root.text, '')];
   for (const reply of replies) {
     lines.push(
       '',

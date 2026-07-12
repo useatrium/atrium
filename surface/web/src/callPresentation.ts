@@ -9,9 +9,7 @@ function fallbackUser(id: string): UserRef {
 export function userForCall(call: CallWire, channels: Channel[], userId: string): UserRef {
   return (
     call.participants.find((u) => u.id === userId) ??
-    channels
-      .find((c) => c.id === call.channelId)
-      ?.members?.find((u) => u.id === userId) ??
+    channels.find((c) => c.id === call.channelId)?.members?.find((u) => u.id === userId) ??
     fallbackUser(userId)
   );
 }

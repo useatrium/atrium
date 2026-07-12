@@ -15,9 +15,13 @@ function clamp(value: number, min: number, max: number) {
 
 export function useZoomPan() {
   const [state, setState] = useState<ZoomPanState>({ scale: 1, x: 0, y: 0 });
-  const dragRef = useRef<{ pointerId: number; startX: number; startY: number; originX: number; originY: number } | null>(
-    null,
-  );
+  const dragRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    originX: number;
+    originY: number;
+  } | null>(null);
 
   const reset = useCallback(() => setState({ scale: 1, x: 0, y: 0 }), []);
 

@@ -76,7 +76,9 @@ describe('WorkStrips (mobile)', () => {
   });
 
   it('renders nothing when every surface is empty', () => {
-    const { container } = renderUI(<WorkStrips items={[{ key: 'changes', label: 'Changes', count: 0 }]} onOpen={() => {}} />);
+    const { container } = renderUI(
+      <WorkStrips items={[{ key: 'changes', label: 'Changes', count: 0 }]} onOpen={() => {}} />,
+    );
     expect(container).toBeEmptyDOMElement();
   });
 });

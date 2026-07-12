@@ -4,13 +4,7 @@ import type pg from 'pg';
 import { buildApp } from '../src/app.js';
 import { createChannel } from '../src/events.js';
 import { createTestPool, seedFixture, truncateAll, type Fixture } from './helpers.js';
-import {
-  ChaosCentaur,
-  chaosInject,
-  chaosSeed,
-  SeededPrng,
-  type ChaosRequest,
-} from './chaosHarness.js';
+import { ChaosCentaur, chaosInject, chaosSeed, SeededPrng, type ChaosRequest } from './chaosHarness.js';
 
 interface UserLogin {
   cookie: string;
@@ -194,10 +188,9 @@ const registry: ChaosOp[] = [
       payload: { theme: 'dark', opId },
     }),
     effectCount: async (ctx) => {
-      const res = await pool.query(
-        "SELECT COUNT(*) AS count FROM users WHERE id = $1 AND prefs->>'theme' = 'dark'",
-        [ctx.alice.user.id],
-      );
+      const res = await pool.query("SELECT COUNT(*) AS count FROM users WHERE id = $1 AND prefs->>'theme' = 'dark'", [
+        ctx.alice.user.id,
+      ]);
       return Number(res.rows[0].count);
     },
   },

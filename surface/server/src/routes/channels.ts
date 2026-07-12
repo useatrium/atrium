@@ -69,8 +69,7 @@ export interface ChannelRouteDeps extends AppMutationContext {
 }
 
 export function registerChannelRoutes(app: FastifyInstance, deps: ChannelRouteDeps): void {
-  const { pool, hub, requireUser, optionalOpId, activeWorkspaceIdFor, noWorkspace, runMutation } =
-    deps;
+  const { pool, hub, requireUser, optionalOpId, activeWorkspaceIdFor, noWorkspace, runMutation } = deps;
 
   app.get('/api/channels', async (req, reply) => {
     const user = requireUser(req, reply);
@@ -97,9 +96,7 @@ export function registerChannelRoutes(app: FastifyInstance, deps: ChannelRouteDe
     if (distinctUserIds.length < 1 || distinctUserIds.length > 8) {
       return reply.code(400).send({ error: 'bad_request', message: 'userIds must contain 1-8 users' });
     }
-    const existingUsers = await pool.query('SELECT id FROM users WHERE id = ANY($1::uuid[])', [
-      distinctUserIds,
-    ]);
+    const existingUsers = await pool.query('SELECT id FROM users WHERE id = ANY($1::uuid[])', [distinctUserIds]);
     if (existingUsers.rows.length !== distinctUserIds.length) {
       return reply.code(404).send({ error: 'user_not_found', message: 'user not found' });
     }
@@ -119,20 +116,17 @@ export function registerChannelRoutes(app: FastifyInstance, deps: ChannelRouteDe
         });
     if (created) {
       // Only members learn the DM/GDM exists.
-      hub.publishToUsers(
-        channel.members?.map((m) => m.id) ?? [user.id, ...distinctUserIds],
-        {
-          id: 0,
-          workspaceId,
-          channelId: channel.id,
-          threadRootEventId: null,
-          type: 'channel.created',
-          actorId: user.id,
-          payload: { name: channel.name, channel },
-          createdAt: new Date().toISOString(),
-          author: user,
-        },
-      );
+      hub.publishToUsers(channel.members?.map((m) => m.id) ?? [user.id, ...distinctUserIds], {
+        id: 0,
+        workspaceId,
+        channelId: channel.id,
+        threadRootEventId: null,
+        type: 'channel.created',
+        actorId: user.id,
+        payload: { name: channel.name, channel },
+        createdAt: new Date().toISOString(),
+        author: user,
+      });
     }
     return reply.code(created ? 201 : 200).send({ channel });
   });
@@ -141,7 +135,10 @@ export function registerChannelRoutes(app: FastifyInstance, deps: ChannelRouteDe
     const user = requireUser(req, reply);
     if (!user) return;
     const body = decodeRouteBody(CreateChannelBodySchema, req.body);
-    const name = String(body.name ?? '').trim().toLowerCase().replace(/\s+/g, '-');
+    const name = String(body.name ?? '')
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, '-');
     if (!CHANNEL_RE.test(name)) {
       return reply.code(400).send({
         error: 'invalid_channel_name',
@@ -173,9 +170,7 @@ export function registerChannelRoutes(app: FastifyInstance, deps: ChannelRouteDe
     const opId = optionalOpId(body);
     const lastReadEventId = Number(body.lastReadEventId);
     if (!Number.isSafeInteger(lastReadEventId) || lastReadEventId < 0) {
-      return reply
-        .code(400)
-        .send({ error: 'bad_request', message: 'lastReadEventId must be a non-negative integer' });
+      return reply.code(400).send({ error: 'bad_request', message: 'lastReadEventId must be a non-negative integer' });
     }
     if (!(await canAccessChannel(pool, user.id, id))) {
       // 404, not 403 - don't leak the existence of someone else's DM.
@@ -256,10 +251,7 @@ export function registerChannelRoutes(app: FastifyInstance, deps: ChannelRouteDe
             [user.id, id],
           );
         } else {
-          await client.query('DELETE FROM channel_mutes WHERE user_id = $1 AND channel_id = $2', [
-            user.id,
-            id,
-          ]);
+          await client.query('DELETE FROM channel_mutes WHERE user_id = $1 AND channel_id = $2', [user.id, id]);
         }
         return { muted: body.muted as boolean };
       },

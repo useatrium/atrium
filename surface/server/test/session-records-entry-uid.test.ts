@@ -62,10 +62,7 @@ describe('session record entry_uid derivation', () => {
       expect(new Set(before.map((row) => row.entryUid)).size).toBe(before.length);
 
       const stableByLogicalEntry = new Map(
-        before.map((row) => [
-          logicalEntryKey(row),
-          { entryUid: row.entryUid, seq: row.seq },
-        ]),
+        before.map((row) => [logicalEntryKey(row), { entryUid: row.entryUid, seq: row.seq }]),
       );
 
       await insertSessionEvents(pool, sessionId, [earlierFrame()]);
@@ -97,11 +94,7 @@ async function insertSession(pool: pg.Pool, fx: Fixture): Promise<string> {
   return res.rows[0]!.id;
 }
 
-async function insertSessionEvents(
-  pool: pg.Pool,
-  sessionId: string,
-  frames: CentaurEventFrame[],
-): Promise<void> {
+async function insertSessionEvents(pool: pg.Pool, sessionId: string, frames: CentaurEventFrame[]): Promise<void> {
   for (const frame of frames) {
     await pool.query(
       `INSERT INTO session_events
@@ -254,10 +247,7 @@ function usageFrame(eventId: number, costUsd: number): CentaurEventFrame {
 }
 
 function expectedUid(source: EntryUidSource, rawKeyString: string): string {
-  return `${source}_${createHash('sha256')
-    .update(`${source}|${rawKeyString}`)
-    .digest('hex')
-    .slice(0, 24)}`;
+  return `${source}_${createHash('sha256').update(`${source}|${rawKeyString}`).digest('hex').slice(0, 24)}`;
 }
 
 function messageRow(rows: ProjectedRow[]): ProjectedRow {
@@ -277,9 +267,7 @@ function questionRow(rows: ProjectedRow[]): ProjectedRow {
 }
 
 function fallbackUsageRow(rows: ProjectedRow[], eventId: number): ProjectedRow {
-  return expectRow(
-    rows.find((row) => row.kind === 'usage' && firstSourceEventId(row.meta) === eventId),
-  );
+  return expectRow(rows.find((row) => row.kind === 'usage' && firstSourceEventId(row.meta) === eventId));
 }
 
 function codexFileChangeRows(rows: ProjectedRow[]): ProjectedRow[] {
