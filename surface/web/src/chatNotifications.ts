@@ -62,7 +62,7 @@ export function notificationForWireEvent(
       typeof event.payload?.resultExcerpt === 'string' ? event.payload.resultExcerpt : '';
     return {
       kind: 'session-completed',
-      title: `Agent session ${status}: ${session.title}`,
+      title: `Agent ${status}: ${session.title}`,
       body: excerpt.slice(0, 140),
       tag: `evt-${event.id}`,
       sessionId,

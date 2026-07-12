@@ -52,7 +52,7 @@ describe('notification settings', () => {
       'value',
       'dm_mention',
     );
-    expect(screen.getByRole('button', { name: 'Agent sessions notifications' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Agent notifications' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Call notifications' })).toBeTruthy();
   });
 
@@ -66,7 +66,7 @@ describe('notification settings', () => {
       notifications: { messages: 'all', sessions: true, calls: true },
     });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Agent sessions notifications' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Agent notifications' }));
     expect(mockTheme.setPrefs).toHaveBeenLastCalledWith({
       notifications: { messages: 'dm_mention', sessions: false, calls: true },
     });

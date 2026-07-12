@@ -5,7 +5,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { EnqueueOpInput } from '@atrium/surface-client';
 import { useSessionActions } from '../src/useSessionActions';
 
-type SessionActionType = 'session.answer' | 'session.cancel' | 'session.stop_turn' | 'session.steer';
+type SessionActionType =
+  | 'session.answer'
+  | 'session.archive'
+  | 'session.cancel'
+  | 'session.pin'
+  | 'session.stop_turn'
+  | 'session.steer';
 type TestEnqueue = <T extends SessionActionType>(input: EnqueueOpInput<T>) => Promise<unknown>;
 
 function renderActions(enqueueOp = vi.fn(async () => ({ opId: 'op-1' }))) {

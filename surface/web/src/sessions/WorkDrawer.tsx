@@ -181,7 +181,7 @@ function SessionFilesPeek({ workspaceId, sessionId }: { workspaceId: string; ses
           </div>
         )}
         {!error && !loading && files.length === 0 && (
-          <EmptyState title="No session files" hint="Files touched by this session will appear here." />
+          <EmptyState title="No agent files" hint="Files touched by this session will appear here." />
         )}
         {!error && files.length > 0 && (
           <div className="grid gap-2">

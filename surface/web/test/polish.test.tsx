@@ -544,7 +544,7 @@ describe('terminal session pane', () => {
       permalink: '/s/s-done',
     };
     render(<SessionPane session={done} me={me} watchers={[]} onClose={() => {}} onAnswerQuestion={async () => {}} />);
-    expect(screen.getByText(/Session ended/)).toBeTruthy();
+    expect(screen.getByText(/Agent ended/)).toBeTruthy();
     expect(screen.queryByText('Take seat')).toBeNull();
     expect(screen.queryByText('Request seat')).toBeNull();
     expect(screen.queryByPlaceholderText(/Message this session/)).toBeNull();
@@ -586,7 +586,7 @@ describe('terminal session pane', () => {
     );
     // completed is idle/resumable — no read-only notice; a subtle status line
     // (not a card) reports the completed turn.
-    expect(screen.queryByText(/Session ended/)).toBeNull();
+    expect(screen.queryByText(/Agent ended/)).toBeNull();
     expect(screen.getByTestId('turn-status').textContent).toContain('Turn complete');
   });
 });

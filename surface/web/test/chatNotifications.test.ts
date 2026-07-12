@@ -139,7 +139,7 @@ describe('notificationForWireEvent', () => {
       ),
     ).toEqual({
       kind: 'session-completed',
-      title: 'Agent session failed: Write the report',
+      title: 'Agent failed: Write the report',
       body: 'The command failed because the token expired.',
       tag: 'evt-101',
       sessionId: 's-1',

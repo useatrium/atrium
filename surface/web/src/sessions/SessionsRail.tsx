@@ -3,6 +3,7 @@
 // pattern). Cards reuse SessionCard; clicking one opens it as a peek (→ Split).
 
 import { useMemo } from 'react';
+import { isArchivedSession } from '@atrium/surface-client';
 import { SessionCard } from './SessionCard';
 import { isTerminalSessionStatus, type Session } from './types';
 
@@ -15,6 +16,7 @@ function groupSessions(sessions: Session[]): Group[] {
   const active: Session[] = [];
   const recent: Session[] = [];
   for (const s of sessions) {
+    if (isArchivedSession(s)) continue; // archived agents live on the Agents surface
     if (s.pendingQuestion || s.providerAuthRequired) needsYou.push(s);
     else if (isTerminalSessionStatus(s.status)) recent.push(s);
     else active.push(s);
@@ -50,13 +52,13 @@ export function SessionsRail({
   return (
     <aside className="flex w-[min(340px,30vw)] shrink-0 flex-col border-l border-edge bg-surface">
       <header className="flex h-12 shrink-0 items-center gap-2 border-b border-edge px-4">
-        <h2 className="text-sm font-semibold text-fg">Sessions</h2>
+        <h2 className="text-sm font-semibold text-fg">Agents</h2>
         {total > 0 && <span className="text-2xs tabular-nums text-fg-muted">{total}</span>}
       </header>
 
       {total === 0 ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-1.5 px-6 text-center">
-          <div className="text-sm font-medium text-fg-secondary">No sessions yet</div>
+          <div className="text-sm font-medium text-fg-secondary">No agents yet</div>
           <div className="text-xs leading-relaxed text-fg-muted">
             Start one by typing <span className="font-medium text-fg-secondary">@agent</span> and a
             task in the channel.

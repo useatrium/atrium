@@ -91,7 +91,11 @@ export class ApiError extends Error {
   }
 }
 
-type ApiResponseSchema<T> = Schema.Schema<T>;
+// The encoded side may differ from T: decode-with-default schemas (archive/pin
+// fields) accept older wire payloads that omit those fields. Schema is invariant
+// in its encoded parameter, so `any` (not `unknown`) is required here.
+// biome-ignore lint/suspicious/noExplicitAny: see above
+type ApiResponseSchema<T> = Schema.Schema<T, any>;
 type ApiResponseDecoder<T> = (input: unknown) => T;
 
 export function decodeApiResponse<T>(schema: ApiResponseSchema<T>, input: unknown): T {

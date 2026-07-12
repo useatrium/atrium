@@ -32,12 +32,14 @@ export function MessageActionMenu({
   restoreFocusRef,
   actions,
   reactions,
+  label = 'Message actions',
 }: {
   state: MessageActionMenuState | null;
   onClose: () => void;
   restoreFocusRef?: RefObject<HTMLElement | null>;
   actions: MessageActionMenuAction[];
   reactions?: MessageActionMenuReactions;
+  label?: string;
 }) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
@@ -109,7 +111,7 @@ export function MessageActionMenu({
     <div
       ref={menuRef}
       role="dialog"
-      aria-label="Message actions"
+      aria-label={label}
       style={mode === 'popover' ? popoverStyle(state.anchor) : undefined}
       className={
         mode === 'sheet'
@@ -201,7 +203,7 @@ export function MessageActionMenu({
     <div className="fixed inset-0 z-40" onPointerDownCapture={markFreshSheetPointerDown}>
       <button
         type="button"
-        aria-label="Close message actions"
+        aria-label={`Close ${label.toLowerCase()}`}
         onClick={(event) => {
           if (canActivateFromClick(event)) closeMenu();
         }}

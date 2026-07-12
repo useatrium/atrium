@@ -474,11 +474,13 @@ export function Chat({
     onApiError,
   });
 
-  const { answerSessionQuestion, cancelSession, steerSession, stopTurn } = useSessionActions({
-    clearFailedCancel,
-    clearFailedSteer,
-    enqueueOp,
-  });
+  const { answerSessionQuestion, cancelSession, setSessionArchived, setSessionPinned, steerSession, stopTurn } =
+    useSessionActions({
+      clearFailedCancel,
+      clearFailedSteer,
+      dispatch,
+      enqueueOp,
+    });
 
   useEffect(() => {
     const onStorage = (event: StorageEvent) => {
@@ -866,6 +868,8 @@ export function Chat({
         dispatch({ type: 'mute-changed', channelId, muted });
         cacheMute(channelId, muted);
       },
+      onChannelPinned: (channelId, pinned) => dispatch({ type: 'channel-pin-changed', channelId, pinned }),
+      onSessionPinned: (sessionId, pinned) => dispatch({ type: 'session-pin-changed', sessionId, pinned }),
       onChannelLeft: (channelId) => dispatch({ type: 'channel-removed', channelId }),
       onPrefs: adoptPrefs,
       onOpen: () => {
@@ -1538,7 +1542,7 @@ export function Chat({
     }
   };
 
-  const { createChannel, setMute, startDm } = useChannelActions({
+  const { createChannel, setArchived, setMute, setPinned, startDm } = useChannelActions({
     dispatch,
     enqueueOp,
     getChannels: () => stateRef.current.channels,
@@ -1688,7 +1692,7 @@ export function Chat({
       {
         id: 'open-agents',
         label: 'Open Agents',
-        subtitle: 'Browse agent sessions',
+        subtitle: 'Browse agents',
         group: 'Navigate',
         keywords: ['agents', 'sessions', 'tasks', 'workspace'],
         icon: <span className="text-xs font-bold leading-none">A</span>,
@@ -1766,7 +1770,7 @@ export function Chat({
       {
         id: 'connect-github',
         label: githubConnection?.connected ? 'Manage GitHub' : 'Connect GitHub',
-        subtitle: connectionsAvailable ? 'Repository access for agent sessions' : 'Unavailable on this server',
+        subtitle: connectionsAvailable ? 'Repository access for agents' : 'Unavailable on this server',
         group: 'Connections',
         keywords: ['github', 'repository', 'repo', 'connection', 'provider'],
         icon: <span className="text-xs font-bold leading-none">GH</span>,
@@ -1858,6 +1862,8 @@ export function Chat({
           setIsSidebarOpen(false);
         }}
         onSetMute={setMute}
+        onSetArchived={setArchived}
+        onSetPinned={setPinned}
         onCreateChannel={createChannel}
         onStartDm={startDm}
         onOpenSession={(sessionId) => {
@@ -1973,6 +1979,8 @@ export function Chat({
                 channel={active}
                 meId={me.id}
                 enqueueOp={enqueueOp}
+                onSetArchived={setArchived}
+                onSetPinned={setPinned}
                 open={membersRouteOpen}
                 onOpenChange={(open) => {
                   goToRoute({
@@ -2157,6 +2165,12 @@ export function Chat({
               onOpenSession={(sessionId) => {
                 openSession(sessionId);
               }}
+              onSetSessionPinned={(sessionId, pinned, previousPinned) =>
+                void setSessionPinned(sessionId, pinned, previousPinned).catch(() => {})
+              }
+              onSetSessionArchived={(sessionId, archived, previousArchivedAt) =>
+                void setSessionArchived(sessionId, archived, previousArchivedAt).catch(() => {})
+              }
             />
           ) : showActivitySurface ? (
             // === mentions-activity additions ===
@@ -2273,6 +2287,12 @@ export function Chat({
           onStopTurn={stopTurn}
           failedCancel={failedCancels[paneSession.id] === true}
           onClearFailedCancel={() => clearFailedCancel(paneSession.id)}
+          onSetArchived={(sessionId, archived, previousArchivedAt) =>
+            void setSessionArchived(sessionId, archived, previousArchivedAt).catch(() => {})
+          }
+          onSetPinned={(sessionId, pinned, previousPinned) =>
+            void setSessionPinned(sessionId, pinned, previousPinned).catch(() => {})
+          }
           providerCredentials={providerCredentials}
           githubConnection={githubConnection}
           onConnectProvider={setProviderDialog}
@@ -2290,12 +2310,12 @@ export function Chat({
           style={isMobileViewport || view === 'focus' ? undefined : placeholderPaneSizing.style}
         >
           <header className="flex h-12 shrink-0 items-center justify-between border-b border-edge px-4">
-            <h2 className="text-sm font-semibold text-fg">Session</h2>
-            <Tooltip content="Close session pane">
+            <h2 className="text-sm font-semibold text-fg">Agent</h2>
+            <Tooltip content="Close agent pane">
               <button
                 type="button"
                 onClick={closeSession}
-                aria-label="Close session pane"
+                aria-label="Close agent pane"
                 className="rounded-md px-2 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg"
               >
                 <XIcon />
@@ -2304,7 +2324,7 @@ export function Chat({
           </header>
           {state.openSessionError ? (
             <div className="flex flex-1 flex-col items-center justify-center gap-1.5 px-6 text-center">
-              <div className="text-sm font-medium text-fg-secondary">Session not found</div>
+              <div className="text-sm font-medium text-fg-secondary">Agent not found</div>
               <div className="text-xs text-fg-muted">It may have been removed, or the link is wrong.</div>
               <button
                 type="button"

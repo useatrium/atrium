@@ -53,12 +53,16 @@ import { MarkupPane, splitMarkdownFrontmatter, type MarkupPaneSource } from '../
 import { MarkupSteerCard } from '../components/MarkupSteerCard';
 import { Tooltip } from '../components/a11y';
 import {
+  ArchiveIcon,
+  ArchiveRestoreIcon,
   ChevronDownIcon,
   ChevronRightIcon,
   CornerUpLeftIcon,
   ExpandIcon,
   ExternalLinkIcon,
   GearIcon,
+  PinIcon,
+  PinOffIcon,
   ShrinkIcon,
   XIcon,
 } from '../components/icons';
@@ -366,6 +370,8 @@ export function SessionPane({
   onStopTurn = async () => {},
   failedCancel = false,
   onClearFailedCancel = () => {},
+  onSetArchived,
+  onSetPinned,
   providerCredentials,
   githubConnection,
   onConnectProvider,
@@ -408,6 +414,10 @@ export function SessionPane({
   onStopTurn?: (sessionId: string) => Promise<void>;
   failedCancel?: boolean;
   onClearFailedCancel?: () => void;
+  /** Global archive toggle; omit to hide the header control. */
+  onSetArchived?: (sessionId: string, archived: boolean, previousArchivedAt: string | null) => void;
+  /** Per-user pin toggle; omit to hide the header control. */
+  onSetPinned?: (sessionId: string, pinned: boolean, previousPinned: boolean) => void;
   providerCredentials?: Record<string, ProviderCredentialStatus | undefined>;
   githubConnection?: ConnectionStatus;
   onConnectProvider?: (provider: ProviderCredentialProvider) => void;
@@ -827,7 +837,7 @@ export function SessionPane({
   };
   const driverName = nameFor(driverId);
   const composerStatusText = isDriver
-    ? "You're driving this session"
+    ? "You're driving this agent"
     : driverPresent
       ? `You're watching — ${driverName} is driving`
       : "You're watching";
@@ -1382,7 +1392,7 @@ export function SessionPane({
           role="separator"
           tabIndex={0}
           aria-orientation="vertical"
-          aria-label="Resize session panel"
+          aria-label="Resize agent panel"
           aria-valuemin={SESSION_PANE_MIN_WIDTH}
           aria-valuemax={paneMaxWidth}
           aria-valuenow={paneWidth ?? SESSION_PANE_FALLBACK_WIDTH}
@@ -1467,7 +1477,7 @@ export function SessionPane({
           </div>
         </div>
         {(isSpawner || isDriver) && !displayTerminal && (
-          <Tooltip content={canStopTurn ? 'Stop current turn' : 'Cancel this session'}>
+          <Tooltip content={canStopTurn ? 'Stop current turn' : 'Cancel this agent'}>
             <button
               type="button"
               onClick={onCancel}
@@ -1493,6 +1503,33 @@ export function SessionPane({
             </button>
           </Tooltip>
         )}
+        {onSetPinned && (
+          <Tooltip content={session.pinned ? 'Unpin this agent' : 'Pin this agent'}>
+            <button
+              type="button"
+              onClick={() => onSetPinned(session.id, !session.pinned, session.pinned)}
+              aria-label={session.pinned ? 'Unpin this agent' : 'Pin this agent'}
+              aria-pressed={session.pinned}
+              className={`rounded-md px-2 py-1 hover:bg-surface-overlay hover:text-fg max-md:inline-flex max-md:size-11 max-md:items-center max-md:justify-center max-md:p-0 [@media(pointer:coarse)]:inline-flex [@media(pointer:coarse)]:size-11 [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center [@media(pointer:coarse)]:p-0 ${
+                session.pinned ? 'text-accent-text-strong' : 'text-fg-tertiary'
+              }`}
+            >
+              {session.pinned ? <PinOffIcon size={15} /> : <PinIcon size={15} />}
+            </button>
+          </Tooltip>
+        )}
+        {onSetArchived && (
+          <Tooltip content={session.archivedAt ? 'Unarchive this agent' : 'Archive this agent'}>
+            <button
+              type="button"
+              onClick={() => onSetArchived(session.id, session.archivedAt == null, session.archivedAt)}
+              aria-label={session.archivedAt ? 'Unarchive this agent' : 'Archive this agent'}
+              className="rounded-md px-2 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg max-md:inline-flex max-md:size-11 max-md:items-center max-md:justify-center max-md:p-0 [@media(pointer:coarse)]:inline-flex [@media(pointer:coarse)]:size-11 [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center [@media(pointer:coarse)]:p-0"
+            >
+              {session.archivedAt ? <ArchiveRestoreIcon size={15} /> : <ArchiveIcon size={15} />}
+            </button>
+          </Tooltip>
+        )}
         <div className="relative max-md:shrink-0">
           <Tooltip content={capabilitiesLabel}>
             <button
@@ -1515,11 +1552,11 @@ export function SessionPane({
           />
         </div>
         {canDetach && (
-          <Tooltip content={sessionLinkCopied ? 'Copied session link' : 'Copy link to this session'}>
+          <Tooltip content={sessionLinkCopied ? 'Copied agent link' : 'Copy link to this agent'}>
             <button
               type="button"
               onClick={copySessionLink}
-              aria-label={sessionLinkCopied ? 'Copied session link' : 'Copy link to this session'}
+              aria-label={sessionLinkCopied ? 'Copied agent link' : 'Copy link to this agent'}
               className={`rounded-md px-2 py-1 hover:bg-surface-overlay hover:text-fg max-md:inline-flex max-md:size-11 max-md:items-center max-md:justify-center max-md:p-0 [@media(pointer:coarse)]:inline-flex [@media(pointer:coarse)]:size-11 [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center [@media(pointer:coarse)]:p-0 ${
                 sessionLinkCopied ? 'text-accent-text-strong' : 'text-fg-tertiary'
               }`}
@@ -1529,12 +1566,12 @@ export function SessionPane({
           </Tooltip>
         )}
         {canDetach && (
-          <Tooltip content={popout ? 'Open in full app' : 'Open session in a new tab'}>
+          <Tooltip content={popout ? 'Open in full app' : 'Open agent in a new tab'}>
             <a
               href={popout ? `/s/${session.id}` : `/s/${session.id}/pane`}
               target={popout ? undefined : '_blank'}
               rel={popout ? undefined : 'noopener noreferrer'}
-              aria-label={popout ? 'Open in full app' : 'Open session in a new tab'}
+              aria-label={popout ? 'Open in full app' : 'Open agent in a new tab'}
               className="rounded-md px-2 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg max-md:inline-flex max-md:size-11 max-md:items-center max-md:justify-center max-md:p-0 [@media(pointer:coarse)]:inline-flex [@media(pointer:coarse)]:size-11 [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center [@media(pointer:coarse)]:p-0"
             >
               <ExternalLinkIcon size={15} />
@@ -1565,17 +1602,37 @@ export function SessionPane({
             </button>
           </Tooltip>
         )}
-        <Tooltip content="Close session pane">
+        <Tooltip content="Close agent pane">
           <button
             type="button"
             onClick={closePane}
-            aria-label="Close session pane"
+            aria-label="Close agent pane"
             className="rounded-md px-2 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg max-md:inline-flex max-md:size-11 max-md:items-center max-md:justify-center max-md:p-0 [@media(pointer:coarse)]:inline-flex [@media(pointer:coarse)]:size-11 [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center [@media(pointer:coarse)]:p-0"
           >
             <XIcon />
           </button>
         </Tooltip>
       </header>
+
+      {session.archivedAt != null && (
+        <div
+          data-testid="archived-banner"
+          className="flex shrink-0 items-center gap-2 border-b border-edge bg-surface-raised/70 px-3 py-1.5 text-xs"
+        >
+          <span className="min-w-0 flex-1 truncate text-fg-muted">
+            Archived — new activity will bring it back.
+          </span>
+          {onSetArchived && (
+            <button
+              type="button"
+              onClick={() => onSetArchived(session.id, false, session.archivedAt)}
+              className="rounded-md px-2 py-0.5 text-2xs font-medium text-fg-tertiary hover:bg-surface-overlay hover:text-fg-body"
+            >
+              Unarchive
+            </button>
+          )}
+        </div>
+      )}
 
       {seatRequest && !displayTerminal && (
         <div
@@ -1963,7 +2020,7 @@ export function SessionPane({
 
       {isEnded ? (
         <div className="shrink-0 border-t border-edge px-4 py-2.5 text-2xs text-fg-muted">
-          Session ended — transcript is read-only.
+          Agent ended — transcript is read-only.
         </div>
       ) : (
         <>

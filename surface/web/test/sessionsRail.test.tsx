@@ -76,11 +76,25 @@ describe('SessionsRail', () => {
     expect(screen.getByText('3')).toBeTruthy();
   });
 
+  it('excludes archived sessions from the rail', () => {
+    const live = session({ title: 'still working', status: 'running' });
+    const archived = session({
+      title: 'tucked away',
+      status: 'completed',
+      archivedAt: new Date().toISOString(),
+    });
+
+    render(<SessionsRail channelId="ch-1" sessions={asMap(live, archived)} onOpenSession={() => {}} />);
+
+    expect(screen.getByText('still working')).toBeTruthy();
+    expect(screen.queryByText('tucked away')).toBeNull();
+  });
+
   it('shows an empty state when the channel has no sessions', () => {
     render(
       <SessionsRail channelId="ch-1" sessions={{}} onOpenSession={() => {}} />,
     );
-    expect(screen.getByText('No sessions yet')).toBeTruthy();
+    expect(screen.getByText('No agents yet')).toBeTruthy();
     expect(screen.queryByText('Active')).toBeNull();
   });
 

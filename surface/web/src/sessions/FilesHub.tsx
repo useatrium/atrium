@@ -1330,7 +1330,7 @@ export function FilesHub({
   const empty = !loading && !error && visibleItemCount === 0;
   const emptyTitle =
     scope === 'session'
-      ? 'No session files'
+      ? 'No agent files'
       : searchActive
         ? 'No matching files'
         : currentDir
@@ -1450,7 +1450,7 @@ export function FilesHub({
           // biome-ignore lint/a11y/useSemanticElements: compact segmented control already exposes a named group and pressed buttons; fieldset would alter toolbar layout.
           <div
             role="group"
-            aria-label="Session file scope"
+            aria-label="Agent file scope"
             className="flex rounded-md border border-edge bg-surface p-0.5 max-md:min-w-0 max-md:flex-1 md:shrink-0"
           >
             {(['session', 'channel'] as const).map((nextScope) => {
@@ -1501,7 +1501,7 @@ export function FilesHub({
           </div>
         )}
         <span className="text-2xs text-fg-muted max-md:ml-auto md:shrink-0">
-          {scope === 'session' ? 'Session files' : scopedChannel ? 'Channel files' : 'Workspace files'}
+          {scope === 'session' ? 'Agent files' : scopedChannel ? 'Channel files' : 'Workspace files'}
         </span>
       </div>
       <FilterBar

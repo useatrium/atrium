@@ -38,7 +38,9 @@ function renderActions({
     useChannelActions({
       client,
       dispatch,
-      enqueueOp: enqueueOp as (input: EnqueueOpInput<'mute.set'>) => Promise<unknown>,
+      enqueueOp: enqueueOp as <T extends 'mute.set' | 'channel.archive' | 'channel.pin'>(
+        input: EnqueueOpInput<T>,
+      ) => Promise<unknown>,
       getChannels: () => channels,
       selectChannel,
     }),

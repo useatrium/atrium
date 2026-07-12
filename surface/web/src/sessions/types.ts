@@ -29,6 +29,7 @@ export {
   PENDING_SESSION_PREFIX,
   isPendingSessionId,
   isTerminalSessionStatus,
+  isArchivedSession,
   STALLED_AFTER_MS,
   isStalledSessionStatus,
   maxSessionStatus,
