@@ -31,8 +31,13 @@ product state; Centaur owns sandboxed agent execution.
   auto-created on first upload. `S3_ENDPOINT` is the public presign host;
   `S3_INTERNAL_ENDPOINT` is optional for server byte I/O. Override via
   `S3_BUCKET`/`S3_ACCESS_KEY`/`S3_SECRET_KEY`.
-- Auth is prototype-simple: `POST /auth/login {handle, displayName}` sets a
-  signed (HMAC-SHA256) httpOnly cookie. No passwords.
+- Auth: three paths, all ending in the same signed (HMAC-SHA256) httpOnly
+  session cookie. Open handle login (`POST /auth/login {handle, displayName}`,
+  no password — dev default, disable with `AUTH_OPEN=0`), email one-time codes
+  (`/auth/email/request` + `/auth/email/verify`; codes print to the server log
+  in dev, `EMAIL_MODE=resend` sends real mail), and Google OAuth when
+  `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`/`GOOGLE_REDIRECT_URL` are set.
+  `GET /auth/methods` tells clients which paths are live.
 
 ## Where code lives
 
@@ -120,34 +125,21 @@ cookie-based, two tabs in the same profile share one login).
 9. Day separators: messages from previous days render under "Today" /
    "Yesterday" / weekday labels.
 
-## API sketch
+## API surface
 
-- `POST /auth/login {handle, displayName}` → sets `atrium_session` cookie
-- `GET /auth/me`, `POST /auth/logout`
-- `GET /auth/methods`
-- `GET /api/workspaces`, `GET /api/channels`, `POST /api/channels {name}`
-- `GET /api/channels/:id/messages?before_id=&after_id=&limit=` returns newest-last;
-  `before_id` pages history (root messages only); `after_id` is the reconnect
-  catch-up read and includes thread replies so counts/threads stay correct
-- `GET /api/threads/:rootEventId/messages`
-- `POST /api/messages {channelId, text, clientMsgId?, threadRootEventId?}`
-  rejects empty and >8KB text; echoes `client_msg_id` in the event payload for
-  optimistic reconciliation
-- `GET /api/sessions`, `POST /api/sessions`, `GET /api/sessions/:id`,
-  `GET /api/sessions/:id/stream`, `POST /api/sessions/:id/messages`
-- Artifact endpoints: `GET /api/sessions/:id/artifacts/by-path`,
-  `/presentations`, `/preview`, `/changes`, `/conflict`, plus
-  `POST /api/sessions/:id/artifacts/:artifactId/resolve`.
-  Raw artifact bytes for Centaur/node-sync use internal routes under
-  `/api/internal/sessions/:id/artifacts/*`.
-  Executable artifact previews are served only for embedded previews; use
-  `/by-path` for raw download/open flows.
-- `POST /api/uploads`, `GET /api/files/:id`, `GET /api/files/:id/url`
-- `POST /api/calls`, `POST /api/calls/:id/accept|decline|leave`
-- `WS /ws`: client sends `{type:"subscribe", channelIds:[...]}` (full
-  replacement); server pushes `{type:"event", event}` for subscribed channels
-  and `{type:"presence", channelId, users}` on join/leave. Protocol-level
-  ping/pong heartbeat (30s) plus an app-level `{type:"ping"}` from the client.
+Routes live in `server/src/routes/`, one file per area — read the route file
+for the current contract rather than trusting a listing here to stay fresh.
+The areas: `auth` (handle / email-code / Google login), `workspaces`,
+`channels`, `messages`, `sessions` + `session-interactions` (spawn, stream,
+steer, questions), `artifacts` + `channel-artifact-writeback`, `uploads` +
+`files` + `files-hub`, `entries` (addressable entry refs), `activity` (the
+Attention feed), `calls`, `push`, `me`, `markup-feedback`, `atrium`
+(agent-facing team context), `client-errors`, `health` — plus `sync` and the
+`internal-*` routes consumed by Centaur/node-sync rather than browsers.
+
+Realtime is `WS /ws` (`server/src/routes/websocket.ts`): the client subscribes
+to channel IDs and receives `{type:"event", event}` fanout and presence
+updates, with a protocol-level ping/pong heartbeat plus an app-level ping.
 
 Presence semantics: channel presence is focus-based ("who is actively viewing
 this channel"), because clients subscribe broadly for event fanout and unread

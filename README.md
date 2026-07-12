@@ -16,7 +16,7 @@ It has two halves:
 - **A shared file store.** One place where many agents and people can edit the same
   files at once without overwriting each other's work.
 
-> Full architecture walkthrough: **https://gbasin.github.io/atrium-architecture/**
+> Full architecture deep dive: [docs/architecture.md](docs/architecture.md)
 
 ## Why
 
@@ -112,10 +112,10 @@ docker compose down
 - **Everything is on the record.** Every message, tool call, edit, and approval is
   saved with who did it and when, so any result can be traced back.
 
-The core move: type `@agent <task>` in a thread, a session starts, a live card
-appears, you can pop it into a side-by-side pane (several people can watch at once),
-hand someone the controls, and a final card lands with a permanent link to the full
-transcript.
+The core move: hit `!!` in the composer, type the task, a session starts, a
+live card appears, you can pop it into a side-by-side pane (several people can
+watch at once), hand someone the controls, and a final card lands with a
+permanent link to the full transcript.
 
 ## Architecture
 
@@ -269,12 +269,14 @@ Atrium adds is in
 | `surface/` | the product: `server/` (Node + TypeScript, Fastify, Postgres), `web/` (Vite + React + Tailwind), `desktop/` (Electron shell around `web/` — signed + notarized macOS build), `mobile/` (Expo), `shared/`, plus tests and deploy config. |
 | `centaur/` | the agent runtime — **our fork of `paradigmxyz/centaur`**, vendored via `git subtree`. Rust + Python + Helm; self-contained (`just`, cargo). See [`centaur/ATRIUM_FORK.md`](centaur/ATRIUM_FORK.md). |
 | `infra/` | local cluster, a stand-in model server for testing, and deployment setup. |
+| `deploy/` | scripts and config for the production box: k3s/registry setup, `redeploy.sh`, boot-heal. |
 | `docs/` | public documentation entry points. |
 | `docs/archive/notes/` | archived design scratchpads and build logs from early development; useful context, not canonical user docs. |
 
 ## Links
 
-- **Architecture walkthrough:** https://gbasin.github.io/atrium-architecture/
+- **Architecture deep dive:** the data model, sandbox filesystem, and capture/sync
+  mechanics — [docs/architecture.md](docs/architecture.md).
 - **UI surfaces:** the screens and how they compose — [docs/surfaces.md](docs/surfaces.md).
 - **Desktop app:** build, signing, and auto-update — [surface/desktop/README.md](surface/desktop/README.md).
 - **Agent engine:** our Centaur fork in [`centaur/`](centaur/) — upstream [paradigmxyz/centaur](https://github.com/paradigmxyz/centaur) (Apache-2.0 OR MIT), pulled via subtree (see [`centaur/ATRIUM_FORK.md`](centaur/ATRIUM_FORK.md)).
