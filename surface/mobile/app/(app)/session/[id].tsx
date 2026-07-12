@@ -27,9 +27,11 @@ import {
   isTerminalSessionStatus,
   matchSteerProvenance,
   mergeSpawnResponse,
+  normalizeSteerProvenanceText,
   randomId,
   sessionDriverId,
   sessionFromWire,
+  steerProvenanceKey,
   type QuestionPrompt,
   type Session,
   type SessionQuestionAnswerSummary,
@@ -120,19 +122,6 @@ function entryLink(serverUrl: string, handle: string): string {
 
 function sessionLink(serverUrl: string, sessionId: string): string {
   return `${serverUrl.replace(/\/+$/, '')}/s/${encodeURIComponent(sessionId)}`;
-}
-
-function normalizeSteerEchoText(text: string): string {
-  return text.trim().replace(/\s+/g, ' ');
-}
-
-function steerProvenanceKey(provenance: SteerProvenance): string {
-  return [
-    String(provenance.resolvedAt),
-    provenance.proposerName,
-    provenance.resolvedByName,
-    provenance.edited ? 'edited' : 'sent',
-  ].join('\u0000');
 }
 
 type PendingSteer = {
@@ -1002,7 +991,7 @@ export default function SessionScreen() {
     const echoed = new Map<string, UserMessageItem[]>();
     for (const item of stream.items) {
       if (item.type !== 'user_message') continue;
-      const text = normalizeSteerEchoText(item.text);
+      const text = normalizeSteerProvenanceText(item.text);
       const matches = echoed.get(text);
       if (matches) matches.push(item);
       else echoed.set(text, [item]);
@@ -1011,7 +1000,7 @@ export default function SessionScreen() {
     const consumedEchoes = new Set<string>();
     const carriedProvenance = new Map<string, SteerRowProvenance>();
     const keep = pendingSteers.filter((pending) => {
-      const text = normalizeSteerEchoText(pending.text);
+      const text = normalizeSteerProvenanceText(pending.text);
       const match = echoed.get(text)?.find((item) => !consumedEchoes.has(item.id));
       if (!match) return true;
       consumedEchoes.add(match.id);

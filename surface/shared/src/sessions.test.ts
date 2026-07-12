@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { matchSteerProvenance, maxSessionStatus, type SessionSuggestion } from './sessions';
+import {
+  matchSteerProvenance,
+  maxSessionStatus,
+  normalizeSteerProvenanceText,
+  steerProvenanceKey,
+  type SessionSuggestion,
+} from './sessions';
 
 describe('maxSessionStatus', () => {
   it('keeps completed ahead of failed regardless of event order', () => {
@@ -134,5 +140,22 @@ describe('matchSteerProvenance', () => {
     );
 
     expect(matched.size).toBe(0);
+  });
+});
+
+describe('steer provenance helpers', () => {
+  it('normalizes whitespace consistently for transcript echo matching', () => {
+    expect(normalizeSteerProvenanceText('  inspect\n\tthe   test  ')).toBe('inspect the test');
+  });
+
+  it('keys every provenance field used to detect a changed attribution', () => {
+    expect(
+      steerProvenanceKey({
+        proposerName: 'Maya Chen',
+        resolvedByName: 'Gary Basin',
+        edited: true,
+        resolvedAt: '2026-07-06T18:41:00.000Z',
+      }),
+    ).toBe('2026-07-06T18:41:00.000Z\u0000Maya Chen\u0000Gary Basin\u0000edited');
   });
 });

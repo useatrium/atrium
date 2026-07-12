@@ -137,8 +137,17 @@ export interface SteerProvenanceUserMessage {
   ts?: string | number | null;
 }
 
-function normalizeSteerProvenanceText(text: string): string {
+export function normalizeSteerProvenanceText(text: string): string {
   return text.trim().replace(/\s+/g, ' ');
+}
+
+export function steerProvenanceKey(provenance: SteerProvenance): string {
+  return [
+    String(provenance.resolvedAt),
+    provenance.proposerName,
+    provenance.resolvedByName,
+    provenance.edited ? 'edited' : 'sent',
+  ].join('\u0000');
 }
 
 function steerProvenanceTime(value: string | number | null | undefined): number | null {

@@ -73,7 +73,9 @@ import {
   formatTime,
   formatTurnTime,
   matchSteerProvenance,
+  normalizeSteerProvenanceText,
   randomId,
+  steerProvenanceKey,
   type SteerProvenance,
 } from '@atrium/surface-client';
 import { sessionsApi } from './api';
@@ -224,19 +226,6 @@ function isInteractiveTarget(target: EventTarget): boolean {
 
 export function isTranscriptEntryHandle(handle: string | null): handle is string {
   return typeof handle === 'string' && handle.startsWith('rec_');
-}
-
-function normalizeSteerEchoText(text: string): string {
-  return text.trim().replace(/\s+/g, ' ');
-}
-
-function steerProvenanceKey(provenance: SteerProvenance): string {
-  return [
-    String(provenance.resolvedAt),
-    provenance.proposerName,
-    provenance.resolvedByName,
-    provenance.edited ? 'edited' : 'sent',
-  ].join('\u0000');
 }
 
 type OutputSurface = 'conflicts' | 'changes' | 'sideEffects' | 'artifacts';
@@ -787,7 +776,7 @@ export function SessionPane({
     const echoed = new Map<string, UserMessageItem[]>();
     for (const it of stream.items) {
       if (it.type === 'user_message') {
-        const t = normalizeSteerEchoText(it.text);
+        const t = normalizeSteerProvenanceText(it.text);
         const matches = echoed.get(t);
         if (matches) matches.push(it);
         else echoed.set(t, [it]);
@@ -796,7 +785,7 @@ export function SessionPane({
     const consumedEchoes = new Set<string>();
     const carriedProvenance = new Map<string, { provenance: SteerProvenance; acceptedByMe: boolean }>();
     const keep = pendingSteers.filter((p) => {
-      const t = normalizeSteerEchoText(p.text);
+      const t = normalizeSteerProvenanceText(p.text);
       const match = echoed.get(t)?.find((it) => !consumedEchoes.has(it.id));
       if (match) {
         consumedEchoes.add(match.id);
