@@ -31,6 +31,7 @@ import {
   type ToolCallItem,
   type UserMessageItem,
 } from '@atrium/centaur-client';
+import { isMacDesktop } from '../desktop';
 import {
   ApiError,
   api,
@@ -1370,6 +1371,7 @@ export function SessionPane({
 
   return (
     <aside
+      id={focused && !popout ? 'main-content' : undefined}
       className={`relative flex min-w-0 flex-col border-l border-edge bg-surface ${
         focused ? 'flex-1' : `shrink-0 ${paneSizing.className}`
       }`}
@@ -1394,7 +1396,11 @@ export function SessionPane({
           }`}
         />
       )}
-      <header className="flex h-12 shrink-0 items-center gap-2 border-b border-edge px-3 max-md:h-auto max-md:min-h-12 max-md:flex-wrap max-md:gap-1 max-md:px-2 max-md:py-1.5">
+      <header
+        className={`flex h-12 shrink-0 items-center gap-2 border-b border-edge px-3 max-md:h-auto max-md:min-h-12 max-md:flex-wrap max-md:gap-1 max-md:px-2 max-md:py-1.5 ${
+          isMacDesktop && popout ? 'pl-20 max-md:pl-20' : ''
+        }`}
+      >
         <StatusChip status={displayStatus} stalled={stalled} />
         {/* On a phone the title+metadata drop to their own full-width row below the
             compact status/actions row, so the title stays readable instead of being

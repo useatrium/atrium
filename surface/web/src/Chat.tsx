@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { ApiError, type Workspace, api } from './api';
-import { isDesktop, desktopWsUrl, setDesktopBadge } from './desktop';
+import { isDesktop, isMacDesktop, desktopWsUrl, setDesktopBadge } from './desktop';
 import {
   DurableOpQueue,
   FILES_CHANGED_EVENT_TYPE,
@@ -1985,7 +1985,11 @@ export function Chat({
 
       {view !== 'focus' && (
         <main id="main-content" className={`${hideMainOnMobile ? 'hidden md:flex' : 'flex'} min-w-0 flex-1 flex-col`}>
-          <header className="flex h-12 shrink-0 items-center gap-2 border-b border-edge px-2 md:gap-3 md:px-4">
+          <header
+            className={`flex h-12 shrink-0 items-center gap-2 border-b border-edge px-2 md:gap-3 md:px-4 ${
+              isMacDesktop ? 'max-md:pl-20' : ''
+            }`}
+          >
             <button
               type="button"
               onClick={() => setIsSidebarOpen(true)}

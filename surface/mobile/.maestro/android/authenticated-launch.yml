@@ -1,0 +1,14 @@
+appId: chat.atrium.app
+---
+# Route the Android development client directly to Metro. Launching by package
+# name opens Expo's launcher and can race its inspector reconnection.
+- openLink: "atrium://expo-development-client/?url=http%3A%2F%2F10.0.2.2%3A8081"
+- runFlow:
+    when:
+      visible: "http://10.0.2.2:8081"
+    commands:
+      - tapOn: "http://10.0.2.2:8081"
+- extendedWaitUntil:
+    visible: "Chat"
+    timeout: 45000
+- assertVisible: "Settings"

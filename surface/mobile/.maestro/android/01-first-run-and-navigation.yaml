@@ -6,9 +6,9 @@ tags:
 env:
   SCREENSHOT_PREFIX: android-first-run
 ---
-- runFlow: ../common/authenticated-launch.yml
+- runFlow: authenticated-launch.yml
 - takeScreenshot: "${SCREENSHOT_PREFIX}-01-chat-orientation"
-- runFlow: ../common/top-level-navigation.yml
+- runFlow: top-level-navigation.yml
 - runFlow: ../common/settings-controls.yml
 # This is the OS Back action, not an in-app selector. It proves the Settings
 # stack pops back to the previously selected top-level destination.

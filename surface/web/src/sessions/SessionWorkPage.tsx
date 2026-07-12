@@ -117,7 +117,7 @@ export function SessionWorkPage({ sessionId, tab }: { sessionId: string; tab: Wo
   }
 
   return (
-    <div data-testid="session-work-page" className="flex h-dvh flex-col bg-surface">
+    <main id="main-content" data-testid="session-work-page" className="flex h-dvh flex-col bg-surface">
       <header className="flex h-11 shrink-0 items-center gap-3 border-b border-edge px-3">
         <a
           href={`/s/${sessionId}`}
@@ -132,6 +132,6 @@ export function SessionWorkPage({ sessionId, tab }: { sessionId: string; tab: Wo
         {!connected && <span className="ml-auto text-2xs text-fg-tertiary">connecting…</span>}
       </header>
       <div className="relative flex min-h-0 flex-1 flex-col">{surface()}</div>
-    </div>
+    </main>
   );
 }

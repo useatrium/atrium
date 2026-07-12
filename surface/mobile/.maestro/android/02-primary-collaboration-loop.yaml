@@ -6,7 +6,7 @@ tags:
 env:
   SCREENSHOT_PREFIX: android-loop
 ---
-- runFlow: ../common/authenticated-launch.yml
+- runFlow: authenticated-launch.yml
 - tapOn:
     text: ".*Agents.*"
 - extendedWaitUntil:

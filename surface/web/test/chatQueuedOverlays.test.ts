@@ -80,7 +80,7 @@ describe('chatQueuedOverlays', () => {
       task: 'Run the quarterly report and summarize anomalies',
       clientSpawnId: 'pending-session-1',
       threadRootEventId: 77,
-      repo: 'gbasin/atrium',
+      repo: 'useatrium/atrium',
       branch: 'feature/reporting',
       createdAt: '2026-06-28T14:00:00.000Z',
     };
@@ -95,7 +95,7 @@ describe('chatQueuedOverlays', () => {
       title: 'Run the quarterly report and summarize anomalies',
       status: 'spawning',
       harness: 'codex',
-      repo: 'gbasin/atrium',
+      repo: 'useatrium/atrium',
       branch: 'feature/reporting',
       spawnedBy: 'user-1',
       spawnerName: 'Me User',

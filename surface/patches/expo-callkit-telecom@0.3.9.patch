@@ -1,0 +1,28 @@
+diff --git a/android/src/main/java/expo/modules/callkittelecom/ExpoCallKitTelecomModule.kt b/android/src/main/java/expo/modules/callkittelecom/ExpoCallKitTelecomModule.kt
+index f6443f6a8869aa084ec9fce8a6d3ae34d1fd8e2f..96738878c24cf1e058c8fe629cd67db368d5400e 100644
+--- a/android/src/main/java/expo/modules/callkittelecom/ExpoCallKitTelecomModule.kt
++++ b/android/src/main/java/expo/modules/callkittelecom/ExpoCallKitTelecomModule.kt
+@@ -1,5 +1,7 @@
+ package expo.modules.callkittelecom
+ 
++import android.util.Log
++import com.google.firebase.FirebaseApp
+ import expo.modules.callkittelecom.events.CallEventEmitter
+ import expo.modules.callkittelecom.events.CallEvents
+ import expo.modules.callkittelecom.managers.CallAudioManager
+@@ -81,7 +83,14 @@ class ExpoCallKitTelecomModule : Module() {
+ 
+             CallManager.shared.initialize(context)
+ 
+-            VoIPPushManager.register()
++            // Local/prebuilt development clients may intentionally omit
++            // google-services.json. Push is unavailable in that case, but the
++            // call module must not crash the entire application during startup.
++            if (FirebaseApp.getApps(context).isNotEmpty()) {
++                VoIPPushManager.register()
++            } else {
++                Log.w("ExpoCallKitTelecom", "Firebase is not configured; skipping Android VoIP push registration")
++            }
+ 
+             CallEventEmitter.setSender { eventName, body -> sendEvent(eventName, body) }
+ 

@@ -2,11 +2,13 @@
 
 ## Reporting a Vulnerability
 
-Please report security issues privately by emailing security@atrium.dev.
+Please report security issues privately through GitHub's private vulnerability
+reporting: open the repository's **Security** tab and choose **Report a
+vulnerability** (or go directly to
+https://github.com/useatrium/atrium/security/advisories/new).
 
-If GitHub private vulnerability reporting is enabled for this repository, you may
-also use GitHub's private advisory flow. Do not open public issues for suspected
-vulnerabilities until we have had a chance to investigate and coordinate a fix.
+Do not open public issues for suspected vulnerabilities until we have had a
+chance to investigate and coordinate a fix.
 
 When possible, include:
 
