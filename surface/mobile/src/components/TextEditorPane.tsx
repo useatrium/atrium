@@ -107,34 +107,13 @@ export function TextEditorPane(props: {
     [closeAfterInlineError],
   );
 
-  const save = useCallback(async () => {
-    if (loadState.status !== 'ready' || saving) return;
-    setSaving(true);
-    setError(null);
-    try {
-      const result = await api.saveTextFile(file.artifactId, draft, loadState.baseSeq, file.mime ?? 'text/plain');
-      if (!mountedRef.current) return;
-      if (result.status === 'normal') {
-        onSaved?.(result);
-        onClose();
-        return;
-      }
-      const nextConflict = await api.loadFileConflict(file.artifactId);
-      if (mountedRef.current) setConflict(nextConflict);
-    } catch (err: unknown) {
-      if (mountedRef.current) handleApiFailure(err);
-    } finally {
-      if (mountedRef.current) setSaving(false);
-    }
-  }, [api, draft, file.artifactId, file.mime, handleApiFailure, loadState, onClose, onSaved, saving]);
-
-  const resolveConflict = useCallback(
-    async (choice: HubFileResolveChoice) => {
-      if (!conflict || saving) return;
+  const runSave = useCallback(
+    async (operation: () => Promise<HubFileSaveResult>) => {
+      if (saving) return;
       setSaving(true);
       setError(null);
       try {
-        const result = await api.resolveFileConflict(file.artifactId, conflict, choice, file.mime ?? 'text/plain');
+        const result = await operation();
         if (!mountedRef.current) return;
         if (result.status === 'normal') {
           onSaved?.(result);
@@ -149,7 +128,24 @@ export function TextEditorPane(props: {
         if (mountedRef.current) setSaving(false);
       }
     },
-    [api, conflict, file.artifactId, file.mime, handleApiFailure, onClose, onSaved, saving],
+    [api, file.artifactId, handleApiFailure, onClose, onSaved, saving],
+  );
+
+  const save = useCallback(async () => {
+    if (loadState.status !== 'ready') return;
+    await runSave(() =>
+      api.saveTextFile(file.artifactId, draft, loadState.baseSeq, file.mime ?? 'text/plain'),
+    );
+  }, [api, draft, file.artifactId, file.mime, loadState, runSave]);
+
+  const resolveConflict = useCallback(
+    async (choice: HubFileResolveChoice) => {
+      if (!conflict) return;
+      await runSave(() =>
+        api.resolveFileConflict(file.artifactId, conflict, choice, file.mime ?? 'text/plain'),
+      );
+    },
+    [api, conflict, file.artifactId, file.mime, runSave],
   );
 
   if (conflict) {
