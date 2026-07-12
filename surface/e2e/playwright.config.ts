@@ -31,11 +31,13 @@ export default defineConfig({
   // WS proxy resets described below, so hold at two until repeated green runs.
   fullyParallel: true,
   workers: 2,
-  // Generous on CI: shared runners are slow and variable, and the vite WS
-  // proxy can reset a socket under load — the client recovers (reconnect →
-  // channel refetch surfaces the missed unread) but needs more than a few
-  // seconds. Local runs stay snappy via the lower timeouts.
-  timeout: process.env.CI ? 60_000 : 30_000,
+  // The test timeout is a HANG detector, not a performance SLO — sized ~2x
+  // the healthy p99 on a slow CI runner (the longest legit specs run 40-55s
+  // there). At 60s, healthy-but-slow runs tipped over and each false fire
+  // cost ~100s (60s burned + a ~40s retry), compounding toward the step
+  // budget. Responsiveness is still policed by the expect timeout below: a
+  // stuck assertion fails in 20s regardless. Local runs stay snappy.
+  timeout: process.env.CI ? 120_000 : 30_000,
   expect: { timeout: process.env.CI ? 20_000 : 8_000 },
   retries: process.env.CI ? 2 : 0,
   reporter: process.env.CI ? [['list'], ['html', { open: 'never' }]] : 'list',
