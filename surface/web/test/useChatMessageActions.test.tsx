@@ -117,41 +117,17 @@ describe('useChatMessageActions', () => {
     );
   });
 
-  it('routes attachment-free summon sigils to session spawn', () => {
+  it('no longer routes sigil text at the send layer — the composer owns summoning', () => {
+    // A literal "!!task" reaching send() (composer intercepts it while typing,
+    // so this is programmatic/paste-edge only) posts as a plain message.
     const { result, enqueueOp } = renderActions();
 
     act(() => result.current.send('ch-1', '!!summarize this thread', 7));
 
     expect(enqueueOp).toHaveBeenCalledWith(
       expect.objectContaining({
-        opType: 'session.spawn',
-        payload: expect.objectContaining({
-          channelId: 'ch-1',
-          task: 'summarize this thread',
-          threadRootEventId: 7,
-          harness: 'codex',
-        }),
-      }),
-      expect.objectContaining({ onStored: expect.any(Function) }),
-    );
-  });
-
-  it('routes summon sigils with attachments to session spawn', () => {
-    const { result, enqueueOp } = renderActions();
-    const attachment = { id: 'file-1', filename: 'a.txt', contentType: 'text/plain', size: 10 };
-
-    act(() =>
-      result.current.send('ch-1', '!! summarize this file', undefined, [attachment], [{ uploadKey: 'upload-1' }]),
-    );
-
-    expect(enqueueOp).toHaveBeenCalledWith(
-      expect.objectContaining({
-        opType: 'session.spawn',
-        payload: expect.objectContaining({
-          task: 'summarize this file',
-          attachments: [attachment],
-          attachmentRefs: [{ uploadKey: 'upload-1' }],
-        }),
+        opType: 'msg.send',
+        payload: expect.objectContaining({ channelId: 'ch-1', text: '!!summarize this thread' }),
       }),
       expect.anything(),
     );

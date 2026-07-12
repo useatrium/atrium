@@ -4,6 +4,7 @@ import { cleanup, fireEvent, render, screen, within } from '@testing-library/rea
 import type { ChatMessage, UserRef } from '@atrium/surface-client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ThemeProvider } from '../theme';
+import type { Session } from '../sessions/types';
 import { MessageRow } from './MessageRow';
 
 const ada: UserRef = {
@@ -37,21 +38,61 @@ function message(overrides: Partial<ChatMessage> = {}): ChatMessage {
   };
 }
 
+function session(overrides: Partial<Session> = {}): Session {
+  return {
+    id: 's-1',
+    workspaceId: 'ws-1',
+    channelId: 'ch-1',
+    threadRootEventId: 42,
+    title: 'Timeline migration',
+    status: 'running',
+    harness: 'codex',
+    repo: null,
+    branch: null,
+    repos: null,
+    spawnedBy: 'u-1',
+    driverId: 'u-1',
+    pendingSeatRequests: [],
+    suggestions: [],
+    answerProposals: [],
+    pendingQuestion: null,
+    providerAuthRequired: null,
+    githubIdentityMode: null,
+    providerConnectionId: null,
+    agentProfileVersionId: null,
+    modelEffort: null,
+    questionEvents: [],
+    seatEvents: [],
+    costUsd: 0,
+    resultText: null,
+    createdAt: '2026-07-05T12:00:00.000Z',
+    completedAt: null,
+    archivedAt: null,
+    pinned: false,
+    lastEventId: 0,
+    permalink: '/s/s-1',
+    ...overrides,
+  };
+}
+
 function renderRow({
   resolveUser,
   onReact = vi.fn().mockResolvedValue(undefined),
   onOpenThread,
   row = message(),
+  session: rowSession,
 }: {
   resolveUser?: (id: string) => UserRef | undefined;
   onReact?: (message: ChatMessage, emoji: string) => Promise<void>;
   onOpenThread?: (rootEventId: number) => void;
   row?: ChatMessage;
+  session?: Session;
 } = {}) {
   render(
     <ThemeProvider>
       <MessageRow
         message={row}
+        session={rowSession}
         grouped={false}
         meId="u-1"
         meHandle="ada"
@@ -137,5 +178,76 @@ describe('MessageRow broadcast replies', () => {
 
     expect(onOpenThread).toHaveBeenCalledWith(42);
     expect(onOpenThread).not.toHaveBeenCalledWith(99);
+  });
+});
+
+describe('MessageRow web presence', () => {
+  it('renders an agent reply with the session author and normal markdown body', () => {
+    renderRow({
+      session: session(),
+      row: message({
+        sessionId: 's-1',
+        sessionEventType: 'replied',
+        text: '**Shipped** the [timeline](https://example.com).',
+        author: { id: 'agent:s-1', handle: 'agent', displayName: 'Agent' },
+      }),
+    });
+
+    expect(screen.getByText('Timeline migration')).toBeTruthy();
+    expect(screen.getByText('AI')).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'timeline' })).toBeTruthy();
+    expect(screen.getByText('Shipped')).toBeTruthy();
+  });
+
+  it('shows a direct inline answer for the current driver', () => {
+    renderRow({
+      session: session({
+        pendingQuestion: {
+          questionId: 'q-1',
+          questions: [
+            { id: 'prompt-1', header: 'Scope', question: 'Ship it?', options: [{ label: 'Yes', description: 'Ship' }] },
+          ],
+        },
+      }),
+      row: message({
+        sessionId: 's-1',
+        sessionEventType: 'question_requested',
+        sessionEventPayload: { questionId: 'q-1' },
+      }),
+    });
+
+    expect(screen.getByRole('button', { name: 'Yes' })).toBeTruthy();
+    expect(screen.getByRole('textbox', { name: 'Type an answer' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Answer' })).toBeTruthy();
+  });
+
+  it('offers a suggestion instead of a direct answer to non-drivers', () => {
+    renderRow({
+      session: session({
+        driverId: 'u-2',
+        pendingQuestion: { questionId: 'q-1', questions: [{ id: 'prompt-1', header: 'Scope', question: 'Ship it?' }] },
+      }),
+      row: message({
+        sessionId: 's-1',
+        sessionEventType: 'question_requested',
+        sessionEventPayload: { questionId: 'q-1' },
+      }),
+    });
+
+    expect(screen.getByRole('textbox', { name: 'Suggest an answer' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Suggest' })).toBeTruthy();
+    expect(screen.getByText('The current driver decides what to send.')).toBeTruthy();
+  });
+
+  it('renders steer and driver-actionable suggestion provenance chips', () => {
+    renderRow({
+      session: session(),
+      row: message({ steeredSessionId: 's-1', suggestedSessionId: 's-1', suggestionId: 'sg-1' }),
+    });
+
+    expect(screen.getByText('→ agent')).toBeTruthy();
+    expect(screen.getByText('suggestion')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Send to agent' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Dismiss' })).toBeTruthy();
   });
 });

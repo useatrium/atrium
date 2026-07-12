@@ -425,6 +425,8 @@ export class SessionRuns {
     threadRootEventId: number | null;
     anchorEventId?: number;
     broadcastCard?: boolean;
+    /** Requested initial reasoning-effort tier; ignored unless valid for the harness. */
+    effort?: string;
     task: string;
     harness?: string;
     repo?: string | null;
@@ -453,6 +455,7 @@ export class SessionRuns {
       threadRootEventId: number | null;
       anchorEventId?: number;
       broadcastCard?: boolean;
+      effort?: string;
       task: string;
       harness?: string;
       repo?: string | null;
@@ -509,10 +512,15 @@ export class SessionRuns {
     // or steers carrying the sticky selection would all fail 400.
     const profileSettings = selectedProfileVersion?.manifest.settings;
     const spawnEffortRaw = profileSettings?.['model_reasoning_effort'] ?? profileSettings?.['effortLevel'];
-    const spawnEffort =
+    const profileEffort =
       typeof spawnEffortRaw === 'string' && (HARNESS_EFFORT_LEVELS[harness] ?? []).includes(spawnEffortRaw)
         ? spawnEffortRaw
         : null;
+    const requestedEffort =
+      typeof args.effort === 'string' && (HARNESS_EFFORT_LEVELS[harness] ?? []).includes(args.effort)
+        ? args.effort
+        : null;
+    const spawnEffort = requestedEffort ?? profileEffort;
     const inserted = await client.query<SessionRow>(
       `INSERT INTO sessions (
          workspace_id, channel_id, thread_root_event_id, centaur_thread_key, harness, repo, branch, session_repos,

@@ -12,12 +12,14 @@ import type {
   SessionSpawnPayload,
   UserRef,
 } from '@atrium/surface-client';
-import { looksLikeSummonSigil, parseSummonSigil, randomId } from '@atrium/surface-client';
+import { randomId } from '@atrium/surface-client';
+import { sessionsApi } from './sessions/api';
 import { PENDING_SESSION_PREFIX } from './sessions/types';
 import type { SpawnConfig } from './sessions/SpawnDialog';
 import { pendingMessageFromSendPayload, pendingSpawnFromPayload, type VoiceMsgSendPayload } from './chatQueuedOverlays';
 import { showErrorToast } from './components/Toasts';
 import type { AttachmentMeta } from '@atrium/surface-client';
+import type { AgentComposerRequest } from './components/Composer';
 
 export type VoiceSendMeta = { fileId: string; durationMs: number; waveform?: number[] };
 export type QueuedVoiceMsgSendPayload = MsgSendPayload;
@@ -74,6 +76,9 @@ export function useChatMessageActions({
         attachments?: AttachmentMeta[];
         attachmentRefs?: AttachmentRef[];
         existingAttachmentRefs?: AgentAttachmentRef[];
+        anchorEventId?: number;
+        broadcastCard?: boolean;
+        effort?: string;
       },
     ) => {
       const harness = opts?.harness?.trim() || 'codex';
@@ -86,6 +91,8 @@ export function useChatMessageActions({
         task,
         clientSpawnId,
         threadRootEventId,
+        ...(opts?.anchorEventId ? { anchorEventId: opts.anchorEventId } : {}),
+        ...(opts?.broadcastCard === true ? { broadcastCard: true } : {}),
         harness,
         ...(repo ? { repo } : {}),
         ...(branch ? { branch } : {}),
@@ -155,20 +162,6 @@ export function useChatMessageActions({
       voice?: VoiceSendMeta,
       broadcast?: boolean,
     ) => {
-      if (text) {
-        const summon = parseSummonSigil(text);
-        if (summon != null) {
-          spawnQueuedSession(channelId, summon.task, threadRootEventId, {
-            ...(attachments && attachments.length > 0 ? { attachments } : {}),
-            ...(attachmentRefs && attachmentRefs.length > 0 ? { attachmentRefs } : {}),
-          });
-          return;
-        }
-        if (looksLikeSummonSigil(text)) {
-          showErrorToast('Type !! followed by the task to run.');
-          return;
-        }
-      }
       const clientMsgId = randomId();
       const pendingPayload: VoiceMsgSendPayload = {
         channelId,
@@ -205,6 +198,52 @@ export function useChatMessageActions({
       });
     },
     [dispatch, enqueueOp, me, spawnQueuedSession],
+  );
+
+  const sendAgent = useCallback(
+    (
+      channelId: string,
+      request: AgentComposerRequest,
+      text: string,
+      attachments?: AttachmentMeta[],
+      attachmentRefs?: AttachmentRef[],
+    ) => {
+      if (request.target === 'spawn-channel' || request.target === 'spawn-thread') {
+        spawnQueuedSession(channelId, text, request.target === 'spawn-thread' ? request.threadRootEventId : undefined, {
+          ...(request.anchorEventId ? { anchorEventId: request.anchorEventId } : {}),
+          ...(request.effort ? { effort: request.effort } : {}),
+          ...(request.target === 'spawn-thread' ? { broadcastCard: true } : {}),
+          ...(attachments && attachments.length > 0 ? { attachments } : {}),
+          ...(attachmentRefs && attachmentRefs.length > 0 ? { attachmentRefs } : {}),
+        });
+        return;
+      }
+      if (request.target === 'steer' && request.sessionId) {
+        void enqueueOp({
+          opId: randomId(),
+          opType: 'session.steer',
+          payload: {
+            sessionId: request.sessionId,
+            text,
+            postToThread: true,
+            ...(request.effort ? { effort: request.effort } : {}),
+            ...(attachments && attachments.length > 0 ? { attachments } : {}),
+            ...(attachmentRefs && attachmentRefs.length > 0 ? { attachmentRefs } : {}),
+          },
+        }).catch(() => showErrorToast("Couldn't queue the agent message."));
+        return;
+      }
+      if (request.target === 'suggest' && request.sessionId) {
+        // Direct API call: the op queue has no suggestion op yet (offline-safety
+        // follow-up); the driver sees it in-thread via postToThread.
+        sessionsApi.createSuggestion(request.sessionId, text, randomId(), true).catch(() => {
+          showErrorToast("Couldn't send the suggestion.");
+        });
+        return;
+      }
+      showErrorToast('This agent action is unavailable here.');
+    },
+    [enqueueOp, spawnQueuedSession],
   );
 
   const editMessage = useCallback(
@@ -334,6 +373,7 @@ export function useChatMessageActions({
     removeMessage,
     retry,
     send,
+    sendAgent,
     spawnQueuedSession,
     startConfiguredSession,
   };

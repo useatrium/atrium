@@ -13,6 +13,7 @@ import {
 } from 'react';
 import {
   isStructuredTextForMarkup,
+  randomId,
   questionAnswerSummaryText,
   questionPayloadAnswers,
   questionPayloadPrompts,
@@ -38,6 +39,7 @@ import { TimelineImage } from './TimelineImage';
 import { useLongPress } from './useLongPress';
 import { VoiceMessage } from '../VoiceMessage';
 import { entryShareUrl, fileShareUrl } from '../lib/publicUrl';
+import { sessionsApi } from '../sessions/api';
 
 export { REACTION_EMOJI } from '@atrium/surface-client/reactions';
 
@@ -106,6 +108,7 @@ export const MessageRow = memo(function MessageRow({
   onReact,
   resolveUser,
   onMarkupEntry,
+  onDelegateToAgent,
 }: {
   message: ChatMessage;
   grouped: boolean;
@@ -132,6 +135,8 @@ export const MessageRow = memo(function MessageRow({
   onReact?: (message: ChatMessage, emoji: string) => Promise<void>;
   resolveUser?: (id: string) => UserRef | undefined;
   onMarkupEntry?: (handle: string, message: ChatMessage) => void;
+  /** Opens the composer in agent mode anchored to this message. */
+  onDelegateToAgent?: (message: ChatMessage) => void;
 }) {
   const m = message;
   const dim = m.status === 'pending';
@@ -140,8 +145,9 @@ export const MessageRow = memo(function MessageRow({
   const isBroadcastReplyInMain = !inThread && m.threadRootEventId != null;
   const threadTargetEventId = isBroadcastReplyInMain ? m.threadRootEventId : m.id;
   const canThread = !inThread && threadTargetEventId != null && onOpenThread && !deleted;
-  const isSessionRow = m.sessionId != null && session != null;
-  const isSessionEventRow = m.sessionEventType != null;
+  const isAgentReply = m.sessionEventType === 'replied';
+  const isSessionRow = m.sessionId != null && session != null && !isAgentReply;
+  const isSessionEventRow = m.sessionEventType != null && !isAgentReply;
   const explicitHandle = (m as MessageWithHandle).handle ?? null;
   const entryHandle = explicitHandle ?? (m.status === 'confirmed' && m.id != null ? encodeEventHandle(m.id) : null);
   const canEdit =
@@ -174,6 +180,7 @@ export const MessageRow = memo(function MessageRow({
     entryHandle != null &&
     isStructuredTextForMarkup(m.text) &&
     !!onMarkupEntry;
+  const authorName = isAgentReply ? (session?.title ?? m.author.displayName) : m.author.displayName;
   const [pickerOpen, setPickerOpen] = useState(false);
   const [openReactionEmoji, setOpenReactionEmoji] = useState<string | null>(null);
   const reactionPopoverBaseId = useId();
@@ -335,6 +342,16 @@ export const MessageRow = memo(function MessageRow({
         onSelect: () => onOpenThread!(threadTargetEventId!),
       });
     }
+    if (onDelegateToAgent && m.id != null && m.sessionId == null && m.sessionEventType == null) {
+      actions.push({
+        key: 'delegate-agent',
+        label: 'Delegate to agent…',
+        onSelect: () => {
+          setPickerOpen(false);
+          onDelegateToAgent(m);
+        },
+      });
+    }
     if (canMarkupReply && entryHandle != null) {
       actions.push({
         key: 'markup-reply',
@@ -389,6 +406,7 @@ export const MessageRow = memo(function MessageRow({
     }
     return actions;
   }, [
+    onDelegateToAgent,
     canAnnotate,
     canCopyMessageText,
     canDelete,
@@ -541,7 +559,7 @@ export const MessageRow = memo(function MessageRow({
       } ${dim ? 'opacity-50' : ''} ${highlighted ? 'entry-flash bg-accent-hover/10' : ''}`}
     >
       <div className="w-8 shrink-0">
-        {!grouped && <Avatar name={m.author.displayName} seed={m.author.id} />}
+        {(!grouped || isAgentReply) && <Avatar name={authorName} seed={m.author.id} />}
         {grouped && (
           <TimestampDisclosure
             iso={m.createdAt}
@@ -581,9 +599,14 @@ export const MessageRow = memo(function MessageRow({
         }}
         className={`relative min-w-0 max-w-3xl flex-1 ${swiping ? 'transition-none' : 'transition-transform duration-150 ease-out'}`}
       >
-        {!grouped && (
+        {(!grouped || isAgentReply) && (
           <div className="flex items-baseline gap-2">
-            <span className="text-sm font-semibold text-fg">{m.author.displayName}</span>
+            <span className="text-sm font-semibold text-fg">{authorName}</span>
+            {isAgentReply && (
+              <span className="rounded-full bg-accent-hover/15 px-1.5 py-px text-3xs font-semibold text-accent-text-strong">
+                AI
+              </span>
+            )}
             <TimestampDisclosure
               iso={m.createdAt}
               label={formatTime(m.createdAt)}
@@ -603,7 +626,7 @@ export const MessageRow = memo(function MessageRow({
           </button>
         )}
         {isSessionEventRow ? (
-          <SessionEventCard message={m} onOpenSession={onOpenSession} />
+          <SessionEventCard message={m} session={session} meId={meId} onOpenSession={onOpenSession} />
         ) : isSessionRow ? (
           <SessionCard
             session={session}
@@ -641,6 +664,9 @@ export const MessageRow = memo(function MessageRow({
               <span className="ml-1 text-2xs text-fg-muted">(edited)</span>
             ) : null}
           </div>
+        )}
+        {!deleted && !isSessionRow && !isSessionEventRow && !isAgentReply && (
+          <MessageProvenance message={m} session={session} meId={meId} />
         )}
         {!deleted && !m.voice && !isSessionRow && !isSessionEventRow && attachments.length > 0 && (
           <div className="mt-1 flex flex-wrap gap-2">
@@ -1019,9 +1045,13 @@ function PenLineIcon(props: SVGProps<SVGSVGElement>) {
 
 function SessionEventCard({
   message,
+  session,
+  meId,
   onOpenSession,
 }: {
   message: ChatMessage;
+  session?: Session;
+  meId?: string;
   onOpenSession?: (sessionId: string) => void;
 }) {
   const payload = message.sessionEventPayload ?? {};
@@ -1050,6 +1080,11 @@ function SessionEventCard({
           <CompactMarkdownText text={questionText} />
         </div>
       )}
+      {message.sessionEventType === 'question_requested' &&
+        session?.pendingQuestion &&
+        payload.questionId === session.pendingQuestion.questionId && (
+          <InlineQuestionAnswer session={session} meId={meId} />
+        )}
       {answers.length > 0 && (
         <div className="mt-1 space-y-1">
           {answers.map((answer) => (
@@ -1073,6 +1108,151 @@ function SessionEventCard({
         >
           Open pane
         </button>
+      )}
+    </div>
+  );
+}
+
+function InlineQuestionAnswer({ session, meId }: { session: Session; meId?: string }) {
+  const pending = session.pendingQuestion;
+  const question = pending?.questions[0];
+  const [draft, setDraft] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [sent, setSent] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  if (!pending || !question) return null;
+  const isDriver = session.driverId === meId;
+  const submit = (value: string) => {
+    const answer = value.trim();
+    if (!answer || busy) return;
+    setBusy(true);
+    setError(null);
+    const answers = { [question.id]: { answers: [answer] } };
+    const request = isDriver
+      ? sessionsApi.answerQuestion(session.id, pending.questionId, answers, randomId())
+      : sessionsApi.createSuggestion(session.id, answer, randomId(), true);
+    request
+      .then(() => {
+        setSent(true);
+        setDraft('');
+      })
+      .catch(() => setError(isDriver ? "Answer didn't send. Try again." : "Suggestion didn't send. Try again."))
+      .finally(() => setBusy(false));
+  };
+
+  return (
+    <div data-testid="inline-question-answer" className="mt-2 border-t border-warning-border/30 pt-2">
+      {question.options?.length ? (
+        <div className="flex flex-wrap gap-1.5">
+          {question.options.map((option) => (
+            <button
+              key={option.label}
+              type="button"
+              disabled={busy || sent}
+              title={option.description}
+              onClick={() => submit(option.label)}
+              className="rounded-md border border-warning-border/60 bg-warning-tint/15 px-2 py-1 text-2xs font-medium text-warning-text-strong hover:bg-warning-tint/35 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      ) : null}
+      <form
+        className="mt-1.5 flex min-w-0 gap-1.5"
+        onSubmit={(event) => {
+          event.preventDefault();
+          submit(draft);
+        }}
+      >
+        <label className="sr-only" htmlFor={`inline-answer-${session.id}-${pending.questionId}`}>
+          {isDriver ? 'Type an answer' : 'Suggest an answer'}
+        </label>
+        <input
+          id={`inline-answer-${session.id}-${pending.questionId}`}
+          value={draft}
+          disabled={busy || sent}
+          onChange={(event) => setDraft(event.target.value)}
+          placeholder={isDriver ? 'type an answer…' : 'Suggest an answer…'}
+          className="min-w-0 flex-1 rounded-md border border-warning-border/50 bg-surface px-2 py-1 text-xs text-fg outline-none placeholder:text-fg-muted focus:border-warning disabled:opacity-60"
+        />
+        <button
+          type="submit"
+          disabled={!draft.trim() || busy || sent}
+          className="shrink-0 rounded-md bg-warning px-2 py-1 text-2xs font-semibold text-surface hover:bg-warning-hover disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {busy ? 'Sending…' : isDriver ? 'Answer' : 'Suggest'}
+        </button>
+      </form>
+      {!isDriver && !sent && (
+        <div className="mt-1 text-3xs text-fg-muted">The current driver decides what to send.</div>
+      )}
+      {sent && <div className="mt-1 text-3xs text-fg-muted">{isDriver ? 'Answer sent.' : 'Suggestion sent.'}</div>}
+      {error && (
+        <div role="alert" className="mt-1 text-3xs text-danger-text">
+          {error}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MessageProvenance({ message, session, meId }: { message: ChatMessage; session?: Session; meId?: string }) {
+  const [busy, setBusy] = useState(false);
+  const [dismissed, setDismissed] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const suggested = message.suggestedSessionId && message.suggestionId;
+  const isDriver = session?.driverId === meId;
+  if (!message.steeredSessionId && !suggested) return null;
+  const resolve = (action: 'send' | 'dismiss') => {
+    if (!suggested || busy) return;
+    setBusy(true);
+    setError(null);
+    sessionsApi
+      .resolveSuggestion(message.suggestedSessionId!, message.suggestionId!, action, {}, randomId())
+      .then(() => setDismissed(true))
+      .catch(() => setError(action === 'send' ? "Couldn't send to agent." : "Couldn't dismiss suggestion."))
+      .finally(() => setBusy(false));
+  };
+  return (
+    <div data-testid="message-provenance" className="mt-1 flex flex-wrap items-center gap-1.5 text-3xs">
+      {message.steeredSessionId && (
+        <span className="rounded-full border border-edge bg-surface-raised px-1.5 py-0.5 font-medium text-fg-tertiary">
+          → agent
+        </span>
+      )}
+      {suggested && !dismissed && (
+        <>
+          <span className="rounded-full border border-accent-border-muted/50 bg-accent-tint/10 px-1.5 py-0.5 font-medium text-accent-text-strong">
+            suggestion
+          </span>
+          {isDriver && (
+            <>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => resolve('send')}
+                className="rounded px-1.5 py-0.5 font-medium text-accent-text-strong hover:bg-accent-tint/35 disabled:opacity-50"
+              >
+                Send to agent
+              </button>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => resolve('dismiss')}
+                className="rounded px-1.5 py-0.5 font-medium text-fg-tertiary hover:bg-surface-overlay disabled:opacity-50"
+              >
+                Dismiss
+              </button>
+            </>
+          )}
+        </>
+      )}
+      {dismissed && <span className="text-fg-muted">{busy ? 'Updating…' : 'Suggestion handled.'}</span>}
+      {error && (
+        <span role="alert" className="text-danger-text">
+          {error}
+        </span>
       )}
     </div>
   );

@@ -31,6 +31,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   looksLikeSummonSigil,
   matchMentionPrefix,
+  parseSummonSigil,
   type AttachmentMeta,
   type AttachmentRef,
   type UserRef,
@@ -89,11 +90,17 @@ export interface ComposerProps {
     height?: number;
   }) => Promise<AttachmentMeta & { uploadKey: string; localUri: string }>;
   onConfigureAgent?: (fullText: string) => void;
+  /** Agent mode owns the normal text input but dispatches through session ops. */
+  onAgentSend?: (text: string, anchorEventId?: number) => void;
+  agentTargetLabel?: string;
+  onConfigureAgentMode?: () => void;
 }
 
 export interface ComposerHandle {
   captureForConfigure: () => string;
   restore: (value: string) => void;
+  activateAgentMode: (anchor?: { eventId: number; label: string }) => void;
+  clearAgentAnchor: () => void;
 }
 
 const VOICE_RECORDING_OPTIONS: RecordingOptions = {
@@ -136,6 +143,9 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     onOpenSession,
     uploadFile,
     onConfigureAgent,
+    onAgentSend,
+    agentTargetLabel,
+    onConfigureAgentMode,
   }: ComposerProps,
   ref,
 ) {
@@ -147,6 +157,9 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const [alsoSendToChannel, setAlsoSendToChannel] = useState(false);
   const [recordingBusy, setRecordingBusy] = useState(false);
   const [recordingError, setRecordingError] = useState<string | null>(null);
+  const [agentMode, setAgentMode] = useState(false);
+  const [agentAnchor, setAgentAnchor] = useState<{ eventId: number; label: string } | null>(null);
+  const [agentMentionHintDismissed, setAgentMentionHintDismissed] = useState(false);
   const audioRecorder = useAudioRecorder(VOICE_RECORDING_OPTIONS);
   const recorderState = useAudioRecorderState(audioRecorder, 125);
   const inputRef = useRef<TextInput>(null);
@@ -214,6 +227,15 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           draftWriter.saveNow(draftKey, value);
         }
         setTimeout(() => inputRef.current?.focus(), 0);
+      },
+      activateAgentMode(anchor) {
+        if (editing) return;
+        setAgentAnchor(anchor ?? null);
+        setAgentMode(true);
+        setTimeout(() => inputRef.current?.focus(), 0);
+      },
+      clearAgentAnchor() {
+        setAgentAnchor(null);
       },
     }),
     [draftKey, draftWriter, editing, onDraftTouched, text],
@@ -340,6 +362,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const readyRefs = ready.map(({ meta }) => ({ uploadKey: meta.uploadKey }));
   const canSend = !uploading && (text.trim().length > 0 || readyMeta.length > 0);
   const showConfigureAgentChip = !editing && onConfigureAgent != null && looksLikeSummonSigil(text);
+  const showAgentMentionHint = !editing && !agentMentionHintDismissed && /^@agent(?:\s|$)/i.test(text);
   const mentionMatch = !editing ? matchMentionPrefix(text) : null;
   const mentionPrefix = mentionMatch?.prefix.toLowerCase() ?? '';
   const matchedUsers = useMemo(() => {
@@ -389,6 +412,18 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     }
     if (!canSend) return;
     lightImpactHaptic();
+    if (agentMode && onAgentSend) {
+      onAgentSend(trimmed, agentAnchor?.eventId);
+      if (draftKey) {
+        onDraftTouched?.(draftKey);
+        draftWriter.saveNow(draftKey, '');
+      }
+      setText('');
+      setAttachments([]);
+      setAgentAnchor(null);
+      setAgentMode(false);
+      return;
+    }
     const broadcast = showBroadcastToggle && alsoSendToChannel;
     onSend(trimmed, readyMeta, readyRefs.length > 0 ? readyRefs : undefined, undefined, broadcast ? true : undefined);
     if (draftKey) {
@@ -490,7 +525,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       style={{
         borderTopWidth: 1,
         borderTopColor: colors.border,
-        backgroundColor: colors.bg,
+        backgroundColor: agentMode ? colors.accentBg : colors.bg,
         paddingHorizontal: space.md,
         paddingTop: space.sm,
         paddingBottom: keyboardVisible ? space.sm : Math.max(8, insets.bottom),
@@ -512,6 +547,77 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           </Pressable>
         </View>
       )}
+
+      {agentMode && !editing ? (
+        <View
+          testID="agent-mode-strip"
+          style={{
+            alignItems: 'center',
+            flexDirection: 'row',
+            gap: 6,
+            minHeight: 34,
+            paddingHorizontal: space.xs,
+          }}
+        >
+          <Text style={{ color: colors.accent, fontSize: font.sm, fontWeight: '800' }}>⚡</Text>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Configure agent target"
+            onPress={onConfigureAgentMode}
+            hitSlop={8}
+            style={{
+              backgroundColor: colors.bgElevated,
+              borderColor: colors.accent,
+              borderRadius: radius.sm,
+              borderWidth: 1,
+              flex: 1,
+              minHeight: 30,
+              justifyContent: 'center',
+              paddingHorizontal: space.sm,
+            }}
+          >
+            <Text numberOfLines={1} style={{ color: colors.text, fontSize: font.xs, fontWeight: '700' }}>
+              {agentTargetLabel ?? 'New agent'}
+            </Text>
+          </Pressable>
+          {agentAnchor ? (
+            <Text
+              numberOfLines={1}
+              style={{ color: colors.textSecondary, flexShrink: 1, fontSize: font.xs, maxWidth: 92 }}
+            >
+              ⚓ {agentAnchor.label}
+            </Text>
+          ) : null}
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Exit agent mode"
+            onPress={() => {
+              setAgentAnchor(null);
+              setAgentMode(false);
+            }}
+            hitSlop={10}
+            style={{ minHeight: 34, minWidth: 34, alignItems: 'center', justifyContent: 'center' }}
+          >
+            <Text style={{ color: colors.textSecondary, fontSize: font.md }}>✕</Text>
+          </Pressable>
+        </View>
+      ) : null}
+
+      {showAgentMentionHint ? (
+        <View testID="agent-mention-hint" style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm }}>
+          <Text style={{ color: colors.textSecondary, flex: 1, fontSize: font.xs }}>
+            Summon agents with !! or ⚡ — mentions are for people now.
+          </Text>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Dismiss agent mention hint"
+            onPress={() => setAgentMentionHintDismissed(true)}
+            hitSlop={8}
+          >
+            <Text style={{ color: colors.textMuted, fontSize: font.sm }}>✕</Text>
+          </Pressable>
+        </View>
+      ) : null}
 
       {showBroadcastToggle && !editing && (
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -725,7 +831,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
         </View>
       ) : null}
 
-      {showConfigureAgentChip ? (
+      {showConfigureAgentChip && !agentMode ? (
         <View style={{ alignItems: 'flex-start' }}>
           <Pressable
             accessibilityRole="button"
@@ -752,6 +858,29 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       ) : null}
 
       <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: space.sm }}>
+        {!editing && onAgentSend ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={agentMode ? 'Exit agent mode' : 'Enter agent mode'}
+            onPress={() => {
+              setAgentAnchor(null);
+              setAgentMode((value) => !value);
+              setTimeout(() => inputRef.current?.focus(), 0);
+            }}
+            hitSlop={8}
+            style={{
+              minWidth: 44,
+              minHeight: 44,
+              borderRadius: 22,
+              backgroundColor: agentMode ? colors.accent : colors.bgElevated,
+              alignItems: 'center',
+              justifyContent: 'center',
+              marginBottom: 2,
+            }}
+          >
+            <Text style={{ fontSize: 18, color: agentMode ? colors.onAccent : colors.textSecondary }}>⚡</Text>
+          </Pressable>
+        ) : null}
         {allowAttachments && !editing && (
           <Pressable
             accessibilityRole="button"
@@ -814,12 +943,20 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           ref={inputRef}
           value={text}
           onChangeText={(v) => {
-            setText(v);
+            // The summon sigil is strictly position-zero. Swallow it as soon as
+            // it is complete so `!! task` feels like entering a mode, not a
+            // message grammar. `parseSummonSigil` remains the shared source of
+            // truth for the task-bearing form.
+            const summon = parseSummonSigil(v);
+            const enteredAgentMode = !editing && !agentMode && (summon != null || v === '!!' || v.startsWith('!! '));
+            const next = enteredAgentMode ? (summon?.task ?? v.slice(2).replace(/^\s/, '')) : v;
+            if (enteredAgentMode) setAgentMode(true);
+            setText(next);
             if (!editing && draftKey) {
               onDraftTouched?.(draftKey);
-              draftWriter.schedule(draftKey, v);
+              draftWriter.schedule(draftKey, next);
             }
-            if (v.trim()) onTyping();
+            if (next.trim()) onTyping();
           }}
           placeholder={placeholder}
           placeholderTextColor={colors.textFaint}

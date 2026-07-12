@@ -35,6 +35,7 @@ export function Timeline({
   onReact,
   resolveUser,
   onMarkupEntry,
+  onDelegateToAgent,
   unreadDividerAfterId,
   dividerReady = true,
   onReachBottom,
@@ -66,6 +67,7 @@ export function Timeline({
   onReact?: (message: ChatMessage, emoji: string) => Promise<void>;
   resolveUser?: (id: string) => UserRef | undefined;
   onMarkupEntry?: (handle: string, message: ChatMessage) => void;
+  onDelegateToAgent?: (message: ChatMessage) => void;
   unreadDividerAfterId?: number | null;
   dividerReady?: boolean;
   onReachBottom?: () => void;
@@ -374,7 +376,15 @@ export function Timeline({
                 <MessageRow
                   message={item.message!}
                   grouped={item.grouped ?? false}
-                  session={item.message!.sessionId != null ? sessions[item.message!.sessionId] : undefined}
+                  session={
+                    item.message!.sessionId != null
+                      ? sessions[item.message!.sessionId]
+                      : item.message!.suggestedSessionId
+                        ? sessions[item.message!.suggestedSessionId]
+                        : item.message!.steeredSessionId
+                          ? sessions[item.message!.steeredSessionId]
+                          : undefined
+                  }
                   spectators={item.message!.sessionId != null ? (spectators[item.message!.sessionId] ?? 0) : 0}
                   meId={meId}
                   meHandle={meHandle}
@@ -389,6 +399,7 @@ export function Timeline({
                   onReact={onReact}
                   resolveUser={resolveUser}
                   onMarkupEntry={onMarkupEntry}
+                  onDelegateToAgent={onDelegateToAgent}
                 />
               </div>
             );

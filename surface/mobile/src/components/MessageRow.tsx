@@ -455,6 +455,20 @@ function SessionCard({
   const { colors } = useTheme();
   const status = session?.status ?? 'spawning';
   const needsInput = session?.pendingQuestion != null;
+  // Terminal sessions freeze elapsed at completion instead of ticking forever.
+  const elapsedEnd = session?.completedAt ? Date.parse(session.completedAt) : Date.now();
+  const elapsedSeconds = Math.max(
+    0,
+    Math.floor((elapsedEnd - Date.parse(session?.createdAt ?? message.createdAt)) / 1000),
+  );
+  const elapsed = `${Math.floor(elapsedSeconds / 60)}:${String(elapsedSeconds % 60).padStart(2, '0')}`;
+  const stateLabel = needsInput
+    ? '🟠 Awaiting input'
+    : status === 'completed'
+      ? 'Done'
+      : status === 'failed' || status === 'cancelled'
+        ? 'Failed'
+        : 'Working';
   const statusColor = needsInput
     ? colors.warning
     : status === 'completed'
@@ -489,11 +503,36 @@ function SessionCard({
         </Text>
       </View>
       <Text style={{ color: colors.text, fontSize: font.sm, lineHeight: 20 }}>{session?.title ?? message.text}</Text>
+      <View testID="session-presence-ticker" style={{ gap: 2 }}>
+        <Text style={{ color: statusColor, fontSize: font.xs, fontWeight: '700' }}>
+          ● {stateLabel} · {elapsed}
+        </Text>
+        {session?.latestActivity?.summary ? (
+          <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: font.xs }}>
+            {session.latestActivity.summary}
+          </Text>
+        ) : null}
+      </View>
       {session?.resultText ? (
         <Text style={{ color: colors.textSecondary, fontSize: font.xs, lineHeight: 18 }}>{session.resultText}</Text>
       ) : null}
       <Text style={{ color: colors.accent, fontSize: font.xs, fontWeight: '700' }}>Open full transcript</Text>
     </Pressable>
+  );
+}
+
+function AgentReplyRow({ message, session }: { message: ChatMessage; session?: Session }) {
+  const { colors } = useTheme();
+  return (
+    <View testID="agent-reply-row" style={{ gap: 4 }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+        <Text numberOfLines={1} style={{ color: colors.text, flexShrink: 1, fontSize: font.md, fontWeight: '700' }}>
+          {session?.title ?? message.author.displayName}
+        </Text>
+        <Text style={{ color: colors.accent, fontSize: font.xs, fontWeight: '800' }}>AI</Text>
+      </View>
+      <MarkdownText text={message.text} />
+    </View>
   );
 }
 
@@ -636,7 +675,8 @@ export const MessageRow = memo(function MessageRow({
   const failed = m.status === 'failed';
   useAccessibilityAnnouncement(failed ? 'Message failed to send. Tap to retry.' : null);
   const tombstone = m.deleted === true;
-  const sessionBlock = m.sessionId != null || m.sessionEventType != null;
+  const isAgentReply = m.sessionEventType === 'replied';
+  const sessionBlock = (m.sessionId != null || m.sessionEventType != null) && !isAgentReply;
   const attachmentDescription = m.attachments?.length
     ? m.attachments.map((a) => `attachment ${a.filename}`).join(', ')
     : '';
@@ -750,6 +790,8 @@ export const MessageRow = memo(function MessageRow({
 
   const body = tombstone ? (
     <Text style={{ color: colors.textFaint, fontSize: font.md, fontStyle: 'italic' }}>Message deleted</Text>
+  ) : isAgentReply ? (
+    <AgentReplyRow message={m} session={session} />
   ) : m.sessionEventType != null ? (
     <SessionEventLine message={m} onOpen={onOpenSession} />
   ) : m.sessionId != null ? (
@@ -766,6 +808,34 @@ export const MessageRow = memo(function MessageRow({
       ) : (
         <Attachments message={m} fileUrl={fileUrl} fileHeaders={fileHeaders} onOpenAttachment={onOpenAttachment} />
       )}
+      {m.steeredSessionId ? (
+        <View
+          style={{
+            alignSelf: 'flex-start',
+            backgroundColor: colors.accentBg,
+            borderRadius: radius.sm,
+            marginTop: 4,
+            paddingHorizontal: 6,
+            paddingVertical: 2,
+          }}
+        >
+          <Text style={{ color: colors.accent, fontSize: font.xs, fontWeight: '700' }}>→ agent</Text>
+        </View>
+      ) : null}
+      {m.suggestedSessionId ? (
+        <View
+          style={{
+            alignSelf: 'flex-start',
+            backgroundColor: colors.warningSurface,
+            borderRadius: radius.sm,
+            marginTop: 4,
+            paddingHorizontal: 6,
+            paddingVertical: 2,
+          }}
+        >
+          <Text style={{ color: colors.warning, fontSize: font.xs, fontWeight: '700' }}>Suggested to agent</Text>
+        </View>
+      ) : null}
     </>
   );
 
@@ -775,19 +845,20 @@ export const MessageRow = memo(function MessageRow({
     </View>
   );
 
-  const header = !grouped ? (
-    <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 8, minWidth: 0 }}>
-      <Text style={{ flexShrink: 1, color: colors.text, fontSize: font.md, fontWeight: '700' }} numberOfLines={1}>
-        {m.author.displayName}
-      </Text>
-      <TimestampText
-        iso={m.createdAt}
-        text={formatTime(m.createdAt)}
-        style={{ flexShrink: 1, color: colors.textFaint, fontSize: font.xs }}
-        numberOfLines={1}
-      />
-    </View>
-  ) : null;
+  const header =
+    !grouped && !isAgentReply ? (
+      <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 8, minWidth: 0 }}>
+        <Text style={{ flexShrink: 1, color: colors.text, fontSize: font.md, fontWeight: '700' }} numberOfLines={1}>
+          {m.author.displayName}
+        </Text>
+        <TimestampText
+          iso={m.createdAt}
+          text={formatTime(m.createdAt)}
+          style={{ flexShrink: 1, color: colors.textFaint, fontSize: font.xs }}
+          numberOfLines={1}
+        />
+      </View>
+    ) : null;
 
   const editedNote =
     m.pendingEdit && !tombstone ? (

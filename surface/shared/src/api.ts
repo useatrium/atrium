@@ -533,6 +533,8 @@ export function createApi(opts: ApiOptions = {}) {
       anchorEventId?: number;
       /** Surface a thread-bound session card in the parent channel timeline too. */
       broadcastCard?: boolean;
+      /** Initial reasoning-effort tier for the new session. */
+      effort?: string;
       /** Optimistic id echoed on session.spawned for lost-response reconcile. */
       clientSpawnId?: string;
       /** Uploaded file ids to attach to the initial agent message. */

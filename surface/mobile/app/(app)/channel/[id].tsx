@@ -18,6 +18,8 @@ import { ConnectionBanner, TypingLine } from '../../../src/components/bits';
 import { Composer, type ComposerHandle } from '../../../src/components/Composer';
 import { MediaLightbox } from '../../../src/components/MediaLightbox';
 import { MessageActions } from '../../../src/components/MessageActions';
+import { MessageActionSheet } from '../../../src/components/MessageActions';
+import { AgentModeConfig, type AgentEffort } from '../../../src/components/AgentModeConfig';
 import { SpawnSheet, type SpawnSheetConfig } from '../../../src/components/SpawnSheet';
 import { Timeline } from '../../../src/components/Timeline';
 import {
@@ -133,6 +135,8 @@ export default function ChannelScreen() {
   const [initialDraft, setInitialDraft] = useState('');
   const [spawnSheetVisible, setSpawnSheetVisible] = useState(false);
   const [spawnSheetInitialTask, setSpawnSheetInitialTask] = useState('');
+  const [agentConfigVisible, setAgentConfigVisible] = useState(false);
+  const [agentEffort, setAgentEffort] = useState<AgentEffort>('medium');
   const composerRef = useRef<ComposerHandle>(null);
   const composerRestoreTextRef = useRef<string | null>(null);
   const spawnSubmittedRef = useRef(false);
@@ -415,7 +419,7 @@ export default function ChannelScreen() {
         <Timeline
           key={id}
           messages={timeline.main}
-          emptyLabel="No messages yet. Say hello — or type !!<task> to put an agent on it."
+          emptyLabel="No messages yet. Say hello — or use ⚡ to delegate work."
           loaded={timeline.loaded}
           hasMoreBefore={timeline.hasMoreBefore}
           sessions={state.sessions}
@@ -473,6 +477,13 @@ export default function ChannelScreen() {
           onOpenSession={(sessionId) => router.push(`/session/${sessionId}`)}
           uploadFile={chat.uploadFile}
           onConfigureAgent={handleConfigureAgent}
+          onAgentSend={(text, anchorEventId) =>
+            spawnSession(id, text, undefined, {
+              ...(anchorEventId != null ? { anchorEventId } : {}),
+            })
+          }
+          agentTargetLabel="New agent in this channel"
+          onConfigureAgentMode={() => setAgentConfigVisible(true)}
         />
       </KeyboardAvoidingView>
 
@@ -496,6 +507,25 @@ export default function ChannelScreen() {
         onMarkupReply={(m) => void openMarkupReply(m)}
         onEdit={setEditing}
         onDelete={(m) => void chat.deleteMessage(m)}
+        onDelegate={(m) => {
+          if (m.id == null) return;
+          composerRef.current?.activateAgentMode({ eventId: m.id, label: m.text || 'message' });
+        }}
+      />
+      <MessageActionSheet
+        visible={agentConfigVisible}
+        actions={[]}
+        onClose={() => setAgentConfigVisible(false)}
+        content={
+          <AgentModeConfig
+            isDriver
+            target="new"
+            effort={agentEffort}
+            onTarget={() => {}}
+            onEffort={setAgentEffort}
+            onClearAnchor={() => composerRef.current?.clearAgentAnchor()}
+          />
+        }
       />
       <MediaLightbox
         visible={attachmentLightbox != null}

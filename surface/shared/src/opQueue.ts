@@ -132,6 +132,8 @@ export interface SessionSpawnPayload {
   anchorEventId?: number;
   /** Surface a thread-bound session card in the parent channel timeline too. */
   broadcastCard?: boolean;
+  /** Initial reasoning-effort tier for the new session (validated per harness). */
+  effort?: string;
   harness?: string;
   /** Spawn-dialog git metadata (optional). */
   repo?: string;
@@ -988,6 +990,7 @@ export function createDefaultOpRegistry(): OpRegistry {
           ...optionalProp('threadRootEventId', payload.threadRootEventId),
           ...optionalProp('anchorEventId', payload.anchorEventId),
           ...optionalProp('broadcastCard', payload.broadcastCard),
+          ...optionalProp('effort', payload.effort),
           ...optionalProp('harness', payload.harness),
           ...optionalProp('repo', payload.repo),
           ...optionalProp('branch', payload.branch),

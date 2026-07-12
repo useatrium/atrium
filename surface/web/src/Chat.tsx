@@ -19,6 +19,7 @@ import {
 import { showNotification } from './notify';
 import { emptyTimeline, type Channel, type UserRef, type WireEvent } from '@atrium/surface-client';
 import { useWs } from '@atrium/surface-client';
+import { encodeEventHandle } from '@atrium/surface-client/handle';
 import { Avatar } from './components/Avatar';
 import { AgentsSurface } from './components/AgentsSurface';
 import { ActivityView } from './components/ActivityView';
@@ -47,7 +48,6 @@ import { SessionPane, type TranscriptDiscussPayload } from './sessions/SessionPa
 import { loadSessionPaneWidth, sessionPaneSizing } from './sessions/useSessionPaneWidth';
 import { SessionsRail } from './sessions/SessionsRail';
 import { SpawnDialog } from './sessions/SpawnDialog';
-import { parseSummonSigil } from './sessions/spawn';
 import { ViewToggle } from './sessions/ViewToggle';
 import { isPendingSessionId, isTerminalSessionStatus, sessionFromWire } from './sessions/types';
 import { adoptPrefs, useTheme } from './theme';
@@ -1199,16 +1199,6 @@ export function Chat({
     setSpawnOpen(true);
   }, []);
 
-  const configureAgentFromComposer = useCallback(
-    (fullText: string) => {
-      const captured = channelComposerRef.current?.captureForConfigure() ?? fullText;
-      const task = parseSummonSigil(captured)?.task ?? captured.replace(/^\s*!!\s*/, '');
-      setConfigureRestore({ draftKey: activeDraftKey, text: captured });
-      openSpawnWithInitialTask(task);
-    },
-    [activeDraftKey, openSpawnWithInitialTask],
-  );
-
   const cancelSpawnDialog = useCallback(() => {
     setSpawnOpen(false);
     setSpawnInitialTask('');
@@ -1435,16 +1425,17 @@ export function Chat({
   // not on every Chat render.
   const placeholderPaneSizing = useMemo(() => sessionPaneSizing(loadSessionPaneWidth()), [state.openSessionId]);
 
-  const { editMessage, reactToMessage, removeMessage, retry, send, startConfiguredSession } = useChatMessageActions({
-    activeChannel: active,
-    dispatch,
-    enqueueOp,
-    me,
-    onSpawnDialogClose: () => {
-      setSpawnOpen(false);
-      setSpawnInitialTask('');
-    },
-  });
+  const { editMessage, reactToMessage, removeMessage, retry, send, sendAgent, startConfiguredSession } =
+    useChatMessageActions({
+      activeChannel: active,
+      dispatch,
+      enqueueOp,
+      me,
+      onSpawnDialogClose: () => {
+        setSpawnOpen(false);
+        setSpawnInitialTask('');
+      },
+    });
 
   // ---- jump to a message from search: page history back until it's loaded ----
   const [highlightId, setHighlightId] = useState<number | null>(null);
@@ -2235,6 +2226,13 @@ export function Chat({
                 onReact={reactToMessage}
                 resolveUser={active ? resolveActiveUser : undefined}
                 onMarkupEntry={(handle, message) => void openMarkupReply(handle, message)}
+                onDelegateToAgent={(message) =>
+                  message.id != null &&
+                  channelComposerRef.current?.activateAgentMode({
+                    eventId: message.id,
+                    label: `/e/${encodeEventHandle(message.id)}`,
+                  })
+                }
                 unreadDividerAfterId={unreadDividerAfterId}
                 dividerReady={dividerReady}
                 onReachBottom={handleReachBottom}
@@ -2268,8 +2266,14 @@ export function Chat({
                 onDraftPersisted={enqueueDraft}
                 onDraftTouched={markDraftTouched}
                 autoFocus={!state.openSessionId}
-                agentAware
-                onConfigureAgent={configureAgentFromComposer}
+                agentMode={{
+                  scope: 'channel',
+                  channelLabel:
+                    active.kind === 'dm' || active.kind === 'gdm' ? channelLabel(active, me.id) : `#${active.name}`,
+                }}
+                onAgentSend={(request, text, attachments, attachmentRefs) =>
+                  sendAgent(active.id, request, text, attachments, attachmentRefs)
+                }
                 previewEntryLinks
                 allowAttachments
               />
@@ -2365,6 +2369,9 @@ export function Chat({
               onClose={() => goToRoute({ surface: 'chat', channelId: active.id, sessionId: null, focusSession: false })}
               onSend={(text, attachments, attachmentRefs, voice, broadcast) =>
                 send(active.id, text, openThreadRoot.id!, attachments, attachmentRefs, voice, broadcast)
+              }
+              onAgentSend={(request, text, attachments, attachmentRefs) =>
+                sendAgent(active.id, request, text, attachments, attachmentRefs)
               }
               queueUpload={queueUpload}
               onOpenSession={openSession}
