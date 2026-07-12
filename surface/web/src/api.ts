@@ -37,6 +37,7 @@ export interface CodexDeviceStartResponse {
 
 export type CodexDevicePollResponse =
   | { status: 'pending'; message?: string }
+  | { status: 'finalizing' }
   | { status: 'connected'; message?: string }
   | { status: 'error'; message?: string }
   | { status: 'expired'; message?: string };
