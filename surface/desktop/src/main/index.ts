@@ -20,11 +20,7 @@ import { clearSession, loadSession, saveSession, type DesktopSession } from './s
 import { DEEP_LINK_SCHEME, deepLinkToRoute } from './deepLink.js';
 import { setupAutoUpdate } from './updater.js';
 import { resolveSessionPopoutOpen, resolveWindowOpen, sessionIdFromPanePath } from './windowOpenPolicy.js';
-import {
-  launchBackgroundColor,
-  mainWindowOptions,
-  popoutWindowOptions,
-} from './windowConfig.js';
+import { launchBackgroundColor, mainWindowOptions, popoutWindowOptions } from './windowConfig.js';
 
 // Must run before app `ready`: marks `app://` as a standard, secure origin so
 // the bundled UI gets a secure context (required for getUserMedia / WebRTC).

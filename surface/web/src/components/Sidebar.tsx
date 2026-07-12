@@ -575,7 +575,6 @@ export function Sidebar({
               )}
             </div>
           </section>
-
         </div>
 
         <footer className="relative flex items-center gap-1 border-t border-edge px-4 py-2.5">

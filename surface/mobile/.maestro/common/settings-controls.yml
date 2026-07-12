@@ -1,3 +1,5 @@
+appId: chat.atrium.app
+---
 - tapOn: "Settings"
 - extendedWaitUntil:
     visible: "Theme"

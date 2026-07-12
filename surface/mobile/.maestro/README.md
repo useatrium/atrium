@@ -8,7 +8,7 @@ the behavior under test.
 The suite proves an authenticated launch (rather than the email-code login UI),
 first-run orientation in the bootstrapped empty `#general` workspace, all five
 top-level destinations, search empty state, appearance preferences, a scripted agent
-session, steering, result inspection, comments, and platform Back behavior. It does
+session, result inspection, thread replies, and Android system Back behavior. It does
 not claim VoiceOver or TalkBack verification.
 
 ## Prerequisites
@@ -77,12 +77,12 @@ demo session and `03` reuses `#general`.
 # iOS
 maestro test surface/mobile/.maestro/ios/01-first-run-and-navigation.yaml
 maestro test surface/mobile/.maestro/ios/02-primary-collaboration-loop.yaml
-maestro test surface/mobile/.maestro/ios/03-comment-on-message.yaml
+maestro test surface/mobile/.maestro/ios/03-thread-reply.yaml
 
 # Android
 maestro test surface/mobile/.maestro/android/01-first-run-and-navigation.yaml
 maestro test surface/mobile/.maestro/android/02-primary-collaboration-loop.yaml
-maestro test surface/mobile/.maestro/android/03-comment-on-message.yaml
+maestro test surface/mobile/.maestro/android/03-thread-reply.yaml
 ```
 
 Screenshots use unique `ios-*` and `android-*` names and land in Maestro's test
@@ -91,13 +91,13 @@ YAML file is not rendered evidence by itself.
 
 ## Coverage and unverified matrix
 
-| Device/runtime | Authenticated launch | Navigation/settings | Demo/steer/result | Native Back | Runtime status in this checkout |
+| Device/runtime | Authenticated launch | Navigation/settings | Demo/result | Native Back | Runtime status in this checkout |
 |---|---:|---:|---:|---:|---|
-| iOS compact iPhone | authored | authored | authored | iOS stack Back | Unverified: no booted simulator; CoreSimulator service unavailable |
+| iOS compact iPhone | executed | executed | executed in focused paths | visible native control; gesture manual | iPhone 17 / iOS 26.5 build ran; navigation/settings, demo result, message send, long-press action sheet, and thread navigation were exercised |
 | iOS large iPhone | authored | authored | authored | iOS stack Back | Unverified: no booted simulator |
 | iPad width | selectors reusable | selectors reusable | selectors reusable | iOS stack Back | Unverified; no device available |
-| Android compact phone | authored | authored | authored | system Back key | Unverified: `adb` unavailable |
-| Android expanded/tablet | selectors reusable; app uses a rail at 600dp | authored | authored | system Back key | Unverified; no runtime available |
+| Android compact phone | authored | authored | authored | system Back key | API 36 ARM64 emulator boots and `adb` is online; native build is blocked in dependency CMake configuration by `Can't infer shell!` before app install |
+| Android expanded/tablet | selectors reusable; app uses a rail at 600dp | authored | authored | system Back key | Emulator tooling is installed; runtime remains unverified |
 
 Not deterministically seedable in the current local harness:
 

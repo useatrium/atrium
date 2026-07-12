@@ -1696,7 +1696,9 @@ export function SessionPane({
           className="shrink-0 border-b border-edge bg-surface-raised px-4 py-3"
         >
           <div className="flex items-baseline gap-2">
-            <h3 id="session-results-heading" className="text-xs font-semibold text-fg">Results</h3>
+            <h3 id="session-results-heading" className="text-xs font-semibold text-fg">
+              Results
+            </h3>
             <span className={`text-xs ${isEnded ? 'text-danger-text' : 'text-fg-muted'}`}>
               {displayStatus === 'failed'
                 ? 'Failed — review the transcript before retrying.'
@@ -1712,8 +1714,16 @@ export function SessionPane({
           )}
           {(changedFileCount > 0 || artifactsN > 0) && (
             <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-fg-muted">
-              {changedFileCount > 0 && <span>{changedFileCount} changed {changedFileCount === 1 ? 'file' : 'files'}</span>}
-              {artifactsN > 0 && <span>{artifactsN} {artifactsN === 1 ? 'artifact' : 'artifacts'} produced</span>}
+              {changedFileCount > 0 && (
+                <span>
+                  {changedFileCount} changed {changedFileCount === 1 ? 'file' : 'files'}
+                </span>
+              )}
+              {artifactsN > 0 && (
+                <span>
+                  {artifactsN} {artifactsN === 1 ? 'artifact' : 'artifacts'} produced
+                </span>
+              )}
             </div>
           )}
         </section>

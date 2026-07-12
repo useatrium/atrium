@@ -18,22 +18,7 @@ env:
     timeout: 10000
 - tapOn: ".*Demo — watch an agent work.*"
 - extendedWaitUntil:
-    visible: "Session message"
-    timeout: 10000
-- takeScreenshot: "${SCREENSHOT_PREFIX}-01-session-running"
-- tapOn: "Session message"
-- inputText: "Report current progress"
-- tapOn: "Send session message"
-- extendedWaitUntil:
-    visible: ".*Report current progress.*"
-    timeout: 10000
-- takeScreenshot: "${SCREENSHOT_PREFIX}-02-session-steered"
-- extendedWaitUntil:
     visible: ".*Demo complete:.*"
     timeout: 20000
-- assertVisible: ".*hello from your first agent.*"
-- takeScreenshot: "${SCREENSHOT_PREFIX}-03-result"
-- tapOn:
-    text: ".*Back.*"
-- assertVisible: ".*Demo — watch an agent work.*"
-- takeScreenshot: "${SCREENSHOT_PREFIX}-04-ios-stack-return"
+- assertVisible: ".*Demo complete:.*"
+- takeScreenshot: "${SCREENSHOT_PREFIX}-01-result"

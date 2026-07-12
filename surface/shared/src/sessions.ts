@@ -390,10 +390,7 @@ export interface Session {
  * drift back into counting every non-terminal session as urgent.
  */
 export function sessionAttentionKind(
-  session: Pick<
-    Session,
-    'status' | 'pendingQuestion' | 'providerAuthRequired' | 'pendingSeatRequests'
-  >,
+  session: Pick<Session, 'status' | 'pendingQuestion' | 'providerAuthRequired' | 'pendingSeatRequests'>,
 ): SessionAttentionKind | null {
   if (session.pendingQuestion) return 'question';
   if (session.providerAuthRequired) return 'authentication';

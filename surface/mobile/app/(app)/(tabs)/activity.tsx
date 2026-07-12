@@ -91,12 +91,14 @@ export default function ActivityScreen() {
     const attention = merged
       .filter((s) => {
         if (s.live) return sessionAttentionKind(s.live) !== null;
-        return sessionAttentionKind({
-          status: s.status,
-          pendingQuestion: null,
-          providerAuthRequired: null,
-          pendingSeatRequests: [],
-        }) !== null;
+        return (
+          sessionAttentionKind({
+            status: s.status,
+            pendingQuestion: null,
+            providerAuthRequired: null,
+            pendingSeatRequests: [],
+          }) !== null
+        );
       })
       .map((session): ActivityRow => ({ rowType: 'session', session }));
     const feedRows = activityItems.map((activity): ActivityRow => ({ rowType: 'activity', activity }));
@@ -275,7 +277,12 @@ export default function ActivityScreen() {
                 accessibilityRole="button"
                 accessibilityLabel="Activity failed. Tap to retry."
                 onPress={() => void load()}
-                style={{ alignItems: 'center', justifyContent: 'center', padding: space.xl, minHeight: navigationTargetSize }}
+                style={{
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  padding: space.xl,
+                  minHeight: navigationTargetSize,
+                }}
               >
                 <Text style={{ color: colors.danger, fontSize: font.sm }}>Activity failed — tap to retry</Text>
               </Pressable>

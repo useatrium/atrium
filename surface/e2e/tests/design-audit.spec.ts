@@ -1,17 +1,8 @@
 import { expect, test, type Locator, type Page, type TestInfo } from '@playwright/test';
 import { Pool } from 'pg';
-import {
-  apiAs,
-  channelId,
-  login,
-  postMessage,
-  postWithAttachment,
-  unique,
-  uploadViaApi,
-} from './helpers.js';
+import { apiAs, channelId, login, postMessage, postWithAttachment, unique, uploadViaApi } from './helpers.js';
 
-const e2eDatabaseUrl =
-  process.env.E2E_DATABASE_URL ?? 'postgres://atrium:atrium@localhost:5433/atrium_e2e';
+const e2eDatabaseUrl = process.env.E2E_DATABASE_URL ?? 'postgres://atrium:atrium@localhost:5433/atrium_e2e';
 
 const VIEWPORTS = [
   { name: 'phone', width: 390, height: 844 },
@@ -54,14 +45,16 @@ async function expectVisibleFocus(locator: Locator): Promise<void> {
     };
   });
   expect(
-    (indicator.outlineStyle !== 'none' && indicator.outlineWidth >= 1) ||
-      indicator.boxShadow !== 'none',
+    (indicator.outlineStyle !== 'none' && indicator.outlineWidth >= 1) || indicator.boxShadow !== 'none',
     `focused control has no computed outline or box-shadow: ${JSON.stringify(indicator)}`,
   ).toBe(true);
 }
 
 function rgb(value: string): [number, number, number] {
-  const channels = value.match(/[\d.]+/g)?.slice(0, 3).map(Number);
+  const channels = value
+    .match(/[\d.]+/g)
+    ?.slice(0, 3)
+    .map(Number);
   if (!channels || channels.length !== 3) throw new Error(`unsupported computed color: ${value}`);
   return channels as [number, number, number];
 }
@@ -184,7 +177,7 @@ test('empty destinations, keyboard focus, and deterministic contrast have eviden
   await attachScreenshot(page, testInfo, 'empty-attention');
 
   await page.getByRole('button', { name: 'Agents', exact: true }).click();
-  await expect(page.getByPlaceholder('Search sessions')).toBeVisible();
+  await expect(page.getByPlaceholder('Search agents')).toBeVisible();
   await attachScreenshot(page, testInfo, 'empty-agents');
 
   await page.getByRole('button', { name: 'Files', exact: true }).click();

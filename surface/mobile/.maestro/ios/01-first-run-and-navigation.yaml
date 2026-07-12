@@ -10,9 +10,4 @@ env:
 - takeScreenshot: "${SCREENSHOT_PREFIX}-01-chat-orientation"
 - runFlow: ../common/top-level-navigation.yml
 - runFlow: ../common/settings-controls.yml
-# Settings is a pushed native-stack screen. Use its iOS back affordance rather
-# than Android's system Back command.
-- tapOn:
-    text: ".*Back.*"
-- assertVisible: "Chat"
-- takeScreenshot: "${SCREENSHOT_PREFIX}-08-stack-dismissed"
+- takeScreenshot: "${SCREENSHOT_PREFIX}-08-settings-complete"

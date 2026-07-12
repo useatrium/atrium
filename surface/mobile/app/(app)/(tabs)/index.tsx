@@ -26,7 +26,12 @@ function HeaderButton({ icon, label, onPress }: { icon: IoniconName; label: stri
       accessibilityLabel={label}
       onPress={onPress}
       hitSlop={6}
-      style={{ width: navigationTargetSize, height: navigationTargetSize, alignItems: 'center', justifyContent: 'center' }}
+      style={{
+        width: navigationTargetSize,
+        height: navigationTargetSize,
+        alignItems: 'center',
+        justifyContent: 'center',
+      }}
     >
       <Ionicons name={icon} size={21} color={colors.textSecondary} />
     </Pressable>
@@ -291,9 +296,7 @@ export default function ChannelList() {
           return (
             <View style={{ paddingHorizontal: space.lg, paddingVertical: space.md, gap: space.md }}>
               <View style={{ gap: space.xs }}>
-                <Text style={{ color: colors.text, fontSize: font.md, fontWeight: '700' }}>
-                  Start a conversation
-                </Text>
+                <Text style={{ color: colors.text, fontSize: font.md, fontWeight: '700' }}>Start a conversation</Text>
                 <Text style={{ color: colors.textSecondary, fontSize: font.sm, lineHeight: 20 }}>
                   Create a channel for shared work, or message someone directly.
                 </Text>
@@ -325,7 +328,9 @@ export default function ChannelList() {
                     backgroundColor: pressed ? colors.bgPressed : colors.bgElevated,
                   })}
                 >
-                  <Text style={{ color: colors.textSecondary, fontSize: font.sm, fontWeight: '700' }}>Direct message</Text>
+                  <Text style={{ color: colors.textSecondary, fontSize: font.sm, fontWeight: '700' }}>
+                    Direct message
+                  </Text>
                 </Pressable>
               </View>
             </View>

@@ -10,7 +10,12 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('../src/api', () => ({
   ApiError: class ApiError extends Error {
-    constructor(public status: number, message: string) { super(message); }
+    constructor(
+      public status: number,
+      message: string,
+    ) {
+      super(message);
+    }
   },
   api: { me: mocks.me, workspaces: mocks.workspaces },
 }));
@@ -32,7 +37,9 @@ vi.mock('../src/sessions/SessionPanePage', () => ({ SessionPanePage: () => null 
 vi.mock('../src/sessions/SessionWorkPage', () => ({ SessionWorkPage: () => null }));
 vi.mock('../src/sessions/WorkDrawer', () => ({ SLUG_TAB: {} }));
 vi.mock('../src/components/Toasts', () => ({ Toasts: () => null }));
-vi.mock('../src/components/a11y', () => ({ TooltipProvider: ({ children }: { children: React.ReactNode }) => children }));
+vi.mock('../src/components/a11y', () => ({
+  TooltipProvider: ({ children }: { children: React.ReactNode }) => children,
+}));
 
 import { App } from '../src/App';
 

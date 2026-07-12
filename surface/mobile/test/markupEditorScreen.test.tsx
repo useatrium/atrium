@@ -2,7 +2,8 @@
 
 import '@testing-library/jest-dom/vitest';
 import { act, cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
-import React, { forwardRef, useImperativeHandle } from 'react';
+import type React from 'react';
+import { forwardRef, useImperativeHandle } from 'react';
 import type { HubFileVersion } from '@atrium/surface-client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import MarkupEditorScreen from '../app/(app)/markup-editor';

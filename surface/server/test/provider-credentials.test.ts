@@ -1,4 +1,4 @@
-import pg from 'pg';
+import type pg from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { CODEX_PROVIDER, PROXY_CREDENTIAL_SENTINEL, ProviderCredentials } from '../src/provider-credentials.js';
 import { createTestPool, seedFixture, truncateAll } from './helpers.js';

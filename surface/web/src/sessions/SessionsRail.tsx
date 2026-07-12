@@ -3,6 +3,7 @@
 // pattern). Cards reuse SessionCard; clicking one opens it as a peek (→ Split).
 
 import { useMemo } from 'react';
+import { isArchivedSession } from '@atrium/surface-client';
 import { SessionCard } from './SessionCard';
 import { isTerminalSessionStatus, type Session } from './types';
 
@@ -15,6 +16,7 @@ function groupSessions(sessions: Session[]): Group[] {
   const active: Session[] = [];
   const recent: Session[] = [];
   for (const s of sessions) {
+    if (isArchivedSession(s)) continue;
     if (s.pendingQuestion || s.providerAuthRequired) needsYou.push(s);
     else if (isTerminalSessionStatus(s.status)) recent.push(s);
     else active.push(s);
@@ -58,8 +60,7 @@ export function SessionsRail({
         <div className="flex flex-1 flex-col items-center justify-center gap-1.5 px-6 text-center">
           <div className="text-sm font-medium text-fg-secondary">No sessions yet</div>
           <div className="text-xs leading-relaxed text-fg-muted">
-            Start one by typing <span className="font-medium text-fg-secondary">@agent</span> and a
-            task in the channel.
+            Start one by typing <span className="font-medium text-fg-secondary">@agent</span> and a task in the channel.
           </div>
         </div>
       ) : (
@@ -74,12 +75,7 @@ export function SessionsRail({
               </div>
               <div className="space-y-1.5">
                 {group.sessions.map((session) => (
-                  <SessionCard
-                    key={session.id}
-                    session={session}
-                    spectators={0}
-                    onOpenPane={onOpenSession}
-                  />
+                  <SessionCard key={session.id} session={session} spectators={0} onOpenPane={onOpenSession} />
                 ))}
               </div>
             </section>

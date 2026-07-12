@@ -125,8 +125,7 @@ export function Login({ onLogin }: { onLogin: (user: UserRef) => void }) {
               className="mb-3 w-full rounded-md border border-edge-strong bg-surface px-3 py-2 text-sm text-fg placeholder-fg-faint outline-none focus:border-accent-hover"
             />
             <label htmlFor="login-display-name" className="mb-1 block text-xs font-medium text-fg-secondary">
-              Display name{' '}
-              <span className="font-normal normal-case text-fg-muted">· optional</span>
+              Display name <span className="font-normal normal-case text-fg-muted">· optional</span>
             </label>
             <input
               id="login-display-name"
@@ -285,7 +284,8 @@ export function Login({ onLogin }: { onLogin: (user: UserRef) => void }) {
         <details className="mt-5 border-t border-edge pt-3 text-xs text-fg-muted">
           <summary className="cursor-pointer font-medium text-fg-secondary">Server details</summary>
           <p className="mt-2 text-pretty">
-            Connected to <span className="font-medium text-fg">{location.host}</span>. Sign-in methods are configured on this Atrium server.
+            Connected to <span className="font-medium text-fg">{location.host}</span>. Sign-in methods are configured on
+            this Atrium server.
           </p>
         </details>
       </div>

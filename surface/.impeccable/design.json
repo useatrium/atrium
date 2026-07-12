@@ -30,17 +30,30 @@
       "label": { "displayName": "Label", "purpose": "Controls, tabs, compact headers, and status labels." }
     },
     "shadows": [
-      { "name": "transient-low", "value": "0 4px 8px rgb(0 0 0 / 18%)", "purpose": "Menus, compact popovers, and directly manipulated objects." },
-      { "name": "transient-high", "value": "0 12px 24px rgb(0 0 0 / 22%)", "purpose": "Dialogs, lightboxes, and full authoring overlays." }
+      {
+        "name": "transient-low",
+        "value": "0 4px 8px rgb(0 0 0 / 18%)",
+        "purpose": "Menus, compact popovers, and directly manipulated objects."
+      },
+      {
+        "name": "transient-high",
+        "value": "0 12px 24px rgb(0 0 0 / 22%)",
+        "purpose": "Dialogs, lightboxes, and full authoring overlays."
+      }
     ],
     "motion": [
-      { "name": "state-fast", "value": "150ms cubic-bezier(0.25, 1, 0.5, 1)", "purpose": "Hover, pressed, selection, and compact disclosure feedback." },
-      { "name": "spatial-standard", "value": "220ms cubic-bezier(0.16, 1, 0.3, 1)", "purpose": "Panels, sheets, and state changes with a spatial relationship." }
+      {
+        "name": "state-fast",
+        "value": "150ms cubic-bezier(0.25, 1, 0.5, 1)",
+        "purpose": "Hover, pressed, selection, and compact disclosure feedback."
+      },
+      {
+        "name": "spatial-standard",
+        "value": "220ms cubic-bezier(0.16, 1, 0.3, 1)",
+        "purpose": "Panels, sheets, and state changes with a spatial relationship."
+      }
     ],
-    "breakpoints": [
-      { "name": "compact", "value": "767px" },
-      { "name": "expanded", "value": "1024px" }
-    ]
+    "breakpoints": [{ "name": "compact", "value": "767px" }, { "name": "expanded", "value": "1024px" }]
   },
   "components": [
     {
@@ -100,8 +113,16 @@
       "Shared conceptual hierarchy with platform-native behavior."
     ],
     "rules": [
-      { "name": "The One Live Signal Rule", "body": "Indigo identifies action, selection, focus, or genuinely active work. Do not spend it on decoration.", "section": "colors" },
-      { "name": "The Grounded Workspace Rule", "body": "Persistent panes and ordinary content are separated by tone, spacing, or a one-pixel edge. Shadows appear only when an element truly occupies a higher interaction layer.", "section": "elevation" }
+      {
+        "name": "The One Live Signal Rule",
+        "body": "Indigo identifies action, selection, focus, or genuinely active work. Do not spend it on decoration.",
+        "section": "colors"
+      },
+      {
+        "name": "The Grounded Workspace Rule",
+        "body": "Persistent panes and ordinary content are separated by tone, spacing, or a one-pixel edge. Shadows appear only when an element truly occupies a higher interaction layer.",
+        "section": "elevation"
+      }
     ],
     "dos": [
       "Do make actor, status, current action, and available intervention legible in every active-work surface.",

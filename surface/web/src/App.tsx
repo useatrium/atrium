@@ -104,7 +104,10 @@ export function App() {
     if (!checked || !me || workspace || bootError) return;
     const currentUser = me;
     setBootError(null);
-    api.workspaces().then(({ workspaces }) => setWorkspaces(workspaces)).catch(() => setBootError('workspace'));
+    api
+      .workspaces()
+      .then(({ workspaces }) => setWorkspaces(workspaces))
+      .catch(() => setBootError('workspace'));
     function setWorkspaces(list: Workspace[]) {
       const first = list[0] ?? null;
       setWorkspace(first);

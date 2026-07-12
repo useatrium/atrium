@@ -7,15 +7,7 @@ type IoniconName = ComponentProps<typeof Ionicons>['name'];
 
 export const navigationTargetSize = Platform.OS === 'ios' ? 44 : 48;
 
-export function TabIcon({
-  name,
-  color,
-  live = false,
-}: {
-  name: IoniconName;
-  color: ColorValue;
-  live?: boolean;
-}) {
+export function TabIcon({ name, color, live = false }: { name: IoniconName; color: ColorValue; live?: boolean }) {
   const { colors } = useTheme();
 
   return (
