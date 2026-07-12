@@ -37,6 +37,9 @@ use crate::{HarnessServerError, Result};
 const LOCAL_ATTACHMENT_WAIT_ENV: &str = "CENTAUR_LOCAL_ATTACHMENT_WAIT_MS";
 const DEFAULT_LOCAL_ATTACHMENT_WAIT_MS: u64 = 30_000;
 const LOCAL_ATTACHMENT_POLL_MS: u64 = 100;
+const ATRIUM_CONTEXT_READY_TIMEOUT_ENV: &str = "ATRIUM_CONTEXT_READY_TIMEOUT_MS";
+const DEFAULT_ATRIUM_CONTEXT_READY_TIMEOUT_MS: u64 = 10_000;
+const ATRIUM_CONTEXT_READY_POLL_MS: u64 = 250;
 
 pub fn server_for(kind: HarnessKind) -> Box<dyn AppServerRuntime> {
     match kind {
@@ -647,7 +650,7 @@ fn wrapped_context_text(context: &[String]) -> Option<String> {
     if context.is_empty() {
         return None;
     }
-    Some(format!("<context>\n{}\n</context>", context.join("\n")))
+    Some(format!("<context>\n{}\n</context>\n\n", context.join("\n")))
 }
 
 fn attachment_block_to_user_input(
@@ -1258,6 +1261,7 @@ fn run_normalized_turn<H: HarnessServer, W: Write>(
     state: &mut ThreadState,
     mut ctx: TurnRunContext<'_, W>,
 ) -> Result<()> {
+    wait_for_atrium_context_if_first_turn(!state.thread_started_sent);
     for notification in ctx
         .normalizer
         .start_notifications(!state.thread_started_sent)?
@@ -1284,6 +1288,48 @@ fn run_normalized_turn<H: HarnessServer, W: Write>(
         Err(error) => finish_turn_with_error(state, ctx.normalizer, ctx.stdout, error)?,
     }
     Ok(())
+}
+
+fn wait_for_atrium_context_if_first_turn(first_turn: bool) {
+    if !first_turn {
+        return;
+    }
+    let timeout = env::var(ATRIUM_CONTEXT_READY_TIMEOUT_ENV)
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .map(Duration::from_millis)
+        .unwrap_or(Duration::from_millis(
+            DEFAULT_ATRIUM_CONTEXT_READY_TIMEOUT_MS,
+        ));
+    if timeout.is_zero() {
+        return;
+    }
+    let Some(home) = env::var_os("HOME") else {
+        return;
+    };
+    wait_for_atrium_context_path(first_turn, &PathBuf::from(home).join("context"), timeout);
+}
+
+fn wait_for_atrium_context_path(first_turn: bool, context_dir: &Path, timeout: Duration) {
+    if !first_turn || timeout.is_zero() {
+        return;
+    }
+    if !context_dir.is_dir() {
+        return;
+    }
+    let marker = context_dir.join(".atrium-context-ready");
+    let start = Instant::now();
+    while !marker.is_file() && start.elapsed() < timeout {
+        let remaining = timeout.saturating_sub(start.elapsed());
+        thread::sleep(remaining.min(Duration::from_millis(ATRIUM_CONTEXT_READY_POLL_MS)));
+    }
+    if !marker.is_file() {
+        eprintln!(
+            "warning: Atrium context readiness marker {} was missing after {}ms; proceeding with first turn",
+            marker.display(),
+            timeout.as_millis()
+        );
+    }
 }
 
 fn finish_turn_interrupted<W: Write>(
@@ -1913,6 +1959,17 @@ mod tests {
         path
     }
 
+    fn temp_context_dir(create: bool) -> PathBuf {
+        let root =
+            env::temp_dir().join(format!("harness-context-test-{}", Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&root).expect("create context test root");
+        let context = root.join("context");
+        if create {
+            std::fs::create_dir(&context).expect("create context mount");
+        }
+        context
+    }
+
     #[test]
     fn blocks_thread_state_uses_centaur_thread_key_and_resume_target() {
         let previous_thread_key = env::var_os("CENTAUR_THREAD_KEY");
@@ -2113,7 +2170,7 @@ mod tests {
             "[atrium context]\nfrom: Alice Basin (human - driver)".to_string(),
             "[atrium context]\nfrom: Bob Basin (human - reviewer)".to_string(),
         ];
-        let wrapped = "<context>\n[atrium context]\nfrom: Alice Basin (human - driver)\n[atrium context]\nfrom: Bob Basin (human - reviewer)\n</context>";
+        let wrapped = "<context>\n[atrium context]\nfrom: Alice Basin (human - driver)\n[atrium context]\nfrom: Bob Basin (human - reviewer)\n</context>\n\n";
         let delivered = prepend_context_input(&context, input.clone());
 
         assert_eq!(delivered.len(), 2);
@@ -2149,6 +2206,45 @@ mod tests {
 
         assert_eq!(content.len(), 1);
         assert_eq!(text_input(&content[0]), "hello");
+    }
+
+    #[test]
+    fn context_gate_waits_until_marker_arrives() {
+        let context = temp_context_dir(true);
+        let marker = context.join(".atrium-context-ready");
+        let writer = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(30));
+            std::fs::write(marker, b"ready\n").unwrap();
+        });
+
+        wait_for_atrium_context_path(true, &context, Duration::from_secs(1));
+
+        writer.join().unwrap();
+        assert!(context.join(".atrium-context-ready").is_file());
+    }
+
+    #[test]
+    fn context_gate_skips_absent_mount() {
+        let context = temp_context_dir(false);
+        let start = Instant::now();
+        wait_for_atrium_context_path(true, &context, Duration::from_secs(1));
+        assert!(start.elapsed() < Duration::from_millis(100));
+    }
+
+    #[test]
+    fn context_gate_timeout_proceeds() {
+        let context = temp_context_dir(true);
+        let start = Instant::now();
+        wait_for_atrium_context_path(true, &context, Duration::from_millis(20));
+        assert!(start.elapsed() >= Duration::from_millis(20));
+    }
+
+    #[test]
+    fn context_gate_never_waits_after_first_turn() {
+        let context = temp_context_dir(true);
+        let start = Instant::now();
+        wait_for_atrium_context_path(false, &context, Duration::from_secs(1));
+        assert!(start.elapsed() < Duration::from_millis(100));
     }
 
     #[test]

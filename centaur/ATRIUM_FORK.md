@@ -49,11 +49,12 @@ The substantive Atrium-only work this fork carries on top of upstream:
   covered by harness-server tests (fake SDK).
   **Open:** the watched live-cluster e2e (real-SDK question round-trip).
 - **Subscription auth** — per-execution Codex/Claude OAuth env injection.
-- **Baked org prompt overlay** — `services/sandbox/ATRIUM_OVERLAY_PROMPT.md` is baked
-  into the sandbox image at `/opt/centaur-overlay/services/sandbox/SYSTEM_PROMPT.md`
-  with `CENTAUR_OVERLAY_DIR` defaulting there, so every sandbox appends the Atrium
-  addendum (context mount, provenance blocks, `/e/` citations) after the base prompt.
-  Pod-level `CENTAUR_OVERLAY_DIR` still overrides for external-overlay deployments.
+- **Baked Atrium base prompt** — `services/sandbox/ATRIUM_BASE_PROMPT.md` is baked
+  into the sandbox image at `/opt/centaur-overlay/services/sandbox/BASE_PROMPT.md`
+  with `CENTAUR_OVERLAY_DIR` defaulting there, so Atrium sandboxes use the native
+  identity, context, and artifact contract instead of the upstream base prompt.
+  API-written `AGENTS_BASE.md` personas still take priority; external overlay deployments
+  can override `CENTAUR_OVERLAY_DIR` and append their existing `SYSTEM_PROMPT.md`.
 - **Warm-lease dep/build cache** — sandboxes reuse dependency + compile caches across
   sessions (upstream Centaur has none): a node-local depcache (pnpm store / cargo registry /
   uv) + sccache, plus a content-addressed cross-node tier in Atrium CAS keyed by lockfile

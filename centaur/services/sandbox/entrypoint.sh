@@ -535,11 +535,14 @@ fi
 unset _centaur_tools_auto_reload
 
 # ── Assemble system prompt from bind mounts ──────────────────────────────────
-# Base prompt: mounted as AGENTS_BASE.md when present, fallback to baked-in AGENTS.md.
+# Base prompt: mounted persona, overlay base, then baked-in upstream prompt.
 # Org/persona overlays are mounted alongside the base prompt when present.
 TARGET_PROMPT="$WORKSPACE_DIR/AGENTS.md"
 if [ -f "$HOME_DIR/AGENTS_BASE.md" ]; then
     cp "$HOME_DIR/AGENTS_BASE.md" "$TARGET_PROMPT"
+elif [ -n "${CENTAUR_OVERLAY_DIR:-}" ] \
+    && [ -f "${CENTAUR_OVERLAY_DIR}/services/sandbox/BASE_PROMPT.md" ]; then
+    cp "${CENTAUR_OVERLAY_DIR}/services/sandbox/BASE_PROMPT.md" "$TARGET_PROMPT"
 elif [ -f /opt/centaur/AGENTS.md ]; then
     cp /opt/centaur/AGENTS.md "$TARGET_PROMPT"
 fi

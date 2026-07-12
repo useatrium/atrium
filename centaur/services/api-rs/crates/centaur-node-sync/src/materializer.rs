@@ -28,6 +28,8 @@ This read-only mount is the local context map for the Atrium channel and its ses
 - See who is here: `cat ~/context/channel/channel.md`.
 "#;
 
+const CONTEXT_READY_MARKER: &str = ".atrium-context-ready";
+
 pub const ATRIUM_DOCS: &[(&str, &str)] = &[
     ("transcript", "transcript.md"),
     ("full", "full.md"),
@@ -100,7 +102,7 @@ pub fn materialize_changed_sessions<C: AtriumClient + ?Sized>(
     Ok(next_cursor)
 }
 
-fn write_mount_readme(atrium_root: &Path) -> Result<(), String> {
+pub fn write_mount_readme(atrium_root: &Path) -> Result<(), String> {
     write_atomic(&atrium_root.join("README.md"), ROOT_README.as_bytes())
 }
 
@@ -214,7 +216,20 @@ pub fn materialize_channel_docs<C: AtriumClient + ?Sized>(
         &channels_dir.join("index.md"),
         render_channels_index(&channels).as_bytes(),
     )?;
-    update_active_channel_symlink(atrium_root, channels.iter().find(|channel| channel.active))?;
+    let active = channels.iter().find(|channel| channel.active);
+    let marker_missing = !atrium_root.join(CONTEXT_READY_MARKER).is_file();
+    let active_selected = active.is_some_and(|channel| match only_channel_ids {
+        Some(ids) => ids.iter().any(|id| id == &channel.id),
+        None => true,
+    });
+    if let Some(active) = active.filter(|_| marker_missing || active_selected) {
+        materialize_one_channel(client, &channels_dir, active, true)?;
+        update_active_channel_symlink(atrium_root, Some(active))?;
+        write_mount_readme(atrium_root)?;
+        write_atomic(&atrium_root.join(CONTEXT_READY_MARKER), b"ready\n")?;
+    } else if active.is_none() {
+        update_active_channel_symlink(atrium_root, None)?;
+    }
     if only_channel_ids.is_none() {
         prune_stale_channel_dirs(&channels_dir, &channels)?;
     }
@@ -225,27 +240,35 @@ pub fn materialize_channel_docs<C: AtriumClient + ?Sized>(
             None => true,
         }
     };
-    for channel in channels.iter().filter(|channel| selected(channel)) {
-        let channel_dir = channels_dir.join(&channel.id);
-        for (doc, filename) in ATRIUM_CHANNEL_DOCS {
-            match client.atrium_channel_doc(&channel.id, doc) {
-                Ok(bytes) => {
-                    let dst = channel_dir.join(filename);
-                    if let Err(error) = write_atomic(&dst, &bytes) {
-                        eprintln!(
-                            "atrium channel materializer write {}/{}: {error}",
-                            channel.id, filename
-                        );
-                    }
-                }
-                Err(error) => {
-                    if !error.contains("status code 403") && !error.contains("status code 404") {
-                        eprintln!(
-                            "atrium channel materializer fetch {}/{}: {error}",
-                            channel.id, doc
-                        );
-                    }
-                }
+    for channel in channels
+        .iter()
+        .filter(|channel| !channel.active && selected(channel))
+    {
+        materialize_one_channel(client, &channels_dir, channel, false)?;
+    }
+    Ok(())
+}
+
+fn materialize_one_channel<C: AtriumClient + ?Sized>(
+    client: &C,
+    channels_dir: &Path,
+    channel: &AtriumChannel,
+    required: bool,
+) -> Result<(), String> {
+    let channel_dir = channels_dir.join(&channel.id);
+    for (doc, filename) in ATRIUM_CHANNEL_DOCS {
+        let result = client
+            .atrium_channel_doc(&channel.id, doc)
+            .and_then(|bytes| write_atomic(&channel_dir.join(filename), &bytes));
+        if let Err(error) = result {
+            if required {
+                return Err(format!("active channel {}/{}: {error}", channel.id, doc));
+            }
+            if !error.contains("status code 403") && !error.contains("status code 404") {
+                eprintln!(
+                    "atrium channel materializer fetch/write {}/{}: {error}",
+                    channel.id, doc
+                );
             }
         }
     }
@@ -347,6 +370,7 @@ fn tmp_path(dst: &Path) -> PathBuf {
 mod tests {
     use super::*;
     use std::collections::HashSet;
+    use std::sync::Mutex;
 
     #[derive(Default)]
     struct FakeClient {
@@ -355,6 +379,7 @@ mod tests {
         fail_docs: HashSet<(String, String)>,
         channels: Vec<AtriumChannel>,
         fail_channel_docs: HashSet<(String, String)>,
+        calls: Mutex<Vec<String>>,
     }
 
     impl FakeClient {
@@ -365,6 +390,7 @@ mod tests {
                 fail_docs: HashSet::new(),
                 channels: Vec::new(),
                 fail_channel_docs: HashSet::new(),
+                calls: Mutex::new(Vec::new()),
             }
         }
 
@@ -409,6 +435,10 @@ mod tests {
         }
 
         fn atrium_doc(&self, target_id: &str, doc: &str) -> Result<Vec<u8>, String> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(format!("session:{target_id}:{doc}"));
             if self
                 .fail_docs
                 .contains(&(target_id.to_string(), doc.to_string()))
@@ -430,10 +460,18 @@ mod tests {
         }
 
         fn atrium_channels(&self) -> Result<Vec<AtriumChannel>, String> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push("channels:index".to_string());
             Ok(self.channels.clone())
         }
 
         fn atrium_channel_doc(&self, channel_id: &str, doc: &str) -> Result<Vec<u8>, String> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(format!("channel:{channel_id}:{doc}"));
             if self
                 .fail_channel_docs
                 .contains(&(channel_id.to_string(), doc.to_string()))
@@ -569,8 +607,79 @@ mod tests {
     }
 
     #[test]
+    fn seeds_readme_without_fetching_remote_content() {
+        let temp = tempfile::tempdir().unwrap();
+        let client = FakeClient::default();
+
+        write_mount_readme(temp.path()).unwrap();
+
+        assert!(temp.path().join("README.md").is_file());
+        assert!(client.calls.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn active_channel_is_materialized_before_other_channels_and_marker() {
+        let temp = tempfile::tempdir().unwrap();
+        let client = FakeClient::default().with_channels(vec![
+            AtriumChannel {
+                id: "other".to_string(),
+                name: "Other".to_string(),
+                kind: "public".to_string(),
+                last_event_id: 1,
+                active: false,
+            },
+            AtriumChannel {
+                id: "active".to_string(),
+                name: "Active".to_string(),
+                kind: "public".to_string(),
+                last_event_id: 2,
+                active: true,
+            },
+        ]);
+
+        materialize_channel_docs(&client, temp.path(), None).unwrap();
+
+        let calls = client.calls.lock().unwrap();
+        let active_chat = calls
+            .iter()
+            .position(|call| call == "channel:active:chat")
+            .unwrap();
+        let other_channel = calls
+            .iter()
+            .position(|call| call == "channel:other:channel")
+            .unwrap();
+        assert!(active_chat < other_channel);
+        assert!(temp.path().join(CONTEXT_READY_MARKER).is_file());
+        assert!(
+            !temp
+                .path()
+                .join(format!("{CONTEXT_READY_MARKER}.tmp"))
+                .exists()
+        );
+    }
+
+    #[test]
+    fn readiness_marker_requires_all_active_channel_docs() {
+        let temp = tempfile::tempdir().unwrap();
+        let client = FakeClient::default()
+            .with_channels(vec![AtriumChannel {
+                id: "active".to_string(),
+                name: "Active".to_string(),
+                kind: "public".to_string(),
+                last_event_id: 2,
+                active: true,
+            }])
+            .failing_channel("active", "chat");
+
+        assert!(materialize_channel_docs(&client, temp.path(), None).is_err());
+        assert!(!temp.path().join(CONTEXT_READY_MARKER).exists());
+        assert!(!temp.path().join("channel").exists());
+    }
+
+    #[test]
     fn materializes_only_dirty_channel_docs_but_refreshes_index() {
         let temp = tempfile::tempdir().unwrap();
+        write_atomic(&temp.path().join(CONTEXT_READY_MARKER), b"ready\n").unwrap();
         let client = FakeClient::default()
             .with_channels(vec![
                 AtriumChannel {

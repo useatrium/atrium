@@ -3508,7 +3508,7 @@ describe('Phase 2 sessions', () => {
     expect(messages[0]!.body.parts).toEqual(messages[1]!.body.parts);
     expect(messages[0]!.body.parts[0]).toMatchObject({
       type: 'context',
-      text: expect.stringContaining('[atrium context]\nfrom: Alice (@alice · human · driver)\nchannel: #general\nsent:'),
+      text: expect.stringContaining('[atrium context]\nfrom: Alice (@alice · human · driver)\nyou: agent — session "stale"\nchannel: #general (id:'),
     });
     expect(messages[0]!.body.parts[1]).toEqual({ type: 'text', text: 'retry after stale' });
     const execute = fake.requests.find((r) => r.path === '/agent/execute');

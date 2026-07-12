@@ -53,6 +53,7 @@ import { AgentProfiles } from './agent-profiles.js';
 import { agentTurnInputLine, agentTurnMessageParts, type AgentTurnAttachmentRef } from './session-attachments.js';
 import { appendReferencedEntriesAppendix } from './referenced-entries.js';
 import { buildSteerContextBlock, type SteerContextSuggestionAttribution } from './steer-context.js';
+import { encodeEventHandle } from './entries.js';
 
 export type SessionStatus = 'spawning' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
 
@@ -346,6 +347,9 @@ interface SteerContextRow {
   display_name: string;
   handle: string;
   channel_name: string;
+  channel_id: string;
+  session_title: string;
+  agent_profile_name: string | null;
   sent_at: Date;
 }
 
@@ -1127,24 +1131,35 @@ export class SessionRuns {
     userId: string,
     seat: string,
     suggestion?: Pick<SteerContextSuggestionAttribution, 'suggestedBy'>,
+    // users has no actor-kind discriminator yet; callers may override the human default.
+    kind: 'human' | 'agent' = 'human',
   ): Promise<string> {
     const res = await client.query<SteerContextRow>(
       `SELECT u.display_name,
               u.handle,
               c.name AS channel_name,
+              c.id AS channel_id,
+              s.title AS session_title,
+              ap.name AS agent_profile_name,
               now() AS sent_at
          FROM users u
          JOIN channels c ON c.id = $2
+         JOIN sessions s ON s.id = $3
+         LEFT JOIN agent_profile_versions apv ON apv.id = s.agent_profile_version_id
+         LEFT JOIN agent_profiles ap ON ap.id = apv.profile_id
         WHERE u.id = $1`,
-      [userId, row.channel_id],
+      [userId, row.channel_id, row.id],
     );
     const context = res.rows[0];
     if (!context) {
       throw new DomainError(404, 'user_not_found', 'user not found');
     }
     return buildSteerContextBlock({
-      from: { name: context.display_name, handle: context.handle, kind: 'human', seat },
+      from: { name: context.display_name, handle: context.handle, kind, seat },
+      you: { name: context.agent_profile_name, sessionTitle: context.session_title },
       channel: context.channel_name,
+      channelId: context.channel_id,
+      thread: row.thread_root_event_id == null ? null : `/e/${encodeEventHandle(row.thread_root_event_id)}`,
       sent: context.sent_at,
       ...(suggestion
         ? {
