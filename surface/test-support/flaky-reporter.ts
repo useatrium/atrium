@@ -2,7 +2,17 @@
 // visible fix-it item. Never make successful retries silent.
 import { appendFile } from 'node:fs/promises';
 import path from 'node:path';
-import type { Reporter, TestCase } from 'vitest/reporters';
+
+// Structurally typed against Vitest 4's reporter API rather than importing types
+// from 'vitest/reporters': every package's typecheck compiles this shared file via
+// its vitest config, and not all of their module resolutions can see vitest's
+// subpath type exports from this directory. Vitest accepts duck-typed reporters.
+interface ReportedTestCase {
+  fullName: string;
+  module: { moduleId: string };
+  result(): { state: string };
+  diagnostic(): { retryCount: number } | undefined;
+}
 
 interface FlakyTest {
   file: string;
@@ -18,12 +28,12 @@ function markdownEscape(value: string): string {
   return value.replaceAll('|', '\\|').replaceAll('\r', ' ').replaceAll('\n', ' ');
 }
 
-export class FlakyReporter implements Reporter {
+export class FlakyReporter {
   private readonly flakyTests: FlakyTest[] = [];
 
   constructor(private readonly packageName: string) {}
 
-  onTestCaseResult(testCase: TestCase): void {
+  onTestCaseResult(testCase: ReportedTestCase): void {
     if (testCase.result().state !== 'passed' || !testCase.diagnostic()?.retryCount) return;
 
     const root = process.env.GITHUB_WORKSPACE ?? process.cwd();
