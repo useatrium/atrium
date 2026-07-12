@@ -5,6 +5,13 @@ artifacts / files), the Centaur agent runtime, and a Cloudflare front door — o
 OVH VPS. Written from a real bring-up; the **⚠️ Gotcha** callouts are the traps we
 actually hit.
 
+This is the complete **worked example** for the general guide at
+[self-hosting.md](self-hosting.md): one real, specific topology (a single VPS
+behind a Cloudflare tunnel + Access gate). Almost nothing here is OVH-specific —
+it applies to any Ubuntu box. For the architecture, the required-vs-optional
+dependency breakdown, and other topologies (private tailnet, plain Caddy TLS),
+start with the general guide.
+
 ## Topology
 
 ```

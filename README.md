@@ -45,6 +45,21 @@ visible and shared, instead of a private tool whose results get copied around by
 hand. It's self-hostable, so your code, your context, and your credentials stay
 with you.
 
+## Own your context
+
+Everything that flows through Atrium — the message log, every file version,
+agents' full transcripts, connected credentials — is your organization's
+**context**: the working memory of how your team and its agents get things
+done. Atrium is built so that context can always live on hardware you control,
+and so you decide how agents are deployed around it.
+
+Concretely: all durable state sits in two boring stores you run (Postgres and
+an S3-compatible object store), the agent runtime is yours to operate and
+police, and **no proprietary service is load-bearing** — every hard dependency
+is commodity open source, and hosted conveniences (push, email, Cloudflare) are
+optional layers that degrade gracefully when absent. The full philosophy and
+every install path: [docs/self-hosting.md](docs/self-hosting.md).
+
 ## Quickstart
 
 This runs the chat side of Atrium on your machine. (Live agent sessions also need a
@@ -275,6 +290,7 @@ Atrium adds is in
 ## Links
 
 - **Architecture walkthrough:** https://gbasin.github.io/atrium-architecture/
+- **Self-hosting:** philosophy, requirements, and every install path — [docs/self-hosting.md](docs/self-hosting.md); complete single-box worked example in [docs/self-host-ovh.md](docs/self-host-ovh.md).
 - **UI surfaces:** the screens and how they compose — [docs/surfaces.md](docs/surfaces.md).
 - **Desktop app:** build, signing, and auto-update — [surface/desktop/README.md](surface/desktop/README.md).
 - **Agent engine:** our Centaur fork in [`centaur/`](centaur/) — upstream [paradigmxyz/centaur](https://github.com/paradigmxyz/centaur) (Apache-2.0 OR MIT), pulled via subtree (see [`centaur/ATRIUM_FORK.md`](centaur/ATRIUM_FORK.md)).

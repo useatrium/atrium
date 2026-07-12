@@ -5,6 +5,8 @@ understanding Atrium.
 
 Useful public docs:
 
+- [Self-hosting Atrium](self-hosting.md) — why and how to run the whole stack on your own hardware; start here for deployment
+- [Self-hosting worked example](self-host-ovh.md) — end-to-end bring-up of the full stack on one VPS
 - [Surface workspace](../surface/README.md)
 - [Self-hosting the surface stack](../surface/deploy/README.md)
 - [Observability strategy](observability-strategy.md)
