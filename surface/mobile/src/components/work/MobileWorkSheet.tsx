@@ -3,6 +3,7 @@
 // detach). This is the full-screen container; it hosts one surface at a time
 // behind a tab bar, the RN counterpart of web's WorkDrawer.
 import { useRef, type ReactNode } from 'react';
+import { Ionicons } from '@expo/vector-icons';
 import { Modal, Pressable, Text, View } from 'react-native';
 import { useModalAccessibilityFocus } from '../../lib/accessibility';
 import { font, space, useTheme } from '../../lib/theme';
@@ -60,8 +61,9 @@ export function MobileWorkSheet({
                   accessibilityHint={`Shows the ${t.label} work surface`}
                   accessibilityState={{ selected: isActive }}
                   style={{
+                    minHeight: 48,
+                    justifyContent: 'center',
                     paddingHorizontal: space.sm,
-                    paddingVertical: space.sm,
                     borderBottomWidth: 2,
                     borderBottomColor: isActive ? colors.accent : 'transparent',
                   }}
@@ -86,9 +88,16 @@ export function MobileWorkSheet({
             onPress={onClose}
             accessibilityRole="button"
             accessibilityLabel="Close work surfaces"
-            style={{ paddingHorizontal: space.sm, paddingVertical: space.sm }}
+            hitSlop={space.xs}
+            style={{
+              width: 48,
+              height: 48,
+              alignItems: 'center',
+              justifyContent: 'center',
+              borderRadius: 6,
+            }}
           >
-            <Text style={{ color: colors.textMuted, fontSize: font.lg }}>✕</Text>
+            <Ionicons name="close" size={22} color={colors.textSecondary} />
           </Pressable>
         </View>
         <View style={{ flex: 1 }}>{active?.render()}</View>

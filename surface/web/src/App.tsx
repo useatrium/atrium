@@ -39,6 +39,8 @@ export function App() {
   const [me, setMe] = useState<UserRef | null>(null);
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [checked, setChecked] = useState(false);
+  const [bootError, setBootError] = useState<'authentication' | 'workspace' | null>(null);
+  const [bootAttempt, setBootAttempt] = useState(0);
 
   useEffect(() => onDesktopNavigate((path) => navigate(path)), []);
 
@@ -48,12 +50,15 @@ export function App() {
       return;
     }
     let disposed = false;
+    let phase: 'authentication' | 'workspace' = 'authentication';
+    setBootError(null);
     api
       .me()
       .then(async ({ user, prefs }) => {
         if (disposed) return;
         setMe(user);
         if (prefs) adoptPrefs(prefs);
+        phase = 'workspace';
         const { workspaces } = await api.workspaces();
         if (disposed) return;
         const first = workspaces[0] ?? null;
@@ -75,7 +80,11 @@ export function App() {
         }
         try {
           const snapshot = await loadBootSnapshot();
-          if (disposed || !snapshot) return;
+          if (disposed) return;
+          if (!snapshot) {
+            setBootError(phase);
+            return;
+          }
           setMe(snapshot.user);
           setWorkspace(snapshot.workspace);
           if (snapshot.prefs) adoptPrefs(snapshot.prefs);
@@ -89,15 +98,13 @@ export function App() {
     return () => {
       disposed = true;
     };
-  }, [markupShellRoute]);
+  }, [markupShellRoute, bootAttempt]);
 
   useEffect(() => {
-    if (!me || workspace) return;
+    if (!checked || !me || workspace || bootError) return;
     const currentUser = me;
-    api
-      .workspaces()
-      .then(({ workspaces }) => setWorkspaces(workspaces))
-      .catch(() => {});
+    setBootError(null);
+    api.workspaces().then(({ workspaces }) => setWorkspaces(workspaces)).catch(() => setBootError('workspace'));
     function setWorkspaces(list: Workspace[]) {
       const first = list[0] ?? null;
       setWorkspace(first);
@@ -107,16 +114,52 @@ export function App() {
         });
       }
     }
-  }, [me, workspace]);
+  }, [bootAttempt, bootError, checked, me, workspace]);
 
   // Toasts mount at the root so even login-screen failures surface.
   let body: ReactNode;
   if (markupShellRoute) body = <MarkupShellPage />;
-  else if (!checked) body = <div className="h-dvh bg-surface" />;
+  else if (!checked)
+    body = (
+      <main id="main-content" className="flex h-dvh items-center justify-center bg-surface px-6">
+        <p role="status" aria-live="polite" className="text-sm text-fg-muted">
+          Checking your sign-in…
+        </p>
+      </main>
+    );
+  else if (bootError)
+    body = (
+      <main id="main-content" className="flex h-dvh items-center justify-center bg-surface px-6">
+        <div className="max-w-sm text-center">
+          <h1 className="text-base font-semibold text-fg">
+            {bootError === 'workspace' ? 'Workspace unavailable' : 'Couldn’t verify your sign-in'}
+          </h1>
+          <p role="alert" className="mt-2 text-sm text-fg-muted">
+            {bootError === 'workspace'
+              ? 'Atrium couldn’t load your workspace. Check your connection and try again.'
+              : 'Atrium couldn’t reach the server. Check your connection and try again.'}
+          </p>
+          <button
+            type="button"
+            onClick={() => {
+              setChecked(false);
+              setBootAttempt((attempt) => attempt + 1);
+            }}
+            className="mt-4 rounded-md bg-accent px-3 py-2 text-sm font-semibold text-on-accent transition-colors hover:bg-accent-hover"
+          >
+            Try again
+          </button>
+        </div>
+      </main>
+    );
   else if (!me) body = <Login onLogin={setMe} />;
   else if (!workspace)
     body = (
-      <div className="flex h-dvh items-center justify-center bg-surface text-sm text-fg-muted">Loading workspace…</div>
+      <main id="main-content" className="flex h-dvh items-center justify-center bg-surface px-6">
+        <p role="status" aria-live="polite" className="text-sm text-fg-muted">
+          Loading your workspace…
+        </p>
+      </main>
     );
   else if (paneRoute) body = <SessionPanePage key={paneRoute.sessionId} sessionId={paneRoute.sessionId} me={me} />;
   else if (workRoute)
