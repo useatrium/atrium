@@ -512,7 +512,6 @@ export async function sendQuestionPush(
   );
   if (tokens.rows.length === 0) return;
 
-  const { fetchImpl, receiptDelayMs, webPushSender } = sendMessagePushOptions(fetchOrOpts);
   const sessionId = typeof event.payload.sessionId === 'string' ? event.payload.sessionId : '';
   const questionId = typeof event.payload.questionId === 'string' ? event.payload.questionId : '';
   const permalink =
@@ -526,32 +525,13 @@ export async function sendQuestionPush(
     sessionId,
     questionId,
   };
-  const webPayload: WebPushPayload = {
+  await sendSingleUserPushes(pool, tokens.rows, fetchOrOpts, {
     title: 'Centaur needs your input',
     body,
     tag: `session:${sessionId || event.id}`,
     badge,
     data,
-  };
-  const expoMessages = tokens.rows.filter((r) => r.kind === 'expo').map((r) => ({
-    to: r.token,
-    title: 'Centaur needs your input',
-    body,
-    sound: 'default' as const,
-    badge,
-    data,
-  }));
-  const webMessages = tokens.rows
-    .filter((r) => r.kind === 'webpush' && r.subscription)
-    .map((r) => ({
-      token: r.token,
-      subscription: r.subscription!,
-      payload: webPayload,
-      urgency: 'normal' as WebPushUrgency,
-    }));
-
-  await sendExpoPushes(pool, expoMessages, fetchImpl, receiptDelayMs);
-  await sendWebPushes(pool, webPushSender, webMessages);
+  });
 }
 
 export async function sendSessionCompletedPush(
@@ -581,7 +561,6 @@ export async function sendSessionCompletedPush(
   );
   if (tokens.rows.length === 0) return;
 
-  const { fetchImpl, receiptDelayMs, webPushSender } = sendMessagePushOptions(fetchOrOpts);
   const body =
     config.pushRedactContent
       ? 'Session finished'
@@ -593,30 +572,38 @@ export async function sendSessionCompletedPush(
   const title = `Session finished: ${sessionTitle}`;
   const badge = await unreadChannelCountFor(pool, event.actorId);
   const data = { channelId: event.channelId, eventId: event.id, permalink, sessionId };
-  const webPayload: WebPushPayload = {
+  await sendSingleUserPushes(pool, tokens.rows, fetchOrOpts, {
     title,
     body,
     tag: `session:${sessionId || event.id}`,
     badge,
     data,
-  };
-  const expoMessages = tokens.rows.filter((r) => r.kind === 'expo').map((r) => ({
-    to: r.token,
-    title,
-    body,
+  });
+}
+
+async function sendSingleUserPushes(
+  pool: Db,
+  tokens: PushTokenRow[],
+  fetchOrOpts: typeof fetch | SendMessagePushOptions,
+  payload: WebPushPayload,
+): Promise<void> {
+  const { fetchImpl, receiptDelayMs, webPushSender } = sendMessagePushOptions(fetchOrOpts);
+  const expoMessages = tokens.filter((row) => row.kind === 'expo').map((row) => ({
+    to: row.token,
+    title: payload.title,
+    body: payload.body,
     sound: 'default' as const,
-    badge,
-    data,
+    badge: payload.badge,
+    data: payload.data,
   }));
-  const webMessages = tokens.rows
-    .filter((r) => r.kind === 'webpush' && r.subscription)
-    .map((r) => ({
-      token: r.token,
-      subscription: r.subscription!,
-      payload: webPayload,
+  const webMessages = tokens
+    .filter((row) => row.kind === 'webpush' && row.subscription)
+    .map((row) => ({
+      token: row.token,
+      subscription: row.subscription!,
+      payload,
       urgency: 'normal' as WebPushUrgency,
     }));
-
   await sendExpoPushes(pool, expoMessages, fetchImpl, receiptDelayMs);
   await sendWebPushes(pool, webPushSender, webMessages);
 }
