@@ -16,6 +16,7 @@ export function ReasoningBlock({
   const { colors } = useTheme();
   const [open, setOpen] = useState(false);
   const hasSummary = Boolean(item.summary?.trim());
+  if (!item.text.trim() && !hasSummary) return null;
 
   return (
     <View

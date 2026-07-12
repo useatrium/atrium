@@ -79,6 +79,7 @@ import { SessionMarkdown } from '../../../src/components/Markdown';
 import { PlanPanel } from '../../../src/components/PlanPanel';
 import { ReasoningBlock } from '../../../src/components/ReasoningBlock';
 import { TurnStatusLine } from '../../../src/components/TurnStatusLine';
+import { HiddenWorkChip } from '../../../src/components/HiddenWorkChip';
 import { MessageActionSheet, type MessageActionListItem } from '../../../src/components/MessageActions';
 import {
   createEntryReferenceQuery,
@@ -89,6 +90,12 @@ import {
 import { useRequiredSession, useSession } from '../../../src/lib/session';
 import { extractEntryLinkHandles, isEntryHandle } from '../../../src/lib/entryLinks';
 import { lightImpactHaptic, selectionHaptic } from '../../../src/lib/haptics';
+import {
+  loadTranscriptView,
+  persistTranscriptView,
+  type TranscriptView,
+} from '../../../src/lib/prefsStorage';
+import { focusTranscriptRows, fullTranscriptRows, toolDefaultOpen } from '../../../src/lib/transcriptView';
 import {
   loadMarkupDraftFromEntry,
   putPendingMarkupDraft,
@@ -246,11 +253,17 @@ function StatusChip({ status, stalled }: { status: SessionStatus; stalled: boole
   );
 }
 
-function ToolCard({ item, onLongPress }: { item: ToolCallItem; onLongPress?: () => void }) {
+export function ToolCard({ item, onLongPress }: { item: ToolCallItem; onLongPress?: () => void }) {
   const { colors } = useTheme();
-  const [open, setOpen] = useState(false);
-  const descriptor = toolDisplay(item);
   const running = item.result === undefined;
+  const [open, setOpen] = useState(() => toolDefaultOpen(item));
+  const manuallyToggled = useRef(false);
+  const wasRunning = useRef(running);
+  useEffect(() => {
+    if (wasRunning.current && !running && !manuallyToggled.current) setOpen(false);
+    wasRunning.current = running;
+  }, [running]);
+  const descriptor = toolDisplay(item);
   const isError = item.result?.is_error === true;
   const command = typeof item.input.command === 'string' ? item.input.command : null;
   const rest = Object.fromEntries(Object.entries(item.input).filter(([key]) => key !== 'command'));
@@ -266,7 +279,10 @@ function ToolCard({ item, onLongPress }: { item: ToolCallItem; onLongPress?: () 
       }}
     >
       <Pressable
-        onPress={() => setOpen((value) => !value)}
+        onPress={() => {
+          manuallyToggled.current = true;
+          setOpen((value) => !value);
+        }}
         onLongPress={onLongPress}
         delayLongPress={250}
         accessibilityRole="button"
@@ -352,7 +368,12 @@ function ToolCard({ item, onLongPress }: { item: ToolCallItem; onLongPress?: () 
             </Text>
           ) : null}
           {item.result ? (
-            <Text
+            <ScrollView
+              style={{ maxHeight: 288 }}
+              nestedScrollEnabled
+              showsVerticalScrollIndicator
+            >
+            <Text selectable
               style={{
                 color: isError ? colors.danger : colors.textSecondary,
                 fontSize: font.xs,
@@ -362,6 +383,7 @@ function ToolCard({ item, onLongPress }: { item: ToolCallItem; onLongPress?: () 
             >
               {item.result.content}
             </Text>
+            </ScrollView>
           ) : null}
         </View>
       ) : null}
@@ -757,6 +779,7 @@ export default function SessionScreen() {
   const [transcriptActionTarget, setTranscriptActionTarget] = useState<TranscriptActionTarget | null>(null);
   const [activeTranscriptEntryId, setActiveTranscriptEntryId] = useState<string | null>(null);
   const [transcriptCopied, setTranscriptCopied] = useState<'text' | 'link' | null>(null);
+  const [transcriptView, setTranscriptViewState] = useState<TranscriptView>('focus');
   const [sessionLinkCopied, setSessionLinkCopied] = useState(false);
   const referenceCache = useRef<Record<string, EntryReferenceMap>>({});
   const referenceFetchKeys = useRef<Set<string>>(new Set());
@@ -769,6 +792,21 @@ export default function SessionScreen() {
   // Transcript item y-offsets (captured via onLayout) so the Turns▾ sheet can
   // jump to a turn — ScrollView has no scrollToItem the way FlatList does.
   const itemOffsets = useRef<Record<string, number>>({});
+
+  useEffect(() => {
+    let active = true;
+    void loadTranscriptView().then((view) => {
+      if (active) setTranscriptViewState(view);
+    });
+    return () => { active = false; };
+  }, []);
+
+  const setTranscriptView = useCallback((view: TranscriptView) => {
+    setTranscriptViewState(view);
+    void persistTranscriptView(view).catch((err: unknown) => {
+      console.warn('failed to persist transcript view', err);
+    });
+  }, []);
 
   useFocusEffect(
     useCallback(() => {
@@ -1005,6 +1043,12 @@ export default function SessionScreen() {
   const codexChangesAt = useCallback(
     (index: number) => inlineCodexChanges.filter((change) => change.index === index),
     [inlineCodexChanges],
+  );
+  const transcriptRows = useMemo(
+    () => transcriptView === 'focus'
+      ? focusTranscriptRows(stream.items, codexChangesAt)
+      : fullTranscriptRows(stream.items, codexChangesAt),
+    [codexChangesAt, stream.items, transcriptView],
   );
   const changedFileCount = useMemo(() => changedPaths(fileChanges).length, [fileChanges]);
   const sideEffects = useMemo(() => collectSideEffects(stream.items), [stream.items]);
@@ -1668,6 +1712,19 @@ export default function SessionScreen() {
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.xs }}>
               <Pressable
                 accessibilityRole="button"
+                accessibilityLabel={transcriptView === 'focus' ? 'Show full transcript' : 'Show focus transcript'}
+                onPress={() => setTranscriptView(transcriptView === 'focus' ? 'full' : 'focus')}
+                hitSlop={8}
+                style={{ minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center', padding: 6 }}
+              >
+                <Ionicons
+                  name={transcriptView === 'focus' ? 'eye-outline' : 'eye-off-outline'}
+                  size={18}
+                  color={transcriptView === 'focus' ? colors.accent : colors.textSecondary}
+                />
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
                 accessibilityLabel={sessionLinkCopied ? 'Copied session link' : 'Copy link to this session'}
                 onPress={copySessionLink}
                 hitSlop={8}
@@ -1810,7 +1867,20 @@ export default function SessionScreen() {
             </View>
           ) : null}
 
-          {stream.items.map((item, index) => {
+          {transcriptRows.map((row) => {
+            if (row.kind === 'hidden') {
+              return (
+                <HiddenWorkChip
+                  key={`hidden-${row.key}`}
+                  count={row.count}
+                  onShowFull={() => setTranscriptView('full')}
+                />
+              );
+            }
+            if (row.kind === 'change') {
+              return <InlineFileChange key={row.change.change.id} change={row.change.change} />;
+            }
+            const { item } = row;
             const handle = transcriptEntryHandle(item);
             const reference = handle ? (references[handle] ?? null) : null;
             const hasActions = handle != null;
@@ -1831,9 +1901,6 @@ export default function SessionScreen() {
             };
             return (
               <Fragment key={item.id}>
-                {codexChangesAt(index).map((anchored) => (
-                  <InlineFileChange key={anchored.change.id} change={anchored.change} />
-                ))}
                 <View
                   onLayout={(e) => {
                     itemOffsets.current[item.id] = e.nativeEvent.layout.y;
@@ -1908,9 +1975,6 @@ export default function SessionScreen() {
               </Fragment>
             );
           })}
-          {codexChangesAt(stream.items.length).map((anchored) => (
-            <InlineFileChange key={anchored.change.id} change={anchored.change} />
-          ))}
           {pendingSteers.map((pending) => (
             <SteerRow
               key={pending.id}
