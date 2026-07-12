@@ -1,11 +1,11 @@
 // @vitest-environment jsdom
 
 import '@testing-library/jest-dom/vitest';
-import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
+import { cleanup, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { formatExactTimestamp } from '@atrium/surface-client';
 import ActivityScreen from '../app/(app)/(tabs)/activity';
-import { renderWithTheme } from './rnTestUtils';
+import { pressWhenReady, renderWithTheme } from './rnTestUtils';
 import { Text } from 'react-native';
 
 // MobileHeader (rendered by ActivityScreen) imports Ionicons; @expo/vector-icons
@@ -138,10 +138,10 @@ describe('mobile Activity screen', () => {
         `Unread, Alice mentioned you, hello @me with code and docs, #general, ${formatExactTimestamp('2026-01-01T00:01:00.000Z')}`,
       ),
     ).toBeInTheDocument();
-    fireEvent.click(screen.getByText('Alice mentioned you'));
-    expect(routerMock.push).toHaveBeenCalledWith('/channel/ch-general');
+    await pressWhenReady(screen.findByText('Alice mentioned you'));
+    await waitFor(() => expect(routerMock.push).toHaveBeenCalledWith('/channel/ch-general'));
 
-    fireEvent.click(screen.getByText('Agent needs your input'));
+    await pressWhenReady(screen.findByText('Agent needs your input'));
     await waitFor(() => expect(routerMock.push).toHaveBeenCalledWith('/session/s-question'));
   });
 
@@ -202,7 +202,7 @@ describe('mobile Activity screen', () => {
     // The failed row (31) is past the watermark (8): announced as unread.
     expect(screen.getByLabelText(/^Unread, Build docs failed/)).toBeInTheDocument();
 
-    fireEvent.click(screen.getByLabelText('Mark all read'));
+    await pressWhenReady(screen.findByLabelText('Mark all read'));
     await waitFor(() => expect(chatMock.api.markActivityRead).toHaveBeenCalledWith(31));
     await waitFor(() => expect(screen.queryByLabelText(/^Unread, Build docs failed/)).not.toBeInTheDocument());
   });

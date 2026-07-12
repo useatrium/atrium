@@ -1,12 +1,12 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest';
-import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
+import { cleanup, screen, waitFor } from '@testing-library/react';
 import { Alert, Pressable, Text, View } from 'react-native';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { HubFile } from '@atrium/surface-client';
 import type { EntryReferenceMap } from '../src/lib/entryReferences';
 import { clearArtifactTextSnippetCache } from '../src/lib/artifactTextSnippets';
-import { renderWithTheme } from './rnTestUtils';
+import { pressWhenReady, renderWithTheme } from './rnTestUtils';
 
 const routerMock = vi.hoisted(() => ({
   push: vi.fn(),
@@ -212,7 +212,7 @@ describe('FilesTab entry references', () => {
     expect(query).not.toHaveProperty('origin');
     expect(query).not.toHaveProperty('mediaKind');
 
-    fireEvent.click(screen.getByLabelText('report.pdf, PDF'));
+    await pressWhenReady(screen.findByLabelText('report.pdf, PDF'));
     expect(await screen.findByText('Preview report.pdf')).toBeInTheDocument();
     expect(screen.getAllByText('↗ 2')).toHaveLength(2);
   });
@@ -223,7 +223,7 @@ describe('FilesTab entry references', () => {
     await renderFilesTab();
     await waitFor(() => expect(chatMock.api.listWorkspaceFiles).toHaveBeenCalled());
 
-    fireEvent.click(screen.getByLabelText('Docs'));
+    await pressWhenReady(screen.findByLabelText('Docs'));
 
     await waitFor(() => expect(chatMock.api.listWorkspaceFiles).toHaveBeenCalledTimes(2));
     const query = chatMock.api.listWorkspaceFiles.mock.calls[1]?.[1] as Record<string, unknown>;
@@ -256,12 +256,16 @@ describe('FilesTab entry references', () => {
 
     await renderFilesTab();
 
-    fireEvent.click(await screen.findByText('↗ 1'));
+    // findByLabelText, not findByRole: role+name computation over the virtualized
+    // list tree is slow enough to eat the findBy budget on a loaded runner.
+    await pressWhenReady(screen.findByLabelText('1 discussion reference'));
 
-    expect(routerMock.push).toHaveBeenCalledWith({
-      pathname: '/thread/[rootId]',
-      params: { rootId: '7', channelId: 'ch-general' },
-    });
+    await waitFor(() =>
+      expect(routerMock.push).toHaveBeenCalledWith({
+        pathname: '/thread/[rootId]',
+        params: { rootId: '7', channelId: 'ch-general' },
+      }),
+    );
   });
 
   it('opens the discussed-in action sheet for multiple references', async () => {
@@ -297,15 +301,17 @@ describe('FilesTab entry references', () => {
 
     await renderFilesTab();
 
-    fireEvent.click(await screen.findByText('↗ 2'));
+    await pressWhenReady(screen.findByLabelText('2 discussion references'));
 
-    expect(Alert.alert).toHaveBeenCalledWith(
-      'Discussed in',
-      undefined,
-      expect.arrayContaining([
-        expect.objectContaining({ text: 'Mina: Channel mention' }),
-        expect.objectContaining({ text: 'Sam: Thread mention' }),
-      ]),
+    await waitFor(() =>
+      expect(Alert.alert).toHaveBeenCalledWith(
+        'Discussed in',
+        undefined,
+        expect.arrayContaining([
+          expect.objectContaining({ text: 'Mina: Channel mention' }),
+          expect.objectContaining({ text: 'Sam: Thread mention' }),
+        ]),
+      ),
     );
     const firstAction = vi.mocked(Alert.alert).mock.calls[0]?.[2]?.[0] as { onPress?: () => void };
     firstAction.onPress?.();

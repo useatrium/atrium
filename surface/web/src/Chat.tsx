@@ -187,6 +187,12 @@ export function isActivityRefreshEvent(
   channels: readonly Channel[],
   sessions: Record<string, { spawnedBy: string }>,
 ): boolean {
+  if (event.type === 'call.ended') {
+    if (!event.channelId || !event.actorId || event.actorId === me.id) return false;
+    const channel = channels.find((candidate) => candidate.id === event.channelId);
+    return channel?.kind === 'dm' || channel?.kind === 'gdm';
+  }
+
   if (event.type === 'message.posted') {
     const text = typeof event.payload.text === 'string' ? event.payload.text : '';
     if (mentionsHandle(text, me.handle)) return true;

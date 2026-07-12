@@ -2,6 +2,8 @@ import { CALL_EMPTY_ACTIVE_TTL_MS, CALL_MAX_AGE_MS, CALL_RING_TTL_MS } from '@at
 import { endCall, type EndCallResult } from './calls.js';
 import type { Db } from './db.js';
 import { withTx } from './db.js';
+import type { WireEvent } from './events.js';
+import { sendMissedCallPush } from './push.js';
 
 export const CALL_SWEEP_INTERVAL_MS = 30_000;
 
@@ -29,6 +31,8 @@ export const STALE_CALL_CANDIDATES_SQL = `SELECT calls.id
 
 export interface CallSweepPublisher {
   publishCallToUsers(userIds: string[], event: { type: 'call.ended'; callId: string }): void;
+  publishEvent(event: WireEvent): void;
+  isUserPresent(channelId: string, userId: string): boolean;
 }
 
 export interface SweepStaleCallsOptions {
@@ -73,6 +77,12 @@ export async function sweepStaleCalls(
 
   for (const result of ended) {
     hub.publishCallToUsers(result.recipients, { type: 'call.ended', callId: result.callId });
+    if (result.event) {
+      hub.publishEvent(result.event);
+      void sendMissedCallPush(pool, hub, result.event).catch((err) => {
+        console.warn('missed call push failed', err);
+      });
+    }
   }
   return ended;
 }

@@ -396,6 +396,14 @@ export class SessionRuns {
     { lastPublishedAt: number; pendingSummary: string | null; timer: ReturnType<typeof setTimeout> | null }
   >();
 
+  /**
+   * Test observability for negative timer assertions: callers need to observe
+   * cancellation because sleeping past a deadline races the async cancel path.
+   */
+  hasPendingQuestionRenotify(id: string): boolean {
+    return this.questionRenotifyTimers.has(id);
+  }
+
   constructor(
     private readonly pool: Db,
     private readonly hub: WsHub,

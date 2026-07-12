@@ -1,12 +1,16 @@
 import { CALL_EMPTY_ACTIVE_TTL_MS, CALL_MAX_AGE_MS, CALL_RING_TTL_MS } from '@atrium/surface-client/calls';
+import { randomUUID } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import type { Db } from './db.js';
+import { getOrCreateDm } from './events.js';
+import { WsHub } from './hub.js';
 import {
   STALE_CALL_CANDIDATES_SQL,
   startCallSweeper,
   sweepStaleCalls,
   type CallSweepPublisher,
 } from './call-sweeper.js';
+import { createTestPool, seedFixture, seedMember, truncateAll } from '../test/helpers.js';
 
 function mockPool(query: ReturnType<typeof vi.fn>): Db {
   const client = { query, release: vi.fn() };
@@ -45,7 +49,11 @@ describe('sweepStaleCalls', () => {
       throw new Error(`unexpected SQL: ${sql}`);
     });
     const publishCallToUsers = vi.fn();
-    const hub = { publishCallToUsers } satisfies CallSweepPublisher;
+    const hub = {
+      publishCallToUsers,
+      publishEvent: vi.fn(),
+      isUserPresent: vi.fn(() => false),
+    } satisfies CallSweepPublisher;
 
     const result = await sweepStaleCalls(mockPool(query), hub);
 
@@ -67,6 +75,47 @@ describe('sweepStaleCalls', () => {
     });
   });
 
+  it('ends an expired ringing DM call and appends its durable event', async () => {
+    const pool = await createTestPool();
+    try {
+      await truncateAll(pool);
+      const fx = await seedFixture(pool);
+      const benId = await seedMember(pool, fx.workspaceId, 'ben', 'Ben');
+      const { channel } = await getOrCreateDm(pool, {
+        workspaceId: fx.workspaceId,
+        userIdA: fx.userId,
+        userIdB: benId,
+      });
+      const callId = randomUUID();
+      await pool.query(
+        `INSERT INTO calls (id, workspace_id, channel_id, initiator_id, room, status, started_at)
+         VALUES ($1, $2, $3, $4, $5, 'ringing', now() - interval '1 minute')`,
+        [callId, fx.workspaceId, channel.id, fx.userId, `call:${callId}`],
+      );
+      await pool.query('INSERT INTO call_participants (call_id, user_id) VALUES ($1, $2)', [callId, fx.userId]);
+
+      const result = await sweepStaleCalls(pool, new WsHub(), { ringTtlMs: 1 });
+      expect(result).toHaveLength(1);
+      expect(result[0]).toMatchObject({ callId, ended: true });
+      const events = await pool.query<{
+        actor_id: string;
+        payload: { callId: string; initiatorId: string; startedAt: string; answered: boolean };
+      }>(
+        `SELECT actor_id, payload
+         FROM events
+         WHERE type = 'call.ended' AND payload->>'callId' = $1`,
+        [callId],
+      );
+      expect(events.rows).toHaveLength(1);
+      expect(events.rows[0]).toMatchObject({
+        actor_id: fx.userId,
+        payload: { callId, initiatorId: fx.userId, answered: false },
+      });
+    } finally {
+      await pool.end();
+    }
+  });
+
   it('skips a tick while the previous sweep is still running', async () => {
     let releaseCandidates!: () => void;
     const candidatesBlocked = new Promise<void>((resolve) => {
@@ -81,7 +130,11 @@ describe('sweepStaleCalls', () => {
     });
     const worker = startCallSweeper({
       pool: mockPool(query),
-      hub: { publishCallToUsers: vi.fn() },
+      hub: {
+        publishCallToUsers: vi.fn(),
+        publishEvent: vi.fn(),
+        isUserPresent: vi.fn(() => false),
+      },
       intervalMs: 60_000,
     });
 

@@ -242,7 +242,9 @@ export type ActivityItem = {
     | 'agent_auth'
     | 'reaction'
     | 'channel_invite'
-    | 'seat_request';
+    | 'seat_request'
+    | 'missed_call'
+    | 'call_declined';
   channelId: string;
   channelName: string;
   actorId: string | null;

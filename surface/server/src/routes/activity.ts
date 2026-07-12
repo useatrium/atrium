@@ -13,7 +13,9 @@ type ActivityKind =
   | 'agent_auth'
   | 'reaction'
   | 'channel_invite'
-  | 'seat_request';
+  | 'seat_request'
+  | 'missed_call'
+  | 'call_declined';
 
 interface ActivityRow {
   event_id: number;
@@ -175,6 +177,70 @@ export function registerActivityRoutes(app: FastifyInstance, deps: ActivityRoute
            AND NOT EXISTS (
              SELECT 1 FROM mentions mn
              WHERE mn.event_id = e.id AND mn.user_id = $1
+           )
+           AND ${visibleChannel}
+
+         UNION ALL
+
+         SELECT e.id AS event_id,
+                'missed_call'::text AS kind,
+                e.channel_id,
+                e.actor_id,
+                'You missed a call.' AS snippet,
+                e.created_at,
+                NULL::uuid AS session_id,
+                NULL::text AS session_title,
+                NULL::text AS session_status,
+                false AS attention
+         FROM events e
+         JOIN channels c ON c.id = e.channel_id
+         WHERE e.type = 'call.ended'
+           AND c.kind IN ('dm', 'gdm')
+           AND e.actor_id IS NOT NULL
+           AND e.payload->>'initiatorId' <> $1::text
+           AND NOT EXISTS (
+             SELECT 1
+             FROM call_participants cp
+             WHERE cp.call_id::text = e.payload->>'callId'
+               AND cp.user_id = $1
+           )
+           AND NOT EXISTS (
+             SELECT 1
+             FROM call_declines cd
+             WHERE cd.call_id::text = e.payload->>'callId'
+               AND cd.user_id = $1
+           )
+           AND ${visibleChannel}
+
+         UNION ALL
+
+         SELECT e.id AS event_id,
+                'call_declined'::text AS kind,
+                e.channel_id,
+                e.actor_id,
+                'You declined this call.' AS snippet,
+                e.created_at,
+                NULL::uuid AS session_id,
+                NULL::text AS session_title,
+                NULL::text AS session_status,
+                false AS attention
+         FROM events e
+         JOIN channels c ON c.id = e.channel_id
+         WHERE e.type = 'call.ended'
+           AND c.kind IN ('dm', 'gdm')
+           AND e.actor_id IS NOT NULL
+           AND e.payload->>'initiatorId' <> $1::text
+           AND NOT EXISTS (
+             SELECT 1
+             FROM call_participants cp
+             WHERE cp.call_id::text = e.payload->>'callId'
+               AND cp.user_id = $1
+           )
+           AND EXISTS (
+             SELECT 1
+             FROM call_declines cd
+             WHERE cd.call_id::text = e.payload->>'callId'
+               AND cd.user_id = $1
            )
            AND ${visibleChannel}
 

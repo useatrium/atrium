@@ -193,7 +193,9 @@ describe('VoIP push registration and call fanout', () => {
     });
     expect(start.statusCode).toBe(200);
 
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    // Negative async-push assertion: disabled notifications intentionally
+    // expose no send completion signal, so allow the dispatch queue to drain.
+    await new Promise((resolve) => setTimeout(resolve, 100));
     expect(records).toEqual([]);
   });
 

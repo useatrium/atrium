@@ -22,6 +22,8 @@ const KIND_LABEL: Record<ActivityItem['kind'], string> = {
   reaction: '☺',
   channel_invite: '+',
   seat_request: '⇄',
+  missed_call: '✆',
+  call_declined: '✆',
 };
 
 function titleFor(item: ActivityItem): string {
@@ -45,6 +47,8 @@ function titleFor(item: ActivityItem): string {
   if (item.kind === 'channel_invite') return `${item.actorName ?? 'Someone'} added you`;
   if (item.kind === 'seat_request')
     return `${item.actorName ?? 'Someone'} wants to drive · ${item.sessionTitle ?? 'a session'}`;
+  if (item.kind === 'missed_call') return `${item.actorName ?? 'Someone'} called you`;
+  if (item.kind === 'call_declined') return `${item.actorName ?? 'Someone'} called · you declined`;
   return 'Activity';
 }
 
