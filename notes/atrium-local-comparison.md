@@ -9,6 +9,13 @@ This review environment compares the design branch against its exact common ance
 | Before | http://127.0.0.1:5373 | http://127.0.0.1:3201 | `atrium_design_baseline` |
 | Design pass | http://127.0.0.1:5374 | http://127.0.0.1:3202 | `atrium_design_redesign` |
 
+Tailnet-only HTTPS access while this Mac and the dev processes are running:
+
+- Before: https://macbook-m1p.tailf13d53.ts.net:8443/
+- Design pass: https://macbook-m1p.tailf13d53.ts.net:8444/
+
+Both URLs share one MagicDNS hostname, and browser cookies are scoped by hostname rather than port. Open them in separate browser profiles (for example, one normal window and one private window) so signing into one database does not replace the other preview's session cookie.
+
 Sign in to each with handle `design-review` and display name `Design Review`. The databases are isolated and contain matching synthetic messages, channels, and completed/running/failed agent sessions.
 
 ## Guided comparison
