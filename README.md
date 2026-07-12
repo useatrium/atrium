@@ -159,33 +159,35 @@ Because the sandbox lets nothing connect into it, a small program on the host
 machine (the **node daemon**) does the copying in both directions:
 
 ```
-                 Humans  (web · desktop · mobile)
-                         │  REST + live updates
-       ┌─────────────────▼───────────────────────────┐
-       │                Atrium Server                   │
-       │  keeps all the data that lasts:                │
-       │   · the message log (every message and         │
-       │     session, in order)                         │
-       │   · the file store (every version, in S3)      │
-       └───────▲────────────────────────┬──────────────┘
-               │ results + files         │ start a session
-       ┌───────┴────────────────────────▼──────────────┐
-       │     node daemon  (runs on the host machine)     │
-       │     copies files out   ·   syncs updates in     │
-       └───────▲────────────────────────┬──────────────┘
-               │ read changes/files      │ write into session files
-       ┌───────┴────────────────────────▼──────────────┐
-       │   Centaur sandbox   (nothing can connect in)    │
-       │   ┌─────────────────────────────────────────┐  │
-       │   │ harness  (Claude Code · Codex · amp · …) │  │
-       │   │ ~        = captured workspace             │  │
-       │   │ ~/repos  = Git-managed working repos      │  │
-       │   │ /atrium  = read-only team context         │  │
-       │   └───────────────────┬─────────────────────┘  │
-       └───────────────────────┼────────────────────────┘
-                               │ proxy adds the credentials
-                               ▼
-                  Model (AI)   (keys never enter the sandbox)
+            Humans  (web · desktop · mobile)
+                                │  REST + live updates
+       ┌────────────────────────▼───────────────────────┐
+       │                 Atrium Server                  │
+       │       durable product · keeps what lasts       │
+       │  · message log (chat, sessions, turns)         │
+       │  · versioned file store (S3 + index)           │
+       └────────────▲───────────────────────┬───────────┘
+                    │ results + files       │ start session
+       ┌────────────┴───────────────────────▼───────────┐
+       │        node daemon  ·  host-side bridge        │
+       │    capture files out  ·  hydrate / sync in     │
+       └────────────▲───────────────────────┬───────────┘
+                    │ read changes          │ write session files
+       ┌────────────┴───────────────────────▼───────────┐
+       │     Centaur sandbox  (nothing connects in)     │
+       │  ┌──────────────────────────────────────────┐  │
+       │  │ harness  (Claude Code · Codex · amp · …) │  │
+       │  │ ~        = captured workspace            │  │
+       │  │ ~/repos  = Git-managed working repos     │  │
+       │  │ /atrium  = read-only team context        │  │
+       │  └─────────────────────┬────────────────────┘  │
+       └────────────────────────┼───────────────────────┘
+                                │  host proxy adds credentials
+                                ▼
+       ┌────────────────────────────────────────────────┐
+       │                 Model provider                 │
+       │         (keys never enter the sandbox)         │
+       └────────────────────────────────────────────────┘
 ```
 
 ### What Atrium keeps
