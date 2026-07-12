@@ -4,11 +4,19 @@ import { ActiveCallsQuerySchema, CallIdParamsSchema, StartCallBodySchema } from 
 import type { AppMutationContext } from '../app-mutations.js';
 import type { Db, DbClient } from '../db.js';
 import { withTx } from '../db.js';
-import { loadActiveCallWiresForUser, loadCallWire, type CallRow } from '../calls.js';
+import {
+  activeCallById,
+  channelRecipientIds,
+  endCall,
+  loadActiveCallWiresForUser,
+  loadCallWire,
+  type CallRow,
+  type EndCallResult,
+} from '../calls.js';
 import { canAccessChannel, DomainError, type UserRef } from '../events.js';
 import type { WsHub } from '../hub.js';
 import { createLiveKitWebhookReceiver, type CallTokenService } from '../livekit.js';
-import { workspaceMemberExists, workspaceMemberIds } from '../membership.js';
+import { workspaceMemberExists } from '../membership.js';
 import { sendIncomingCallVoipPushes, type VoipPushSender } from '../voip.js';
 import { isUuid } from '../idempotency.js';
 import { decodeRouteBody, decodeRouteParams, decodeRouteQuery } from '../route-schema.js';
@@ -27,22 +35,6 @@ function callsUnconfigured(reply: FastifyReply) {
   return reply.code(503).send({ error: 'calls_unconfigured', message: 'voice calls are not configured' });
 }
 
-async function channelRecipientIds(client: DbClient, channelId: string): Promise<string[]> {
-  const channel = await client.query<{ workspace_id: string; kind: string }>(
-    'SELECT workspace_id, kind FROM channels WHERE id = $1',
-    [channelId],
-  );
-  const row = channel.rows[0];
-  if (!row) return [];
-  if (row.kind === 'public') {
-    return workspaceMemberIds(client, row.workspace_id);
-  }
-  const members = await client.query<{ user_id: string }>('SELECT user_id FROM channel_members WHERE channel_id = $1', [
-    channelId,
-  ]);
-  return members.rows.map((member) => member.user_id);
-}
-
 async function canAccessChannelInTx(client: DbClient, userId: string, channelId: string): Promise<boolean> {
   const res = await client.query<{ member: boolean }>(
     `SELECT CASE WHEN c.kind = 'public' THEN ${workspaceMemberExists('c.workspace_id', '$2')}
@@ -53,21 +45,6 @@ async function canAccessChannelInTx(client: DbClient, userId: string, channelId:
     [channelId, userId],
   );
   return res.rows[0]?.member === true;
-}
-
-async function activeCallById(
-  client: DbClient,
-  callId: string,
-): Promise<(CallRow & { channel_kind: 'public' | 'private' | 'dm' | 'gdm' }) | null> {
-  const call = await client.query<CallRow & { channel_kind: 'public' | 'private' | 'dm' | 'gdm' }>(
-    `SELECT calls.*, c.kind AS channel_kind
-     FROM calls
-     JOIN channels c ON c.id = calls.channel_id
-     WHERE calls.id = $1 AND calls.status <> 'ended'
-     FOR UPDATE OF calls`,
-    [callId],
-  );
-  return call.rows[0] ?? null;
 }
 
 async function requireAccessibleActiveCall(client: DbClient, callId: string, userId: string) {
@@ -103,12 +80,6 @@ interface ParticipantLeftResult {
   recipients: string[];
   ended: boolean;
   left: boolean;
-}
-
-interface EndCallResult {
-  callId: string;
-  recipients: string[];
-  ended: boolean;
 }
 
 type LiveKitWebhookEvent = {
@@ -175,27 +146,6 @@ async function markParticipantLeft(
   const call = await activeCallById(client, callId);
   if (!call) return null;
   return markParticipantLeftInCall(client, call, userId);
-}
-
-async function endCall(client: DbClient, callId: string): Promise<EndCallResult | null> {
-  const call = await activeCallById(client, callId);
-  if (!call) return null;
-  await client.query('UPDATE call_participants SET left_at = now() WHERE call_id = $1 AND left_at IS NULL', [call.id]);
-  const ended = await client.query(
-    `UPDATE calls
-     SET status = 'ended', ended_at = COALESCE(ended_at, now())
-     WHERE id = $1 AND status <> 'ended'
-     RETURNING 1`,
-    [call.id],
-  );
-  if ((ended.rowCount ?? 0) === 0) {
-    return { callId: call.id, recipients: [], ended: false };
-  }
-  return {
-    callId: call.id,
-    recipients: await channelRecipientIds(client, call.channel_id),
-    ended: true,
-  };
 }
 
 async function reconcileLiveKitWebhookEvent(
@@ -401,8 +351,6 @@ export function registerCallRoutes(app: FastifyInstance, deps: CallRouteDeps): v
     if (!user) return;
     const { id } = decodeRouteParams(CallIdParamsSchema, req.params);
     if (!isUuid(id)) return reply.code(404).send({ error: 'call_not_found', message: 'call not found' });
-    if (!calls) return callsUnconfigured(reply);
-
     const result = await withTx(pool, async (client) => {
       const call = await requireAccessibleActiveCall(client, id, user.id);
       const recipients = await channelRecipientIds(client, call.channel_id);
@@ -433,8 +381,6 @@ export function registerCallRoutes(app: FastifyInstance, deps: CallRouteDeps): v
     if (!user) return;
     const { id } = decodeRouteParams(CallIdParamsSchema, req.params);
     if (!isUuid(id)) return reply.code(404).send({ error: 'call_not_found', message: 'call not found' });
-    if (!calls) return callsUnconfigured(reply);
-
     const result = await withTx(pool, async (client) => {
       const call = await requireAccessibleActiveCall(client, id, user.id);
       return markParticipantLeftInCall(client, call, user.id);
