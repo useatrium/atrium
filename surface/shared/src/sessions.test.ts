@@ -3,6 +3,10 @@ import {
   matchSteerProvenance,
   maxSessionStatus,
   normalizeSteerProvenanceText,
+  questionAnswerSummaryText,
+  questionPayloadAnswers,
+  questionPayloadPrompts,
+  sessionQuestionEventLabel,
   steerProvenanceKey,
   type SessionSuggestion,
 } from './sessions';
@@ -157,5 +161,34 @@ describe('steer provenance helpers', () => {
         resolvedAt: '2026-07-06T18:41:00.000Z',
       }),
     ).toBe('2026-07-06T18:41:00.000Z\u0000Maya Chen\u0000Gary Basin\u0000edited');
+  });
+});
+
+describe('session question event helpers', () => {
+  it('parses valid prompts and ignores malformed payload entries', () => {
+    expect(
+      questionPayloadPrompts({ questions: [null, 'bad', { question: '  ' }, { question: 'Choose one' }] }),
+    ).toEqual([{ question: 'Choose one' }]);
+  });
+
+  it('parses answer summaries with safe fallbacks', () => {
+    expect(
+      questionPayloadAnswers({
+        answers: [
+          null,
+          { header: 'missing id' },
+          { id: 'choice', answers: ['A', 2], count: Number.NaN },
+        ],
+      }),
+    ).toEqual([{ id: 'choice', header: 'choice', answers: ['A'], count: 1 }]);
+  });
+
+  it('formats recorded answers and question event outcomes', () => {
+    expect(questionAnswerSummaryText({ id: 'q', header: 'Q', answers: ['A', 'B'], count: 2 })).toBe('A\nB');
+    expect(questionAnswerSummaryText({ id: 'q', header: 'Q', answers: [], count: 1 })).toBe('1 answer recorded');
+    expect(sessionQuestionEventLabel('question_requested', undefined)).toBe('Question asked');
+    expect(sessionQuestionEventLabel('question_resolved', 'empty')).toBe(
+      'Question expired without an answer',
+    );
   });
 });

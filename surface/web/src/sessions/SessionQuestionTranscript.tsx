@@ -1,5 +1,6 @@
 import { useId, type CSSProperties } from 'react';
 import type { QuestionItem } from '@atrium/centaur-client';
+import { questionAnswerSummaryText } from '@atrium/surface-client';
 import type { SessionQuestionAnswerSummary, SessionQuestionEvent } from './types';
 
 // Skip offscreen rendering work so 500+ item transcripts scroll smoothly.
@@ -56,11 +57,6 @@ function questionStatusLabel(
     return { label: questionResolutionText(reason), tone: 'cancelled' };
   }
   return { label: 'Answered', tone: 'answered' };
-}
-
-function answerValueText(summary: SessionQuestionAnswerSummary): string {
-  if (summary.answers.length > 0) return summary.answers.join('\n');
-  return summary.count === 1 ? '1 answer recorded' : `${summary.count} answers recorded`;
 }
 
 function hhmm(iso: string): string {
@@ -145,7 +141,7 @@ export function QuestionTranscriptCard({
                       Answer
                     </div>
                     <div className="mt-0.5 whitespace-pre-wrap break-words text-xs text-fg-body">
-                      {answerValueText(summary)}
+                      {questionAnswerSummaryText(summary)}
                     </div>
                   </div>
                 )}

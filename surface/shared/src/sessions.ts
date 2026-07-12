@@ -84,6 +84,57 @@ export interface SessionQuestionAnswerSummary {
   count: number;
 }
 
+export interface SessionQuestionPayloadPrompt {
+  question: string;
+}
+
+export function questionPayloadPrompts(payload: Record<string, unknown>): SessionQuestionPayloadPrompt[] {
+  if (!Array.isArray(payload.questions)) return [];
+  return payload.questions
+    .map((item): SessionQuestionPayloadPrompt | null => {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) return null;
+      const question = (item as Record<string, unknown>).question;
+      return typeof question === 'string' && question.trim() ? { question } : null;
+    })
+    .filter((item): item is SessionQuestionPayloadPrompt => item !== null);
+}
+
+export function questionPayloadAnswers(payload: Record<string, unknown>): SessionQuestionAnswerSummary[] {
+  if (!Array.isArray(payload.answers)) return [];
+  return payload.answers
+    .map((item): SessionQuestionAnswerSummary | null => {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) return null;
+      const raw = item as Record<string, unknown>;
+      if (typeof raw.id !== 'string') return null;
+      const answers = Array.isArray(raw.answers)
+        ? raw.answers.filter((answer): answer is string => typeof answer === 'string')
+        : [];
+      return {
+        id: raw.id,
+        header: typeof raw.header === 'string' ? raw.header : raw.id,
+        answers,
+        count: typeof raw.count === 'number' && Number.isFinite(raw.count) ? raw.count : answers.length,
+      };
+    })
+    .filter((item): item is SessionQuestionAnswerSummary => item !== null);
+}
+
+export function questionAnswerSummaryText(summary: SessionQuestionAnswerSummary): string {
+  if (summary.answers.length > 0) return summary.answers.join('\n');
+  return summary.count === 1 ? '1 answer recorded' : `${summary.count} answers recorded`;
+}
+
+export function sessionQuestionEventLabel(
+  type: 'question_requested' | 'question_answered' | 'question_resolved' | undefined,
+  reason: unknown,
+): string {
+  if (type === 'question_requested') return 'Question asked';
+  if (type === 'question_answered') return 'Question answered';
+  if (reason === 'empty') return 'Question expired without an answer';
+  if (reason === 'cancelled') return 'Question cancelled';
+  return 'Question resolved';
+}
+
 export interface SessionQuestionEvent {
   /** Workspace event id. Dedupe key across WS fanout + catch-up overlap. */
   id: number;

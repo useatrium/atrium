@@ -11,7 +11,15 @@ import {
   type PointerEvent as ReactPointerEvent,
   type SVGProps,
 } from 'react';
-import { isStructuredTextForMarkup, type ChatMessage, type UserRef } from '@atrium/surface-client';
+import {
+  isStructuredTextForMarkup,
+  questionAnswerSummaryText,
+  questionPayloadAnswers,
+  questionPayloadPrompts,
+  sessionQuestionEventLabel,
+  type ChatMessage,
+  type UserRef,
+} from '@atrium/surface-client';
 import { encodeEventHandle } from '@atrium/surface-client/handle';
 import { SessionCard } from '../sessions/SessionCard';
 import type { Session } from '../sessions/types';
@@ -1051,13 +1059,7 @@ function SessionEventCard({
               </div>
               <div className="mt-0.5 whitespace-pre-wrap break-words text-fg-body">
                 <CompactMarkdownText
-                  text={
-                    answer.answers.length > 0
-                      ? answer.answers.join('\n')
-                      : answer.count === 1
-                        ? '1 answer recorded'
-                        : `${answer.count} answers recorded`
-                  }
+                  text={questionAnswerSummaryText(answer)}
                 />
               </div>
             </div>
@@ -1076,45 +1078,4 @@ function SessionEventCard({
       )}
     </div>
   );
-}
-
-function questionPayloadPrompts(payload: Record<string, unknown>): Array<{ question: string }> {
-  if (!Array.isArray(payload.questions)) return [];
-  return payload.questions
-    .map((item): { question: string } | null => {
-      if (!item || typeof item !== 'object' || Array.isArray(item)) return null;
-      const raw = item as Record<string, unknown>;
-      return typeof raw.question === 'string' && raw.question.trim() ? { question: raw.question } : null;
-    })
-    .filter((item): item is { question: string } => item !== null);
-}
-
-function questionPayloadAnswers(
-  payload: Record<string, unknown>,
-): Array<{ id: string; header: string; answers: string[]; count: number }> {
-  if (!Array.isArray(payload.answers)) return [];
-  return payload.answers
-    .map((item): { id: string; header: string; answers: string[]; count: number } | null => {
-      if (!item || typeof item !== 'object' || Array.isArray(item)) return null;
-      const raw = item as Record<string, unknown>;
-      if (typeof raw.id !== 'string') return null;
-      const answers = Array.isArray(raw.answers)
-        ? raw.answers.filter((answer): answer is string => typeof answer === 'string')
-        : [];
-      return {
-        id: raw.id,
-        header: typeof raw.header === 'string' ? raw.header : raw.id,
-        answers,
-        count: typeof raw.count === 'number' && Number.isFinite(raw.count) ? raw.count : answers.length,
-      };
-    })
-    .filter((item): item is { id: string; header: string; answers: string[]; count: number } => item !== null);
-}
-
-function sessionQuestionEventLabel(type: ChatMessage['sessionEventType'], reason: unknown): string {
-  if (type === 'question_requested') return 'Question asked';
-  if (type === 'question_answered') return 'Question answered';
-  if (reason === 'empty') return 'Question expired without an answer';
-  if (reason === 'cancelled') return 'Question cancelled';
-  return 'Question resolved';
 }

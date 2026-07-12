@@ -28,6 +28,7 @@ import {
   matchSteerProvenance,
   mergeSpawnResponse,
   normalizeSteerProvenanceText,
+  questionAnswerSummaryText,
   randomId,
   sessionDriverId,
   sessionFromWire,
@@ -436,11 +437,6 @@ function questionStatusLabel(item: QuestionItem, events: SessionQuestionEvent[])
   return questionResolutionText(reason);
 }
 
-function answerValueText(summary: SessionQuestionAnswerSummary): string {
-  if (summary.answers.length > 0) return summary.answers.join('\n');
-  return summary.count === 1 ? '1 answer recorded' : `${summary.count} answers recorded`;
-}
-
 function MobileQuestionTranscriptCard({
   item,
   events,
@@ -538,7 +534,7 @@ function MobileQuestionTranscriptCard({
                     ANSWER
                   </Text>
                   <Text style={{ color: colors.text, fontSize: font.sm, lineHeight: 20 }}>
-                    {answerValueText(summary)}
+                    {questionAnswerSummaryText(summary)}
                   </Text>
                 </View>
               ) : null}
