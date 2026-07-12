@@ -23,7 +23,12 @@ const KIND_LABEL: Record<ActivityItem['kind'], string> = {
 
 function titleFor(item: ActivityItem): string {
   if (item.kind === 'mention') return `${item.actorName ?? 'Someone'} mentioned you`;
-  if (item.kind === 'dm') return `${item.actorName ?? 'Someone'} sent a DM`;
+  if (item.kind === 'dm') {
+    // DM channel names are internal keys; the gdm: prefix is the only group signal.
+    return item.channelName.startsWith('gdm:')
+      ? `${item.actorName ?? 'Someone'} messaged the group`
+      : `${item.actorName ?? 'Someone'} sent a DM`;
+  }
   if (item.kind === 'thread_reply') return `${item.actorName ?? 'Someone'} replied in a thread`;
   if (item.kind === 'agent_question') {
     return item.sessionTitle ? `${item.sessionTitle} · needs your answer` : 'Agent needs your input';

@@ -3,6 +3,7 @@ import { Platform, useWindowDimensions } from 'react-native';
 import { Tabs } from 'expo-router';
 import { isTerminalSessionStatus, sessionAttentionKind, type Session } from '@atrium/surface-client';
 import { useChat } from '../../../src/lib/chat';
+import { useActivityCounts } from '../../../src/lib/useActivityCounts';
 import { navigationTargetSize, TabIcon } from '../../../src/components/PlatformTabBar';
 import { useTheme } from '../../../src/lib/theme';
 
@@ -19,6 +20,10 @@ export default function TabsLayout() {
   const { colors } = useTheme();
   const { width } = useWindowDimensions();
   const counts = useMemo(() => getSessionNavigationCounts(state.sessions ?? {}), [state.sessions]);
+  // Server-derived: correct on cold boot AND honors the read watermark for
+  // acknowledged failures, unlike the live WS map above.
+  const activityCounts = useActivityCounts();
+  const attentionBadge = activityCounts.attention;
   const expandedAndroid = Platform.OS === 'android' && width >= 600;
 
   return (
@@ -81,8 +86,8 @@ export default function TabsLayout() {
         name="activity"
         options={{
           title: 'Attention',
-          tabBarAccessibilityLabel: counts.attention > 0 ? `Attention, ${counts.attention} items` : 'Attention',
-          tabBarBadge: counts.attention > 0 ? counts.attention : undefined,
+          tabBarAccessibilityLabel: attentionBadge > 0 ? `Attention, ${attentionBadge} items` : 'Attention',
+          tabBarBadge: attentionBadge > 0 ? attentionBadge : undefined,
           tabBarIcon: ({ color }) => <TabIcon name="notifications" color={color} />,
         }}
       />
