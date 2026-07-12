@@ -1725,7 +1725,34 @@ export default function SessionScreen() {
               </Pressable>
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel={sessionLinkCopied ? 'Copied session link' : 'Copy link to this session'}
+                accessibilityLabel={session.pinned ? 'Unpin this agent' : 'Pin this agent'}
+                accessibilityState={{ selected: session.pinned }}
+                onPress={() => chat.setSessionPinned(session.id, !session.pinned, session.pinned)}
+                hitSlop={8}
+                style={{ minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center', padding: 6 }}
+              >
+                <Ionicons
+                  name={session.pinned ? 'pin' : 'pin-outline'}
+                  size={18}
+                  color={session.pinned ? colors.accent : colors.textSecondary}
+                />
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={session.archivedAt ? 'Unarchive this agent' : 'Archive this agent'}
+                onPress={() => chat.setSessionArchived(session.id, session.archivedAt == null, session.archivedAt)}
+                hitSlop={8}
+                style={{ minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center', padding: 6 }}
+              >
+                <Ionicons
+                  name={session.archivedAt ? 'arrow-up-circle-outline' : 'archive-outline'}
+                  size={18}
+                  color={colors.textSecondary}
+                />
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={sessionLinkCopied ? 'Copied agent link' : 'Copy link to this agent'}
                 onPress={copySessionLink}
                 hitSlop={8}
                 style={{ minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center', padding: 6 }}
@@ -1745,8 +1772,8 @@ export default function SessionScreen() {
                         ? 'Retry stop turn'
                         : 'Stop current turn'
                       : displayCancelAsk === 'confirm'
-                        ? 'Confirm cancel session'
-                        : 'Cancel session'
+                        ? 'Confirm cancel agent'
+                        : 'Cancel agent'
                   }
                   accessibilityState={{ disabled: false }}
                   onPress={cancel}
@@ -1790,6 +1817,35 @@ export default function SessionScreen() {
           <Text style={{ color: colors.danger, fontSize: font.xs, textAlign: 'center' }}>
             {cancelErrorMessage}
           </Text>
+        </View>
+      )}
+      {session.archivedAt != null && (
+        <View
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: space.sm,
+            backgroundColor: colors.bgElevated,
+            borderBottomWidth: 1,
+            borderBottomColor: colors.borderSoft,
+            paddingHorizontal: space.lg,
+            paddingVertical: space.sm,
+          }}
+        >
+          <Text style={{ flex: 1, color: colors.textMuted, fontSize: font.xs }}>
+            Archived — new activity will bring it back.
+          </Text>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Unarchive this agent"
+            onPress={() => chat.setSessionArchived(session.id, false, session.archivedAt)}
+            hitSlop={8}
+            style={{ minHeight: 32, justifyContent: 'center' }}
+          >
+            <Text style={{ color: colors.textSecondary, fontSize: font.xs, fontWeight: '700' }}>
+              UNARCHIVE
+            </Text>
+          </Pressable>
         </View>
       )}
       <KeyboardAvoidingView

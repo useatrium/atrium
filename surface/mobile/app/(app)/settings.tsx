@@ -1208,10 +1208,10 @@ export default function SettingsScreen() {
             onChange={(messages) => updateNotificationPrefs({ messages })}
           />
         </Row>
-        <Row label="Agent sessions">
+        <Row label="Agents">
           <Switch
             accessibilityRole="switch"
-            accessibilityLabel="Agent session notifications"
+            accessibilityLabel="Agent notifications"
             accessibilityState={{ checked: prefs.notifications.sessions }}
             value={prefs.notifications.sessions}
             onValueChange={(sessions) => updateNotificationPrefs({ sessions })}

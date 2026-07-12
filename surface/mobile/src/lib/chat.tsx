@@ -150,6 +150,10 @@ interface ChatContextValue {
   clearFailedSessionSteer: (sessionId: string) => void;
   cancelSession: (sessionId: string) => Promise<void>;
   stopTurn: (sessionId: string) => Promise<void>;
+  /** Global session archive toggle; state folds from the durable event. */
+  setSessionArchived: (sessionId: string, archived: boolean, previousArchivedAt: string | null) => void;
+  /** Per-user session pin toggle with optimistic dispatch. */
+  setSessionPinned: (sessionId: string, pinned: boolean, previousPinned: boolean) => void;
   failedSessionCancels: Record<string, true>;
   clearFailedSessionCancel: (sessionId: string) => void;
   /** Track the open session so the WS subscribes to its presence key (so
@@ -163,6 +167,10 @@ interface ChatContextValue {
   mentionUsers: UserRef[] | null;
   loadMentionUsers: () => void;
   setMute: (channelId: string, muted: boolean) => void;
+  /** Global channel archive toggle (optimistic; rolls back on failure). */
+  setChannelArchived: (channelId: string, archived: boolean) => void;
+  /** Per-user channel pin toggle (optimistic; rolls back on failure). */
+  setChannelPinned: (channelId: string, pinned: boolean) => void;
   upsertSession: (session: AgentSession) => void;
   notifyTyping: (channelId: string) => void;
   typing: Record<string, TypingEntry>;
@@ -324,13 +332,13 @@ export function ChatProvider({ session, children }: { session: Session; children
       case 'mute.set':
         return "Couldn't update the mute setting.";
       case 'session.spawn':
-        return "Couldn't start the agent session.";
+        return "Couldn't start the agent.";
       case 'session.answer':
         return "Couldn't submit the answer.";
       case 'session.steer':
-        return "Couldn't send the session message.";
+        return "Couldn't send the agent message.";
       case 'session.cancel':
-        return "Couldn't cancel the session.";
+        return "Couldn't cancel the agent.";
       case 'session.stop_turn':
         return "Couldn't stop the turn.";
       case 'prefs.set':
@@ -515,6 +523,33 @@ export function ChatProvider({ session, children }: { session: Session; children
       });
     },
     [clearFailedSessionCancel, enqueueOp],
+  );
+
+  const setSessionArchived = useCallback(
+    (sessionId: string, archived: boolean, previousArchivedAt: string | null) => {
+      // Archive state folds from the durable session.archived/unarchived event.
+      void enqueueOp({
+        opId: randomId(),
+        opType: 'session.archive',
+        payload: { sessionId, archived, previousArchivedAt },
+      }).catch(onApiError);
+    },
+    [enqueueOp, onApiError],
+  );
+
+  const setSessionPinned = useCallback(
+    (sessionId: string, pinned: boolean, previousPinned: boolean) => {
+      dispatch({ type: 'session-pin-changed', sessionId, pinned });
+      void enqueueOp({
+        opId: randomId(),
+        opType: 'session.pin',
+        payload: { sessionId, pinned, previousPinned },
+      }).catch((err: unknown) => {
+        onApiError(err);
+        dispatch({ type: 'session-pin-changed', sessionId, pinned: previousPinned });
+      });
+    },
+    [enqueueOp, onApiError],
   );
 
   const markDraftTouched = useCallback((key: string) => {
@@ -1024,6 +1059,8 @@ export function ChatProvider({ session, children }: { session: Session; children
         dispatch({ type: 'mute-changed', channelId, muted });
         cacheMute(channelId, muted);
       },
+      onChannelPinned: (channelId, pinned) => dispatch({ type: 'channel-pin-changed', channelId, pinned }),
+      onSessionPinned: (sessionId, pinned) => dispatch({ type: 'session-pin-changed', sessionId, pinned }),
       onPrefs: adoptPrefs,
       onChannelLeft: (channelId) => dispatch({ type: 'channel-removed', channelId }),
       onOpen: () => {
@@ -1531,6 +1568,43 @@ export function ChatProvider({ session, children }: { session: Session; children
     [cacheMute, enqueueOp, onApiError],
   );
 
+  const setChannelArchived = useCallback(
+    (channelId: string, archived: boolean) => {
+      const previousArchivedAt =
+        stateRef.current.channels.find((c) => c.id === channelId)?.archivedAt ?? null;
+      dispatch({
+        type: 'channel-archive-changed',
+        channelId,
+        archivedAt: archived ? new Date().toISOString() : null,
+      });
+      void enqueueOp({
+        opId: randomId(),
+        opType: 'channel.archive',
+        payload: { channelId, archived, previousArchivedAt },
+      }).catch((err: unknown) => {
+        onApiError(err);
+        dispatch({ type: 'channel-archive-changed', channelId, archivedAt: previousArchivedAt });
+      });
+    },
+    [enqueueOp, onApiError],
+  );
+
+  const setChannelPinned = useCallback(
+    (channelId: string, pinned: boolean) => {
+      const previousPinned = stateRef.current.channels.find((c) => c.id === channelId)?.pinned === true;
+      dispatch({ type: 'channel-pin-changed', channelId, pinned });
+      void enqueueOp({
+        opId: randomId(),
+        opType: 'channel.pin',
+        payload: { channelId, pinned, previousPinned },
+      }).catch((err: unknown) => {
+        onApiError(err);
+        dispatch({ type: 'channel-pin-changed', channelId, pinned: previousPinned });
+      });
+    },
+    [enqueueOp, onApiError],
+  );
+
   const answerSessionQuestion = useCallback(
     async (
       sessionId: string,
@@ -1716,6 +1790,8 @@ export function ChatProvider({ session, children }: { session: Session; children
       clearFailedSessionSteer,
       cancelSession,
       stopTurn,
+      setSessionArchived,
+      setSessionPinned,
       failedSessionCancels,
       clearFailedSessionCancel,
       setActiveSessionId,
@@ -1727,6 +1803,8 @@ export function ChatProvider({ session, children }: { session: Session; children
       mentionUsers,
       loadMentionUsers,
       setMute,
+      setChannelArchived,
+      setChannelPinned,
       upsertSession,
       notifyTyping,
       typing,
@@ -1775,6 +1853,8 @@ export function ChatProvider({ session, children }: { session: Session; children
       clearFailedSessionSteer,
       cancelSession,
       stopTurn,
+      setSessionArchived,
+      setSessionPinned,
       failedSessionCancels,
       clearFailedSessionCancel,
       setActiveSessionId,
@@ -1786,6 +1866,8 @@ export function ChatProvider({ session, children }: { session: Session; children
       mentionUsers,
       loadMentionUsers,
       setMute,
+      setChannelArchived,
+      setChannelPinned,
       upsertSession,
       notifyTyping,
       typing,
