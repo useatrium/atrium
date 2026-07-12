@@ -4,7 +4,7 @@
 # mounts a REAL overlay, exercises create/modify/delete/rename/symlink, and asserts
 # the scanner's classification + the openat2 symlink-escape block. Locks in the
 # proofs (whiteout→Delete, symlink→metadata-only, openat2 ELOOP) that previously
-# only ran by hand on the kind node. Run from services/api-rs.
+# only ran by hand on the kind node. Run from the crate root (runtime/node-sync).
 set -euo pipefail
 
 cargo build -p centaur-node-sync --bin scan-demo

@@ -1,0 +1,16 @@
+# Keep the Docker build context lean: the image build (COPY . . + cargo build)
+# only needs the manifests + src/ + tests/. target/ is the big one.
+.git/
+target/
+target/**
+logs/
+*.log
+.claude
+.cursor
+.vscode
+.idea
+.DS_Store
+.dockerignore
+*.md
+.env
+.env.*

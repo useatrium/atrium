@@ -48,14 +48,13 @@ the Atrium repo (not a separate `gbasin/centaur`) is the source of truth.
   and be recorded in the repo-root `NOTICE` — never by editing this subtree's top-level
   `LICENSE`. Note the trade-off before doing this: code that other centaur crates or
   binaries link against can't be more restrictive than the binary it ends up in.
-- **Current exception:** `services/api-rs/crates/centaur-node-sync` is
-  **AGPL-3.0-or-later**. It's an Atrium-original crate (upstream has no node-sync
-  subsystem), ships only standalone binaries (the node daemon + overlay/warmcache
-  helpers), and nothing else in the workspace links it — the rest of Centaur talks to
-  it via pod exec, mount conventions, and HTTP. Keep it that way: **don't add
-  `centaur-node-sync` as a library dependency of any Apache/MIT crate.** CI enforces
-  this — the "License boundary" job in the root `centaur-ci.yml` fails any PR that
-  makes another crate depend on it.
+- **No current exceptions.** The Atrium-original `centaur-node-sync` crate (AGPL) was
+  briefly such an exception inside this subtree; it now lives outside at repo-root
+  **`runtime/node-sync`** (its own cargo workspace), so this subtree is uniformly
+  Apache-2.0 OR MIT. The rest of Centaur talks to that daemon only via pod exec,
+  mount-path conventions, and HTTP — keep it that way: **never add `centaur-node-sync`
+  as a library dependency of any crate here** (that would link AGPL code into
+  permissive binaries).
 - External contributions everywhere in the repo (including here) are covered by the
   CLA — see the repo-root `CONTRIBUTING.md`.
 
@@ -64,7 +63,10 @@ The substantive Atrium-only work this fork carries on top of upstream:
 
 - **Artifact capture + workspace sync** — the node-sync capture/hydrate daemon ships overlay
   changes directly to Atrium's CAS ledger. Centaur no longer stages artifact bytes or
-  exposes compatibility artifact byte routes.
+  exposes compatibility artifact byte routes. The daemon crate itself is Atrium-owned
+  and lives at repo-root `runtime/node-sync` (AGPL, own cargo workspace); this subtree
+  keeps the sandbox-side wiring that talks to it (init containers, mounts, the chart's
+  DaemonSet, `just build-one node-sync`).
 - **Harness resume** — capture/restore of the rollout transcript so a torn-down session
   resumes the *same* Codex/Claude conversation (ephemeral home + entrypoint restore +
   conditional resume-trigger + a thread-scoped restore proxy).

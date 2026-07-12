@@ -9,7 +9,7 @@
 #     ARTIFACT_CAPTURE_API_KEY=node-key (ATRIUM_FULL_VIEW unset → full view gated off).
 #   - kind cluster `centaur` up; a CURRENT centaur-node-syncd linux binary at
 #     /usr/local/bin/centaur-node-syncd on the centaur-control-plane node
-#     (build via crates/centaur-node-sync/ci/build-and-load.sh, then docker cp the
+#     (build via runtime/node-sync/ci/build-and-load.sh, then docker cp the
 #     binary onto the node).
 # Run:  bash atrium-daemon-e2e.sh
 set -euo pipefail
