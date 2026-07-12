@@ -81,6 +81,34 @@ async function activeCallById(
   return call.rows[0] ?? null;
 }
 
+async function requireAccessibleActiveCall(client: DbClient, callId: string, userId: string) {
+  const call = await activeCallById(client, callId);
+  if (!call || !(await canAccessChannelInTx(client, userId, call.channel_id))) {
+    throw new DomainError(404, 'call_not_found', 'call not found');
+  }
+  return call;
+}
+
+async function markParticipantJoined(client: DbClient, callId: string, userId: string): Promise<boolean> {
+  const existing = await client.query<{ left_at: Date | null }>(
+    'SELECT left_at FROM call_participants WHERE call_id = $1 AND user_id = $2',
+    [callId, userId],
+  );
+  const joinedNow = existing.rows.length === 0 || existing.rows[0]!.left_at != null;
+  await client.query(
+    `INSERT INTO call_participants (call_id, user_id, joined_at, left_at)
+     VALUES ($1, $2, now(), NULL)
+     ON CONFLICT (call_id, user_id) DO UPDATE
+     SET joined_at = CASE
+           WHEN call_participants.left_at IS NULL THEN call_participants.joined_at
+           ELSE now()
+         END,
+         left_at = NULL`,
+    [callId, userId],
+  );
+  return joinedNow;
+}
+
 interface ParticipantLeftResult {
   callId: string;
   recipients: string[];
@@ -307,23 +335,7 @@ export function registerCallRoutes(app: FastifyInstance, deps: CallRouteDeps): v
           call = inserted.rows[0]!;
           created = true;
         }
-        const existingParticipant = await client.query<{ left_at: Date | null }>(
-          'SELECT left_at FROM call_participants WHERE call_id = $1 AND user_id = $2',
-          [call.id, user.id],
-        );
-        const joinedNow =
-          existingParticipant.rows.length === 0 || existingParticipant.rows[0]!.left_at != null;
-        await client.query(
-          `INSERT INTO call_participants (call_id, user_id, joined_at, left_at)
-           VALUES ($1, $2, now(), NULL)
-           ON CONFLICT (call_id, user_id) DO UPDATE
-           SET joined_at = CASE
-                 WHEN call_participants.left_at IS NULL THEN call_participants.joined_at
-                 ELSE now()
-               END,
-               left_at = NULL`,
-          [call.id, user.id],
-        );
+        const joinedNow = await markParticipantJoined(client, call.id, user.id);
         // Promote to 'active' only when joining an EXISTING call; a freshly
         // created call stays 'ringing' so the call.ringing frame's embedded
         // status is honest (it flips to 'active' when a callee accepts).
@@ -376,21 +388,8 @@ export function registerCallRoutes(app: FastifyInstance, deps: CallRouteDeps): v
     if (!calls) return callsUnconfigured(reply);
 
     const response = await withTx(pool, async (client) => {
-      const call = await activeCallById(client, id);
-      if (!call || !(await canAccessChannelInTx(client, user.id, call.channel_id))) {
-        throw new DomainError(404, 'call_not_found', 'call not found');
-      }
-      await client.query(
-        `INSERT INTO call_participants (call_id, user_id, joined_at, left_at)
-         VALUES ($1, $2, now(), NULL)
-         ON CONFLICT (call_id, user_id) DO UPDATE
-         SET joined_at = CASE
-               WHEN call_participants.left_at IS NULL THEN call_participants.joined_at
-               ELSE now()
-             END,
-             left_at = NULL`,
-        [call.id, user.id],
-      );
+      const call = await requireAccessibleActiveCall(client, id, user.id);
+      await markParticipantJoined(client, call.id, user.id);
       const updated = await client.query<CallRow>(
         `UPDATE calls SET status = 'active'
          WHERE id = $1 AND status <> 'ended'
@@ -426,10 +425,7 @@ export function registerCallRoutes(app: FastifyInstance, deps: CallRouteDeps): v
     if (!calls) return callsUnconfigured(reply);
 
     const result = await withTx(pool, async (client) => {
-      const call = await activeCallById(client, id);
-      if (!call || !(await canAccessChannelInTx(client, user.id, call.channel_id))) {
-        throw new DomainError(404, 'call_not_found', 'call not found');
-      }
+      const call = await requireAccessibleActiveCall(client, id, user.id);
       const recipients = await channelRecipientIds(client, call.channel_id);
       // A DM call has exactly two people: either the callee declining or the
       // caller cancelling ends it (otherwise it would hang in 'ringing' forever
@@ -462,10 +458,7 @@ export function registerCallRoutes(app: FastifyInstance, deps: CallRouteDeps): v
     if (!calls) return callsUnconfigured(reply);
 
     const result = await withTx(pool, async (client) => {
-      const call = await activeCallById(client, id);
-      if (!call || !(await canAccessChannelInTx(client, user.id, call.channel_id))) {
-        throw new DomainError(404, 'call_not_found', 'call not found');
-      }
+      const call = await requireAccessibleActiveCall(client, id, user.id);
       return markParticipantLeftInCall(client, call, user.id);
     });
     if (result.left) {
