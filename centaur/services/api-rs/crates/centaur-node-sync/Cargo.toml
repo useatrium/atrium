@@ -8,7 +8,7 @@ edition.workspace = true
 license = "AGPL-3.0-or-later"
 # Not repository.workspace: that points at upstream paradigmxyz/centaur, which
 # doesn't contain this crate — AGPL source-availability must point at the fork.
-repository = "https://github.com/gbasin/atrium"
+repository = "https://github.com/useatrium/atrium"
 
 # The node-side sync component (Track C4 + the inbound complement). Privileged,
 # one-per-node: scans each session's overlay `upper` (the changed set), classifies

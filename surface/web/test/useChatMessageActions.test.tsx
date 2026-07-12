@@ -220,7 +220,7 @@ describe('useChatMessageActions', () => {
       result.current.startConfiguredSession({
         task: 'ship it',
         harness: 'codex',
-        repo: 'gbasin/atrium',
+        repo: 'useatrium/atrium',
         branch: 'feature/refactor',
       }),
     );
@@ -232,9 +232,9 @@ describe('useChatMessageActions', () => {
         payload: expect.objectContaining({
           channelId: 'ch-1',
           task: 'ship it',
-          repo: 'gbasin/atrium',
+          repo: 'useatrium/atrium',
           branch: 'feature/refactor',
-          repos: [{ repo: 'gbasin/atrium', ref: 'feature/refactor' }],
+          repos: [{ repo: 'useatrium/atrium', ref: 'feature/refactor' }],
         }),
       }),
       expect.anything(),
