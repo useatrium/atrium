@@ -616,6 +616,22 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             onInsert={mentions.insert}
           />
         )}
+        {mentions.nonMembers.length > 0 && (
+          <div className="mb-1.5 flex flex-col gap-1 rounded border border-warning-border/50 bg-warning-tint/20 px-2 py-1.5 text-xs text-warning-text">
+            {mentions.nonMembers.map((user) => (
+              <span key={user.id} className="flex items-center gap-2">
+                <span className="min-w-0 truncate">@{user.handle} isn’t in this channel and won’t be notified</span>
+                <button
+                  type="button"
+                  className="shrink-0 rounded border border-warning-border/60 px-1.5 py-0.5 font-medium hover:bg-warning-tint/40"
+                  onClick={() => void mentions.invite(user.id).catch(() => {})}
+                >
+                  Invite
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
         {files.length > 0 && (
           <div className="mb-2 flex flex-wrap gap-1.5">
             {files.map((p) => (

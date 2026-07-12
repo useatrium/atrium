@@ -64,6 +64,12 @@ export function trimMentionSubmission(text: string, ranges: MentionRange[]): { t
   };
 }
 
+/** Keep a warned non-member only while a range still mentions them. */
+export function pruneWarnedMentions(warned: UserRef[], ranges: MentionRange[]): UserRef[] {
+  const alive = new Set(ranges.map((range) => range.userId));
+  return warned.every((user) => alive.has(user.id)) ? warned : warned.filter((user) => alive.has(user.id));
+}
+
 export function decodeEditingText(
   wireText: string,
   resolveUser?: (id: string) => UserRef | undefined,

@@ -43,7 +43,7 @@ async function persist(
     channelId,
     text,
     actorId,
-    presenceFor: () => presenceIds.map((id) => ({ id })),
+    onlineUserIds: () => presenceIds,
   });
   return eventId;
 }

@@ -52,7 +52,7 @@ describe('suggestMentions', () => {
     expect(suggestMentions({ prefix: '', users: [alice], includeSpecials: true, limit: 1 })).toEqual([
       { kind: 'user', user: alice, inChannel: false },
       { kind: 'special', name: 'channel', description: 'Notify everyone in this channel' },
-      { kind: 'special', name: 'here', description: 'Notify everyone active in this channel' },
+      { kind: 'special', name: 'here', description: 'Notify channel members who are online' },
     ]);
     expect(suggestMentions({ prefix: 'CH', users: [alice], includeSpecials: true })).toEqual([
       { kind: 'special', name: 'channel', description: 'Notify everyone in this channel' },

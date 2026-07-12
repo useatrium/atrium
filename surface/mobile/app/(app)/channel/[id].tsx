@@ -471,6 +471,10 @@ export default function ChannelScreen() {
             // Public channels have no explicit membership — the members endpoint 404s there.
             if (channel != null && channel.kind !== 'public') chat.loadMentionMembers(id);
           }}
+          onInviteMember={async (userId) => {
+            await chat.addChannelMember(id, userId);
+            await chat.channelMembers(id);
+          }}
           editingText={editing?.text ?? null}
           onSubmitEdit={(text, mentionRanges) => {
             if (editing) void chat.editMessage(editing, text, mentionRanges);

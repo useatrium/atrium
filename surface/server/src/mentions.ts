@@ -13,7 +13,7 @@ export interface PersistMentionsArgs {
   channelId: string | null;
   text: string;
   actorId: string | null;
-  presenceFor: (channelId: string) => Array<{ id: string }>;
+  onlineUserIds: () => Iterable<string>;
 }
 
 /** Handles are [a-z0-9][a-z0-9_-]*, so a plain regex extraction is safe. */
@@ -62,7 +62,7 @@ export function mentionTargetUserIds(users: Iterable<{ id: string }>, actorId: s
 
 export async function persistMentions(
   pool: Db,
-  { eventId, channelId, text, actorId, presenceFor }: PersistMentionsArgs,
+  { eventId, channelId, text, actorId, onlineUserIds }: PersistMentionsArgs,
 ): Promise<void> {
   if (!channelId) return;
   const tokens = extractMentionTokens(text);
@@ -105,7 +105,7 @@ export async function persistMentions(
     }
   }
   if (expandsSpecials && tokens.specials.includes('here')) {
-    for (const { id } of presenceFor(channelId)) {
+    for (const id of onlineUserIds()) {
       if (id !== actorId && members.has(id) && !kinds.has(id)) kinds.set(id, 'here');
     }
   }

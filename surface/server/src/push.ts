@@ -125,15 +125,15 @@ type PushEvent = Pick<WireEvent, 'channelId' | 'actorId' | 'payload'> & {
 export function pushRecipientsFor(pool: Db, ev: PushEvent): Promise<PushRecipientResult>;
 export function pushRecipientsFor(
   pool: Db,
-  hub: Pick<WsHub, 'presenceFor'>,
+  hub: Pick<WsHub, 'onlineUserIds'>,
   ev: PushEvent,
 ): Promise<PushRecipientResult>;
 export async function pushRecipientsFor(
   pool: Db,
-  hubOrEvent: Pick<WsHub, 'presenceFor'> | PushEvent,
+  hubOrEvent: Pick<WsHub, 'onlineUserIds'> | PushEvent,
   maybeEvent?: PushEvent,
 ): Promise<PushRecipientResult> {
-  const hub = maybeEvent ? (hubOrEvent as Pick<WsHub, 'presenceFor'>) : { presenceFor: () => [] };
+  const hub = maybeEvent ? (hubOrEvent as Pick<WsHub, 'onlineUserIds'>) : { onlineUserIds: () => new Set<string>() };
   const ev = maybeEvent ?? (hubOrEvent as PushEvent);
   if (!ev.channelId) return { userIds: [], channelName: '', isDm: false, recipients: [] };
   const ch = await pool.query<{ name: string; kind: string; workspace_id: string }>(
@@ -177,8 +177,8 @@ export async function pushRecipientsFor(
       for (const userId of memberIds) addRecipient(recipients, userId, ev.actorId, 'mention_all');
     }
     if (specials.includes('here')) {
-      for (const user of hub.presenceFor(ev.channelId)) {
-        if (members.has(user.id)) addRecipient(recipients, user.id, ev.actorId, 'mention_all');
+      for (const userId of hub.onlineUserIds()) {
+        if (members.has(userId)) addRecipient(recipients, userId, ev.actorId, 'mention_all');
       }
     }
   }

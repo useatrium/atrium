@@ -11,8 +11,9 @@ const ada = { id: '11111111-1111-4111-8111-111111111111', handle: 'ada', display
 const ben = { id: '22222222-2222-4222-8222-222222222222', handle: 'ben', displayName: 'Ben Bitdiddle' };
 const channelMembers = vi.hoisted(() => vi.fn());
 const users = vi.hoisted(() => vi.fn());
+const addChannelMember = vi.hoisted(() => vi.fn());
 
-vi.mock('../api', () => ({ api: { channelMembers, users } }));
+vi.mock('../api', () => ({ api: { channelMembers, users, addChannelMember } }));
 
 function Harness({ initial = '' }: { initial?: string }) {
   const [value, setValue] = useState(initial);
@@ -25,12 +26,18 @@ function Harness({ initial = '' }: { initial?: string }) {
     textareaRef: ref,
     context: { channelId: 'channel-1', includeSpecials: true, publicChannel: false },
   });
+  const warnings = mention.nonMembers.map((user) => (
+    <button key={user.id} type="button" onClick={() => void mention.invite(user.id)}>
+      Invite @{user.handle}
+    </button>
+  ));
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (mention.onKeyDown(event)) return;
     if (event.key === 'Enter') setSent((count) => count + 1);
   };
   return (
     <div>
+      {warnings}
       {mention.open && (
         <MentionSuggestions
           activeIndex={mention.activeIndex}
@@ -65,6 +72,7 @@ beforeEach(() => {
   clearMentionTypeaheadCachesForTests();
   channelMembers.mockReset().mockResolvedValue({ members: [ada, ben] });
   users.mockReset().mockResolvedValue({ users: [ada, ben] });
+  addChannelMember.mockReset().mockResolvedValue({ member: ada });
 });
 
 afterEach(cleanup);
@@ -108,6 +116,66 @@ describe('useMentionTypeahead', () => {
     expect(screen.queryByRole('listbox')).toBeNull();
     fireEvent.change(input, { target: { value: '@a' } });
     expect(await screen.findByRole('listbox')).toBeTruthy();
+  });
+
+  it('warns when mentioning a non-member of a private channel and clears on invite', async () => {
+    const zoe = { id: '33333333-3333-4333-8333-333333333333', handle: 'zoe', displayName: 'Zoe Out' };
+    channelMembers.mockResolvedValue({ members: [ada] });
+    users.mockResolvedValue({ users: [ada, zoe] });
+    render(
+      <ThemeProvider>
+        <Harness />
+      </ThemeProvider>,
+    );
+    const input = screen.getByRole('textbox', { name: 'Harness input' }) as HTMLTextAreaElement;
+    fireEvent.change(input, { target: { value: '@zo' } });
+    fireEvent.mouseDown(await screen.findByRole('option', { name: /Zoe Out/ }));
+    expect(input.value).toBe('@zoe ');
+
+    const invite = await screen.findByRole('button', { name: 'Invite @zoe' });
+    fireEvent.click(invite);
+    await waitFor(() => expect(addChannelMember).toHaveBeenCalledWith('channel-1', zoe.id));
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Invite @zoe' })).toBeNull());
+  });
+
+  it('drops the warning when the mention text is edited away', async () => {
+    const zoe = { id: '33333333-3333-4333-8333-333333333333', handle: 'zoe', displayName: 'Zoe Out' };
+    channelMembers.mockResolvedValue({ members: [ada] });
+    users.mockResolvedValue({ users: [ada, zoe] });
+    render(
+      <ThemeProvider>
+        <Harness />
+      </ThemeProvider>,
+    );
+    const input = screen.getByRole('textbox', { name: 'Harness input' }) as HTMLTextAreaElement;
+    fireEvent.change(input, { target: { value: '@zo' } });
+    fireEvent.mouseDown(await screen.findByRole('option', { name: /Zoe Out/ }));
+    await screen.findByRole('button', { name: 'Invite @zoe' });
+
+    fireEvent.change(input, { target: { value: '@zXoe ' } });
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Invite @zoe' })).toBeNull());
+  });
+
+  it('refetches stale rosters when the picker opens after the TTL', async () => {
+    vi.useFakeTimers();
+    try {
+      render(
+        <ThemeProvider>
+          <Harness />
+        </ThemeProvider>,
+      );
+      const input = screen.getByRole('textbox', { name: 'Harness input' }) as HTMLTextAreaElement;
+      fireEvent.change(input, { target: { value: '@' } });
+      await vi.waitFor(() => expect(channelMembers).toHaveBeenCalledTimes(1));
+
+      fireEvent.change(input, { target: { value: '' } });
+      vi.advanceTimersByTime(6 * 60 * 1000);
+      fireEvent.change(input, { target: { value: '@' } });
+      await vi.waitFor(() => expect(channelMembers).toHaveBeenCalledTimes(2));
+      expect(users).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('records, shifts, drops, and serializes user mention ranges', async () => {

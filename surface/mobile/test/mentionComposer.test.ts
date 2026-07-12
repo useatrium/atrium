@@ -4,6 +4,7 @@ import {
   decodeEditingText,
   encodeMessageForSend,
   insertMentionCandidate,
+  pruneWarnedMentions,
   updateMentionRangesForEdit,
 } from '../src/lib/mentionComposer';
 
@@ -45,6 +46,13 @@ describe('mobile mention composer contract', () => {
       { start: 11, end: 17, userId: USER_ID },
     ]);
     expect(updateMentionRangesForEdit('hello @riley', 'hello @rXiley', ranges)).toEqual([]);
+  });
+
+  it('drops a non-member warning once no range mentions that user', () => {
+    const ranges = [{ start: 0, end: 6, userId: USER_ID }];
+    expect(pruneWarnedMentions([riley, sam], ranges)).toEqual([riley]);
+    expect(pruneWarnedMentions([riley], ranges)).toEqual([riley]);
+    expect(pruneWarnedMentions([riley], [])).toEqual([]);
   });
 
   it('encodes sends and decodes edits back to display text and ranges', () => {

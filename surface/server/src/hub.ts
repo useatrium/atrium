@@ -163,6 +163,13 @@ export class WsHub {
     }
   }
 
+  /** Users with any connected socket — drives @here fanout (online ∩ members). */
+  onlineUserIds(): Set<string> {
+    const out = new Set<string>();
+    for (const client of this.clients) out.add(client.user.id);
+    return out;
+  }
+
   presenceFor(channelId: string): UserRef[] {
     const byId = new Map<string, UserRef>();
     for (const client of this.clients) {
