@@ -15,7 +15,7 @@ import { useTheme } from '../theme';
 import { Tooltip } from './a11y';
 import { BellIcon, BellOffIcon } from './icons';
 
-const SOURCE_URL = 'https://github.com/gbasin/atrium';
+const SOURCE_URL = 'https://github.com/useatrium/atrium';
 const LICENSE_URL = `${SOURCE_URL}/blob/master/LICENSE`;
 
 const BELL_TITLES: Record<NotifyState, string> = {
