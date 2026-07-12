@@ -466,7 +466,7 @@ function fakeIronControl(
       if (path.endsWith('/effective_config')) {
         return json({
           data: {
-            secrets: [{ replace: { proxy_value: 'GITHUB_TOKEN' }, rules: [{ host: 'api.github.com' }] }],
+            secrets: [{ inject: { header: 'Authorization' }, rules: [{ host: 'api.github.com' }] }],
           },
         });
       }
