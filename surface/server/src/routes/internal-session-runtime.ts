@@ -44,15 +44,30 @@ export async function registerInternalSessionRuntimeRoutes(
   const { pool, maxUploadBytes, agentProfiles, providerCredentials, requireCaptureKey, resolveInternalSessionRef } =
     deps;
 
-  app.get('/api/internal/sessions/:id/harness-transcript', async (req, reply) => {
-    if (!requireCaptureKey(req, reply)) return;
-    const { id } = req.params as { id: string };
+  async function resolveHarnessSession(req: FastifyRequest, reply: FastifyReply) {
+    if (!requireCaptureKey(req, reply)) return null;
     const harness = (req.query as { harness?: string }).harness ?? '';
     if (!isHarness(harness)) {
-      return reply.code(400).send({ error: 'bad_query', message: 'harness must be claude|codex' });
+      reply.code(400).send({ error: 'bad_query', message: 'harness must be claude|codex' });
+      return null;
     }
+    const { id } = req.params as { id: string };
     const session = await resolveInternalSessionRef(id);
-    if (!session) return reply.code(404).send({ error: 'session_not_found' });
+    if (!session) {
+      reply.code(404).send({ error: 'session_not_found' });
+      return null;
+    }
+    return {
+      session,
+      harness,
+      provider: harness === 'codex' ? CODEX_PROVIDER : CLAUDE_CODE_PROVIDER,
+    } as const;
+  }
+
+  app.get('/api/internal/sessions/:id/harness-transcript', async (req, reply) => {
+    const resolved = await resolveHarnessSession(req, reply);
+    if (!resolved) return;
+    const { session, harness } = resolved;
     const t = await loadHarnessTranscript(pool, { getObjectBytes }, session.id, harness);
     if (!t) return reply.code(404).send({ error: 'not_found', message: 'no transcript captured' });
     reply.header('Content-Type', 'application/x-ndjson');
@@ -65,14 +80,9 @@ export async function registerInternalSessionRuntimeRoutes(
       done(null, body),
     );
     ht.put('/api/internal/sessions/:id/harness-transcript', async (req, reply) => {
-      if (!requireCaptureKey(req, reply)) return;
-      const { id } = req.params as { id: string };
-      const harness = (req.query as { harness?: string }).harness ?? '';
-      if (!isHarness(harness)) {
-        return reply.code(400).send({ error: 'bad_query', message: 'harness must be claude|codex' });
-      }
-      const session = await resolveInternalSessionRef(id);
-      if (!session) return reply.code(404).send({ error: 'session_not_found' });
+      const resolved = await resolveHarnessSession(req, reply);
+      if (!resolved) return;
+      const { session, harness } = resolved;
       const bytes = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
       if (bytes.length === 0) {
         return reply.code(400).send({ error: 'bad_request', message: 'empty transcript body' });
@@ -94,34 +104,22 @@ export async function registerInternalSessionRuntimeRoutes(
   });
 
   app.get('/api/internal/sessions/:id/harness-state-bundle', async (req, reply) => {
-    if (!requireCaptureKey(req, reply)) return;
-    const { id } = req.params as { id: string };
-    const harness = (req.query as { harness?: string }).harness ?? '';
-    if (!isHarness(harness)) {
-      return reply.code(400).send({ error: 'bad_query', message: 'harness must be claude|codex' });
-    }
-    const ref = await resolveInternalSessionRef(id);
-    if (!ref) return reply.code(404).send({ error: 'session_not_found' });
-    const bundle = await loadHarnessStateBundle(pool, ref.id, harness);
+    const resolved = await resolveHarnessSession(req, reply);
+    if (!resolved) return;
+    const bundle = await loadHarnessStateBundle(pool, resolved.session.id, resolved.harness);
     if (!bundle) return reply.code(404).send({ error: 'not_found', message: 'no harness-state bundle captured' });
     return reply.send(bundle);
   });
 
   app.put('/api/internal/sessions/:id/harness-state-bundle', async (req, reply) => {
-    if (!requireCaptureKey(req, reply)) return;
-    const { id } = req.params as { id: string };
-    const harness = (req.query as { harness?: string }).harness ?? '';
-    if (!isHarness(harness)) {
-      return reply.code(400).send({ error: 'bad_query', message: 'harness must be claude|codex' });
-    }
-    const ref = await resolveInternalSessionRef(id);
-    if (!ref) return reply.code(404).send({ error: 'session_not_found' });
+    const resolved = await resolveHarnessSession(req, reply);
+    if (!resolved) return;
     try {
       const { size, sha256 } = await storeHarnessStateBundle(
         pool,
         { uploadObject },
-        ref.id,
-        harness,
+        resolved.session.id,
+        resolved.harness,
         (req.body ?? {}) as { adapterVersion?: string; manifest?: unknown },
       );
       return reply.send({ size_bytes: size, sha256 });
@@ -132,43 +130,25 @@ export async function registerInternalSessionRuntimeRoutes(
   });
 
   app.put('/api/internal/sessions/:id/profile-candidates', async (req, reply) => {
-    if (!requireCaptureKey(req, reply)) return;
-    const { id } = req.params as { id: string };
-    const harness = (req.query as { harness?: string }).harness ?? '';
-    if (!isHarness(harness)) {
-      return reply.code(400).send({ error: 'bad_query', message: 'harness must be claude|codex' });
-    }
-    const session = await resolveInternalSessionRef(id);
-    if (!session) return reply.code(404).send({ error: 'session_not_found' });
-    const provider = harness === 'codex' ? CODEX_PROVIDER : CLAUDE_CODE_PROVIDER;
+    const resolved = await resolveHarnessSession(req, reply);
+    if (!resolved) return;
+    const { session, provider } = resolved;
     const proposal = await agentProfiles.ingestSessionProposal(session.id, provider, req.body ?? {});
     return reply.send({ proposal });
   });
 
   app.put('/api/internal/sessions/:id/profile-baseline', async (req, reply) => {
-    if (!requireCaptureKey(req, reply)) return;
-    const { id } = req.params as { id: string };
-    const harness = (req.query as { harness?: string }).harness ?? '';
-    if (!isHarness(harness)) {
-      return reply.code(400).send({ error: 'bad_query', message: 'harness must be claude|codex' });
-    }
-    const session = await resolveInternalSessionRef(id);
-    if (!session) return reply.code(404).send({ error: 'session_not_found' });
-    const provider = harness === 'codex' ? CODEX_PROVIDER : CLAUDE_CODE_PROVIDER;
+    const resolved = await resolveHarnessSession(req, reply);
+    if (!resolved) return;
+    const { session, provider } = resolved;
     const { baselineHash } = await agentProfiles.putSessionBaseline(session.id, provider, req.body ?? {});
     return reply.send({ baselineHash });
   });
 
   app.get('/api/internal/sessions/:id/profile-bundles', async (req, reply) => {
-    if (!requireCaptureKey(req, reply)) return;
-    const { id } = req.params as { id: string };
-    const harness = (req.query as { harness?: string }).harness ?? '';
-    if (!isHarness(harness)) {
-      return reply.code(400).send({ error: 'bad_query', message: 'harness must be claude|codex' });
-    }
-    const session = await resolveInternalSessionRef(id);
-    if (!session) return reply.code(404).send({ error: 'session_not_found' });
-    const provider = harness === 'codex' ? CODEX_PROVIDER : CLAUDE_CODE_PROVIDER;
+    const resolved = await resolveHarnessSession(req, reply);
+    if (!resolved) return;
+    const { session, provider } = resolved;
     const bundles = await listSessionProfileBundles(pool, session.id, provider);
     return reply.send({ bundles });
   });
@@ -209,14 +189,9 @@ export async function registerInternalSessionRuntimeRoutes(
   });
 
   app.put('/api/internal/sessions/:id/provider-credential-refresh', async (req, reply) => {
-    if (!requireCaptureKey(req, reply)) return;
-    const { id } = req.params as { id: string };
-    const harness = (req.query as { harness?: string }).harness ?? '';
-    if (!isHarness(harness)) {
-      return reply.code(400).send({ error: 'bad_query', message: 'harness must be claude|codex' });
-    }
-    const ref = await resolveInternalSessionRef(id);
-    if (!ref) return reply.code(404).send({ error: 'session_not_found' });
+    const resolved = await resolveHarnessSession(req, reply);
+    if (!resolved) return;
+    const { session: ref, harness, provider } = resolved;
     const session = await pool.query<{ spawned_by: string }>('SELECT spawned_by FROM sessions WHERE id = $1', [ref.id]);
     const ownerId = session.rows[0]?.spawned_by;
     if (!ownerId) return reply.code(404).send({ error: 'session_not_found' });
@@ -243,7 +218,6 @@ export async function registerInternalSessionRuntimeRoutes(
       const provider = await providerCredentials.upsertClaudeToken(ownerId, token);
       return reply.send({ provider });
     } catch (err) {
-      const provider = harness === 'codex' ? CODEX_PROVIDER : CLAUDE_CODE_PROVIDER;
       const message = err instanceof Error ? err.message : 'invalid refreshed credential';
       await providerCredentials.markProviderAuthRequired(provider, ownerId, message);
       return reply.code(400).send({ error: 'bad_request', message });
