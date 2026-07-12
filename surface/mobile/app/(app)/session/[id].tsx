@@ -1319,6 +1319,32 @@ export default function SessionScreen() {
       .catch(() => {});
   }, [chat.serverUrl, id]);
 
+  // Header overflow: pin/archive/transcript-view live behind one ⋯ button so
+  // the title keeps room next to copy-link and cancel on small phones.
+  const openHeaderActions = useCallback(() => {
+    if (!session) return;
+    const isArchived = session.archivedAt != null;
+    Alert.alert(session.title, undefined, [
+      ...(isArchived
+        ? []
+        : [
+            {
+              text: session.pinned ? 'Unpin' : 'Pin',
+              onPress: () => chat.setSessionPinned(session.id, !session.pinned, session.pinned),
+            },
+          ]),
+      {
+        text: isArchived ? 'Unarchive' : 'Archive',
+        onPress: () => chat.setSessionArchived(session.id, !isArchived, session.archivedAt),
+      },
+      {
+        text: transcriptView === 'focus' ? 'Show full transcript' : 'Show focus transcript',
+        onPress: () => setTranscriptView(transcriptView === 'focus' ? 'full' : 'focus'),
+      },
+      { text: 'Cancel', style: 'cancel' as const },
+    ]);
+  }, [chat, session, setTranscriptView, transcriptView]);
+
   const sendSteer = () => {
     if (!id) return;
     const text = steerText.trim();
@@ -1712,46 +1738,6 @@ export default function SessionScreen() {
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.xs }}>
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel={transcriptView === 'focus' ? 'Show full transcript' : 'Show focus transcript'}
-                onPress={() => setTranscriptView(transcriptView === 'focus' ? 'full' : 'focus')}
-                hitSlop={8}
-                style={{ minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center', padding: 6 }}
-              >
-                <Ionicons
-                  name={transcriptView === 'focus' ? 'eye-outline' : 'eye-off-outline'}
-                  size={18}
-                  color={transcriptView === 'focus' ? colors.accent : colors.textSecondary}
-                />
-              </Pressable>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={session.pinned ? 'Unpin this agent' : 'Pin this agent'}
-                accessibilityState={{ selected: session.pinned }}
-                onPress={() => chat.setSessionPinned(session.id, !session.pinned, session.pinned)}
-                hitSlop={8}
-                style={{ minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center', padding: 6 }}
-              >
-                <Ionicons
-                  name={session.pinned ? 'pin' : 'pin-outline'}
-                  size={18}
-                  color={session.pinned ? colors.accent : colors.textSecondary}
-                />
-              </Pressable>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={session.archivedAt ? 'Unarchive this agent' : 'Archive this agent'}
-                onPress={() => chat.setSessionArchived(session.id, session.archivedAt == null, session.archivedAt)}
-                hitSlop={8}
-                style={{ minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center', padding: 6 }}
-              >
-                <Ionicons
-                  name={session.archivedAt ? 'arrow-up-circle-outline' : 'archive-outline'}
-                  size={18}
-                  color={colors.textSecondary}
-                />
-              </Pressable>
-              <Pressable
-                accessibilityRole="button"
                 accessibilityLabel={sessionLinkCopied ? 'Copied agent link' : 'Copy link to this agent'}
                 onPress={copySessionLink}
                 hitSlop={8}
@@ -1762,6 +1748,15 @@ export default function SessionScreen() {
                   size={18}
                   color={sessionLinkCopied ? colors.accent : colors.textSecondary}
                 />
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Agent actions"
+                onPress={openHeaderActions}
+                hitSlop={8}
+                style={{ minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center', padding: 6 }}
+              >
+                <Ionicons name="ellipsis-horizontal" size={18} color={colors.textSecondary} />
               </Pressable>
               {canCancel ? (
                 <Pressable
@@ -2197,10 +2192,10 @@ export default function SessionScreen() {
                 </View>
               ) : null}
               <TextInput
-                accessibilityLabel="Session message"
+                accessibilityLabel="Agent message"
                 value={steerText}
                 onChangeText={setSteerText}
-                placeholder="Message this session"
+                placeholder="Message this agent"
                 placeholderTextColor={colors.textFaint}
                 multiline
                 style={{
