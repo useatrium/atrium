@@ -860,6 +860,203 @@ describe('Phase 2 sessions', () => {
     await app.close();
   });
 
+  it('converges the github-default fallback at spawn for users without a GitHub connection', async () => {
+    const ironCalls: Array<{ url: string; init: RequestInit }> = [];
+    const app = await buildApp({
+      pool,
+      ironControl: fakeIronControl(ironCalls),
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const cookie = await loginCookie(app);
+    await connectClaude(app, cookie, 'oauth-from-test');
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/sessions',
+      headers: { cookie },
+      payload: { channelId: fx.channelId, task: 'say PONG', harness: 'claude-code' },
+    });
+
+    expect(res.statusCode).toBe(201);
+    const methodsAndPaths = ironCalls.map((call) => [call.init.method ?? 'GET', new URL(call.url).pathname]);
+    expect(methodsAndPaths).toEqual(
+      expect.arrayContaining([
+        ['PUT', `/api/v1/principals/atrium-workspace-${fx.workspaceId}-user-${fx.userId}`],
+        ['PUT', '/api/v1/roles/github-default'],
+        ['POST', '/api/v1/principals/prn_atrium/roles'],
+      ]),
+    );
+    await waitFor(() => {
+      expect(fake.requests.some((r) => r.path === '/agent/spawn')).toBe(true);
+    });
+    await app.close();
+  });
+
+  it('does not converge the fallback at spawn when the user has a connected GitHub identity', async () => {
+    const ironCalls: Array<{ url: string; init: RequestInit }> = [];
+    const app = await buildApp({
+      pool,
+      ironControl: fakeIronControl(ironCalls),
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const cookie = await loginCookie(app);
+    await connectClaude(app, cookie, 'oauth-from-test');
+    await connectGitHubMetadata(fx.workspaceId, fx.userId, 'pat');
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/sessions',
+      headers: { cookie },
+      payload: { channelId: fx.channelId, task: 'say PONG', harness: 'claude-code' },
+    });
+
+    expect(res.statusCode).toBe(201);
+    expect(ironCalls).toHaveLength(0);
+    await waitFor(() => {
+      expect(fake.requests.some((r) => r.path === '/agent/spawn')).toBe(true);
+    });
+    await app.close();
+  });
+
+  it('spawns even when the fallback convergence fails against iron-control', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const ironCalls: Array<{ url: string; init: RequestInit }> = [];
+      const app = await buildApp({
+        pool,
+        ironControl: fakeIronControl(ironCalls, { failGitHubDefaultRoleUpsert: true }),
+        sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+      });
+      await app.ready();
+      const cookie = await loginCookie(app);
+      await connectClaude(app, cookie, 'oauth-from-test');
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/sessions',
+        headers: { cookie },
+        payload: { channelId: fx.channelId, task: 'say PONG', harness: 'claude-code' },
+      });
+
+      expect(res.statusCode).toBe(201);
+      expect(warn).toHaveBeenCalledWith(
+        'GitHub fallback convergence before spawn failed',
+        expect.objectContaining({ channelId: fx.channelId }),
+      );
+      await waitFor(() => {
+        expect(fake.requests.some((r) => r.path === '/agent/spawn')).toBe(true);
+      });
+      await app.close();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('re-checks the connection under the github lock before converging the fallback at spawn', async () => {
+    const ironCalls: Array<{ url: string; init: RequestInit }> = [];
+    const app = await buildApp({
+      pool,
+      ironControl: fakeIronControl(ironCalls),
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const cookie = await loginCookie(app);
+    await connectClaude(app, cookie, 'oauth-from-test');
+
+    const lockClient = await pool.connect();
+    await lockClient.query('SELECT pg_advisory_lock(hashtext($1))', [
+      `connection:${fx.workspaceId}:${fx.userId}:github`,
+    ]);
+    let completed = false;
+    const spawn = app
+      .inject({
+        method: 'POST',
+        url: '/api/sessions',
+        headers: { cookie },
+        payload: { channelId: fx.channelId, task: 'say PONG', harness: 'claude-code' },
+      })
+      .then((res) => {
+        completed = true;
+        return res;
+      });
+
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(completed).toBe(false);
+      expect(ironCalls).toHaveLength(0);
+      // A concurrent connect lands while the lock is held: the in-lock
+      // re-check must see it and skip the fallback convergence entirely.
+      await connectGitHubMetadata(fx.workspaceId, fx.userId, 'pat');
+    } finally {
+      await lockClient.query('SELECT pg_advisory_unlock(hashtext($1))', [
+        `connection:${fx.workspaceId}:${fx.userId}:github`,
+      ]);
+      lockClient.release();
+    }
+
+    const res = await spawn;
+    expect(res.statusCode).toBe(201);
+    expect(ironCalls).toHaveLength(0);
+    await waitFor(() => {
+      expect(fake.requests.some((r) => r.path === '/agent/spawn')).toBe(true);
+    });
+    await app.close();
+  });
+
+  it('uses first-run copy and creates no phantom connection when a never-connected session hits a GitHub auth failure', async () => {
+    fake.setFrames([
+      {
+        event: 'execution_state',
+        event_id: 9,
+        data: {
+          type: 'execution.state',
+          status: 'failed',
+          result_text:
+            "fatal: Authentication failed for 'https://github.com/acme/private.git' while using GITHUB_TOKEN",
+        },
+      },
+    ]);
+    const ironCalls: Array<{ url: string; init: RequestInit }> = [];
+    const app = await buildApp({
+      pool,
+      ironControl: fakeIronControl(ironCalls),
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const cookie = await loginCookie(app);
+    await connectClaude(app, cookie, 'oauth-from-test');
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/sessions',
+      headers: { cookie },
+      payload: { channelId: fx.channelId, task: 'checkout a repo', harness: 'claude-code' },
+    });
+    expect(res.statusCode).toBe(201);
+    const id = res.json().session.id;
+
+    await waitFor(async () => {
+      const row = await pool.query(`SELECT status FROM sessions WHERE id = $1`, [id]);
+      expect(row.rows[0]).toMatchObject({ status: 'failed' });
+      const authEvent = await pool.query(`SELECT payload FROM events WHERE type = 'session.github_auth_required'`);
+      expect(authEvent.rows[0].payload).toMatchObject({
+        sessionId: id,
+        provider: 'github',
+        userId: fx.userId,
+        message:
+          "GitHub access isn't set up for this session yet. Retry in a new session, or connect GitHub to act as your own identity.",
+      });
+    });
+    const connection = await pool.query(
+      `SELECT 1 FROM user_connections WHERE workspace_id = $1 AND user_id = $2 AND provider = 'github'`,
+      [fx.workspaceId, fx.userId],
+    );
+    expect(connection.rowCount).toBe(0);
+    await app.close();
+  });
+
   it('validates private repo access for a GitHub App installation before spawning', async () => {
     const app = await buildApp({
       pool,
@@ -5027,7 +5224,7 @@ describe('session list access control', () => {
 
 function fakeIronControl(
   calls: Array<{ url: string; init: RequestInit }>,
-  options: { inaccessibleGitHubRepos?: string[] } = {},
+  options: { inaccessibleGitHubRepos?: string[]; failGitHubDefaultRoleUpsert?: boolean } = {},
 ): IronControlAdminClient {
   return new IronControlAdminClient({
     baseUrl: 'http://iron.test',
@@ -5050,6 +5247,9 @@ function fakeIronControl(
       }
       if (path.endsWith('/roles/lookup/default/infra')) {
         return json({ data: { id: 'role_infra', namespace: 'default', foreign_id: 'infra' } });
+      }
+      if (options.failGitHubDefaultRoleUpsert && path === '/api/v1/roles/github-default') {
+        return new Response('boom', { status: 500 });
       }
       if (path.includes('/roles/')) {
         return json({ data: { id: 'role_github_default', namespace: 'default', foreign_id: 'github-default' } });

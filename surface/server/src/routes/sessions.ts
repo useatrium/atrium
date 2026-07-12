@@ -16,7 +16,11 @@ import { githubConnectionId, type Connections } from '../connections.js';
 import type { SessionRuns } from '../session-runs.js';
 import { GitHubRepoValidationError, validateGitHubAppInstallationRepos } from '../github-repo-validation.js';
 import { githubPatSecretForeignId, IronControlRequestError, type IronControlAdminClient } from '../iron-control.js';
-import { convergeExistingGitHubDirectGrant, convergeGitHubExistingIdentityGrant } from '../github-iron-control.js';
+import {
+  convergeExistingGitHubDirectGrant,
+  convergeGitHubExistingIdentityGrant,
+  convergeGitHubPublicReadFallback,
+} from '../github-iron-control.js';
 import {
   parseAgentTurnAttachmentInputPayloads,
   resolveAgentTurnAttachments,
@@ -301,6 +305,36 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
           workspaceId: githubConnection.workspace_id,
           userId: githubConnection.user_id,
         });
+      }
+      // Users who never connected GitHub only inherit the shared github-default
+      // fallback role once something converges their principal; without this,
+      // a first spawn runs with no GitHub credential at all until a failed
+      // GitHub action triggers the auth-failure path. Converge best-effort at
+      // spawn so the fallback (App-backed bot or public-read token) is live
+      // from the first session. Never blocks the spawn. Guarding on a null
+      // githubConnection also means this only runs on the automatic no-repo
+      // path, which never holds the connection lock yet (every locked path
+      // above either resolved a connection or 409'd), so taking it here
+      // cannot deadlock.
+      if (ironControl.configured && !githubConnection) {
+        const existing = await connectedGitHubForChannel(deps.pool, user.id, channelId);
+        if (!existing) {
+          const workspaceId = await workspaceIdForChannel(deps.pool, channelId);
+          if (workspaceId) {
+            try {
+              await connections.withConnectionLock(workspaceId, user.id, 'github', async () => {
+                // Re-check under the lock: a concurrent connect may have just
+                // granted a direct identity, and re-adding the fallback role
+                // would leave the principal with two GITHUB_TOKEN transforms.
+                const connected = await connectedGitHubForChannel(deps.pool, user.id, channelId);
+                if (connected) return;
+                await convergeGitHubPublicReadFallback(ironControl, { workspaceId, userId: user.id });
+              });
+            } catch (err) {
+              console.warn('GitHub fallback convergence before spawn failed', { channelId, userId: user.id, err });
+            }
+          }
+        }
       }
       const resolvedGitHubIdentityMode =
         githubIdentityMode === 'automatic' && githubConnection?.token_kind
