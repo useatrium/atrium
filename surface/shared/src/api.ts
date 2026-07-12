@@ -529,6 +529,10 @@ export function createApi(opts: ApiOptions = {}) {
       agentProfileId?: string;
       agentProfileVersionId?: string;
       threadRootEventId?: number;
+      /** Event that prompted the summon; the server validates channel ownership. */
+      anchorEventId?: number;
+      /** Surface a thread-bound session card in the parent channel timeline too. */
+      broadcastCard?: boolean;
       /** Optimistic id echoed on session.spawned for lost-response reconcile. */
       clientSpawnId?: string;
       /** Uploaded file ids to attach to the initial agent message. */
@@ -750,6 +754,7 @@ export function createApi(opts: ApiOptions = {}) {
       op: OpOptions = {},
       opts: {
         effort?: string;
+        postToThread?: boolean;
         attachments?: string[];
         attachmentRefs?: AgentAttachmentRef[];
       } = {},
@@ -757,6 +762,7 @@ export function createApi(opts: ApiOptions = {}) {
       const body: SessionSteerBody = {
         text,
         ...(opts.effort ? { effort: opts.effort } : {}),
+        ...(opts.postToThread === true ? { postToThread: true } : {}),
         ...(opts.attachments && opts.attachments.length > 0 ? { attachments: opts.attachments } : {}),
         ...(opts.attachmentRefs && opts.attachmentRefs.length > 0 ? { attachmentRefs: opts.attachmentRefs } : {}),
         ...(op.opId ? { opId: op.opId } : {}),
@@ -811,8 +817,12 @@ export function createApi(opts: ApiOptions = {}) {
         body: JSON.stringify(body),
       });
     },
-    createSuggestion: (id: string, text: string, op: OpOptions = {}) => {
-      const body: SessionSuggestionCreateBody = { text, ...(op.opId ? { opId: op.opId } : {}) };
+    createSuggestion: (id: string, text: string, opts: OpOptions & { postToThread?: boolean } = {}) => {
+      const body: SessionSuggestionCreateBody = {
+        text,
+        ...(opts.postToThread === true ? { postToThread: true } : {}),
+        ...(opts.opId ? { opId: opts.opId } : {}),
+      };
       return req<{ ok: true }>(`/api/sessions/${id}/suggestions`, {
         method: 'POST',
         body: JSON.stringify(body),

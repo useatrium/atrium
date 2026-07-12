@@ -778,6 +778,103 @@ describe('Phase 2 sessions', () => {
     await app.close();
   });
 
+  it('anchors a thread summon in context and broadcasts its card when requested', async () => {
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const cookie = await loginCookie(app);
+    await connectClaude(app, cookie, 'oauth-from-test');
+    const root = await postMessage(pool, {
+      workspaceId: fx.workspaceId,
+      channelId: fx.channelId,
+      actorId: fx.userId,
+      text: 'Can someone investigate this?',
+    });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/sessions',
+      headers: { cookie },
+      payload: {
+        channelId: fx.channelId,
+        threadRootEventId: root.id,
+        broadcastCard: true,
+        task: 'Investigate the report.',
+        harness: 'claude-code',
+      },
+    });
+
+    expect(res.statusCode).toBe(201);
+    const sessionId = res.json().session.id as string;
+    const spawned = await pool.query<{ thread_root_event_id: number; payload: Record<string, unknown> }>(
+      `SELECT thread_root_event_id, payload
+         FROM events
+        WHERE type = 'session.spawned' AND payload->>'sessionId' = $1`,
+      [sessionId],
+    );
+    expect(spawned.rows).toEqual([
+      expect.objectContaining({
+        thread_root_event_id: root.id,
+        payload: expect.objectContaining({ anchor_event_id: root.id, broadcast: true }),
+      }),
+    ]);
+
+    await waitFor(() => {
+      const initialMessage = fake.requests.find((request) => request.path === '/agent/message');
+      expect(initialMessage?.body.parts[0]).toMatchObject({
+        type: 'context',
+        text: expect.stringContaining(`tagged after: /e/${encodeEventHandle(root.id)}`),
+      });
+    });
+
+    const timeline = await app.inject({
+      method: 'GET',
+      url: `/api/channels/${fx.channelId}/messages`,
+      headers: { cookie },
+    });
+    expect(timeline.statusCode).toBe(200);
+    expect(
+      (
+        timeline.json().events as { type: string; payload: Record<string, unknown>; threadRootEventId: number | null }[]
+      ).find((event) => event.type === 'session.spawned' && event.payload.sessionId === sessionId),
+    ).toMatchObject({ threadRootEventId: root.id, payload: { broadcast: true } });
+    await app.close();
+  });
+
+  it('rejects an explicit summon anchor from another channel', async () => {
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const cookie = await loginCookie(app);
+    await connectClaude(app, cookie, 'oauth-from-test');
+    const foreignAnchor = await postMessage(pool, {
+      workspaceId: fx.workspaceId,
+      channelId: fx.otherChannelId,
+      actorId: fx.userId,
+      text: 'A different channel message.',
+    });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/sessions',
+      headers: { cookie },
+      payload: {
+        channelId: fx.channelId,
+        anchorEventId: foreignAnchor.id,
+        task: 'Do not create this session.',
+        harness: 'claude-code',
+      },
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toMatchObject({ error: 'anchor_channel_mismatch' });
+    await app.close();
+  });
+
   it('rejects private repo spawn without a connected GitHub connection', async () => {
     const app = await buildApp({
       pool,
@@ -2538,7 +2635,7 @@ describe('Phase 2 sessions', () => {
     await app.close();
   });
 
-  it('channel after_id catch-up returns session question events with payloads intact', async () => {
+  it('channel after_id catch-up returns session question and reply events with payloads intact', async () => {
     const id = await insertSessionRow({ title: 'needs input', status: 'running' });
     const root = await pool.query<{ id: number }>(
       `INSERT INTO events (workspace_id, channel_id, type, actor_id, payload)
@@ -2575,6 +2672,12 @@ describe('Phase 2 sessions', () => {
         [fx.workspaceId, fx.channelId, rootId, type, fx.userId, JSON.stringify(payload)],
       );
     }
+    const replyPayload = { session_id: id, text: 'I have the answer.' };
+    await pool.query(
+      `INSERT INTO events (workspace_id, channel_id, thread_root_event_id, type, actor_id, payload)
+       VALUES ($1, $2, $3, 'session.replied', NULL, $4)`,
+      [fx.workspaceId, fx.channelId, rootId, JSON.stringify(replyPayload)],
+    );
 
     const app = await buildApp({
       pool,
@@ -2599,11 +2702,13 @@ describe('Phase 2 sessions', () => {
       'session.question_requested',
       'session.question_answered',
       'session.question_resolved',
+      'session.replied',
     ]);
     expect(events.every((e) => e.threadRootEventId === rootId)).toBe(true);
     expect(events[0]!.payload).toEqual(requestedPayload);
     expect(events[1]!.payload).toEqual(answeredPayload);
     expect(events[2]!.payload).toEqual(resolvedPayload);
+    expect(events[3]!.payload).toEqual(replyPayload);
     await app.close();
   });
 
@@ -3985,6 +4090,71 @@ describe('Phase 2 sessions', () => {
       to: bob.userId,
       reason: 'taken',
     });
+    await app.close();
+  });
+
+  it('can mirror a driver steer and a watcher suggestion into the session thread', async () => {
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const alice = await loginUser(app, 'alice', 'Alice');
+    await connectClaude(app, alice.cookie, 'oauth-from-test');
+    const bob = await loginUser(app, 'bob', 'Bob');
+    const id = await insertRunningSession(alice.userId);
+    const root = await postMessage(pool, {
+      workspaceId: fx.workspaceId,
+      channelId: fx.channelId,
+      actorId: alice.userId,
+      text: 'Discuss this agent run here.',
+    });
+    await pool.query('UPDATE sessions SET thread_root_event_id = $1 WHERE id = $2', [root.id, id]);
+
+    const steer = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${id}/messages`,
+      headers: { cookie: alice.cookie },
+      payload: { text: 'Please inspect the error.', postToThread: true },
+    });
+    expect(steer.statusCode).toBe(202);
+
+    const suggestion = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${id}/suggestions`,
+      headers: { cookie: bob.cookie },
+      payload: { text: 'Try the focused test first.', postToThread: true },
+    });
+    expect(suggestion.statusCode).toBe(202);
+
+    const messages = await pool.query<{
+      actor_id: string;
+      thread_root_event_id: number;
+      payload: Record<string, unknown>;
+    }>(
+      `SELECT actor_id, thread_root_event_id, payload
+         FROM events
+        WHERE type = 'message.posted'
+          AND thread_root_event_id = $1
+        ORDER BY id ASC`,
+      [root.id],
+    );
+    expect(messages.rows).toEqual([
+      expect.objectContaining({
+        actor_id: alice.userId,
+        thread_root_event_id: root.id,
+        payload: { text: 'Please inspect the error.', steered_session_id: id },
+      }),
+      expect.objectContaining({
+        actor_id: bob.userId,
+        thread_root_event_id: root.id,
+        payload: expect.objectContaining({
+          text: 'Try the focused test first.',
+          suggested_session_id: id,
+          suggestion_id: expect.any(String),
+        }),
+      }),
+    ]);
     await app.close();
   });
 

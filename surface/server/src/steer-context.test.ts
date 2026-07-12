@@ -13,6 +13,7 @@ describe('steer context block', () => {
       you: { name: 'Rex', sessionTitle: 'Fix the flaky e2e suite' },
       channel: 'design',
       channelId: 'd4dbf59b-f82d-4bcb-bca9-cba174205d6e',
+      taggedAfter: '/e/evt_210',
       thread: '/e/evt_211',
       sent: new Date('2026-07-08T14:32:05.000Z'),
       suggestion: {
@@ -26,6 +27,7 @@ describe('steer context block', () => {
         'from: Alice Basin (human · driver)\n' +
         'you: Rex — session "Fix the flaky e2e suite"\n' +
         'channel: #design (id: d4dbf59b-f82d-4bcb-bca9-cba174205d6e)\n' +
+        'tagged after: /e/evt_210\n' +
         'thread: /e/evt_211\n' +
         'sent: 2026-07-08T14:32:05Z\n' +
         'suggested by: Bob Jones (human) — accepted and sent by: Alice Basin (driver)',
@@ -38,6 +40,7 @@ describe('steer context block', () => {
       you: 'Rex — session "Fix the flaky e2e suite"',
       channel: 'design',
       channelId: 'd4dbf59b-f82d-4bcb-bca9-cba174205d6e',
+      taggedAfter: '/e/evt_210',
       thread: '/e/evt_211',
       sent: '2026-07-08T14:32:05Z',
       suggestedBy: { name: 'Bob Jones', handle: null, kind: 'human' },
@@ -103,6 +106,7 @@ describe('steer context block', () => {
       you: null,
       channel: 'old',
       channelId: null,
+      taggedAfter: null,
       thread: null,
     });
   });

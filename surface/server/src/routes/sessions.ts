@@ -29,6 +29,8 @@ type GitHubIdentityMode = 'automatic' | 'app_installation' | 'app_user' | 'pat';
 const SessionSpawnBodySchema = Schema.Struct({
   channelId: Schema.optional(Schema.Unknown),
   threadRootEventId: Schema.optional(Schema.Unknown),
+  anchorEventId: Schema.optional(Schema.Unknown),
+  broadcastCard: Schema.optional(Schema.Unknown),
   task: Schema.optional(Schema.Unknown),
   harness: Schema.optional(Schema.Unknown),
   repo: Schema.optional(Schema.Unknown),
@@ -174,6 +176,14 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
     if (threadRootEventId !== null && !Number.isFinite(threadRootEventId)) {
       return reply.code(400).send({ error: 'bad_request', message: 'threadRootEventId must be numeric' });
     }
+    const anchorEventId = body.anchorEventId != null ? Number(body.anchorEventId) : undefined;
+    if (anchorEventId !== undefined && (!Number.isSafeInteger(anchorEventId) || anchorEventId <= 0)) {
+      return reply.code(400).send({ error: 'bad_request', message: 'anchorEventId must be a positive integer' });
+    }
+    if (body.broadcastCard !== undefined && typeof body.broadcastCard !== 'boolean') {
+      return reply.code(400).send({ error: 'bad_request', message: 'broadcastCard must be boolean' });
+    }
+    const broadcastCard = body.broadcastCard === true;
     if (!(await canAccessChannel(deps.pool, user.id, channelId))) {
       return reply.code(404).send({ error: 'channel_not_found', message: 'channel not found' });
     }
@@ -325,6 +335,8 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
         body: {
           channelId,
           threadRootEventId,
+          ...(anchorEventId !== undefined ? { anchorEventId } : {}),
+          ...(broadcastCard ? { broadcastCard: true } : {}),
           task,
           harness: typeof body.harness === 'string' && body.harness.trim() ? body.harness.trim() : undefined,
           repo,
@@ -349,6 +361,8 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
           createdSession = await sessionRuns.createSessionInTx(client, {
             channelId,
             threadRootEventId,
+            ...(anchorEventId !== undefined ? { anchorEventId } : {}),
+            ...(broadcastCard ? { broadcastCard: true } : {}),
             task,
             harness: typeof body.harness === 'string' && body.harness.trim() ? body.harness.trim() : undefined,
             repo,

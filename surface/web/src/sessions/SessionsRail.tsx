@@ -60,7 +60,7 @@ export function SessionsRail({
         <div className="flex flex-1 flex-col items-center justify-center gap-1.5 px-6 text-center">
           <div className="text-sm font-medium text-fg-secondary">No agents yet</div>
           <div className="text-xs leading-relaxed text-fg-muted">
-            Start one by typing <span className="font-medium text-fg-secondary">@agent</span> and a task in the channel.
+            Start one by typing <span className="font-medium text-fg-secondary">!!</span> and a task in the channel.
           </div>
         </div>
       ) : (

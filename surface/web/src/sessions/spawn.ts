@@ -1,10 +1,10 @@
-// Composer grammar helpers: "@agent <task>" routes to a queued session spawn
+// Composer grammar helpers: "!!<task>" routes to a queued session spawn
 // instead of a plain message.
 
 import type { AppAction } from '@atrium/surface-client';
 import type { ChatMessage, SessionSpawnPayload, UserRef } from '@atrium/surface-client';
-export { AGENT_PREFIX, looksLikeAgentCommand, parseAgentTask } from '@atrium/surface-client';
-import { randomId, parseAgentTask } from '@atrium/surface-client';
+export { SUMMON_SIGIL, looksLikeSummonSigil, parseSummonSigil } from '@atrium/surface-client';
+import { randomId, parseSummonSigil } from '@atrium/surface-client';
 import { PENDING_SESSION_PREFIX, type Session } from './types';
 
 export interface SpawnContext {
@@ -16,13 +16,13 @@ export interface SpawnContext {
 }
 
 /**
- * If `text` is an @agent command, spawn a session (optimistic card now, POST
+ * If `text` is a summon-sigil command, spawn a session (optimistic card now, POST
  * in the background) and return true. Returns false for plain messages.
  */
 export function trySpawnFromComposer(text: string, ctx: SpawnContext): boolean {
-  const task = parseAgentTask(text);
-  if (task == null) return false;
-  spawnSession(task, ctx);
+  const summon = parseSummonSigil(text);
+  if (summon == null) return false;
+  spawnSession(summon.task, ctx);
   return true;
 }
 

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-// (c) Composer @agent grammar: queues session.spawn (with threadRootEventId
+// (c) Composer summon sigil: queues session.spawn (with threadRootEventId
 // when sent from a thread) instead of posting a message.
 
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
@@ -31,7 +31,7 @@ const wireSession: SessionWire = {
   permalink: '/s/sess-9',
 };
 
-/** Same routing Chat.send performs: @agent → session spawn, else message. */
+/** Same routing Chat.send performs: !! → session spawn, else message. */
 function Harness({
   threadRootEventId,
   dispatch,
@@ -66,7 +66,7 @@ function type(value: string) {
   return box;
 }
 
-describe('composer @agent grammar', () => {
+describe('composer summon sigil', () => {
   it('queues session.spawn with threadRootEventId when in a thread', () => {
     const dispatch = vi.fn();
     const enqueueSpawn = vi.fn((payload: SessionSpawnPayload) => {
@@ -85,7 +85,7 @@ describe('composer @agent grammar', () => {
     const onPlain = vi.fn();
     render(<Harness threadRootEventId={7} dispatch={dispatch} enqueueSpawn={enqueueSpawn} onPlainMessage={onPlain} />);
 
-    const box = type('@agent fix the flaky test');
+    const box = type('!!fix the flaky test');
     // subtle hint chip while the grammar matches
     expect(screen.getByText(/— spawns an agent/)).toBeTruthy();
     fireEvent.keyDown(box, { key: 'Enter' });
@@ -112,7 +112,7 @@ describe('composer @agent grammar', () => {
   it('omits threadRootEventId for channel-level spawns', () => {
     const enqueueSpawn = vi.fn();
     render(<Harness dispatch={vi.fn()} enqueueSpawn={enqueueSpawn} onPlainMessage={vi.fn()} />);
-    const box = type('@agent summarize today');
+    const box = type('!! summarize today');
     fireEvent.keyDown(box, { key: 'Enter' });
     const channelBody = enqueueSpawn.mock.calls[0]?.[0];
     expect(channelBody).toMatchObject({
@@ -123,7 +123,7 @@ describe('composer @agent grammar', () => {
     expect(channelBody.clientSpawnId).toMatch(/^pending:/);
   });
 
-  it('leaves plain messages on the message path; bare "@agent" prompts for a task', () => {
+  it('leaves @agent as a plain message; bare !! prompts for a task', () => {
     const enqueueSpawn = vi.fn();
     const onPlain = vi.fn();
     render(<Harness dispatch={vi.fn()} enqueueSpawn={enqueueSpawn} onPlainMessage={onPlain} />);
@@ -133,15 +133,27 @@ describe('composer @agent grammar', () => {
     fireEvent.keyDown(box, { key: 'Enter' });
     expect(onPlain).toHaveBeenLastCalledWith('deploying in 5');
 
-    // "@agent" with no task never posts the literal string — it keeps the
+    // "!!" with no task never posts the literal string — it keeps the
     // text and asks for a task instead.
-    box = type('@agent');
+    box = type('!!');
     expect(screen.getByText(/— spawns an agent/)).toBeTruthy();
     fireEvent.keyDown(box, { key: 'Enter' });
     expect(screen.getByText(/Add a task/)).toBeTruthy();
     expect(onPlain).toHaveBeenCalledTimes(1);
-    expect((box as HTMLTextAreaElement).value).toBe('@agent');
+    expect((box as HTMLTextAreaElement).value).toBe('!!');
 
     expect(enqueueSpawn).not.toHaveBeenCalled();
+
+    box = type('@agent fix the flaky test');
+    fireEvent.keyDown(box, { key: 'Enter' });
+    expect(onPlain).toHaveBeenLastCalledWith('@agent fix the flaky test');
+    expect(enqueueSpawn).not.toHaveBeenCalled();
+
+    // Composer trims on send, so stray leading whitespace still summons.
+    box = type(' !! fix the flaky test');
+    fireEvent.keyDown(box, { key: 'Enter' });
+    expect(onPlain).toHaveBeenCalledTimes(2);
+    expect(enqueueSpawn).toHaveBeenCalledTimes(1);
+    expect(enqueueSpawn.mock.calls[0]?.[0]).toMatchObject({ task: 'fix the flaky test' });
   });
 });

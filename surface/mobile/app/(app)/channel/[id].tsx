@@ -8,7 +8,7 @@ import {
   emptyTimeline,
   type ChatMessage,
   type HubFile,
-  parseAgentTask,
+  parseSummonSigil,
 } from '@atrium/surface-client';
 import { Ionicons } from '@expo/vector-icons';
 import { useChat } from '../../../src/lib/chat';
@@ -298,7 +298,7 @@ export default function ChannelScreen() {
     const capturedText = composerRef.current?.captureForConfigure() ?? fullText;
     composerRestoreTextRef.current = capturedText;
     spawnSubmittedRef.current = false;
-    setSpawnSheetInitialTask(parseAgentTask(capturedText) ?? capturedText.replace(/^\s*@agent\b\s*/i, ''));
+    setSpawnSheetInitialTask(parseSummonSigil(capturedText)?.task ?? capturedText.replace(/^\s*!!\s*/, ''));
     setSpawnSheetVisible(true);
   }, []);
 
@@ -415,7 +415,7 @@ export default function ChannelScreen() {
         <Timeline
           key={id}
           messages={timeline.main}
-          emptyLabel="No messages yet. Say hello — or type @agent <task> to put an agent on it."
+          emptyLabel="No messages yet. Say hello — or type !!<task> to put an agent on it."
           loaded={timeline.loaded}
           hasMoreBefore={timeline.hasMoreBefore}
           sessions={state.sessions}

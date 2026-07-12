@@ -364,6 +364,40 @@ describe('threads and reply counts', () => {
       [2, 'question_requested', 'Agent asked a question'],
     ]);
   });
+
+  it('folds a persisted agent reply into the session conversation thread', () => {
+    const root: WireEvent = {
+      id: 1,
+      workspaceId: 'ws-1',
+      channelId: CH,
+      threadRootEventId: null,
+      type: 'session.spawned',
+      actorId: alice.id,
+      payload: { sessionId: 'sess-1', title: 'investigate', harness: 'codex', by: alice.id },
+      createdAt: new Date(1000).toISOString(),
+      author: alice,
+    };
+    const reply: WireEvent = {
+      id: 2,
+      workspaceId: 'ws-1',
+      channelId: CH,
+      threadRootEventId: 1,
+      type: 'session.replied',
+      actorId: null,
+      payload: { session_id: 'sess-1', text: 'I found the stale key path.' },
+      createdAt: new Date(2000).toISOString(),
+      author: null,
+    };
+
+    let t = applyEvent(emptyTimeline, root);
+    t = applyEvent(t, reply);
+    expect(t.main[0]!.replyCount).toBe(1);
+
+    t = mergeThread(t, 1, [reply]);
+    expect(t.threads[1]!.map((m) => [m.id, m.sessionId, m.sessionEventType, m.text])).toEqual([
+      [2, 'sess-1', 'replied', 'I found the stale key path.'],
+    ]);
+  });
 });
 
 describe('history pagination merge', () => {

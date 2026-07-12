@@ -10,7 +10,7 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from 'react';
-import { looksLikeAgentCommand, parseAgentTask } from '../sessions/spawn';
+import { looksLikeSummonSigil, parseSummonSigil } from '../sessions/spawn';
 import type { AttachmentMeta, AttachmentRef, UploadPayload, VoiceMeta } from '@atrium/surface-client';
 import { createDraftChangeDebouncer, formatBytes, randomId } from '@atrium/surface-client';
 import { FileIcon, PaperclipIcon, XIcon } from './icons';
@@ -53,9 +53,9 @@ type ComposerProps = {
   /** ArrowUp in an empty composer — Slack-style "edit my last message". */
   onArrowUpOnEmpty?: () => void;
   autoFocus?: boolean;
-  /** Show the "@agent spawns a session" hint chip while the grammar matches. */
+  /** Show the summon-sigil hint chip while the grammar matches. */
   agentAware?: boolean;
-  /** Open the configured spawn dialog from the current @agent draft. */
+  /** Open the configured spawn dialog from the current summon-sigil draft. */
   onConfigureAgent?: (fullText: string) => void;
   /** Enable paste / drag-drop / file uploads. */
   allowAttachments?: boolean;
@@ -98,7 +98,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   imperativeRef,
 ) {
   const [text, setText] = useState('');
-  // "@agent" with no task: refuse to post the literal string — show what's
+  // "!!" with no task: refuse to post the literal string — show what's
   // missing instead (cleared as soon as the text changes).
   const [agentNeedsTask, setAgentNeedsTask] = useState(false);
   const [files, setFiles] = useState<PendingFile[]>([]);
@@ -117,8 +117,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       ),
     [onDraftChange, onDraftPersisted],
   );
-  const agentHint = !!agentAware && !disabled && looksLikeAgentCommand(text);
-  const agentTask = agentHint ? parseAgentTask(text) : null;
+  const agentHint = !!agentAware && !disabled && looksLikeSummonSigil(text);
+  const agentTask = agentHint ? parseSummonSigil(text) : null;
   const configureAgentHint = !!onConfigureAgent && agentHint && agentTask != null;
   const agentNeedsTaskHint = agentNeedsTask || (!!onConfigureAgent && agentHint && agentTask == null);
   const entryLinkHandles = useMemo(
@@ -284,7 +284,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     const trimmed = text.trim();
     if (disabled || uploading) return;
     if (!trimmed && readyFiles.length === 0) return;
-    if (agentAware && trimmed && looksLikeAgentCommand(trimmed) && parseAgentTask(trimmed) == null) {
+    if (agentAware && trimmed && looksLikeSummonSigil(trimmed) && parseSummonSigil(trimmed) == null) {
       setAgentNeedsTask(true);
       return;
     }
@@ -516,7 +516,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       <div className="mt-1 flex items-center gap-2 px-1 text-3xs text-fg-muted">
         {agentNeedsTaskHint ? (
           <span className="rounded-full bg-warning/15 px-2 py-0.5 font-medium text-warning-text">
-            Add a task: @agent &lt;task&gt;
+            Add a task: !!&lt;task&gt;
           </span>
         ) : configureAgentHint ? (
           <Tooltip content="Configure and start an agent">
@@ -531,7 +531,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           </Tooltip>
         ) : agentHint ? (
           <span className="rounded-full bg-accent-hover/15 px-2 py-0.5 font-medium text-accent-text-strong">
-            @agent — spawns an agent
+            !! — spawns an agent
           </span>
         ) : footer !== undefined ? (
           footer
@@ -540,7 +540,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             {disabled
               ? (disabledHint ?? '')
               : agentAware
-                ? 'Enter to send · Shift+Enter for a new line · @agent <task> spawns an agent'
+                ? 'Enter to send · Shift+Enter for a new line · !!<task> spawns an agent'
                 : 'Enter to send · Shift+Enter for a new line'}
           </span>
         )}

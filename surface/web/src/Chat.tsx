@@ -47,7 +47,7 @@ import { SessionPane, type TranscriptDiscussPayload } from './sessions/SessionPa
 import { loadSessionPaneWidth, sessionPaneSizing } from './sessions/useSessionPaneWidth';
 import { SessionsRail } from './sessions/SessionsRail';
 import { SpawnDialog } from './sessions/SpawnDialog';
-import { parseAgentTask } from './sessions/spawn';
+import { parseSummonSigil } from './sessions/spawn';
 import { ViewToggle } from './sessions/ViewToggle';
 import { isPendingSessionId, isTerminalSessionStatus, sessionFromWire } from './sessions/types';
 import { adoptPrefs, useTheme } from './theme';
@@ -593,7 +593,7 @@ export function Chat({
   const channelMemberRequestsRef = useRef<Set<string>>(new Set());
   const [createChannelRequestSeq, setCreateChannelRequestSeq] = useState(0);
   const [startDmRequestSeq, setStartDmRequestSeq] = useState(0);
-  // Configured-spawn dialog (the @agent composer grammar is the quick path).
+  // Configured-spawn dialog (the summon sigil is the quick path).
   const [spawnOpen, setSpawnOpen] = useState(false);
   const [spawnInitialTask, setSpawnInitialTask] = useState('');
   const [configureRestore, setConfigureRestore] = useState<{ draftKey: string; text: string } | null>(null);
@@ -868,6 +868,8 @@ export function Chat({
       },
       onChannelPinned: (channelId, pinned) => dispatch({ type: 'channel-pin-changed', channelId, pinned }),
       onSessionPinned: (sessionId, pinned) => dispatch({ type: 'session-pin-changed', sessionId, pinned }),
+      onSessionActivity: (sessionId, activity) =>
+        dispatch({ type: 'session-activity', sessionId, summary: activity.summary, at: activity.at }),
       onChannelLeft: (channelId) => dispatch({ type: 'channel-removed', channelId }),
       onPrefs: adoptPrefs,
       onOpen: () => {
@@ -1200,7 +1202,7 @@ export function Chat({
   const configureAgentFromComposer = useCallback(
     (fullText: string) => {
       const captured = channelComposerRef.current?.captureForConfigure() ?? fullText;
-      const task = parseAgentTask(captured) ?? captured.replace(/^\s*@agent\b\s*/i, '');
+      const task = parseSummonSigil(captured)?.task ?? captured.replace(/^\s*!!\s*/, '');
       setConfigureRestore({ draftKey: activeDraftKey, text: captured });
       openSpawnWithInitialTask(task);
     },
@@ -2224,7 +2226,7 @@ export function Chat({
                 onOpenSession={openSession}
                 onRunDemoAgent={active ? startDemoSession : undefined}
                 demoAgentBusy={demoStarting}
-                onInsertAgentCommand={() => putTextInComposer('@agent ')}
+                onInsertAgentCommand={() => putTextInComposer('!!')}
                 onSayHello={() => putTextInComposer('Hello!')}
                 onConnectProvider={openProviderConnect}
                 onRetry={retry}

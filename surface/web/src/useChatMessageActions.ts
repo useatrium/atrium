@@ -12,7 +12,7 @@ import type {
   SessionSpawnPayload,
   UserRef,
 } from '@atrium/surface-client';
-import { looksLikeAgentCommand, parseAgentTask, randomId } from '@atrium/surface-client';
+import { looksLikeSummonSigil, parseSummonSigil, randomId } from '@atrium/surface-client';
 import { PENDING_SESSION_PREFIX } from './sessions/types';
 import type { SpawnConfig } from './sessions/SpawnDialog';
 import { pendingMessageFromSendPayload, pendingSpawnFromPayload, type VoiceMsgSendPayload } from './chatQueuedOverlays';
@@ -156,16 +156,16 @@ export function useChatMessageActions({
       broadcast?: boolean,
     ) => {
       if (text) {
-        const task = parseAgentTask(text);
-        if (task != null) {
-          spawnQueuedSession(channelId, task, threadRootEventId, {
+        const summon = parseSummonSigil(text);
+        if (summon != null) {
+          spawnQueuedSession(channelId, summon.task, threadRootEventId, {
             ...(attachments && attachments.length > 0 ? { attachments } : {}),
             ...(attachmentRefs && attachmentRefs.length > 0 ? { attachmentRefs } : {}),
           });
           return;
         }
-        if (looksLikeAgentCommand(text.trim())) {
-          showErrorToast('Type @agent followed by the task to run.');
+        if (looksLikeSummonSigil(text)) {
+          showErrorToast('Type !! followed by the task to run.');
           return;
         }
       }

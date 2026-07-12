@@ -112,9 +112,10 @@ export function questionAnswerSummaryText(summary: SessionQuestionAnswerSummary)
 }
 
 export function sessionQuestionEventLabel(
-  type: 'question_requested' | 'question_answered' | 'question_resolved' | undefined,
+  type: 'question_requested' | 'question_answered' | 'question_resolved' | 'replied' | undefined,
   reason: unknown,
 ): string {
+  if (type === 'replied') return 'Agent replied';
   if (type === 'question_requested') return 'Question asked';
   if (type === 'question_answered') return 'Question answered';
   if (reason === 'empty') return 'Question expired without an answer';
@@ -369,12 +370,21 @@ export interface Session {
   seatEvents: SeatAuditEntry[];
   costUsd: number;
   resultText: string | null;
+  /** Latest ephemeral tool/activity ticker received over the workspace socket. */
+  latestActivity?: SessionActivity;
   createdAt: string;
   completedAt: string | null;
   archivedAt: string | null;
   pinned: boolean;
   lastEventId: number;
   permalink: string;
+}
+
+/** Ephemeral per-session activity. It is intentionally not returned by REST or
+ * persisted in the events table. */
+export interface SessionActivity {
+  summary: string;
+  at: string;
 }
 
 export interface SessionRepoSpec {
@@ -586,6 +596,7 @@ export interface SessionAttachmentRef {
 export const SessionSteerBodySchema = Schema.Struct({
   text: Schema.optional(Schema.Unknown),
   effort: Schema.optional(Schema.Unknown),
+  postToThread: Schema.optional(Schema.Unknown),
   attachments: Schema.optional(Schema.Unknown),
   attachmentRefs: Schema.optional(Schema.Unknown),
   opId: Schema.optional(Schema.Unknown),
@@ -593,6 +604,7 @@ export const SessionSteerBodySchema = Schema.Struct({
 export interface SessionSteerBody {
   text: string;
   effort?: string;
+  postToThread?: boolean;
   attachments?: string[];
   attachmentRefs?: SessionAttachmentRef[];
   opId?: string;
@@ -618,10 +630,12 @@ export interface SessionSeatGrantBody {
 
 export const SessionSuggestionCreateBodySchema = Schema.Struct({
   text: Schema.optional(Schema.Unknown),
+  postToThread: Schema.optional(Schema.Unknown),
   opId: Schema.optional(Schema.Unknown),
 });
 export interface SessionSuggestionCreateBody {
   text: string;
+  postToThread?: boolean;
   opId?: string;
 }
 
@@ -799,6 +813,7 @@ export function mergeSpawnResponse(live: Session | undefined, resp: Session): Se
     status: maxSessionStatus(live.status, resp.status),
     costUsd: Math.max(live.costUsd, resp.costUsd),
     resultText: live.resultText ?? resp.resultText,
+    ...(live.latestActivity ? { latestActivity: live.latestActivity } : {}),
     completedAt: live.completedAt ?? resp.completedAt,
     archivedAt: live.archivedAt ?? resp.archivedAt,
     pinned: live.pinned ?? resp.pinned,
@@ -826,7 +841,8 @@ export function mergeSpawnResponse(live: Session | undefined, resp: Session): Se
  */
 export function applySessionEvent(sessions: Record<string, Session>, ev: SessionFoldEvent): Record<string, Session> {
   const p = ev.payload ?? {};
-  const sessionId = typeof p.sessionId === 'string' ? p.sessionId : null;
+  const sessionId =
+    typeof p.sessionId === 'string' ? p.sessionId : typeof p.session_id === 'string' ? p.session_id : null;
   if (!sessionId) return sessions;
   const prev = sessions[sessionId];
 
@@ -1167,6 +1183,20 @@ export function applySessionEvent(sessions: Record<string, Session>, ev: Session
   }
 
   return sessions;
+}
+
+/** Fold an ephemeral `session.activity` socket frame. Unknown sessions are
+ * ignored so a deploy-skewed or out-of-order frame cannot create a partial
+ * session entity. */
+export function applySessionActivity(
+  sessions: Record<string, Session>,
+  sessionId: string,
+  activity: SessionActivity,
+): Record<string, Session> {
+  const prev = sessions[sessionId];
+  if (!prev) return sessions;
+  if (prev.latestActivity?.summary === activity.summary && prev.latestActivity.at === activity.at) return sessions;
+  return { ...sessions, [sessionId]: { ...prev, latestActivity: activity } };
 }
 
 /** Validate a proposal's answer map: { [questionId]: { answers: string[] } }. */

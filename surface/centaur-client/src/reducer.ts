@@ -1315,6 +1315,7 @@ interface ParsedSteerContextBlock {
   you: string | null;
   channel: string | null;
   channelId: string | null;
+  taggedAfter: string | null;
   thread: string | null;
 }
 
@@ -1339,6 +1340,7 @@ function parseSteerContextBlock(text: string): ParsedSteerContextBlock | null {
     you: value('you: '),
     channel: channelMatch ? channelMatch[1]!.trim() || null : channelValue,
     channelId: channelMatch ? channelMatch[2]!.trim() || null : null,
+    taggedAfter: value('tagged after: '),
     thread: value('thread: '),
   };
 }

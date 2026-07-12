@@ -114,10 +114,10 @@ describe('Timeline loading vs empty', () => {
     expect(screen.queryByText(/No messages yet/)).toBeNull();
   });
 
-  it('shows the empty state (with the @agent hint) once loaded', () => {
+  it('shows the empty state (with the summon-sigil hint) once loaded', () => {
     render(<Timeline {...common} loaded={true} />);
     expect(screen.getByText(/No messages yet/)).toBeTruthy();
-    expect(screen.getByText(/@agent/)).toBeTruthy();
+    expect(screen.getByText(/!!/)).toBeTruthy();
   });
 });
 

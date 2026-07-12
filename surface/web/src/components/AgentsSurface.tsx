@@ -245,7 +245,7 @@ export function AgentsSurface({
               <div className="max-w-sm text-xs leading-relaxed text-fg-muted">
                 {query.trim()
                   ? 'Try a different title, channel, spawner, or harness.'
-                  : 'Start one by typing @agent and a task in a channel.'}
+                  : 'Start one by typing !! and a task in a channel.'}
               </div>
               {!query.trim() && (
                 <button

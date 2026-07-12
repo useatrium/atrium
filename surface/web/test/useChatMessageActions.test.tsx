@@ -117,10 +117,10 @@ describe('useChatMessageActions', () => {
     );
   });
 
-  it('routes attachment-free @agent sends to session spawn', () => {
+  it('routes attachment-free summon sigils to session spawn', () => {
     const { result, enqueueOp } = renderActions();
 
-    act(() => result.current.send('ch-1', '@agent summarize this thread', 7));
+    act(() => result.current.send('ch-1', '!!summarize this thread', 7));
 
     expect(enqueueOp).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -136,12 +136,12 @@ describe('useChatMessageActions', () => {
     );
   });
 
-  it('routes @agent sends with attachments to session spawn', () => {
+  it('routes summon sigils with attachments to session spawn', () => {
     const { result, enqueueOp } = renderActions();
     const attachment = { id: 'file-1', filename: 'a.txt', contentType: 'text/plain', size: 10 };
 
     act(() =>
-      result.current.send('ch-1', '@agent summarize this file', undefined, [attachment], [{ uploadKey: 'upload-1' }]),
+      result.current.send('ch-1', '!! summarize this file', undefined, [attachment], [{ uploadKey: 'upload-1' }]),
     );
 
     expect(enqueueOp).toHaveBeenCalledWith(

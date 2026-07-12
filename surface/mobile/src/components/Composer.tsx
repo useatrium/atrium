@@ -29,7 +29,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
-  looksLikeAgentCommand,
+  looksLikeSummonSigil,
   matchMentionPrefix,
   type AttachmentMeta,
   type AttachmentRef,
@@ -339,12 +339,9 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   }));
   const readyRefs = ready.map(({ meta }) => ({ uploadKey: meta.uploadKey }));
   const canSend = !uploading && (text.trim().length > 0 || readyMeta.length > 0);
-  const showConfigureAgentChip = !editing && onConfigureAgent != null && looksLikeAgentCommand(text);
+  const showConfigureAgentChip = !editing && onConfigureAgent != null && looksLikeSummonSigil(text);
   const mentionMatch = !editing ? matchMentionPrefix(text) : null;
   const mentionPrefix = mentionMatch?.prefix.toLowerCase() ?? '';
-  // @agent only spawns when the whole message starts with it — don't offer
-  // the suggestion for mid-text mentions.
-  const agentMatches = mentionMatch != null && mentionMatch.start === 0 && 'agent'.startsWith(mentionPrefix);
   const matchedUsers = useMemo(() => {
     if (!mentionMatch || !mentionUsers) return [];
     return mentionUsers
@@ -353,9 +350,9 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
         const displayName = u.displayName.toLowerCase();
         return handle.startsWith(mentionPrefix) || displayName.includes(mentionPrefix);
       })
-      .slice(0, agentMatches ? 4 : 5);
-  }, [agentMatches, mentionMatch, mentionPrefix, mentionUsers]);
-  const showMentionSuggestions = mentionMatch != null && (agentMatches || matchedUsers.length > 0);
+      .slice(0, 5);
+  }, [mentionMatch, mentionPrefix, mentionUsers]);
+  const showMentionSuggestions = mentionMatch != null && matchedUsers.length > 0;
   const entryLinkHandles = useMemo(
     () => (previewEntryLinks && serverUrl ? extractEntryLinkHandles(text, serverUrl) : []),
     [previewEntryLinks, serverUrl, text],
@@ -539,38 +536,6 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             overflow: 'hidden',
           }}
         >
-          {agentMatches && (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Mention agent"
-              onPress={() => insertMention('agent')}
-              style={({ pressed }) => ({
-                flexDirection: 'row',
-                alignItems: 'center',
-                gap: space.sm,
-                paddingHorizontal: space.md,
-                paddingVertical: space.sm,
-                backgroundColor: pressed ? colors.bgPressed : colors.bgElevated,
-              })}
-            >
-              <View
-                style={{
-                  width: 28,
-                  height: 28,
-                  borderRadius: radius.sm,
-                  backgroundColor: colors.accentBg,
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                }}
-              >
-                <Text style={{ color: colors.accent, fontSize: font.sm, fontWeight: '800' }}>@</Text>
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={{ color: colors.text, fontSize: font.sm, fontWeight: '700' }}>@agent</Text>
-                <Text style={{ color: colors.textMuted, fontSize: font.xs }}>run an agent task</Text>
-              </View>
-            </Pressable>
-          )}
           {matchedUsers.map((u) => (
             <Pressable
               key={u.id}

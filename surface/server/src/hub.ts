@@ -124,6 +124,21 @@ export class WsHub {
     }
   }
 
+  /** Ephemeral tool/activity ticker. It deliberately shares the channel
+   * subscription fanout path with persisted events but never touches `events`. */
+  publishSessionActivity(channelId: string, activity: { sessionId: string; summary: string; at: string }): void {
+    for (const client of this.clients) {
+      if (client.channels.has(channelId)) {
+        this.sendTo(client, {
+          type: 'session.activity',
+          session_id: activity.sessionId,
+          summary: activity.summary,
+          at: activity.at,
+        });
+      }
+    }
+  }
+
   /** Send an event only to specific users' sockets (e.g. DM creation). */
   publishToUsers(userIds: string[], event: WireEvent): void {
     const ids = new Set(userIds);

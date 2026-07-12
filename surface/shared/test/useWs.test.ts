@@ -81,6 +81,15 @@ describe('websocket frame decoding', () => {
     ['muted', { type: 'muted', channelId: 'c1', muted: true }],
     ['channel pinned', { type: 'channel-pinned', channelId: 'c1', pinned: true }],
     ['session pinned', { type: 'session-pinned', sessionId: 's1', pinned: true }],
+    [
+      'session activity',
+      {
+        type: 'session.activity',
+        session_id: 's1',
+        summary: 'running tests: pnpm test',
+        at: '2026-07-12T12:00:00.000Z',
+      },
+    ],
     ['channel-left', { type: 'channel-left', channelId: 'c1' }],
     ['prefs', { type: 'prefs', prefs: { theme: 'dark' } }],
     ['pong', { type: 'pong', t: 123 }],
@@ -140,6 +149,15 @@ describe('websocket frame decoding', () => {
     expect(decodeWsFrame({ type: 'prefs', prefs: null })).toEqual({
       type: 'prefs',
       prefs: null,
+    });
+  });
+
+  it('defaults future session activity fields during deploy skew', () => {
+    expect(decodeWsFrame({ type: 'session.activity' })).toMatchObject({
+      type: 'session.activity',
+      session_id: '',
+      summary: '',
+      at: '',
     });
   });
 });

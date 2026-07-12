@@ -7,7 +7,7 @@ import { getFrameGapStats, resetFrameGapStats } from './frame-gap.js';
 import { WsHub } from './hub.js';
 import { releaseSessionProjectionState } from './session-records.js';
 import { projectIncrementalAndEmit } from './session-record-changefeed.js';
-import { isCompletedItemFrame, SessionRuns } from './session-runs.js';
+import { isCompletedItemFrame, sessionActivitySummary, SessionRuns } from './session-runs.js';
 
 let pool: pg.Pool;
 let fx: Fixture;
@@ -80,6 +80,79 @@ describe('session projection triggers', () => {
         },
       }),
     ).toBe(false);
+  });
+
+  it('derives compact activity summaries from tool-start frames', () => {
+    expect(
+      sessionActivitySummary({
+        event: 'amp_raw_event',
+        event_id: 1,
+        data: {
+          type: 'item.started',
+          item: { type: 'commandExecution', command: 'pnpm test --filter @atrium/server' },
+        },
+      }),
+    ).toBe('running tests: pnpm test --filter @atrium/server');
+    expect(
+      sessionActivitySummary({
+        event: 'amp_raw_event',
+        event_id: 2,
+        data: {
+          type: 'item.started',
+          item: { type: 'fileChange', changes: [{ path: 'surface/server/src/routes/sessions.ts' }] },
+        },
+      }),
+    ).toBe('editing surface/server/src/routes/sessions.ts');
+    expect(
+      sessionActivitySummary({
+        event: 'assistant_tool_use_observed',
+        event_id: 3,
+        data: {
+          type: 'obs.assistant_tool_use',
+          engine: 'centaur',
+          harness: 'codex',
+          thread_key: 'thread',
+          execution_id: 'exec',
+          tool_name: 'Bash',
+          tool_use_id: 'tool-1',
+          input_keys: ['command'],
+          input_size_bytes: 5,
+        },
+      }),
+    ).toBe('running Bash');
+  });
+
+  it('persists a completed turn reply under the session conversation root', async () => {
+    const sessionId = await insertSession();
+    const root = await pool.query<{ id: number }>(
+      `INSERT INTO events (workspace_id, channel_id, type, actor_id, payload)
+       VALUES ($1, $2, 'message.posted', $3, '{"text":"start"}'::jsonb)
+       RETURNING id`,
+      [fx.workspaceId, fx.channelId, fx.userId],
+    );
+    const rootId = root.rows[0]!.id;
+    await pool.query('UPDATE sessions SET thread_root_event_id = $1 WHERE id = $2', [rootId, sessionId]);
+    const runs = new SessionRuns(pool, new WsHub(), {
+      autoResume: false,
+      centaur: centaurTail([completedExecutionFrame(7)]),
+      apiKey: 'test',
+    });
+
+    await runPrivateTailer(runs, sessionId);
+
+    const replies = await pool.query<{ thread_root_event_id: number; payload: { session_id: string; text: string } }>(
+      `SELECT thread_root_event_id, payload
+         FROM events
+        WHERE type = 'session.replied'
+          AND payload->>'session_id' = $1`,
+      [sessionId],
+    );
+    expect(replies.rows).toEqual([
+      {
+        thread_root_event_id: rootId,
+        payload: { session_id: sessionId, text: 'done' },
+      },
+    ]);
   });
 
   it('debounces live completed-item projection and final-projects the remaining dirty record', async () => {

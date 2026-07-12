@@ -324,9 +324,7 @@ export function Timeline({
                     className="inline-flex h-9 items-center justify-center rounded-md border border-edge-strong bg-surface px-3 text-sm font-medium text-fg-secondary transition-colors hover:bg-surface-overlay hover:text-fg disabled:cursor-default disabled:text-fg-faint"
                   >
                     Insert{' '}
-                    <code className="ml-1 rounded bg-surface-overlay/80 px-1 py-0.5 text-2xs text-accent-text">
-                      @agent
-                    </code>
+                    <code className="ml-1 rounded bg-surface-overlay/80 px-1 py-0.5 text-2xs text-accent-text">!!</code>
                   </button>
                 </div>
                 <div className="mt-4">
