@@ -1,75 +1,16 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { containsCriticMarkup, type HubFileVersion } from '@atrium/surface-client';
+import { containsCriticMarkup, lineDiffOps, type HubFileVersion } from '@atrium/surface-client';
 import { DiffView } from '../../sessions/fileChangeView';
 import { CriticMarkupView } from '../CriticMarkupView';
 import type { PreviewFile } from './types';
 import { effectiveMediaKind, fileExtension, formatBytes, isNotebookFile } from './utils';
 
-type LineOp = { kind: 'context' | 'remove' | 'add'; text: string };
 type Segment = { kind: 'same' | 'changed'; text: string };
 
 const TEXT_MIME_PARTS = ['json', 'yaml', 'xml', 'javascript', 'typescript', 'markdown', 'csv'];
 
-function splitLines(text: string): string[] {
-  return text.replace(/\r\n/g, '\n').split('\n');
-}
-
-function simpleLineOps(oldText: string, newText: string): LineOp[] {
-  const oldLines = splitLines(oldText);
-  const newLines = splitLines(newText);
-  const out: LineOp[] = [];
-  const max = Math.max(oldLines.length, newLines.length);
-  for (let i = 0; i < max; i += 1) {
-    if (oldLines[i] === newLines[i]) out.push({ kind: 'context', text: oldLines[i] ?? '' });
-    else {
-      if (oldLines[i] !== undefined) out.push({ kind: 'remove', text: oldLines[i] ?? '' });
-      if (newLines[i] !== undefined) out.push({ kind: 'add', text: newLines[i] ?? '' });
-    }
-  }
-  return out;
-}
-
-function lineOps(oldText: string, newText: string): LineOp[] {
-  const oldLines = splitLines(oldText);
-  const newLines = splitLines(newText);
-  if (oldLines.length * newLines.length > 250_000) return simpleLineOps(oldText, newText);
-
-  const dp = Array.from({ length: oldLines.length + 1 }, () => Array<number>(newLines.length + 1).fill(0));
-  for (let i = oldLines.length - 1; i >= 0; i -= 1) {
-    for (let j = newLines.length - 1; j >= 0; j -= 1) {
-      dp[i]![j] = oldLines[i] === newLines[j] ? dp[i + 1]![j + 1]! + 1 : Math.max(dp[i + 1]![j]!, dp[i]![j + 1]!);
-    }
-  }
-
-  const out: LineOp[] = [];
-  let i = 0;
-  let j = 0;
-  while (i < oldLines.length && j < newLines.length) {
-    if (oldLines[i] === newLines[j]) {
-      out.push({ kind: 'context', text: oldLines[i] ?? '' });
-      i += 1;
-      j += 1;
-    } else if (dp[i + 1]![j]! >= dp[i]![j + 1]!) {
-      out.push({ kind: 'remove', text: oldLines[i] ?? '' });
-      i += 1;
-    } else {
-      out.push({ kind: 'add', text: newLines[j] ?? '' });
-      j += 1;
-    }
-  }
-  while (i < oldLines.length) {
-    out.push({ kind: 'remove', text: oldLines[i] ?? '' });
-    i += 1;
-  }
-  while (j < newLines.length) {
-    out.push({ kind: 'add', text: newLines[j] ?? '' });
-    j += 1;
-  }
-  return out;
-}
-
 function unifiedDiff(oldText: string, newText: string): string {
-  return lineOps(oldText, newText)
+  return lineDiffOps(oldText, newText)
     .map((op) => `${op.kind === 'add' ? '+' : op.kind === 'remove' ? '-' : ' '}${op.text}`)
     .join('\n');
 }
@@ -101,7 +42,7 @@ function compactInlineSegments(oldLine: string, newLine: string): { oldSegments:
 }
 
 function replacementPairs(oldText: string, newText: string): Array<{ oldLine: string; newLine: string }> {
-  const ops = lineOps(oldText, newText);
+  const ops = lineDiffOps(oldText, newText);
   const pairs: Array<{ oldLine: string; newLine: string }> = [];
   let removed: string[] = [];
   let added: string[] = [];

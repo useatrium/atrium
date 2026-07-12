@@ -14,6 +14,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   formatBytes,
   formatRelativeTimestamp,
+  lineDiffOps,
   type Api,
   type HubFile,
   type HubFileVersion,
@@ -21,8 +22,6 @@ import {
 import { useAccessibilityAnnouncement, useModalAccessibilityFocus } from '../lib/accessibility';
 import { font, radius, space, useTheme } from '../lib/theme';
 import { TimestampText } from './TimestampText';
-
-type DiffLine = { kind: 'context' | 'add' | 'remove'; text: string };
 
 function authorLabel(author: string): string {
   const stripped = author
@@ -32,74 +31,8 @@ function authorLabel(author: string): string {
   return stripped || author || 'Unknown';
 }
 
-function splitLines(text: string): string[] {
-  return text.replace(/\r\n/g, '\n').split('\n');
-}
-
 function bytesLabel(value: number | null | undefined): string {
   return value == null ? 'Unknown size' : formatBytes(value);
-}
-
-function simpleLineDiff(oldText: string, newText: string): DiffLine[] {
-  const oldLines = splitLines(oldText);
-  const newLines = splitLines(newText);
-  const max = Math.max(oldLines.length, newLines.length);
-  const out: DiffLine[] = [];
-  for (let index = 0; index < max; index += 1) {
-    const oldLine = oldLines[index];
-    const newLine = newLines[index];
-    if (oldLine === newLine) {
-      out.push({ kind: 'context', text: oldLine ?? '' });
-    } else {
-      if (oldLine !== undefined) out.push({ kind: 'remove', text: oldLine });
-      if (newLine !== undefined) out.push({ kind: 'add', text: newLine });
-    }
-  }
-  return out;
-}
-
-function lineDiff(oldText: string, newText: string): DiffLine[] {
-  const oldLines = splitLines(oldText);
-  const newLines = splitLines(newText);
-  if (oldLines.length * newLines.length > 200_000) return simpleLineDiff(oldText, newText);
-
-  const dp = Array.from({ length: oldLines.length + 1 }, () =>
-    Array<number>(newLines.length + 1).fill(0),
-  );
-  for (let i = oldLines.length - 1; i >= 0; i -= 1) {
-    for (let j = newLines.length - 1; j >= 0; j -= 1) {
-      dp[i]![j] =
-        oldLines[i] === newLines[j]
-          ? dp[i + 1]![j + 1]! + 1
-          : Math.max(dp[i + 1]![j]!, dp[i]![j + 1]!);
-    }
-  }
-
-  const out: DiffLine[] = [];
-  let i = 0;
-  let j = 0;
-  while (i < oldLines.length && j < newLines.length) {
-    if (oldLines[i] === newLines[j]) {
-      out.push({ kind: 'context', text: oldLines[i] ?? '' });
-      i += 1;
-      j += 1;
-    } else if (dp[i + 1]![j]! >= dp[i]![j + 1]!) {
-      out.push({ kind: 'remove', text: oldLines[i] ?? '' });
-      i += 1;
-    } else {
-      out.push({ kind: 'add', text: newLines[j] ?? '' });
-      j += 1;
-    }
-  }
-  while (i < oldLines.length) {
-    out.push({ kind: 'remove', text: oldLines[i] ?? '' });
-    i += 1;
-  }
-  while (j < newLines.length) {
-    out.push({ kind: 'add', text: newLines[j] ?? '' });
-    j += 1;
-  }
-  return out;
 }
 
 function errorMessage(error: unknown, fallback: string): string {
@@ -179,7 +112,7 @@ function DiffViewer({
   const mountedRef = useRef(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [lines, setLines] = useState<DiffLine[]>([]);
+  const [lines, setLines] = useState<ReturnType<typeof lineDiffOps>>([]);
 
   useAccessibilityAnnouncement(error);
 
@@ -211,7 +144,7 @@ function DiffViewer({
         return Promise.all([selectedResponse.text(), latestResponse.text()]);
       })
       .then(([selectedText, latestText]) => {
-        if (!cancelled && mountedRef.current) setLines(lineDiff(selectedText, latestText));
+        if (!cancelled && mountedRef.current) setLines(lineDiffOps(selectedText, latestText));
       })
       .catch((err: unknown) => {
         if (!cancelled && mountedRef.current) setError(errorMessage(err, 'Could not load version diff.'));
