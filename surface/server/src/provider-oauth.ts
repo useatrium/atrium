@@ -97,6 +97,17 @@ export class PendingOAuthStore {
     return row ? this.decode<S>(row) : null;
   }
 
+  /** Replace the sealed state of a live, pending handshake owned by the user. */
+  async updateState<S>(id: string, userId: string, state: S): Promise<boolean> {
+    const res = await this.pool.query(
+      `UPDATE oauth_pending
+       SET state_ciphertext = $3, updated_at = now()
+       WHERE id = $1 AND user_id = $2 AND status = 'pending' AND expires_at > now()`,
+      [id, userId, seal(this.secret, state)],
+    );
+    return (res.rowCount ?? 0) > 0;
+  }
+
   async markError(id: string, message: string): Promise<void> {
     await this.pool.query(
       `UPDATE oauth_pending SET status = 'error', last_error = $2, updated_at = now()
