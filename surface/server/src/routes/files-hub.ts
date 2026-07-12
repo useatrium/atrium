@@ -157,16 +157,39 @@ async function requireReadableArtifact(
   user: UserRef,
 ): Promise<string | null> {
   const { artifactId } = req.params as { artifactId: string };
-  if (!isUuid(artifactId)) {
-    reply.code(404).send({ error: 'file_not_found', message: 'file not found' });
-    return null;
-  }
-  const access = await ledger.artifactReadableByUser(artifactId, user.id);
-  if (!access) {
+  if (!isUuid(artifactId) || !(await ledger.artifactReadableByUser(artifactId, user.id))) {
     reply.code(404).send({ error: 'file_not_found', message: 'file not found' });
     return null;
   }
   return artifactId;
+}
+
+async function requireManageableArtifact(
+  ledger: ArtifactLedger,
+  req: FastifyRequest,
+  reply: FastifyReply,
+  user: UserRef,
+) {
+  const artifactId = await requireReadableArtifact(ledger, req, reply, user);
+  if (!artifactId) return null;
+  if (!(await ledger.userCanManageArtifact(artifactId, user.id))) {
+    reply.code(403).send({ error: 'forbidden' });
+    return null;
+  }
+  return artifactId;
+}
+
+function requireBaseSeq(req: FastifyRequest, reply: FastifyReply): number | null {
+  const baseSeq = parseBaseSeq(firstHeader(req.headers['x-artifact-base-seq']));
+  if (baseSeq === false) {
+    reply.code(400).send({ error: 'bad_request', message: 'X-Artifact-Base-Seq must be a positive integer' });
+    return null;
+  }
+  if (baseSeq == null) {
+    reply.code(409).send({ error: 'base_required' });
+    return null;
+  }
+  return baseSeq;
 }
 
 export async function registerFilesHubRoutes(app: FastifyInstance, deps: FilesHubRouteDeps): Promise<void> {
@@ -411,30 +434,11 @@ export async function registerFilesHubRoutes(app: FastifyInstance, deps: FilesHu
     editScope.put('/api/files/:artifactId/content', async (req, reply) => {
       const user = requireUser(req, reply);
       if (!user) return;
-      const { artifactId: rawArtifactId } = req.params as { artifactId: string };
-      if (!isUuid(rawArtifactId)) {
-        return reply.code(404).send({ error: 'not_found' });
-      }
-      const readable = await ledger.artifactReadableByUser(rawArtifactId, user.id);
-      if (!readable) {
-        return reply.code(404).send({ error: 'not_found' });
-      }
-      if (!(await ledger.userCanManageArtifact(rawArtifactId, user.id))) {
-        return reply.code(403).send({ error: 'forbidden' });
-      }
-      if (readable.tombstoned) {
-        return reply.code(410).send({ error: 'gone' });
-      }
+      const rawArtifactId = await requireManageableArtifact(ledger, req, reply, user);
+      if (!rawArtifactId) return;
 
-      const baseSeq = parseBaseSeq(firstHeader(req.headers['x-artifact-base-seq']));
-      if (baseSeq === false) {
-        return reply
-          .code(400)
-          .send({ error: 'bad_request', message: 'X-Artifact-Base-Seq must be a positive integer' });
-      }
-      if (baseSeq == null) {
-        return reply.code(409).send({ error: 'base_required' });
-      }
+      const baseSeq = requireBaseSeq(req, reply);
+      if (baseSeq == null) return;
 
       const current = await ledger.artifactContentById(rawArtifactId);
       if (!current) {
@@ -477,31 +481,15 @@ export async function registerFilesHubRoutes(app: FastifyInstance, deps: FilesHu
     editScope.post('/api/files/:artifactId/resolve', async (req, reply) => {
       const user = requireUser(req, reply);
       if (!user) return;
-      const { artifactId: rawArtifactId } = req.params as { artifactId: string };
-      if (!isUuid(rawArtifactId)) {
-        return reply.code(404).send({ error: 'not_found' });
-      }
-      const readable = await ledger.artifactReadableByUser(rawArtifactId, user.id);
-      if (!readable) {
-        return reply.code(404).send({ error: 'not_found' });
-      }
-      if (!(await ledger.userCanManageArtifact(rawArtifactId, user.id))) {
-        return reply.code(403).send({ error: 'forbidden' });
-      }
+      const rawArtifactId = await requireManageableArtifact(ledger, req, reply, user);
+      if (!rawArtifactId) return;
 
       const conflict = await ledger.getConflictById(rawArtifactId);
       if (!conflict) {
         return reply.code(409).send({ error: 'no_conflict' });
       }
-      const baseSeq = parseBaseSeq(firstHeader(req.headers['x-artifact-base-seq']));
-      if (baseSeq === false) {
-        return reply
-          .code(400)
-          .send({ error: 'bad_request', message: 'X-Artifact-Base-Seq must be a positive integer' });
-      }
-      if (baseSeq == null) {
-        return reply.code(409).send({ error: 'base_required' });
-      }
+      const baseSeq = requireBaseSeq(req, reply);
+      if (baseSeq == null) return;
       if (baseSeq !== conflict.conflictSeq) {
         return reply.code(409).send({
           error: 'stale_base',
