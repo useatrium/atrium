@@ -26,4 +26,3 @@
 - eraseText
 - tapOn: "Chat"
 - assertVisible: "Chat"
-

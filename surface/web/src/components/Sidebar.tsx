@@ -65,14 +65,12 @@ export function Sidebar({
   onSetPinned,
   onCreateChannel,
   onStartDm,
-  onOpenSession,
   activeSurface = 'chat',
   onOpenFiles,
   onOpenAgents,
   // === mentions-activity additions ===
   onOpenActivity,
   onOpenSettings,
-  sessionEventSeq,
   onLogout,
   isOpen = false,
   onClose,
@@ -94,14 +92,12 @@ export function Sidebar({
   onSetPinned?: (channelId: string, pinned: boolean) => void;
   onCreateChannel: (name: string, isPrivate?: boolean) => Promise<void>;
   onStartDm: (userIds: string[]) => void;
-  onOpenSession: (sessionId: string) => void;
   activeSurface?: 'chat' | 'files' | 'activity' | 'agents' | 'settings';
   onOpenFiles?: () => void;
   onOpenAgents?: () => void;
   // === mentions-activity additions ===
   onOpenActivity?: () => void;
   onOpenSettings?: () => void;
-  sessionEventSeq: number;
   onLogout: () => void;
   isOpen?: boolean;
   onClose?: () => void;

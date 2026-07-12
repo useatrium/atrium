@@ -33,7 +33,8 @@ import { GitHubConnectionDialog } from './components/GitHubConnectionDialog';
 import { EntryQuoteApplyContextProvider } from './components/EntryQuoteCard';
 import { ShortcutsHelp, Tooltip } from './components/a11y';
 import { FileIcon, GearIcon, LockIcon, PhoneIcon, PlayIcon, PlusIcon, SearchIcon, XIcon } from './components/icons';
-import { MarkupPane, splitMarkdownFrontmatter, type MarkupPaneMode, type MarkupPaneSource } from './components/MarkupPane';
+import { splitMarkdownFrontmatter } from '@atrium/surface-client';
+import { MarkupPane, type MarkupPaneMode, type MarkupPaneSource } from './components/MarkupPane';
 import { showErrorToast } from './components/Toasts';
 import { QuickSwitcher, type QuickSwitcherCommand } from './components/QuickSwitcher';
 import { SettingsSurface } from './components/SettingsSurface';
@@ -41,7 +42,6 @@ import { Sidebar } from './components/Sidebar';
 import { ThreadPanel } from './components/ThreadPanel';
 import { Timeline } from './components/Timeline';
 import { sessionsApi } from './sessions/api';
-import { sessionsMockBus } from './sessions/devMock';
 import { Gallery } from './sessions/Gallery';
 import { SessionPane, type TranscriptDiscussPayload } from './sessions/SessionPane';
 import { loadSessionPaneWidth, sessionPaneSizing } from './sessions/useSessionPaneWidth';
@@ -76,13 +76,17 @@ import { useSessionPaneState } from './useSessionPaneState';
 import { useSessionQueueFailures } from './useSessionQueueFailures';
 import { useTypingIndicators } from './useTypingIndicators';
 import { useUploadQueue } from './useUploadQueue';
-import {
-  entryParamFromSearch,
-  stripEntryParamFromLocation,
-  threadRootParamFromSearch,
-} from './EntryLinkRoute';
+import { entryParamFromSearch, stripEntryParamFromLocation, threadRootParamFromSearch } from './EntryLinkRoute';
 import { SHORTCUTS, matchesChord } from './lib/shortcuts';
-import { URL_PARAMS, navigate, parseInAppRoute, routePath, useLocation, type InAppRoute, type MainSurface } from './router';
+import {
+  URL_PARAMS,
+  navigate,
+  parseInAppRoute,
+  routePath,
+  useLocation,
+  type InAppRoute,
+  type MainSurface,
+} from './router';
 
 const PAGE_SIZE = 50;
 const SYNC_LIMIT = 500;
@@ -474,11 +478,13 @@ export function Chat({
     onApiError,
   });
 
-  const { answerSessionQuestion, cancelSession, steerSession, stopTurn } = useSessionActions({
-    clearFailedCancel,
-    clearFailedSteer,
-    enqueueOp,
-  });
+  const { answerSessionQuestion, cancelSession, setSessionArchived, setSessionPinned, steerSession, stopTurn } =
+    useSessionActions({
+      clearFailedCancel,
+      clearFailedSteer,
+      dispatch,
+      enqueueOp,
+    });
 
   useEffect(() => {
     const onStorage = (event: StorageEvent) => {
@@ -640,10 +646,6 @@ export function Chat({
     }
   }, [state.sessions]);
 
-  // ---- DEV MOCK (sessions): fold synthetic session.* events; no-op without
-  // VITE_SESSIONS_MOCK=1. Delete with src/sessions/devMock.ts. ----
-  useEffect(() => sessionsMockBus?.subscribe((event: WireEvent) => dispatch({ type: 'server-event', event })), []);
-
   const active = state.channels.find((c) => c.id === state.activeChannelId) ?? null;
   const timeline = (active && state.timelines[active.id]) || emptyTimeline;
   const openThreadRoot =
@@ -706,9 +708,7 @@ export function Chat({
       })
       .catch((err: unknown) => {
         onApiError(err);
-        setChannelMemberCache((current) =>
-          current[channelId] ? current : { ...current, [channelId]: [] },
-        );
+        setChannelMemberCache((current) => (current[channelId] ? current : { ...current, [channelId]: [] }));
       });
   }, [activeChannelId, onApiError]);
   const activeUserMap = useMemo(() => {
@@ -866,6 +866,8 @@ export function Chat({
         dispatch({ type: 'mute-changed', channelId, muted });
         cacheMute(channelId, muted);
       },
+      onChannelPinned: (channelId, pinned) => dispatch({ type: 'channel-pin-changed', channelId, pinned }),
+      onSessionPinned: (sessionId, pinned) => dispatch({ type: 'session-pin-changed', sessionId, pinned }),
       onChannelLeft: (channelId) => dispatch({ type: 'channel-removed', channelId }),
       onPrefs: adoptPrefs,
       onOpen: () => {
@@ -1028,7 +1030,13 @@ export function Chat({
     if (!active) return;
     navigate(
       routePathWithSearch(
-        { surface: 'chat', channelId: active.id, sessionId: null, threadRootId: String(rootEventId), focusSession: false },
+        {
+          surface: 'chat',
+          channelId: active.id,
+          sessionId: null,
+          threadRootId: String(rootEventId),
+          focusSession: false,
+        },
         locationState.search,
         locationState.hash,
       ),
@@ -1066,11 +1074,14 @@ export function Chat({
     const sessionId = params.get('session') ?? undefined;
     const threadRootId = threadRootParamFromSearch(window.location.search);
     if (!channelId && !sessionId) return;
-    openNotificationTarget({
-      ...(channelId ? { channelId } : {}),
-      ...(sessionId ? { sessionId } : {}),
-      ...(threadRootId != null ? { threadRootId } : {}),
-    }, { replace: true });
+    openNotificationTarget(
+      {
+        ...(channelId ? { channelId } : {}),
+        ...(sessionId ? { sessionId } : {}),
+        ...(threadRootId != null ? { threadRootId } : {}),
+      },
+      { replace: true },
+    );
   }, [openNotificationTarget]);
 
   useEffect(() => {
@@ -1538,11 +1549,11 @@ export function Chat({
     }
   };
 
-  const { createChannel, setMute, startDm } = useChannelActions({
+  const { createChannel, setArchived, setMute, setPinned, startDm } = useChannelActions({
     dispatch,
     enqueueOp,
     getChannels: () => stateRef.current.channels,
-    selectChannel,
+    navigateToChannel: goToChannel,
   });
 
   const presentUsers = active ? (state.presence[active.id] ?? []) : [];
@@ -1688,7 +1699,7 @@ export function Chat({
       {
         id: 'open-agents',
         label: 'Open Agents',
-        subtitle: 'Browse agent sessions',
+        subtitle: 'Browse agents',
         group: 'Navigate',
         keywords: ['agents', 'sessions', 'tasks', 'workspace'],
         icon: <span className="text-xs font-bold leading-none">A</span>,
@@ -1766,7 +1777,7 @@ export function Chat({
       {
         id: 'connect-github',
         label: githubConnection?.connected ? 'Manage GitHub' : 'Connect GitHub',
-        subtitle: connectionsAvailable ? 'Repository access for agent sessions' : 'Unavailable on this server',
+        subtitle: connectionsAvailable ? 'Repository access for agents' : 'Unavailable on this server',
         group: 'Connections',
         keywords: ['github', 'repository', 'repo', 'connection', 'provider'],
         icon: <span className="text-xs font-bold leading-none">GH</span>,
@@ -1858,6 +1869,8 @@ export function Chat({
           setIsSidebarOpen(false);
         }}
         onSetMute={setMute}
+        onSetArchived={setArchived}
+        onSetPinned={setPinned}
         onCreateChannel={createChannel}
         onStartDm={startDm}
         activeSurface={mainSurface}
@@ -1963,23 +1976,27 @@ export function Chat({
                 </>
               )}
             </h1>
-            {!showNonChatSurface && active && (membersRouteOpen || active.kind === 'private' || active.kind === 'gdm') && (
-              <ChannelMembersMenu
-                channel={active}
-                meId={me.id}
-                enqueueOp={enqueueOp}
-                open={membersRouteOpen}
-                onOpenChange={(open) => {
-                  goToRoute({
-                    surface: 'chat',
-                    channelId: active.id,
-                    sessionId: null,
-                    membersOpen: open,
-                    focusSession: false,
-                  });
-                }}
-              />
-            )}
+            {!showNonChatSurface &&
+              active &&
+              (membersRouteOpen || active.kind === 'private' || active.kind === 'gdm') && (
+                <ChannelMembersMenu
+                  channel={active}
+                  meId={me.id}
+                  enqueueOp={enqueueOp}
+                  onSetArchived={setArchived}
+                  onSetPinned={setPinned}
+                  open={membersRouteOpen}
+                  onOpenChange={(open) => {
+                    goToRoute({
+                      surface: 'chat',
+                      channelId: active.id,
+                      sessionId: null,
+                      membersOpen: open,
+                      focusSession: false,
+                    });
+                  }}
+                />
+              )}
             {showNonChatSurface ? (
               <button
                 type="button"
@@ -2152,6 +2169,12 @@ export function Chat({
               onOpenSession={(sessionId) => {
                 openSession(sessionId);
               }}
+              onSetSessionPinned={(sessionId, pinned, previousPinned) =>
+                void setSessionPinned(sessionId, pinned, previousPinned).catch(() => {})
+              }
+              onSetSessionArchived={(sessionId, archived, previousArchivedAt) =>
+                void setSessionArchived(sessionId, archived, previousArchivedAt).catch(() => {})
+              }
             />
           ) : showActivitySurface ? (
             // === mentions-activity additions ===
@@ -2268,6 +2291,12 @@ export function Chat({
           onStopTurn={stopTurn}
           failedCancel={failedCancels[paneSession.id] === true}
           onClearFailedCancel={() => clearFailedCancel(paneSession.id)}
+          onSetArchived={(sessionId, archived, previousArchivedAt) =>
+            void setSessionArchived(sessionId, archived, previousArchivedAt).catch(() => {})
+          }
+          onSetPinned={(sessionId, pinned, previousPinned) =>
+            void setSessionPinned(sessionId, pinned, previousPinned).catch(() => {})
+          }
           providerCredentials={providerCredentials}
           githubConnection={githubConnection}
           onConnectProvider={setProviderDialog}
@@ -2299,7 +2328,7 @@ export function Chat({
           </header>
           {state.openSessionError ? (
             <div className="flex flex-1 flex-col items-center justify-center gap-1.5 px-6 text-center">
-              <div className="text-sm font-medium text-fg-secondary">Session not found</div>
+              <div className="text-sm font-medium text-fg-secondary">Agent not found</div>
               <div className="text-xs text-fg-muted">It may have been removed, or the link is wrong.</div>
               <button
                 type="button"
@@ -2326,9 +2355,7 @@ export function Chat({
               spectators={spectators}
               meId={me.id}
               meHandle={me.handle}
-              onClose={() =>
-                goToRoute({ surface: 'chat', channelId: active.id, sessionId: null, focusSession: false })
-              }
+              onClose={() => goToRoute({ surface: 'chat', channelId: active.id, sessionId: null, focusSession: false })}
               onSend={(text, attachments, attachmentRefs, voice, broadcast) =>
                 send(active.id, text, openThreadRoot.id!, attachments, attachmentRefs, voice, broadcast)
               }

@@ -28,8 +28,6 @@ function renderSidebar(channels: Channel[], props: Partial<Parameters<typeof Sid
         onSetMute={vi.fn()}
         onCreateChannel={async () => {}}
         onStartDm={vi.fn()}
-        onOpenSession={vi.fn()}
-        sessionEventSeq={0}
         onLogout={vi.fn()}
         {...props}
       />

@@ -34,6 +34,8 @@ function session(overrides: Partial<Session> = {}): Session {
     lastEventId: 1,
     permalink: '/session/session-1',
     ...overrides,
+    archivedAt: overrides.archivedAt ?? null,
+    pinned: overrides.pinned ?? false,
   };
 }
 

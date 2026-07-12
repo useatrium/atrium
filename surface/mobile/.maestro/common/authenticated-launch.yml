@@ -4,4 +4,3 @@
     visible: "Chat"
     timeout: 15000
 - assertVisible: "Settings"
-

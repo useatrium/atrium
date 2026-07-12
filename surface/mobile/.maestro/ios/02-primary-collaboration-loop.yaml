@@ -37,4 +37,3 @@ env:
     text: ".*Back.*"
 - assertVisible: ".*Demo — watch an agent work.*"
 - takeScreenshot: "${SCREENSHOT_PREFIX}-04-ios-stack-return"
-

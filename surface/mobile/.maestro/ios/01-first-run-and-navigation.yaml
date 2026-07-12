@@ -16,4 +16,3 @@ env:
     text: ".*Back.*"
 - assertVisible: "Chat"
 - takeScreenshot: "${SCREENSHOT_PREFIX}-08-stack-dismissed"
-
