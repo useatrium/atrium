@@ -23,6 +23,7 @@ function isRowEvent(type: string): boolean {
   return (
     type === 'message.posted' ||
     type === 'session.spawned' ||
+    type === 'session.replied' ||
     type === 'session.question_requested' ||
     type === 'session.question_answered' ||
     type === 'session.question_resolved'

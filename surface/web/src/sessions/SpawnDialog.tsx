@@ -1,4 +1,4 @@
-// Configured spawn: the @agent grammar starts a session with defaults; this
+// Configured spawn: the summon sigil starts a session with defaults; this
 // dialog captures the harness and optional repo specs Centaur mounts into the
 // sandbox for the run.
 

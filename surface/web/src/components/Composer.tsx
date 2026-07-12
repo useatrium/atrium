@@ -10,13 +10,13 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from 'react';
-import { looksLikeAgentCommand, parseAgentTask } from '../sessions/spawn';
+import { looksLikeSummonSigil, parseSummonSigil } from '../sessions/spawn';
 import type { AttachmentMeta, AttachmentRef, UploadPayload, VoiceMeta } from '@atrium/surface-client';
 import { createDraftChangeDebouncer, formatBytes, randomId } from '@atrium/surface-client';
 import { FileIcon, PaperclipIcon, XIcon } from './icons';
 import { Tooltip } from './a11y';
 import { VoiceRecorder, type RecordedVoice } from '../VoiceRecorder';
-import { SHORTCUTS } from '../lib/shortcuts';
+import { SHORTCUTS, matchesChord } from '../lib/shortcuts';
 import { extractEntryHandles } from '../lib/entryLinks';
 import { EntryInlineChip } from './EntryQuoteCard';
 import { MentionSuggestions } from './MentionSuggestions';
@@ -39,7 +39,27 @@ interface PendingFile {
 export interface ComposerHandle {
   captureForConfigure: () => string;
   restoreDraft: (text: string) => void;
+  /** Enter agent mode (optionally pre-anchored) — the message-action "Delegate to agent…" door. */
+  activateAgentMode: (anchor?: { eventId: number; label: string }) => void;
 }
+
+export type AgentComposerRequest = {
+  target: 'spawn-channel' | 'spawn-thread' | 'steer' | 'suggest';
+  sessionId?: string;
+  threadRootEventId?: number;
+  anchorEventId?: number;
+  effort?: string;
+};
+
+/** Context for the first-class agent mode. Kept local to web so server contracts stay explicit. */
+export type AgentComposerMode = {
+  scope: 'channel' | 'thread';
+  channelLabel: string;
+  threadRootEventId?: number;
+  attachedSession?: { id: string; title: string; driverId: string | null; modelEffort?: string | null };
+  meId?: string;
+  initialAnchor?: { eventId: number; label: string };
+};
 
 type ComposerProps = {
   placeholder: string;
@@ -55,9 +75,9 @@ type ComposerProps = {
   /** ArrowUp in an empty composer — Slack-style "edit my last message". */
   onArrowUpOnEmpty?: () => void;
   autoFocus?: boolean;
-  /** Show the "@agent spawns a session" hint chip while the grammar matches. */
+  /** Show the summon-sigil hint chip while the grammar matches. */
   agentAware?: boolean;
-  /** Open the configured spawn dialog from the current @agent draft. */
+  /** Open the configured spawn dialog from the current summon-sigil draft. */
   onConfigureAgent?: (fullText: string) => void;
   /** Enable paste / drag-drop / file uploads. */
   allowAttachments?: boolean;
@@ -73,6 +93,14 @@ type ComposerProps = {
   onDraftPersisted?: (key: string, text: string) => void | Promise<void>;
   onDraftTouched?: (key: string) => void;
   previewEntryLinks?: boolean;
+  /** Enables the first-class summon/steer UI for channel and thread composers. */
+  agentMode?: AgentComposerMode;
+  onAgentSend?: (
+    request: AgentComposerRequest,
+    text: string,
+    attachments?: AttachmentMeta[],
+    attachmentRefs?: AttachmentRef[],
+  ) => void;
   /** Enables channel mention suggestions. Omit for agent-session composers. */
   mentionContext?: MentionContext;
 };
@@ -98,14 +126,38 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     onDraftPersisted,
     onDraftTouched,
     previewEntryLinks,
+    agentMode: agentModeContext,
+    onAgentSend,
     mentionContext,
   },
   imperativeRef,
 ) {
   const [text, setText] = useState('');
-  // "@agent" with no task: refuse to post the literal string — show what's
+  // "!!" with no task: refuse to post the literal string — show what's
   // missing instead (cleared as soon as the text changes).
   const [agentNeedsTask, setAgentNeedsTask] = useState(false);
+  const [agentMode, setAgentMode] = useState(false);
+  const [agentTarget, setAgentTarget] = useState<'session' | 'thread'>('session');
+  const [agentAnchor, setAgentAnchor] = useState<AgentComposerMode['initialAnchor']>();
+  const [agentEffort, setAgentEffort] = useState<string>('');
+  const [agentOptionsOpen, setAgentOptionsOpen] = useState(false);
+  // One-time coach mark on first agent-mode entry; device-local like the theme pref.
+  const [agentCoachSeen, setAgentCoachSeen] = useState(() => {
+    try {
+      return localStorage.getItem('atrium.agentCoachSeen') === '1';
+    } catch {
+      return true;
+    }
+  });
+  const dismissAgentCoach = () => {
+    setAgentCoachSeen(true);
+    try {
+      localStorage.setItem('atrium.agentCoachSeen', '1');
+    } catch {
+      // storage unavailable — session-only dismissal
+    }
+  };
+  const [agentTargetOpen, setAgentTargetOpen] = useState(false);
   const [files, setFiles] = useState<PendingFile[]>([]);
   const [attachmentNotice, setAttachmentNotice] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
@@ -122,8 +174,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       ),
     [onDraftChange, onDraftPersisted],
   );
-  const agentHint = !!agentAware && !disabled && looksLikeAgentCommand(text);
-  const agentTask = agentHint ? parseAgentTask(text) : null;
+  const agentHint = !!agentAware && !disabled && looksLikeSummonSigil(text);
+  const agentTask = agentHint ? parseSummonSigil(text) : null;
   const configureAgentHint = !!onConfigureAgent && agentHint && agentTask != null;
   const agentNeedsTaskHint = agentNeedsTask || (!!onConfigureAgent && agentHint && agentTask == null);
   const entryLinkHandles = useMemo(
@@ -133,6 +185,24 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const uploading = files.some((f) => f.status === 'uploading');
   const readyFiles = files.filter((f): f is PendingFile & { fileId: string } => f.status === 'ready' && !!f.fileId);
   const sendDisabled = (!text.trim() && readyFiles.length === 0) || !!disabled || uploading;
+  const attachedSession = agentModeContext?.attachedSession;
+  const isDriver = attachedSession?.driverId != null && attachedSession.driverId === agentModeContext?.meId;
+  const canTargetSession = agentModeContext?.scope === 'thread' && attachedSession != null;
+  const effectiveAgentTarget =
+    agentModeContext?.scope === 'channel'
+      ? 'spawn-channel'
+      : agentTarget === 'thread' || !attachedSession
+        ? 'spawn-thread'
+        : isDriver
+          ? 'steer'
+          : 'suggest';
+  const targetLabel =
+    agentModeContext?.scope === 'channel'
+      ? `New agent · ${agentModeContext.channelLabel}`
+      : effectiveAgentTarget === 'spawn-thread'
+        ? 'New agent · this thread'
+        : `${effectiveAgentTarget === 'steer' ? 'Steer' : 'Suggest'} · “${attachedSession?.title ?? 'agent'}”`;
+  const anchorLabel = agentAnchor?.label ?? (agentModeContext?.scope === 'thread' ? 'this thread' : 'latest message');
   const sendTooltip = disabled
     ? (disabledHint ?? 'Message composer unavailable')
     : uploading
@@ -177,6 +247,12 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   }, [initialDraft]);
 
   useEffect(() => {
+    setAgentTarget('session');
+    setAgentAnchor(agentModeContext?.initialAnchor);
+    setAgentEffort(attachedSession?.modelEffort ?? '');
+  }, [agentModeContext?.initialAnchor, attachedSession?.id, attachedSession?.modelEffort]);
+
+  useEffect(() => {
     if (autoFocus) ref.current?.focus();
   }, [autoFocus]);
 
@@ -192,6 +268,13 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   useImperativeHandle(
     imperativeRef,
     () => ({
+      activateAgentMode(anchor) {
+        if (!agentModeContext || disabled) return;
+        if (anchor) setAgentAnchor(anchor);
+        setAgentMode(true);
+        setAgentNeedsTask(false);
+        requestAnimationFrame(() => ref.current?.focus());
+      },
       captureForConfigure() {
         const captured = text;
         setText('');
@@ -293,12 +376,11 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     const trimmed = text.trim();
     if (disabled || uploading) return;
     if (!trimmed && readyFiles.length === 0) return;
-    if (agentAware && trimmed && looksLikeAgentCommand(trimmed) && parseAgentTask(trimmed) == null) {
+    if (agentAware && trimmed && looksLikeSummonSigil(trimmed) && parseSummonSigil(trimmed) == null) {
       setAgentNeedsTask(true);
       return;
     }
-    onSend(
-      mentions.serialize(text).trim(),
+    const attachments =
       readyFiles.length > 0
         ? readyFiles.map((f) => ({
             id: f.fileId,
@@ -308,9 +390,25 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             ...(f.width ? { width: f.width } : {}),
             ...(f.height ? { height: f.height } : {}),
           }))
-        : undefined,
-      readyFiles.length > 0 ? readyFiles.map((f) => ({ uploadKey: f.uploadKey })) : undefined,
-    );
+        : undefined;
+    const attachmentRefs = readyFiles.length > 0 ? readyFiles.map((f) => ({ uploadKey: f.uploadKey })) : undefined;
+    if (agentMode && agentModeContext && onAgentSend) {
+      onAgentSend(
+        {
+          target: effectiveAgentTarget,
+          ...(attachedSession && effectiveAgentTarget !== 'spawn-thread' ? { sessionId: attachedSession.id } : {}),
+          ...(agentModeContext.threadRootEventId ? { threadRootEventId: agentModeContext.threadRootEventId } : {}),
+          ...(agentAnchor?.eventId ? { anchorEventId: agentAnchor.eventId } : {}),
+          ...(agentEffort ? { effort: agentEffort } : {}),
+        },
+        trimmed,
+        attachments,
+        attachmentRefs,
+      );
+      setAgentMode(false);
+    } else {
+      onSend(mentions.serialize(text).trim(), attachments, attachmentRefs);
+    }
     if (draftKey) {
       onDraftTouched?.(draftKey);
       draftWriter.saveNow(draftKey, '');
@@ -359,7 +457,15 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (mentions.onKeyDown(e)) return;
-    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+    if (agentModeContext && matchesChord(e.nativeEvent, SHORTCUTS.toggleAgentMode.keys)) {
+      e.preventDefault();
+      setAgentMode((value) => !value);
+    } else if (e.key === 'Escape' && agentMode) {
+      e.preventDefault();
+      setAgentOptionsOpen(false);
+      setAgentTargetOpen(false);
+      setAgentMode(false);
+    } else if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
       send();
     } else if (e.key === 'ArrowUp' && text === '' && onArrowUpOnEmpty) {
@@ -369,7 +475,117 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   };
 
   return (
-    <div className="border-t border-edge bg-surface p-3">
+    <div className={`border-t bg-surface p-3 ${agentMode ? 'border-accent/60 bg-accent/5' : 'border-edge'}`}>
+      {agentMode && agentModeContext && (
+        <div className="mb-2 hidden min-w-0 flex-wrap items-center gap-1.5 px-1 min-[431px]:flex">
+          <div className="relative min-w-0">
+            <button
+              type="button"
+              onClick={() => setAgentTargetOpen((value) => !value)}
+              aria-expanded={agentTargetOpen}
+              aria-haspopup="menu"
+              className="flex min-w-0 max-w-[22rem] items-center gap-1 rounded-full border border-accent/35 bg-accent/10 px-2 py-1 text-xs font-medium text-accent-text-strong hover:bg-accent/15"
+            >
+              <span aria-hidden>⚡</span>
+              <span className="truncate">{targetLabel}</span>
+              <span aria-hidden>▾</span>
+            </button>
+            {agentTargetOpen && canTargetSession && (
+              <div
+                role="menu"
+                className="absolute bottom-full left-0 z-30 mb-1 w-64 rounded-md border border-edge-strong bg-surface-overlay p-1 shadow-lg"
+              >
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setAgentTarget('session');
+                    setAgentTargetOpen(false);
+                  }}
+                  className="flex w-full rounded px-2 py-1.5 text-left text-xs text-fg-secondary hover:bg-edge-strong hover:text-fg"
+                >
+                  {isDriver ? 'Steer this session' : 'Suggest to this session'}
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setAgentTarget('thread');
+                    setAgentTargetOpen(false);
+                  }}
+                  className="flex w-full rounded px-2 py-1.5 text-left text-xs text-fg-secondary hover:bg-edge-strong hover:text-fg"
+                >
+                  New session in this thread
+                </button>
+                <div className="px-2 pb-1 pt-1.5 text-3xs leading-4 text-fg-muted">
+                  The agent reads this conversation before starting (⚓ anchor).
+                </div>
+              </div>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={() => setAgentAnchor(undefined)}
+            className="max-w-40 shrink-0 truncate rounded-full border border-edge-strong px-2 py-1 text-xs text-fg-secondary hover:bg-surface-overlay"
+            title={agentAnchor ? 'Clear anchor' : undefined}
+          >
+            <span aria-hidden>⚓ </span>
+            {anchorLabel}
+          </button>
+          <label className="flex shrink-0 items-center gap-1 rounded-full border border-edge-strong px-2 py-1 text-xs text-fg-secondary">
+            <span>effort</span>
+            <select
+              value={agentEffort}
+              onChange={(e) => setAgentEffort(e.target.value)}
+              aria-label="Agent effort"
+              className="max-w-16 bg-transparent text-xs text-fg outline-none"
+            >
+              <option value="">default</option>
+              <option value="low">low</option>
+              <option value="medium">med</option>
+              <option value="high">high</option>
+              <option value="max">max</option>
+            </select>
+          </label>
+        </div>
+      )}
+      {agentMode && agentModeContext && (
+        <div className="mb-2 flex min-w-0 items-center gap-1 rounded-md border border-accent/30 bg-accent/10 px-2 py-1 text-xs text-accent-text-strong min-[431px]:hidden">
+          <button
+            type="button"
+            onClick={() => setAgentOptionsOpen(true)}
+            className="min-w-0 flex-1 truncate text-left font-medium"
+          >
+            <span aria-hidden>⚡ </span>
+            {targetLabel} · <span aria-hidden>⚓ </span>
+            {anchorLabel}
+          </button>
+          <button
+            type="button"
+            onClick={() => setAgentMode(false)}
+            aria-label="Exit agent mode"
+            className="shrink-0 rounded px-1 hover:bg-accent/15"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+      {agentMode && agentModeContext && !agentCoachSeen && (
+        <div className="mb-2 flex items-start gap-2 rounded-md border border-edge-strong bg-surface-overlay px-2 py-1.5 text-xs text-fg-secondary">
+          <span className="min-w-0 flex-1">
+            Summon an agent with <span className="font-semibold">!!</span>, the ⚡ button, or right-click a message →
+            “Delegate to agent…”. It reads this conversation before starting. Esc exits.
+          </span>
+          <button
+            type="button"
+            onClick={dismissAgentCoach}
+            aria-label="Dismiss agent mode tip"
+            className="shrink-0 rounded px-1 text-fg-muted hover:bg-surface-raised hover:text-fg"
+          >
+            ✕
+          </button>
+        </div>
+      )}
       {/* biome-ignore lint/a11y/noStaticElementInteractions: drop zone handles drag/drop events; keyboard file attachment uses the adjacent Attach button. */}
       <div
         title={disabled ? disabledHint : undefined}
@@ -385,7 +601,9 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             ? 'border-edge bg-surface-raised/40'
             : dragOver
               ? 'border-accent-hover bg-surface-raised'
-              : 'border-edge-strong bg-surface-raised focus-within:border-edge-focus'
+              : agentMode
+                ? 'border-accent/60 bg-surface-raised focus-within:border-accent'
+                : 'border-edge-strong bg-surface-raised focus-within:border-edge-focus'
         }`}
       >
         {mentions.open && (
@@ -478,12 +696,28 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           )}
           {!voiceActive && (
             <>
+              {agentModeContext && !disabled && (
+                <Tooltip
+                  content={agentMode ? 'Exit agent mode' : 'Agent mode'}
+                  shortcut={SHORTCUTS.toggleAgentMode.keys}
+                >
+                  <button
+                    type="button"
+                    onClick={() => setAgentMode((value) => !value)}
+                    aria-label={agentMode ? 'Exit agent mode' : 'Enter agent mode'}
+                    aria-pressed={agentMode}
+                    className={`rounded-md px-1.5 py-1 text-sm ${agentMode ? 'bg-accent/15 text-accent-text-strong' : 'text-fg-muted hover:bg-surface-overlay hover:text-fg-body'}`}
+                  >
+                    ⚡
+                  </button>
+                </Tooltip>
+              )}
               <textarea
                 ref={ref}
                 rows={1}
                 value={text}
                 disabled={disabled}
-                placeholder={disabled ? (disabledHint ?? placeholder) : placeholder}
+                placeholder={disabled ? (disabledHint ?? placeholder) : agentMode ? 'Describe the task…' : placeholder}
                 aria-label="Message input"
                 aria-expanded={mentions.open}
                 aria-controls={mentions.open ? mentions.listboxId : undefined}
@@ -491,10 +725,23 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                 role="combobox"
                 aria-autocomplete="list"
                 onChange={(e) => {
-                  mentions.onValueChange(e.target.value, e.target.selectionStart ?? e.target.value.length);
+                  const next = e.target.value;
+                  const summonSource = next.trimStart();
+                  const summon =
+                    agentModeContext && !agentMode && looksLikeSummonSigil(summonSource)
+                      ? parseSummonSigil(summonSource)
+                      : null;
+                  if (agentModeContext && !agentMode && (summonSource === '!!' || summon != null)) {
+                    setAgentMode(true);
+                    const task = summon?.task ?? '';
+                    e.target.value = task;
+                    mentions.onValueChange(task, task.length);
+                  } else {
+                    mentions.onValueChange(next, e.target.selectionStart ?? next.length);
+                  }
                   if (draftKey) {
                     onDraftTouched?.(draftKey);
-                    draftWriter.schedule(draftKey, e.target.value);
+                    draftWriter.schedule(draftKey, summon?.task ?? (summonSource === '!!' ? '' : next));
                   }
                   setAgentNeedsTask(false);
                   if (e.target.value.trim()) onTyping?.();
@@ -542,9 +789,13 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
         </div>
       )}
       <div className="mt-1 flex items-center gap-2 px-1 text-3xs text-fg-muted">
-        {agentNeedsTaskHint ? (
+        {text.startsWith('@agent ') ? (
           <span className="rounded-full bg-warning/15 px-2 py-0.5 font-medium text-warning-text">
-            Add a task: @agent &lt;task&gt;
+            Summon agents with !! or ⚡ — mentions are for people now.
+          </span>
+        ) : agentNeedsTaskHint ? (
+          <span className="rounded-full bg-warning/15 px-2 py-0.5 font-medium text-warning-text">
+            Add a task: !!&lt;task&gt;
           </span>
         ) : configureAgentHint ? (
           <Tooltip content="Configure and start an agent">
@@ -559,7 +810,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           </Tooltip>
         ) : agentHint ? (
           <span className="rounded-full bg-accent-hover/15 px-2 py-0.5 font-medium text-accent-text-strong">
-            @agent — spawns an agent
+            !! — spawns an agent
           </span>
         ) : footer !== undefined ? (
           footer
@@ -567,12 +818,83 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           <span>
             {disabled
               ? (disabledHint ?? '')
-              : agentAware
-                ? 'Enter to send · Shift+Enter for a new line · @agent <task> spawns an agent'
-                : 'Enter to send · Shift+Enter for a new line'}
+              : agentModeContext
+                ? 'Enter to send · Shift+Enter for a new line · !! or ⚡ for an agent'
+                : agentAware
+                  ? 'Enter to send · Shift+Enter for a new line · !!<task> spawns an agent'
+                  : 'Enter to send · Shift+Enter for a new line'}
           </span>
         )}
       </div>
+      {agentOptionsOpen && agentModeContext && (
+        <div className="fixed inset-0 z-50 flex items-end min-[431px]:hidden">
+          <button
+            type="button"
+            aria-label="Close agent mode options"
+            onClick={() => setAgentOptionsOpen(false)}
+            className="absolute inset-0 bg-black/30"
+          />
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-label="Agent mode options"
+            className="relative w-full rounded-t-xl border border-edge-strong bg-surface-overlay p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] shadow-xl"
+          >
+            <div className="mb-3 text-sm font-semibold text-fg">Agent mode</div>
+            {canTargetSession && (
+              <div className="mb-3 grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setAgentTarget('session')}
+                  className={`rounded-md border px-2 py-2 text-xs ${agentTarget === 'session' ? 'border-accent bg-accent/10 text-accent-text-strong' : 'border-edge-strong text-fg-secondary'}`}
+                >
+                  {isDriver ? 'Steer session' : 'Suggest'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAgentTarget('thread')}
+                  className={`rounded-md border px-2 py-2 text-xs ${agentTarget === 'thread' ? 'border-accent bg-accent/10 text-accent-text-strong' : 'border-edge-strong text-fg-secondary'}`}
+                >
+                  New session
+                </button>
+              </div>
+            )}
+            <label className="mb-3 flex items-center justify-between text-sm text-fg-secondary">
+              <span>Effort</span>
+              <select
+                value={agentEffort}
+                onChange={(e) => setAgentEffort(e.target.value)}
+                aria-label="Agent effort"
+                className="rounded border border-edge-strong bg-surface-raised px-2 py-1 text-sm text-fg"
+              >
+                <option value="">Default</option>
+                <option value="low">Low</option>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+                <option value="max">Max</option>
+              </select>
+            </label>
+            <div className="mb-2 text-xs leading-5 text-fg-muted">
+              The agent reads this conversation before starting (⚓ anchor).
+            </div>
+            <div className="flex items-center justify-between text-sm text-fg-secondary">
+              <span>
+                <span aria-hidden>⚓ </span>
+                {anchorLabel}
+              </span>
+              {agentAnchor && (
+                <button
+                  type="button"
+                  onClick={() => setAgentAnchor(undefined)}
+                  className="rounded px-2 py-1 text-xs text-accent-text-strong hover:bg-accent/10"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+          </section>
+        </div>
+      )}
     </div>
   );
 });

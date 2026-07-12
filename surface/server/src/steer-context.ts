@@ -25,6 +25,8 @@ export interface SteerContextProvenance {
   you: { name?: string | null; sessionTitle: string };
   channel: string;
   channelId: string;
+  /** `/e/<handle>` for the channel event that prompted an initial summon. */
+  taggedAfter?: string | null;
   thread?: string | null;
   sent: Date | string;
   suggestion?: SteerContextSuggestionAttribution;
@@ -38,6 +40,7 @@ export interface ParsedSteerContextBlock {
   you: string | null;
   channel: string | null;
   channelId: string | null;
+  taggedAfter: string | null;
   thread: string | null;
   sent: string | null;
   suggestedBy?: {
@@ -64,6 +67,7 @@ export function buildSteerContextBlock(provenance: SteerContextProvenance): stri
     `from: ${oneLine(from.name)} (${actorLabel(from.handle, from.kind, from.seat)})`,
     `you: ${oneLine(provenance.you.name ?? '') || 'agent'} — session "${sessionTitle(provenance.you.sessionTitle)}"`,
     `channel: #${channelLabel(provenance.channel)} (id: ${oneLine(provenance.channelId)})`,
+    ...(provenance.taggedAfter ? [`tagged after: ${oneLine(provenance.taggedAfter)}`] : []),
     ...(provenance.thread ? [`thread: ${oneLine(provenance.thread)}`] : []),
     `sent: ${sentIso(provenance.sent)}`,
   ];
@@ -92,6 +96,7 @@ export function parseSteerContextBlock(text: string): ParsedSteerContextBlock | 
 
   const channelLine = lines.find((line) => line.startsWith('channel: '));
   const youLine = lines.find((line) => line.startsWith('you: '));
+  const taggedAfterLine = lines.find((line) => line.startsWith('tagged after: '));
   const threadLine = lines.find((line) => line.startsWith('thread: '));
   const sentLine = lines.find((line) => line.startsWith('sent: '));
   const suggestionLine = lines.find((line) => line.startsWith('suggested by: '));
@@ -104,6 +109,7 @@ export function parseSteerContextBlock(text: string): ParsedSteerContextBlock | 
     seat: from.seat,
     you: youLine ? youLine.slice('you: '.length).trim() || null : null,
     ...parseChannelLine(channelLine),
+    taggedAfter: taggedAfterLine ? taggedAfterLine.slice('tagged after: '.length).trim() || null : null,
     thread: threadLine ? threadLine.slice('thread: '.length).trim() || null : null,
     sent: sentLine ? sentLine.slice('sent: '.length).trim() || null : null,
     ...(suggestion ? suggestion : {}),

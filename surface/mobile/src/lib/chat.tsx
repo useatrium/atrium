@@ -20,8 +20,8 @@ import {
   initialAppState,
   isPendingSessionId,
   isTerminalSessionStatus,
-  looksLikeAgentCommand,
-  parseAgentTask,
+  looksLikeSummonSigil,
+  parseSummonSigil,
   PENDING_SESSION_PREFIX,
   randomId,
   reconcileDraftSnapshot,
@@ -89,6 +89,8 @@ type SpawnSessionOptions = Pick<
   | 'githubIdentityId'
   | 'agentProfileId'
   | 'agentProfileVersionId'
+  | 'anchorEventId'
+  | 'broadcastCard'
 >;
 
 interface ChatContextValue {
@@ -134,7 +136,9 @@ interface ChatContextValue {
     questionId: string,
     answers: Record<string, { answers: string[] }>,
   ) => Promise<void>;
-  steerSession: (sessionId: string, text: string, effort?: string) => Promise<void>;
+  steerSession: (sessionId: string, text: string, effort?: string, opts?: { postToThread?: boolean }) => Promise<void>;
+  /** Suggestions are server-supported, but await a shared queued op type. */
+  suggestToSession: (sessionId: string, text: string) => Promise<void>;
   failedSessionSteers: Record<string, string>;
   clearFailedSessionSteer: (sessionId: string) => void;
   cancelSession: (sessionId: string) => Promise<void>;
@@ -462,15 +466,30 @@ export function ChatProvider({ session, children }: { session: Session; children
   }, []);
 
   const steerSession = useCallback(
-    async (sessionId: string, text: string, effort?: string): Promise<void> => {
+    async (sessionId: string, text: string, effort?: string, opts?: { postToThread?: boolean }): Promise<void> => {
       clearFailedSessionSteer(sessionId);
       await enqueueOp({
         opId: randomId(),
         opType: 'session.steer',
-        payload: { sessionId, text, ...(effort ? { effort } : {}) },
+        payload: {
+          sessionId,
+          text,
+          ...(effort ? { effort } : {}),
+          ...(opts?.postToThread ? { postToThread: true } : {}),
+        },
       });
     },
     [clearFailedSessionSteer, enqueueOp],
+  );
+
+  const suggestToSession = useCallback(
+    async (sessionId: string, text: string): Promise<void> => {
+      // There is no `session.suggest` member in VALID_OP_TYPES yet. Keep this
+      // call here rather than inventing a mobile-only queue that would diverge
+      // from the shared durable-op contract.
+      await api.createSuggestion(sessionId, text, { opId: randomId(), postToThread: true });
+    },
+    [api],
   );
 
   const clearFailedSessionCancel = useCallback((sessionId: string) => {
@@ -685,6 +704,7 @@ export function ChatProvider({ session, children }: { session: Session; children
           clientMsgId: payload.clientSpawnId,
           channelId: payload.channelId,
           threadRootEventId: payload.threadRootEventId ?? null,
+          ...(payload.broadcastCard === true ? { broadcast: true } : {}),
           text: payload.task,
           edited: false,
           author: me,
@@ -1022,6 +1042,8 @@ export function ChatProvider({ session, children }: { session: Session; children
       },
       onChannelPinned: (channelId, pinned) => dispatch({ type: 'channel-pin-changed', channelId, pinned }),
       onSessionPinned: (sessionId, pinned) => dispatch({ type: 'session-pin-changed', sessionId, pinned }),
+      onSessionActivity: (sessionId, activity) =>
+        dispatch({ type: 'session-activity', sessionId, summary: activity.summary, at: activity.at }),
       onPrefs: adoptPrefs,
       onChannelLeft: (channelId) => dispatch({ type: 'channel-removed', channelId }),
       onOpen: () => {
@@ -1196,6 +1218,8 @@ export function ChatProvider({ session, children }: { session: Session; children
         ...(opts?.githubIdentityId ? { githubIdentityId: opts.githubIdentityId } : {}),
         ...(opts?.agentProfileId ? { agentProfileId: opts.agentProfileId } : {}),
         ...(opts?.agentProfileVersionId ? { agentProfileVersionId: opts.agentProfileVersionId } : {}),
+        ...(opts?.anchorEventId != null ? { anchorEventId: opts.anchorEventId } : {}),
+        ...(opts?.broadcastCard === true ? { broadcastCard: true } : {}),
         createdAt: now,
       };
       const pending = pendingSpawnFromPayload(payload);
@@ -1243,17 +1267,17 @@ export function ChatProvider({ session, children }: { session: Session; children
       broadcast?: boolean,
       mentionRanges: MentionRange[] = [],
     ) => {
-      // Attachments can't ride along on a session spawn — let "@agent …"
+      // Attachments can't ride along on a session spawn — let "!!…"
       // with attachments fall through as a plain message rather than drop them.
       const hasAttachments = attachments != null && attachments.length > 0;
       if (!hasAttachments) {
-        const task = parseAgentTask(text);
-        if (task != null) {
-          spawnSession(channelId, task, threadRootEventId);
+        const summon = parseSummonSigil(text);
+        if (summon != null) {
+          spawnSession(channelId, summon.task, threadRootEventId);
           return;
         }
-        if (looksLikeAgentCommand(text.trim())) {
-          Alert.alert('Add a task', 'Type @agent followed by the task to run.');
+        if (looksLikeSummonSigil(text)) {
+          Alert.alert('Add a task', 'Type !! followed by the task to run.');
           return;
         }
       }
@@ -1783,6 +1807,7 @@ export function ChatProvider({ session, children }: { session: Session; children
       react,
       answerSessionQuestion,
       steerSession,
+      suggestToSession,
       failedSessionSteers,
       clearFailedSessionSteer,
       cancelSession,
@@ -1849,6 +1874,7 @@ export function ChatProvider({ session, children }: { session: Session; children
       react,
       answerSessionQuestion,
       steerSession,
+      suggestToSession,
       failedSessionSteers,
       clearFailedSessionSteer,
       cancelSession,

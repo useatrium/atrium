@@ -21,7 +21,13 @@ import {
   type UserRef,
   type WireEvent,
 } from './timeline';
-import { applySessionEvent, maxSessionStatus, mergeSpawnResponse, type Session } from './sessions';
+import {
+  applySessionActivity,
+  applySessionEvent,
+  maxSessionStatus,
+  mergeSpawnResponse,
+  type Session,
+} from './sessions';
 import { mentionsUser } from './mentions';
 
 /** 'mention' outranks plain unread — it renders as a red @ badge. */
@@ -144,6 +150,7 @@ export type AppAction =
   | { type: 'session-created'; channelId: string; tempId: string; session: Session }
   | { type: 'session-spawn-failed'; channelId: string; tempId: string }
   | { type: 'session-upsert'; session: Session }
+  | { type: 'session-activity'; sessionId: string; summary: string; at: string }
   | { type: 'open-session'; sessionId: string }
   | { type: 'session-load-failed'; sessionId: string }
   | { type: 'close-session' };
@@ -552,6 +559,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         status: existing ? maxSessionStatus(existing.status, action.session.status) : action.session.status,
         pendingQuestion: action.session.pendingQuestion ?? existing?.pendingQuestion ?? null,
         providerAuthRequired: action.session.providerAuthRequired ?? existing?.providerAuthRequired ?? null,
+        ...(existing?.latestActivity ? { latestActivity: existing.latestActivity } : {}),
         questionEvents,
         // GET /api/sessions/:id carries no audit history, so keep what
         // live session.* folds already accumulated.
@@ -568,6 +576,14 @@ export function appReducer(state: AppState, action: AppAction): AppState {
           [action.session.id]: session,
         },
       };
+    }
+
+    case 'session-activity': {
+      const sessions = applySessionActivity(state.sessions, action.sessionId, {
+        summary: action.summary,
+        at: action.at,
+      });
+      return sessions === state.sessions ? state : { ...state, sessions };
     }
 
     case 'open-session':

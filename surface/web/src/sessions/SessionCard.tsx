@@ -2,7 +2,6 @@ import { useEffect, useRef, useState, type MouseEvent } from 'react';
 import { formatTime } from '@atrium/surface-client';
 import {
   formatCost,
-  formatElapsed,
   isPendingSessionId,
   isStalledSessionStatus,
   isTerminalSessionStatus,
@@ -10,6 +9,7 @@ import {
   type SessionStatus,
 } from './types';
 import { SessionAppPresentationCards } from './AppPresentationCard';
+import { SessionPresenceTicker } from './SessionPresenceTicker';
 
 /** Compact "repo@branch" label for the metadata line (branch optional). */
 export function repoBranchLabel(repo: string, branch?: string | null): string {
@@ -139,6 +139,8 @@ export function SessionCard({
         )}
       </div>
 
+      {!spawnFailed && <SessionPresenceTicker session={session} className="mt-1 pl-0.5" />}
+
       <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-2xs text-fg-muted">
         <span className="truncate">{session.spawnerName ?? session.spawnedBy}</span>
         {session.driverId !== null && session.driverId !== session.spawnedBy && (
@@ -158,11 +160,7 @@ export function SessionCard({
           </>
         )}
         <span className="text-fg-faint">·</span>
-        {stalled ? (
-          <span className="tabular-nums">started {formatTime(session.createdAt)}</span>
-        ) : (
-          <span className="tabular-nums">{formatElapsed(sessionElapsedMs(session, now))}</span>
-        )}
+        {stalled ? <span className="tabular-nums">started {formatTime(session.createdAt)}</span> : <span>live</span>}
         {session.costUsd > 0 && (
           <>
             <span className="text-fg-faint">·</span>

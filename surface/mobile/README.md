@@ -99,6 +99,6 @@ What it needs from you (one-time, interactive):
   notifications config is still per-platform (web: desktop notifications
   toggle; mobile: push via EAS, see above).
 
-(Previously listed gaps that have since shipped: `@agent` composer spawn,
+(Previously listed gaps that have since shipped: composer agent summon (now the `!!`/⚡ agent mode),
 live session viewing/steering at `session/[id]`, sessions list, emoji
 reactions, message edit/delete, uploads, jump-to-message.)

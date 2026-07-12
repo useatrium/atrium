@@ -470,7 +470,7 @@ export default function SessionsScreen() {
                     </View>
                   )}
                   <Text style={{ color: colors.textMuted, fontSize: font.xs }}>
-                    You can also type @agent &lt;task&gt; in any channel
+                    You can also type !!&lt;task&gt; in any channel
                   </Text>
                 </View>
               </View>

@@ -368,6 +368,8 @@ interface SteerContextRow {
 const TERMINAL_STATUSES = new Set<SessionStatus>(['completed', 'failed', 'cancelled']);
 const DEMO_HARNESS = 'demo';
 const DEMO_TITLE = 'Demo — watch an agent work';
+const SESSION_REPLY_MAX_BYTES = 16 * 1024;
+const SESSION_REPLY_TRUNCATION_MARKER = '\n\n[reply truncated]';
 
 // Idle window before a terminal session's sandbox assignment is released.
 const releaseIdleMs = () => Number(process.env.SESSION_RELEASE_IDLE_MS ?? 60_000);
@@ -389,6 +391,10 @@ export class SessionRuns {
   private readonly tailers = new Map<string, { controller: AbortController; done: Promise<void> }>();
   private readonly releaseTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly questionRenotifyTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly activityThrottles = new Map<
+    string,
+    { lastPublishedAt: number; pendingSummary: string | null; timer: ReturnType<typeof setTimeout> | null }
+  >();
 
   /**
    * Test observability for negative timer assertions: callers need to observe
@@ -425,6 +431,10 @@ export class SessionRuns {
   async createSession(args: {
     channelId: string;
     threadRootEventId: number | null;
+    anchorEventId?: number;
+    broadcastCard?: boolean;
+    /** Requested initial reasoning-effort tier; ignored unless valid for the harness. */
+    effort?: string;
     task: string;
     harness?: string;
     repo?: string | null;
@@ -451,6 +461,9 @@ export class SessionRuns {
     args: {
       channelId: string;
       threadRootEventId: number | null;
+      anchorEventId?: number;
+      broadcastCard?: boolean;
+      effort?: string;
       task: string;
       harness?: string;
       repo?: string | null;
@@ -492,6 +505,11 @@ export class SessionRuns {
     if (args.threadRootEventId != null) {
       await assertThreadRoot(client, args.channelId, args.threadRootEventId);
     }
+    const anchorEventId = await resolveSpawnAnchorEventId(client, {
+      channelId: args.channelId,
+      threadRootEventId: args.threadRootEventId,
+      explicitAnchorEventId: args.anchorEventId,
+    });
     const conflictClause = args.clientSpawnId
       ? `ON CONFLICT (spawned_by, client_spawn_id) WHERE client_spawn_id IS NOT NULL DO NOTHING`
       : '';
@@ -502,10 +520,15 @@ export class SessionRuns {
     // or steers carrying the sticky selection would all fail 400.
     const profileSettings = selectedProfileVersion?.manifest.settings;
     const spawnEffortRaw = profileSettings?.['model_reasoning_effort'] ?? profileSettings?.['effortLevel'];
-    const spawnEffort =
+    const profileEffort =
       typeof spawnEffortRaw === 'string' && (HARNESS_EFFORT_LEVELS[harness] ?? []).includes(spawnEffortRaw)
         ? spawnEffortRaw
         : null;
+    const requestedEffort =
+      typeof args.effort === 'string' && (HARNESS_EFFORT_LEVELS[harness] ?? []).includes(args.effort)
+        ? args.effort
+        : null;
+    const spawnEffort = requestedEffort ?? profileEffort;
     const inserted = await client.query<SessionRow>(
       `INSERT INTO sessions (
          workspace_id, channel_id, thread_root_event_id, centaur_thread_key, harness, repo, branch, session_repos,
@@ -560,6 +583,8 @@ export class SessionRuns {
         ...(row.provider_connection_id ? { provider_connection_id: row.provider_connection_id } : {}),
         ...(row.agent_profile_version_id ? { agent_profile_version_id: row.agent_profile_version_id } : {}),
         ...(args.clientSpawnId ? { client_spawn_id: args.clientSpawnId } : {}),
+        ...(anchorEventId != null ? { anchor_event_id: anchorEventId } : {}),
+        ...(args.broadcastCard === true && args.threadRootEventId != null ? { broadcast: true } : {}),
       },
     });
     if (args.threadRootEventId == null) {
@@ -580,8 +605,9 @@ export class SessionRuns {
   ): void {
     if (!result.created || !result.event || !result.row) return;
     this.hub.publishEvent(result.event);
+    const anchorEventId = numberPayloadValue(result.event.payload.anchor_event_id);
     queueMicrotask(() => {
-      void this.startSession(result.row!.id, task, attachments).catch(() => {});
+      void this.startSession(result.row!.id, task, attachments, anchorEventId).catch(() => {});
     });
   }
 
@@ -965,6 +991,7 @@ export class SessionRuns {
     text: string,
     effort?: SessionEffortLevel,
     attachments: readonly AgentTurnAttachmentRef[] = [],
+    postToThread = false,
   ): Promise<WireEvent[]> {
     this.cancelScheduledRelease(id);
     const row = await this.requireDriverInTx(client, id, userId);
@@ -978,7 +1005,14 @@ export class SessionRuns {
       );
     }
     await this.postUserMessageOnce(activeRow, userId, text, true, client, effort, attachments);
-    if (!effort || effort === activeRow.model_effort) return revived.event ? [revived.event] : [];
+    const events = revived.event ? [revived.event] : [];
+    if (postToThread) {
+      const threadEvent = await appendSessionThreadMessage(client, activeRow, userId, text, {
+        steered_session_id: id,
+      });
+      if (threadEvent) events.push(threadEvent);
+    }
+    if (!effort || effort === activeRow.model_effort) return events;
     await client.query('UPDATE sessions SET model_effort = $1 WHERE id = $2', [effort, id]);
     const effortEvent = await appendEvent(client, {
       workspaceId: activeRow.workspace_id,
@@ -988,7 +1022,7 @@ export class SessionRuns {
       actorId: userId,
       payload: { sessionId: id, effort, by: userId },
     });
-    return revived.event ? [revived.event, effortEvent] : [effortEvent];
+    return [...events, effortEvent];
   }
 
   afterPostUserMessage(id: string): void {
@@ -1210,6 +1244,7 @@ export class SessionRuns {
     suggestion?: Pick<SteerContextSuggestionAttribution, 'suggestedBy'>,
     // users has no actor-kind discriminator yet; callers may override the human default.
     kind: 'human' | 'agent' = 'human',
+    opts?: { taggedAfter?: string },
   ): Promise<string> {
     const res = await client.query<SteerContextRow>(
       `SELECT u.display_name,
@@ -1236,6 +1271,7 @@ export class SessionRuns {
       you: { name: context.agent_profile_name, sessionTitle: context.session_title },
       channel: context.channel_name,
       channelId: context.channel_id,
+      ...(opts?.taggedAfter ? { taggedAfter: opts.taggedAfter } : {}),
       thread: row.thread_root_event_id == null ? null : `/e/${encodeEventHandle(row.thread_root_event_id)}`,
       sent: context.sent_at,
       ...(suggestion
@@ -1444,7 +1480,13 @@ export class SessionRuns {
    * the caller's transaction (the route wraps it in runMutation for idempotency
    * + a single commit); the returned event is published in onApplied.
    */
-  async createSuggestionInTx(client: DbClient, id: string, userId: string, text: string): Promise<WireEvent> {
+  async createSuggestionInTx(
+    client: DbClient,
+    id: string,
+    userId: string,
+    text: string,
+    postToThread = false,
+  ): Promise<WireEvent[]> {
     const session = await client.query<SessionRow>('SELECT * FROM sessions WHERE id = $1', [id]);
     const row = session.rows[0];
     if (!row) {
@@ -1461,14 +1503,21 @@ export class SessionRuns {
        RETURNING id`,
       [id, userId, text],
     );
-    return appendEvent(client, {
+    const suggestionId = inserted.rows[0]!.id;
+    const suggestionEvent = await appendEvent(client, {
       workspaceId: row.workspace_id,
       channelId: row.channel_id,
       threadRootEventId: row.thread_root_event_id,
       type: 'session.suggestion_added',
       actorId: userId,
-      payload: { sessionId: id, suggestionId: inserted.rows[0]!.id, authorId: userId, text },
+      payload: { sessionId: id, suggestionId, authorId: userId, text },
     });
+    if (!postToThread) return [suggestionEvent];
+    const threadEvent = await appendSessionThreadMessage(client, row, userId, text, {
+      suggested_session_id: id,
+      suggestion_id: suggestionId,
+    });
+    return threadEvent ? [suggestionEvent, threadEvent] : [suggestionEvent];
   }
 
   /**
@@ -1723,6 +1772,10 @@ export class SessionRuns {
     this.releaseTimers.clear();
     for (const timer of this.questionRenotifyTimers.values()) clearTimeout(timer);
     this.questionRenotifyTimers.clear();
+    for (const throttle of this.activityThrottles.values()) {
+      if (throttle.timer) clearTimeout(throttle.timer);
+    }
+    this.activityThrottles.clear();
     const handles = [...this.tailers.values()];
     for (const handle of handles) handle.controller.abort();
     this.tailers.clear();
@@ -1735,6 +1788,7 @@ export class SessionRuns {
     id: string,
     task: string | null,
     attachments: readonly AgentTurnAttachmentRef[] = [],
+    anchorEventId: number | null = null,
   ): Promise<void> {
     try {
       let row = await this.getStartableSessionRow(id);
@@ -1756,7 +1810,15 @@ export class SessionRuns {
       generation = row.assignment_generation ?? generation;
       let initialContextBlock: string | undefined;
       if (task != null) {
-        initialContextBlock = await this.buildUserTurnContextBlock(this.pool, row, row.spawned_by, 'spawner');
+        initialContextBlock = await this.buildUserTurnContextBlock(
+          this.pool,
+          row,
+          row.spawned_by,
+          'spawner',
+          undefined,
+          'human',
+          anchorEventId != null ? { taggedAfter: `/e/${encodeEventHandle(anchorEventId)}` } : undefined,
+        );
         // Inline any /e/<handle> references in the spawn task the same way steers do
         // (postUserMessageOnce), so an agent can resolve an explicit reference to a
         // channel message/artifact at spawn. Never let a resolver hiccup fail the spawn.
@@ -1877,6 +1939,8 @@ export class SessionRuns {
         pendingLastEventId = lastEventId;
         frameCountSinceFlush += 1;
         await this.mirrorFrame(id, frame);
+        const activitySummary = sessionActivitySummary(frame);
+        if (activitySummary) this.publishSessionActivity(row, id, activitySummary);
         if (providerAuthFailureTextForFrame(frame)) {
           providerAuthFailureEventId = frame.event_id;
         }
@@ -1941,6 +2005,50 @@ export class SessionRuns {
        ON CONFLICT (session_id, centaur_event_id) DO NOTHING`,
       [id, frame.event_id, frame.event, JSON.stringify(frame)],
     );
+  }
+
+  /** Coalesce noisy harness tool-start frames into at most one channel ticker
+   * per second, retaining the newest summary while waiting. */
+  private publishSessionActivity(row: SessionRow, sessionId: string, summary: string): void {
+    const now = Date.now();
+    const throttle = this.activityThrottles.get(sessionId) ?? {
+      lastPublishedAt: 0,
+      pendingSummary: null,
+      timer: null,
+    };
+    this.activityThrottles.set(sessionId, throttle);
+
+    const publish = (nextSummary: string) => {
+      throttle.lastPublishedAt = Date.now();
+      this.hub.publishSessionActivity(row.channel_id, {
+        sessionId,
+        summary: nextSummary,
+        at: new Date(throttle.lastPublishedAt).toISOString(),
+      });
+    };
+
+    if (now - throttle.lastPublishedAt >= 1000 && throttle.timer == null) {
+      publish(summary);
+      return;
+    }
+
+    throttle.pendingSummary = summary;
+    if (throttle.timer) return;
+    const delay = Math.max(0, 1000 - (now - throttle.lastPublishedAt));
+    throttle.timer = setTimeout(() => {
+      throttle.timer = null;
+      const latest = throttle.pendingSummary;
+      throttle.pendingSummary = null;
+      if (latest) publish(latest);
+    }, delay);
+    throttle.timer.unref?.();
+  }
+
+  private clearSessionActivity(sessionId: string): void {
+    const throttle = this.activityThrottles.get(sessionId);
+    if (!throttle) return;
+    if (throttle.timer) clearTimeout(throttle.timer);
+    this.activityThrottles.delete(sessionId);
   }
 
   private async foldFrame(
@@ -2292,6 +2400,7 @@ export class SessionRuns {
       });
       return [statusEvent, resolvedEvent];
     });
+    if (TERMINAL_STATUSES.has(status)) this.clearSessionActivity(id);
     for (const event of events) this.hub.publishEvent(event);
     if (status === 'failed') {
       const failedEvent = events.find((event) => event.type === 'session.status_changed');
@@ -2355,6 +2464,19 @@ export class SessionRuns {
         [status, resultText, lastEventId, id],
       );
       const next = completed.rows[0]!;
+      const replyText = boundedSessionReplyText(resultText);
+      const replyThreadRootEventId = replyText == null ? null : await sessionThreadRootEventId(client, next);
+      const replyEvent =
+        replyText == null || replyThreadRootEventId == null
+          ? null
+          : await appendEvent(client, {
+              workspaceId: next.workspace_id,
+              channelId: next.channel_id,
+              threadRootEventId: replyThreadRootEventId,
+              type: 'session.replied',
+              actorId: null,
+              payload: { session_id: id, text: replyText },
+            });
       const completedEvent = await appendEvent(client, {
         workspaceId: next.workspace_id,
         channelId: next.channel_id,
@@ -2368,7 +2490,7 @@ export class SessionRuns {
           permalink: `/s/${id}`,
         },
       });
-      if (!pending) return [completedEvent];
+      if (!pending) return replyEvent ? [replyEvent, completedEvent] : [completedEvent];
       const resolvedEvent = await appendEvent(client, {
         workspaceId: next.workspace_id,
         channelId: next.channel_id,
@@ -2377,8 +2499,9 @@ export class SessionRuns {
         actorId: next.spawned_by,
         payload: { sessionId: id, questionId: pending.questionId, reason: 'cancelled' },
       });
-      return [completedEvent, resolvedEvent];
+      return replyEvent ? [replyEvent, completedEvent, resolvedEvent] : [completedEvent, resolvedEvent];
     });
+    this.clearSessionActivity(id);
     for (const event of events) this.hub.publishEvent(event);
     if (events.some((event) => event.type === 'session.question_resolved')) {
       this.cancelScheduledQuestionRenotify(id);
@@ -2833,6 +2956,209 @@ async function assertThreadRoot(client: DbClient, channelId: string, threadRootE
   if (r.thread_root_event_id != null) {
     throw new DomainError(400, 'nested_thread', 'cannot spawn from a nested thread event');
   }
+}
+
+/** Resolve the conversation event that prompted a summon without persisting a
+ * second copy on the session row. The spawn event payload is the durable source
+ * of truth for later consumers. */
+async function resolveSpawnAnchorEventId(
+  client: DbClient,
+  args: { channelId: string; threadRootEventId: number | null; explicitAnchorEventId?: number },
+): Promise<number | null> {
+  if (args.explicitAnchorEventId !== undefined) {
+    if (!Number.isSafeInteger(args.explicitAnchorEventId) || args.explicitAnchorEventId <= 0) {
+      throw new DomainError(400, 'bad_anchor_event_id', 'anchorEventId must be a positive integer');
+    }
+    const anchor = await client.query<{ id: number; channel_id: string | null }>(
+      'SELECT id, channel_id FROM events WHERE id = $1',
+      [args.explicitAnchorEventId],
+    );
+    const row = anchor.rows[0];
+    if (!row) {
+      throw new DomainError(400, 'anchor_event_not_found', 'anchor event not found');
+    }
+    if (row.channel_id !== args.channelId) {
+      throw new DomainError(400, 'anchor_channel_mismatch', 'anchor event belongs to another channel');
+    }
+    return Number(row.id);
+  }
+
+  if (args.threadRootEventId != null) {
+    const latestThreadMessage = await client.query<{ id: number }>(
+      `SELECT id
+       FROM events
+       WHERE channel_id = $1
+         AND thread_root_event_id = $2
+         AND type = 'message.posted'
+       ORDER BY id DESC
+       LIMIT 1`,
+      [args.channelId, args.threadRootEventId],
+    );
+    return Number(latestThreadMessage.rows[0]?.id ?? args.threadRootEventId);
+  }
+
+  const latestChannelMessage = await client.query<{ id: number }>(
+    `SELECT id
+     FROM events
+     WHERE channel_id = $1
+       AND type = 'message.posted'
+     ORDER BY id DESC
+     LIMIT 1`,
+    [args.channelId],
+  );
+  return latestChannelMessage.rows[0] ? Number(latestChannelMessage.rows[0].id) : null;
+}
+
+function numberPayloadValue(value: unknown): number | null {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : null;
+}
+
+/** Every session conversation has either its supplied thread root or its own
+ * spawn-card root. The fallback covers legacy rows created before the latter
+ * was written back to `sessions.thread_root_event_id`. */
+async function sessionThreadRootEventId(client: DbClient, row: SessionRow): Promise<number | null> {
+  if (row.thread_root_event_id != null) return row.thread_root_event_id;
+  const spawn = await client.query<{ id: number; thread_root_event_id: number | null }>(
+    `SELECT id, thread_root_event_id
+     FROM events
+     WHERE type = 'session.spawned'
+       AND channel_id = $1
+       AND payload->>'sessionId' = $2
+     ORDER BY id ASC
+     LIMIT 1`,
+    [row.channel_id, row.id],
+  );
+  const event = spawn.rows[0];
+  if (!event) return null;
+  return event.thread_root_event_id == null ? Number(event.id) : Number(event.thread_root_event_id);
+}
+
+async function appendSessionThreadMessage(
+  client: DbClient,
+  row: SessionRow,
+  actorId: string,
+  text: string,
+  linkage: Record<string, string>,
+): Promise<WireEvent | null> {
+  const threadRootEventId = await sessionThreadRootEventId(client, row);
+  if (threadRootEventId == null) return null;
+  return appendEvent(client, {
+    workspaceId: row.workspace_id,
+    channelId: row.channel_id,
+    threadRootEventId,
+    type: 'message.posted',
+    actorId,
+    payload: { text, ...linkage },
+  });
+}
+
+function boundedSessionReplyText(text: string | null): string | null {
+  if (!text || text.trim().length === 0) return null;
+  if (Buffer.byteLength(text, 'utf8') <= SESSION_REPLY_MAX_BYTES) return text;
+
+  const markerBytes = Buffer.byteLength(SESSION_REPLY_TRUNCATION_MARKER, 'utf8');
+  let bytes = markerBytes;
+  let prefix = '';
+  for (const character of text) {
+    const characterBytes = Buffer.byteLength(character, 'utf8');
+    if (bytes + characterBytes > SESSION_REPLY_MAX_BYTES) break;
+    prefix += character;
+    bytes += characterBytes;
+  }
+  return `${prefix}${SESSION_REPLY_TRUNCATION_MARKER}`;
+}
+
+/** Derive a concise human-facing ticker from a tool-start frame. The durable
+ * transcript remains the source of truth; this deliberately exposes no tool
+ * output and is never persisted. */
+export function sessionActivitySummary(frame: CentaurEventFrame): string | null {
+  if (frame.event === 'assistant_tool_use_observed') {
+    return activityFallback(frame.data.tool_name);
+  }
+  if (frame.event !== 'amp_raw_event') return null;
+
+  const raw = objectRecord(frame.data);
+  const params = objectRecord(raw.params);
+  const item = objectRecord(raw.item ?? params.item);
+  const rawType = typeof raw.type === 'string' ? raw.type : typeof raw.method === 'string' ? raw.method : '';
+
+  if (rawType === 'item.started' || rawType === 'item/started') {
+    const itemType = typeof item.type === 'string' ? item.type : '';
+    if (itemType === 'commandExecution') {
+      return (
+        commandActivity(
+          stringFromActivityRecord(item, ['command', 'cmd']) ??
+            stringFromActivityRecord(objectRecord(item.input), ['command', 'cmd']),
+        ) ?? activityFallback(itemType)
+      );
+    }
+    if (itemType === 'fileChange') {
+      const changedPath = Array.isArray(item.changes)
+        ? item.changes
+            .map(objectRecord)
+            .map((change) => stringFromActivityRecord(change, ['path', 'file_path', 'filePath']))
+            .find((path): path is string => path != null)
+        : null;
+      return (
+        fileActivity(
+          'editing',
+          stringFromActivityRecord(item, ['path', 'file_path', 'filePath']) ??
+            stringFromActivityRecord(objectRecord(item.input), ['path', 'file_path', 'filePath']) ??
+            changedPath ??
+            null,
+        ) ?? activityFallback(itemType)
+      );
+    }
+  }
+
+  if (raw.type !== 'assistant') return null;
+  const message = objectRecord(raw.message);
+  const content = Array.isArray(message.content) ? message.content : [];
+  const tool = content.map(objectRecord).find((block) => block.type === 'tool_use');
+  if (!tool) return null;
+  const name = typeof tool.name === 'string' ? tool.name : 'tool';
+  const input = objectRecord(tool.input);
+  const command = stringFromActivityRecord(input, ['command', 'cmd', 'commandLine', 'script']);
+  if (command) return commandActivity(command);
+
+  const path = stringFromActivityRecord(input, ['path', 'file_path', 'filePath', 'filename']);
+  if (path) {
+    const lower = name.toLowerCase();
+    return fileActivity(
+      lower.includes('read') || lower.includes('view') || lower.includes('cat') ? 'reading' : 'editing',
+      path,
+    );
+  }
+  return activityFallback(name);
+}
+
+function stringFromActivityRecord(record: Record<string, unknown>, keys: readonly string[]): string | null {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === 'string' && value.trim()) return value;
+  }
+  return null;
+}
+
+function commandActivity(command: string | null): string | null {
+  if (!command) return null;
+  const compact = compactActivityText(command, 60);
+  const isTest =
+    /(?:^|\s)(?:pnpm|npm|yarn|bun|cargo|go|pytest|vitest|jest)\b.*\btest\b|\b(?:pytest|vitest|jest)\b/i.test(command);
+  return isTest ? `running tests: ${compact}` : `running: ${compact}`;
+}
+
+function fileActivity(verb: 'editing' | 'reading', path: string | null): string | null {
+  return path ? `${verb} ${compactActivityText(path, 80)}` : null;
+}
+
+function activityFallback(name: string): string {
+  return `running ${compactActivityText(name || 'tool', 60)}`;
+}
+
+function compactActivityText(value: string, maxLength: number): string {
+  const compact = value.trim().replace(/\s+/g, ' ');
+  return compact.length <= maxLength ? compact : `${compact.slice(0, Math.max(1, maxLength - 1))}…`;
 }
 
 function normalizeStatus(status: string): SessionStatus {

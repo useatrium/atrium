@@ -37,6 +37,7 @@ export function Timeline({
   onReact,
   resolveUser,
   onMarkupEntry,
+  onDelegateToAgent,
   unreadDividerAfterId,
   dividerReady = true,
   onReachBottom,
@@ -69,6 +70,7 @@ export function Timeline({
   onReact?: (message: ChatMessage, emoji: string) => Promise<void>;
   resolveUser?: (id: string) => UserRef | undefined;
   onMarkupEntry?: (handle: string, message: ChatMessage) => void;
+  onDelegateToAgent?: (message: ChatMessage) => void;
   unreadDividerAfterId?: number | null;
   dividerReady?: boolean;
   onReachBottom?: () => void;
@@ -327,9 +329,7 @@ export function Timeline({
                     className="inline-flex h-9 items-center justify-center rounded-md border border-edge-strong bg-surface px-3 text-sm font-medium text-fg-secondary transition-colors hover:bg-surface-overlay hover:text-fg disabled:cursor-default disabled:text-fg-faint"
                   >
                     Insert{' '}
-                    <code className="ml-1 rounded bg-surface-overlay/80 px-1 py-0.5 text-2xs text-accent-text">
-                      @agent
-                    </code>
+                    <code className="ml-1 rounded bg-surface-overlay/80 px-1 py-0.5 text-2xs text-accent-text">!!</code>
                   </button>
                 </div>
                 <div className="mt-4">
@@ -379,7 +379,15 @@ export function Timeline({
                 <MessageRow
                   message={item.message!}
                   grouped={item.grouped ?? false}
-                  session={item.message!.sessionId != null ? sessions[item.message!.sessionId] : undefined}
+                  session={
+                    item.message!.sessionId != null
+                      ? sessions[item.message!.sessionId]
+                      : item.message!.suggestedSessionId
+                        ? sessions[item.message!.suggestedSessionId]
+                        : item.message!.steeredSessionId
+                          ? sessions[item.message!.steeredSessionId]
+                          : undefined
+                  }
                   spectators={item.message!.sessionId != null ? (spectators[item.message!.sessionId] ?? 0) : 0}
                   meId={meId}
                   meHandle={meHandle}
@@ -395,6 +403,7 @@ export function Timeline({
                   onReact={onReact}
                   resolveUser={resolveUser}
                   onMarkupEntry={onMarkupEntry}
+                  onDelegateToAgent={onDelegateToAgent}
                 />
               </div>
             );

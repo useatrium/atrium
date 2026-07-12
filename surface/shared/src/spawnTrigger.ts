@@ -1,13 +1,16 @@
-export const AGENT_PREFIX = '@agent';
+/** Composer sigil that temporarily summons an agent before first-class agent
+ * mode replaces this compatibility path. */
+export const SUMMON_SIGIL = '!!';
 
-/** True while the composer text begins with "@agent" (drives the hint chip). */
-export function looksLikeAgentCommand(text: string): boolean {
-  return text.startsWith(AGENT_PREFIX);
+/** True while the composer text begins with the summon sigil. */
+export function looksLikeSummonSigil(text: string): boolean {
+  return text.startsWith(SUMMON_SIGIL);
 }
 
-/** Extract the task from "@agent <task>", or null if this is a plain message. */
-export function parseAgentTask(text: string): string | null {
-  if (!text.startsWith(`${AGENT_PREFIX} `)) return null;
-  const task = text.slice(AGENT_PREFIX.length + 1).trim();
-  return task.length > 0 ? task : null;
+/** Extract the task from `!! task` or `!!task`, or return null for a plain or
+ * incomplete message. */
+export function parseSummonSigil(text: string): { task: string } | null {
+  if (!text.startsWith(SUMMON_SIGIL)) return null;
+  const task = text.slice(SUMMON_SIGIL.length).trim();
+  return task.length > 0 ? { task } : null;
 }
