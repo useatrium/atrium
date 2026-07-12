@@ -185,6 +185,94 @@ describe('/api/activity', () => {
     expect(daveItems.map((item: any) => Number(item.eventId))).not.toContain(reply.id);
   });
 
+  it('surfaces reactions to my messages, channel invites, and seat requests as ambient history', async () => {
+    const alice = await login('alice', 'Alice');
+    const bob = await login('bob', 'Bob');
+    const mine = await post(bob.cookie, fx.channelId, 'react to this');
+    const reactRes = await app.inject({
+      method: 'POST',
+      url: `/api/messages/${mine.id}/reactions`,
+      headers: { cookie: alice.cookie },
+      payload: { emoji: '🔥', action: 'add' },
+    });
+    expect(reactRes.statusCode).toBe(200);
+
+    const sessionId = await createActivitySession(bob.user.id, 'seat session');
+    const seat = await insertSessionEventFor(sessionId, alice.user.id, 'session.seat_requested', {
+      by: alice.user.id,
+    });
+    const invite = await pool.query<{ id: number }>(
+      `INSERT INTO events (workspace_id, channel_id, type, actor_id, payload)
+       VALUES ($1, $2, 'channel.member_joined', $3, $4) RETURNING id`,
+      [fx.workspaceId, fx.channelId, alice.user.id, JSON.stringify({ userId: bob.user.id, displayName: 'Bob' })],
+    );
+
+    const items = (await activity(bob.cookie)).items;
+    const reaction = items.find((item: any) => item.kind === 'reaction');
+    expect(reaction).toMatchObject({ actorId: alice.user.id, attention: false });
+    expect(reaction.snippet).toContain('🔥');
+    expect(reaction.snippet).toContain('react to this');
+    expect(items.find((item: any) => Number(item.eventId) === seat)).toMatchObject({
+      kind: 'seat_request',
+      sessionTitle: 'seat session',
+      attention: false,
+    });
+    expect(items.find((item: any) => Number(item.eventId) === invite.rows[0]!.id)).toMatchObject({
+      kind: 'channel_invite',
+      actorId: alice.user.id,
+      attention: false,
+    });
+    // Nobody is alerted about their own reactions or other people's invites.
+    const aliceItems = (await activity(alice.cookie)).items;
+    expect(aliceItems.find((item: any) => item.kind === 'reaction')).toBeUndefined();
+  });
+
+  it('keeps muted-channel items in history but out of counts and attention', async () => {
+    const alice = await login('alice', 'Alice');
+    const bob = await login('bob', 'Bob');
+    const sessionId = await createActivitySession(bob.user.id, 'muted blocked session', 'queued');
+    await pool.query(`UPDATE sessions SET provider_auth_required = '{"provider":"claude"}'::jsonb WHERE id = $1`, [
+      sessionId,
+    ]);
+    const auth = await insertSessionEventFor(sessionId, bob.user.id, 'session.provider_auth_required', {
+      provider: 'claude',
+    });
+    const mention = await post(alice.cookie, fx.channelId, 'ping @bob while muted');
+
+    const before = await activity(bob.cookie);
+    expect(before.counts.attention).toBeGreaterThanOrEqual(1);
+    expect(before.counts.unread).toBeGreaterThanOrEqual(2);
+
+    const muteRes = await app.inject({
+      method: 'POST',
+      url: `/api/channels/${fx.channelId}/mute`,
+      headers: { cookie: bob.cookie },
+      payload: { muted: true },
+    });
+    expect(muteRes.statusCode).toBe(200);
+
+    const after = await activity(bob.cookie);
+    // Quiet, not hidden: the rows remain…
+    expect(after.items.find((item: any) => Number(item.eventId) === mention.id)).toMatchObject({
+      kind: 'mention',
+      muted: true,
+    });
+    expect(after.items.find((item: any) => Number(item.eventId) === auth)).toMatchObject({
+      kind: 'agent_auth',
+      muted: true,
+      attention: false,
+    });
+    // …but they no longer demand anything.
+    expect(after.counts).toEqual({ attention: 0, unread: 0 });
+
+    await app.inject({
+      method: 'POST',
+      url: `/api/channels/${fx.channelId}/mute`,
+      headers: { cookie: bob.cookie },
+      payload: { muted: false },
+    });
+  });
+
   it('does not leak stale private-channel mentions after membership changes', async () => {
     const alice = await login('alice', 'Alice');
     const bob = await login('bob', 'Bob');
