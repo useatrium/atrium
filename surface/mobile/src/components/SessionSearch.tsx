@@ -114,64 +114,55 @@ export function SessionSearch() {
   const [error, setError] = useState<string | null>(null);
   const seq = useRef(0);
 
+  const search = useCallback(
+    (query: string, delayMs = 0) => {
+      const mine = ++seq.current;
+      setResults([]);
+      setBusy(true);
+      setError(null);
+      const execute = () => {
+        api
+          .searchSessions({ q: query, limit: SEARCH_LIMIT })
+          .then(({ results }) => {
+            if (seq.current === mine) setResults(results);
+          })
+          .catch((err: unknown) => {
+            if (seq.current === mine) {
+              setResults([]);
+              setError(err instanceof Error ? err.message : 'Search failed');
+            }
+          })
+          .finally(() => {
+            if (seq.current === mine) setBusy(false);
+          });
+      };
+      const timer = delayMs > 0 ? setTimeout(execute, delayMs) : null;
+      if (timer == null) execute();
+      return () => {
+        if (timer != null) clearTimeout(timer);
+        if (seq.current === mine) seq.current += 1;
+      };
+    },
+    [api],
+  );
+
   useEffect(() => {
     const query = q.trim();
-    const mine = ++seq.current;
     if (query.length < MIN_QUERY_LENGTH) {
+      seq.current += 1;
       setResults([]);
       setBusy(false);
       setError(null);
       return;
     }
-
-    setResults([]);
-    setBusy(true);
-    setError(null);
-    const timer = setTimeout(() => {
-      api
-        .searchSessions({ q: query, limit: SEARCH_LIMIT })
-        .then(({ results }) => {
-          if (seq.current === mine) setResults(results);
-        })
-        .catch((err: unknown) => {
-          if (seq.current === mine) {
-            setResults([]);
-            setError(err instanceof Error ? err.message : 'Search failed');
-          }
-        })
-        .finally(() => {
-          if (seq.current === mine) setBusy(false);
-        });
-    }, SEARCH_DELAY_MS);
-
-    return () => {
-      clearTimeout(timer);
-      if (seq.current === mine) seq.current += 1;
-    };
-  }, [api, q]);
+    return search(query, SEARCH_DELAY_MS);
+  }, [q, search]);
 
   const retry = useCallback(() => {
     const query = q.trim();
     if (query.length < MIN_QUERY_LENGTH) return;
-    const mine = ++seq.current;
-    setResults([]);
-    setBusy(true);
-    setError(null);
-    api
-      .searchSessions({ q: query, limit: SEARCH_LIMIT })
-      .then(({ results }) => {
-        if (seq.current === mine) setResults(results);
-      })
-      .catch((err: unknown) => {
-        if (seq.current === mine) {
-          setResults([]);
-          setError(err instanceof Error ? err.message : 'Search failed');
-        }
-      })
-      .finally(() => {
-        if (seq.current === mine) setBusy(false);
-      });
-  }, [api, q]);
+    search(query);
+  }, [q, search]);
 
   const items = useMemo(() => buildItems(results), [results]);
   const queryReady = q.trim().length >= MIN_QUERY_LENGTH;
