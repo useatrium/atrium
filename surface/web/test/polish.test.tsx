@@ -16,8 +16,12 @@ import { ThemeProvider } from '../src/theme';
 import { isStalledSessionStatus, STALLED_AFTER_MS, type Session } from '../src/sessions/types';
 import { FakeEventSource, installFakeEventSource } from './helpers/fakeEventSource';
 import type { CentaurEventFrame } from '@atrium/centaur-client';
+import { clearUserDirectoryForTests, primeUserDirectory } from '../src/userDirectory';
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  clearUserDirectoryForTests();
+});
 
 const me = { id: 'u-me', handle: 'me', displayName: 'Me' };
 
@@ -225,17 +229,39 @@ describe('message editing', () => {
     renderThemed(<MessageRow message={msg(me.id)} grouped={false} meId={me.id} onEdit={onEdit} />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Edit message' }));
-    const box = screen.getByRole('textbox', { name: 'Edit message text' });
+    const box = screen.getByRole('combobox', { name: 'Edit message text' });
     fireEvent.change(box, { target: { value: 'typo fixed' } });
     fireEvent.keyDown(box, { key: 'Enter' });
 
     await waitFor(() => expect(onEdit).toHaveBeenCalledWith(expect.objectContaining({ id: 42 }), 'typo fixed'));
-    await waitFor(() => expect(screen.queryByRole('textbox', { name: 'Edit message text' })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole('combobox', { name: 'Edit message text' })).toBeNull());
   });
 
   it('offers no Edit button on other people’s messages', () => {
     renderThemed(<MessageRow message={msg('u-other')} grouped={false} meId={me.id} onEdit={async () => {}} />);
     expect(screen.queryByRole('button', { name: 'Edit message' })).toBeNull();
+  });
+
+  it('decodes stable mention tokens for editing and encodes them again on save', async () => {
+    const user = { id: '11111111-1111-4111-8111-111111111111', handle: 'ada', displayName: 'Ada Lovelace' };
+    primeUserDirectory([user]);
+    const onEdit = vi.fn(async () => {});
+    renderThemed(
+      <MessageRow
+        message={{ ...msg(me.id), text: `hello <@${user.id}>` }}
+        grouped={false}
+        meId={me.id}
+        onEdit={onEdit}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit message' }));
+    const box = screen.getByRole('combobox', { name: 'Edit message text' }) as HTMLTextAreaElement;
+    expect(box.value).toBe('hello @ada');
+    fireEvent.change(box, { target: { value: 'hello @ada!' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+
+    await waitFor(() => expect(onEdit).toHaveBeenCalledWith(expect.anything(), `hello <@${user.id}>!`));
   });
 });
 
@@ -379,6 +405,34 @@ describe('mentions', () => {
     expect(meSpan.className).toContain('warning');
     expect(otherSpan.className).toContain('accent');
     expect(meSpan.className).not.toBe(otherSpan.className);
+  });
+
+  it('tints the full row for stable-id and group mentions', () => {
+    const id = '11111111-1111-4111-8111-111111111111';
+    const message: ChatMessage = {
+      id: 42,
+      clientMsgId: null,
+      channelId: 'ch-1',
+      threadRootEventId: null,
+      text: `hello <@${id}>`,
+      edited: false,
+      author: { id: 'other', handle: 'other', displayName: 'Other' },
+      createdAt: new Date().toISOString(),
+      replyCount: 0,
+      lastReplyId: 0,
+      status: 'confirmed',
+    };
+    const { container, rerender } = renderThemed(
+      <MessageRow message={message} grouped={false} meId={id} meHandle="me" />,
+    );
+    expect(container.querySelector('[data-eid="42"]')?.className).toContain('warning');
+
+    rerender(
+      <ThemeProvider>
+        <MessageRow message={{ ...message, text: '<!here>' }} grouped={false} meId={id} meHandle="me" />
+      </ThemeProvider>,
+    );
+    expect(container.querySelector('[data-eid="42"]')?.className).toContain('warning');
   });
 });
 

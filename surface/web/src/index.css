@@ -70,7 +70,9 @@
   --fg-secondary: #d4d4d8;
   --fg-tertiary: #a1a1aa;
   --fg-muted: #8f8f98;
-  --fg-faint: #52525b;
+  /* #52525b measured 2.57:1 on --surface (axe serious); #85858e clears AA on
+     surface/raised/hover while staying a step below --fg-muted. */
+  --fg-faint: #85858e;
 
   --accent: #4f46e5;
   --accent-hover: #6366f1;

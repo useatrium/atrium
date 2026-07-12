@@ -6,7 +6,7 @@ import type { Db } from './db.js';
 import type { WsHub } from './hub.js';
 import type { WireEvent } from './events.js';
 import { config } from './config.js';
-import { mentionedHandles } from './mentions.js';
+import { memberUserIdsForChannel, resolveDirectMentionUserIds } from './mentions.js';
 import {
   getWebPushSender,
   type WebPushPayload,
@@ -15,13 +15,22 @@ import {
   type WebPushUrgency,
 } from './webpush.js';
 import { normalizeNotificationPrefs, type NotificationPrefs } from '@atrium/surface-client/prefs';
+import { extractMentionTokens } from '@atrium/surface-client/mentions';
 
 const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send';
 const EXPO_RECEIPTS_URL = 'https://exp.host/--/api/v2/push/getReceipts';
 const CHUNK = 100; // Expo's max messages per request
 const RECEIPT_DELAY_MS = 15 * 60 * 1000;
 
-type PushReason = 'dm' | 'mention' | 'thread' | 'channel';
+export type PushReason = 'dm' | 'mention' | 'mention_all' | 'thread' | 'channel';
+
+const PUSH_REASON_PRIORITY: Record<PushReason, number> = {
+  dm: 5,
+  mention: 4,
+  mention_all: 3,
+  thread: 2,
+  channel: 1,
+};
 
 interface PushRecipient {
   userId: string;
@@ -52,7 +61,9 @@ function addRecipient(
   actorId: string | null,
   reason: PushReason,
 ): void {
-  if (!userId || userId === actorId || recipients.has(userId)) return;
+  if (!userId || userId === actorId) return;
+  const existing = recipients.get(userId);
+  if (existing && PUSH_REASON_PRIORITY[existing] >= PUSH_REASON_PRIORITY[reason]) return;
   recipients.set(userId, reason);
 }
 
@@ -107,16 +118,28 @@ async function dropNonMembers(pool: Db, channelId: string, recipients: Map<strin
 }
 
 /** User ids to push for a message: DM partner(s), @mentioned users, or thread participants. */
+type PushEvent = Pick<WireEvent, 'channelId' | 'actorId' | 'payload'> & {
+  threadRootEventId?: number | null;
+};
+
+export function pushRecipientsFor(pool: Db, ev: PushEvent): Promise<PushRecipientResult>;
+export function pushRecipientsFor(
+  pool: Db,
+  hub: Pick<WsHub, 'presenceFor'>,
+  ev: PushEvent,
+): Promise<PushRecipientResult>;
 export async function pushRecipientsFor(
   pool: Db,
-  ev: Pick<WireEvent, 'channelId' | 'actorId' | 'payload'> & {
-    threadRootEventId?: number | null;
-  },
+  hubOrEvent: Pick<WsHub, 'presenceFor'> | PushEvent,
+  maybeEvent?: PushEvent,
 ): Promise<PushRecipientResult> {
+  const hub = maybeEvent ? (hubOrEvent as Pick<WsHub, 'presenceFor'>) : { presenceFor: () => [] };
+  const ev = maybeEvent ?? (hubOrEvent as PushEvent);
   if (!ev.channelId) return { userIds: [], channelName: '', isDm: false, recipients: [] };
-  const ch = await pool.query<{ name: string; kind: string }>('SELECT name, kind FROM channels WHERE id = $1', [
-    ev.channelId,
-  ]);
+  const ch = await pool.query<{ name: string; kind: string; workspace_id: string }>(
+    'SELECT name, kind, workspace_id FROM channels WHERE id = $1',
+    [ev.channelId],
+  );
   const row = ch.rows[0];
   if (!row) return { userIds: [], channelName: '', isDm: false, recipients: [] };
 
@@ -139,11 +162,24 @@ export async function pushRecipientsFor(
   }
 
   const text = typeof ev.payload?.text === 'string' ? ev.payload.text : '';
-  const handles = mentionedHandles(text);
-  if (handles.length > 0) {
-    const users = await pool.query<{ id: string }>('SELECT id FROM users WHERE handle = ANY($1::text[])', [handles]);
-    for (const user of users.rows) {
-      addRecipient(recipients, user.id, ev.actorId, 'mention');
+  for (const userId of await resolveDirectMentionUserIds(pool, text)) {
+    addRecipient(recipients, userId, ev.actorId, 'mention');
+  }
+
+  const { specials } = extractMentionTokens(text);
+  if (specials.length > 0) {
+    const memberIds = await memberUserIdsForChannel(pool, ev.channelId, {
+      kind: row.kind,
+      workspaceId: row.workspace_id,
+    });
+    const members = new Set(memberIds);
+    if (specials.includes('channel')) {
+      for (const userId of memberIds) addRecipient(recipients, userId, ev.actorId, 'mention_all');
+    }
+    if (specials.includes('here')) {
+      for (const user of hub.presenceFor(ev.channelId)) {
+        if (members.has(user.id)) addRecipient(recipients, user.id, ev.actorId, 'mention_all');
+      }
     }
   }
 
@@ -217,9 +253,10 @@ function sendMessagePushOptions(fetchOrOpts: typeof fetch | SendMessagePushOptio
   };
 }
 
-function titleFor(reason: PushReason, author: string, channelName: string): string {
+export function titleFor(reason: PushReason, author: string, channelName: string): string {
   if (reason === 'dm') return author;
   if (reason === 'mention') return `${author} mentioned you in #${channelName}`;
+  if (reason === 'mention_all') return `${author} mentioned everyone in #${channelName}`;
   if (reason === 'channel') return `${author} in #${channelName}`;
   return `${author} replied in #${channelName}`;
 }
@@ -418,7 +455,7 @@ export async function sendMessagePush(
   event: WireEvent,
   fetchOrOpts: typeof fetch | SendMessagePushOptions = fetch,
 ): Promise<void> {
-  const { recipients, channelName } = await pushRecipientsFor(pool, event);
+  const { recipients, channelName } = await pushRecipientsFor(pool, hub, event);
   const targets = recipients.filter(
     (recipient) => !(event.channelId && hub.isUserPresent(event.channelId, recipient.userId)),
   );
@@ -469,7 +506,7 @@ export async function sendMessagePush(
         token: r.token,
         subscription: r.subscription!,
         payload: payloadFor(r.user_id, title),
-        urgency: (reason === 'mention' ? 'high' : 'normal') as WebPushUrgency,
+        urgency: (reason === 'mention' || reason === 'mention_all' ? 'high' : 'normal') as WebPushUrgency,
       };
     });
 

@@ -19,6 +19,8 @@ import { VoiceRecorder, type RecordedVoice } from '../VoiceRecorder';
 import { SHORTCUTS } from '../lib/shortcuts';
 import { extractEntryHandles } from '../lib/entryLinks';
 import { EntryInlineChip } from './EntryQuoteCard';
+import { MentionSuggestions } from './MentionSuggestions';
+import { type MentionContext, useMentionTypeahead } from './useMentionTypeahead';
 
 const MAX_ATTACHMENTS = 10;
 const MAX_ATTACHMENT_BYTES = 100 * 1024 * 1024;
@@ -71,6 +73,8 @@ type ComposerProps = {
   onDraftPersisted?: (key: string, text: string) => void | Promise<void>;
   onDraftTouched?: (key: string) => void;
   previewEntryLinks?: boolean;
+  /** Enables channel mention suggestions. Omit for agent-session composers. */
+  mentionContext?: MentionContext;
 };
 
 export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Composer(
@@ -94,6 +98,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     onDraftPersisted,
     onDraftTouched,
     previewEntryLinks,
+    mentionContext,
   },
   imperativeRef,
 ) {
@@ -135,6 +140,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       : !text.trim() && readyFiles.length === 0
         ? 'Enter a message or attach a file'
         : 'Send message';
+  const mentions = useMentionTypeahead({ value: text, setValue: setText, textareaRef: ref, context: mentionContext });
 
   useEffect(() => () => draftWriter.cancel(), [draftWriter]);
 
@@ -157,12 +163,13 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 
   useEffect(() => {
     setText('');
+    mentions.clear();
     setFiles((prev) => {
       for (const file of prev) URL.revokeObjectURL(file.localUri);
       return [];
     });
     if (ref.current) ref.current.style.height = 'auto';
-  }, [draftKey]);
+  }, [draftKey, mentions.clear]);
 
   useEffect(() => {
     if (!initialDraft) return;
@@ -188,6 +195,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       captureForConfigure() {
         const captured = text;
         setText('');
+        mentions.clear();
         setAgentNeedsTask(false);
         persistDraftValue('');
         if (ref.current) ref.current.style.height = 'auto';
@@ -195,6 +203,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       },
       restoreDraft(value: string) {
         setText(value);
+        mentions.clear();
         setAgentNeedsTask(false);
         persistDraftValue(value);
         requestAnimationFrame(() => {
@@ -207,7 +216,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
         });
       },
     }),
-    [imperativeRef, persistDraftValue, text],
+    [imperativeRef, mentions.clear, persistDraftValue, text],
   );
 
   const contentHashFor = async (file: File): Promise<string | undefined> => {
@@ -289,7 +298,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       return;
     }
     onSend(
-      trimmed,
+      mentions.serialize(text).trim(),
       readyFiles.length > 0
         ? readyFiles.map((f) => ({
             id: f.fileId,
@@ -307,6 +316,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       draftWriter.saveNow(draftKey, '');
     }
     setText('');
+    mentions.clear();
     setFiles((prev) => {
       for (const file of prev) URL.revokeObjectURL(file.localUri);
       return [];
@@ -348,6 +358,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   };
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (mentions.onKeyDown(e)) return;
     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
       send();
@@ -369,7 +380,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
         }}
         onDragLeave={() => setDragOver(false)}
         onDrop={onDrop}
-        className={`rounded-lg border px-3 py-2 ${
+        className={`relative rounded-lg border px-3 py-2 ${
           disabled
             ? 'border-edge bg-surface-raised/40'
             : dragOver
@@ -377,6 +388,16 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               : 'border-edge-strong bg-surface-raised focus-within:border-edge-focus'
         }`}
       >
+        {mentions.open && (
+          <MentionSuggestions
+            activeIndex={mentions.activeIndex}
+            candidates={mentions.candidates}
+            listboxId={mentions.listboxId}
+            optionId={mentions.optionId}
+            onActiveIndexChange={mentions.setActiveIndex}
+            onInsert={mentions.insert}
+          />
+        )}
         {files.length > 0 && (
           <div className="mb-2 flex flex-wrap gap-1.5">
             {files.map((p) => (
@@ -464,8 +485,13 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                 disabled={disabled}
                 placeholder={disabled ? (disabledHint ?? placeholder) : placeholder}
                 aria-label="Message input"
+                aria-expanded={mentions.open}
+                aria-controls={mentions.open ? mentions.listboxId : undefined}
+                aria-activedescendant={mentions.open ? mentions.optionId(mentions.activeIndex) : undefined}
+                role="combobox"
+                aria-autocomplete="list"
                 onChange={(e) => {
-                  setText(e.target.value);
+                  mentions.onValueChange(e.target.value, e.target.selectionStart ?? e.target.value.length);
                   if (draftKey) {
                     onDraftTouched?.(draftKey);
                     draftWriter.schedule(draftKey, e.target.value);
@@ -476,6 +502,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                   e.target.style.height = `${Math.min(e.target.scrollHeight, 160)}px`;
                 }}
                 onKeyDown={onKeyDown}
+                onSelect={(e) => mentions.trackSelection(e.currentTarget)}
+                onKeyUp={(e) => mentions.trackSelection(e.currentTarget)}
                 onPaste={(e) => {
                   if (!allowAttachments || disabled) return;
                   if (e.clipboardData?.files?.length) {
