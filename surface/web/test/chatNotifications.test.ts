@@ -178,3 +178,81 @@ describe('notificationForWireEvent', () => {
     ).toBeNull();
   });
 });
+
+describe('session alert coverage parity with push', () => {
+  const channels = [channel()];
+
+  it('notifies for my agent questions with the session title', () => {
+    const sessions = { 's-1': session({ status: 'running' }) };
+    const n = notificationForWireEvent(
+      event({
+        type: 'session.question_requested',
+        actorId: me.id,
+        payload: { sessionId: 's-1', questions: [{ id: 'q', header: 'Decision', question: 'Ship it?' }] },
+      }),
+      me,
+      channels,
+      sessions,
+    );
+    expect(n).toMatchObject({ kind: 'session-alert', title: 'Write the report needs your input', body: 'Ship it?' });
+  });
+
+  it('notifies for crash-path failures with honest copy', () => {
+    const sessions = { 's-1': session({ status: 'failed' }) };
+    const n = notificationForWireEvent(
+      event({ type: 'session.status_changed', actorId: me.id, payload: { sessionId: 's-1', status: 'failed' } }),
+      me,
+      channels,
+      sessions,
+    );
+    expect(n).toMatchObject({ kind: 'session-alert', title: 'Session failed: Write the report' });
+  });
+
+  it('notifies for provider auth blocks and names the provider', () => {
+    const sessions = { 's-1': session({ status: 'queued' }) };
+    const n = notificationForWireEvent(
+      event({
+        type: 'session.provider_auth_required',
+        actorId: me.id,
+        payload: { sessionId: 's-1', provider: 'anthropic' },
+      }),
+      me,
+      channels,
+      sessions,
+    );
+    expect(n).toMatchObject({
+      kind: 'session-alert',
+      title: 'Write the report is blocked',
+      body: 'Reconnect anthropic to resume.',
+    });
+  });
+
+  it('stays silent for non-failed status changes, foreign sessions, and sessions pref off', () => {
+    const sessions = { 's-1': session({ status: 'running' }) };
+    expect(
+      notificationForWireEvent(
+        event({ type: 'session.status_changed', actorId: me.id, payload: { sessionId: 's-1', status: 'running' } }),
+        me,
+        channels,
+        sessions,
+      ),
+    ).toBeNull();
+    expect(
+      notificationForWireEvent(
+        event({ type: 'session.question_requested', actorId: ada.id, payload: { sessionId: 's-1', questions: [] } }),
+        me,
+        channels,
+        { 's-1': session({ spawnedBy: ada.id }) },
+      ),
+    ).toBeNull();
+    expect(
+      notificationForWireEvent(
+        event({ type: 'session.question_requested', actorId: me.id, payload: { sessionId: 's-1', questions: [] } }),
+        me,
+        channels,
+        sessions,
+        { messages: 'dm_mention', sessions: false, calls: true },
+      ),
+    ).toBeNull();
+  });
+});

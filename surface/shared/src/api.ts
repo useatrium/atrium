@@ -232,7 +232,17 @@ export interface RegisterPushBody {
 
 export type ActivityItem = {
   eventId: string;
-  kind: 'mention' | 'dm' | 'thread_reply' | 'agent_question' | 'session_completed' | 'session_failed' | 'agent_auth';
+  kind:
+    | 'mention'
+    | 'dm'
+    | 'thread_reply'
+    | 'agent_question'
+    | 'session_completed'
+    | 'session_failed'
+    | 'agent_auth'
+    | 'reaction'
+    | 'channel_invite'
+    | 'seat_request';
   channelId: string;
   channelName: string;
   actorId: string | null;
@@ -244,6 +254,8 @@ export type ActivityItem = {
   sessionStatus?: string | null;
   /** True only while this event's session is currently actionable. */
   attention: boolean;
+  /** Quiet-not-hidden: muted-channel items stay in history but never count. */
+  muted?: boolean;
 };
 
 export type ActivityCounts = {
