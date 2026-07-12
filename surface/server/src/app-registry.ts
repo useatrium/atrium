@@ -283,7 +283,7 @@ async function freezeSourceFiles(client: DbClient, workspaceId: string, prefixes
       rel_path: normalizeAppRelPath(row.rel_path),
       blob_sha: row.blob_sha,
       kind: row.kind,
-      mime: appFileMime(row.rel_path, row.mime),
+      mime: appAssetMime(row.rel_path, row.mime),
       size_bytes: Number(row.size_bytes ?? 0),
       s3_key: row.s3_key,
     }));
@@ -291,7 +291,7 @@ async function freezeSourceFiles(client: DbClient, workspaceId: string, prefixes
   return [];
 }
 
-function appFileMime(relPath: string, storedMime: string | null | undefined): string {
+export function appAssetMime(relPath: string, storedMime: string | null | undefined): string {
   const mime = (storedMime ?? '').split(';', 1)[0]!.trim().toLowerCase();
   if (mime && mime !== 'application/octet-stream') return mime;
   if (/\.html?$/i.test(relPath)) return 'text/html; charset=utf-8';

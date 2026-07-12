@@ -1,7 +1,7 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import type { Db } from './db.js';
 import { config } from './config.js';
-import { AppRegistry, normalizeAppRelPath } from './app-registry.js';
+import { appAssetMime, AppRegistry, normalizeAppRelPath } from './app-registry.js';
 import { verifyAppLaunchSignature } from './app-signing.js';
 import { getObjectStream } from './s3.js';
 
@@ -50,7 +50,7 @@ export async function buildAppsOrigin(deps: AppsOriginDeps): Promise<FastifyInst
     const file = await registry.resolveFile(params.appId, version, relPath);
     if (!file) return reply.code(404).send({ error: 'not_found', message: 'app file not found' });
 
-    reply.header('Content-Type', appOriginMime(file.relPath, file.mime));
+    reply.header('Content-Type', appAssetMime(file.relPath, file.mime));
     reply.header('Content-Length', String(file.sizeBytes));
     reply.header('Cache-Control', 'no-store');
     reply.header('X-Content-Type-Options', 'nosniff');
@@ -69,18 +69,4 @@ export async function buildAppsOrigin(deps: AppsOriginDeps): Promise<FastifyInst
   });
 
   return app;
-}
-
-function appOriginMime(relPath: string, storedMime: string | null | undefined): string {
-  const mime = (storedMime ?? '').split(';', 1)[0]!.trim().toLowerCase();
-  if (mime && mime !== 'application/octet-stream') return mime;
-  if (/\.html?$/i.test(relPath)) return 'text/html; charset=utf-8';
-  if (/\.css$/i.test(relPath)) return 'text/css; charset=utf-8';
-  if (/\.m?js$/i.test(relPath)) return 'text/javascript; charset=utf-8';
-  if (/\.json$/i.test(relPath)) return 'application/json; charset=utf-8';
-  if (/\.svg$/i.test(relPath)) return 'image/svg+xml';
-  if (/\.png$/i.test(relPath)) return 'image/png';
-  if (/\.jpe?g$/i.test(relPath)) return 'image/jpeg';
-  if (/\.webp$/i.test(relPath)) return 'image/webp';
-  return mime || 'application/octet-stream';
 }
