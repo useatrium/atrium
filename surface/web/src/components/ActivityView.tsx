@@ -19,11 +19,19 @@ const KIND_LABEL: Record<ActivityItem['kind'], string> = {
   session_completed: 'OK',
   session_failed: '!',
   agent_auth: '⚿',
+  reaction: '☺',
+  channel_invite: '+',
+  seat_request: '⇄',
 };
 
 function titleFor(item: ActivityItem): string {
   if (item.kind === 'mention') return `${item.actorName ?? 'Someone'} mentioned you`;
-  if (item.kind === 'dm') return `${item.actorName ?? 'Someone'} sent a DM`;
+  if (item.kind === 'dm') {
+    // DM channel names are internal keys; the gdm: prefix is the only group signal.
+    return item.channelName.startsWith('gdm:')
+      ? `${item.actorName ?? 'Someone'} messaged the group`
+      : `${item.actorName ?? 'Someone'} sent a DM`;
+  }
   if (item.kind === 'thread_reply') return `${item.actorName ?? 'Someone'} replied in a thread`;
   if (item.kind === 'agent_question') {
     return item.sessionTitle ? `${item.sessionTitle} · needs your answer` : 'Agent needs your input';
@@ -33,6 +41,10 @@ function titleFor(item: ActivityItem): string {
   }
   if (item.kind === 'session_failed') return `${item.sessionTitle ?? 'Agent'} failed`;
   if (item.kind === 'agent_auth') return `${item.sessionTitle ?? 'Agent'} is blocked — reconnect provider`;
+  if (item.kind === 'reaction') return `${item.actorName ?? 'Someone'} reacted to your message`;
+  if (item.kind === 'channel_invite') return `${item.actorName ?? 'Someone'} added you`;
+  if (item.kind === 'seat_request')
+    return `${item.actorName ?? 'Someone'} wants to drive · ${item.sessionTitle ?? 'a session'}`;
   return 'Activity';
 }
 
@@ -107,7 +119,7 @@ function ActivityRow({
 }) {
   const relativeTimestamp = formatRelativeTimestamp(item.createdAt);
   const exactTimestamp = formatExactTimestamp(item.createdAt);
-  const unread = isUnread(item, lastReadEventId);
+  const unread = isUnread(item, lastReadEventId) && !item.muted;
 
   return (
     <li>

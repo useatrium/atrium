@@ -390,6 +390,14 @@ export class SessionRuns {
   private readonly releaseTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly questionRenotifyTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
+  /**
+   * Test observability for negative timer assertions: callers need to observe
+   * cancellation because sleeping past a deadline races the async cancel path.
+   */
+  hasPendingQuestionRenotify(id: string): boolean {
+    return this.questionRenotifyTimers.has(id);
+  }
+
   constructor(
     private readonly pool: Db,
     private readonly hub: WsHub,

@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest';
-import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
+import { cleanup, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { EntryQuoteCards, stripYamlFrontmatter } from '../src/components/EntryQuoteCards';
 import type { ResolvedEntry } from '../src/lib/entryResolve';
-import { renderWithTheme } from './rnTestUtils';
+import { pressWhenReady, renderWithTheme } from './rnTestUtils';
 
 vi.mock('@expo/vector-icons', () => ({
   Ionicons: () => null,
@@ -50,12 +50,12 @@ describe('EntryQuoteCards', () => {
 
     expect(screen.queryByText('This is the transcript excerpt that should appear in the quote card.')).toBeNull();
 
-    const excerpt = await screen.findByText('This is the transcript excerpt that should appear in the quote card.');
+    await screen.findByText('This is the transcript excerpt that should appear in the quote card.');
     expect(screen.getByText('ASSISTANT MESSAGE')).toBeInTheDocument();
     expect(screen.getByText('Build the thing')).toBeInTheDocument();
 
-    fireEvent.click(excerpt);
-    expect(onOpenSession).toHaveBeenCalledWith('s-1');
+    await pressWhenReady(screen.findByRole('button', { name: /ASSISTANT MESSAGE, Build the thing:/ }));
+    await waitFor(() => expect(onOpenSession).toHaveBeenCalledWith('s-1'));
     expect(onOpenChannel).not.toHaveBeenCalled();
   });
 
@@ -78,11 +78,11 @@ describe('EntryQuoteCards', () => {
       />,
     );
 
-    const excerpt = await screen.findByText('This is the transcript excerpt that should appear in the quote card.');
+    await screen.findByText('This is the transcript excerpt that should appear in the quote card.');
     await waitFor(() => expect(resolveEntry).toHaveBeenCalledWith('evt_8'));
 
-    fireEvent.click(excerpt);
-    expect(onOpenChannel).toHaveBeenCalledWith('ch-1');
+    await pressWhenReady(screen.findByRole('button', { name: /MESSAGE, #general:/ }));
+    await waitFor(() => expect(onOpenChannel).toHaveBeenCalledWith('ch-1'));
   });
 
   it('renders artifact CriticMarkup content as a tracked-changes card with an expand footer', async () => {

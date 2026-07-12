@@ -337,7 +337,9 @@ describe('GET /api/internal/changes/stream', () => {
 
       await bindProfileWithBundle(known);
       await stream.waitForChanged('profile', known.key);
-      await new Promise((resolve) => setTimeout(resolve, 1200));
+      // Negative debounce assertion: a correctly filtered profile change emits
+      // no completion signal, so wait beyond the one-second debounce window.
+      await new Promise((resolve) => setTimeout(resolve, 1600));
       expect(publishToUsers).toHaveBeenCalledTimes(1);
     } finally {
       await stream.close();

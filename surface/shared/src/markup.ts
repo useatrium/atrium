@@ -24,6 +24,18 @@ export function splitMarkdownFrontmatter(content: string): { frontmatter: string
   return { frontmatter: content.slice(0, frontmatterEnd), body: content.slice(bodyStart) };
 }
 
+/** One-line plain-text preview: compact the blocks, then strip inline markup
+ * (links/code/emphasis) so the string can render in a truncating Text node. */
+export function plainMarkdownSnippet(text: string): string {
+  return compactMarkdownSource(text)
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+    .replace(/`{1,3}([^`]+)`{1,3}/g, '$1')
+    .replace(/(\*\*|__)(.*?)\1/g, '$2')
+    .replace(/(^|\s)([*_])(?!\s)([^*_]+?)(?<=\S)\2(?=\s|[.,!?;:]|$)/g, '$1$3')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 export function compactMarkdownSource(text: string): string {
   return text
     .replace(/```[\s\S]*?```/g, (match) => {

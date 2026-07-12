@@ -328,7 +328,7 @@ describe('Sidebar', () => {
     expect(screen.getByText('Workspace')).toBeTruthy();
     expect(screen.getByText('Conversations')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Agents' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: '@ Attention' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Attention' })).toBeTruthy();
     expect(screen.queryByText('Sessions')).toBeNull();
   });
 

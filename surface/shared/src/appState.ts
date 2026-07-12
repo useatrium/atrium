@@ -22,6 +22,7 @@ import {
   type WireEvent,
 } from './timeline';
 import { applySessionEvent, maxSessionStatus, mergeSpawnResponse, type Session } from './sessions';
+import { mentionsUser } from './mentions';
 
 /** 'mention' outranks plain unread — it renders as a red @ badge. */
 export type UnreadLevel = false | true | 'mention';
@@ -430,7 +431,10 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         const channel = state.channels.find((c) => c.id === ev.channelId);
         if (channel?.muted) return withEventCursor(next);
         const isDm = channel?.kind === 'dm' || channel?.kind === 'gdm';
-        const mentioned = isDm || (ev.actorId !== null && mentionsHandle(text, state.meHandle)) ? 'mention' : true;
+        const mentioned =
+          isDm || (ev.actorId !== null && mentionsUser(text, { id: state.meId, handle: state.meHandle }))
+            ? 'mention'
+            : true;
         // A mention badge sticks until the channel is read.
         const level = next.unread[ev.channelId] === 'mention' ? 'mention' : mentioned;
         next = { ...next, unread: { ...next.unread, [ev.channelId]: level } };

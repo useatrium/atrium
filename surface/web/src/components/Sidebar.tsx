@@ -434,7 +434,12 @@ export function Sidebar({
                     : 'text-fg-tertiary hover:bg-surface-overlay/70 hover:text-fg-body'
                 }`}
               >
-                <span className="grid w-[15px] shrink-0 place-items-center text-xs font-bold text-fg-muted">@</span>
+                <span
+                  aria-hidden="true"
+                  className="grid w-[15px] shrink-0 place-items-center text-xs font-bold text-fg-muted"
+                >
+                  @
+                </span>
                 <span className="truncate">Attention</span>
                 {inboxBadge()}
               </button>
@@ -464,7 +469,7 @@ export function Sidebar({
                       setError(null);
                     }}
                     aria-label="Create channel"
-                    className="rounded px-1.5 text-sm leading-5 text-fg-muted hover:bg-surface-overlay hover:text-fg-body"
+                    className="grid min-h-6 min-w-6 place-items-center rounded px-1.5 text-sm leading-5 text-fg-muted hover:bg-surface-overlay hover:text-fg-body"
                   >
                     +
                   </button>
@@ -514,7 +519,7 @@ export function Sidebar({
                     type="button"
                     onClick={() => openDmPicker()}
                     aria-label="Start a DM"
-                    className="rounded px-1.5 text-sm leading-5 text-fg-muted hover:bg-surface-overlay hover:text-fg-body"
+                    className="grid min-h-6 min-w-6 place-items-center rounded px-1.5 text-sm leading-5 text-fg-muted hover:bg-surface-overlay hover:text-fg-body"
                   >
                     +
                   </button>

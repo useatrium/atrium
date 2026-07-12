@@ -202,8 +202,9 @@ describe('session pane folds the B_tooltest stream', () => {
     expect(await screen.findByRole('dialog', { name: 'Session capabilities' })).toBeTruthy();
     expect(sessionsApi.getCapabilities).toHaveBeenCalledWith('s-b');
     expect(screen.getByRole('button', { name: 'Refresh capabilities' })).toBeTruthy();
+    // The dialog mounts a commit before the async capabilities land, so anchor on resolved snapshot content.
     expect(
-      screen.getByText('Codex partial snapshot: 1 tool, 0 MCP servers, 0 agents, 1 skill, 1 observed call.'),
+      await screen.findByText('Codex partial snapshot: 1 tool, 0 MCP servers, 0 agents, 1 skill, 1 observed call.'),
     ).toBeTruthy();
     expect(screen.getByText('functions.exec_command')).toBeTruthy();
     expect(screen.getByText('stress-test')).toBeTruthy();

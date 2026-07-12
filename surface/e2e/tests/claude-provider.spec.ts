@@ -6,7 +6,9 @@ test('Claude Code spawn offers subscription auth without blocking default auth',
 
   await page.getByRole('button', { name: 'New agent' }).click();
   await page.getByPlaceholder('What should the agent do?').fill('check claude provider wiring');
-  await page.getByRole('combobox').selectOption('claude-code');
+  // The message composer is also role=combobox (ARIA typeahead) — target the
+  // harness <select> element specifically.
+  await page.locator('select').selectOption('claude-code');
 
   // Calm, neutral note (no longer a "not connected" warning): the default auth
   // works and Connect is an opt-in upgrade. (Apostrophe is a typographic ’.)

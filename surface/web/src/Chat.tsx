@@ -2306,6 +2306,15 @@ export function Chat({
                 spectators={spectators}
                 meId={me.id}
                 meHandle={me.handle}
+                mentionContext={
+                  active
+                    ? {
+                        channelId: active.id,
+                        includeSpecials: active.kind !== 'dm' && active.kind !== 'gdm',
+                        publicChannel: active.kind === 'public',
+                      }
+                    : undefined
+                }
                 editRequestId={editRequestId}
                 highlightId={highlightId}
                 onEditRequestHandled={() => setEditRequestId(null)}
@@ -2360,6 +2369,11 @@ export function Chat({
                 onConfigureAgent={configureAgentFromComposer}
                 previewEntryLinks
                 allowAttachments
+                mentionContext={{
+                  channelId: active.id,
+                  includeSpecials: active.kind !== 'dm' && active.kind !== 'gdm',
+                  publicChannel: active.kind === 'public',
+                }}
               />
             </>
           )}
@@ -2450,6 +2464,11 @@ export function Chat({
               spectators={spectators}
               meId={me.id}
               meHandle={me.handle}
+              mentionContext={{
+                channelId: active.id,
+                includeSpecials: active.kind !== 'dm' && active.kind !== 'gdm',
+                publicChannel: active.kind === 'public',
+              }}
               onClose={() => goToRoute({ surface: 'chat', channelId: active.id, sessionId: null, focusSession: false })}
               onSend={(text, attachments, attachmentRefs, voice, broadcast) =>
                 send(active.id, text, openThreadRoot.id!, attachments, attachmentRefs, voice, broadcast)

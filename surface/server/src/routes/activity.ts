@@ -10,7 +10,10 @@ type ActivityKind =
   | 'agent_question'
   | 'session_completed'
   | 'session_failed'
-  | 'agent_auth';
+  | 'agent_auth'
+  | 'reaction'
+  | 'channel_invite'
+  | 'seat_request';
 
 interface ActivityRow {
   event_id: number;
@@ -25,6 +28,7 @@ interface ActivityRow {
   session_title: string | null;
   session_status: string | null;
   attention: boolean;
+  muted: boolean;
 }
 
 interface ActivityQueryRow {
@@ -74,6 +78,7 @@ function toActivityItem(row: ActivityRow) {
     sessionTitle: row.session_title,
     sessionStatus: row.session_status,
     attention: row.attention,
+    muted: row.muted,
   };
 }
 
@@ -315,6 +320,69 @@ export function registerActivityRoutes(app: FastifyInstance, deps: ActivityRoute
          WHERE e.type IN ('session.provider_auth_required', 'session.github_auth_required')
            AND s.spawned_by = $1
            AND ${visibleChannel}
+
+         UNION ALL
+
+         SELECT e.id AS event_id,
+                'reaction'::text AS kind,
+                e.channel_id,
+                e.actor_id,
+                (e.payload->>'emoji') || '  ' || coalesce(nullif(t.payload->>'text', ''), '(attachment)') AS snippet,
+                e.created_at,
+                NULL::uuid AS session_id,
+                NULL::text AS session_title,
+                NULL::text AS session_status,
+                false AS attention
+         FROM events e
+         JOIN events t
+           ON t.id = NULLIF(substring(e.payload->>'target' FROM '^evt_([0-9]+)$'), '')::bigint
+         JOIN channels c ON c.id = e.channel_id
+         WHERE e.type = 'reaction.added'
+           AND e.actor_id IS NOT NULL
+           AND e.actor_id <> $1
+           AND t.actor_id = $1
+           AND ${visibleChannel}
+
+         UNION ALL
+
+         SELECT e.id AS event_id,
+                'channel_invite'::text AS kind,
+                e.channel_id,
+                e.actor_id,
+                'You were added to this channel.' AS snippet,
+                e.created_at,
+                NULL::uuid AS session_id,
+                NULL::text AS session_title,
+                NULL::text AS session_status,
+                false AS attention
+         FROM events e
+         JOIN channels c ON c.id = e.channel_id
+         WHERE e.type = 'channel.member_joined'
+           AND e.payload->>'userId' = $1::text
+           AND e.actor_id IS NOT NULL
+           AND e.actor_id <> $1
+           AND ${visibleChannel}
+
+         UNION ALL
+
+         SELECT e.id AS event_id,
+                'seat_request'::text AS kind,
+                e.channel_id,
+                e.actor_id,
+                'Wants to take the driver seat.' AS snippet,
+                e.created_at,
+                s.id AS session_id,
+                s.title AS session_title,
+                s.status AS session_status,
+                false AS attention
+         FROM events e
+         JOIN channels c ON c.id = e.channel_id
+         JOIN sessions s ON s.id::text = e.payload->>'sessionId'
+         WHERE e.type = 'session.seat_requested'
+           AND e.actor_id IS NOT NULL
+           AND e.actor_id <> $1
+           AND s.spawned_by = $1
+           AND ${visibleChannel}
        ),
        page AS (
          SELECT a.event_id,
@@ -328,10 +396,12 @@ export function registerActivityRoutes(app: FastifyInstance, deps: ActivityRoute
                 a.session_id,
                 a.session_title,
                 a.session_status,
-                a.attention
+                (a.attention AND mt.channel_id IS NULL) AS attention,
+                (mt.channel_id IS NOT NULL) AS muted
          FROM activity a
          JOIN channels c ON c.id = a.channel_id
          LEFT JOIN users u ON u.id = a.actor_id
+         LEFT JOIN channel_mutes mt ON mt.channel_id = a.channel_id AND mt.user_id = $1
          WHERE ($2::bigint IS NULL OR a.event_id < $2::bigint)
          ORDER BY a.event_id DESC
          LIMIT 50
@@ -341,6 +411,10 @@ export function registerActivityRoutes(app: FastifyInstance, deps: ActivityRoute
          FROM sessions s
          CROSS JOIN read_cursor
          WHERE s.spawned_by = $1
+           AND NOT EXISTS (
+             SELECT 1 FROM channel_mutes mt
+             WHERE mt.channel_id = s.channel_id AND mt.user_id = $1
+           )
            AND (
              (
                s.pending_question IS NOT NULL
@@ -364,7 +438,13 @@ export function registerActivityRoutes(app: FastifyInstance, deps: ActivityRoute
        SELECT read_cursor.last_read_event_id,
               LEAST(
                 99::bigint,
-                (SELECT COUNT(*) FROM activity WHERE event_id > read_cursor.last_read_event_id)
+                (SELECT COUNT(*)
+                 FROM activity qa
+                 WHERE qa.event_id > read_cursor.last_read_event_id
+                   AND NOT EXISTS (
+                     SELECT 1 FROM channel_mutes mt
+                     WHERE mt.channel_id = qa.channel_id AND mt.user_id = $1
+                   ))
               )::int AS unread_count,
               attention_count.attention_count,
               COALESCE((SELECT json_agg(page ORDER BY page.event_id DESC) FROM page), '[]'::json) AS items

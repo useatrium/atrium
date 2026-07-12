@@ -12,6 +12,7 @@ import { buildTimelineItems } from '@atrium/surface-client';
 import { Composer } from './Composer';
 import { XIcon } from './icons';
 import { MessageRow } from './MessageRow';
+import type { MentionContext } from './useMentionTypeahead';
 import {
   THREAD_PANE_FALLBACK_WIDTH,
   THREAD_PANE_MAX_VW,
@@ -28,6 +29,7 @@ export function ThreadPanel({
   spectators,
   meId,
   meHandle,
+  mentionContext,
   onClose,
   onSend,
   queueUpload,
@@ -53,6 +55,7 @@ export function ThreadPanel({
   spectators: Record<string, number>;
   meId?: string;
   meHandle?: string;
+  mentionContext?: MentionContext;
   onClose: () => void;
   onSend: (
     text: string,
@@ -143,6 +146,7 @@ export function ThreadPanel({
           spectators={spectatorsFor(root)}
           meId={meId}
           meHandle={meHandle}
+          mentionContext={mentionContext}
           onOpenSession={onOpenSession}
           onRetry={onRetry}
           onEdit={onEdit}
@@ -167,6 +171,7 @@ export function ThreadPanel({
               spectators={spectatorsFor(item.message!)}
               meId={meId}
               meHandle={meHandle}
+              mentionContext={mentionContext}
               onOpenSession={onOpenSession}
               onRetry={onRetry}
               onEdit={onEdit}
@@ -212,6 +217,7 @@ export function ThreadPanel({
         onDraftPersisted={onDraftPersisted}
         onDraftTouched={onDraftTouched}
         previewEntryLinks={previewEntryLinks}
+        mentionContext={mentionContext}
       />
     </aside>
   );
