@@ -103,22 +103,13 @@ export class IronControlAdminClient {
     token: string;
     labels?: Record<string, unknown>;
   }): Promise<IronControlSecret> {
-    return this.write<IronControlSecret>('PUT', `/api/v1/static_secrets/${encodeURIComponent(args.foreignId)}`, {
-      namespace: this.namespace,
-      foreign_id: args.foreignId,
-      name: args.name,
-      labels: args.labels ?? {},
-      replace_config: {
-        proxy_value: 'GITHUB_TOKEN',
-        match_headers: ['Authorization'],
-        require: true,
-      },
+    return this.upsertGitHubReplacementSecret({
+      ...args,
       source: {
         source_type: 'control_plane',
         secret: args.token,
         config: { authorization_format: 'github_basic' },
       },
-      rules: [{ host: 'github.com' }, { host: 'api.github.com' }],
     });
   }
 
@@ -126,22 +117,15 @@ export class IronControlAdminClient {
     token: string;
     labels?: Record<string, unknown>;
   }): Promise<IronControlSecret> {
-    return this.write<IronControlSecret>('PUT', `/api/v1/static_secrets/${githubPublicReadSecretForeignId()}`, {
-      namespace: this.namespace,
-      foreign_id: githubPublicReadSecretForeignId(),
+    return this.upsertGitHubReplacementSecret({
+      foreignId: githubPublicReadSecretForeignId(),
       name: 'GitHub public-read fallback token',
-      labels: args.labels ?? {},
-      replace_config: {
-        proxy_value: 'GITHUB_TOKEN',
-        match_headers: ['Authorization'],
-        require: true,
-      },
+      labels: args.labels,
       source: {
         source_type: 'control_plane',
         secret: args.token,
         config: { authorization_format: 'github_basic' },
       },
-      rules: [{ host: 'github.com' }, { host: 'api.github.com' }],
     });
   }
 
@@ -151,6 +135,21 @@ export class IronControlAdminClient {
     brokerCredentialId: string;
     labels?: Record<string, unknown>;
   }): Promise<IronControlSecret> {
+    return this.upsertGitHubReplacementSecret({
+      ...args,
+      source: {
+        source_type: 'token_broker',
+        config: { ...tokenBrokerSourceConfig(args.brokerCredentialId, this.namespace), authorization_format: 'github_basic' },
+      },
+    });
+  }
+
+  private async upsertGitHubReplacementSecret(args: {
+    foreignId: string;
+    name: string;
+    labels?: Record<string, unknown>;
+    source: Record<string, unknown>;
+  }): Promise<IronControlSecret> {
     return this.write<IronControlSecret>('PUT', `/api/v1/static_secrets/${encodeURIComponent(args.foreignId)}`, {
       namespace: this.namespace,
       foreign_id: args.foreignId,
@@ -161,10 +160,7 @@ export class IronControlAdminClient {
         match_headers: ['Authorization'],
         require: true,
       },
-      source: {
-        source_type: 'token_broker',
-        config: { ...tokenBrokerSourceConfig(args.brokerCredentialId, this.namespace), authorization_format: 'github_basic' },
-      },
+      source: args.source,
       rules: [{ host: 'github.com' }, { host: 'api.github.com' }],
     });
   }
