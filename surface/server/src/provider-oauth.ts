@@ -170,14 +170,7 @@ export async function postForm<T = unknown>(
     },
     body: new URLSearchParams(form).toString(),
   });
-  let body: unknown = null;
-  const text = await res.text();
-  try {
-    body = text ? JSON.parse(text) : null;
-  } catch {
-    body = { raw: text };
-  }
-  return { ok: res.ok, status: res.status, body: body as T };
+  return { ok: res.ok, status: res.status, body: (await readResponseBody(res)) as T };
 }
 
 // ── JSON-body token-endpoint POST ────────────────────────────────────────────
@@ -198,14 +191,16 @@ export async function postJson<T = unknown>(
     },
     body: JSON.stringify(payload),
   });
-  let body: unknown = null;
-  const text = await res.text();
+  return { ok: res.ok, status: res.status, body: (await readResponseBody(res)) as T };
+}
+
+async function readResponseBody(response: Response): Promise<unknown> {
+  const text = await response.text();
   try {
-    body = text ? JSON.parse(text) : null;
+    return text ? JSON.parse(text) : null;
   } catch {
-    body = { raw: text };
+    return { raw: text };
   }
-  return { ok: res.ok, status: res.status, body: body as T };
 }
 
 // ── AES-256-GCM seal/unseal (shape-compatible with provider-credentials.ts) ──
