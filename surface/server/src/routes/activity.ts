@@ -96,7 +96,10 @@ function exceptionIdsFrom(row: { unread_exception_ids: Array<number | string> | 
   return Array.isArray(row.unread_exception_ids) ? row.unread_exception_ids.map(String) : [];
 }
 
-async function readStateFor(pool: Db, userId: string): Promise<{ lastReadEventId: string; unreadExceptionIds: string[] }> {
+async function readStateFor(
+  pool: Db,
+  userId: string,
+): Promise<{ lastReadEventId: string; unreadExceptionIds: string[] }> {
   const res = await pool.query<ActivityReadStateRow>(
     `SELECT COALESCE((
        SELECT last_read_event_id FROM activity_read_cursors WHERE user_id = $1
@@ -143,19 +146,23 @@ export function registerActivityRoutes(app: FastifyInstance, deps: ActivityRoute
   app.post('/api/activity/read', async (req, reply) => {
     const user = requireUser(req, reply);
     if (!user) return;
-    const body = req.body as {
-      lastReadEventId?: unknown;
-      markReadEventId?: unknown;
-      markUnreadEventId?: unknown;
-    } | undefined;
+    const body = req.body as
+      | {
+          lastReadEventId?: unknown;
+          markReadEventId?: unknown;
+          markUnreadEventId?: unknown;
+        }
+      | undefined;
 
     const markUnreadEventId = parseReadEventId(body?.markUnreadEventId);
     const markReadEventId = parseReadEventId(body?.markReadEventId);
     const requestedCursor = parseReadEventId(body?.lastReadEventId);
 
-    const modes = [requestedCursor !== undefined, markReadEventId !== undefined, markUnreadEventId !== undefined].filter(
-      Boolean,
-    ).length;
+    const modes = [
+      requestedCursor !== undefined,
+      markReadEventId !== undefined,
+      markUnreadEventId !== undefined,
+    ].filter(Boolean).length;
     if (modes !== 1) {
       return reply.code(400).send({
         error: 'bad_request',

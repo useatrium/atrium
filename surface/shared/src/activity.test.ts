@@ -1,10 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  activityKindMarker,
-  isActivityUnread,
-  matchesActivityFilter,
-  type ActivityFeedFilter,
-} from './activity.js';
+import { activityKindMarker, isActivityUnread, matchesActivityFilter, type ActivityFeedFilter } from './activity.js';
 import type { ActivityItem } from './api.js';
 
 function item(overrides: Partial<ActivityItem> = {}): ActivityItem {

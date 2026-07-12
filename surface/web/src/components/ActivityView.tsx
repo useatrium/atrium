@@ -162,7 +162,9 @@ function ActivityRow({
               <CompactMarkdownText text={item.snippet} />
             </span>
             {/* DM channel names are internal keys; the title already names the sender. */}
-            {item.kind !== 'dm' && <span className="mt-1 block truncate text-xs text-fg-muted">#{item.channelName}</span>}
+            {item.kind !== 'dm' && (
+              <span className="mt-1 block truncate text-xs text-fg-muted">#{item.channelName}</span>
+            )}
           </span>
         </button>
         <Menu>
@@ -257,9 +259,7 @@ export function ActivityView({
         setNextCursor(res.nextCursor);
         // Decode-with-default: a deploy-skewed server may predate read-state.
         setLastReadEventId(typeof res.lastReadEventId === 'string' ? res.lastReadEventId : '0');
-        setUnreadExceptionIds(
-          Array.isArray(res.unreadExceptionIds) ? res.unreadExceptionIds.map(String) : [],
-        );
+        setUnreadExceptionIds(Array.isArray(res.unreadExceptionIds) ? res.unreadExceptionIds.map(String) : []);
         const nextCounts = { attention: Number(res.counts?.attention) || 0, unread: Number(res.counts?.unread) || 0 };
         setCounts(nextCounts);
         onCountsChange?.(nextCounts);
@@ -294,8 +294,7 @@ export function ActivityView({
       const previous = { lastReadEventId, unreadExceptionIds, counts, items };
       // Optimistic: strip this exception and bump watermark through this id.
       const nextExceptions = unreadExceptionIds.filter((id) => id !== item.eventId);
-      const nextWatermark =
-        Number(lastReadEventId) < eventId ? String(eventId) : lastReadEventId;
+      const nextWatermark = Number(lastReadEventId) < eventId ? String(eventId) : lastReadEventId;
       setLastReadEventId(nextWatermark);
       setUnreadExceptionIds(nextExceptions);
       setCounts((c) => {
@@ -303,9 +302,7 @@ export function ActivityView({
         onCountsChange?.(next);
         return next;
       });
-      setItems((rows) =>
-        rows.map((row) => (row.eventId === item.eventId ? { ...row, unread: false } : row)),
-      );
+      setItems((rows) => rows.map((row) => (row.eventId === item.eventId ? { ...row, unread: false } : row)));
       try {
         const response = await api.markActivityItemRead(eventId);
         applyReadState(response);
@@ -336,9 +333,7 @@ export function ActivityView({
         onCountsChange?.(next);
         return next;
       });
-      setItems((rows) =>
-        rows.map((row) => (row.eventId === item.eventId ? { ...row, unread: true } : row)),
-      );
+      setItems((rows) => rows.map((row) => (row.eventId === item.eventId ? { ...row, unread: true } : row)));
       try {
         const response = await api.markActivityItemUnread(eventId);
         applyReadState(response);
@@ -472,9 +467,7 @@ export function ActivityView({
                 aria-selected={selected}
                 onClick={() => setFilter(entry.id)}
                 className={`rounded px-2 py-0.5 text-2xs font-semibold ${
-                  selected
-                    ? 'bg-surface-overlay text-fg shadow-sm'
-                    : 'text-fg-muted hover:text-fg-body'
+                  selected ? 'bg-surface-overlay text-fg shadow-sm' : 'text-fg-muted hover:text-fg-body'
                 }`}
               >
                 {entry.label}

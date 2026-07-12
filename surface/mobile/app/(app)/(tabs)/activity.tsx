@@ -191,15 +191,12 @@ export default function ActivityScreen() {
     void load('initial');
   }, [load]);
 
-  const applyReadState = useCallback(
-    (state: { lastReadEventId: string; unreadExceptionIds?: string[] }) => {
-      setLastReadEventId(state.lastReadEventId);
-      if (Array.isArray(state.unreadExceptionIds)) {
-        setUnreadExceptionIds(state.unreadExceptionIds.map(String));
-      }
-    },
-    [],
-  );
+  const applyReadState = useCallback((state: { lastReadEventId: string; unreadExceptionIds?: string[] }) => {
+    setLastReadEventId(state.lastReadEventId);
+    if (Array.isArray(state.unreadExceptionIds)) {
+      setUnreadExceptionIds(state.unreadExceptionIds.map(String));
+    }
+  }, []);
 
   const markItemRead = useCallback(
     async (item: ActivityItem) => {
@@ -209,9 +206,7 @@ export default function ActivityScreen() {
       setLastReadEventId((w) => (Number(w) < eventId ? String(eventId) : w));
       setUnreadExceptionIds((ids) => ids.filter((id) => id !== item.eventId));
       setCounts((prev) => ({ attention: prev.attention, unread: Math.max(0, prev.unread - 1) }));
-      setActivityItems((rows) =>
-        rows.map((row) => (row.eventId === item.eventId ? { ...row, unread: false } : row)),
-      );
+      setActivityItems((rows) => rows.map((row) => (row.eventId === item.eventId ? { ...row, unread: false } : row)));
       try {
         const response = await api.markActivityItemRead(eventId);
         applyReadState(response);
@@ -236,9 +231,7 @@ export default function ActivityScreen() {
         setUnreadExceptionIds((ids) => [...ids, item.eventId]);
       }
       setCounts((prev) => ({ attention: prev.attention, unread: Math.min(99, prev.unread + 1) }));
-      setActivityItems((rows) =>
-        rows.map((row) => (row.eventId === item.eventId ? { ...row, unread: true } : row)),
-      );
+      setActivityItems((rows) => rows.map((row) => (row.eventId === item.eventId ? { ...row, unread: true } : row)));
       try {
         const response = await api.markActivityItemUnread(eventId);
         applyReadState(response);
