@@ -68,6 +68,62 @@ describe('channel message pagination', () => {
     expect(catchUp.hasMore).toBe(false);
   });
 
+  it('returns persisted root question events in fresh and paged history', async () => {
+    const before = await post('before question');
+    const questionId = 'question-1';
+    const inserted = await pool.query<{ id: string; type: string }>(
+      `INSERT INTO events (workspace_id, channel_id, type, actor_id, payload)
+       SELECT $1, $2, type, $3, payload
+       FROM jsonb_to_recordset($4::jsonb) AS event(type text, payload jsonb)
+       RETURNING id::text, type`,
+      [
+        fx.workspaceId,
+        fx.channelId,
+        fx.userId,
+        JSON.stringify([
+          {
+            type: 'session.question_requested',
+            payload: { sessionId: 'session-1', questionId, questions: [{ id: 'choice', question: 'Choose?' }] },
+          },
+          {
+            type: 'session.question_answered',
+            payload: {
+              sessionId: 'session-1',
+              questionId,
+              answers: [{ id: 'choice', header: 'Choice', answers: ['A'], count: 1 }],
+            },
+          },
+          {
+            type: 'session.question_resolved',
+            payload: { sessionId: 'session-1', questionId, reason: 'answered' },
+          },
+        ]),
+      ],
+    );
+
+    const latest = await listChannelMessages(pool, { channelId: fx.channelId, limit: 2 });
+    expect(latest.events.map((event) => event.type)).toEqual([
+      'session.question_answered',
+      'session.question_resolved',
+    ]);
+    expect(latest.hasMore).toBe(true);
+
+    const earlier = await listChannelMessages(pool, {
+      channelId: fx.channelId,
+      beforeId: latest.events[0]!.id,
+      limit: 2,
+    });
+    expect(earlier.events.map((event) => event.type)).toEqual([
+      'message.posted',
+      'session.question_requested',
+    ]);
+    expect(earlier.events[0]!.id).toBe(before.id);
+    expect(earlier.events[1]!.id).toBe(
+      Number(inserted.rows.find((event) => event.type === 'session.question_requested')!.id),
+    );
+    expect(earlier.hasMore).toBe(false);
+  });
+
   it('excludes thread replies from the default timeline but counts them on the root', async () => {
     const root = await post('root');
     await post('noise before replies');

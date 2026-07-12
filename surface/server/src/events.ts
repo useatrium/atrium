@@ -836,6 +836,8 @@ const MESSAGE_SELECT = `
 // fold the same events from WS fanout).
 const TIMELINE_EVENT_TYPES =
   "('message.posted', 'message.edited', 'message.deleted', 'reaction.added', 'reaction.removed', 'voice.transcribed', 'session.spawned', 'session.status_changed', 'session.effort_changed', 'session.completed', 'session.archived', 'session.unarchived', 'session.seat_requested', 'session.seat_changed', 'session.question_requested', 'session.question_answered', 'session.question_resolved', 'session.provider_auth_required', 'session.github_auth_required', 'session.provider_auth_resolved')";
+const TIMELINE_ROOT_EVENT_TYPES =
+  "('message.posted', 'session.spawned', 'session.question_requested', 'session.question_answered', 'session.question_resolved')";
 
 function foldEdit(
   row: EventDbRow & { edited_text?: string | null; is_deleted?: boolean; reactions?: unknown },
@@ -910,7 +912,7 @@ export async function listChannelMessages(
   const res = await pool.query<EventDbRow>(
     `${MESSAGE_SELECT}
      WHERE e.channel_id = $1
-       AND e.type IN ('message.posted', 'session.spawned')
+       AND e.type IN ${TIMELINE_ROOT_EVENT_TYPES}
        AND (e.thread_root_event_id IS NULL OR (e.payload->>'broadcast')::boolean IS TRUE)
        ${args.beforeId !== undefined ? 'AND e.id < $3' : ''}
      ORDER BY e.id DESC
