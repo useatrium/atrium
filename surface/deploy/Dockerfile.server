@@ -29,6 +29,9 @@ COPY surface/centaur-client ./surface/centaur-client
 # output. Some bundled deps (e.g. @opentelemetry/core) do CommonJS
 # `require("util")` of Node builtins; without this shim esbuild's ESM bundle
 # throws "Dynamic require of \"util\" is not supported" at startup.
+# esbuild resolves from surface/server devDependencies — it looks unused to
+# dep sweeps (dev uses tsx, CI never builds this image) but this bundle step
+# is its only consumer; removing it breaks deploy only (2026-07-12).
 RUN cd surface/server && pnpm exec esbuild src/index.ts \
   --bundle \
   --platform=node \
