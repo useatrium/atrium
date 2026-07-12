@@ -1,0 +1,24 @@
+appId: chat.atrium.app
+name: iOS thread reply
+tags: [ios, power-user]
+---
+- runFlow: ../common/authenticated-launch.yml
+- tapOn: "general"
+- extendedWaitUntil:
+    visible: ".*Message #general.*"
+    timeout: 10000
+- tapOn: ".*Message #general.*"
+- inputText: "Maestro iOS thread probe"
+- tapOn: "Send message"
+- extendedWaitUntil:
+    visible: ".*Maestro iOS thread probe.*"
+    timeout: 15000
+- tapOn: ".*#general.*"
+- longPressOn: ".*Maestro iOS thread probe.*"
+- tapOn: "Reply in thread"
+- assertVisible: "Thread"
+- tapOn: ".*Reply in thread.*"
+- inputText: "validated by iOS Maestro"
+- tapOn: "Send message"
+- assertVisible: ".*validated by iOS Maestro.*"
+- takeScreenshot: "ios-thread-01-replied"

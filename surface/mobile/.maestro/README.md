@@ -1,75 +1,135 @@
-# Mobile E2E validation (Maestro)
+# Native design-audit evidence (Maestro)
 
-Flows here drive the **real app on a simulator** to validate touch interactions —
-long-press, swipe, taps on accessibility-labelled controls.
+These flows drive the real Expo development build through visible text and React
+Native accessibility labels. They use no screen coordinates. iOS and Android share
+the same assertions except where native stack dismissal and Android system Back are
+the behavior under test.
 
-## Why Maestro (and not idb / simctl)
+The suite proves an authenticated launch (rather than the email-code login UI),
+first-run orientation in the bootstrapped empty `#general` workspace, all five
+top-level destinations, search empty state, appearance preferences, a scripted agent
+session, result inspection, thread replies, and Android system Back behavior. It does
+not claim VoiceOver or TalkBack verification.
 
-`xcrun simctl` can't inject UI gestures. `idb ui tap --duration` *can* tap, but its
-synthetic press does **not** register as a React-Native `onLongPress` — so long-press
-menus (e.g. the message → **Comments** sheet) can't be reached with idb. Maestro
-injects gestures through the accessibility layer, which RN recognises, and selects
-elements by visible text / `accessibilityLabel` (no pixel coordinates). That makes it
-the going-forward way to validate mobile interactions.
+## Prerequisites
 
-## One-time setup
+- Node 24+, pnpm 10+, Docker, Maestro, and a JRE.
+- For iOS: Xcode with one supported simulator booted.
+- For Android: an Android SDK, `adb` on `PATH`, and one emulator/device online.
+- Run pnpm commands from `surface/`, the workspace root.
+- Close the Expo development-client menu before starting Maestro. The flows do not
+  dismiss it with a coordinate tap.
+
+Install Maestro itself per its upstream instructions. A typical macOS shell has:
 
 ```sh
-brew install openjdk                       # Maestro needs a JRE (no sudo)
-curl -Ls "https://get.maestro.mobile.dev" | bash
 export JAVA_HOME=/opt/homebrew/opt/openjdk
 export PATH="$HOME/.maestro/bin:$JAVA_HOME/bin:$PATH"
+maestro --version
 ```
 
-## Bring up the app, then run the flow
+## Deterministic reset and server
+
+The first-run and collaboration flows expect Atrium's normal first-boot fixture:
+workspace `atrium`, channel `#general`, auto-login user `qa`, no prior sessions, and
+no message history. Reset it exactly as follows from `surface/` (this deletes only
+the local Compose database and object-store volumes):
 
 ```sh
-# 1. backend (dev defaults + open auth) — from surface/server
-AUTH_OPEN=1 AUTH_DEV_CODES=1 ATRIUM_FULL_VIEW=1 PORT=3001 pnpm start
-
-# 2. build + install the dev client on a booted sim, with auto-login — from surface/mobile
-#    (a populated workspace gives the flow real channels/messages to act on)
-EXPO_PUBLIC_AUTO_LOGIN="http://localhost:3001|qa|QA Tester" \
-  npx expo run:ios --device "iPhone 17 Pro"
-
-# 3. run the flows
-maestro test surface/mobile/.maestro/          # all flows
-maestro test surface/mobile/.maestro/comment-on-message.yaml
+docker compose down -v
+docker compose up -d --wait db minio livekit
+pnpm --filter @atrium/server migrate
+AUTH_OPEN=1 AUTH_DEV_CODES=1 ATRIUM_FULL_VIEW=1 PORT=3001 pnpm --filter @atrium/server start
 ```
 
-Screenshots (`takeScreenshot`) land in the working dir; `maestro test` exits non-zero
-on any failed assertion, so this drops into CI later.
+Leave the server running. The server's idempotent bootstrap creates `#general`; the
+mobile auto-login creates/uses the `qa` member. The collaboration flow starts the
+built-in `demo` harness, so Codex, Claude, and Centaur credentials are not required.
 
-## Gotcha — building from a git worktree
+## Build and install
 
-`expo run:ios` from a **CoW-copied worktree** fails with
-`missing required module 'SwiftShims'` (precompiled `.pcm` files baked with the
-main-checkout path). Build from the main checkout, or if you must use a worktree, do a
-fresh `pnpm install` (not a CoW copy) and clear
-`expo-modules-jsi/apple/.DerivedData` + `~/Library/Developer/Xcode/DerivedData/Atrium-*`
-first.
+In another shell from `surface/mobile/`:
 
-## Flows
+```sh
+EXPO_PUBLIC_AUTO_LOGIN="http://localhost:3001|qa|QA Tester" \
+  npx expo run:ios --device "<booted simulator name>"
 
-- `comment-on-message.yaml` — post a message → **long-press** it → open **Comments** →
-  add a comment. Validates the exact interaction idb couldn't (#105).
+EXPO_PUBLIC_AUTO_LOGIN="http://10.0.2.2:3001|qa|QA Tester" \
+  npx expo run:android --device
+```
 
-## Learnings (why the flow looks the way it does)
+Use the host LAN address instead of `10.0.2.2` for a physical Android device. The
+iOS simulator can use `localhost`; a physical iOS device also needs the host LAN
+address. Expo SDK 56's native Stack supplies platform-default push/pop behavior;
+`headerBackButtonDisplayMode="minimal"` only changes the iOS/web label presentation.
 
-- **Anchored selectors.** Maestro matches an element's *whole* text. A chat row's
-  accessibilityText is `"<author>, <time>: <body>"`, so target a message with
-  `.*<body>.*`, not the bare body. Same for the comment composer (`Comment text Add a
-  comment`).
-- **Long-press needs a retry.** A synthetic long-press occasionally doesn't cross RN's
-  `onLongPress` threshold (this is also why `idb` couldn't do it at all). Wrapping
-  `longPressOn` + a wait-for-the-sheet in `retry` makes it reliable.
-- **Accessibility was the real blocker.** The action sheet and the comments sheet
-  exposed *nothing* to the accessibility tree (only their scrim) because a labelled
-  `role="button"` modal backdrop collapses into one node and hides its children — from
-  VoiceOver *and* from test drivers. Fixed in `MessageActions.tsx` / `EntryComments.tsx`
-  by making the scrim + inner wrappers `accessible={false}`. **If you add a new modal,
-  keep its backdrop non-accessible or its content won't be reachable.**
-- **Dev-build noise.** The Expo dev-client menu pops on launch (dismiss via the backdrop
-  tap, retried) and `clearState: true` drops you on the dev *launcher* — don't use it.
-  During hot iteration, Fast Refresh can leave a stale `onLongPress`; a full app reload
-  fixes it (a fresh `launchApp` run is unaffected).
+Worktree builds can retain path-bound Apple derived data. If iOS reports
+`missing required module 'SwiftShims'`, perform a fresh `pnpm install` in this
+worktree and remove `surface/mobile/node_modules/expo-modules-jsi/apple/.DerivedData`
+plus `~/Library/Developer/Xcode/DerivedData/Atrium-*`, then build once more.
+
+## Run order and commands
+
+Reset once per platform. Run the files in numeric order because `02` creates the
+demo session and `03` reuses `#general`.
+
+```sh
+# iOS
+maestro test surface/mobile/.maestro/ios/01-first-run-and-navigation.yaml
+maestro test surface/mobile/.maestro/ios/02-primary-collaboration-loop.yaml
+maestro test surface/mobile/.maestro/ios/03-thread-reply.yaml
+
+# Android
+maestro test surface/mobile/.maestro/android/01-first-run-and-navigation.yaml
+maestro test surface/mobile/.maestro/android/02-primary-collaboration-loop.yaml
+maestro test surface/mobile/.maestro/android/03-thread-reply.yaml
+```
+
+Screenshots use unique `ios-*` and `android-*` names and land in Maestro's test
+artifacts for the run. Preserve the run directory with the audit record; a checked-in
+YAML file is not rendered evidence by itself.
+
+## Coverage and unverified matrix
+
+| Device/runtime | Authenticated launch | Navigation/settings | Demo/result | Native Back | Runtime status in this checkout |
+|---|---:|---:|---:|---:|---|
+| iOS compact iPhone | executed | executed | executed in focused paths | visible native control; gesture manual | iPhone 17 / iOS 26.5 build ran; navigation/settings, demo result, message send, long-press action sheet, and thread navigation were exercised |
+| iOS large iPhone | authored | authored | authored | iOS stack Back | Unverified: no booted simulator |
+| iPad width | selectors reusable | selectors reusable | selectors reusable | iOS stack Back | Unverified; no device available |
+| Android compact phone | authored | authored | authored | system Back key | API 36 ARM64 emulator boots and `adb` is online; native build is blocked in dependency CMake configuration by `Can't infer shell!` before app install |
+| Android expanded/tablet | selectors reusable; app uses a rail at 600dp | authored | authored | system Back key | Emulator tooling is installed; runtime remains unverified |
+
+Not deterministically seedable in the current local harness:
+
+- The empty Attention state is captured, but exclusion of a simultaneously healthy
+  running session is unverified. The demo completes in a few seconds and has no
+  pause/gate with which to hold a stable running state during cross-tab navigation.
+- Agent questions, approvals, authentication requests, failed/stalled sessions, and
+  artifacts/file changes. The demo harness produces a successful transcript, tool
+  result, and completion result only.
+- Session cancellation/recovery. The demo is a short one-shot stream; racing its
+  stop control would produce timing-dependent evidence rather than a stable test.
+- Offline/reconnect. Maestro can toggle Android/iOS system connectivity only through
+  device-specific permissions or external simulator commands, while stopping the
+  shared local server would affect the test runner and is not an app-scoped fixture.
+  A deterministic server fault/proxy control is needed before this becomes CI-safe.
+- VoiceOver/TalkBack. Maestro traverses the accessibility tree but does not prove a
+  screen-reader task was completed. Record those as separate manual sessions.
+
+## Failure cleanup
+
+On a failed flow, keep Maestro's logs and screenshots first. Then close the app,
+reset preferences by rerunning `01` (it restores System theme, medium text, normal
+contrast, and full motion), and use `docker compose down -v` before another clean evidence run. If a
+demo session already exists, reset the database; `Run a demo agent` intentionally
+appears only in the empty Agents state. Do not use `launchApp.clearState: true` with
+the development client because it can return to the Expo launcher instead of Atrium.
+
+## Selector maintenance
+
+- Maestro matches the complete accessibility text. Use `.*substring.*` for dynamic
+  rows such as messages and sessions.
+- Prefer stable `accessibilityLabel` values and visible product language. Do not add
+  coordinates to work around a missing semantic selector.
+- Keep platform-neutral commands in `common/*.yml`; add platform-specific commands
+  only for actual native behavior differences.

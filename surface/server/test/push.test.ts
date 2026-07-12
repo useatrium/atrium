@@ -10,9 +10,11 @@ import { WsHub, type HubSocket } from '../src/hub.js';
 import {
   checkExpoPushReceipts,
   pushRecipientsFor,
+  sendAuthRequiredPush,
   sendQuestionPush,
   sendMessagePush,
   sendSessionCompletedPush,
+  sendSessionFailedPush,
 } from '../src/push.js';
 import { mentionedHandles } from '../src/mentions.js';
 import type { WebPushPayload, WebPushSender, WebPushSubscription, WebPushUrgency } from '../src/webpush.js';
@@ -116,6 +118,32 @@ async function postInChannelAs(
     text,
     threadRootEventId: threadRootEventId ?? null,
   });
+}
+
+async function createPushSession(title: string): Promise<string> {
+  const session = await pool.query<{ id: string }>(
+    `INSERT INTO sessions (workspace_id, channel_id, centaur_thread_key, title, status, spawned_by, driver_id)
+     VALUES ($1, $2, $3, $4, 'running', $5, $5)
+     RETURNING id`,
+    [fx.workspaceId, fx.channelId, `push:${title}:${Date.now()}:${Math.random()}`, title, fx.userId],
+  );
+  return session.rows[0]!.id;
+}
+
+async function appendSessionEvent(
+  type: string,
+  sessionId: string,
+  payload: Record<string, unknown>,
+): Promise<WireEvent> {
+  return withTx(pool, (client) =>
+    appendEvent(client, {
+      workspaceId: fx.workspaceId,
+      channelId: fx.channelId,
+      type,
+      actorId: fx.userId,
+      payload: { ...payload, sessionId },
+    }),
+  );
 }
 
 describe('mentionedHandles', () => {
@@ -451,7 +479,7 @@ describe('sendQuestionPush', () => {
     expect(sent).toHaveLength(1);
     expect(sent[0]).toMatchObject({
       to: 'ExponentPushToken[creator-1]',
-      title: 'Centaur needs your input',
+      title: 'An agent needs your input',
       body: 'Which deployment path should I take?',
       data: {
         channelId: fx.channelId,
@@ -461,6 +489,23 @@ describe('sendQuestionPush', () => {
         questionId: 'q-main',
       },
     });
+  });
+
+  it('names the session when it is available', async () => {
+    await registerToken(fx.userId, 'ExponentPushToken[creator-titled]');
+    const sessionId = await createPushSession('Deploy green');
+    const ev = await appendSessionEvent('session.question_requested', sessionId, {
+      questionId: 'q-main',
+      permalink: `/s/${sessionId}`,
+      questions: [{ id: 'choice', header: 'Decision', question: 'Which deployment path should I take?' }],
+    });
+    const hub = new WsHub();
+    const fetchImpl = okFetch();
+
+    await sendQuestionPush(pool, hub, ev, fetchImpl);
+
+    const sent = JSON.parse(fetchImpl.mock.calls[0]![1]!.body as string);
+    expect(sent[0].title).toBe('Deploy green needs your input');
   });
 
   it('skips the creator when focused on the question channel', async () => {
@@ -565,6 +610,91 @@ describe('sendSessionCompletedPush', () => {
     await sendSessionCompletedPush(pool, hub, ev, fetchImpl);
 
     expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('uses failed copy for terminal failures while retaining a failure excerpt when allowed', async () => {
+    await registerToken(fx.userId, 'ExponentPushToken[creator-failed]');
+    const sessionId = await createPushSession('Broken rollout');
+    const ev = await appendSessionEvent('session.completed', sessionId, {
+      status: 'failed',
+      resultExcerpt: 'The provider timed out.',
+      permalink: `/s/${sessionId}`,
+    });
+    const hub = new WsHub();
+    const oldRedact = config.pushRedactContent;
+
+    try {
+      config.pushRedactContent = false;
+      const fetchWithExcerpt = okFetch();
+      await sendSessionCompletedPush(pool, hub, ev, fetchWithExcerpt);
+      const withExcerpt = JSON.parse(fetchWithExcerpt.mock.calls[0]![1]!.body as string);
+      expect(withExcerpt[0]).toMatchObject({
+        title: 'Session failed: Broken rollout',
+        body: 'The provider timed out.',
+      });
+
+      config.pushRedactContent = true;
+      const redactedFetch = okFetch();
+      await sendSessionCompletedPush(pool, hub, ev, redactedFetch);
+      const redacted = JSON.parse(redactedFetch.mock.calls[0]![1]!.body as string);
+      expect(redacted[0]).toMatchObject({
+        title: 'Session failed: Broken rollout',
+        body: 'Session failed',
+      });
+    } finally {
+      config.pushRedactContent = oldRedact;
+    }
+  });
+});
+
+describe('agent-state push senders', () => {
+  it('pushes crash-path session failures with the session deep link', async () => {
+    await registerToken(fx.userId, 'ExponentPushToken[creator-crash]');
+    const sessionId = await createPushSession('Crash recovery');
+    const ev = await appendSessionEvent('session.status_changed', sessionId, { status: 'failed' });
+    const hub = new WsHub();
+    const fetchImpl = okFetch();
+
+    await sendSessionFailedPush(pool, hub, ev, fetchImpl);
+
+    const sent = JSON.parse(fetchImpl.mock.calls[0]![1]!.body as string);
+    expect(sent[0]).toMatchObject({
+      to: 'ExponentPushToken[creator-crash]',
+      title: 'Session failed: Crash recovery',
+      body: 'The run crashed before finishing.',
+      data: {
+        channelId: fx.channelId,
+        eventId: ev.id,
+        permalink: `/s/${sessionId}`,
+        sessionId,
+      },
+    });
+  });
+
+  it('pushes provider authentication blocks with the session deep link', async () => {
+    await registerToken(fx.userId, 'ExponentPushToken[creator-auth]');
+    const sessionId = await createPushSession('Private repository');
+    const ev = await appendSessionEvent('session.github_auth_required', sessionId, {
+      provider: 'github',
+      reason: 'invalid_token',
+    });
+    const hub = new WsHub();
+    const fetchImpl = okFetch();
+
+    await sendAuthRequiredPush(pool, hub, ev, fetchImpl);
+
+    const sent = JSON.parse(fetchImpl.mock.calls[0]![1]!.body as string);
+    expect(sent[0]).toMatchObject({
+      to: 'ExponentPushToken[creator-auth]',
+      title: 'Private repository is blocked',
+      body: 'Reconnect github to resume.',
+      data: {
+        channelId: fx.channelId,
+        eventId: ev.id,
+        permalink: `/s/${sessionId}`,
+        sessionId,
+      },
+    });
   });
 });
 

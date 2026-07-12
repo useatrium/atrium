@@ -232,13 +232,42 @@ export interface RegisterPushBody {
 
 export type ActivityItem = {
   eventId: string;
-  kind: 'mention' | 'dm' | 'agent_question' | 'session_completed';
+  kind:
+    | 'mention'
+    | 'dm'
+    | 'thread_reply'
+    | 'agent_question'
+    | 'session_completed'
+    | 'session_failed'
+    | 'agent_auth'
+    | 'reaction'
+    | 'channel_invite'
+    | 'seat_request';
   channelId: string;
   channelName: string;
   actorId: string | null;
   actorName: string | null;
   snippet: string;
   createdAt: string;
+  sessionId?: string | null;
+  sessionTitle?: string | null;
+  sessionStatus?: string | null;
+  /** True only while this event's session is currently actionable. */
+  attention: boolean;
+  /** Quiet-not-hidden: muted-channel items stay in history but never count. */
+  muted?: boolean;
+};
+
+export type ActivityCounts = {
+  attention: number;
+  unread: number;
+};
+
+export type ActivityResponse = {
+  items: ActivityItem[];
+  nextCursor: string | null;
+  lastReadEventId: string;
+  counts: ActivityCounts;
 };
 
 export function createApi(opts: ApiOptions = {}) {
@@ -488,8 +517,13 @@ export function createApi(opts: ApiOptions = {}) {
       const q = new URLSearchParams();
       if (cursor !== undefined) q.set('cursor', cursor);
       const qs = q.toString();
-      return req<{ items: ActivityItem[]; nextCursor: string | null }>(`/api/activity${qs ? `?${qs}` : ''}`);
+      return req<ActivityResponse>(`/api/activity${qs ? `?${qs}` : ''}`);
     },
+    markActivityRead: (lastReadEventId: number) =>
+      req<{ lastReadEventId: string }>('/api/activity/read', {
+        method: 'POST',
+        body: JSON.stringify({ lastReadEventId }),
+      }),
     thread: (rootEventId: number) =>
       req<{ events: WireEvent[] }>(`/api/threads/${rootEventId}/messages`, undefined, decodeThreadMessagesResponse),
     postMessage: (body: {

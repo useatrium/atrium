@@ -337,7 +337,7 @@ export default function FilesTab() {
       const next: FilesRouteParamPatch = {};
       let changed = false;
       for (const key of FILE_PARAM_KEYS) {
-        if (!Object.prototype.hasOwnProperty.call(patch, key)) continue;
+        if (!Object.hasOwn(patch, key)) continue;
         const nextValue = patch[key];
         const currentValue = firstParam(params[key]) ?? undefined;
         if (nextValue !== currentValue) {

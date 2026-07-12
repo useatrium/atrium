@@ -60,7 +60,6 @@ function searchParam(url: string, key: string): string | null {
 }
 
 test('/files lightbox file and info panel are URL-addressable', async ({ page }) => {
-  test.setTimeout(60_000);
   const handle = unique('addr-files');
   const ctx = await apiAs(handle, 'Addressable Files');
   const firstName = `${unique('addr78-a')}.png`;

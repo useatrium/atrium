@@ -86,7 +86,7 @@ describe('SessionsRail', () => {
 
   it('shows an empty state when the channel has no sessions', () => {
     render(<SessionsRail channelId="ch-1" sessions={{}} onOpenSession={() => {}} />);
-    expect(screen.getByText('No agents yet')).toBeTruthy();
+    expect(screen.getByText('No sessions yet')).toBeTruthy();
     expect(screen.queryByText('Active')).toBeNull();
   });
 

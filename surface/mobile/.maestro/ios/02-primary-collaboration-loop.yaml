@@ -1,0 +1,24 @@
+appId: chat.atrium.app
+name: iOS deterministic demo collaboration loop
+tags:
+  - ios
+  - power-user
+env:
+  SCREENSHOT_PREFIX: ios-loop
+---
+- runFlow: ../common/authenticated-launch.yml
+- tapOn:
+    text: ".*Agents.*"
+- extendedWaitUntil:
+    visible: "Run a demo agent"
+    timeout: 10000
+- tapOn: "Run a demo agent"
+- extendedWaitUntil:
+    visible: ".*Demo — watch an agent work.*"
+    timeout: 10000
+- tapOn: ".*Demo — watch an agent work.*"
+- extendedWaitUntil:
+    visible: ".*Demo complete:.*"
+    timeout: 20000
+- assertVisible: ".*Demo complete:.*"
+- takeScreenshot: "${SCREENSHOT_PREFIX}-01-result"

@@ -70,7 +70,9 @@
   --fg-secondary: #d4d4d8;
   --fg-tertiary: #a1a1aa;
   --fg-muted: #8f8f98;
-  --fg-faint: #52525b;
+  /* #52525b measured 2.57:1 on --surface (axe serious); #85858e clears AA on
+     surface/raised/hover while staying a step below --fg-muted. */
+  --fg-faint: #85858e;
 
   --accent: #4f46e5;
   --accent-hover: #6366f1;
@@ -292,10 +294,21 @@ body {
   text-align: center;
 }
 
-/* Visible keyboard focus on command controls. Form fields use local border focus states. */
-:where(button, [role="button"], a):focus-visible {
+/* A shared keyboard focus fallback. Components with an explicit ring/outline
+   keep their local treatment instead of receiving a second indicator. */
+:where(button, [role="button"], a, input, select, textarea):focus-visible:not([class*="focus-visible:ring"]):not(
+  [class*="focus:ring"]
+):not([class*="focus-visible:outline"]) {
   outline: 2px solid var(--color-accent-text);
   outline-offset: 1px;
+}
+
+@media (forced-colors: active) {
+  :where(button, [role="button"], a, input, select, textarea):focus-visible {
+    box-shadow: none !important;
+    outline: 2px solid Highlight !important;
+    outline-offset: 2px;
+  }
 }
 
 /* Thin dark scrollbars */

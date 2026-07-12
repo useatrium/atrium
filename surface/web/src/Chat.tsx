@@ -17,7 +17,14 @@ import {
   useQueueSyncState,
 } from '@atrium/surface-client';
 import { showNotification } from './notify';
-import { emptyTimeline, type Channel, type UserRef, type WireEvent } from '@atrium/surface-client';
+import {
+  emptyTimeline,
+  mentionsHandle,
+  type ActivityCounts,
+  type Channel,
+  type UserRef,
+  type WireEvent,
+} from '@atrium/surface-client';
 import { useWs } from '@atrium/surface-client';
 import { encodeEventHandle } from '@atrium/surface-client/handle';
 import { Avatar } from './components/Avatar';
@@ -160,6 +167,41 @@ export function applyUnreadBadges(unreadCount: number): void {
     void nav.clearAppBadge().catch(() => {});
   }
   setDesktopBadge(unreadCount);
+}
+
+const ACTIVITY_SESSION_EVENT_TYPES = new Set([
+  'session.question_requested',
+  'session.question_answered',
+  'session.question_resolved',
+  'session.provider_auth_required',
+  'session.github_auth_required',
+  'session.provider_auth_resolved',
+  'session.completed',
+  'session.status_changed',
+]);
+
+/** True when a live event can change this user's Inbox feed or its attention state. */
+export function isActivityRefreshEvent(
+  event: WireEvent,
+  me: UserRef,
+  channels: readonly Channel[],
+  sessions: Record<string, { spawnedBy: string }>,
+): boolean {
+  if (event.type === 'message.posted') {
+    const text = typeof event.payload.text === 'string' ? event.payload.text : '';
+    if (mentionsHandle(text, me.handle)) return true;
+    if (!event.actorId || event.actorId === me.id) return false;
+    const channel = event.channelId ? channels.find((candidate) => candidate.id === event.channelId) : null;
+    if (channel?.kind === 'dm' || channel?.kind === 'gdm') return true;
+    // The server knows the full participant history, which may predate this
+    // client's loaded timeline. Refreshing other people's thread replies is
+    // therefore the safe way to avoid missing a newly relevant one.
+    return event.threadRootEventId != null;
+  }
+
+  if (!ACTIVITY_SESSION_EVENT_TYPES.has(event.type)) return false;
+  const sessionId = typeof event.payload.sessionId === 'string' ? event.payload.sessionId : null;
+  return !!sessionId && sessions[sessionId]?.spawnedBy === me.id;
 }
 // === web-client additions ===
 
@@ -306,12 +348,16 @@ export function Chat({
   const { prefs } = useTheme();
   const [state, dispatch] = useReducer(appReducer, initialAppState);
   const [sessionEventSeq, setSessionEventSeq] = useState(0);
+  const [activityCounts, setActivityCounts] = useState<ActivityCounts>({ attention: 0, unread: 0 });
+  const [activityLiveEvent, setActivityLiveEvent] = useState<WireEvent | null>(null);
+  const [activityRefreshKey, setActivityRefreshKey] = useState(0);
   const { clearFailedCancel, clearFailedSteer, failedCancels, failedSteers, rememberRejectedSessionOp } =
     useSessionQueueFailures();
   const calls = useCall(me, state.channels);
   const callsAvailable = useCallsAvailable();
   const stateRef = useRef(state);
   stateRef.current = state;
+  const activityRefreshTimerRef = useRef<number | null>(null);
   const readCursorCacheWriteRef = useRef<Promise<void>>(Promise.resolve());
   const authInvalidatedRef = useRef(false);
   const [hydrated, setHydrated] = useState(false);
@@ -323,6 +369,38 @@ export function Chat({
   const [dividerReadyChannelId, setDividerReadyChannelId] = useState<string | null>(null);
   const dividerFrozenForRef = useRef<string | null>(null);
   const locationState = useLocation();
+
+  const handleActivityCountsChange = useCallback((next: ActivityCounts) => {
+    setActivityCounts(next);
+  }, []);
+
+  const refreshActivityCounts = useCallback(() => {
+    // Promise.resolve() guard: a transport that throws synchronously (e.g. a
+    // test environment without fetch) must not take the whole tree down; the
+    // normalization guards a deploy-skewed server that predates `counts`.
+    void Promise.resolve()
+      .then(() => api.getActivity())
+      .then(({ counts }) =>
+        setActivityCounts({ attention: Number(counts?.attention) || 0, unread: Number(counts?.unread) || 0 }),
+      )
+      .catch(() => {});
+  }, []);
+
+  const scheduleActivityCountsRefresh = useCallback(() => {
+    if (activityRefreshTimerRef.current != null) return;
+    activityRefreshTimerRef.current = window.setTimeout(() => {
+      activityRefreshTimerRef.current = null;
+      refreshActivityCounts();
+    }, 150);
+  }, [refreshActivityCounts]);
+
+  useEffect(() => {
+    refreshActivityCounts();
+    return () => {
+      if (activityRefreshTimerRef.current != null) window.clearTimeout(activityRefreshTimerRef.current);
+    };
+  }, [refreshActivityCounts]);
+
   const selectChannel = useCallback((channelId: string) => {
     // Leaving a channel: read is now only marked at the bottom, so a channel
     // opened but not read to the end still has a stale cursor. `select-channel`
@@ -845,6 +923,10 @@ export function Chat({
       onEvent: (event: WireEvent) => {
         if (handleFilesChangedEvent(event)) return;
         if (event.type.startsWith('session.')) setSessionEventSeq((n) => n + 1);
+        if (isActivityRefreshEvent(event, me, stateRef.current.channels, stateRef.current.sessions)) {
+          setActivityLiveEvent(event);
+          scheduleActivityCountsRefresh();
+        }
         // A message landing ends that author's "is typing…" immediately.
         if (event.type === 'message.posted' && event.actorId) {
           clearTypingUser(event.actorId);
@@ -874,6 +956,8 @@ export function Chat({
       onPrefs: adoptPrefs,
       onOpen: () => {
         syncThenFlushQueuedOps();
+        setActivityRefreshKey((n) => n + 1);
+        scheduleActivityCountsRefresh();
       },
       onStatus: (status) => dispatch({ type: 'ws-status', status }),
     },
@@ -1588,7 +1672,8 @@ export function Chat({
   }, [closeSession, isSidebarOpen, mainSurface, openChatSurface, shortcutsHelpOpen, switcherOpen]);
 
   // ---- unread badge in the tab title ----
-  const unreadCount = Object.values(state.unread).filter(Boolean).length;
+  const channelUnreadCount = Object.values(state.unread).filter(Boolean).length;
+  const unreadCount = channelUnreadCount + activityCounts.attention;
   useEffect(() => {
     document.title = unreadCount > 0 ? `(${unreadCount}) Atrium` : 'Atrium';
     applyUnreadBadges(unreadCount);
@@ -1700,7 +1785,7 @@ export function Chat({
       },
       {
         id: 'open-activity',
-        label: 'Open Inbox',
+        label: 'Open Attention',
         subtitle: 'Review mentions and updates',
         group: 'Navigate',
         keywords: ['inbox', 'activity', 'mentions', 'notifications', 'updates'],
@@ -1866,10 +1951,6 @@ export function Chat({
         onSetPinned={setPinned}
         onCreateChannel={createChannel}
         onStartDm={startDm}
-        onOpenSession={(sessionId) => {
-          openSession(sessionId);
-          setIsSidebarOpen(false);
-        }}
         activeSurface={mainSurface}
         onOpenFiles={() => {
           openFilesSurface();
@@ -1884,11 +1965,11 @@ export function Chat({
           openActivitySurface();
           setIsSidebarOpen(false);
         }}
+        activityCounts={activityCounts}
         onOpenSettings={() => {
           openSettingsSurface();
           setIsSidebarOpen(false);
         }}
-        sessionEventSeq={sessionEventSeq}
         onLogout={onLogout}
         isOpen={isSidebarOpen}
         onClose={() => setIsSidebarOpen(false)}
@@ -1919,7 +2000,7 @@ export function Chat({
                   : showAgentsSurface
                     ? 'Agents'
                     : showActivitySurface
-                      ? 'Inbox'
+                      ? 'Attention'
                       : showFilesSurface
                         ? `Files for ${active ? channelLabel(active, me.id) : workspace.name}`
                         : undefined
@@ -1943,7 +2024,13 @@ export function Chat({
                   <span className="grid size-4 shrink-0 place-items-center rounded bg-surface-raised text-2xs font-bold text-fg-muted">
                     @
                   </span>
-                  <span className="truncate">Inbox</span>
+                  <span className="truncate">Attention</span>
+                  {activityCounts.attention > 0 && (
+                    <span className="rounded-full bg-warning-tint px-1.5 py-px text-3xs font-bold text-warning-text-strong">
+                      {activityCounts.attention >= 99 ? '99+' : activityCounts.attention}
+                      <span className="sr-only"> needs attention</span>
+                    </span>
+                  )}
                 </>
               ) : showFilesSurface ? (
                 <>
@@ -2183,6 +2270,9 @@ export function Chat({
               onOpenSession={(sessionId) => {
                 openSession(sessionId);
               }}
+              liveEvent={activityLiveEvent}
+              refreshKey={activityRefreshKey}
+              onCountsChange={handleActivityCountsChange}
             />
           ) : showFilesSurface ? (
             <Gallery
@@ -2325,12 +2415,12 @@ export function Chat({
           style={isMobileViewport || view === 'focus' ? undefined : placeholderPaneSizing.style}
         >
           <header className="flex h-12 shrink-0 items-center justify-between border-b border-edge px-4">
-            <h2 className="text-sm font-semibold text-fg">Agent</h2>
-            <Tooltip content="Close agent pane">
+            <h2 className="text-sm font-semibold text-fg">Session</h2>
+            <Tooltip content="Close session details">
               <button
                 type="button"
                 onClick={closeSession}
-                aria-label="Close agent pane"
+                aria-label="Close session details"
                 className="rounded-md px-2 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg"
               >
                 <XIcon />

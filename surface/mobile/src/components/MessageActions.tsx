@@ -1,9 +1,10 @@
 // Long-press action sheet: optional quick reactions + a data-driven action list.
 
-import { useEffect, useRef, useState, type ReactNode, type Ref } from 'react';
+import { useEffect, useRef, useState, type ComponentProps, type ReactNode, type Ref } from 'react';
 import { Alert, Modal, Pressable, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Clipboard from 'expo-clipboard';
+import { Ionicons } from '@expo/vector-icons';
 import type { ChatMessage } from '@atrium/surface-client';
 import { QUICK_REACTIONS } from '@atrium/surface-client/reactions';
 import { useAccessibilityAnnouncement, useModalAccessibilityFocus } from '../lib/accessibility';
@@ -22,12 +23,14 @@ export type MessageActionListItem = {
   onSelect: () => void;
   destructive?: boolean;
   hint?: string;
+  icon?: ComponentProps<typeof Ionicons>['name'];
 };
 
 export interface MessageActionSheetProps {
   visible: boolean;
   actions: MessageActionListItem[];
   onClose: () => void;
+  title?: string;
   reactions?: {
     onQuickReact: (emoji: string) => void;
     onPickerReact: (emoji: string) => void;
@@ -54,12 +57,14 @@ function Action({
   label,
   hint,
   destructive,
+  icon,
   focusRef,
   onPress,
 }: {
   label: string;
   hint?: string;
   destructive?: boolean;
+  icon?: ComponentProps<typeof Ionicons>['name'];
   focusRef?: Ref<View>;
   onPress: () => void;
 }) {
@@ -79,20 +84,35 @@ function Action({
         backgroundColor: pressed ? colors.bgPressed : 'transparent',
       })}
     >
-      <Text
-        style={{
-          color: destructive ? colors.danger : colors.text,
-          fontSize: font.md,
-          fontWeight: '500',
-        }}
-      >
-        {label}
-      </Text>
+      {icon ? (
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.md }}>
+          <Ionicons name={icon} size={19} color={destructive ? colors.danger : colors.textSecondary} />
+          <Text
+            style={{
+              color: destructive ? colors.danger : colors.text,
+              fontSize: font.md,
+              fontWeight: '500',
+            }}
+          >
+            {label}
+          </Text>
+        </View>
+      ) : (
+        <Text
+          style={{
+            color: destructive ? colors.danger : colors.text,
+            fontSize: font.md,
+            fontWeight: '500',
+          }}
+        >
+          {label}
+        </Text>
+      )}
     </Pressable>
   );
 }
 
-export function MessageActionSheet({ visible, actions, onClose, reactions, content }: MessageActionSheetProps) {
+export function MessageActionSheet({ visible, actions, onClose, title, reactions, content }: MessageActionSheetProps) {
   const { colors, reduceMotion } = useTheme();
   const insets = useSafeAreaInsets();
   const [pickerVisible, setPickerVisible] = useState(false);
@@ -153,6 +173,21 @@ export function MessageActionSheet({ visible, actions, onClose, reactions, conte
           ) : (
             <>
               {content ? <View style={{ paddingHorizontal: space.lg, paddingBottom: space.sm }}>{content}</View> : null}
+              {title ? (
+                <Text
+                  accessibilityRole="header"
+                  numberOfLines={2}
+                  style={{
+                    color: colors.textMuted,
+                    fontSize: font.sm,
+                    fontWeight: '700',
+                    paddingHorizontal: space.lg,
+                    paddingBottom: space.md,
+                  }}
+                >
+                  {title}
+                </Text>
+              ) : null}
               {reactions ? (
                 <View
                   style={{
@@ -216,6 +251,7 @@ export function MessageActionSheet({ visible, actions, onClose, reactions, conte
                   label={action.label}
                   hint={action.hint}
                   destructive={action.destructive}
+                  icon={action.icon}
                   focusRef={index === firstActionIndex ? firstActionRef : undefined}
                   onPress={action.onSelect}
                 />
