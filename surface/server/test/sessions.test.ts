@@ -840,6 +840,8 @@ describe('Phase 2 sessions', () => {
       });
 
     try {
+      // Negative assertion while an advisory lock deliberately blocks spawn;
+      // the blocked path has no externally observable arrival signal.
       await new Promise((resolve) => setTimeout(resolve, 100));
       expect(completed).toBe(false);
       expect(ironCalls).toHaveLength(0);
@@ -2500,7 +2502,7 @@ describe('Phase 2 sessions', () => {
     });
 
     expect(answer.statusCode).toBe(202);
-    await new Promise((resolve) => setTimeout(resolve, 800));
+    await waitFor(() => expect(app.sessionRuns.hasPendingQuestionRenotify(id)).toBe(false));
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     await app.close();
   });
@@ -2533,7 +2535,10 @@ describe('Phase 2 sessions', () => {
       id,
     ]);
 
-    await new Promise((resolve) => setTimeout(resolve, 800));
+    // This exercises the timer callback's stale-question DB guard. There is no
+    // completion signal for that asynchronous guard, so retain a deadline wait
+    // with ample margin over the 600 ms timer.
+    await new Promise((resolve) => setTimeout(resolve, 1200));
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     await app.close();
   });
@@ -2966,7 +2971,9 @@ describe('Phase 2 sessions', () => {
       });
       await app.ready();
 
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      // Negative boot-sweep assertion: no completion signal exists when the
+      // sweep correctly skips an already released assignment.
+      await new Promise((resolve) => setTimeout(resolve, 100));
       expect(fake.requests.some((r) => r.path.endsWith('/release'))).toBe(false);
       await app.close();
     });
@@ -2984,7 +2991,9 @@ describe('Phase 2 sessions', () => {
       });
       await app.ready();
 
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      // Negative boot-sweep assertion: no completion signal exists when the
+      // sweep correctly skips a non-terminal session.
+      await new Promise((resolve) => setTimeout(resolve, 100));
       expect(fake.requests.some((r) => r.path.endsWith('/release'))).toBe(false);
       const row = await pool.query('SELECT status, assignment_generation FROM sessions WHERE id = $1', [id]);
       expect(row.rows[0]).toMatchObject({ status: 'running', assignment_generation: 4 });
