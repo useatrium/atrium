@@ -335,17 +335,7 @@ export class AgentProfiles {
       if (profile.current_version_id !== proposal.base_profile_version_id) {
         throw new DomainError(409, 'profile_version_conflict', 'profile changed after this proposal was captured');
       }
-      const version = await createVersionFromProposal(client, userId, profile.id, proposal.proposal_json);
-      await bindSessionSnapshot(client, sessionId, version, true);
-      const updated = await updateProposalStatus(client, proposalId, userId, 'saved_profile');
-      return {
-        proposal: updated,
-        profile: profileFromRow(
-          { ...profile, current_version_id: version.id, updated_at: new Date() },
-          version,
-        ),
-        version,
-      };
+      return saveProposalAsProfile(client, userId, sessionId, proposalId, proposal, profile);
     });
   }
 
@@ -358,17 +348,7 @@ export class AgentProfiles {
     return withTx(this.pool, async (client) => {
       const proposal = await requirePendingSessionProposal(client, userId, sessionId, proposalId);
       const profile = await insertProfile(client, userId, proposal.provider, normalizeName(name, proposal.provider));
-      const version = await createVersionFromProposal(client, userId, profile.id, proposal.proposal_json);
-      await bindSessionSnapshot(client, sessionId, version, true);
-      const updated = await updateProposalStatus(client, proposalId, userId, 'saved_profile');
-      return {
-        proposal: updated,
-        profile: profileFromRow(
-          { ...profile, current_version_id: version.id, updated_at: new Date() },
-          version,
-        ),
-        version,
-      };
+      return saveProposalAsProfile(client, userId, sessionId, proposalId, proposal, profile);
     });
   }
 
@@ -622,6 +602,24 @@ function runtimeOverlayFromManifest(manifest: AgentProfileManifest): Record<stri
     out.CLAUDE_USER_CONFIG_OVERLAY = JSON.stringify({ mcpServers: manifest.mcpServers });
   }
   return out;
+}
+
+async function saveProposalAsProfile(
+  client: Queryable,
+  userId: string,
+  sessionId: string,
+  proposalId: string,
+  proposal: ProposalRow,
+  profile: ProfileRow,
+): Promise<{ proposal: AgentProfileProposal; profile: AgentProfile; version: AgentProfileVersion }> {
+  const version = await createVersionFromProposal(client, userId, profile.id, proposal.proposal_json);
+  await bindSessionSnapshot(client, sessionId, version, true);
+  const updated = await updateProposalStatus(client, proposalId, userId, 'saved_profile');
+  return {
+    proposal: updated,
+    profile: profileFromRow({ ...profile, current_version_id: version.id, updated_at: new Date() }, version),
+    version,
+  };
 }
 
 async function createVersionFromProposal(
