@@ -171,6 +171,10 @@ export default function ThreadScreen() {
             const kind = state.channels.find((candidate) => candidate.id === channelId)?.kind;
             if (kind != null && kind !== 'public') chat.loadMentionMembers(channelId);
           }}
+          onInviteMember={async (userId) => {
+            await chat.addChannelMember(channelId, userId);
+            await chat.channelMembers(channelId);
+          }}
           editingText={editing?.text ?? null}
           onSubmitEdit={(text, mentionRanges) => {
             if (editing) void chat.editMessage(editing, text, mentionRanges);

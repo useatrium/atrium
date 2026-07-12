@@ -51,6 +51,7 @@ import { downsamplePeaks, formatVoiceDuration, normalizeMetering, type VoiceSend
 import {
   decodeEditingText,
   insertMentionCandidate,
+  pruneWarnedMentions,
   trimMentionSubmission,
   updateMentionRangesForEdit,
 } from '../lib/mentionComposer';
@@ -87,6 +88,8 @@ export interface ComposerProps {
   includeSpecialMentions?: boolean;
   resolveUser?: (id: string) => UserRef | undefined;
   onMentionTrigger?: () => void;
+  /** Invite a mentioned non-member to the channel (private channels). */
+  onInviteMember?: (userId: string) => Promise<void> | void;
   allowAttachments?: boolean;
   showBroadcastToggle?: boolean;
   previewEntryLinks?: boolean;
@@ -144,6 +147,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     includeSpecialMentions = false,
     resolveUser,
     onMentionTrigger,
+    onInviteMember,
     allowAttachments,
     showBroadcastToggle,
     previewEntryLinks,
@@ -160,6 +164,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const insets = useSafeAreaInsets();
   const [text, setText] = useState('');
   const [mentionRanges, setMentionRanges] = useState<MentionRange[]>([]);
+  /** Mentions of users outside a private channel — the server won't notify them. */
+  const [warnedNonMembers, setWarnedNonMembers] = useState<UserRef[]>([]);
   const [selection, setSelection] = useState({ start: 0, end: 0 });
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
   const [keyboardVisible, setKeyboardVisible] = useState(false);
@@ -204,6 +210,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     if (!editing) {
       setText('');
       setMentionRanges([]);
+      setWarnedNonMembers([]);
       setSelection({ start: 0, end: 0 });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -424,6 +431,11 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     if (!mentionMatch) return;
     const value = candidate.kind === 'user' ? candidate.user.handle : candidate.name;
     const inserted = insertMentionCandidate(text, mentionRanges, mentionMatch.start, selection.start, value, candidate);
+    if (candidate.kind === 'user' && !candidate.inChannel && includeSpecialMentions) {
+      setWarnedNonMembers((current) =>
+        current.some((user) => user.id === candidate.user.id) ? current : [...current, candidate.user],
+      );
+    }
     setText(inserted.text);
     setMentionRanges(inserted.ranges);
     setSelection({ start: inserted.caret, end: inserted.caret });
@@ -445,6 +457,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       onSubmitEdit?.(submission.text, submission.ranges);
       setText('');
       setMentionRanges([]);
+      setWarnedNonMembers([]);
       setSelection({ start: 0, end: 0 });
       return;
     }
@@ -467,6 +480,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     setAlsoSendToChannel(false);
     setText('');
     setMentionRanges([]);
+    setWarnedNonMembers([]);
     setSelection({ start: 0, end: 0 });
     setAttachments([]);
   };
@@ -577,6 +591,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             onPress={() => {
               setText('');
               setMentionRanges([]);
+              setWarnedNonMembers([]);
               setSelection({ start: 0, end: 0 });
               onCancelEdit?.();
             }}
@@ -660,6 +675,48 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             ),
           )}
         </ScrollView>
+      )}
+
+      {warnedNonMembers.length > 0 && (
+        <View
+          style={{
+            borderWidth: 1,
+            borderColor: colors.warning,
+            borderRadius: radius.md,
+            backgroundColor: colors.warningSurface,
+            paddingHorizontal: space.md,
+            paddingVertical: space.sm,
+            gap: space.xs,
+          }}
+        >
+          {warnedNonMembers.map((user) => (
+            <View key={user.id} style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm }}>
+              <Text style={{ color: colors.warning, fontSize: font.xs, flex: 1 }} numberOfLines={2}>
+                @{user.handle} isn’t in this channel and won’t be notified
+              </Text>
+              {onInviteMember ? (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Invite ${user.displayName} to this channel`}
+                  onPress={() => {
+                    void onInviteMember(user.id);
+                    setWarnedNonMembers((current) => current.filter((candidate) => candidate.id !== user.id));
+                  }}
+                  style={({ pressed }) => ({
+                    borderWidth: 1,
+                    borderColor: colors.warning,
+                    borderRadius: radius.sm,
+                    paddingHorizontal: space.sm,
+                    paddingVertical: 2,
+                    backgroundColor: pressed ? colors.warningSurface : 'transparent',
+                  })}
+                >
+                  <Text style={{ color: colors.warning, fontSize: font.xs, fontWeight: '700' }}>Invite</Text>
+                </Pressable>
+              ) : null}
+            </View>
+          ))}
+        </View>
       )}
 
       {attachments.length > 0 && (
@@ -916,7 +973,11 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           value={text}
           onChangeText={(v) => {
             if (editing) editDirtyRef.current = true;
-            setMentionRanges((current) => updateMentionRangesForEdit(text, v, current));
+            setMentionRanges((current) => {
+              const next = updateMentionRangesForEdit(text, v, current);
+              setWarnedNonMembers((warned) => pruneWarnedMentions(warned, next));
+              return next;
+            });
             setText(v);
             if (!editing && draftKey) {
               onDraftTouched?.(draftKey);

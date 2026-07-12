@@ -10,44 +10,59 @@ import {
 import { api } from '../api';
 import { primeUserDirectory } from '../userDirectory';
 
-const memberCache = new Map<string, UserRef[]>();
+/** Rosters go stale as people join; refresh on the next picker open after this. */
+const ROSTER_TTL_MS = 5 * 60 * 1000;
+const memberCache = new Map<string, { members: UserRef[]; fetchedAt: number }>();
 const memberRequests = new Map<string, Promise<UserRef[]>>();
-let userCache: UserRef[] | null = null;
+let userCache: { users: UserRef[]; fetchedAt: number } | null = null;
 let userRequest: Promise<UserRef[]> | null = null;
+
+function cachedMembers(channelId: string): UserRef[] | null {
+  return memberCache.get(channelId)?.members ?? null;
+}
 
 function loadMembers(channelId: string): Promise<UserRef[]> {
   const cached = memberCache.get(channelId);
-  if (cached) return Promise.resolve(cached);
+  if (cached && Date.now() - cached.fetchedAt < ROSTER_TTL_MS) return Promise.resolve(cached.members);
   const pending = memberRequests.get(channelId);
   if (pending) return pending;
   const request = api
     .channelMembers(channelId)
     .then(({ members }) => {
-      memberCache.set(channelId, members);
+      memberCache.set(channelId, { members, fetchedAt: Date.now() });
       return members;
     })
     .catch(() => {
-      memberCache.set(channelId, []);
-      return [];
+      // Keep a stale roster over an empty one; cache the miss otherwise.
+      if (!cached) memberCache.set(channelId, { members: [], fetchedAt: Date.now() });
+      return cached?.members ?? [];
     })
     .finally(() => memberRequests.delete(channelId));
   memberRequests.set(channelId, request);
   return request;
 }
 
+export function addKnownChannelMember(channelId: string, user: UserRef): void {
+  const cached = memberCache.get(channelId);
+  if (cached && !cached.members.some((member) => member.id === user.id)) {
+    memberCache.set(channelId, { members: [...cached.members, user], fetchedAt: cached.fetchedAt });
+  }
+}
+
 function loadUsers(): Promise<UserRef[]> {
-  if (userCache) return Promise.resolve(userCache);
+  if (userCache && Date.now() - userCache.fetchedAt < ROSTER_TTL_MS) return Promise.resolve(userCache.users);
   if (userRequest) return userRequest;
+  const previous = userCache;
   userRequest = api
     .users()
     .then(({ users }) => {
-      userCache = users;
+      userCache = { users, fetchedAt: Date.now() };
       primeUserDirectory(users);
       return users;
     })
     .catch(() => {
-      userCache = [];
-      return [];
+      if (!previous) userCache = { users: [], fetchedAt: Date.now() };
+      return previous?.users ?? [];
     })
     .finally(() => {
       userRequest = null;
@@ -97,13 +112,19 @@ export function useMentionTypeahead({
   const [users, setUsers] = useState<UserRef[] | null>(null);
   const [activeIndex, setActiveIndex] = useState(0);
   const [dismissedKey, setDismissedKey] = useState<string | null>(null);
+  /** Range-tracked mentions of users outside a private channel — they will NOT
+   * be notified (the server drops non-member mentions), so the composer warns. */
+  const [nonMembers, setNonMembers] = useState<UserRef[]>([]);
   const rangesRef = useRef<MentionRange[]>([]);
   const listboxId = `mention-listbox-${useId().replace(/:/g, '')}`;
   const match = context ? matchMentionPrefix(value.slice(0, selectionStart)) : null;
   const matchKey = match ? `${match.start}:${match.prefix}` : null;
+  // One load per mention session (an '@' at a given position), so a stale
+  // roster refreshes on the next picker open rather than per keystroke.
+  const matchStart = match ? match.start : null;
 
   useEffect(() => {
-    if (!context || !match || (members !== null && users !== null)) return;
+    if (!context || matchStart === null) return;
     // Public channels have no explicit membership (workspace = membership), so
     // the members endpoint is a 404 there — the whole directory counts as in-channel.
     const membersPromise = context.publicChannel ? Promise.resolve(null) : loadMembers(context.channelId);
@@ -111,11 +132,11 @@ export function useMentionTypeahead({
       setMembers(context.publicChannel ? nextUsers : nextMembers);
       setUsers(nextUsers);
     });
-  }, [context, match, members, users]);
+  }, [context, matchStart]);
 
   useEffect(() => {
-    setMembers(memberCache.get(context?.channelId ?? '') ?? null);
-    setUsers(userCache);
+    setMembers(cachedMembers(context?.channelId ?? ''));
+    setUsers(userCache?.users ?? null);
     setDismissedKey(null);
     setActiveIndex(0);
   }, [context?.channelId]);
@@ -150,6 +171,10 @@ export function useMentionTypeahead({
   const onValueChange = useCallback(
     (next: string, caret: number) => {
       rangesRef.current = maintainRanges(rangesRef.current, value, next);
+      const alive = new Set(rangesRef.current.map((range) => range.userId));
+      setNonMembers((current) =>
+        current.every((user) => alive.has(user.id)) ? current : current.filter((user) => alive.has(user.id)),
+      );
       setValue(next);
       setSelectionStart(caret);
     },
@@ -168,6 +193,11 @@ export function useMentionTypeahead({
           end: match.start + display.length - 1,
           userId: candidate.user.id,
         });
+        if (!candidate.inChannel && context && !context.publicChannel && context.includeSpecials) {
+          setNonMembers((current) =>
+            current.some((user) => user.id === candidate.user.id) ? current : [...current, candidate.user],
+          );
+        }
       }
       setValue(next);
       setDismissedKey(null);
@@ -178,7 +208,7 @@ export function useMentionTypeahead({
         textareaRef.current?.setSelectionRange(caret, caret);
       });
     },
-    [match, selectionStart, setValue, textareaRef, value],
+    [context, match, selectionStart, setValue, textareaRef, value],
   );
 
   const onKeyDown = useCallback(
@@ -208,9 +238,24 @@ export function useMentionTypeahead({
   );
 
   const serialize = useCallback((text: string) => encodeMentionsToWire(text, rangesRef.current), []);
+  const invite = useCallback(
+    async (userId: string) => {
+      if (!context) return;
+      const user = nonMembers.find((candidate) => candidate.id === userId);
+      if (!user) return;
+      await api.addChannelMember(context.channelId, userId);
+      addKnownChannelMember(context.channelId, user);
+      setMembers((current) =>
+        current && !current.some((member) => member.id === userId) ? [...current, user] : current,
+      );
+      setNonMembers((current) => current.filter((candidate) => candidate.id !== userId));
+    },
+    [context, nonMembers],
+  );
   const clear = useCallback(() => {
     rangesRef.current = [];
     setDismissedKey(null);
+    setNonMembers([]);
     setSelectionStart(0);
   }, []);
   const initialize = useCallback((ranges: MentionRange[], caret: number) => {
@@ -225,6 +270,8 @@ export function useMentionTypeahead({
     clear,
     initialize,
     insert,
+    invite,
+    nonMembers,
     listboxId,
     onKeyDown,
     onValueChange,

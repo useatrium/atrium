@@ -59,7 +59,7 @@ export function suggestMentions(opts: {
       result.push({ kind: 'special', name: 'channel', description: 'Notify everyone in this channel' });
     }
     if (prefix === '' || 'here'.startsWith(prefix)) {
-      result.push({ kind: 'special', name: 'here', description: 'Notify everyone active in this channel' });
+      result.push({ kind: 'special', name: 'here', description: 'Notify channel members who are online' });
     }
   }
 

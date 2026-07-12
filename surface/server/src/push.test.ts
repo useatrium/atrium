@@ -21,7 +21,7 @@ beforeEach(async () => {
 
 function hubWithPresence(ids: string[]) {
   return {
-    presenceFor: () => ids.map((id) => ({ id, handle: id, displayName: id })),
+    onlineUserIds: () => new Set(ids),
   };
 }
 

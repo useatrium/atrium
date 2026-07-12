@@ -261,6 +261,10 @@ export function ChatProvider({ session, children }: { session: Session; children
   const [mentionMembers, setMentionMembers] = useState<Record<string, UserRef[]>>({});
   const loadingMentionUsersRef = useRef(false);
   const loadingMentionMembersRef = useRef(new Set<string>());
+  // Rosters go stale as people join; refetch on the next picker open after this.
+  const MENTION_ROSTER_TTL_MS = 5 * 60 * 1000;
+  const mentionUsersFetchedAtRef = useRef(0);
+  const mentionMembersFetchedAtRef = useRef(new Map<string, number>());
   const userDirectoryRef = useRef(new Map<string, UserRef>([[me.id.toLowerCase(), me]]));
   const [userDirectoryVersion, setUserDirectoryVersion] = useState(0);
   const touchedDraftKeysRef = useRef<Set<string>>(new Set());
@@ -1502,11 +1506,13 @@ export function ChatProvider({ session, children }: { session: Session; children
   );
 
   const loadMentionUsers = useCallback(() => {
-    if (mentionUsers || loadingMentionUsersRef.current) return;
+    const fresh = mentionUsers && Date.now() - mentionUsersFetchedAtRef.current < MENTION_ROSTER_TTL_MS;
+    if (fresh || loadingMentionUsersRef.current) return;
     loadingMentionUsersRef.current = true;
     api
       .users()
       .then(({ users }) => {
+        mentionUsersFetchedAtRef.current = Date.now();
         setMentionUsers(users);
         for (const user of users) userDirectoryRef.current.set(user.id.toLowerCase(), user);
         setUserDirectoryVersion((version) => version + 1);
@@ -1519,9 +1525,12 @@ export function ChatProvider({ session, children }: { session: Session; children
 
   const loadMentionMembers = useCallback(
     (channelId: string) => {
-      if (mentionMembers[channelId] || loadingMentionMembersRef.current.has(channelId)) return;
+      const fetchedAt = mentionMembersFetchedAtRef.current.get(channelId) ?? 0;
+      const fresh = mentionMembers[channelId] && Date.now() - fetchedAt < MENTION_ROSTER_TTL_MS;
+      if (fresh || loadingMentionMembersRef.current.has(channelId)) return;
       loadingMentionMembersRef.current.add(channelId);
       void channelMembers(channelId)
+        .then(() => mentionMembersFetchedAtRef.current.set(channelId, Date.now()))
         .catch(onApiError)
         .finally(() => loadingMentionMembersRef.current.delete(channelId));
     },
