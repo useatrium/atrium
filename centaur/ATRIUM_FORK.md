@@ -122,13 +122,15 @@ migrations that pass on fresh DBs can still fail on live ones.
 
 **A new migration file may silently not ship in box-built images.**
 `sqlx::migrate!()` embeds the migrations directory at proc-macro expansion, but
-sccache's cache key only sees rustc's declared inputs — not the macro's file
-reads. If a commit adds a migration without touching crate source, the box's
-Docker build can serve a stale compile of `centaur-session-sqlx` and the binary
-ships without the new migration (this dropped `1004` on 2026-07-12; the
-constraint had to be applied manually). After a deploy that adds a migration,
-verify it landed: `select version from _sqlx_migrations order by version desc
-limit 3` on `ai_v2`. Touching any `.rs` file in the crate forces a true rebuild.
+cargo does not fingerprint that directory as a crate input — with the api-rs
+Docker build's persistent `/build/target` cache mount, adding a migration
+without touching any `.rs` file reused the stale rlib and the binary shipped
+without the new migration (this dropped `1004` on 2026-07-12; the constraint
+had to be applied manually). `centaur-session-sqlx/build.rs` now emits
+`cargo:rerun-if-changed=migrations` (sqlx's documented fix) so the crate
+re-fingerprints on migration changes. Belt-and-braces: after a deploy that adds
+a migration, verify it landed — `select version from _sqlx_migrations order by
+version desc limit 3` on `ai_v2`.
 
 ## Deploy
 From the Atrium repo root:
