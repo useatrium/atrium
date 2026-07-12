@@ -150,7 +150,7 @@ describe('mentionedHandles', () => {
   it('extracts deduped lowercase handles', () => {
     expect(mentionedHandles('hey @Ben and @alice and @ben!')).toEqual(['ben', 'alice']);
     expect(mentionedHandles('no mentions here')).toEqual([]);
-    expect(mentionedHandles('mid@word is not a mention of word')).toEqual(['word']);
+    expect(mentionedHandles('mid@word is not a mention of word')).toEqual([]);
   });
 });
 

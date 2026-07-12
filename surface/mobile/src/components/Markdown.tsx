@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { compactMarkdownSource } from '@atrium/surface-client';
+import { compactMarkdownSource, type UserRef } from '@atrium/surface-client';
 import * as Clipboard from 'expo-clipboard';
 import {
   Component,
@@ -46,8 +46,11 @@ type MarkdownItState = {
 };
 
 const mentionHrefPrefix = 'atrium-mention:';
+const mentionIdHrefPrefix = 'atrium-mention-id:';
+const specialMentionHrefPrefix = 'atrium-special-mention:';
 const entryHrefPrefix = 'atrium-entry:';
-const mentionRe = /@([a-z0-9][a-z0-9_-]{1,31})/gi;
+const mentionRe =
+  /<@([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})>|<!(channel|here)>|(^|[\s(["'{<])@([a-z0-9][a-z0-9_-]{1,31})/gi;
 
 export interface EntryReferenceMarkdownContextValue {
   resolveEntry?: EntryResolver;
@@ -116,16 +119,29 @@ const mentionPlugin = (md: MarkdownIt) => {
         let last = 0;
         mentionRe.lastIndex = 0;
         for (let match = mentionRe.exec(child.content); match; match = mentionRe.exec(child.content)) {
-          const handle = match[1] ?? '';
-          if (match.index > last) {
+          const userId = match[1];
+          const special = match[2];
+          const legacyBoundary = match[3] ?? '';
+          const handle = match[4];
+          const mentionStart = match.index + legacyBoundary.length;
+          if (mentionStart > last) {
             const text = new state.Token('text', '', 0);
-            text.content = child.content.slice(last, match.index);
+            text.content = child.content.slice(last, mentionStart);
             next.push(text);
           }
           const open = new state.Token('link_open', 'a', 1);
-          open.attrs = [['href', `${mentionHrefPrefix}${handle}`]];
+          open.attrs = [
+            [
+              'href',
+              userId
+                ? `${mentionIdHrefPrefix}${userId}`
+                : special
+                  ? `${specialMentionHrefPrefix}${special}`
+                  : `${mentionHrefPrefix}${handle}`,
+            ],
+          ];
           const text = new state.Token('text', '', 0);
-          text.content = `@${handle}`;
+          text.content = handle ? `@${handle}` : match[0];
           const close = new state.Token('link_close', 'a', -1);
           next.push(open, text, close);
           last = match.index + match[0].length;
@@ -230,6 +246,8 @@ function trimTrailingNewline(value: string): string {
 
 function openExternalLink(url: string): boolean {
   if (url.startsWith(mentionHrefPrefix)) return false;
+  if (url.startsWith(mentionIdHrefPrefix)) return false;
+  if (url.startsWith(specialMentionHrefPrefix)) return false;
   if (url.startsWith(entryHrefPrefix)) return false;
   if (!/^(https?:|mailto:|tel:)/i.test(url)) return false;
   void Linking.openURL(url).catch(() => {});
@@ -464,6 +482,8 @@ function makeRules(
   colors: Colors,
   variant: 'session' | 'message' | 'compact',
   meHandle: string | undefined,
+  meId: string | undefined,
+  resolveUser: ((id: string) => UserRef | undefined) | undefined,
   entryReferences: EntryReferenceMarkdownContextValue,
 ): RenderRules {
   const highlightedCode = (node: ASTNode) => {
@@ -499,6 +519,34 @@ function makeRules(
       }
 
       if (!href.startsWith(mentionHrefPrefix)) {
+        if (href.startsWith(mentionIdHrefPrefix)) {
+          const userId = href.slice(mentionIdHrefPrefix.length);
+          const user = resolveUser?.(userId);
+          const isMe = meId != null && userId.toLowerCase() === meId.toLowerCase();
+          return (
+            <Text
+              key={node.key}
+              style={{
+                color: user ? colors.accent : colors.textMuted,
+                fontWeight: '700',
+                ...(isMe ? { backgroundColor: colors.accentBg } : {}),
+              }}
+            >
+              @{user?.displayName ?? 'unknown'}
+            </Text>
+          );
+        }
+        if (href.startsWith(specialMentionHrefPrefix)) {
+          const name = href.slice(specialMentionHrefPrefix.length);
+          return (
+            <Text
+              key={node.key}
+              style={{ color: colors.onMention, backgroundColor: colors.mention, fontWeight: '800' }}
+            >
+              @{name}
+            </Text>
+          );
+        }
         if (variant === 'compact') {
           return (
             <Text key={node.key} style={{ color: colors.accent }}>
@@ -600,17 +648,21 @@ export const MarkdownText = memo(function MarkdownText({
   text,
   variant = 'message',
   meHandle,
+  meId,
+  resolveUser,
 }: {
   text: string;
   variant?: 'session' | 'message' | 'compact';
   meHandle?: string | null;
+  meId?: string | null;
+  resolveUser?: (id: string) => UserRef | undefined;
 }) {
   const { colors } = useTheme();
   const entryReferences = useContext(EntryReferenceMarkdownContext);
   const styles = useMemo(() => markdownStyles(colors, variant), [colors, variant]);
   const rules = useMemo(
-    () => makeRules(colors, variant, meHandle ?? undefined, entryReferences),
-    [colors, variant, meHandle, entryReferences],
+    () => makeRules(colors, variant, meHandle ?? undefined, meId ?? undefined, resolveUser, entryReferences),
+    [colors, variant, meHandle, meId, resolveUser, entryReferences],
   );
   const source = variant === 'compact' ? compactMarkdownSource(text) : text;
 

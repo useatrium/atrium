@@ -4,6 +4,7 @@ import { router } from 'expo-router';
 import {
   type ActivityCounts,
   type ActivityItem,
+  decodeWireToDisplay,
   plainMarkdownSnippet,
   formatExactTimestamp,
   formatRelativeTimestamp,
@@ -64,6 +65,9 @@ export function activityItemTitle(item: ActivityItem): string {
   }
   if (item.kind === 'session_failed') return `${sessionTitle} failed`;
   if (item.kind === 'agent_auth') return `${sessionTitle} is blocked — reconnect provider`;
+  if (item.kind === 'reaction') return `${item.actorName ?? 'Someone'} reacted to your message`;
+  if (item.kind === 'channel_invite') return `${item.actorName ?? 'Someone'} added you`;
+  if (item.kind === 'seat_request') return `${item.actorName ?? 'Someone'} wants to drive · ${sessionTitle}`;
   return 'Activity';
 }
 
@@ -75,6 +79,9 @@ export function activityItemMarker(item: ActivityItem): string {
   if (item.kind === 'session_completed') return 'OK';
   if (item.kind === 'session_failed') return '!';
   if (item.kind === 'agent_auth') return '⚿';
+  if (item.kind === 'reaction') return '☺';
+  if (item.kind === 'channel_invite') return '+';
+  if (item.kind === 'seat_request') return '⇄';
   return '•';
 }
 
@@ -100,7 +107,7 @@ export function partitionRows(
 }
 
 export default function ActivityScreen() {
-  const { api, state } = useChat();
+  const { api, state, resolveUser } = useChat();
   const { colors } = useTheme();
   const [sessions, setSessions] = useState<SessionListItem[]>([]);
   const [activityItems, setActivityItems] = useState<ActivityItem[]>([]);
@@ -256,8 +263,10 @@ export default function ActivityScreen() {
     const marker = activityItemMarker(item);
     // Single-line plain-text snippet: text truncation (not a pixel clip), so
     // descenders survive and the row scales with Dynamic Type.
-    const snippet = plainMarkdownSnippet(item.snippet);
-    const unread = isUnread(item, lastReadEventId);
+    const snippet = plainMarkdownSnippet(
+      decodeWireToDisplay(item.snippet, (id) => resolveUser(id)?.handle ?? null).text,
+    );
+    const unread = isUnread(item, lastReadEventId) && !item.muted;
     const danger = attention && item.kind === 'session_failed';
     const chipBackground = attention ? (danger ? colors.dangerSurface : colors.warningSurface) : colors.bgElevated;
     const chipColor = attention ? (danger ? colors.danger : colors.warning) : colors.textMuted;

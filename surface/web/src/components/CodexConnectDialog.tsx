@@ -22,7 +22,7 @@ export function CodexConnectDialog({
 }) {
   const containerRef = useRef<HTMLFormElement>(null);
   const [flow, setFlow] = useState<CodexDeviceStartResponse | null>(null);
-  const [phase, setPhase] = useState<'starting' | 'waiting' | 'error' | 'expired'>('starting');
+  const [phase, setPhase] = useState<'starting' | 'waiting' | 'finalizing' | 'error' | 'expired'>('starting');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -32,9 +32,12 @@ export function CodexConnectDialog({
   const statusErrorId = 'codex-connect-status-error';
   const errorId = 'codex-connect-error';
   const waitingId = 'codex-connect-waiting';
+  const finalizingId = 'codex-connect-finalizing';
+  const showStatusError = Boolean(status?.lastError) && (phase === 'starting' || phase === 'waiting');
   const descriptionIds = [
     phase === 'waiting' ? waitingId : null,
-    status?.lastError ? statusErrorId : null,
+    phase === 'finalizing' ? finalizingId : null,
+    showStatusError ? statusErrorId : null,
     error ? errorId : null,
   ]
     .filter((id): id is string => Boolean(id))
@@ -62,7 +65,7 @@ export function CodexConnectDialog({
   }, [start]);
 
   useEffect(() => {
-    if (!flow || phase !== 'waiting') return undefined;
+    if (!flow || (phase !== 'waiting' && phase !== 'finalizing')) return undefined;
     let cancelled = false;
     let timeout: ReturnType<typeof setTimeout> | undefined;
 
@@ -72,6 +75,11 @@ export function CodexConnectDialog({
         if (cancelled) return;
         if (result.status === 'pending') {
           timeout = setTimeout(poll, Math.max(flow.intervalSec ?? 5, 1) * 1000);
+          return;
+        }
+        if (result.status === 'finalizing') {
+          setPhase('finalizing');
+          timeout = setTimeout(poll, 2000);
           return;
         }
         if (result.status === 'connected') {
@@ -94,7 +102,7 @@ export function CodexConnectDialog({
       }
     };
 
-    timeout = setTimeout(poll, Math.max(flow.intervalSec ?? 5, 1) * 1000);
+    timeout = setTimeout(poll, phase === 'finalizing' ? 2000 : Math.max(flow.intervalSec ?? 5, 1) * 1000);
     return () => {
       cancelled = true;
       if (timeout) clearTimeout(timeout);
@@ -139,7 +147,7 @@ export function CodexConnectDialog({
         aria-modal="true"
         aria-label="Connect Codex"
         aria-describedby={descriptionIds || undefined}
-        aria-busy={busy || phase === 'starting' || phase === 'waiting' ? 'true' : undefined}
+        aria-busy={busy || phase === 'starting' || phase === 'waiting' || phase === 'finalizing' ? 'true' : undefined}
         className="mt-28 w-[min(520px,calc(100vw-2rem))] overflow-hidden rounded-lg border border-edge-strong bg-surface-raised shadow-2xl max-md:my-4"
       >
         <header className="flex items-center justify-between border-b border-edge px-4 py-3">
@@ -163,7 +171,7 @@ export function CodexConnectDialog({
           <button
             type="button"
             onClick={openSignIn}
-            disabled={!flow?.verificationUri || phase === 'starting'}
+            disabled={!flow?.verificationUri || phase === 'starting' || phase === 'finalizing'}
             className="w-full rounded-md bg-accent px-3 py-2 text-sm font-semibold text-on-accent hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50 max-md:min-h-11"
           >
             Open OpenAI sign-in
@@ -198,12 +206,22 @@ export function CodexConnectDialog({
               <span>Waiting for approval on OpenAI...</span>
             </div>
           )}
-          {status?.lastError && (
+          {phase === 'finalizing' && (
+            <div
+              id={finalizingId}
+              className="flex items-center gap-2 rounded-md border border-edge bg-surface px-3 py-2 text-xs text-fg-muted"
+            >
+              <span className="h-3 w-3 animate-spin rounded-full border-2 border-edge-strong border-t-transparent" />
+              <span>Finalizing connection…</span>
+            </div>
+          )}
+          {showStatusError && (
             <div
               id={statusErrorId}
               className="rounded-md border border-warning-border/50 bg-warning-tint/20 px-3 py-2 text-xs text-warning-text"
             >
-              {status.lastError}
+              <div className="font-semibold">Reconnecting because:</div>
+              <div>{status?.lastError}</div>
             </div>
           )}
           {error && (
@@ -246,7 +264,7 @@ export function CodexConnectDialog({
             <button
               type="submit"
               onClick={start}
-              disabled={busy || phase === 'starting' || phase === 'waiting'}
+              disabled={busy || phase === 'starting' || phase === 'waiting' || phase === 'finalizing'}
               className="rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-on-accent hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50 max-md:min-h-11"
             >
               {connected ? 'Reconnect' : 'Connect'}
