@@ -815,6 +815,30 @@ describe('app unread read cursors', () => {
     const state = appReducer(unfocused, { type: 'server-event', event: wire(12, 'plain', { author: bob }) });
     expect(state.unread[CH]).toBe('mention');
   });
+
+  it('badges stable-id wire mentions in live channel messages', () => {
+    const meId = '123e4567-e89b-12d3-a456-426614174000';
+    let state = appReducer(initialAppState, { type: 'init-me', id: meId, handle: 'alice' });
+    state = appReducer(state, {
+      type: 'channels-loaded',
+      channels: [
+        {
+          id: CH,
+          workspaceId: 'ws-1',
+          name: 'public',
+          createdAt: new Date(0).toISOString(),
+          kind: 'public',
+        },
+      ],
+    });
+    state = appReducer(state, { type: 'select-channel', channelId: null });
+    state = appReducer(state, {
+      type: 'server-event',
+      event: wire(12, `hello <@${meId}>`, { author: bob }),
+    });
+
+    expect(state.unread[CH]).toBe('mention');
+  });
 });
 
 describe('channel removal', () => {

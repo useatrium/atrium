@@ -6,6 +6,7 @@ export * from './appState';
 export * from './sessions';
 export * from './spawnTrigger';
 export * from './mentions';
+export * from './mentionSuggest';
 export * from './formatting';
 export * from './criticmarkup';
 export * from './api';

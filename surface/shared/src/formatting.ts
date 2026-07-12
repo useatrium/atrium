@@ -1,14 +1,19 @@
+import type { SpecialMention } from './mentions';
+
 export type Segment =
   | { kind: 'codeblock'; lang: string; code: string }
   | { kind: 'code'; code: string }
   | { kind: 'link'; href: string }
   | { kind: 'mention'; handle: string }
+  | { kind: 'mentionId'; userId: string }
+  | { kind: 'special'; name: SpecialMention }
   | { kind: 'text'; text: string };
 
 const FENCE_RE = /```([a-zA-Z0-9_-]*)\n?([\s\S]*?)```/g;
 const INLINE_CODE_RE = /`([^`\n]+)`/g;
 const URL_RE = /https?:\/\/[^\s<>"')\]]+[^\s<>"')\].,;:!?]/g;
-const MENTION_RE = /@([a-z0-9][a-z0-9_-]{1,31})/gi;
+const MENTION_RE =
+  /<@([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})>|<!(channel|here)>|@([a-z0-9][a-z0-9_-]{1,31})/gi;
 
 function tokenizeMentions(text: string): Segment[] {
   const out: Segment[] = [];
@@ -16,7 +21,9 @@ function tokenizeMentions(text: string): Segment[] {
   MENTION_RE.lastIndex = 0;
   for (let m = MENTION_RE.exec(text); m; m = MENTION_RE.exec(text)) {
     if (m.index > last) out.push({ kind: 'text', text: text.slice(last, m.index) });
-    out.push({ kind: 'mention', handle: m[1] ?? '' });
+    if (m[1]) out.push({ kind: 'mentionId', userId: m[1].toLowerCase() });
+    else if (m[2]) out.push({ kind: 'special', name: m[2].toLowerCase() as SpecialMention });
+    else out.push({ kind: 'mention', handle: m[3] ?? '' });
     last = m.index + m[0].length;
   }
   if (last < text.length) out.push({ kind: 'text', text: text.slice(last) });
