@@ -378,7 +378,7 @@ describe('/api/activity', () => {
       payload: { lastReadEventId: failed + 10_000 },
     });
     expect(read.statusCode).toBe(200);
-    expect(read.json()).toEqual({ lastReadEventId: String(failed) });
+    expect(read.json()).toMatchObject({ lastReadEventId: String(failed), unreadExceptionIds: [] });
 
     // Read cursors only move forward. A slower tab cannot make the failure
     // unread again after this tab has acknowledged it.
@@ -389,7 +389,7 @@ describe('/api/activity', () => {
       payload: { lastReadEventId: question },
     });
     expect(staleRead.statusCode).toBe(200);
-    expect(staleRead.json()).toEqual({ lastReadEventId: String(failed) });
+    expect(staleRead.json()).toMatchObject({ lastReadEventId: String(failed), unreadExceptionIds: [] });
 
     const acknowledged = await activity(bob.cookie);
     expect(acknowledged.counts).toEqual({ attention: 2, unread: 0 });
@@ -433,6 +433,58 @@ describe('/api/activity', () => {
 
     expect(res.statusCode).toBe(400);
     expect(res.json()).toMatchObject({ error: 'bad_request' });
+  });
+
+  it('supports per-item mark read/unread via watermark exceptions', async () => {
+    const bob = await login('bob', 'Bob');
+    const alice = await login('alice', 'Alice');
+    await post(alice.cookie, fx.channelId, 'hello @bob from the public channel');
+
+    const before = await activity(bob.cookie);
+    expect(before.counts.unread).toBeGreaterThanOrEqual(1);
+    const target = before.items.find((item: { kind: string }) => item.kind === 'mention');
+    expect(target).toBeTruthy();
+    const targetId = Number(target.eventId);
+    const newestId = Math.max(...before.items.map((item: { eventId: string }) => Number(item.eventId)));
+
+    const markAll = await app.inject({
+      method: 'POST',
+      url: '/api/activity/read',
+      headers: { cookie: bob.cookie },
+      payload: { lastReadEventId: newestId },
+    });
+    expect(markAll.statusCode).toBe(200);
+    expect(markAll.json()).toMatchObject({ lastReadEventId: String(newestId), unreadExceptionIds: [] });
+
+    const markUnread = await app.inject({
+      method: 'POST',
+      url: '/api/activity/read',
+      headers: { cookie: bob.cookie },
+      payload: { markUnreadEventId: targetId },
+    });
+    expect(markUnread.statusCode).toBe(200);
+    expect(markUnread.json().unreadExceptionIds.map(String)).toContain(String(targetId));
+
+    const afterUnread = await activity(bob.cookie);
+    expect(afterUnread.counts.unread).toBeGreaterThanOrEqual(1);
+    expect(afterUnread.items.find((item: { eventId: string }) => Number(item.eventId) === targetId)).toMatchObject({
+      unread: true,
+    });
+    expect(afterUnread.unreadExceptionIds.map(String)).toContain(String(targetId));
+
+    const markRead = await app.inject({
+      method: 'POST',
+      url: '/api/activity/read',
+      headers: { cookie: bob.cookie },
+      payload: { markReadEventId: targetId },
+    });
+    expect(markRead.statusCode).toBe(200);
+    expect(markRead.json().unreadExceptionIds.map(String)).not.toContain(String(targetId));
+
+    const afterRead = await activity(bob.cookie);
+    expect(afterRead.items.find((item: { eventId: string }) => Number(item.eventId) === targetId)).toMatchObject({
+      unread: false,
+    });
   });
 });
 

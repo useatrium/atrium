@@ -258,6 +258,12 @@ export type ActivityItem = {
   attention: boolean;
   /** Quiet-not-hidden: muted-channel items stay in history but never count. */
   muted?: boolean;
+  /**
+   * Server-computed unread against the activity watermark + mark-unread
+   * exceptions. Optional for deploy-skew tolerance; clients fall back to
+   * local watermark math when absent.
+   */
+  unread?: boolean;
 };
 
 export type ActivityCounts = {
@@ -265,10 +271,17 @@ export type ActivityCounts = {
   unread: number;
 };
 
+export type ActivityReadState = {
+  lastReadEventId: string;
+  unreadExceptionIds: string[];
+};
+
 export type ActivityResponse = {
   items: ActivityItem[];
   nextCursor: string | null;
   lastReadEventId: string;
+  /** Event ids explicitly marked unread after the watermark advanced past them. */
+  unreadExceptionIds?: string[];
   counts: ActivityCounts;
 };
 
@@ -521,10 +534,23 @@ export function createApi(opts: ApiOptions = {}) {
       const qs = q.toString();
       return req<ActivityResponse>(`/api/activity${qs ? `?${qs}` : ''}`);
     },
+    /** Mark all activity through `lastReadEventId` read and clear mark-unread exceptions. */
     markActivityRead: (lastReadEventId: number) =>
-      req<{ lastReadEventId: string }>('/api/activity/read', {
+      req<ActivityReadState>('/api/activity/read', {
         method: 'POST',
         body: JSON.stringify({ lastReadEventId }),
+      }),
+    /** Mark one item read (advances the watermark through that id). */
+    markActivityItemRead: (eventId: number) =>
+      req<ActivityReadState>('/api/activity/read', {
+        method: 'POST',
+        body: JSON.stringify({ markReadEventId: eventId }),
+      }),
+    /** Mark one already-read item unread (stores an exception under the watermark). */
+    markActivityItemUnread: (eventId: number) =>
+      req<ActivityReadState>('/api/activity/read', {
+        method: 'POST',
+        body: JSON.stringify({ markUnreadEventId: eventId }),
       }),
     thread: (rootEventId: number) =>
       req<{ events: WireEvent[] }>(`/api/threads/${rootEventId}/messages`, undefined, decodeThreadMessagesResponse),

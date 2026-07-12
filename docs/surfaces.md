@@ -86,12 +86,16 @@ editor).
 
 ## Attention
 
-- **Attention** (`components/ActivityView.tsx`, `/activity`) — the "what needs
-  me" surface. A pinned **Needs attention** tier (agent questions, provider
-  auth, failed sessions) above an activity history (mentions, DMs, thread
-  replies, session completions, reactions, invites, seat requests, missed and
-  declined calls). Per-item read state against a watermark, mark-all-read, and
-  the sidebar badge; rows deep-link to the channel or session.
+- **Attention** (`components/ActivityView.tsx`, `/activity`; mobile tab) — the
+  "what needs me" surface. A pinned **Needs attention** tier (agent questions,
+  provider auth, failed sessions) above activity history (mentions, DMs, thread
+  replies, reactions, invites, seat requests, missed/declined calls). Filters:
+  **Inbox** (default, hides completed sessions), **Unread**, **Done**
+  (completions only), **All**. Read state is a per-user watermark plus
+  mark-unread exceptions; mark-all-read, per-item mark read/unread (⋯ menu on
+  web, swipe/long-press on mobile), and auto-mark-read when opening history
+  rows. Sidebar badge uses the attention count; rows deep-link to channel or
+  session.
 
 ## Files
 

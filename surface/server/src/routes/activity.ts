@@ -31,13 +31,20 @@ interface ActivityRow {
   session_status: string | null;
   attention: boolean;
   muted: boolean;
+  unread: boolean;
 }
 
 interface ActivityQueryRow {
   last_read_event_id: number | string;
   unread_count: number | string;
   attention_count: number | string;
+  unread_exception_ids: Array<number | string> | null;
   items: ActivityRow[] | null;
+}
+
+interface ActivityReadStateRow {
+  last_read_event_id: number | string;
+  unread_exception_ids: Array<number | string> | null;
 }
 
 export interface ActivityRouteDeps {
@@ -81,7 +88,53 @@ function toActivityItem(row: ActivityRow) {
     sessionStatus: row.session_status,
     attention: row.attention,
     muted: row.muted,
+    unread: row.unread,
   };
+}
+
+function exceptionIdsFrom(row: { unread_exception_ids: Array<number | string> | null }): string[] {
+  return Array.isArray(row.unread_exception_ids) ? row.unread_exception_ids.map(String) : [];
+}
+
+async function readStateFor(pool: Db, userId: string): Promise<{ lastReadEventId: string; unreadExceptionIds: string[] }> {
+  const res = await pool.query<ActivityReadStateRow>(
+    `SELECT COALESCE((
+       SELECT last_read_event_id FROM activity_read_cursors WHERE user_id = $1
+     ), 0)::bigint AS last_read_event_id,
+     COALESCE((
+       SELECT json_agg(event_id ORDER BY event_id)
+       FROM activity_unread_exceptions
+       WHERE user_id = $1
+     ), '[]'::json) AS unread_exception_ids`,
+    [userId],
+  );
+  const row = res.rows[0]!;
+  return {
+    lastReadEventId: String(row.last_read_event_id),
+    unreadExceptionIds: exceptionIdsFrom(row),
+  };
+}
+
+/** Advance the watermark (forward-only) and clamp to a real event id. */
+async function advanceWatermark(pool: Db, userId: string, requestedCursor: number): Promise<string> {
+  const res = await pool.query<{ last_read_event_id: number | string }>(
+    `WITH clamped AS (
+       SELECT COALESCE(MAX(id), 0)::bigint AS last_read_event_id
+       FROM events
+       WHERE id <= $2::bigint
+     )
+     INSERT INTO activity_read_cursors (user_id, last_read_event_id, updated_at)
+     SELECT $1, last_read_event_id, now()
+     FROM clamped
+     ON CONFLICT (user_id) DO UPDATE
+       -- A late click from another tab must not make already-read activity
+       -- unread again.
+       SET last_read_event_id = GREATEST(activity_read_cursors.last_read_event_id, EXCLUDED.last_read_event_id),
+           updated_at = now()
+     RETURNING last_read_event_id`,
+    [userId, requestedCursor],
+  );
+  return String(res.rows[0]!.last_read_event_id);
 }
 
 export function registerActivityRoutes(app: FastifyInstance, deps: ActivityRouteDeps): void {
@@ -90,33 +143,63 @@ export function registerActivityRoutes(app: FastifyInstance, deps: ActivityRoute
   app.post('/api/activity/read', async (req, reply) => {
     const user = requireUser(req, reply);
     if (!user) return;
-    const body = req.body as { lastReadEventId?: unknown } | undefined;
+    const body = req.body as {
+      lastReadEventId?: unknown;
+      markReadEventId?: unknown;
+      markUnreadEventId?: unknown;
+    } | undefined;
+
+    const markUnreadEventId = parseReadEventId(body?.markUnreadEventId);
+    const markReadEventId = parseReadEventId(body?.markReadEventId);
     const requestedCursor = parseReadEventId(body?.lastReadEventId);
-    if (requestedCursor === undefined) {
-      return reply.code(400).send({ error: 'bad_request', message: 'lastReadEventId must be a non-negative event id' });
+
+    const modes = [requestedCursor !== undefined, markReadEventId !== undefined, markUnreadEventId !== undefined].filter(
+      Boolean,
+    ).length;
+    if (modes !== 1) {
+      return reply.code(400).send({
+        error: 'bad_request',
+        message: 'Provide exactly one of lastReadEventId, markReadEventId, or markUnreadEventId',
+      });
     }
 
-    // A cursor always lands on a real event (or the initial zero), even if a
-    // client sends an optimistic id that has not been committed yet.
-    const res = await pool.query<{ last_read_event_id: number | string }>(
-      `WITH clamped AS (
-         SELECT COALESCE(MAX(id), 0)::bigint AS last_read_event_id
-         FROM events
-         WHERE id <= $2::bigint
-       )
-       INSERT INTO activity_read_cursors (user_id, last_read_event_id, updated_at)
-       SELECT $1, last_read_event_id, now()
-       FROM clamped
-       ON CONFLICT (user_id) DO UPDATE
-         -- A late click from another tab must not make already-read activity
-         -- unread again.
-         SET last_read_event_id = GREATEST(activity_read_cursors.last_read_event_id, EXCLUDED.last_read_event_id),
-             updated_at = now()
-       RETURNING last_read_event_id`,
-      [user.id, requestedCursor],
-    );
+    // Mark all / advance through: forward-only watermark + clear every
+    // mark-unread exception so the inbox is fully clean.
+    if (requestedCursor !== undefined) {
+      await advanceWatermark(pool, user.id, requestedCursor);
+      await pool.query(`DELETE FROM activity_unread_exceptions WHERE user_id = $1`, [user.id]);
+      return readStateFor(pool, user.id);
+    }
 
-    return { lastReadEventId: String(res.rows[0]!.last_read_event_id) };
+    // Per-item mark read: advance watermark through this event (older items
+    // also become read) and drop any mark-unread exception on it.
+    if (markReadEventId !== undefined) {
+      await advanceWatermark(pool, user.id, markReadEventId);
+      await pool.query(`DELETE FROM activity_unread_exceptions WHERE user_id = $1 AND event_id = $2`, [
+        user.id,
+        markReadEventId,
+      ]);
+      return readStateFor(pool, user.id);
+    }
+
+    // Per-item mark unread: only meaningful for already-read rows (≤ watermark).
+    // Above-watermark rows are already unread; store nothing.
+    const eventId = markUnreadEventId!;
+    if (eventId === 0) {
+      return reply.code(400).send({ error: 'bad_request', message: 'markUnreadEventId must be a positive event id' });
+    }
+    await pool.query(
+      `INSERT INTO activity_unread_exceptions (user_id, event_id)
+       SELECT $1, $2::bigint
+       WHERE $2::bigint > 0
+         AND $2::bigint <= COALESCE((
+           SELECT last_read_event_id FROM activity_read_cursors WHERE user_id = $1
+         ), 0)
+         AND EXISTS (SELECT 1 FROM events e WHERE e.id = $2::bigint)
+       ON CONFLICT DO NOTHING`,
+      [user.id, eventId],
+    );
+    return readStateFor(pool, user.id);
   });
 
   app.get('/api/activity', async (req, reply) => {
@@ -329,7 +412,13 @@ export function registerActivityRoutes(app: FastifyInstance, deps: ActivityRoute
                 s.status AS session_status,
                 CASE
                   WHEN e.payload->>'status' = 'failed'
-                    THEN s.status = 'failed' AND e.id > read_cursor.last_read_event_id
+                    THEN s.status = 'failed' AND (
+                      e.id > read_cursor.last_read_event_id
+                      OR EXISTS (
+                        SELECT 1 FROM activity_unread_exceptions ue
+                        WHERE ue.user_id = $1 AND ue.event_id = e.id
+                      )
+                    )
                   ELSE false
                 END AS attention
          FROM events e
@@ -351,7 +440,16 @@ export function registerActivityRoutes(app: FastifyInstance, deps: ActivityRoute
                 s.id AS session_id,
                 s.title AS session_title,
                 s.status AS session_status,
-                (s.status = 'failed' AND e.id > read_cursor.last_read_event_id) AS attention
+                (
+                  s.status = 'failed'
+                  AND (
+                    e.id > read_cursor.last_read_event_id
+                    OR EXISTS (
+                      SELECT 1 FROM activity_unread_exceptions ue
+                      WHERE ue.user_id = $1 AND ue.event_id = e.id
+                    )
+                  )
+                ) AS attention
          FROM events e
          JOIN channels c ON c.id = e.channel_id
          JOIN sessions s ON s.id::text = e.payload->>'sessionId'
@@ -463,7 +561,17 @@ export function registerActivityRoutes(app: FastifyInstance, deps: ActivityRoute
                 a.session_title,
                 a.session_status,
                 (a.attention AND mt.channel_id IS NULL) AS attention,
-                (mt.channel_id IS NOT NULL) AS muted
+                (mt.channel_id IS NOT NULL) AS muted,
+                (
+                  mt.channel_id IS NULL
+                  AND (
+                    a.event_id > (SELECT last_read_event_id FROM read_cursor)
+                    OR EXISTS (
+                      SELECT 1 FROM activity_unread_exceptions ue
+                      WHERE ue.user_id = $1 AND ue.event_id = a.event_id
+                    )
+                  )
+                ) AS unread
          FROM activity a
          JOIN channels c ON c.id = a.channel_id
          LEFT JOIN users u ON u.id = a.actor_id
@@ -489,15 +597,30 @@ export function registerActivityRoutes(app: FastifyInstance, deps: ActivityRoute
              OR s.provider_auth_required IS NOT NULL
              OR (
                s.status = 'failed'
-               AND COALESCE((
-                 SELECT MAX(failed.id)
-                 FROM events failed
-                 WHERE failed.payload->>'sessionId' = s.id::text
-                   AND (
-                     (failed.type = 'session.completed' AND failed.payload->>'status' = 'failed')
-                     OR (failed.type = 'session.status_changed' AND failed.payload->>'status' = 'failed')
-                   )
-               ), 0)::bigint > read_cursor.last_read_event_id
+               AND (
+                 COALESCE((
+                   SELECT MAX(failed.id)
+                   FROM events failed
+                   WHERE failed.payload->>'sessionId' = s.id::text
+                     AND (
+                       (failed.type = 'session.completed' AND failed.payload->>'status' = 'failed')
+                       OR (failed.type = 'session.status_changed' AND failed.payload->>'status' = 'failed')
+                     )
+                 ), 0)::bigint > read_cursor.last_read_event_id
+                 OR EXISTS (
+                   SELECT 1 FROM activity_unread_exceptions ue
+                   WHERE ue.user_id = $1
+                     AND ue.event_id = COALESCE((
+                       SELECT MAX(failed.id)
+                       FROM events failed
+                       WHERE failed.payload->>'sessionId' = s.id::text
+                         AND (
+                           (failed.type = 'session.completed' AND failed.payload->>'status' = 'failed')
+                           OR (failed.type = 'session.status_changed' AND failed.payload->>'status' = 'failed')
+                         )
+                     ), 0)
+                 )
+               )
              )
            )
        )
@@ -506,13 +629,24 @@ export function registerActivityRoutes(app: FastifyInstance, deps: ActivityRoute
                 99::bigint,
                 (SELECT COUNT(*)
                  FROM activity qa
-                 WHERE qa.event_id > read_cursor.last_read_event_id
+                 WHERE (
+                   qa.event_id > read_cursor.last_read_event_id
+                   OR EXISTS (
+                     SELECT 1 FROM activity_unread_exceptions ue
+                     WHERE ue.user_id = $1 AND ue.event_id = qa.event_id
+                   )
+                 )
                    AND NOT EXISTS (
                      SELECT 1 FROM channel_mutes mt
                      WHERE mt.channel_id = qa.channel_id AND mt.user_id = $1
                    ))
               )::int AS unread_count,
               attention_count.attention_count,
+              COALESCE((
+                SELECT json_agg(event_id ORDER BY event_id)
+                FROM activity_unread_exceptions
+                WHERE user_id = $1
+              ), '[]'::json) AS unread_exception_ids,
               COALESCE((SELECT json_agg(page ORDER BY page.event_id DESC) FROM page), '[]'::json) AS items
        FROM read_cursor
        CROSS JOIN attention_count`,
@@ -525,6 +659,7 @@ export function registerActivityRoutes(app: FastifyInstance, deps: ActivityRoute
       items,
       nextCursor: items.length === 50 ? items[items.length - 1]!.eventId : null,
       lastReadEventId: String(result.last_read_event_id),
+      unreadExceptionIds: exceptionIdsFrom(result),
       counts: {
         attention: Number(result.attention_count),
         unread: Number(result.unread_count),

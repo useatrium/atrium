@@ -1,14 +1,27 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, FlatList, Pressable, RefreshControl, Text, View } from 'react-native';
-import { router } from 'expo-router';
 import {
+  ActivityIndicator,
+  FlatList,
+  Pressable,
+  RefreshControl,
+  Text,
+  View,
+  type GestureResponderEvent,
+} from 'react-native';
+import { router } from 'expo-router';
+import { Swipeable } from 'react-native-gesture-handler';
+import {
+  activityKindMarker,
   type ActivityCounts,
+  type ActivityFeedFilter,
   type ActivityItem,
   decodeWireToDisplay,
   plainMarkdownSnippet,
   formatExactTimestamp,
   formatRelativeTimestamp,
+  isActivityUnread,
   isTerminalSessionStatus,
+  matchesActivityFilter,
   sessionAttentionKind,
   type Session,
   type SessionListItem,
@@ -26,20 +39,22 @@ interface DisplaySession extends SessionListItem {
 
 type ActivityRow =
   | { rowType: 'header'; key: string; label: string; tone: 'attention' | 'default' }
+  | { rowType: 'filter'; key: string }
   | { rowType: 'session'; session: DisplaySession }
   | { rowType: 'activity'; activity: ActivityItem; attention: boolean };
+
+const FILTERS: Array<{ id: ActivityFeedFilter; label: string }> = [
+  { id: 'inbox', label: 'Inbox' },
+  { id: 'unread', label: 'Unread' },
+  { id: 'done', label: 'Done' },
+  { id: 'all', label: 'All' },
+];
 
 function statusColor(status: SessionStatus, colors: Colors): string {
   if (status === 'completed') return colors.online;
   if (status === 'failed' || status === 'cancelled') return colors.danger;
   if (status === 'running') return colors.accent;
   return colors.warning;
-}
-
-function isUnread(item: ActivityItem, lastReadEventId: string): boolean {
-  const eventId = Number(item.eventId);
-  const watermark = Number(lastReadEventId);
-  return Number.isSafeInteger(eventId) && Number.isSafeInteger(watermark) && eventId > watermark;
 }
 
 // DM/GDM channel names are internal keys (`dm:<ids>` / `gdm:<ids>`), so the key
@@ -73,20 +88,9 @@ export function activityItemTitle(item: ActivityItem): string {
   return 'Activity';
 }
 
+/** @deprecated Prefer activityKindMarker from @atrium/surface-client */
 export function activityItemMarker(item: ActivityItem): string {
-  if (item.kind === 'mention') return '@';
-  if (item.kind === 'dm') return 'DM';
-  if (item.kind === 'thread_reply') return '↩';
-  if (item.kind === 'agent_question') return '?';
-  if (item.kind === 'session_completed') return 'OK';
-  if (item.kind === 'session_failed') return '!';
-  if (item.kind === 'agent_auth') return '⚿';
-  if (item.kind === 'reaction') return '☺';
-  if (item.kind === 'channel_invite') return '+';
-  if (item.kind === 'seat_request') return '⇄';
-  if (item.kind === 'missed_call') return '✆';
-  if (item.kind === 'call_declined') return '✆';
-  return '•';
+  return activityKindMarker(item.kind);
 }
 
 // One pinned row per session: a live blocked session row wins over feed items,
@@ -110,6 +114,15 @@ export function partitionRows(
   return { attention, history };
 }
 
+function parseEventId(value: string): number | null {
+  const id = Number(value);
+  return Number.isSafeInteger(id) && id > 0 ? id : null;
+}
+
+function isHistoryKind(kind: ActivityItem['kind']): boolean {
+  return kind !== 'agent_question' && kind !== 'agent_auth';
+}
+
 export default function ActivityScreen() {
   const { api, state, resolveUser } = useChat();
   const { colors } = useTheme();
@@ -117,12 +130,15 @@ export default function ActivityScreen() {
   const [activityItems, setActivityItems] = useState<ActivityItem[]>([]);
   const [nextActivityCursor, setNextActivityCursor] = useState<string | null>(null);
   const [lastReadEventId, setLastReadEventId] = useState('0');
+  const [unreadExceptionIds, setUnreadExceptionIds] = useState<string[]>([]);
   const [counts, setCounts] = useState<ActivityCounts>({ attention: 0, unread: 0 });
+  const [filter, setFilter] = useState<ActivityFeedFilter>('inbox');
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [markingRead, setMarkingRead] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const exceptionSet = useMemo(() => new Set(unreadExceptionIds), [unreadExceptionIds]);
 
   const load = useCallback(
     async (mode: 'initial' | 'refresh' = 'refresh') => {
@@ -139,6 +155,9 @@ export default function ActivityScreen() {
         setNextActivityCursor(activityRes.nextCursor);
         // Decode-with-default: a deploy-skewed server may predate read-state.
         setLastReadEventId(typeof activityRes.lastReadEventId === 'string' ? activityRes.lastReadEventId : '0');
+        setUnreadExceptionIds(
+          Array.isArray(activityRes.unreadExceptionIds) ? activityRes.unreadExceptionIds.map(String) : [],
+        );
         setCounts({
           attention: Number(activityRes.counts?.attention) || 0,
           unread: Number(activityRes.counts?.unread) || 0,
@@ -172,6 +191,69 @@ export default function ActivityScreen() {
     void load('initial');
   }, [load]);
 
+  const applyReadState = useCallback(
+    (state: { lastReadEventId: string; unreadExceptionIds?: string[] }) => {
+      setLastReadEventId(state.lastReadEventId);
+      if (Array.isArray(state.unreadExceptionIds)) {
+        setUnreadExceptionIds(state.unreadExceptionIds.map(String));
+      }
+    },
+    [],
+  );
+
+  const markItemRead = useCallback(
+    async (item: ActivityItem) => {
+      const eventId = parseEventId(item.eventId);
+      if (eventId == null) return;
+      const previous = { lastReadEventId, unreadExceptionIds, counts, items: activityItems };
+      setLastReadEventId((w) => (Number(w) < eventId ? String(eventId) : w));
+      setUnreadExceptionIds((ids) => ids.filter((id) => id !== item.eventId));
+      setCounts((prev) => ({ attention: prev.attention, unread: Math.max(0, prev.unread - 1) }));
+      setActivityItems((rows) =>
+        rows.map((row) => (row.eventId === item.eventId ? { ...row, unread: false } : row)),
+      );
+      try {
+        const response = await api.markActivityItemRead(eventId);
+        applyReadState(response);
+        void load();
+      } catch (err) {
+        setLastReadEventId(previous.lastReadEventId);
+        setUnreadExceptionIds(previous.unreadExceptionIds);
+        setCounts(previous.counts);
+        setActivityItems(previous.items);
+        setError(err instanceof Error ? err.message : 'Unable to mark activity read');
+      }
+    },
+    [activityItems, api, applyReadState, counts, lastReadEventId, load, unreadExceptionIds],
+  );
+
+  const markItemUnread = useCallback(
+    async (item: ActivityItem) => {
+      const eventId = parseEventId(item.eventId);
+      if (eventId == null) return;
+      const previous = { lastReadEventId, unreadExceptionIds, counts, items: activityItems };
+      if (!unreadExceptionIds.includes(item.eventId) && Number(item.eventId) <= Number(lastReadEventId)) {
+        setUnreadExceptionIds((ids) => [...ids, item.eventId]);
+      }
+      setCounts((prev) => ({ attention: prev.attention, unread: Math.min(99, prev.unread + 1) }));
+      setActivityItems((rows) =>
+        rows.map((row) => (row.eventId === item.eventId ? { ...row, unread: true } : row)),
+      );
+      try {
+        const response = await api.markActivityItemUnread(eventId);
+        applyReadState(response);
+        void load();
+      } catch (err) {
+        setLastReadEventId(previous.lastReadEventId);
+        setUnreadExceptionIds(previous.unreadExceptionIds);
+        setCounts(previous.counts);
+        setActivityItems(previous.items);
+        setError(err instanceof Error ? err.message : 'Unable to mark activity unread');
+      }
+    },
+    [activityItems, api, applyReadState, counts, lastReadEventId, load, unreadExceptionIds],
+  );
+
   const markAllRead = useCallback(async () => {
     const newestEventId = Math.max(
       0,
@@ -181,21 +263,31 @@ export default function ActivityScreen() {
       }),
     );
     if (newestEventId <= 0 || markingRead) return;
-    const previousCursor = lastReadEventId;
+    const previous = {
+      cursor: lastReadEventId,
+      exceptions: unreadExceptionIds,
+      counts,
+      items: activityItems,
+    };
     setMarkingRead(true);
     setLastReadEventId(String(newestEventId));
+    setUnreadExceptionIds([]);
     setCounts((prev) => ({ attention: prev.attention, unread: 0 }));
+    setActivityItems((rows) => rows.map((row) => ({ ...row, unread: false })));
     try {
       const response = await api.markActivityRead(newestEventId);
-      setLastReadEventId(response.lastReadEventId);
+      applyReadState(response);
       void load();
     } catch (err) {
-      setLastReadEventId(previousCursor);
+      setLastReadEventId(previous.cursor);
+      setUnreadExceptionIds(previous.exceptions);
+      setCounts(previous.counts);
+      setActivityItems(previous.items);
       setError(err instanceof Error ? err.message : 'Unable to mark activity read');
     } finally {
       setMarkingRead(false);
     }
-  }, [activityItems, api, lastReadEventId, load, markingRead]);
+  }, [activityItems, api, applyReadState, counts, lastReadEventId, load, markingRead, unreadExceptionIds]);
 
   // Only unresolved agent states belong in the pinned tier. Healthy progress
   // stays on Agents; everything else is history under the watermark.
@@ -218,24 +310,49 @@ export default function ActivityScreen() {
       );
     });
     const { attention, history } = partitionRows(liveAttention, activityItems);
-    const out: ActivityRow[] = [];
-    if (attention.length > 0) {
+
+    const filterRow = (row: ActivityRow): boolean => {
+      if (row.rowType !== 'activity') {
+        // Live session pins only appear in inbox/all/unread (not Done).
+        if (filter === 'done') return false;
+        if (filter === 'unread') return true; // treat live pins as needing eyes
+        return true;
+      }
+      const unread = isActivityUnread(row.activity, lastReadEventId, exceptionSet);
+      return matchesActivityFilter(row.activity, filter, unread);
+    };
+
+    const filteredAttention = attention.filter(filterRow);
+    const filteredHistory = history.filter(filterRow);
+
+    const out: ActivityRow[] = [{ rowType: 'filter', key: 'filters' }];
+    if (filteredAttention.length > 0) {
       out.push({
         rowType: 'header',
         key: 'needs-attention',
-        label: `Needs attention · ${attention.length}`,
+        label: `Needs attention · ${filteredAttention.length}`,
         tone: 'attention',
       });
-      out.push(...attention);
+      out.push(...filteredAttention);
     }
-    if (history.length > 0) {
-      out.push({ rowType: 'header', key: 'activity', label: 'Activity', tone: 'default' });
-      out.push(...history);
+    if (filteredHistory.length > 0) {
+      out.push({
+        rowType: 'header',
+        key: 'activity',
+        label: filter === 'done' ? 'Done' : 'Activity',
+        tone: 'default',
+      });
+      out.push(...filteredHistory);
     }
     return out;
-  }, [activityItems, sessions, state.sessions]);
+  }, [activityItems, exceptionSet, filter, lastReadEventId, sessions, state.sessions]);
 
   const openActivity = async (item: ActivityItem) => {
+    const unread = isActivityUnread(item, lastReadEventId, exceptionSet);
+    if (unread && isHistoryKind(item.kind) && !item.attention) {
+      void markItemRead(item);
+    }
+
     if (
       item.kind !== 'agent_question' &&
       item.kind !== 'session_completed' &&
@@ -245,8 +362,8 @@ export default function ActivityScreen() {
       router.push(`/channel/${item.channelId}`);
       return;
     }
-    const eventId = Number(item.eventId);
-    if (!Number.isSafeInteger(eventId) || eventId <= 0) {
+    const eventId = parseEventId(item.eventId);
+    if (eventId == null) {
       router.push(`/channel/${item.channelId}`);
       return;
     }
@@ -260,21 +377,49 @@ export default function ActivityScreen() {
     }
   };
 
+  const renderSwipeActions = (item: ActivityItem, unread: boolean) => {
+    const actionLabel = unread ? 'Read' : 'Unread';
+    const onPress = (event: GestureResponderEvent) => {
+      event.stopPropagation?.();
+      if (unread) void markItemRead(item);
+      else void markItemUnread(item);
+    };
+    return (
+      <View style={{ flexDirection: 'row', width: 88 }}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={unread ? 'Mark read' : 'Mark unread'}
+          onPress={onPress}
+          style={{
+            flex: 1,
+            alignItems: 'center',
+            justifyContent: 'center',
+            backgroundColor: unread ? colors.accent : colors.warning,
+            paddingHorizontal: space.sm,
+          }}
+        >
+          <Text style={{ color: colors.onAccent, fontSize: font.xs, fontWeight: '800' }}>{actionLabel}</Text>
+        </Pressable>
+      </View>
+    );
+  };
+
   const renderActivityItem = (item: ActivityItem, attention: boolean) => {
     const time = formatRelativeTimestamp(item.createdAt) || item.createdAt;
     const exactTime = formatExactTimestamp(item.createdAt) || item.createdAt;
     const title = activityItemTitle(item);
-    const marker = activityItemMarker(item);
+    const marker = activityKindMarker(item.kind);
     // Single-line plain-text snippet: text truncation (not a pixel clip), so
     // descenders survive and the row scales with Dynamic Type.
     const snippet = plainMarkdownSnippet(
       decodeWireToDisplay(item.snippet, (id) => resolveUser(id)?.handle ?? null).text,
     );
-    const unread = isUnread(item, lastReadEventId) && !item.muted;
+    const unread = isActivityUnread(item, lastReadEventId, exceptionSet);
     const danger = attention && item.kind === 'session_failed';
     const chipBackground = attention ? (danger ? colors.dangerSurface : colors.warningSurface) : colors.bgElevated;
     const chipColor = attention ? (danger ? colors.danger : colors.warning) : colors.textMuted;
-    return (
+
+    const row = (
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={[
@@ -287,6 +432,11 @@ export default function ActivityScreen() {
           .filter(Boolean)
           .join(', ')}
         onPress={() => void openActivity(item)}
+        onLongPress={() => {
+          if (unread) void markItemRead(item);
+          else void markItemUnread(item);
+        }}
+        delayLongPress={350}
         style={({ pressed }) => ({
           flexDirection: 'row',
           alignItems: 'center',
@@ -297,7 +447,7 @@ export default function ActivityScreen() {
           borderBottomColor: colors.borderSoft,
           borderLeftWidth: attention ? 2 : 0,
           borderLeftColor: attention ? (danger ? colors.danger : colors.warning) : 'transparent',
-          backgroundColor: pressed ? colors.borderSoft : 'transparent',
+          backgroundColor: pressed ? colors.borderSoft : colors.bg,
         })}
       >
         <View
@@ -331,9 +481,64 @@ export default function ActivityScreen() {
         </View>
       </Pressable>
     );
+
+    return (
+      <Swipeable
+        overshootRight={false}
+        renderRightActions={() => renderSwipeActions(item, unread)}
+        childrenContainerStyle={{ backgroundColor: colors.bg }}
+      >
+        {row}
+      </Swipeable>
+    );
   };
 
   const renderItem = ({ item }: { item: ActivityRow }) => {
+    if (item.rowType === 'filter') {
+      return (
+        <View
+          style={{
+            flexDirection: 'row',
+            flexWrap: 'wrap',
+            gap: 6,
+            paddingHorizontal: space.lg,
+            paddingTop: space.md,
+            paddingBottom: space.sm,
+          }}
+        >
+          {FILTERS.map((entry) => {
+            const selected = filter === entry.id;
+            return (
+              <Pressable
+                key={entry.id}
+                accessibilityRole="button"
+                accessibilityState={{ selected }}
+                accessibilityLabel={`Filter ${entry.label}`}
+                onPress={() => setFilter(entry.id)}
+                style={{
+                  borderRadius: 8,
+                  paddingHorizontal: 10,
+                  paddingVertical: 6,
+                  backgroundColor: selected ? colors.bgElevated : 'transparent',
+                  borderWidth: 1,
+                  borderColor: selected ? colors.border : colors.borderSoft,
+                }}
+              >
+                <Text
+                  style={{
+                    color: selected ? colors.text : colors.textMuted,
+                    fontSize: font.xs,
+                    fontWeight: '700',
+                  }}
+                >
+                  {entry.label}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+      );
+    }
     if (item.rowType === 'header') {
       return (
         <Text
@@ -389,6 +594,9 @@ export default function ActivityScreen() {
     );
   };
 
+  const hasFeedRows = rows.some((row) => row.rowType === 'activity' || row.rowType === 'session');
+  const showEmptyBody = !loading && !hasFeedRows;
+
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg }}>
       <MobileHeader
@@ -423,8 +631,8 @@ export default function ActivityScreen() {
         <FlatList
           data={rows}
           keyExtractor={(item) =>
-            item.rowType === 'header'
-              ? `header:${item.key}`
+            item.rowType === 'header' || item.rowType === 'filter'
+              ? `${item.rowType}:${item.key}`
               : item.rowType === 'session'
                 ? `session:${item.session.id}`
                 : `activity:${item.activity.kind}:${item.activity.eventId}`
@@ -433,35 +641,51 @@ export default function ActivityScreen() {
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={() => void load()} tintColor={colors.textMuted} />
           }
-          ListEmptyComponent={
-            error ? (
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Activity failed. Tap to retry."
-                onPress={() => void load()}
-                style={{
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  padding: space.xl,
-                  minHeight: navigationTargetSize,
-                }}
-              >
-                <Text style={{ color: colors.danger, fontSize: font.sm }}>Activity failed — tap to retry</Text>
-              </Pressable>
-            ) : (
-              <View
-                style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: space.xl, gap: space.sm }}
-              >
-                <Text style={{ color: colors.text, fontSize: font.md, fontWeight: '700' }}>You're all caught up</Text>
-                <Text style={{ color: colors.textMuted, fontSize: font.sm, textAlign: 'center', lineHeight: 20 }}>
-                  Mentions, DMs, agent questions, failed work, and recent completions will appear here.
-                </Text>
-              </View>
-            )
-          }
-          contentContainerStyle={rows.length === 0 ? { flexGrow: 1 } : undefined}
           ListFooterComponent={
-            nextActivityCursor ? (
+            showEmptyBody ? (
+              error ? (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Activity failed. Tap to retry."
+                  onPress={() => void load()}
+                  style={{
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    padding: space.xl,
+                    minHeight: navigationTargetSize,
+                  }}
+                >
+                  <Text style={{ color: colors.danger, fontSize: font.sm }}>Activity failed — tap to retry</Text>
+                </Pressable>
+              ) : (
+                <View
+                  style={{
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    padding: space.xl,
+                    gap: space.sm,
+                    minHeight: 200,
+                  }}
+                >
+                  <Text style={{ color: colors.text, fontSize: font.md, fontWeight: '700' }}>
+                    {activityItems.length === 0
+                      ? "You're all caught up"
+                      : filter === 'done'
+                        ? 'No completed sessions'
+                        : filter === 'unread'
+                          ? 'No unread activity'
+                          : 'Nothing in this view'}
+                  </Text>
+                  <Text style={{ color: colors.textMuted, fontSize: font.sm, textAlign: 'center', lineHeight: 20 }}>
+                    {activityItems.length === 0
+                      ? 'Mentions, DMs, agent questions, failed work, and recent completions will appear here.'
+                      : filter === 'done'
+                        ? 'Completed agent work lives under Done. Switch to Inbox or All for the rest.'
+                        : 'Try another filter, or mark items unread to keep them here.'}
+                  </Text>
+                </View>
+              )
+            ) : nextActivityCursor ? (
               <View style={{ padding: space.lg, paddingBottom: 96 }}>
                 <Pressable
                   accessibilityRole="button"
@@ -487,6 +711,7 @@ export default function ActivityScreen() {
               <View style={{ height: 96 }} />
             )
           }
+          contentContainerStyle={showEmptyBody ? { flexGrow: 1 } : undefined}
         />
       )}
     </View>

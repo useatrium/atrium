@@ -23,6 +23,8 @@ const chatMock = vi.hoisted(() => ({
     listSessions: vi.fn(),
     getActivity: vi.fn(),
     markActivityRead: vi.fn(),
+    markActivityItemRead: vi.fn(),
+    markActivityItemUnread: vi.fn(),
     messages: vi.fn(),
   },
   me: { id: 'u-me', handle: 'me', displayName: 'Me' },
@@ -30,6 +32,7 @@ const chatMock = vi.hoisted(() => ({
     wsStatus: 'open' as const,
     sessions: {},
   },
+  resolveUser: () => null,
 }));
 
 vi.mock('expo-router', () => ({
@@ -63,8 +66,20 @@ beforeEach(() => {
   chatMock.api.listSessions.mockReset();
   chatMock.api.getActivity.mockReset();
   chatMock.api.markActivityRead.mockReset();
+  chatMock.api.markActivityItemRead.mockReset();
+  chatMock.api.markActivityItemUnread.mockReset();
   chatMock.api.messages.mockReset();
   chatMock.state.sessions = {};
+  chatMock.api.markActivityRead.mockResolvedValue({ lastReadEventId: '0', unreadExceptionIds: [] });
+  chatMock.api.markActivityItemRead.mockResolvedValue({ lastReadEventId: '0', unreadExceptionIds: [] });
+  chatMock.api.markActivityItemUnread.mockResolvedValue({ lastReadEventId: '0', unreadExceptionIds: [] });
+});
+
+vi.mock('react-native-gesture-handler', () => {
+  const React = require('react');
+  return {
+    Swipeable: ({ children }: { children: unknown }) => React.createElement(React.Fragment, null, children),
+  };
 });
 
 describe('mobile Activity screen', () => {
@@ -190,7 +205,7 @@ describe('mobile Activity screen', () => {
         lastReadEventId: '31',
         counts: { attention: 1, unread: 0 },
       });
-    chatMock.api.markActivityRead.mockResolvedValue({ lastReadEventId: '31' });
+    chatMock.api.markActivityRead.mockResolvedValue({ lastReadEventId: '31', unreadExceptionIds: [] });
 
     renderWithTheme(<ActivityScreen />);
 
@@ -201,6 +216,8 @@ describe('mobile Activity screen', () => {
     expect(screen.getByText('Cara messaged the group')).toBeInTheDocument();
     // The failed row (31) is past the watermark (8): announced as unread.
     expect(screen.getByLabelText(/^Unread, Build docs failed/)).toBeInTheDocument();
+    expect(screen.getByLabelText('Filter Inbox')).toBeInTheDocument();
+    expect(screen.getByLabelText('Filter Done')).toBeInTheDocument();
 
     await pressWhenReady(screen.findByLabelText('Mark all read'));
     await waitFor(() => expect(chatMock.api.markActivityRead).toHaveBeenCalledWith(31));

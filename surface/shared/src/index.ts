@@ -10,6 +10,7 @@ export * from './mentionSuggest';
 export * from './formatting';
 export * from './criticmarkup';
 export * from './api';
+export * from './activity';
 export * from './calls';
 export * from './sync';
 export * from './opQueue';
