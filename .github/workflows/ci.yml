@@ -180,8 +180,10 @@ jobs:
     runs-on: ubuntu-latest
     needs: ci_changes
     if: needs.ci_changes.outputs.surface == 'true'
-    # Green runs sit at ~11m and a single flaky retry pushes past 12m — the
-    # job then gets cancelled during teardown while the suite itself passed.
+    # Must fit: ~2min setup + the e2e step budget below, with headroom. A
+    # slow-runner suite that recovers through retries was killed at the old
+    # 10min step budget twice in a row (2026-07-12) — a "green" suite that
+    # dies mid-retry uploads no report and reads as a hard failure.
     timeout-minutes: 18
     # Run inside the official Playwright image: browsers + system deps are
     # pre-installed, so there is no flaky azureedge browser download (which
@@ -234,11 +236,12 @@ jobs:
 
       # No browser-install step: the Playwright container already has Chromium.
       # Per-step timeout so a webServer/teardown hang is killed fast and
-      # attributed, instead of silently eating the whole job budget. Slow
-      # runners put green suites at ~9-11m, so 10m clipped passing runs.
+      # attributed, instead of silently eating the whole job budget. Sized so
+      # a slow runner can absorb a few 60s test timeouts plus their retries:
+      # the healthy suite runs ~5m, and a kill here discards the report.
       - name: Run Playwright e2e
         working-directory: surface
-        timeout-minutes: 16
+        timeout-minutes: 15
         shell: bash
         env:
           # playwright.config.ts reads E2E_DATABASE_URL for the webServer (it
@@ -269,12 +272,17 @@ jobs:
           "$RUNNER_TEMP/mc" mb --ignore-existing ci/atrium-files
           pnpm e2e
 
+      # test-results/ holds per-test traces/screenshots as they are produced,
+      # so unlike the HTML report (written only at suite end) it survives a
+      # step-timeout kill — without it, a killed run uploads nothing at all.
       - name: Upload Playwright report
         if: failure()
         uses: actions/upload-artifact@v7
         with:
           name: playwright-report
-          path: surface/e2e/playwright-report/
+          path: |
+            surface/e2e/playwright-report/
+            surface/e2e/test-results/
           if-no-files-found: ignore
 
   surface:
