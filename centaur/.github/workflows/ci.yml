@@ -23,7 +23,6 @@ jobs:
       rust_api: ${{ steps.filter.outputs.rust_api }}
       slackbotv2_tests: ${{ steps.filter.outputs.slackbotv2_tests }}
       discordbot_checks: ${{ steps.filter.outputs.discordbot_checks }}
-      node_sync: ${{ steps.filter.outputs.node_sync }}
       githubbot_checks: ${{ steps.filter.outputs.githubbot_checks }}
       teamsbot_checks: ${{ steps.filter.outputs.teamsbot_checks }}
     steps:
@@ -96,10 +95,6 @@ jobs:
             '^package\.json$' \
             '^pnpm-lock\.yaml$' \
             '^pnpm-workspace\.yaml$' \
-            '^\.github/workflows/ci\.yml$'
-          set_output node_sync \
-            '^services/api-rs/crates/centaur-node-sync/' \
-            '^contrib/chart/' \
             '^\.github/workflows/ci\.yml$'
 
   migration-order:
@@ -231,96 +226,6 @@ jobs:
             kill "$(cat "$RUNNER_TEMP/centaur-api-server.pid")" 2>/dev/null || true
           fi
           docker rm -f centaur-api-integration-test-postgres || true
-
-  node-sync-overlay:
-    name: node-sync overlay scanner validation
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-        with:
-          persist-credentials: false
-
-      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
-        with:
-          toolchain: stable
-
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-        with:
-          workspaces: services/api-rs
-
-      # Real overlay + scan-demo: locks in the syscall proofs (whiteout→Delete,
-      # symlink→metadata-only, openat2 NO_SYMLINKS blocks the /etc/shadow escape).
-      # ubuntu-latest supports overlayfs on ext4 + passwordless sudo.
-      - name: Overlay scanner validation
-        working-directory: services/api-rs
-        run: bash crates/centaur-node-sync/ci/overlay-validation.sh
-
-  # === c4ovl provision-overlay additions ===
-  # Heavy kind+image-build e2e: gated to node-sync changes so it never runs on
-  # unrelated PRs, and intentionally NOT a required ci-success check until it has
-  # been observed green (mirrors #62: don't make CI go red on an unvalidated job).
-  node-sync-pod-e2e:
-    name: node-sync pod-native overlay e2e
-    runs-on: ubuntu-latest
-    needs: ci_changes
-    if: needs.ci_changes.outputs.node_sync == 'true'
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-        with:
-          persist-credentials: false
-
-      - name: Install kind, kubectl, and helm
-        env:
-          KIND_VERSION: v0.23.0
-          KUBECTL_VERSION: v1.30.4
-          HELM_VERSION: v3.15.4
-        run: |
-          set -euo pipefail
-
-          curl -fsSLo kind "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64"
-          chmod +x kind
-          sudo mv kind /usr/local/bin/kind
-
-          curl -fsSLo kubectl "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
-          curl -fsSLo kubectl.sha256 "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl.sha256"
-          echo "$(cat kubectl.sha256)  kubectl" | sha256sum -c -
-          chmod +x kubectl
-          sudo mv kubectl /usr/local/bin/kubectl
-
-          HELM_ARCHIVE="helm-${HELM_VERSION}-linux-amd64.tar.gz"
-          curl -fsSLo "${HELM_ARCHIVE}" "https://get.helm.sh/${HELM_ARCHIVE}"
-          curl -fsSLo "${HELM_ARCHIVE}.sha256sum" "https://get.helm.sh/${HELM_ARCHIVE}.sha256sum"
-          sha256sum -c "${HELM_ARCHIVE}.sha256sum"
-          tar -xzf "${HELM_ARCHIVE}"
-          sudo mv linux-amd64/helm /usr/local/bin/helm
-
-          kind version
-          kubectl version --client
-          helm version
-
-      - name: Create kind cluster
-        run: kind create cluster --name centaur
-
-      - name: Build, load, and run pod-native e2e
-        working-directory: services/api-rs
-        env:
-          KIND_CLUSTER: centaur
-          NS: centaur
-        run: |
-          bash crates/centaur-node-sync/ci/build-and-load.sh
-          NODE_SYNC_SKIP_BUILD_LOAD=1 bash crates/centaur-node-sync/ci/pod-native-e2e.sh
-
-      - name: Dump pod diagnostics
-        if: ${{ failure() }}
-        run: |
-          kubectl -n centaur get pods -o wide || true
-          kubectl -n centaur describe pods || true
-          kubectl -n centaur logs -l app.kubernetes.io/component=node-sync --all-containers --tail=200 || true
-          kubectl -n centaur logs deploy/capture-sink --tail=100 || true
-
-      - name: Delete kind cluster
-        if: ${{ always() }}
-        run: kind delete cluster --name centaur
 
   slackbotv2-tests:
     name: Slackbot v2 tests
@@ -488,7 +393,6 @@ jobs:
       - ci_changes
       - migration-order
       - rust-api
-      - node-sync-overlay
       - slackbotv2-tests
       - discordbot-checks
       - githubbot-checks

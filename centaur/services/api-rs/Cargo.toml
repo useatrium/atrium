@@ -5,7 +5,6 @@ members = [
     "crates/centaur-api-integration-test",
     "crates/centaur-iron-control",
     "crates/centaur-iron-proxy",
-    "crates/centaur-node-sync",
     "crates/centaur-perms",
     "crates/centaur-sandbox-core",
     "crates/centaur-sandbox-e2e",

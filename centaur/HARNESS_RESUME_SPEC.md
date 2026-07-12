@@ -26,7 +26,7 @@ uses it as the deterministic `--session-id`).
   Resume needs ONLY this file (no sqlite). CWD must match (it's fixed).
 - **Codex:** `$CODEX_HOME/sessions/.../rollout-<id>.jsonl` (only this; no sqlite).
 
-## Lane C1 — daemon capture (crate `services/api-rs/crates/centaur-node-sync`)
+## Lane C1 — daemon capture (crate `runtime/node-sync`, repo root)
 The node-sync daemon already reads the agent's overlay upper-dir node-side and
 ships workspace artifacts to Atrium. Extend it to ALSO capture the **harness
 transcript** (a separate, non-artifact path — it must NOT go through the artifact
@@ -68,7 +68,7 @@ captured transcript):
 - `crates/harness-server/src/codex.rs:~268-293` — `start_or_resume_thread` reads
   `CODEX_CONTINUE_THREAD_ID` → `thread/resume`.
 - `services/api-rs/crates/centaur-session-runtime/src/lib.rs:4307` — the guard.
-- The node-sync daemon: `services/api-rs/crates/centaur-node-sync` (capture sweep,
+- The node-sync daemon: repo-root `runtime/node-sync` (capture sweep,
   http client, runtime). The Atrium capture-key env is `ATRIUM_CAPTURE_API_KEY`.
 
 ## Deliverables

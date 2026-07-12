@@ -89,10 +89,12 @@ _build-teamsbot:
 _build-agent:
     docker build --label "org.opencontainers.image.revision={{image_revision}}" --build-arg "RUST_BUILD_PROFILE={{rust_build_profile}}" --target "{{agent_build_target}}" -t "{{agent_image}}" -f "{{agent_dockerfile}}" .
 
-# The node-sync image builds from services/api-rs as its context (not the repo
-# root), so services/api-rs/.dockerignore controls the transferred files.
+# The node-sync daemon is Atrium-owned and lives OUTSIDE this subtree at
+# runtime/node-sync (its own cargo workspace + Docker context; AGPL, unlike the
+# subtree). The recipe stays here so `just build-one node-sync` / build-changed /
+# deploy keep working unchanged.
 _build-node-sync:
-    cd services/api-rs && docker build --label "org.opencontainers.image.revision={{image_revision}}" --build-arg "RUST_BUILD_PROFILE={{rust_build_profile}}" -f crates/centaur-node-sync/Dockerfile -t centaur-node-sync:latest .
+    docker build --label "org.opencontainers.image.revision={{image_revision}}" --build-arg "RUST_BUILD_PROFILE={{rust_build_profile}}" -t centaur-node-sync:latest ../runtime/node-sync
 
 # The console builds from its own subdirectory context (services/console), unlike
 # the other services which build from the repo root.

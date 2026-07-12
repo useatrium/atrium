@@ -1,10 +1,11 @@
 name: Centaur CI
 
 # Ported from the vendored centaur/.github/workflows/ci.yml (which is inert here — GitHub
-# only runs root workflows). Scoped to centaur/** changes. Publishing workflows are NOT
-# ported (they'd push to Centaur's registries from the wrong repo). The heavy kind e2e
-# runs whenever node-sync paths change on PRs, and is part of the required gate.
-# See docs/centaur-vendoring.md.
+# only runs root workflows). Scoped to centaur/** changes, plus the Atrium-owned node-sync
+# daemon at runtime/node-sync (its jobs live here because they exercise the centaur chart
+# and sandbox contract). Publishing workflows are NOT ported (they'd push to Centaur's
+# registries from the wrong repo). The heavy kind e2e runs whenever node-sync paths change
+# on PRs, and is part of the required gate. See docs/centaur-vendoring.md.
 
 # Always runs (no top-level path filter) so the `Centaur CI success` check reports on
 # EVERY PR and merge group — required-check-safe. The heavy jobs gate on `ci_changes`, so
@@ -34,7 +35,6 @@ jobs:
       github_bootstrap_demotion: ${{ steps.filter.outputs.github_bootstrap_demotion }}
       rust_api: ${{ steps.filter.outputs.rust_api }}
       node_sync: ${{ steps.filter.outputs.node_sync }}
-      license_boundary: ${{ steps.filter.outputs.license_boundary }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
@@ -90,39 +90,9 @@ jobs:
             '^centaur/services/api-rs/' \
             '^\.github/workflows/centaur-ci\.yml$'
           set_output node_sync \
-            '^centaur/services/api-rs/crates/centaur-node-sync/' \
+            '^runtime/node-sync/' \
             '^centaur/contrib/chart/' \
             '^\.github/workflows/centaur-ci\.yml$'
-          set_output license_boundary \
-            '^centaur/.*Cargo\.toml$' \
-            '^\.github/workflows/centaur-ci\.yml$'
-
-  license-boundary:
-    name: License boundary
-    runs-on: ubuntu-slim
-    needs: ci_changes
-    if: needs.ci_changes.outputs.license_boundary == 'true'
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-        with:
-          persist-credentials: false
-
-      # centaur-node-sync is AGPL-3.0-or-later inside an otherwise
-      # Apache-2.0 OR MIT tree (see centaur/ATRIUM_FORK.md "Licensing"). It
-      # must stay standalone-binaries-only: linking it into another crate
-      # would silently pull AGPL code into permissively-licensed binaries.
-      - name: centaur-node-sync must not be a dependency of any other crate
-        run: |
-          violations="$(grep -RInE '^[[:space:]]*centaur-node-sync[[:space:]]*=|package[[:space:]]*=[[:space:]]*"centaur-node-sync"' \
-            --include='Cargo.toml' centaur/ \
-            | grep -v '^centaur/services/api-rs/crates/centaur-node-sync/' || true)"
-          if [[ -n "${violations}" ]]; then
-            echo "::error::centaur-node-sync is AGPL-licensed and must not be a dependency of any Apache/MIT crate (centaur/ATRIUM_FORK.md 'Licensing'):"
-            printf '%s\n' "${violations}"
-            exit 1
-          fi
-          echo "OK: no crate depends on centaur-node-sync"
 
   migration-order:
     name: Migration order
@@ -312,13 +282,13 @@ jobs:
 
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
-          workspaces: centaur/services/api-rs
+          workspaces: runtime/node-sync
 
       # Real overlay + scan-demo: locks in the syscall proofs (whiteout→Delete,
       # symlink→metadata-only, openat2 NO_SYMLINKS blocks the /etc/shadow escape).
       - name: Overlay scanner validation
-        working-directory: centaur/services/api-rs
-        run: bash crates/centaur-node-sync/ci/overlay-validation.sh
+        working-directory: runtime/node-sync
+        run: bash ci/overlay-validation.sh
 
   node-sync-pod-e2e:
     name: node-sync pod-native overlay e2e
@@ -366,48 +336,48 @@ jobs:
         run: kind create cluster --name centaur
 
       - name: Build, load, and run pod-native e2e
-        working-directory: centaur/services/api-rs
+        working-directory: runtime/node-sync
         env:
           KIND_CLUSTER: centaur
           NS: centaur
         run: |
-          bash crates/centaur-node-sync/ci/build-and-load.sh
-          NODE_SYNC_SKIP_BUILD_LOAD=1 bash crates/centaur-node-sync/ci/pod-native-e2e.sh
+          bash ci/build-and-load.sh
+          NODE_SYNC_SKIP_BUILD_LOAD=1 bash ci/pod-native-e2e.sh
 
       # Warm-cache real-pod e2e (warm-lease 2.2d-v): the shipped image's
       # warmcache-hydrate init container warms the depcache for an agent pod.
       # Informational — needs no overlay, reuses the cluster + loaded image.
       - name: Warm-cache pod e2e (informational)
         continue-on-error: true
-        working-directory: centaur/services/api-rs
+        working-directory: runtime/node-sync
         env:
           KIND_CLUSTER: centaur
           NS: centaur
           IMAGE: centaur-node-sync:e2e
-        run: bash crates/centaur-node-sync/ci/warmcache-pod-e2e.sh
+        run: bash ci/warmcache-pod-e2e.sh
 
       # SPIKE (warm-pool for repo sessions): proves the post-claim in-place overlay remount
       # propagates into an already-running pod (HostToContainer post-start). Informational.
       - name: Warm-pool repo-rebind spike POC (informational)
         continue-on-error: true
-        working-directory: centaur/services/api-rs
+        working-directory: runtime/node-sync
         env:
           KIND_CLUSTER: centaur
           NS: centaur
           IMAGE: centaur-node-sync:e2e
-        run: bash crates/centaur-node-sync/ci/warmpool-rebind-poc.sh
+        run: bash ci/warmpool-rebind-poc.sh
 
       # SPIKE: flat-home HOME composition — generic harness-config lower + repo lower compose into a
       # flat HOME on a running pod, with centaur's AGENTS.md precedence. Informational. (Real-harness
       # sub-step auto-runs only with the centaur-agent image; here the node-sync image just provides sh.)
       - name: Warm-pool HOME-composition spike POC (informational)
         continue-on-error: true
-        working-directory: centaur/services/api-rs
+        working-directory: runtime/node-sync
         env:
           KIND_CLUSTER: centaur
           NS: centaur
           IMAGE: centaur-node-sync:e2e
-        run: bash crates/centaur-node-sync/ci/warmpool-home-compose-poc.sh
+        run: bash ci/warmpool-home-compose-poc.sh
 
       - name: Dump pod diagnostics
         if: ${{ failure() }}
@@ -427,7 +397,6 @@ jobs:
     if: always()
     needs:
       - ci_changes
-      - license-boundary
       - migration-order
       - github-bootstrap-demotion
       - rust-api
@@ -443,5 +412,5 @@ jobs:
       - name: Decide whether the needed jobs succeeded or failed
         uses: re-actors/alls-green@05ac9388f0aebcb5727afa17fcccfecd6f8ec5fe # release/v1
         with:
-          allowed-skips: license-boundary, migration-order, github-bootstrap-demotion, rust-api, node-sync-overlay, node-sync-pod-e2e
+          allowed-skips: migration-order, github-bootstrap-demotion, rust-api, node-sync-overlay, node-sync-pod-e2e
           jobs: ${{ toJSON(needs) }}

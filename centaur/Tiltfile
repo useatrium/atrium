@@ -47,10 +47,11 @@ docker_build(
     build_args = {"RUST_BUILD_PROFILE": RUST_BUILD_PROFILE},
 )
 
+# Atrium-owned daemon; lives outside the subtree in its own cargo workspace.
 docker_build(
     local_image("centaur-node-sync"),
-    "services/api-rs",
-    dockerfile = "crates/centaur-node-sync/Dockerfile",
+    "../runtime/node-sync",
+    dockerfile = "../runtime/node-sync/Dockerfile",
     build_args = {"RUST_BUILD_PROFILE": RUST_BUILD_PROFILE},
 )
 

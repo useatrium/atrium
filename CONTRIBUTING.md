@@ -19,10 +19,9 @@ under `centaur/` retains its upstream **Apache-2.0 OR MIT** terms (see
 [LICENSE](LICENSE), [NOTICE](NOTICE), and [centaur/LICENSE](centaur/LICENSE)).
 Changes under `centaur/` stay under the subtree's Apache-2.0 OR MIT terms so
 the fork keeps merging cleanly with upstream and fixes can flow back;
-everything else is AGPL. Narrow, documented exceptions exist inside the
-subtree (currently the Atrium-original `centaur-node-sync` crate, which is
-AGPL) — they're recorded in [NOTICE](NOTICE) and in
-[centaur/ATRIUM_FORK.md](centaur/ATRIUM_FORK.md).
+everything else — including the Atrium-original `centaur-node-sync` daemon at
+`runtime/node-sync` — is AGPL. The boundary is the `centaur/` directory; see
+[NOTICE](NOTICE) and [centaur/ATRIUM_FORK.md](centaur/ATRIUM_FORK.md).
 
 External contributions require a signed **Contributor License Agreement**:
 

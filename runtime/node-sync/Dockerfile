@@ -1,8 +1,8 @@
 # syntax=docker/dockerfile:1.7
 # centaur-node-sync image — the privileged per-node sync daemon (Track C4).
 # Multi-stage: build the static-ish binary, ship a minimal privileged runtime.
-# Built from the api-rs workspace root context:
-#   docker build -f crates/centaur-node-sync/Dockerfile -t centaur-node-sync:latest .
+# Built from the crate directory (its own cargo workspace):
+#   docker build -t centaur-node-sync:latest runtime/node-sync
 FROM rust:1-bookworm AS build
 WORKDIR /work
 COPY . .

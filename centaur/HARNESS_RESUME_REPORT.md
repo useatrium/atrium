@@ -24,7 +24,7 @@ security fix:
 - `services/api-rs/crates/centaur-session-core/{Cargo.toml,src/lib.rs,src/sandbox_token.rs}`
 - `services/api-rs/crates/centaur-session-runtime/src/lib.rs`
 - `services/api-rs/crates/centaur-api-server/src/{args.rs,error.rs,lib.rs,routes.rs}`
-- `services/api-rs/crates/centaur-node-sync/src/{runtime.rs,http_client.rs,bin/centaur-node-syncd.rs}`
+- `runtime/node-sync/src/{runtime.rs,http_client.rs,bin/centaur-node-syncd.rs}`
 - `crates/harness-server/src/server.rs`
 - `services/sandbox/entrypoint.sh`
 - `contrib/chart/templates/apirs.yaml`

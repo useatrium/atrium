@@ -17,6 +17,7 @@ the wire protocol between them can now land as **one PR** across both.
 |---|---|---|
 | `surface/` | the product: `server/` (Fastify + Postgres), `web/` (Vite + React), `desktop/` (Electron), `mobile/` (Expo), `shared/`, `centaur-client/`, `e2e/`. **This is the pnpm workspace root.** | Node 24+, pnpm 10+ |
 | `centaur/` | the agent runtime (our vendored fork — see `centaur/ATRIUM_FORK.md`) | `just`, cargo, Helm/k8s |
+| `runtime/node-sync/` | Atrium-owned per-node sync daemon (overlay capture/hydrate, warm cache, context mount). Its own cargo workspace; AGPL like the rest of Atrium, unlike the subtree. Deployed via centaur's chart (`nodeSync.*`), built by `just build-one node-sync`. | cargo, Docker |
 | `infra/` | local cluster, stand-in model server, deploy config | — |
 | `docs/` | public docs | — |
 | `docs/archive/notes/` | archived design scratchpads and build logs | — |
@@ -33,6 +34,9 @@ the wire protocol between them can now land as **one PR** across both.
 - **Runtime work** → `centaur/`. It is **self-contained**: its own `Justfile`, cargo
   workspace, and `AGENTS.md`. Start with `cd centaur && just up`. When you work anywhere
   under `centaur/`, that subtree's `AGENTS.md` + `ATRIUM_FORK.md` auto-load — follow them.
+- **Node-sync daemon work** → `runtime/node-sync/` (plain `cargo build`/`cargo test`
+  there). Its sandbox-side wiring (init containers, mounts, chart DaemonSet) stays under
+  `centaur/`, so daemon-contract changes usually touch both trees in one PR.
 
 ## `centaur/` is a vendored upstream fork — treat it as a managed import
 

@@ -15,12 +15,11 @@ export DOCKER_BUILDKIT=1
 
 IMAGE="${IMAGE:-centaur-node-sync:e2e}"
 KIND_CLUSTER="${KIND_CLUSTER:-centaur}"
-# Dockerfile builds from the api-rs workspace root (it needs the whole workspace).
-API_RS_DIR="${API_RS_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)}"
-DOCKERFILE="crates/centaur-node-sync/Dockerfile"
+# The crate is its own cargo workspace; the Dockerfile builds from the crate root.
+CRATE_DIR="${CRATE_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 
-echo "==> building ${IMAGE} from ${API_RS_DIR}/${DOCKERFILE}"
-docker build -f "${API_RS_DIR}/${DOCKERFILE}" -t "${IMAGE}" "${API_RS_DIR}"
+echo "==> building ${IMAGE} from ${CRATE_DIR}"
+docker build -f "${CRATE_DIR}/Dockerfile" -t "${IMAGE}" "${CRATE_DIR}"
 
 echo "==> loading ${IMAGE} into kind cluster '${KIND_CLUSTER}'"
 kind load docker-image "${IMAGE}" --name "${KIND_CLUSTER}"

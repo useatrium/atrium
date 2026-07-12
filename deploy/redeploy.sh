@@ -149,13 +149,13 @@ else
 fi
 changed(){ [ "$FIRST" = 1 ] && return 0; grep -qE "$1" <<<"$CHANGED"; }
 
-need_surface=0; need_apirs=0; need_ironproxy=0; need_agent=0
+need_surface=0; need_apirs=0; need_ironproxy=0; need_agent=0; need_nodesync=0
 changed '^surface/'                                                   && need_surface=1
 changed '^centaur/services/(api-rs|workflow-python)/|^centaur/Cargo'  && need_apirs=1
 changed '^centaur/services/iron-proxy/'                               && need_ironproxy=1
 changed '^centaur/services/sandbox/|^centaur/(tools|workflows|\.agents|harness|crates)/' && need_agent=1
-# node-sync builds from the api-rs context, so it tracks api-rs
-need_nodesync=$need_apirs
+# node-sync is Atrium-owned and lives outside the subtree (its own workspace)
+changed '^runtime/node-sync/'                                         && need_nodesync=1
 
 backup_db(){
   local f="$BK/surface-$(date +%Y%m%d-%H%M%S).sql.gz"
