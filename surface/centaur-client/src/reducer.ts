@@ -9,6 +9,7 @@ import type {
   CodexReasoningTextDeltaEvent,
   AmpToolEvent,
   AnthropicTextBlock,
+  AnthropicThinkingBlock,
   AnthropicToolUseBlock,
   ArtifactCaptured,
   CentaurEventFrame,
@@ -600,6 +601,18 @@ function reduceAssistant(
     .map((block) => block.text)
     .join("");
   const toolBlocks = event.message.content.filter(isToolUseBlock);
+  const thinkingBlocks = event.message.content.filter(isThinkingBlock);
+  const messageKey = event.message.id ?? event.uuid;
+  const messageHandle = handleForAmpMessage(handles, "agent", event.message.id, event.uuid);
+
+  if (messageKey) {
+    thinkingBlocks.forEach((block, index) => {
+      const thinking = block.thinking ?? block.text ?? "";
+      if (thinking.trim()) {
+        upsertClaudeReasoningItem(state, eventId, messageKey, index, thinking, event, messageHandle);
+      }
+    });
+  }
 
   if (event.uuid) {
     if (text) {
@@ -609,7 +622,7 @@ function reduceAssistant(
         event.uuid,
         event.message.id,
         text,
-        handleForAmpMessage(handles, "agent", event.message.id, event.uuid),
+        messageHandle,
       );
     }
     for (const block of toolBlocks) {
@@ -623,11 +636,49 @@ function reduceAssistant(
       state,
       eventId,
       text,
-      handleForAmpMessage(handles, "agent", event.message.id, event.uuid),
+      messageHandle,
     );
   }
   for (const block of toolBlocks) {
     applyToolDerivedState(state, eventId, upsertToolCall(state, eventId, block, handleForToolUse(handles, block.id)));
+  }
+}
+
+function upsertClaudeReasoningItem(
+  state: SessionState,
+  eventId: number,
+  messageKey: string,
+  blockIndex: number,
+  text: string,
+  event: AmpAssistantEvent,
+  handle?: string,
+): void {
+  const id = `reasoning:claude:${messageKey}:${blockIndex}`;
+  const existing = state.items.find(
+    (item): item is ReasoningItem => item.type === "reasoning" && item.id === id,
+  );
+  if (existing) {
+    existing.text = text;
+    assignHandle(existing, handle);
+    pushSourceEventId(existing, eventId);
+    return;
+  }
+
+  const created: ReasoningItem = {
+    type: "reasoning",
+    id,
+    text,
+    messageId: messageKey,
+    ...(handle ? { handle } : {}),
+    sourceEventIds: [eventId],
+  };
+  const textIndex = state.items.findIndex(
+    (item) => item.type === "text" && (item.uuid === event.uuid || item.messageId === event.message.id),
+  );
+  if (textIndex === -1) {
+    state.items.push(created);
+  } else {
+    state.items.splice(textIndex, 0, created);
   }
 }
 
@@ -903,14 +954,22 @@ function reduceCodexItemCompleted(
 
   if (event.item.type === "reasoning") {
     const text = typeof event.item.text === "string" ? event.item.text : codexContentText(event.item);
+    const summary = codexReasoningSummary(event.item.summary);
+    const id = `reasoning:${event.item.id}`;
+    const existing = state.items.find(
+      (item): item is ReasoningItem => item.type === "reasoning" && item.id === id,
+    );
+    if (!text.trim() && !summary?.trim() && !reasoningHasContent(existing)) {
+      return;
+    }
     upsertReasoningItem(
       state,
       eventId,
       event.item.id,
       text,
-      stringValue(event.item.summary),
+      summary,
       handleForCodexItem(handles, event.item.id, "reasoning", "agent"),
-      true,
+      Boolean(text.trim()),
     );
     return;
   }
@@ -934,6 +993,25 @@ function reduceCodexItemCompleted(
   if (event.item.type === "fileChange") {
     captureCodexFileChange(state, eventId, event.item);
   }
+}
+
+function codexReasoningSummary(value: unknown): string | undefined {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const parts = value.flatMap((part): string[] => {
+    if (typeof part === "string") return part.trim() ? [part] : [];
+    if (!isJsonObject(part) || typeof part.text !== "string" || !part.text.trim()) return [];
+    return [part.text];
+  });
+  return parts.length ? parts.join("\n\n") : undefined;
+}
+
+function reasoningHasContent(item: ReasoningItem | undefined): boolean {
+  return Boolean(item && (item.text.trim() || item.summary?.trim()));
 }
 
 function appendReasoningText(
@@ -1342,6 +1420,10 @@ function mergeModels(current: string[], incoming: string[]): string[] {
 
 function isTextBlock(block: { type: string }): block is AnthropicTextBlock {
   return block.type === "text";
+}
+
+function isThinkingBlock(block: { type: string }): block is AnthropicThinkingBlock {
+  return block.type === "thinking";
 }
 
 function isToolUseBlock(block: { type: string }): block is AnthropicToolUseBlock {
