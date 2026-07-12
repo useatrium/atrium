@@ -67,6 +67,9 @@ export const config = {
   githubAppId: process.env.GITHUB_APP_ID ?? '',
   githubAppPrivateKey: (process.env.GITHUB_APP_PRIVATE_KEY ?? '').replace(/\\n/g, '\n'),
   githubAppPrivateKeyId: process.env.GITHUB_APP_PRIVATE_KEY_ID ?? '',
+  // Pins which App installation backs the shared `github-default` fallback role.
+  // Unset auto-discovers, but only when the App has exactly one installation.
+  githubAppFallbackInstallationId: process.env.GITHUB_APP_FALLBACK_INSTALLATION_ID ?? '',
   githubPublicReadToken: process.env.GITHUB_PUBLIC_READ_TOKEN ?? '',
   // The Centaur artifact-byte endpoint authenticates with its own
   // sandbox-token key, distinct from CENTAUR_API_KEY. Unset falls back to

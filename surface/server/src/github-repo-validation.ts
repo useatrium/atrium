@@ -112,6 +112,49 @@ export async function verifyGitHubAppInstallation(
   };
 }
 
+export async function listGitHubAppInstallations(
+  config: Omit<GitHubRepoValidationConfig, 'installationId'>,
+): Promise<GitHubAppInstallationInfo[]> {
+  if (!config.appId || !config.privateKey) {
+    throw new GitHubRepoValidationError('unconfigured', 'GitHub App installation validation is not configured');
+  }
+  const fetchImpl = config.fetchImpl ?? fetch;
+  const jwt = githubAppJwt(config);
+  const res = await fetchImpl('https://api.github.com/app/installations?per_page=100', {
+    method: 'GET',
+    headers: githubHeaders({ authorization: `Bearer ${jwt}` }),
+  });
+  if (!res.ok) {
+    throw new GitHubRepoValidationError('token_exchange_failed', `GitHub installations list failed: ${res.status}`);
+  }
+  const body = await res.json().catch(() => null);
+  if (!Array.isArray(body)) {
+    throw new GitHubRepoValidationError('token_exchange_failed', 'GitHub installations list returned no body');
+  }
+  const installations: GitHubAppInstallationInfo[] = [];
+  for (const item of body) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
+    const installation = item as Record<string, unknown>;
+    const installationId =
+      typeof installation.id === 'number' && Number.isSafeInteger(installation.id)
+        ? String(installation.id)
+        : typeof installation.id === 'string' && installation.id
+          ? installation.id
+          : null;
+    if (!installationId) continue;
+    const account = installation.account;
+    const accountRecord =
+      account && typeof account === 'object' && !Array.isArray(account) ? (account as Record<string, unknown>) : null;
+    installations.push({
+      installationId,
+      accountLogin: typeof accountRecord?.login === 'string' ? accountRecord.login : null,
+      accountType: typeof accountRecord?.type === 'string' ? accountRecord.type : null,
+      targetType: typeof installation.target_type === 'string' ? installation.target_type : null,
+    });
+  }
+  return installations;
+}
+
 function githubHeaders(args: { authorization: string }): Record<string, string> {
   return {
     accept: 'application/vnd.github+json',
@@ -120,7 +163,7 @@ function githubHeaders(args: { authorization: string }): Record<string, string> 
   };
 }
 
-function githubAppJwt(config: GitHubRepoValidationConfig): string {
+function githubAppJwt(config: Omit<GitHubRepoValidationConfig, 'installationId'>): string {
   const now = config.nowSeconds ?? Math.floor(Date.now() / 1000);
   const header = {
     alg: 'RS256',

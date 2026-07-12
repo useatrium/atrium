@@ -2309,8 +2309,6 @@ export class SessionRuns {
   }
 
   private async markGitHubNeedsAuth(id: string, message: string | undefined, lastEventId = 0): Promise<boolean> {
-    const authMessage =
-      message ?? 'GitHub authentication failed. Reconnect GitHub before retrying private repository access.';
     const before = await this.pool.query<
       Pick<SessionRow, 'workspace_id' | 'spawned_by' | 'provider_credential_user_id'>
     >('SELECT workspace_id, spawned_by, provider_credential_user_id FROM sessions WHERE id = $1', [id]);
@@ -2322,6 +2320,19 @@ export class SessionRuns {
       : null;
     if (!owner) return false;
     const event = await this.connections.withConnectionLock(owner.workspaceId, owner.userId, 'github', async () => {
+      // "Reconnect" is misleading for owners who never connected GitHub (they
+      // ran on the shared fallback), so pick the copy by whether a connection
+      // row exists — and never upsert a phantom needs_auth row for them.
+      const connectionRes = await this.pool.query(
+        `SELECT 1 FROM user_connections WHERE workspace_id = $1 AND user_id = $2 AND provider = 'github'`,
+        [owner.workspaceId, owner.userId],
+      );
+      const hasConnection = (connectionRes.rowCount ?? 0) > 0;
+      const authMessage =
+        message ??
+        (hasConnection
+          ? 'GitHub authentication failed. Reconnect GitHub before retrying private repository access.'
+          : "GitHub access isn't set up for this session yet. Retry in a new session, or connect GitHub to act as your own identity.");
       if (this.ironControl?.configured) {
         await convergeGitHubPublicReadFallback(this.ironControl, owner).catch((err) => {
           console.warn('GitHub fallback convergence after auth failure failed', { id, err });
@@ -2332,7 +2343,9 @@ export class SessionRuns {
         const row = before.rows[0];
         if (!row) return null;
         const ownerId = row.provider_credential_user_id ?? row.spawned_by;
-        await this.connections.markGitHubNeedsAuth(row.workspace_id, ownerId, authMessage, client);
+        if (hasConnection) {
+          await this.connections.markGitHubNeedsAuth(row.workspace_id, ownerId, authMessage, client);
+        }
         await client.query('UPDATE sessions SET last_event_id = GREATEST(last_event_id, $1) WHERE id = $2', [
           lastEventId,
           id,
