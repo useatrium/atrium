@@ -8,6 +8,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./handle": "./src/handle.ts",
+    "./mentions": "./src/mentions.ts",
     "./reactions": "./src/reactions.ts",
     "./prefs": "./src/prefs.ts",
     "./calls": "./src/calls.ts",
