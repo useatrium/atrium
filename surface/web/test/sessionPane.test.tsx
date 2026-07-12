@@ -74,6 +74,8 @@ function bSession(overrides: Partial<Session> = {}): Session {
     spawnedBy: me.id,
     spawnerName: me.displayName,
     driverId: null,
+    archivedAt: null,
+    pinned: false,
     pendingSeatRequests: [],
     suggestions: [],
     answerProposals: [],

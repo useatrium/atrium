@@ -8,6 +8,7 @@ import { buildAppsOrigin } from './apps-origin.js';
 import { pruneIdempotencyKeys } from './idempotency.js';
 import { pruneDraftTombstones } from './drafts.js';
 import { pruneOrphanFiles } from './gc.js';
+import { archiveStaleSessions } from './session-archive.js';
 import { deleteObject, startStorageBootstrap } from './s3.js';
 import { startArtifactGcWorker, type ArtifactGcWorker } from './artifact-ledger-gc.js';
 import { SttWorker } from './stt/worker.js';
@@ -21,13 +22,16 @@ export async function main() {
   }
   const pool = createPool(config.databaseUrl);
   await runMigrations(pool);
+  const hub = new WsHub();
   await pruneIdempotencyKeys(pool);
   await pruneDraftTombstones(pool);
   await pruneOrphanFiles(pool, { deleteObject }).catch((err) => {
     console.warn('orphan file prune failed', err);
   });
+  await archiveStaleSessions(pool, hub).catch((err) => {
+    console.warn('stale session archive failed', err);
+  });
   const workspace = await ensureDefaultWorkspace(pool);
-  const hub = new WsHub();
   const sttWorker = new SttWorker({ pool, hub });
   await sttWorker.sweepOnBoot();
   const heartbeat = hub.startHeartbeat(30_000);
@@ -43,6 +47,9 @@ export async function main() {
   const filePrune = setInterval(() => {
     void pruneOrphanFiles(pool, { deleteObject }).catch((err) => {
       console.warn('orphan file prune failed', err);
+    });
+    void archiveStaleSessions(pool, hub).catch((err) => {
+      console.warn('stale session archive failed', err);
     });
   }, 24 * 60 * 60 * 1000);
   filePrune.unref?.();

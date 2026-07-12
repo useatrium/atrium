@@ -311,6 +311,66 @@ describe('durable op queue coalescing', () => {
     expect(ops[0]!.queueKey).toBe('draft:channel:one');
     expect(ops[0]!.payload).toEqual({ draftKey: 'channel:one', text: 'hello world' });
   });
+
+  it('last-write-wins archive and pin operations per target', async () => {
+    const storage = new MemoryOpStorage();
+    const queue = new DurableOpQueue({ storage, api, dispatch: () => {} });
+    await queue.enqueue({
+      opId: '00000000-0000-4000-8000-000000000101',
+      opType: 'channel.archive',
+      payload: { channelId: 'ch-1', archived: true, previousArchivedAt: null },
+    });
+    await queue.enqueue({
+      opId: '00000000-0000-4000-8000-000000000102',
+      opType: 'channel.archive',
+      payload: { channelId: 'ch-1', archived: false, previousArchivedAt: 'stale' },
+    });
+    await queue.enqueue({
+      opId: '00000000-0000-4000-8000-000000000103',
+      opType: 'channel.pin',
+      payload: { channelId: 'ch-1', pinned: true, previousPinned: false },
+    });
+    await queue.enqueue({
+      opId: '00000000-0000-4000-8000-000000000104',
+      opType: 'channel.pin',
+      payload: { channelId: 'ch-1', pinned: false, previousPinned: true },
+    });
+    await queue.enqueue({
+      opId: '00000000-0000-4000-8000-000000000105',
+      opType: 'session.archive',
+      payload: { sessionId: 'sess-1', archived: true, previousArchivedAt: null },
+    });
+    await queue.enqueue({
+      opId: '00000000-0000-4000-8000-000000000106',
+      opType: 'session.archive',
+      payload: { sessionId: 'sess-1', archived: false, previousArchivedAt: 'stale' },
+    });
+    await queue.enqueue({
+      opId: '00000000-0000-4000-8000-000000000107',
+      opType: 'session.pin',
+      payload: { sessionId: 'sess-1', pinned: true, previousPinned: false },
+    });
+    await queue.enqueue({
+      opId: '00000000-0000-4000-8000-000000000108',
+      opType: 'session.pin',
+      payload: { sessionId: 'sess-1', pinned: false, previousPinned: true },
+    });
+
+    const byType = new Map((await storage.listOps()).map((op) => [op.opType, op]));
+    expect(byType.size).toBe(4);
+    expect(byType.get('channel.archive')!.payload).toEqual({
+      channelId: 'ch-1',
+      archived: false,
+      previousArchivedAt: null,
+    });
+    expect(byType.get('channel.pin')!.payload).toEqual({ channelId: 'ch-1', pinned: false, previousPinned: false });
+    expect(byType.get('session.archive')!.payload).toEqual({
+      sessionId: 'sess-1',
+      archived: false,
+      previousArchivedAt: null,
+    });
+    expect(byType.get('session.pin')!.payload).toEqual({ sessionId: 'sess-1', pinned: false, previousPinned: false });
+  });
 });
 
 describe('durable op queue flushing', () => {

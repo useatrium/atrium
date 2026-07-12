@@ -69,6 +69,12 @@ export function queuedFailureMessage(opType: OpType, err?: unknown): string {
       return "Couldn't add the person.";
     case 'channel.leave':
       return "Couldn't leave the channel.";
+    case 'channel.archive':
+    case 'session.archive':
+      return "Couldn't update the archive setting.";
+    case 'channel.pin':
+    case 'session.pin':
+      return "Couldn't update the pin setting.";
   }
 }
 

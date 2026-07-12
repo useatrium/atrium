@@ -16,6 +16,8 @@ function channel(overrides: Partial<Channel> = {}): Channel {
     kind: 'public',
     members: [me, ada],
     muted: false,
+    archivedAt: null,
+    pinned: false,
     ...overrides,
   };
 }
@@ -46,6 +48,8 @@ function session(overrides: Partial<Session> = {}): Session {
     harness: 'codex',
     spawnedBy: me.id,
     driverId: null,
+    archivedAt: null,
+    pinned: false,
     pendingSeatRequests: [],
     suggestions: [],
     answerProposals: [],

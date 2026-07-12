@@ -6,12 +6,17 @@ import { normalizePrefs, UserPrefsSchema, type UserPrefs } from './prefs';
 import { UserRefSchema, WireEventSchema, type WireEvent } from './timeline';
 
 const ChannelKindSchema = Schema.Literal('public', 'private', 'dm', 'gdm');
+const NullableStringSchema = Schema.Union(Schema.String, Schema.Null);
 
 export const ChannelSchema = Schema.mutable(Schema.Struct({
   id: Schema.String,
   workspaceId: Schema.String,
   name: Schema.String,
   createdAt: Schema.String,
+  // Decode-with-default: an old server (deploy skew) or cached snapshot may
+  // omit these; failing the whole channel-list decode would blank the sidebar.
+  archivedAt: Schema.optionalWith(NullableStringSchema, { default: () => null }),
+  pinned: Schema.optionalWith(Schema.Boolean, { default: () => false }),
   lastReadEventId: Schema.optionalWith(Schema.Number, { exact: true }),
   latestEventId: Schema.optionalWith(Schema.Number, { exact: true }),
   muted: Schema.optionalWith(Schema.Boolean, { exact: true }),

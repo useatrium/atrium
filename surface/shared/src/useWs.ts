@@ -20,6 +20,8 @@ export interface WsCallbacks {
   onSessionTyping?: (sessionId: string, user: UserRef) => void;
   onRead?: (channelId: string, lastReadEventId: number) => void;
   onMuted?: (channelId: string, muted: boolean) => void;
+  onChannelPinned?: (channelId: string, pinned: boolean) => void;
+  onSessionPinned?: (sessionId: string, pinned: boolean) => void;
   onChannelLeft?: (channelId: string) => void;
   /** Server-synced user preferences changed (this device or another). */
   onPrefs?: (prefs: UserPrefs) => void;
@@ -109,6 +111,20 @@ const WsMutedFrameSchema = Schema.mutable(Schema.Struct({
   ...WsFrameSeqSchema,
 }));
 
+const WsChannelPinnedFrameSchema = Schema.mutable(Schema.Struct({
+  type: Schema.Literal('channel-pinned'),
+  channelId: Schema.String,
+  pinned: Schema.Boolean,
+  ...WsFrameSeqSchema,
+}));
+
+const WsSessionPinnedFrameSchema = Schema.mutable(Schema.Struct({
+  type: Schema.Literal('session-pinned'),
+  sessionId: Schema.String,
+  pinned: Schema.Boolean,
+  ...WsFrameSeqSchema,
+}));
+
 const WsChannelLeftFrameSchema = Schema.mutable(Schema.Struct({
   type: Schema.Literal('channel-left'),
   channelId: Schema.String,
@@ -174,6 +190,8 @@ const WsFrameSchema = Schema.Union(
   WsSessionTypingFrameSchema,
   WsReadFrameSchema,
   WsMutedFrameSchema,
+  WsChannelPinnedFrameSchema,
+  WsSessionPinnedFrameSchema,
   WsChannelLeftFrameSchema,
   WsPrefsFrameSchema,
   WsPongFrameSchema,
@@ -340,6 +358,10 @@ export function useWs(
           cbRef.current.onRead?.(msg.channelId, msg.lastReadEventId);
         else if (msg.type === 'muted' && msg.channelId && typeof msg.muted === 'boolean')
           cbRef.current.onMuted?.(msg.channelId, msg.muted);
+        else if (msg.type === 'channel-pinned' && msg.channelId && typeof msg.pinned === 'boolean')
+          cbRef.current.onChannelPinned?.(msg.channelId, msg.pinned);
+        else if (msg.type === 'session-pinned' && msg.sessionId && typeof msg.pinned === 'boolean')
+          cbRef.current.onSessionPinned?.(msg.sessionId, msg.pinned);
         else if (msg.type === 'channel-left' && msg.channelId)
           cbRef.current.onChannelLeft?.(msg.channelId);
         else if (msg.type === 'prefs' && msg.prefs)

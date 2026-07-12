@@ -14,6 +14,8 @@ function channel(overrides: Partial<Channel> = {}): Channel {
     kind: 'public',
     latestEventId: 0,
     lastReadEventId: 0,
+    archivedAt: null,
+    pinned: false,
     ...overrides,
   };
 }

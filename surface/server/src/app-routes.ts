@@ -158,6 +158,7 @@ export async function registerAppRoutes(deps: AppRouteDeps): Promise<void> {
 
   registerSessionRoutes(app, {
     pool,
+    hub,
     sessionRuns,
     connections,
     ironControl,

@@ -64,6 +64,10 @@ export interface Channel {
   workspaceId: string;
   name: string;
   createdAt: string;
+  /** Global archive state; null means visible/active. */
+  archivedAt: string | null;
+  /** Per-user state resolved for the current client. */
+  pinned: boolean;
   lastReadEventId?: number;
   latestEventId?: number;
   muted?: boolean;
@@ -190,8 +194,10 @@ export interface ConnectionIdentity {
 
 export type Api = ReturnType<typeof createApi>;
 
+export type SessionListStatus = 'running' | 'recent' | 'all' | 'archived';
+
 export interface ListSessionsOptions {
-  status?: 'running' | 'recent' | 'all';
+  status?: SessionListStatus;
   limit?: number;
 }
 
@@ -473,6 +479,16 @@ export function createApi(opts: ApiOptions = {}) {
         method: 'POST',
         body: JSON.stringify({ muted, ...(op.opId ? { opId: op.opId } : {}) }),
       }),
+    setChannelArchived: (channelId: string, archived: boolean, op: OpOptions = {}) =>
+      req<{ archived: boolean; archivedAt: string | null }>(`/api/channels/${channelId}/archive`, {
+        method: 'POST',
+        body: JSON.stringify({ archived, ...(op.opId ? { opId: op.opId } : {}) }),
+      }),
+    setChannelPinned: (channelId: string, pinned: boolean, op: OpOptions = {}) =>
+      req<{ pinned: boolean }>(`/api/channels/${channelId}/pin`, {
+        method: 'POST',
+        body: JSON.stringify({ pinned, ...(op.opId ? { opId: op.opId } : {}) }),
+      }),
     getActivity: (cursor?: string) => {
       const q = new URLSearchParams();
       if (cursor !== undefined) q.set('cursor', cursor);
@@ -723,6 +739,16 @@ export function createApi(opts: ApiOptions = {}) {
         decodeSessionListResponse,
       );
     },
+    setSessionArchived: (id: string, archived: boolean, op: OpOptions = {}) =>
+      req<{ archived: boolean; archivedAt: string | null }>(`/api/sessions/${id}/archive`, {
+        method: 'POST',
+        body: JSON.stringify({ archived, ...(op.opId ? { opId: op.opId } : {}) }),
+      }),
+    setSessionPinned: (id: string, pinned: boolean, op: OpOptions = {}) =>
+      req<{ pinned: boolean }>(`/api/sessions/${id}/pin`, {
+        method: 'POST',
+        body: JSON.stringify({ pinned, ...(op.opId ? { opId: op.opId } : {}) }),
+      }),
     steerSession: (
       id: string,
       text: string,

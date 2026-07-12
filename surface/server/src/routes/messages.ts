@@ -235,7 +235,7 @@ export function registerMessageRoutes(app: FastifyInstance, deps: MessageRouteDe
     if (!channel.rows[0] || !(await canAccessChannel(pool, user.id, body.channelId))) {
       return reply.code(404).send({ error: 'channel_not_found', message: 'channel not found' });
     }
-    const event = await postMessage(pool, {
+    const posted = await postMessage(pool, {
       workspaceId: channel.rows[0].workspace_id,
       channelId: body.channelId,
       actorId: user.id,
@@ -246,6 +246,8 @@ export function registerMessageRoutes(app: FastifyInstance, deps: MessageRouteDe
       attachments,
       voice,
     });
+    const { channelUnarchivedEvent, ...event } = posted;
+    if (channelUnarchivedEvent) hub.publishEvent(channelUnarchivedEvent);
     try {
       await persistMentions(pool, {
         eventId: event.id,

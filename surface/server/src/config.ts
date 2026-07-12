@@ -3,6 +3,13 @@ function positiveIntEnv(name: string, fallback: number): number {
   return Number.isSafeInteger(value) && value > 0 ? value : fallback;
 }
 
+function nonNegativeIntEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw == null || raw.trim() === '') return fallback;
+  const value = Number(raw);
+  return Number.isSafeInteger(value) && value >= 0 ? value : fallback;
+}
+
 export const config = {
   databaseUrl:
     process.env.DATABASE_URL ?? 'postgres://atrium:atrium@localhost:5433/atrium',
@@ -40,6 +47,7 @@ export const config = {
   rateLimitMax: positiveIntEnv('ATRIUM_RATE_LIMIT_MAX', 600),
   rateLimitLoginMax: positiveIntEnv('ATRIUM_RATE_LIMIT_LOGIN_MAX', 30),
   maxMessageBytes: 8 * 1024,
+  sessionAutoArchiveDays: nonNegativeIntEnv('ATRIUM_SESSION_AUTO_ARCHIVE_DAYS', 14),
   centaurBaseUrl: process.env.CENTAUR_BASE_URL ?? 'http://127.0.0.1:18000',
   centaurApiKey: process.env.CENTAUR_API_KEY ?? '',
   centaurHarness: process.env.CENTAUR_HARNESS ?? 'codex',

@@ -170,6 +170,10 @@ export interface Channel {
   workspaceId: string;
   name: string;
   createdAt: string;
+  /** Global archive state; null means visible/active. */
+  archivedAt: string | null;
+  /** Per-user state resolved for the requesting user. */
+  pinned: boolean;
   kind: 'public' | 'private' | 'dm' | 'gdm';
   lastReadEventId?: number;
   latestEventId?: number;
@@ -218,6 +222,8 @@ export async function createChannel(
           workspaceId: row.workspace_id,
           name: row.name,
           createdAt: new Date(row.created_at).toISOString(),
+          archivedAt: null,
+          pinned: false,
           kind: row.kind,
           ...(row.kind === 'private' ? { memberCount: args.actorId ? 1 : 0 } : {}),
         },
@@ -279,12 +285,12 @@ export async function postMessage(
     attachments?: AttachmentMeta[];
     voice?: VoicePostMeta;
   },
-): Promise<WireEvent> {
+): Promise<PostedMessage> {
   // Idempotency: the mobile offline outbox retries sends whose response was
   // lost, reusing the clientMsgId — return the already-committed event
   // instead of duplicating (the events_client_msg_dedupe unique index covers
   // the concurrent-retry race).
-  const findExisting = async (db: Db | DbClient): Promise<WireEvent | null> => {
+  const findExisting = async (db: Db | DbClient): Promise<PostedMessage | null> => {
     if (!args.clientMsgId) return null;
     const res = await db.query<EventDbRow>(
       `SELECT * FROM events
@@ -320,6 +326,25 @@ export async function postMessage(
           throw new DomainError(400, 'nested_thread', 'cannot reply to a reply; threads are one level deep');
         }
       }
+      // This is the shared message executor used by every posting surface.
+      // Revive inside the same transaction so the durable lifecycle event is
+      // ordered before the message that caused it.
+      const revivedChannel = await client.query<{ workspace_id: string }>(
+        `UPDATE channels
+         SET archived_at = NULL
+         WHERE id = $1 AND archived_at IS NOT NULL
+         RETURNING workspace_id`,
+        [args.channelId],
+      );
+      const channelUnarchivedEvent = revivedChannel.rows[0]
+        ? await appendEvent(client, {
+            workspaceId: revivedChannel.rows[0].workspace_id,
+            channelId: args.channelId,
+            type: 'channel.unarchived',
+            actorId: args.actorId,
+            payload: { channelId: args.channelId, archivedAt: null },
+          })
+        : null;
       const payload: Record<string, unknown> = { text: args.text };
       const entryRefs = extractEntryRefs(args.text);
       if (entryRefs.length > 0) payload.entry_refs = entryRefs;
@@ -360,7 +385,8 @@ export async function postMessage(
           [voice.fileId, ev.id, args.workspaceId, args.channelId],
         );
       }
-      return toWireEvent(await attachAuthor(client, ev));
+      const message = toWireEvent(await attachAuthor(client, ev));
+      return channelUnarchivedEvent ? { ...message, channelUnarchivedEvent } : message;
     });
   } catch (err) {
     // Lost the insert race to a concurrent retry — the winner's row is the answer.
@@ -370,6 +396,12 @@ export async function postMessage(
     }
     throw err;
   }
+}
+
+/** Internal post result. HTTP routes fan out `channelUnarchivedEvent` before
+ * returning the normal message event to clients. */
+export interface PostedMessage extends WireEvent {
+  channelUnarchivedEvent?: WireEvent;
 }
 
 /**
@@ -808,7 +840,7 @@ const MESSAGE_SELECT = `
 // catch-up heals changes made while a client was disconnected (live clients
 // fold the same events from WS fanout).
 const TIMELINE_EVENT_TYPES =
-  "('message.posted', 'message.edited', 'message.deleted', 'reaction.added', 'reaction.removed', 'voice.transcribed', 'session.spawned', 'session.status_changed', 'session.effort_changed', 'session.completed', 'session.seat_requested', 'session.seat_changed', 'session.question_requested', 'session.question_answered', 'session.question_resolved', 'session.provider_auth_required', 'session.github_auth_required', 'session.provider_auth_resolved')";
+  "('message.posted', 'message.edited', 'message.deleted', 'reaction.added', 'reaction.removed', 'voice.transcribed', 'session.spawned', 'session.status_changed', 'session.effort_changed', 'session.completed', 'session.archived', 'session.unarchived', 'session.seat_requested', 'session.seat_changed', 'session.question_requested', 'session.question_answered', 'session.question_resolved', 'session.provider_auth_required', 'session.github_auth_required', 'session.provider_auth_resolved')";
 
 function foldEdit(
   row: EventDbRow & { edited_text?: string | null; is_deleted?: boolean; reactions?: unknown },
@@ -916,7 +948,7 @@ export async function listThreadMessages(
 // workspace.created is intentionally excluded: there is no live fanout today
 // and no client reducer consumes it.
 const SYNC_EVENT_TYPES =
-  "('message.posted', 'message.edited', 'message.deleted', 'reaction.added', 'reaction.removed', 'voice.transcribed', 'session.spawned', 'session.status_changed', 'session.effort_changed', 'session.completed', 'session.seat_requested', 'session.seat_changed', 'session.question_requested', 'session.question_answered', 'session.question_resolved', 'session.provider_auth_required', 'session.github_auth_required', 'session.provider_auth_resolved', 'channel.created', 'channel.member_joined', 'channel.member_left')";
+  "('message.posted', 'message.edited', 'message.deleted', 'reaction.added', 'reaction.removed', 'voice.transcribed', 'session.spawned', 'session.status_changed', 'session.effort_changed', 'session.completed', 'session.archived', 'session.unarchived', 'session.seat_requested', 'session.seat_changed', 'session.question_requested', 'session.question_answered', 'session.question_resolved', 'session.provider_auth_required', 'session.github_auth_required', 'session.provider_auth_resolved', 'channel.created', 'channel.archived', 'channel.unarchived', 'channel.member_joined', 'channel.member_left')";
 
 function syncVisibleCte(userUuidParam: string, userTextParam: string): string {
   const workspaceMember = workspaceMemberExists('e.workspace_id', userUuidParam);
@@ -1081,6 +1113,8 @@ export async function listChannels(
     workspaceId: r.workspace_id,
     name: r.name,
     createdAt: new Date(r.created_at).toISOString(),
+    archivedAt: r.archived_at ? new Date(r.archived_at).toISOString() : null,
+    pinned: false,
     kind: 'public' as const,
   }));
 }
@@ -1092,10 +1126,12 @@ export async function listChannelsFor(pool: Db | DbClient, userId: string): Prom
     workspace_id: string;
     name: string;
     created_at: Date;
+    archived_at: Date | null;
     kind: 'public' | 'private' | 'dm' | 'gdm';
     last_read_event_id: string;
     latest_event_id: string;
     muted: boolean;
+    pinned: boolean;
     member_count: string;
     mentioned_since_read: boolean;
   }>(
@@ -1103,6 +1139,7 @@ export async function listChannelsFor(pool: Db | DbClient, userId: string): Prom
             COALESCE(rc.last_read_event_id, 0) AS last_read_event_id,
             COALESCE(latest.latest_event_id, 0) AS latest_event_id,
             (cm.user_id IS NOT NULL) AS muted,
+            (cp.user_id IS NOT NULL) AS pinned,
             COALESCE(member_counts.member_count, 0) AS member_count,
             -- === mentions-activity additions ===
             COALESCE(mentions_since_read.mentioned_since_read, false) AS mentioned_since_read
@@ -1111,6 +1148,8 @@ export async function listChannelsFor(pool: Db | DbClient, userId: string): Prom
        ON rc.channel_id = c.id AND rc.user_id = $1
      LEFT JOIN channel_mutes cm
        ON cm.channel_id = c.id AND cm.user_id = $1
+     LEFT JOIN channel_pins cp
+       ON cp.channel_id = c.id AND cp.user_id = $1
      LEFT JOIN LATERAL (
        SELECT COUNT(*) AS member_count
        FROM channel_members m
@@ -1163,6 +1202,8 @@ export async function listChannelsFor(pool: Db | DbClient, userId: string): Prom
     workspaceId: r.workspace_id,
     name: r.name,
     createdAt: new Date(r.created_at).toISOString(),
+    archivedAt: r.archived_at ? new Date(r.archived_at).toISOString() : null,
+    pinned: r.pinned,
     kind: r.kind,
     lastReadEventId: Number(r.last_read_event_id),
     latestEventId: Number(r.latest_event_id),
@@ -1288,6 +1329,7 @@ export async function addChannelMemberTx(
     workspace_id: string;
     name: string;
     created_at: Date;
+    archived_at: Date | null;
     kind: Channel['kind'];
     member: boolean;
   }>(
@@ -1331,6 +1373,8 @@ export async function addChannelMemberTx(
       workspaceId: row.workspace_id,
       name: row.name,
       createdAt: new Date(row.created_at).toISOString(),
+      archivedAt: row.archived_at ? new Date(row.archived_at).toISOString() : null,
+      pinned: false,
       kind: row.kind,
       ...(row.kind === 'gdm' ? { members } : { memberCount: Number(count.rows[0]!.count) }),
     },

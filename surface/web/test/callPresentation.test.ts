@@ -27,6 +27,8 @@ function channel(overrides: Partial<Channel> = {}): Channel {
     kind: 'public',
     members: [me, ada],
     muted: false,
+    archivedAt: null,
+    pinned: false,
     ...overrides,
   };
 }

@@ -7,6 +7,7 @@ import {
 import { config } from '../config.js';
 import type { Db, DbClient } from '../db.js';
 import { canAccessChannel, type UserRef } from '../events.js';
+import type { WsHub } from '../hub.js';
 import type { AgentProfiles } from '../agent-profiles.js';
 import type { AppRegistry, AppScope } from '../app-registry.js';
 import { classifyScope } from '../artifact-scope.js';
@@ -47,6 +48,16 @@ const SessionListQuerySchema = Schema.Struct({
   limit: Schema.optional(Schema.Unknown),
 });
 
+const SessionArchiveBodySchema = Schema.Struct({
+  archived: Schema.optional(Schema.Unknown),
+  opId: Schema.optional(Schema.Unknown),
+});
+
+const SessionPinBodySchema = Schema.Struct({
+  pinned: Schema.optional(Schema.Unknown),
+  opId: Schema.optional(Schema.Unknown),
+});
+
 const SessionParamsSchema = Schema.Struct({
   id: Schema.String,
 });
@@ -72,6 +83,7 @@ const AppLaunchBodySchema = Schema.Struct({
 
 export interface SessionRouteDeps {
   pool: Db;
+  hub: WsHub;
   sessionRuns: SessionRuns;
   connections: Connections;
   ironControl: IronControlAdminClient;
@@ -92,6 +104,7 @@ export interface SessionRouteDeps {
 
 export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDeps): void {
   const {
+    hub,
     sessionRuns,
     connections,
     ironControl,
@@ -379,7 +392,7 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
     if (!user) return;
     const q = decodeRouteQuery(SessionListQuerySchema, req.query);
     const status =
-      q.status === 'running' || q.status === 'recent' || q.status === 'all'
+      q.status === 'running' || q.status === 'recent' || q.status === 'all' || q.status === 'archived'
         ? q.status
         : q.status == null
           ? 'all'
@@ -400,6 +413,61 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
     if (!user) return;
     const { id } = decodeRouteParams(SessionParamsSchema, req.params);
     return { session: await sessionRuns.getSessionForUser(id, user.id) };
+  });
+
+  app.post('/api/sessions/:id/archive', async (req, reply) => {
+    const user = await requireSessionAccess(req, reply);
+    if (!user) return;
+    const { id } = decodeRouteParams(SessionParamsSchema, req.params);
+    const body = decodeRouteBody(SessionArchiveBodySchema, req.body);
+    const opId = optionalOpId(body);
+    if (typeof body.archived !== 'boolean') {
+      return reply.code(400).send({ error: 'bad_request', message: 'archived must be boolean' });
+    }
+    const change = await runMutation({
+      userId: user.id,
+      opId,
+      opType: 'session.archive',
+      body: { sessionId: id, archived: body.archived },
+      fn: (client) => sessionRuns.setArchiveStateInTx(client, id, user.id, body.archived as boolean),
+      onApplied: (result) => {
+        if (result.event) hub.publishEvent(result.event);
+      },
+    });
+    return { archived: body.archived, archivedAt: change.archivedAt };
+  });
+
+  app.post('/api/sessions/:id/pin', async (req, reply) => {
+    const user = await requireSessionAccess(req, reply);
+    if (!user) return;
+    const { id } = decodeRouteParams(SessionParamsSchema, req.params);
+    const body = decodeRouteBody(SessionPinBodySchema, req.body);
+    const opId = optionalOpId(body);
+    if (typeof body.pinned !== 'boolean') {
+      return reply.code(400).send({ error: 'bad_request', message: 'pinned must be boolean' });
+    }
+    return runMutation({
+      userId: user.id,
+      opId,
+      opType: 'session.pin',
+      body: { sessionId: id, pinned: body.pinned },
+      fn: async (client) => {
+        if (body.pinned) {
+          await client.query(
+            `INSERT INTO session_pins (user_id, session_id)
+             VALUES ($1, $2)
+             ON CONFLICT (user_id, session_id) DO NOTHING`,
+            [user.id, id],
+          );
+        } else {
+          await client.query('DELETE FROM session_pins WHERE user_id = $1 AND session_id = $2', [user.id, id]);
+        }
+        return { pinned: body.pinned as boolean };
+      },
+      onApplied: (response) => {
+        hub.sendToUsers([user.id], { type: 'session-pinned', sessionId: id, pinned: response.pinned });
+      },
+    });
   });
 
   app.get('/api/sessions/:id/profile-change-proposals', async (req, reply) => {

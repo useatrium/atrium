@@ -35,6 +35,8 @@ export function spawnSession(task: string, ctx: SpawnContext): void {
     id: tempId,
     workspaceId: '',
     channelId,
+    archivedAt: null,
+    pinned: false,
     threadRootEventId: threadRootEventId ?? null,
     title: task.slice(0, 80),
     status: 'spawning',

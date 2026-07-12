@@ -28,6 +28,8 @@ function sessionWire(overrides: Partial<SessionWire> = {}): SessionWire {
     resultText: null,
     createdAt: '2026-07-04T12:00:00.000Z',
     completedAt: null,
+    archivedAt: null,
+    pinned: false,
     lastEventId: 12,
     permalink: '/s/sess-1',
     ...overrides,
@@ -47,6 +49,8 @@ function listItem(overrides: Partial<SessionListItem> = {}): SessionListItem {
     costUsd: 0,
     createdAt: '2026-07-04T12:00:00.000Z',
     completedAt: null,
+    archivedAt: null,
+    pinned: false,
     ...overrides,
   };
 }
@@ -122,6 +126,8 @@ function syncResponse(overrides: Partial<SyncResponse> = {}): SyncResponse {
           workspaceId: 'ws-1',
           name: 'general',
           createdAt: '2026-07-04T12:00:00.000Z',
+          archivedAt: null,
+          pinned: false,
           lastReadEventId: 1,
           latestEventId: 2,
           muted: false,

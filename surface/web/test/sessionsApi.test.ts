@@ -13,6 +13,8 @@ function sessionWire(overrides: Partial<SessionWire> = {}): SessionWire {
     harness: 'codex',
     spawnedBy: 'u-1',
     driverId: 'u-1',
+    archivedAt: null,
+    pinned: false,
     costUsd: 0,
     resultText: null,
     createdAt: '2026-07-04T12:00:00.000Z',

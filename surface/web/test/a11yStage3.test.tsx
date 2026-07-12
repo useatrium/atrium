@@ -85,8 +85,8 @@ describe('QuickSwitcher accessibility', () => {
     render(
       <QuickSwitcher
         channels={[
-          { id: 'ch-1', workspaceId: 'ws-1', name: 'general', createdAt: '' },
-          { id: 'ch-2', workspaceId: 'ws-1', name: 'ops', createdAt: '' },
+          { id: 'ch-1', workspaceId: 'ws-1', name: 'general', createdAt: '', archivedAt: null, pinned: false },
+          { id: 'ch-2', workspaceId: 'ws-1', name: 'ops', createdAt: '', archivedAt: null, pinned: false },
         ]}
         activeChannelId="ch-1"
         meId={me.id}

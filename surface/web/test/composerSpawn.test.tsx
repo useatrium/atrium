@@ -21,6 +21,8 @@ const wireSession: SessionWire = {
   harness: 'claude-code',
   spawnedBy: me.id,
   driverId: null,
+  archivedAt: null,
+  pinned: false,
   costUsd: 0,
   resultText: null,
   createdAt: new Date().toISOString(),
