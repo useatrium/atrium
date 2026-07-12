@@ -13,7 +13,11 @@ import { isWorkspaceMember } from '../membership.js';
 import { getObjectBytes, getObjectStream, headObject, presignGet, uploadObject } from '../s3.js';
 import { sanitizeFilename } from '../safe-filename.js';
 import { ensureThumbnailForBlobDeduped } from '../thumbnails.js';
-import { writeBackArtifactById, writeBackDeleteById } from '../artifact-writeback.js';
+import {
+  writeBackArtifactById,
+  writeBackDeleteById,
+  type WriteBackArtifactByIdResult,
+} from '../artifact-writeback.js';
 
 type FileCategory = 'image' | 'doc' | 'data' | 'app' | 'upload';
 const FILE_CATEGORY_VALUES: readonly FileCategory[] = ['image', 'doc', 'data', 'app', 'upload'];
@@ -41,6 +45,19 @@ export interface FilesHubRouteDeps {
 
 function isUuid(value: string): boolean {
   return /^[0-9a-f-]{36}$/i.test(value);
+}
+
+function sendWritebackResult(reply: FastifyReply, result: WriteBackArtifactByIdResult) {
+  if (result.ok) return reply.send({ seq: result.seq, status: result.status });
+  if (result.reason === 'gone') return reply.code(410).send({ error: 'gone' });
+  if (result.reason === 'binary_not_editable') {
+    return reply.code(415).send({ error: 'binary_not_editable', mediaKind: result.mediaKind });
+  }
+  return reply.code(409).send({
+    error: result.reason,
+    ...(result.baseSeq != null ? { baseSeq: result.baseSeq } : {}),
+    ...(result.latestSeq != null ? { latestSeq: result.latestSeq } : {}),
+  });
 }
 
 function stringArray(value: unknown): string[] | undefined {
@@ -454,18 +471,7 @@ export async function registerFilesHubRoutes(app: FastifyInstance, deps: FilesHu
         author: `human:${user.id}`,
         baseSeq,
       });
-      if (!result.ok) {
-        if (result.reason === 'gone') return reply.code(410).send({ error: 'gone' });
-        if (result.reason === 'binary_not_editable') {
-          return reply.code(415).send({ error: 'binary_not_editable', mediaKind: result.mediaKind });
-        }
-        return reply.code(409).send({
-          error: result.reason,
-          ...(result.baseSeq != null ? { baseSeq: result.baseSeq } : {}),
-          ...(result.latestSeq != null ? { latestSeq: result.latestSeq } : {}),
-        });
-      }
-      return reply.send({ seq: result.seq, status: result.status });
+      return sendWritebackResult(reply, result);
     });
 
     editScope.post('/api/files/:artifactId/resolve', async (req, reply) => {
@@ -527,18 +533,7 @@ export async function registerFilesHubRoutes(app: FastifyInstance, deps: FilesHu
             author: `human:${user.id}`,
             baseSeq,
           });
-      if (!result.ok) {
-        if (result.reason === 'gone') return reply.code(410).send({ error: 'gone' });
-        if (result.reason === 'binary_not_editable') {
-          return reply.code(415).send({ error: 'binary_not_editable', mediaKind: result.mediaKind });
-        }
-        return reply.code(409).send({
-          error: result.reason,
-          ...(result.baseSeq != null ? { baseSeq: result.baseSeq } : {}),
-          ...(result.latestSeq != null ? { latestSeq: result.latestSeq } : {}),
-        });
-      }
-      return reply.send({ seq: result.seq, status: result.status });
+      return sendWritebackResult(reply, result);
     });
   });
 
