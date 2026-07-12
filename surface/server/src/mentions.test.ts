@@ -18,10 +18,7 @@ describe('mentionedHandles', () => {
 describe('mentionTargetUserIds', () => {
   it('dedupes resolved users and excludes the actor id', () => {
     expect(
-      mentionTargetUserIds(
-        [{ id: 'mentioned-user' }, { id: 'actor-user' }, { id: 'mentioned-user' }],
-        'actor-user',
-      ),
+      mentionTargetUserIds([{ id: 'mentioned-user' }, { id: 'actor-user' }, { id: 'mentioned-user' }], 'actor-user'),
     ).toEqual(['mentioned-user']);
   });
 });

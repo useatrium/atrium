@@ -24,9 +24,7 @@ const errors = [];
 for (const file of files) {
   const match = nameRe.exec(file);
   if (!match) {
-    errors.push(
-      `${file}: expected migration filename format NNN_lower_snake_case.sql`,
-    );
+    errors.push(`${file}: expected migration filename format NNN_lower_snake_case.sql`);
     continue;
   }
   const prefix = match[1];
@@ -39,17 +37,13 @@ for (const [prefix, group] of [...byPrefix.entries()].sort()) {
   if (group.length <= 1) continue;
   const allowed = allowedDuplicateGroups.get(prefix);
   if (allowed && sameList(group, allowed)) continue;
-  errors.push(
-    `${prefix}: duplicate migration prefix is not allowed (${group.join(', ')})`,
-  );
+  errors.push(`${prefix}: duplicate migration prefix is not allowed (${group.join(', ')})`);
 }
 
 for (const [prefix, allowed] of allowedDuplicateGroups) {
   const group = byPrefix.get(prefix);
   if (!group || !sameList(group, allowed)) {
-    errors.push(
-      `${prefix}: allowed duplicate prefix is stale; remove it from check-migration-filenames.mjs`,
-    );
+    errors.push(`${prefix}: allowed duplicate prefix is stale; remove it from check-migration-filenames.mjs`);
   }
 }
 

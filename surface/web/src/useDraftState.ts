@@ -27,48 +27,43 @@ export function useDraftState({
 
   activeDraftKeysRef.current = activeDraftKeysForSync;
 
-  const reconcileDraftsFromSnapshot = useCallback(
-    (snapshot: DraftSnapshot, deletions: DraftDeletionSnapshot = {}) => {
-      void eventCache
-        .listDrafts()
-        .then(async (local) => {
-          const { hydrate, remove } = reconcileDraftSnapshot({
-            snapshot,
-            deletions,
-            local,
-            touchedThisSession: touchedDraftKeysRef.current,
-            activeDraftKeys: activeDraftKeysRef.current,
-          });
-          const entries = Object.entries(hydrate);
-          await Promise.all(
-            entries
-              .map(([draftKey, draft]) =>
-                eventCache.setDraft(draftKey, draft.text, draft.updatedAt),
-              )
-              .concat(remove.map((draftKey) => eventCache.setDraft(draftKey, ''))),
-          );
-          if (entries.length === 0 && remove.length === 0) return;
-          setDrafts((prev) => {
-            let next = prev;
-            for (const [draftKey, draft] of entries) {
-              if (!(draftKey in prev) || prev[draftKey] === draft.text) continue;
-              if (next === prev) next = { ...prev };
-              next[draftKey] = draft.text;
-            }
-            for (const draftKey of remove) {
-              if (!(draftKey in prev) || prev[draftKey] === '') continue;
-              if (next === prev) next = { ...prev };
-              next[draftKey] = '';
-            }
-            return next;
-          });
-        })
-        .catch((err: unknown) => {
-          console.warn('failed to reconcile draft snapshot', err);
+  const reconcileDraftsFromSnapshot = useCallback((snapshot: DraftSnapshot, deletions: DraftDeletionSnapshot = {}) => {
+    void eventCache
+      .listDrafts()
+      .then(async (local) => {
+        const { hydrate, remove } = reconcileDraftSnapshot({
+          snapshot,
+          deletions,
+          local,
+          touchedThisSession: touchedDraftKeysRef.current,
+          activeDraftKeys: activeDraftKeysRef.current,
         });
-    },
-    [],
-  );
+        const entries = Object.entries(hydrate);
+        await Promise.all(
+          entries
+            .map(([draftKey, draft]) => eventCache.setDraft(draftKey, draft.text, draft.updatedAt))
+            .concat(remove.map((draftKey) => eventCache.setDraft(draftKey, ''))),
+        );
+        if (entries.length === 0 && remove.length === 0) return;
+        setDrafts((prev) => {
+          let next = prev;
+          for (const [draftKey, draft] of entries) {
+            if (!(draftKey in prev) || prev[draftKey] === draft.text) continue;
+            if (next === prev) next = { ...prev };
+            next[draftKey] = draft.text;
+          }
+          for (const draftKey of remove) {
+            if (!(draftKey in prev) || prev[draftKey] === '') continue;
+            if (next === prev) next = { ...prev };
+            next[draftKey] = '';
+          }
+          return next;
+        });
+      })
+      .catch((err: unknown) => {
+        console.warn('failed to reconcile draft snapshot', err);
+      });
+  }, []);
 
   const loadDraft = useCallback((key: string, label: string) => {
     let disposed = false;

@@ -46,15 +46,10 @@ async function loginToken(handle: string): Promise<string> {
 describe('ws auth race', () => {
   it('frames sent immediately on open are processed after auth resolves', async () => {
     const token = await loginToken('alice');
-    const ws = new WebSocket(
-      `ws://127.0.0.1:${port}/ws?token=${encodeURIComponent(token)}`,
-    );
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws?token=${encodeURIComponent(token)}`);
     const received: { type?: string; channelId?: string; seq?: number }[] = [];
     const done = new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(
-        () => reject(new Error(`only got: ${JSON.stringify(received)}`)),
-        4000,
-      );
+      const timer = setTimeout(() => reject(new Error(`only got: ${JSON.stringify(received)}`)), 4000);
       ws.on('open', () => {
         // No await between open and these sends — this is the racing burst.
         ws.send(JSON.stringify({ type: 'subscribe', channelIds: [fx.channelId] }));
@@ -64,9 +59,7 @@ describe('ws auth race', () => {
       ws.on('message', (d) => {
         received.push(JSON.parse(d.toString()));
         const gotPong = received.some((m) => m.type === 'pong');
-        const gotPresence = received.some(
-          (m) => m.type === 'presence' && m.channelId === fx.channelId,
-        );
+        const gotPresence = received.some((m) => m.type === 'presence' && m.channelId === fx.channelId);
         if (gotPong && gotPresence) {
           clearTimeout(timer);
           resolve();

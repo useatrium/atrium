@@ -3,10 +3,7 @@ import '@testing-library/jest-dom/vitest';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import type { SessionSuggestion } from '@atrium/surface-client';
-import {
-  SuggestionsStrip,
-  type OptimisticSuggestionSend,
-} from '../src/components/work/SuggestionsStrip';
+import { SuggestionsStrip, type OptimisticSuggestionSend } from '../src/components/work/SuggestionsStrip';
 import { renderWithTheme as renderUI } from './rnTestUtils';
 
 afterEach(cleanup);
@@ -55,10 +52,7 @@ describe('SuggestionsStrip (mobile)', () => {
     const onSend = vi.fn();
     renderStrip({
       onSend,
-      suggestions: [
-        suggestion({ id: 'sug-1' }),
-        suggestion({ id: 'sug-sent', status: 'sent', text: 'Already sent.' }),
-      ],
+      suggestions: [suggestion({ id: 'sug-1' }), suggestion({ id: 'sug-sent', status: 'sent', text: 'Already sent.' })],
     });
 
     const strip = screen.getByTestId('suggestion-strip');
@@ -150,10 +144,7 @@ describe('SuggestionsStrip (mobile)', () => {
 
   it('renders nothing when there are no pending suggestions', () => {
     const { container } = renderStrip({
-      suggestions: [
-        suggestion({ id: 'sent', status: 'sent' }),
-        suggestion({ id: 'dismissed', status: 'dismissed' }),
-      ],
+      suggestions: [suggestion({ id: 'sent', status: 'sent' }), suggestion({ id: 'dismissed', status: 'dismissed' })],
     });
 
     expect(container).toBeEmptyDOMElement();

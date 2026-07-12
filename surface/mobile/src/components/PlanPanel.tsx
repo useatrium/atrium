@@ -6,13 +6,7 @@ import { SessionMarkdown } from './Markdown';
 
 type PlanState = NonNullable<SessionState['plan']>;
 
-export const PlanPanel = memo(function PlanPanel({
-  todos,
-  plan,
-}: {
-  todos?: TodoEntry[];
-  plan?: PlanState | null;
-}) {
+export const PlanPanel = memo(function PlanPanel({ todos, plan }: { todos?: TodoEntry[]; plan?: PlanState | null }) {
   const { colors } = useTheme();
   const [open, setOpen] = useState(false);
   const hasTodos = (todos?.length ?? 0) > 0;
@@ -52,9 +46,7 @@ export const PlanPanel = memo(function PlanPanel({
           backgroundColor: pressed ? colors.bgPressed : 'transparent',
         })}
       >
-        <Text style={{ color: colors.textMuted, fontSize: font.xs, width: 12 }}>
-          {open ? '▾' : '▸'}
-        </Text>
+        <Text style={{ color: colors.textMuted, fontSize: font.xs, width: 12 }}>{open ? '▾' : '▸'}</Text>
         <Text
           numberOfLines={1}
           style={{ flex: 1, minWidth: 0, color: colors.textSecondary, fontSize: font.xs, fontWeight: '800' }}

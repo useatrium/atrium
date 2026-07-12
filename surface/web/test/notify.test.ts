@@ -19,10 +19,7 @@ afterEach(() => {
   Object.defineProperty(navigator, 'serviceWorker', { configurable: true, value: undefined });
 });
 
-function installNotification(
-  permission: NotificationPermission,
-  requested: NotificationPermission = 'granted',
-) {
+function installNotification(permission: NotificationPermission, requested: NotificationPermission = 'granted') {
   class MockNotification {
     static permission = permission;
     static requestPermission = vi.fn(async () => {

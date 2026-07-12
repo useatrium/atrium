@@ -68,12 +68,7 @@ async function login(handle: string, displayName = handle) {
   return { cookie: res.headers['set-cookie'] as string, user: res.json().user };
 }
 
-async function registerToken(
-  userId: string,
-  token: string,
-  platform: 'ios' | 'android',
-  kind: 'expo' | 'voip',
-) {
+async function registerToken(userId: string, token: string, platform: 'ios' | 'android', kind: 'expo' | 'voip') {
   await pool.query(
     `INSERT INTO push_tokens (token, user_id, platform, kind)
      VALUES ($1, $2, $3, $4)`,

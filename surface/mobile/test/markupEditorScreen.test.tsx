@@ -40,7 +40,11 @@ const version: HubFileVersion = {
 
 vi.mock('expo-router', () => ({
   Stack: {
-    Screen: ({ options }: { options?: { headerLeft?: () => React.ReactNode; headerRight?: () => React.ReactNode } }) => (
+    Screen: ({
+      options,
+    }: {
+      options?: { headerLeft?: () => React.ReactNode; headerRight?: () => React.ReactNode };
+    }) => (
       <>
         {options?.headerLeft?.()}
         {options?.headerRight?.()}
@@ -78,7 +82,10 @@ vi.mock('../src/lib/chat', () => ({
 }));
 
 vi.mock('react-native-webview', () => ({
-  WebView: forwardRef(function MockWebView(props: { onMessage?: (event: { nativeEvent: { data: string } }) => void }, ref) {
+  WebView: forwardRef(function MockWebView(
+    props: { onMessage?: (event: { nativeEvent: { data: string } }) => void },
+    ref,
+  ) {
     lastWebViewProps = props;
     useImperativeHandle(ref, () => ({
       postMessage: postMessageToWebView,

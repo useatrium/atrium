@@ -37,14 +37,12 @@ function sessionFreshness(session: SessionListItem): number {
 function sessionMatchesSearch(session: SessionListItem, query: string): boolean {
   const normalized = query.trim().toLowerCase();
   if (!normalized) return true;
-  return [session.title, session.channelName, session.spawnerName, session.harness]
-    .some((value) => value.toLowerCase().includes(normalized));
+  return [session.title, session.channelName, session.spawnerName, session.harness].some((value) =>
+    value.toLowerCase().includes(normalized),
+  );
 }
 
-function groupSessions(
-  sessions: SessionListItem[],
-  liveSessions: Record<string, Session>,
-): Group[] {
+function groupSessions(sessions: SessionListItem[], liveSessions: Record<string, Session>): Group[] {
   const pinned: SessionListItem[] = [];
   const needsYou: SessionListItem[] = [];
   const active: SessionListItem[] = [];
@@ -290,12 +288,14 @@ export function AgentsSurface({
               aria-expanded={archivedOpen}
               className="flex w-full items-center gap-2 px-1 py-1 text-3xs font-semibold uppercase tracking-wider text-fg-muted hover:text-fg-secondary max-md:min-h-11"
             >
-              <span aria-hidden className="inline-block w-3 text-center">{archivedOpen ? '▾' : '▸'}</span>
+              <span aria-hidden className="inline-block w-3 text-center">
+                {archivedOpen ? '▾' : '▸'}
+              </span>
               <span>Archived</span>
               {archived != null && <span className="tabular-nums text-fg-faint">{visibleArchived.length}</span>}
             </button>
-            {archivedOpen && (
-              archivedLoading && archived == null ? (
+            {archivedOpen &&
+              (archivedLoading && archived == null ? (
                 <div className="px-1 py-2 text-xs text-fg-muted">Loading archived agents…</div>
               ) : visibleArchived.length === 0 ? (
                 <div className="px-1 py-2 text-xs text-fg-muted">No archived agents.</div>
@@ -310,8 +310,7 @@ export function AgentsSurface({
                     />
                   ))}
                 </div>
-              )
-            )}
+              ))}
           </section>
         </div>
       )}

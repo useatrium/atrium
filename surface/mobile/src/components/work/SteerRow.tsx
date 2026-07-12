@@ -1,11 +1,6 @@
 import { useMemo } from 'react';
 import { Pressable, Text, View, type GestureResponderEvent } from 'react-native';
-import {
-  containsCriticMarkup,
-  formatTurnTime,
-  parseMarkupSteer,
-  type SteerProvenance,
-} from '@atrium/surface-client';
+import { containsCriticMarkup, formatTurnTime, parseMarkupSteer, type SteerProvenance } from '@atrium/surface-client';
 import type { EntryResolver } from '../../lib/entryResolve';
 import { font, space, useTheme } from '../../lib/theme';
 import { CriticMarkupText } from '../CriticMarkupText';
@@ -48,9 +43,7 @@ function SteerProvenanceByline({ provenance }: { provenance?: SteerRowProvenance
       >
         ↩
       </Text>
-      <Text style={{ color: colors.textMuted, fontSize: font.xs, lineHeight: 16 }}>
-        {label}
-      </Text>
+      <Text style={{ color: colors.textMuted, fontSize: font.xs, lineHeight: 16 }}>{label}</Text>
     </View>
   );
 }

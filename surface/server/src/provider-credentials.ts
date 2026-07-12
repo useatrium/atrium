@@ -1,9 +1,4 @@
-import {
-  createCipheriv,
-  createDecipheriv,
-  createHash,
-  randomBytes,
-} from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
 import { config } from './config.js';
 import type { Db, DbClient } from './db.js';
 
@@ -111,27 +106,18 @@ export class ProviderCredentials {
     await this.deleteProviderSecret(userId, CODEX_PROVIDER);
   }
 
-  private async deleteProviderSecret(
-    userId: string,
-    provider: ProviderCredentialProvider,
-  ): Promise<void> {
-    await this.pool.query(
-      'DELETE FROM user_provider_credentials WHERE user_id = $1 AND provider = $2',
-      [userId, provider],
-    );
+  private async deleteProviderSecret(userId: string, provider: ProviderCredentialProvider): Promise<void> {
+    await this.pool.query('DELETE FROM user_provider_credentials WHERE user_id = $1 AND provider = $2', [
+      userId,
+      provider,
+    ]);
   }
 
-  async getClaudeToken(
-    userId: string,
-    client: Queryable = this.pool,
-  ): Promise<string | null> {
+  async getClaudeToken(userId: string, client: Queryable = this.pool): Promise<string | null> {
     return this.getProviderSecret(userId, CLAUDE_CODE_PROVIDER, client);
   }
 
-  async getCodexAuthJson(
-    userId: string,
-    client: Queryable = this.pool,
-  ): Promise<string | null> {
+  async getCodexAuthJson(userId: string, client: Queryable = this.pool): Promise<string | null> {
     return this.getProviderSecret(userId, CODEX_PROVIDER, client);
   }
 
@@ -179,10 +165,7 @@ export class ProviderCredentials {
    * Re-assert a proxy-backed credential after a successful run. This only
    * touches the proxy placeholder row; real-token rows remain unchanged.
    */
-  async markConnectedIfProxy(
-    userId: string,
-    provider: ProviderCredentialProvider,
-  ): Promise<void> {
+  async markConnectedIfProxy(userId: string, provider: ProviderCredentialProvider): Promise<void> {
     await this.pool.query(
       `UPDATE user_provider_credentials
        SET status = 'connected',
@@ -196,19 +179,11 @@ export class ProviderCredentials {
     );
   }
 
-  async markClaudeAuthRequired(
-    userId: string,
-    message: string,
-    client: Queryable = this.pool,
-  ): Promise<void> {
+  async markClaudeAuthRequired(userId: string, message: string, client: Queryable = this.pool): Promise<void> {
     await this.markProviderAuthRequired(CLAUDE_CODE_PROVIDER, userId, message, client);
   }
 
-  async markCodexAuthRequired(
-    userId: string,
-    message: string,
-    client: Queryable = this.pool,
-  ): Promise<void> {
+  async markCodexAuthRequired(userId: string, message: string, client: Queryable = this.pool): Promise<void> {
     await this.markProviderAuthRequired(CODEX_PROVIDER, userId, message, client);
   }
 
@@ -297,9 +272,7 @@ export function isCodexAuthFailureText(value: string | null | undefined): boolea
   );
 }
 
-export function isProviderAuthFailureText(
-  value: string | null | undefined,
-): boolean {
+export function isProviderAuthFailureText(value: string | null | undefined): boolean {
   return isClaudeAuthFailureText(value) || isCodexAuthFailureText(value);
 }
 
@@ -317,10 +290,7 @@ export function providerDisplayName(provider: ProviderCredentialProvider): strin
   return provider === CLAUDE_CODE_PROVIDER ? 'Claude Code' : 'Codex';
 }
 
-function statusFromRow(
-  provider: ProviderCredentialProvider,
-  row: CredentialRow | null,
-): ProviderCredentialStatusJson {
+function statusFromRow(provider: ProviderCredentialProvider, row: CredentialRow | null): ProviderCredentialStatusJson {
   if (!row) {
     return {
       provider,
@@ -408,10 +378,7 @@ function decryptSecret(secret: string, value: string): string {
   const key = keyFromSecret(secret);
   const decipher = createDecipheriv('aes-256-gcm', key, Buffer.from(iv64, 'base64url'));
   decipher.setAuthTag(Buffer.from(tag64, 'base64url'));
-  return Buffer.concat([
-    decipher.update(Buffer.from(ciphertext64, 'base64url')),
-    decipher.final(),
-  ]).toString('utf8');
+  return Buffer.concat([decipher.update(Buffer.from(ciphertext64, 'base64url')), decipher.final()]).toString('utf8');
 }
 
 function keyFromSecret(secret: string): Buffer {

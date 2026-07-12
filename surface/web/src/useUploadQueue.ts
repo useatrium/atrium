@@ -1,10 +1,5 @@
 import { useCallback } from 'react';
-import {
-  randomId,
-  type EnqueueOpInput,
-  type QueuedOp,
-  type UploadPayload,
-} from '@atrium/surface-client';
+import { randomId, type EnqueueOpInput, type QueuedOp, type UploadPayload } from '@atrium/surface-client';
 
 type UploadEnqueue = (input: EnqueueOpInput<'upload'>) => Promise<unknown>;
 
@@ -48,13 +43,7 @@ export function waitForQueuedUpload(
   });
 }
 
-export function useUploadQueue({
-  enqueueOp,
-  storage,
-}: {
-  enqueueOp: UploadEnqueue;
-  storage: UploadQueueStorage;
-}) {
+export function useUploadQueue({ enqueueOp, storage }: { enqueueOp: UploadEnqueue; storage: UploadQueueStorage }) {
   const queueUpload = useCallback(
     async (payload: UploadPayload): Promise<{ fileId: string }> => {
       await enqueueOp({

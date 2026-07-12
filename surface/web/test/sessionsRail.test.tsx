@@ -56,13 +56,7 @@ describe('SessionsRail', () => {
     const done = session({ title: 'finished up', status: 'completed', completedAt: new Date().toISOString() });
     const other = session({ title: 'other channel', channelId: 'ch-2' });
 
-    render(
-      <SessionsRail
-        channelId="ch-1"
-        sessions={asMap(needs, active, done, other)}
-        onOpenSession={() => {}}
-      />,
-    );
+    render(<SessionsRail channelId="ch-1" sessions={asMap(needs, active, done, other)} onOpenSession={() => {}} />);
 
     expect(screen.getByText('Needs you')).toBeTruthy();
     expect(screen.getByText('Active')).toBeTruthy();
@@ -91,9 +85,7 @@ describe('SessionsRail', () => {
   });
 
   it('shows an empty state when the channel has no sessions', () => {
-    render(
-      <SessionsRail channelId="ch-1" sessions={{}} onOpenSession={() => {}} />,
-    );
+    render(<SessionsRail channelId="ch-1" sessions={{}} onOpenSession={() => {}} />);
     expect(screen.getByText('No agents yet')).toBeTruthy();
     expect(screen.queryByText('Active')).toBeNull();
   });

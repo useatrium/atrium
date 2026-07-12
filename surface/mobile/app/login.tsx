@@ -104,8 +104,7 @@ export default function Login() {
   }, [serverUrl]);
 
   const canRequestCode = serverUrl.trim().length > 0 && email.trim().length > 0 && !busy;
-  const canVerifyCode =
-    serverUrl.trim().length > 0 && email.trim().length > 0 && code.trim().length === 6 && !busy;
+  const canVerifyCode = serverUrl.trim().length > 0 && email.trim().length > 0 && code.trim().length === 6 && !busy;
   const canPressHandle = handle.trim().length >= 2 && !busy;
   const canSubmitHandle = serverUrl.trim().length > 0 && handle.trim().length >= 2 && !busy;
   const inputStyle = {
@@ -196,10 +195,7 @@ export default function Login() {
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg }}>
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      >
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <ScrollView
           contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', padding: space.xl }}
           keyboardShouldPersistTaps="handled"
@@ -449,9 +445,7 @@ export default function Login() {
                     paddingVertical: 14,
                   })}
                 >
-                  <Text style={{ color: colors.text, fontSize: font.md, fontWeight: '700' }}>
-                    Continue with Google
-                  </Text>
+                  <Text style={{ color: colors.text, fontSize: font.md, fontWeight: '700' }}>Continue with Google</Text>
                 </Pressable>
               )}
 

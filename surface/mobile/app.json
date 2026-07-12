@@ -11,17 +11,12 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "chat.atrium.app",
-      "associatedDomains": [
-        "applinks:atrium.garybasin.com"
-      ],
+      "associatedDomains": ["applinks:atrium.garybasin.com"],
       "infoPlist": {
         "NSPhotoLibraryUsageDescription": "Attach photos to messages.",
         "NSCameraUsageDescription": "Take a photo to attach to a message.",
         "NSMicrophoneUsageDescription": "Allow Atrium to record voice messages and calls.",
-        "UIBackgroundModes": [
-          "audio",
-          "voip"
-        ],
+        "UIBackgroundModes": ["audio", "voip"],
         "ITSAppUsesNonExemptEncryption": false
       },
       "bitcode": false
@@ -75,10 +70,7 @@
               "pathPrefix": "/settings"
             }
           ],
-          "category": [
-            "BROWSABLE",
-            "DEFAULT"
-          ]
+          "category": ["BROWSABLE", "DEFAULT"]
         }
       ],
       "predictiveBackGestureEnabled": false,

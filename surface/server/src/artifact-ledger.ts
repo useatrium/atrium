@@ -5,16 +5,9 @@
 
 import type { Db, DbClient } from './db.js';
 import { withTx } from './db.js';
-import {
-  canonicalizeSessionArtifactPath,
-  canonicalizeWorkspaceArtifactPath,
-} from './artifact-path.js';
+import { canonicalizeSessionArtifactPath, canonicalizeWorkspaceArtifactPath } from './artifact-path.js';
 import { classifyScope, readableArtifactRootsForSession, type ArtifactScopeRoot } from './artifact-scope.js';
-import {
-  classifyMediaFromMime,
-  type MediaClassification,
-  type MediaKind,
-} from './media-classifier.js';
+import { classifyMediaFromMime, type MediaClassification, type MediaKind } from './media-classifier.js';
 type FileOrigin = 'upload' | 'agent' | 'workspace';
 
 interface HubFile {
@@ -376,19 +369,15 @@ export class ArtifactLedger {
 
   /** True if the blob's bytes are already durable in S3/CAS. */
   async blobIsDurable(sha256: string): Promise<boolean> {
-    const res = await this.pool.query<{ s3_key: string | null }>(
-      `SELECT s3_key FROM cas_blobs WHERE sha256 = $1`,
-      [sha256],
-    );
+    const res = await this.pool.query<{ s3_key: string | null }>(`SELECT s3_key FROM cas_blobs WHERE sha256 = $1`, [
+      sha256,
+    ]);
     return res.rows[0]?.s3_key != null;
   }
 
   /** Stamp the S3 key once bytes are durable (only if not already stamped). */
   async stampBlobS3Key(sha256: string, s3Key: string): Promise<void> {
-    await this.pool.query(
-      `UPDATE cas_blobs SET s3_key = $2 WHERE sha256 = $1 AND s3_key IS NULL`,
-      [sha256, s3Key],
-    );
+    await this.pool.query(`UPDATE cas_blobs SET s3_key = $2 WHERE sha256 = $1 AND s3_key IS NULL`, [sha256, s3Key]);
   }
 
   // === chain primitives (used directly by the conflict lane) ===============
@@ -450,8 +439,9 @@ export class ArtifactLedger {
         WHERE p.artifact_id = $1 AND p.name = 'latest'`,
       [artifactId],
     );
-    const row = viaPointer.rows[0]
-      ?? (
+    const row =
+      viaPointer.rows[0] ??
+      (
         await client.query<{ seq: number; blob_sha: string | null; kind: VersionKind }>(
           `SELECT seq, blob_sha, kind FROM artifact_versions
             WHERE artifact_id = $1 ORDER BY seq DESC LIMIT 1`,
@@ -483,21 +473,14 @@ export class ArtifactLedger {
   }
 
   /** Move a pointer (`latest`/`official`/pin) to a seq. */
-  async advancePointer(
-    client: DbClient,
-    artifactId: string,
-    name: string,
-    seq: number,
-  ): Promise<void> {
+  async advancePointer(client: DbClient, artifactId: string, name: string, seq: number): Promise<void> {
     await client.query(
       `INSERT INTO artifact_pointers (artifact_id, name, seq)
        VALUES ($1, $2, $3)
        ON CONFLICT (artifact_id, name) DO UPDATE SET seq = EXCLUDED.seq, updated_at = now()`,
       [artifactId, name, seq],
     );
-    await client.query("SELECT pg_notify('artifact_advanced', $1)", [
-      JSON.stringify({ artifactId, name, seq }),
-    ]);
+    await client.query("SELECT pg_notify('artifact_advanced', $1)", [JSON.stringify({ artifactId, name, seq })]);
   }
 
   // === gc additions ===
@@ -747,10 +730,9 @@ export class ArtifactLedger {
 
   /** The S3 key for a blob sha (or null if unknown/unstamped). */
   async blobS3Key(sha: string): Promise<string | null> {
-    const res = await this.pool.query<{ s3_key: string | null }>(
-      `SELECT s3_key FROM cas_blobs WHERE sha256 = $1`,
-      [sha],
-    );
+    const res = await this.pool.query<{ s3_key: string | null }>(`SELECT s3_key FROM cas_blobs WHERE sha256 = $1`, [
+      sha,
+    ]);
     return res.rows[0]?.s3_key ?? null;
   }
 
@@ -775,9 +757,7 @@ export class ArtifactLedger {
 
   /** Resolve an artifact id back to its workspace/provenance/path — for the
    * by-id resolve endpoint. */
-  async artifactById(
-    artifactId: string,
-  ): Promise<{
+  async artifactById(artifactId: string): Promise<{
     workspaceId: string;
     sessionId: string | null;
     channelId: string | null;
@@ -790,10 +770,7 @@ export class ArtifactLedger {
       channel_id: string | null;
       path: string;
       tombstoned_at: Date | string | null;
-    }>(
-      `SELECT workspace_id, session_id, channel_id, path, tombstoned_at FROM artifacts WHERE id = $1`,
-      [artifactId],
-    );
+    }>(`SELECT workspace_id, session_id, channel_id, path, tombstoned_at FROM artifacts WHERE id = $1`, [artifactId]);
     const row = res.rows[0];
     if (!row) return null;
     return {
@@ -807,19 +784,19 @@ export class ArtifactLedger {
 
   /** Scope query (A4): the artifact paths a session subscribes, with their
    * current latest seq — the node's hydration/subscription set seed (§10.1). */
-  async sessionScope(
-    sessionId: string,
-  ): Promise<Array<{
-    path: string;
-    latestSeq: number;
-    kind: VersionKind;
-    sha: string | null;
-    mime: string | null;
-    detectedMime: string | null;
-    mediaKind: MediaKind | null;
-    isText: boolean | null;
-    sizeBytes: number | null;
-  }>> {
+  async sessionScope(sessionId: string): Promise<
+    Array<{
+      path: string;
+      latestSeq: number;
+      kind: VersionKind;
+      sha: string | null;
+      mime: string | null;
+      detectedMime: string | null;
+      mediaKind: MediaKind | null;
+      isText: boolean | null;
+      sizeBytes: number | null;
+    }>
+  > {
     const scope = await readableArtifactRootsForSession(this.pool, sessionId);
     const res = await this.pool.query<{
       path: string;
@@ -880,12 +857,8 @@ export class ArtifactLedger {
         ? [`shared/channels/${params.channelId}/%`]
         : scope.readableChannelIds.map((id) => `shared/channels/${id}/%`);
     const sharedPatterns =
-      params.channelId != null
-        ? sharedChannelPatterns
-        : ['shared/global/%', 'shared/apps/%', ...sharedChannelPatterns];
-    const scratchPatterns = includeScratch
-      ? scope.sessionIds.map((id) => `scratch/${id}/%`)
-      : [];
+      params.channelId != null ? sharedChannelPatterns : ['shared/global/%', 'shared/apps/%', ...sharedChannelPatterns];
+    const scratchPatterns = includeScratch ? scope.sessionIds.map((id) => `scratch/${id}/%`) : [];
     const readablePredicates: string[] = [];
     if (sharedPatterns.length > 0) {
       values.push(sharedPatterns);
@@ -1139,9 +1112,7 @@ export class ArtifactLedger {
       );
       readable = (session.rowCount ?? 0) > 0;
     }
-    return readable
-      ? { workspaceId: row.workspace_id, path: row.path, tombstoned: row.tombstoned_at != null }
-      : null;
+    return readable ? { workspaceId: row.workspace_id, path: row.path, tombstoned: row.tombstoned_at != null } : null;
   }
 
   async artifactContentById(artifactId: string): Promise<{
@@ -1273,10 +1244,7 @@ export class ArtifactLedger {
   }
 
   async removeLabel(artifactId: string, label: string): Promise<string[]> {
-    await this.pool.query('DELETE FROM artifact_labels WHERE artifact_id = $1 AND label = $2', [
-      artifactId,
-      label,
-    ]);
+    await this.pool.query('DELETE FROM artifact_labels WHERE artifact_id = $1 AND label = $2', [artifactId, label]);
     return this.labelsForArtifact(artifactId);
   }
 
@@ -1290,10 +1258,7 @@ export class ArtifactLedger {
       );
       return true;
     }
-    await this.pool.query('DELETE FROM artifact_stars WHERE artifact_id = $1 AND user_id = $2', [
-      artifactId,
-      userId,
-    ]);
+    await this.pool.query('DELETE FROM artifact_stars WHERE artifact_id = $1 AND user_id = $2', [artifactId, userId]);
     return false;
   }
 
@@ -1379,11 +1344,7 @@ export class ArtifactLedger {
   /** Revert an artifact to an earlier version: append a new 'modified' version that reuses
    * that seq's bytes and advance the 'latest' pointer. Also clears any tombstone. Returns the
    * new head seq, or null if the target seq is missing/deleted/byte-less. */
-  async revertArtifactToSeq(
-    artifactId: string,
-    seq: number,
-    author: string,
-  ): Promise<{ newSeq: number } | null> {
+  async revertArtifactToSeq(artifactId: string, seq: number, author: string): Promise<{ newSeq: number } | null> {
     return withTx(this.pool, async (client) => {
       const locked = await client.query<{ id: string }>('SELECT id FROM artifacts WHERE id = $1 FOR UPDATE', [
         artifactId,
@@ -1492,8 +1453,14 @@ export class ArtifactLedger {
 
       if (latest == null) {
         await this.insertVersion(client, {
-          artifactId, seq: 1, blobSha: params.blobSha, baseSeq: null,
-          author: params.author, kind: params.kind, status, conflict: params.conflict,
+          artifactId,
+          seq: 1,
+          blobSha: params.blobSha,
+          baseSeq: null,
+          author: params.author,
+          kind: params.kind,
+          status,
+          conflict: params.conflict,
         });
         await this.advancePointer(client, artifactId, 'latest', 1);
         return { ok: true, artifactId, seq: 1, idempotent: false };
@@ -1514,8 +1481,14 @@ export class ArtifactLedger {
 
       const seq = latest.seq + 1;
       await this.insertVersion(client, {
-        artifactId, seq, blobSha: params.blobSha, baseSeq: latest.seq,
-        author: params.author, kind: params.kind, status, conflict: params.conflict,
+        artifactId,
+        seq,
+        blobSha: params.blobSha,
+        baseSeq: latest.seq,
+        author: params.author,
+        kind: params.kind,
+        status,
+        conflict: params.conflict,
       });
       await this.advancePointer(client, artifactId, 'latest', seq);
       return { ok: true, artifactId, seq, idempotent: false };

@@ -140,11 +140,7 @@ describe('AnnotatedTranscriptRow Discuss affordance', () => {
 
   it('hides Discuss without thread context, such as popouts', () => {
     render(
-      <AnnotatedTranscriptRow
-        handle="rec_1"
-        discussContext={null}
-        onDiscussEntry={vi.fn()}
-      >
+      <AnnotatedTranscriptRow handle="rec_1" discussContext={null} onDiscussEntry={vi.fn()}>
         <div>Transcript text</div>
       </AnnotatedTranscriptRow>,
     );

@@ -1,10 +1,30 @@
-import { forwardRef, useEffect, useImperativeHandle, useRef, useState, type Dispatch, type SetStateAction } from 'react';
+import {
+  forwardRef,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+  type Dispatch,
+  type SetStateAction,
+} from 'react';
 import { EditorView } from 'prosemirror-view';
 import type { Command } from 'prosemirror-state';
 
-import { applyComment, applyStrike, applySuggestEdit, createMarkupEditorState, documentHasMarkup, isInCodeBlock } from './MarkupEditorCore';
+import {
+  applyComment,
+  applyStrike,
+  applySuggestEdit,
+  createMarkupEditorState,
+  documentHasMarkup,
+  isInCodeBlock,
+} from './MarkupEditorCore';
 import { serializeToCriticMarkup } from './criticMarkup';
-import { closedSelectionPopover, SelectionPopover, type SelectionPopoverMode, type SelectionPopoverState } from './SelectionPopover';
+import {
+  closedSelectionPopover,
+  SelectionPopover,
+  type SelectionPopoverMode,
+  type SelectionPopoverState,
+} from './SelectionPopover';
 import './MarkupEditor.css';
 
 export interface MarkupEditorProps {

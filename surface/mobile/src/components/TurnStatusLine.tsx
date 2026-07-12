@@ -1,11 +1,5 @@
 import { useEffect, useRef, type ReactNode } from 'react';
-import {
-  ActivityIndicator,
-  Animated,
-  Pressable,
-  Text,
-  View,
-} from 'react-native';
+import { ActivityIndicator, Animated, Pressable, Text, View } from 'react-native';
 import { formatTokens, type TurnLiveness, type TurnPhase } from '@atrium/centaur-client';
 import { formatCost, formatElapsed } from '@atrium/surface-client';
 import { font, space, useTheme } from '../lib/theme';
@@ -90,9 +84,7 @@ export function TurnStatusLine({
     left =
       phase === 'waiting' ? (
         <>
-          <Text style={{ color: colors.textSecondary, fontSize: font.xs, fontWeight: '700' }}>
-            {label}
-          </Text>
+          <Text style={{ color: colors.textSecondary, fontSize: font.xs, fontWeight: '700' }}>{label}</Text>
           {quietMs >= 1000 ? (
             <Text style={{ color: colors.textFaint, fontSize: font.xs, fontVariant: ['tabular-nums'] }}>
               {formatElapsed(quietMs)}
@@ -101,9 +93,7 @@ export function TurnStatusLine({
         </>
       ) : (
         <>
-          <Text style={{ color: colors.textSecondary, fontSize: font.xs, fontWeight: '700' }}>
-            ✓ {label}
-          </Text>
+          <Text style={{ color: colors.textSecondary, fontSize: font.xs, fontWeight: '700' }}>✓ {label}</Text>
           {showClock ? (
             <Text style={{ color: colors.textFaint, fontSize: font.xs, fontVariant: ['tabular-nums'] }}>
               {formatElapsed(elapsedMs)}
@@ -134,9 +124,7 @@ export function TurnStatusLine({
         </Text>
         {onCancel ? (
           <Pressable accessibilityRole="button" onPress={onCancel} hitSlop={8}>
-            <Text style={{ color: colors.accent, fontSize: font.xs, fontWeight: '800' }}>
-              {cancelLabel ?? 'Stop'}
-            </Text>
+            <Text style={{ color: colors.accent, fontSize: font.xs, fontWeight: '800' }}>{cancelLabel ?? 'Stop'}</Text>
           </Pressable>
         ) : null}
         {showClock ? (
@@ -150,12 +138,8 @@ export function TurnStatusLine({
     left = (
       <>
         <HeartbeatDot pulse={pulse} parked />
-        <Text style={{ color: colors.textSecondary, fontSize: font.xs, fontWeight: '700' }}>
-          {label}
-        </Text>
-        <Text style={{ color: colors.textFaint, fontSize: font.xs }}>
-          — quiet for {formatElapsed(quietMs)}
-        </Text>
+        <Text style={{ color: colors.textSecondary, fontSize: font.xs, fontWeight: '700' }}>{label}</Text>
+        <Text style={{ color: colors.textFaint, fontSize: font.xs }}>— quiet for {formatElapsed(quietMs)}</Text>
         {showClock ? (
           <Text style={{ color: colors.textFaint, fontSize: font.xs, fontVariant: ['tabular-nums'] }}>
             {formatElapsed(elapsedMs)}
@@ -196,9 +180,7 @@ export function TurnStatusLine({
         gap: space.sm,
       }}
     >
-      <View style={{ minWidth: 0, flex: 1, flexDirection: 'row', alignItems: 'center', gap: 7 }}>
-        {left}
-      </View>
+      <View style={{ minWidth: 0, flex: 1, flexDirection: 'row', alignItems: 'center', gap: 7 }}>{left}</View>
       {showMeta ? (
         <View style={{ flexShrink: 0, flexDirection: 'row', alignItems: 'center', gap: 5 }}>
           {tokens ? (
@@ -218,9 +200,7 @@ export function TurnStatusLine({
               {formatCost(costUsd)}
             </Text>
           ) : null}
-          {costUsd > 0 && modelText ? (
-            <Text style={{ color: colors.textFaint, fontSize: font.xs }}>·</Text>
-          ) : null}
+          {costUsd > 0 && modelText ? <Text style={{ color: colors.textFaint, fontSize: font.xs }}>·</Text> : null}
           {modelText ? (
             <Text numberOfLines={1} style={{ maxWidth: 140, color: colors.textFaint, fontSize: font.xs }}>
               {modelText}

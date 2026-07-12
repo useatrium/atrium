@@ -1,188 +1,185 @@
-import { describe, expect, it } from "vitest";
-import { initialSessionState, reduceSession, type SessionState } from "./reducer.js";
-import type { CentaurEventFrame } from "./types.js";
+import { describe, expect, it } from 'vitest';
+import { initialSessionState, reduceSession, type SessionState } from './reducer.js';
+import type { CentaurEventFrame } from './types.js';
 
 const reduceAll = (frames: CentaurEventFrame[]): SessionState =>
   frames.reduce((state, frame) => reduceSession(state, frame), initialSessionState());
 
 const running = (eventId: number, ts?: string): CentaurEventFrame =>
   ({
-    event: "execution_state",
+    event: 'execution_state',
     event_id: eventId,
-    data: { type: "execution.state", status: "running" },
+    data: { type: 'execution.state', status: 'running' },
     ...(ts ? { ts } : {}),
   }) as CentaurEventFrame;
 
 const completed = (eventId: number, ts?: string): CentaurEventFrame =>
   ({
-    event: "execution_state",
+    event: 'execution_state',
     event_id: eventId,
-    data: { type: "execution.state", status: "completed" },
+    data: { type: 'execution.state', status: 'completed' },
     ...(ts ? { ts } : {}),
   }) as CentaurEventFrame;
 
 const stoppedByUser = (eventId: number): CentaurEventFrame =>
   ({
-    event: "execution_state",
+    event: 'execution_state',
     event_id: eventId,
-    data: { type: "execution.state", status: "completed", completion_reason: "stopped_by_user" },
+    data: { type: 'execution.state', status: 'completed', completion_reason: 'stopped_by_user' },
   }) as CentaurEventFrame;
 
 const cancelled = (eventId: number, reason?: string): CentaurEventFrame =>
   ({
-    event: "execution_state",
+    event: 'execution_state',
     event_id: eventId,
-    data: { type: "execution.state", status: "cancelled", ...(reason ? { reason } : {}) },
+    data: { type: 'execution.state', status: 'cancelled', ...(reason ? { reason } : {}) },
   }) as CentaurEventFrame;
 
-describe("reduceSession stopped-by-user", () => {
-  it("folds completion_reason=stopped_by_user onto stoppedByUser", () => {
+describe('reduceSession stopped-by-user', () => {
+  it('folds completion_reason=stopped_by_user onto stoppedByUser', () => {
     const state = reduceAll([running(1), stoppedByUser(2)]);
     expect(state.stoppedByUser).toBe(true);
   });
 
-  it("folds cancelled reason=turn_interrupted onto stoppedByUser", () => {
-    const state = reduceAll([running(1), cancelled(2, "turn_interrupted")]);
+  it('folds cancelled reason=turn_interrupted onto stoppedByUser', () => {
+    const state = reduceAll([running(1), cancelled(2, 'turn_interrupted')]);
     expect(state.stoppedByUser).toBe(true);
   });
 
-  it("leaves stoppedByUser falsy for a normal completion", () => {
+  it('leaves stoppedByUser falsy for a normal completion', () => {
     const state = reduceAll([running(1), completed(2)]);
     expect(state.stoppedByUser).toBeFalsy();
   });
 
-  it("leaves stoppedByUser falsy for a non-user cancellation", () => {
-    const state = reduceAll([running(1), cancelled(2, "session_cancelled")]);
+  it('leaves stoppedByUser falsy for a non-user cancellation', () => {
+    const state = reduceAll([running(1), cancelled(2, 'session_cancelled')]);
     expect(state.stoppedByUser).toBeFalsy();
   });
 
-  it("clears stoppedByUser when a new turn starts (steer after stop)", () => {
+  it('clears stoppedByUser when a new turn starts (steer after stop)', () => {
     const state = reduceAll([running(1), stoppedByUser(2), running(3)]);
     expect(state.stoppedByUser).toBe(false);
   });
 });
 
-describe("reduceSession liveness layer", () => {
-  it("stamps lastFrameTs and increments frameSeq on every fold", () => {
+describe('reduceSession liveness layer', () => {
+  it('stamps lastFrameTs and increments frameSeq on every fold', () => {
     const state = reduceAll([
-      running(1, "2026-07-02T10:00:00.000Z"),
+      running(1, '2026-07-02T10:00:00.000Z'),
       {
-        event: "amp_raw_event",
+        event: 'amp_raw_event',
         event_id: 2,
-        ts: "2026-07-02T10:00:05.000Z",
+        ts: '2026-07-02T10:00:05.000Z',
         data: {
-          method: "item/agentMessage/delta",
-          params: { itemId: "m1", delta: "hi" },
+          method: 'item/agentMessage/delta',
+          params: { itemId: 'm1', delta: 'hi' },
         },
       },
     ]);
 
     expect(state.frameSeq).toBe(2);
-    expect(state.lastFrameTs).toBe("2026-07-02T10:00:05.000Z");
+    expect(state.lastFrameTs).toBe('2026-07-02T10:00:05.000Z');
   });
 
-  it("keeps the previous lastFrameTs when a frame carries no stamp", () => {
+  it('keeps the previous lastFrameTs when a frame carries no stamp', () => {
     const state = reduceAll([
-      running(1, "2026-07-02T10:00:00.000Z"),
+      running(1, '2026-07-02T10:00:00.000Z'),
       {
-        event: "amp_raw_event",
+        event: 'amp_raw_event',
         event_id: 2,
-        data: { method: "item/agentMessage/delta", params: { itemId: "m1", delta: "hi" } },
+        data: { method: 'item/agentMessage/delta', params: { itemId: 'm1', delta: 'hi' } },
       },
     ]);
 
-    expect(state.lastFrameTs).toBe("2026-07-02T10:00:00.000Z");
+    expect(state.lastFrameTs).toBe('2026-07-02T10:00:00.000Z');
   });
 
-  it("anchors the turn to execution_state running, refined by turn/started", () => {
+  it('anchors the turn to execution_state running, refined by turn/started', () => {
     const state = reduceAll([
-      running(1, "2026-07-02T10:00:00.000Z"),
+      running(1, '2026-07-02T10:00:00.000Z'),
       {
-        event: "amp_raw_event",
+        event: 'amp_raw_event',
         event_id: 2,
-        ts: "2026-07-02T10:00:03.000Z",
-        data: { method: "turn/started", params: {} },
+        ts: '2026-07-02T10:00:03.000Z',
+        data: { method: 'turn/started', params: {} },
       },
     ]);
 
-    expect(state.turnStartTs).toBe("2026-07-02T10:00:03.000Z");
+    expect(state.turnStartTs).toBe('2026-07-02T10:00:03.000Z');
     expect(state.turnEndTs).toBeUndefined();
   });
 
-  it("does not reset the turn anchor on a mid-turn running snapshot", () => {
-    const state = reduceAll([
-      running(1, "2026-07-02T10:00:00.000Z"),
-      running(2, "2026-07-02T10:05:00.000Z"),
-    ]);
+  it('does not reset the turn anchor on a mid-turn running snapshot', () => {
+    const state = reduceAll([running(1, '2026-07-02T10:00:00.000Z'), running(2, '2026-07-02T10:05:00.000Z')]);
 
-    expect(state.turnStartTs).toBe("2026-07-02T10:00:00.000Z");
+    expect(state.turnStartTs).toBe('2026-07-02T10:00:00.000Z');
   });
 
-  it("closes the turn on turn/completed and terminal execution_state", () => {
+  it('closes the turn on turn/completed and terminal execution_state', () => {
     const state = reduceAll([
-      running(1, "2026-07-02T10:00:00.000Z"),
+      running(1, '2026-07-02T10:00:00.000Z'),
       {
-        event: "amp_raw_event",
+        event: 'amp_raw_event',
         event_id: 2,
-        ts: "2026-07-02T10:04:00.000Z",
-        data: { method: "turn/completed", params: {} },
+        ts: '2026-07-02T10:04:00.000Z',
+        data: { method: 'turn/completed', params: {} },
       },
-      completed(3, "2026-07-02T10:04:01.000Z"),
+      completed(3, '2026-07-02T10:04:01.000Z'),
     ]);
 
-    expect(state.turnEndTs).toBe("2026-07-02T10:04:00.000Z");
-    expect(state.status).toBe("completed");
+    expect(state.turnEndTs).toBe('2026-07-02T10:04:00.000Z');
+    expect(state.status).toBe('completed');
   });
 
-  it("re-opens the turn when a steer regresses a completed session", () => {
+  it('re-opens the turn when a steer regresses a completed session', () => {
     const state = reduceAll([
-      running(1, "2026-07-02T10:00:00.000Z"),
-      completed(2, "2026-07-02T10:04:00.000Z"),
-      running(3, "2026-07-02T11:00:00.000Z"),
+      running(1, '2026-07-02T10:00:00.000Z'),
+      completed(2, '2026-07-02T10:04:00.000Z'),
+      running(3, '2026-07-02T11:00:00.000Z'),
     ]);
 
-    expect(state.turnStartTs).toBe("2026-07-02T11:00:00.000Z");
+    expect(state.turnStartTs).toBe('2026-07-02T11:00:00.000Z');
     expect(state.turnEndTs).toBeUndefined();
   });
 
-  it("a new turn/started clears the previous turn end", () => {
+  it('a new turn/started clears the previous turn end', () => {
     const state = reduceAll([
-      running(1, "2026-07-02T10:00:00.000Z"),
+      running(1, '2026-07-02T10:00:00.000Z'),
       {
-        event: "amp_raw_event",
+        event: 'amp_raw_event',
         event_id: 2,
-        ts: "2026-07-02T10:04:00.000Z",
-        data: { method: "turn/completed", params: {} },
+        ts: '2026-07-02T10:04:00.000Z',
+        data: { method: 'turn/completed', params: {} },
       },
       {
-        event: "amp_raw_event",
+        event: 'amp_raw_event',
         event_id: 3,
-        ts: "2026-07-02T10:05:00.000Z",
-        data: { method: "turn/started", params: {} },
+        ts: '2026-07-02T10:05:00.000Z',
+        data: { method: 'turn/started', params: {} },
       },
     ]);
 
-    expect(state.turnStartTs).toBe("2026-07-02T10:05:00.000Z");
+    expect(state.turnStartTs).toBe('2026-07-02T10:05:00.000Z');
     expect(state.turnEndTs).toBeUndefined();
   });
 
-  it("estimates tokens from streamed delta chars until real usage arrives", () => {
+  it('estimates tokens from streamed delta chars until real usage arrives', () => {
     const deltas = reduceAll([
-      running(1, "2026-07-02T10:00:00.000Z"),
+      running(1, '2026-07-02T10:00:00.000Z'),
       {
-        event: "amp_raw_event",
+        event: 'amp_raw_event',
         event_id: 2,
         data: {
-          method: "item/reasoning/textDelta",
-          params: { itemId: "r1", delta: "twelve chars" }, // 12
+          method: 'item/reasoning/textDelta',
+          params: { itemId: 'r1', delta: 'twelve chars' }, // 12
         },
       },
       {
-        event: "amp_raw_event",
+        event: 'amp_raw_event',
         event_id: 3,
         data: {
-          method: "item/agentMessage/delta",
-          params: { itemId: "m1", delta: "eight ch" }, // 8
+          method: 'item/agentMessage/delta',
+          params: { itemId: 'm1', delta: 'eight ch' }, // 8
         },
       },
     ]);
@@ -192,13 +189,13 @@ describe("reduceSession liveness layer", () => {
     // A snapshot with only an input-inflated total contributes nothing — one
     // such fold would otherwise pin the max-merged counter at ~context size.
     const totalOnly = reduceSession(deltas, {
-      event: "amp_raw_event",
+      event: 'amp_raw_event',
       event_id: 4,
       data: {
-        method: "thread/tokenUsage/updated",
+        method: 'thread/tokenUsage/updated',
         params: {
-          threadId: "t",
-          turnId: "u",
+          threadId: 't',
+          turnId: 'u',
           tokenUsage: { total: { totalTokens: 120_000, inputTokens: 120_000 } },
         },
       },
@@ -206,13 +203,13 @@ describe("reduceSession liveness layer", () => {
     expect(totalOnly.tokensUsed).toBeUndefined();
 
     const withReal = reduceSession(deltas, {
-      event: "amp_raw_event",
+      event: 'amp_raw_event',
       event_id: 4,
       data: {
-        method: "thread/tokenUsage/updated",
+        method: 'thread/tokenUsage/updated',
         params: {
-          threadId: "t",
-          turnId: "u",
+          threadId: 't',
+          turnId: 'u',
           tokenUsage: {
             total: { totalTokens: 900, inputTokens: 700, outputTokens: 150, reasoningOutputTokens: 50 },
             last: { totalTokens: 0, inputTokens: 0, outputTokens: 0, reasoningOutputTokens: 0 },
@@ -225,13 +222,13 @@ describe("reduceSession liveness layer", () => {
 
     // Snapshots are cumulative — a stale/smaller one never regresses the count.
     const stale = reduceSession(withReal, {
-      event: "amp_raw_event",
+      event: 'amp_raw_event',
       event_id: 5,
       data: {
-        method: "thread/tokenUsage/updated",
+        method: 'thread/tokenUsage/updated',
         params: {
-          threadId: "t",
-          turnId: "u",
+          threadId: 't',
+          turnId: 'u',
           tokenUsage: {
             total: { totalTokens: 100, inputTokens: 0, outputTokens: 90, reasoningOutputTokens: 10 },
             last: { totalTokens: 0, inputTokens: 0, outputTokens: 0, reasoningOutputTokens: 0 },
@@ -242,63 +239,63 @@ describe("reduceSession liveness layer", () => {
     expect(stale.tokensUsed).toBe(200);
   });
 
-  it("accumulates usage_observed output tokens", () => {
+  it('accumulates usage_observed output tokens', () => {
     const state = reduceAll([
-      running(1, "2026-07-02T10:00:00.000Z"),
+      running(1, '2026-07-02T10:00:00.000Z'),
       {
-        event: "usage_observed",
+        event: 'usage_observed',
         event_id: 2,
-        data: { type: "obs.usage", model: "m", cost_usd: 0.01, output_tokens: 120 },
+        data: { type: 'obs.usage', model: 'm', cost_usd: 0.01, output_tokens: 120 },
       } as never,
       {
-        event: "usage_observed",
+        event: 'usage_observed',
         event_id: 3,
-        data: { type: "obs.usage", model: "m", cost_usd: 0.01, output_tokens: 80 },
+        data: { type: 'obs.usage', model: 'm', cost_usd: 0.01, output_tokens: 80 },
       } as never,
     ]);
     expect(state.tokensUsed).toBe(200);
   });
 
-  it("flags the transport on stdout_pump_failed and clears it on recovery", () => {
+  it('flags the transport on stdout_pump_failed and clears it on recovery', () => {
     const failed: CentaurEventFrame = {
-      event: "system_event_observed",
+      event: 'system_event_observed',
       event_id: 2,
       data: {
-        type: "obs.system",
-        engine: "api-rs",
-        harness: "api-rs",
-        thread_key: "t",
-        execution_id: "e",
-        subtype: "session.stdout_pump_failed",
+        type: 'obs.system',
+        engine: 'api-rs',
+        harness: 'api-rs',
+        thread_key: 't',
+        execution_id: 'e',
+        subtype: 'session.stdout_pump_failed',
         payload: {},
       },
     } as CentaurEventFrame;
 
-    const midFailure = reduceAll([running(1, "2026-07-02T10:00:00.000Z"), failed]);
-    expect(midFailure.transport).toBe("reattaching");
+    const midFailure = reduceAll([running(1, '2026-07-02T10:00:00.000Z'), failed]);
+    expect(midFailure.transport).toBe('reattaching');
 
     const reattached = reduceSession(midFailure, {
-      event: "system_event_observed",
+      event: 'system_event_observed',
       event_id: 3,
       data: {
-        type: "obs.system",
-        engine: "api-rs",
-        harness: "api-rs",
-        thread_key: "t",
-        execution_id: "e",
-        subtype: "session.stdout_pump_reattached",
+        type: 'obs.system',
+        engine: 'api-rs',
+        harness: 'api-rs',
+        thread_key: 't',
+        execution_id: 'e',
+        subtype: 'session.stdout_pump_reattached',
         payload: {},
       },
     } as CentaurEventFrame);
-    expect(reattached.transport).toBe("ok");
+    expect(reattached.transport).toBe('ok');
 
     // Harness output flowing again also proves the pipe is healthy.
     const viaOutput = reduceSession(midFailure, {
-      event: "amp_raw_event",
+      event: 'amp_raw_event',
       event_id: 3,
-      ts: "2026-07-02T10:00:10.000Z",
-      data: { method: "item/agentMessage/delta", params: { itemId: "m1", delta: "x" } },
+      ts: '2026-07-02T10:00:10.000Z',
+      data: { method: 'item/agentMessage/delta', params: { itemId: 'm1', delta: 'x' } },
     });
-    expect(viaOutput.transport).toBe("ok");
+    expect(viaOutput.transport).toBe('ok');
   });
 });

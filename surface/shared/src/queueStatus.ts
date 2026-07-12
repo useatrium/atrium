@@ -4,9 +4,7 @@ import type { OpStorage, QueuedOp } from './opQueue';
 
 export type QueueStatusWs = AppState['wsStatus'];
 
-export function countActiveQueuedChanges(
-  ops: readonly Pick<QueuedOp, 'status'>[],
-): number {
+export function countActiveQueuedChanges(ops: readonly Pick<QueuedOp, 'status'>[]): number {
   return ops.filter((op) => op.status === 'pending' || op.status === 'inflight').length;
 }
 
@@ -55,13 +53,7 @@ export function useQueueSyncState(
         .then((ops) => {
           if (disposed) return;
           const queuedCount = countActiveQueuedChanges(ops);
-          const derived = deriveSyncStuck(
-            wsStatus,
-            queuedCount,
-            stuckSinceRef.current,
-            Date.now(),
-            stuckAfterMs,
-          );
+          const derived = deriveSyncStuck(wsStatus, queuedCount, stuckSinceRef.current, Date.now(), stuckAfterMs);
           stuckSinceRef.current = derived.stuckSince;
           setState((prev) =>
             prev.queuedCount === queuedCount && prev.syncStuck === derived.syncStuck

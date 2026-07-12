@@ -164,9 +164,7 @@ describe('group DMs', () => {
     expect(first.statusCode).toBe(201);
     const channel = first.json().channel;
     expect(channel.kind).toBe('gdm');
-    expect(channel.members.map((m: any) => m.id).sort()).toEqual(
-      [aliceUser.id, benUser.id, carolUser.id].sort(),
-    );
+    expect(channel.members.map((m: any) => m.id).sort()).toEqual([aliceUser.id, benUser.id, carolUser.id].sort());
 
     const again = await app.inject({
       method: 'POST',
@@ -199,17 +197,18 @@ describe('group DMs', () => {
       headers: { cookie: ben },
     });
     expect(left.statusCode).toBe(200);
-    expect(benSocket.received).toContainEqual(
-      expect.objectContaining({ type: 'channel-left', channelId: gdm.id }),
-    );
+    expect(benSocket.received).toContainEqual(expect.objectContaining({ type: 'channel-left', channelId: gdm.id }));
     const members = await app.inject({
       method: 'GET',
       url: `/api/channels/${gdm.id}/members`,
       headers: { cookie: alice },
     });
-    expect(members.json().members.map((m: any) => m.id).sort()).toEqual(
-      [aliceUser.id, carolUser.id].sort(),
-    );
+    expect(
+      members
+        .json()
+        .members.map((m: any) => m.id)
+        .sort(),
+    ).toEqual([aliceUser.id, carolUser.id].sort());
 
     const dm = (
       await app.inject({

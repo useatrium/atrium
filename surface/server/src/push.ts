@@ -56,11 +56,7 @@ function addRecipient(
   recipients.set(userId, reason);
 }
 
-async function dropMutedRecipients(
-  pool: Db,
-  channelId: string,
-  recipients: Map<string, PushReason>,
-): Promise<void> {
+async function dropMutedRecipients(pool: Db, channelId: string, recipients: Map<string, PushReason>): Promise<void> {
   if (recipients.size === 0) return;
   const muted = await pool.query<{ user_id: string }>(
     `SELECT user_id
@@ -71,10 +67,7 @@ async function dropMutedRecipients(
   for (const row of muted.rows) recipients.delete(row.user_id);
 }
 
-async function notificationPrefsFor(
-  pool: Db,
-  userIds: string[],
-): Promise<Map<string, NotificationPrefs>> {
+async function notificationPrefsFor(pool: Db, userIds: string[]): Promise<Map<string, NotificationPrefs>> {
   if (userIds.length === 0) return new Map();
   const prefs = await pool.query<{ id: string; prefs: unknown }>(
     'SELECT id, prefs FROM users WHERE id = ANY($1::uuid[])',
@@ -100,11 +93,7 @@ async function dropMessagePrefsOff(pool: Db, recipients: Map<string, PushReason>
 
 /** Private channels: a mention/thread recipient who isn't a member must not
  *  receive an out-of-band push containing the message text. */
-async function dropNonMembers(
-  pool: Db,
-  channelId: string,
-  recipients: Map<string, PushReason>,
-): Promise<void> {
+async function dropNonMembers(pool: Db, channelId: string, recipients: Map<string, PushReason>): Promise<void> {
   if (recipients.size === 0) return;
   const members = await pool.query<{ user_id: string }>(
     `SELECT user_id FROM channel_members
@@ -125,19 +114,17 @@ export async function pushRecipientsFor(
   },
 ): Promise<PushRecipientResult> {
   if (!ev.channelId) return { userIds: [], channelName: '', isDm: false, recipients: [] };
-  const ch = await pool.query<{ name: string; kind: string }>(
-    'SELECT name, kind FROM channels WHERE id = $1',
-    [ev.channelId],
-  );
+  const ch = await pool.query<{ name: string; kind: string }>('SELECT name, kind FROM channels WHERE id = $1', [
+    ev.channelId,
+  ]);
   const row = ch.rows[0];
   if (!row) return { userIds: [], channelName: '', isDm: false, recipients: [] };
 
   const recipients = new Map<string, PushReason>();
   if (row.kind === 'dm' || row.kind === 'gdm') {
-    const members = await pool.query<{ user_id: string }>(
-      'SELECT user_id FROM channel_members WHERE channel_id = $1',
-      [ev.channelId],
-    );
+    const members = await pool.query<{ user_id: string }>('SELECT user_id FROM channel_members WHERE channel_id = $1', [
+      ev.channelId,
+    ]);
     for (const member of members.rows) {
       addRecipient(recipients, member.user_id, ev.actorId, 'dm');
     }
@@ -154,10 +141,7 @@ export async function pushRecipientsFor(
   const text = typeof ev.payload?.text === 'string' ? ev.payload.text : '';
   const handles = mentionedHandles(text);
   if (handles.length > 0) {
-    const users = await pool.query<{ id: string }>(
-      'SELECT id FROM users WHERE handle = ANY($1::text[])',
-      [handles],
-    );
+    const users = await pool.query<{ id: string }>('SELECT id FROM users WHERE handle = ANY($1::text[])', [handles]);
     for (const user of users.rows) {
       addRecipient(recipients, user.id, ev.actorId, 'mention');
     }
@@ -217,9 +201,7 @@ interface ExpoReceipt {
   details?: { error?: string };
 }
 
-function sendMessagePushOptions(
-  fetchOrOpts: typeof fetch | SendMessagePushOptions,
-): Required<SendMessagePushOptions> {
+function sendMessagePushOptions(fetchOrOpts: typeof fetch | SendMessagePushOptions): Required<SendMessagePushOptions> {
   if (typeof fetchOrOpts === 'function') {
     return {
       fetchImpl: fetchOrOpts,
@@ -289,12 +271,7 @@ export function clearReceiptTimers(): void {
   receiptTimers.clear();
 }
 
-function scheduleReceiptCheck(
-  pool: Db,
-  tickets: ExpoReceiptTicket[],
-  fetchImpl: typeof fetch,
-  delayMs: number,
-): void {
+function scheduleReceiptCheck(pool: Db, tickets: ExpoReceiptTicket[], fetchImpl: typeof fetch, delayMs: number): void {
   if (tickets.length === 0) return;
   const timer = setTimeout(() => {
     receiptTimers.delete(timer);
@@ -383,9 +360,7 @@ async function sendExpoPushes(
     } catch {
       continue;
     }
-    const dead = chunk
-      .filter((_, j) => tickets[j]?.details?.error === 'DeviceNotRegistered')
-      .map((m) => m.to);
+    const dead = chunk.filter((_, j) => tickets[j]?.details?.error === 'DeviceNotRegistered').map((m) => m.to);
     await pruneTokens(pool, dead);
 
     for (let j = 0; j < chunk.length; j += 1) {
@@ -420,7 +395,10 @@ async function sendWebPushes(
       return result.status === 'dead' ? message.token : null;
     }),
   );
-  await pruneTokens(pool, results.filter((token): token is string => token !== null));
+  await pruneTokens(
+    pool,
+    results.filter((token): token is string => token !== null),
+  );
 }
 
 /**
@@ -466,14 +444,16 @@ export async function sendMessagePush(
     badge: badges.get(userId) ?? 0,
     data: messageData,
   });
-  const expoMessages = tokens.rows.filter((r) => r.kind === 'expo').map((r) => ({
-    to: r.token,
-    title: titleFor(reasonByUserId.get(r.user_id) ?? 'thread', author, channelName),
-    body,
-    sound: 'default' as const,
-    badge: badges.get(r.user_id) ?? 0,
-    data: messageData,
-  }));
+  const expoMessages = tokens.rows
+    .filter((r) => r.kind === 'expo')
+    .map((r) => ({
+      to: r.token,
+      title: titleFor(reasonByUserId.get(r.user_id) ?? 'thread', author, channelName),
+      body,
+      sound: 'default' as const,
+      badge: badges.get(r.user_id) ?? 0,
+      data: messageData,
+    }));
   const webMessages = tokens.rows
     .filter((r) => r.kind === 'webpush' && r.subscription)
     .map((r) => {
@@ -514,8 +494,7 @@ export async function sendQuestionPush(
 
   const sessionId = typeof event.payload.sessionId === 'string' ? event.payload.sessionId : '';
   const questionId = typeof event.payload.questionId === 'string' ? event.payload.questionId : '';
-  const permalink =
-    typeof event.payload.permalink === 'string' ? event.payload.permalink : `/s/${sessionId}`;
+  const permalink = typeof event.payload.permalink === 'string' ? event.payload.permalink : `/s/${sessionId}`;
   const body = firstQuestionText(event.payload).slice(0, 140);
   const badge = await unreadChannelCountFor(pool, event.actorId);
   const data = {
@@ -561,14 +540,12 @@ export async function sendSessionCompletedPush(
   );
   if (tokens.rows.length === 0) return;
 
-  const body =
-    config.pushRedactContent
-      ? 'Session finished'
-      : typeof event.payload.resultExcerpt === 'string' && event.payload.resultExcerpt.trim()
-        ? event.payload.resultExcerpt.slice(0, 140)
-        : 'Open Atrium to review.';
-  const permalink =
-    typeof event.payload.permalink === 'string' ? event.payload.permalink : `/s/${sessionId}`;
+  const body = config.pushRedactContent
+    ? 'Session finished'
+    : typeof event.payload.resultExcerpt === 'string' && event.payload.resultExcerpt.trim()
+      ? event.payload.resultExcerpt.slice(0, 140)
+      : 'Open Atrium to review.';
+  const permalink = typeof event.payload.permalink === 'string' ? event.payload.permalink : `/s/${sessionId}`;
   const title = `Session finished: ${sessionTitle}`;
   const badge = await unreadChannelCountFor(pool, event.actorId);
   const data = { channelId: event.channelId, eventId: event.id, permalink, sessionId };
@@ -588,14 +565,16 @@ async function sendSingleUserPushes(
   payload: WebPushPayload,
 ): Promise<void> {
   const { fetchImpl, receiptDelayMs, webPushSender } = sendMessagePushOptions(fetchOrOpts);
-  const expoMessages = tokens.filter((row) => row.kind === 'expo').map((row) => ({
-    to: row.token,
-    title: payload.title,
-    body: payload.body,
-    sound: 'default' as const,
-    badge: payload.badge,
-    data: payload.data,
-  }));
+  const expoMessages = tokens
+    .filter((row) => row.kind === 'expo')
+    .map((row) => ({
+      to: row.token,
+      title: payload.title,
+      body: payload.body,
+      sound: 'default' as const,
+      badge: payload.badge,
+      data: payload.data,
+    }));
   const webMessages = tokens
     .filter((row) => row.kind === 'webpush' && row.subscription)
     .map((row) => ({

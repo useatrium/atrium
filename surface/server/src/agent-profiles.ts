@@ -82,9 +82,7 @@ export class AgentProfiles {
         spawned_by: string;
         harness: string | null;
         agent_profile_version_id: string | null;
-      }>('SELECT spawned_by, harness, agent_profile_version_id FROM sessions WHERE id = $1 FOR UPDATE', [
-        sessionId,
-      ]);
+      }>('SELECT spawned_by, harness, agent_profile_version_id FROM sessions WHERE id = $1 FOR UPDATE', [sessionId]);
       const found = session.rows[0];
       if (!found) throw new DomainError(404, 'session_not_found', 'session not found');
       const sessionProvider = providerForHarnessValue(found.harness);
@@ -165,13 +163,7 @@ export class AgentProfiles {
            baseline_hash = EXCLUDED.baseline_hash,
            baseline_manifest_json = EXCLUDED.baseline_manifest_json,
            updated_at = now()`,
-        [
-          sessionId,
-          provider,
-          proposal.adapterVersion,
-          baselineHash,
-          JSON.stringify(proposal.manifest),
-        ],
+        [sessionId, provider, proposal.adapterVersion, baselineHash, JSON.stringify(proposal.manifest)],
       );
     });
     return { baselineHash };
@@ -203,10 +195,7 @@ export class AgentProfiles {
     return proposalFromRow(inserted.rows[0]!);
   }
 
-  async listSessionProposals(
-    sessionId: string,
-    userId: string,
-  ): Promise<AgentProfileProposal[]> {
+  async listSessionProposals(sessionId: string, userId: string): Promise<AgentProfileProposal[]> {
     await assertSessionReadable(this.pool, sessionId, userId);
     const rows = await this.pool.query<ProposalRow>(
       `SELECT * FROM session_profile_change_proposals
@@ -238,17 +227,11 @@ export class AgentProfiles {
     );
     const row = profile.rows[0];
     if (!row) throw new DomainError(404, 'profile_not_found', 'profile not found');
-    const version = row.current_version_id
-      ? await this.loadVersionForUser(userId, row.current_version_id)
-      : null;
+    const version = row.current_version_id ? await this.loadVersionForUser(userId, row.current_version_id) : null;
     return profileFromRow(row, version);
   }
 
-  async createProfile(
-    userId: string,
-    provider: AgentProfileProvider,
-    name: string,
-  ): Promise<AgentProfile> {
+  async createProfile(userId: string, provider: AgentProfileProvider, name: string): Promise<AgentProfile> {
     const trimmed = normalizeName(name, provider);
     const row = await this.pool.query<ProfileRow>(
       `INSERT INTO agent_profiles (user_id, provider, name)
@@ -259,11 +242,7 @@ export class AgentProfiles {
     return profileFromRow(row.rows[0]!, null);
   }
 
-  async createVersion(
-    userId: string,
-    profileId: string,
-    raw: unknown,
-  ): Promise<AgentProfileVersion> {
+  async createVersion(userId: string, profileId: string, raw: unknown): Promise<AgentProfileVersion> {
     return withTx(this.pool, async (client) => {
       const profile = await requireProfile(client, userId, profileId);
       const proposal = normalizeProposal(profile.provider, raw);
@@ -271,19 +250,11 @@ export class AgentProfiles {
     });
   }
 
-  async discardProposal(
-    userId: string,
-    sessionId: string,
-    proposalId: string,
-  ): Promise<AgentProfileProposal> {
+  async discardProposal(userId: string, sessionId: string, proposalId: string): Promise<AgentProfileProposal> {
     return this.transitionProposal(userId, sessionId, proposalId, 'discarded');
   }
 
-  async applyProposalToLineage(
-    userId: string,
-    sessionId: string,
-    proposalId: string,
-  ): Promise<AgentProfileProposal> {
+  async applyProposalToLineage(userId: string, sessionId: string, proposalId: string): Promise<AgentProfileProposal> {
     return withTx(this.pool, async (client) => {
       const proposal = await requirePendingSessionProposal(client, userId, sessionId, proposalId);
       const payload = proposal.proposal_json;
@@ -439,18 +410,13 @@ export class AgentProfiles {
     return new Map(rows.rows.map((row) => [row.id, versionFromRow(row)]));
   }
 
-  private async loadVersionForUser(
-    userId: string,
-    versionId: string,
-  ): Promise<AgentProfileVersion | null> {
+  private async loadVersionForUser(userId: string, versionId: string): Promise<AgentProfileVersion | null> {
     return loadVersionForUser(this.pool, userId, versionId);
   }
 }
 
 export function providerFromProfileValue(value: unknown): AgentProfileProvider | null {
-  return typeof value === 'string' && isProviderCredentialProvider(value)
-    ? value
-    : null;
+  return typeof value === 'string' && isProviderCredentialProvider(value) ? value : null;
 }
 
 function providerForHarnessValue(value: unknown): AgentProfileProvider | null {
@@ -459,10 +425,7 @@ function providerForHarnessValue(value: unknown): AgentProfileProvider | null {
   return null;
 }
 
-export function normalizeProposal(
-  provider: AgentProfileProvider,
-  raw: unknown,
-): AgentProfileProposalPayload {
+export function normalizeProposal(provider: AgentProfileProvider, raw: unknown): AgentProfileProposalPayload {
   const root = asRecord(raw);
   const rawProvider = providerFromProfileValue(root.provider);
   if (rawProvider && rawProvider !== provider) {
@@ -539,9 +502,7 @@ export function normalizeProposal(
     manifest,
     riskSummary,
     baselineHash:
-      typeof root.baselineHash === 'string' && root.baselineHash.trim()
-        ? root.baselineHash.trim().slice(0, 128)
-        : null,
+      typeof root.baselineHash === 'string' && root.baselineHash.trim() ? root.baselineHash.trim().slice(0, 128) : null,
   };
   const size = Buffer.byteLength(stableStringify(proposal), 'utf8');
   if (size > MAX_PROFILE_JSON_BYTES) {
@@ -590,9 +551,7 @@ function runtimeOverlayFromManifest(manifest: AgentProfileManifest): Record<stri
       ...(manifest.settings ?? {}),
       ...(manifest.mcpServers ? { mcp_servers: manifest.mcpServers } : {}),
     };
-    return Object.keys(overlay).length > 0
-      ? { CODEX_CONFIG_OVERLAY: toToml(overlay) }
-      : {};
+    return Object.keys(overlay).length > 0 ? { CODEX_CONFIG_OVERLAY: toToml(overlay) } : {};
   }
   const out: Record<string, string> = {};
   if (manifest.settings && Object.keys(manifest.settings).length > 0) {
@@ -650,10 +609,10 @@ async function createVersionFromProposal(
     ],
   );
   const version = versionFromRow(row.rows[0]!);
-  await client.query(
-    'UPDATE agent_profiles SET current_version_id = $1, updated_at = now() WHERE id = $2',
-    [version.id, profileId],
-  );
+  await client.query('UPDATE agent_profiles SET current_version_id = $1, updated_at = now() WHERE id = $2', [
+    version.id,
+    profileId,
+  ]);
   return version;
 }
 
@@ -687,10 +646,7 @@ async function bindSessionSnapshot(
     ],
   );
   if (advanceSessionVersion) {
-    await client.query(
-      'UPDATE sessions SET agent_profile_version_id = $2 WHERE id = $1',
-      [sessionId, version.id],
-    );
+    await client.query('UPDATE sessions SET agent_profile_version_id = $2 WHERE id = $1', [sessionId, version.id]);
   }
   await notifyProfileBundlesAdvanced(client, sessionId, version.provider);
 }
@@ -700,9 +656,7 @@ async function notifyProfileBundlesAdvanced(
   sessionId: string,
   provider: AgentProfileProvider,
 ): Promise<void> {
-  await client.query("SELECT pg_notify('profile_bundles_advanced', $1)", [
-    JSON.stringify({ sessionId, provider }),
-  ]);
+  await client.query("SELECT pg_notify('profile_bundles_advanced', $1)", [JSON.stringify({ sessionId, provider })]);
 }
 
 async function updateProposalStatus(
@@ -726,11 +680,7 @@ async function updateProposalStatus(
   return proposalFromRow(found);
 }
 
-async function requirePendingProposal(
-  client: Queryable,
-  userId: string,
-  proposalId: string,
-): Promise<ProposalRow> {
+async function requirePendingProposal(client: Queryable, userId: string, proposalId: string): Promise<ProposalRow> {
   const row = await client.query<ProposalRow>(
     `SELECT * FROM session_profile_change_proposals
      WHERE id = $1 AND user_id = $2 FOR UPDATE`,
@@ -771,11 +721,7 @@ async function assertSessionReadable(pool: Queryable, sessionId: string, userId:
   }
 }
 
-async function requireProfile(
-  client: Queryable,
-  userId: string,
-  profileId: string,
-): Promise<ProfileRow> {
+async function requireProfile(client: Queryable, userId: string, profileId: string): Promise<ProfileRow> {
   const row = await client.query<ProfileRow>(
     `SELECT id, provider, name, current_version_id, created_at, updated_at
      FROM agent_profiles
@@ -852,10 +798,7 @@ function proposalFromRow(row: ProposalRow): AgentProfileProposal {
   };
 }
 
-function diffManifests(
-  baseline: AgentProfileManifest | null,
-  current: AgentProfileManifest,
-): AgentProfileDiff {
+function diffManifests(baseline: AgentProfileManifest | null, current: AgentProfileManifest): AgentProfileDiff {
   const currentPaths = manifestDiffPaths(current);
   if (!baseline) {
     return { added: [...currentPaths.keys()].sort(), changed: [], removed: [] };
@@ -942,9 +885,7 @@ function sanitizeProfileObject(
       key: metadataKeyPath(item.key ?? item.path ?? path.join('.')),
       reason: item.reason,
     })),
-    warnings: sanitized.warnings.map((warning) =>
-      normalizeMetadataString(warning, 'profile metadata warning', 300),
-    ),
+    warnings: sanitized.warnings.map((warning) => normalizeMetadataString(warning, 'profile metadata warning', 300)),
     blockedSecrets: sanitized.blockedSecrets,
   };
 }
@@ -1090,23 +1031,23 @@ function normalizeSourceHashes(value: unknown): AgentProfileProposalPayload['sou
     const row = asRecord(item);
     const path = normalizeProfilePath(row.path);
     if (!path || deniedProfilePath(path)) return [];
-    return [{
-      path,
-      sha256: normalizeSha(row.sha256 ?? row.hash),
-      ...(Number.isFinite(Number(row.sizeBytes ?? row.size_bytes))
-        ? { sizeBytes: Number(row.sizeBytes ?? row.size_bytes) }
-        : {}),
-    }];
+    return [
+      {
+        path,
+        sha256: normalizeSha(row.sha256 ?? row.hash),
+        ...(Number.isFinite(Number(row.sizeBytes ?? row.size_bytes))
+          ? { sizeBytes: Number(row.sizeBytes ?? row.size_bytes) }
+          : {}),
+      },
+    ];
   });
 }
 
 function normalizeRiskLabels(value: unknown): AgentProfileRiskLabel[] {
   if (!Array.isArray(value)) return [];
-  return value.filter((item): item is AgentProfileRiskLabel =>
-    item === 'safe'
-    || item === 'needs-secret-ref'
-    || item === 'policy-capped'
-    || item === 'unsupported',
+  return value.filter(
+    (item): item is AgentProfileRiskLabel =>
+      item === 'safe' || item === 'needs-secret-ref' || item === 'policy-capped' || item === 'unsupported',
   );
 }
 
@@ -1134,9 +1075,7 @@ function normalizeSafeStringArray(value: unknown, max: number, fallback: string)
 }
 
 function normalizeShortString(value: unknown, fallback: string, max: number): string {
-  return typeof value === 'string' && value.trim()
-    ? value.trim().slice(0, max)
-    : fallback;
+  return typeof value === 'string' && value.trim() ? value.trim().slice(0, max) : fallback;
 }
 
 function normalizeMetadataString(value: unknown, fallback: string, max: number): string {
@@ -1158,11 +1097,7 @@ function metadataKeyPath(value: string): string {
 }
 
 function normalizeName(value: unknown, provider: AgentProfileProvider): string {
-  return normalizeShortString(
-    value,
-    provider === CODEX_PROVIDER ? 'Codex profile' : 'Claude Code profile',
-    80,
-  );
+  return normalizeShortString(value, provider === CODEX_PROVIDER ? 'Codex profile' : 'Claude Code profile', 80);
 }
 
 function normalizeOptionalId(value: unknown): string | null {
@@ -1170,9 +1105,7 @@ function normalizeOptionalId(value: unknown): string | null {
 }
 
 function normalizeSha(value: unknown): string {
-  return typeof value === 'string' && /^[0-9a-f]{64}$/i.test(value)
-    ? value.toLowerCase()
-    : sha256(String(value ?? ''));
+  return typeof value === 'string' && /^[0-9a-f]{64}$/i.test(value) ? value.toLowerCase() : sha256(String(value ?? ''));
 }
 
 function normalizeProfilePath(value: unknown): string | null {
@@ -1214,10 +1147,10 @@ function firstDeniedProfilePath(value: unknown): string | null {
     // these branches or every correctly-sanitized baseline would be rejected.
     if (/^(excluded|source_?hashes|source_file_hashes|warnings)$/i.test(key)) continue;
     if (
-      /^(path|source_path)$/i.test(key)
-      && typeof child === 'string'
-      && normalizeProfilePath(child)
-      && deniedProfilePath(normalizeProfilePath(child)!)
+      /^(path|source_path)$/i.test(key) &&
+      typeof child === 'string' &&
+      normalizeProfilePath(child) &&
+      deniedProfilePath(normalizeProfilePath(child)!)
     ) {
       return child;
     }
@@ -1229,16 +1162,16 @@ function firstDeniedProfilePath(value: unknown): string | null {
 
 function deniedProfilePath(path: string): boolean {
   const parts = path.toLowerCase().split('/');
-  return parts.some((part) => part === '.ssh' || part === '.aws' || part === '.git')
-    || parts.some((part) => part.includes('credentials'))
-    || ['auth.json', '.credentials.json', '.netrc', '.git-credentials'].includes(parts.at(-1) ?? '')
-    || /\.(pem|key)$/.test(parts.at(-1) ?? '');
+  return (
+    parts.some((part) => part === '.ssh' || part === '.aws' || part === '.git') ||
+    parts.some((part) => part.includes('credentials')) ||
+    ['auth.json', '.credentials.json', '.netrc', '.git-credentials'].includes(parts.at(-1) ?? '') ||
+    /\.(pem|key)$/.test(parts.at(-1) ?? '')
+  );
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
-  return value != null && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
+  return value != null && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
 
 function metadataStringContainsSecret(value: string): boolean {

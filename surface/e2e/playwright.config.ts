@@ -8,8 +8,7 @@ const serverPort = Number(process.env.E2E_SERVER_PORT ?? 3101);
 const webPort = Number(process.env.E2E_WEB_PORT ?? 5273);
 const centaurPort = Number(process.env.E2E_CENTAUR_PORT ?? 18100);
 const webServerTimeout = Number(process.env.E2E_WEBSERVER_TIMEOUT ?? 60_000);
-const databaseUrl =
-  process.env.E2E_DATABASE_URL ?? 'postgres://atrium:atrium@localhost:5433/atrium_e2e';
+const databaseUrl = process.env.E2E_DATABASE_URL ?? 'postgres://atrium:atrium@localhost:5433/atrium_e2e';
 const baseURL = `http://127.0.0.1:${webPort}`;
 const apiTarget = `http://127.0.0.1:${serverPort}`;
 

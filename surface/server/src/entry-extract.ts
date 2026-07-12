@@ -45,14 +45,17 @@ export async function extractEntryToMarkdownArtifact(
   }
 
   const extractedAt = new Date().toISOString();
-  const bytes = Buffer.from(renderMarkdownArtifact({
-    handle: params.handle,
-    entry: params.entry,
-    title,
-    userId: params.userId,
-    sessionId: scope.sessionId,
-    extractedAt,
-  }), 'utf8');
+  const bytes = Buffer.from(
+    renderMarkdownArtifact({
+      handle: params.handle,
+      entry: params.entry,
+      title,
+      userId: params.userId,
+      sessionId: scope.sessionId,
+      extractedAt,
+    }),
+    'utf8',
+  );
   const sha = createHash('sha256').update(bytes).digest('hex');
   const s3Key = casBlobKey(sha);
 
@@ -102,10 +105,7 @@ async function resolveExtractScope(db: Db, handle: string): Promise<EntryScope> 
         channel_id: string | null;
         type: string;
         payload: Record<string, unknown>;
-      }>(
-        'SELECT workspace_id, channel_id, type, payload FROM events WHERE id = $1',
-        [decoded.eventId],
-      );
+      }>('SELECT workspace_id, channel_id, type, payload FROM events WHERE id = $1', [decoded.eventId]);
       const row = res.rows[0];
       if (!row?.channel_id) throw new Error(`entry scope not found for ${handle}`);
       return {

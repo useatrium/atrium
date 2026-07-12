@@ -39,11 +39,7 @@ export function DiffView({ diff }: { diff: string }) {
         <div
           key={i}
           className={
-            line.startsWith('+')
-              ? 'text-success-text'
-              : line.startsWith('-')
-                ? 'text-danger-text'
-                : 'text-fg-muted'
+            line.startsWith('+') ? 'text-success-text' : line.startsWith('-') ? 'text-danger-text' : 'text-fg-muted'
           }
         >
           {line || ' '}
@@ -66,9 +62,7 @@ function FileChangeHeader({
   const { adds, dels } = diffStats(change.diff);
   return (
     <>
-      <span className="text-fg-muted">
-        {open ? <ChevronDownIcon size={12} /> : <ChevronRightIcon size={12} />}
-      </span>
+      <span className="text-fg-muted">{open ? <ChevronDownIcon size={12} /> : <ChevronRightIcon size={12} />}</span>
       <span
         className={`shrink-0 rounded px-1.5 py-px text-3xs font-semibold uppercase tracking-wide ${KIND_BADGE[change.kind]}`}
       >

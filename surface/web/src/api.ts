@@ -26,8 +26,7 @@ const apiOptions = desktopApiOptions();
 const baseApi = createApi(apiOptions);
 const base = (apiOptions?.baseUrl ?? '').replace(/\/+$/, '');
 
-export const PROVIDER_CREDENTIALS_REFRESH_SENTINEL =
-  '__atrium_provider_credentials_refresh_after_oauth__';
+export const PROVIDER_CREDENTIALS_REFRESH_SENTINEL = '__atrium_provider_credentials_refresh_after_oauth__';
 
 export interface CodexDeviceStartResponse {
   userCode: string;
@@ -103,13 +102,10 @@ export function startClaudeCodeOAuth() {
 }
 
 export function exchangeClaudeCodeOAuth(pendingId: string, code: string) {
-  return req<ClaudeCodeOAuthExchangeResponse>(
-    '/api/me/provider-credentials/claude-code/oauth/exchange',
-    {
-      method: 'POST',
-      body: JSON.stringify({ pendingId, code }),
-    },
-  );
+  return req<ClaudeCodeOAuthExchangeResponse>('/api/me/provider-credentials/claude-code/oauth/exchange', {
+    method: 'POST',
+    body: JSON.stringify({ pendingId, code }),
+  });
 }
 
 export const api = {

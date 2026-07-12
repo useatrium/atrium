@@ -79,9 +79,7 @@ function artifactSrc(sessionId: string, artifact: Artifact): string | null {
   // Serve the ledger's *latest* version for this path (the by-path route follows
   // the pointer, so it reflects later captures / write-back edits) rather than
   // this single capture's bytes.
-  return artifact.ref
-    ? `/api/sessions/${sessionId}/artifacts/by-path?path=${encodeURIComponent(artifact.path)}`
-    : null;
+  return artifact.ref ? `/api/sessions/${sessionId}/artifacts/by-path?path=${encodeURIComponent(artifact.path)}` : null;
 }
 
 /** Collapse captures to one entry per path (newest-wins) with a version count —
@@ -135,10 +133,7 @@ export function ArtifactTile({
             }}
           />
         ) : null}
-        <span
-          hidden={isImage || undefined}
-          className="font-mono text-sm font-semibold tracking-wide text-fg-muted"
-        >
+        <span hidden={isImage || undefined} className="font-mono text-sm font-semibold tracking-wide text-fg-muted">
           {typeLabel(artifact)}
         </span>
       </div>
@@ -152,10 +147,7 @@ export function ArtifactTile({
           {name}
         </span>
         {versions > 1 && (
-          <span
-            className="shrink-0 text-3xs tabular-nums text-fg-muted"
-            title={`${versions} captured versions`}
-          >
+          <span className="shrink-0 text-3xs tabular-nums text-fg-muted" title={`${versions} captured versions`}>
             v{versions}
           </span>
         )}
@@ -278,7 +270,10 @@ export function ArtifactsSurface({
   embedded?: boolean;
 }) {
   const location = useLocation();
-  const previewParam = useMemo(() => new URLSearchParams(location.search).get(URL_PARAMS.preview)?.trim() ?? '', [location.search]);
+  const previewParam = useMemo(
+    () => new URLSearchParams(location.search).get(URL_PARAMS.preview)?.trim() ?? '',
+    [location.search],
+  );
   const [preview, setPreview] = useState<Artifact | null>(null);
   const presentationByPath = useMemo(
     () => new Map(presentations.map((presentation) => [presentation.path, presentation])),
@@ -321,7 +316,8 @@ export function ArtifactsSurface({
       setPreview(null);
       return;
     }
-    const match = tiles.find(({ artifact }) => artifact.path === previewParam || artifact.id === previewParam)?.artifact ?? null;
+    const match =
+      tiles.find(({ artifact }) => artifact.path === previewParam || artifact.id === previewParam)?.artifact ?? null;
     setPreview(match);
   }, [previewParam, tiles]);
 

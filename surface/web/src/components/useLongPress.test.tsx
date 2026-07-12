@@ -4,13 +4,7 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useLongPress } from './useLongPress';
 
-function LongPressTarget({
-  disabled,
-  onLongPress,
-}: {
-  disabled?: boolean;
-  onLongPress: () => void;
-}) {
+function LongPressTarget({ disabled, onLongPress }: { disabled?: boolean; onLongPress: () => void }) {
   const { pressing: _pressing, ...longPressHandlers } = useLongPress({
     disabled,
     delayMs: 400,

@@ -271,7 +271,8 @@ function positionAnnotations(doc: ProseMirrorNode, annotations: InlineAnnotation
 
   for (const annotation of annotations) {
     const startIndex = flattened.text.indexOf(annotation.startMarker, searchStart);
-    const endIndex = startIndex >= 0 ? flattened.text.indexOf(annotation.endMarker, startIndex + annotation.startMarker.length) : -1;
+    const endIndex =
+      startIndex >= 0 ? flattened.text.indexOf(annotation.endMarker, startIndex + annotation.startMarker.length) : -1;
     if (startIndex < 0 || endIndex < 0) {
       continue;
     }

@@ -2,8 +2,7 @@ import { expect, test, type Page } from '@playwright/test';
 import { Pool } from 'pg';
 import { baseURL, channelId, createTestChannel, login, unique } from './helpers.js';
 
-const e2eDatabaseUrl =
-  process.env.E2E_DATABASE_URL ?? 'postgres://atrium:atrium@localhost:5433/atrium_e2e';
+const e2eDatabaseUrl = process.env.E2E_DATABASE_URL ?? 'postgres://atrium:atrium@localhost:5433/atrium_e2e';
 
 async function injectSession(args: {
   handle: string;
@@ -19,13 +18,10 @@ async function injectSession(args: {
   const entryText = 'Browser E2E transcript action sheet target.';
   try {
     await client.query('BEGIN');
-    const user = await client.query<{ id: string }>('SELECT id FROM users WHERE handle = $1', [
-      args.handle,
+    const user = await client.query<{ id: string }>('SELECT id FROM users WHERE handle = $1', [args.handle]);
+    const channel = await client.query<{ workspace_id: string }>('SELECT workspace_id FROM channels WHERE id = $1', [
+      args.channelId,
     ]);
-    const channel = await client.query<{ workspace_id: string }>(
-      'SELECT workspace_id FROM channels WHERE id = $1',
-      [args.channelId],
-    );
     if (!user.rows[0] || !channel.rows[0]) throw new Error('missing e2e user or channel');
 
     const userId = user.rows[0].id;
@@ -59,12 +55,7 @@ async function injectSession(args: {
       `INSERT INTO session_records
          (session_id, event_id, seq, entry_uid, kind, actor, driver, view_tier, text, meta, ts)
        VALUES ($1, 2, 1, $2, 'message', 'agent', 'codex', 'lean', $3, $4::jsonb, now())`,
-      [
-        sessionId,
-        entryUid,
-        entryText,
-        JSON.stringify({ itemId, messageId: itemId }),
-      ],
+      [sessionId, entryUid, entryText, JSON.stringify({ itemId, messageId: itemId })],
     );
     await client.query('COMMIT');
     return { sessionId, entryHandle, entryText };
@@ -142,10 +133,7 @@ test.use({
   viewport: { width: 390, height: 844 },
 });
 
-test('transcript action sheet opens on touch without resting action-bar clutter', async ({
-  context,
-  page,
-}) => {
+test('transcript action sheet opens on touch without resting action-bar clutter', async ({ context, page }) => {
   const { entryHandle, entryText } = await gotoInjectedTranscript(page);
   const transcriptRow = page.locator(`[data-entry-handle="${entryHandle}"]`);
   const actionBar = transcriptRow.locator('[data-testid="transcript-entry-action-bar"]');
@@ -203,10 +191,7 @@ test('transcript action sheet opens on touch without resting action-bar clutter'
 // "Select text…" (touch-only, #341 menu): transcript rows have no raw
 // markdown, so the sheet shows the rendered DOM's innerText — same source as
 // Copy block text.
-test('Select text opens a selectable sheet with the transcript entry text', async ({
-  context,
-  page,
-}) => {
+test('Select text opens a selectable sheet with the transcript entry text', async ({ context, page }) => {
   const { entryHandle, entryText } = await gotoInjectedTranscript(page);
   const transcriptRow = page.locator(`[data-entry-handle="${entryHandle}"]`);
   await transcriptRow.evaluate((element) => element.scrollIntoView({ block: 'center', inline: 'nearest' }));

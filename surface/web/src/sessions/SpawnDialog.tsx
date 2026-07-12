@@ -115,9 +115,9 @@ export function SpawnDialog({
     ? activeReferenceCount > 0
       ? `Working repo + ${activeReferenceCount} reference ${activeReferenceCount === 1 ? 'repo' : 'repos'}`
       : 'Working repo'
-      : activeReferenceCount > 0
-        ? `${activeReferenceCount} reference ${activeReferenceCount === 1 ? 'repo' : 'repos'}`
-        : 'No repo selected';
+    : activeReferenceCount > 0
+      ? `${activeReferenceCount} reference ${activeReferenceCount === 1 ? 'repo' : 'repos'}`
+      : 'No repo selected';
   const titleId = 'spawn-dialog-title';
   const taskErrorId = 'spawn-task-error';
   const privateRepoBlockedId = 'spawn-private-repo-error';
@@ -206,9 +206,7 @@ export function SpawnDialog({
   }
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-start justify-center bg-surface/60 p-4"
-    >
+    <div className="fixed inset-0 z-50 flex items-start justify-center bg-surface/60 p-4">
       <form
         ref={containerRef}
         onSubmit={submit}
@@ -219,7 +217,9 @@ export function SpawnDialog({
       >
         <header className="flex items-center justify-between border-b border-edge px-4 py-3">
           <div>
-            <h2 id={titleId} className="text-sm font-semibold text-fg">New agent</h2>
+            <h2 id={titleId} className="text-sm font-semibold text-fg">
+              New agent
+            </h2>
             <p className="text-2xs text-fg-muted">in {channelName}</p>
           </div>
           <button

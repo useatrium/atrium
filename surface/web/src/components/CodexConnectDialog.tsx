@@ -36,7 +36,9 @@ export function CodexConnectDialog({
     phase === 'waiting' ? waitingId : null,
     status?.lastError ? statusErrorId : null,
     error ? errorId : null,
-  ].filter((id): id is string => Boolean(id)).join(' ');
+  ]
+    .filter((id): id is string => Boolean(id))
+    .join(' ');
 
   useDialog({ open: true, containerRef, onClose: onCancel, closeOnOutsidePointer: true });
 
@@ -129,9 +131,7 @@ export function CodexConnectDialog({
   }
 
   return (
-    <div
-      className="fixed inset-0 z-[60] flex items-start justify-center overflow-y-auto bg-surface/60 p-4"
-    >
+    <div className="fixed inset-0 z-[60] flex items-start justify-center overflow-y-auto bg-surface/60 p-4">
       <form
         ref={containerRef}
         onSubmit={(e) => e.preventDefault()}
@@ -144,10 +144,10 @@ export function CodexConnectDialog({
       >
         <header className="flex items-center justify-between border-b border-edge px-4 py-3">
           <div>
-            <h2 id={titleId} className="text-sm font-semibold text-fg">Codex</h2>
-            <p className="text-2xs text-fg-muted">
-              {connected ? 'Connected' : 'Not connected'}
-            </p>
+            <h2 id={titleId} className="text-sm font-semibold text-fg">
+              Codex
+            </h2>
+            <p className="text-2xs text-fg-muted">{connected ? 'Connected' : 'Not connected'}</p>
           </div>
           <button
             type="button"
@@ -169,9 +169,7 @@ export function CodexConnectDialog({
             Open OpenAI sign-in
           </button>
           <div className="rounded-md border border-edge bg-surface px-3 py-3">
-            <div className="mb-2 text-2xs font-semibold uppercase tracking-wider text-fg-muted">
-              User code
-            </div>
+            <div className="mb-2 text-2xs font-semibold uppercase tracking-wider text-fg-muted">User code</div>
             <div className="flex items-center gap-2">
               <div className="min-w-0 flex-1 rounded-md border border-edge bg-surface-raised px-3 py-2 text-center font-mono text-2xl font-semibold tracking-wider text-fg">
                 {flow?.userCode ?? (phase === 'starting' ? 'Starting...' : 'Unavailable')}

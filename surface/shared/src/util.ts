@@ -58,10 +58,7 @@ function hslLuminance(hue: number, s: number, l: number): number {
  * background (warm hues), so initials meet AA on every hue in both schemes. */
 const DARK_FG_LUM = 0.0031; // relative luminance of #0a0a0c
 
-export function userColorTokens(
-  seed: string,
-  scheme: 'dark' | 'light' = 'dark',
-): { bg: string; fg: string } {
+export function userColorTokens(seed: string, scheme: 'dark' | 'light' = 'dark'): { bg: string; fg: string } {
   const hue = seedHue(seed);
   const s = scheme === 'dark' ? 50 : 45;
   let l = scheme === 'dark' ? 42 : 46;
@@ -163,11 +160,7 @@ export function formatDay(iso: string): string {
 }
 
 export function sameDay(a: Date, b: Date): boolean {
-  return (
-    a.getFullYear() === b.getFullYear() &&
-    a.getMonth() === b.getMonth() &&
-    a.getDate() === b.getDate()
-  );
+  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 }
 
 export function formatBytes(n: number): string {

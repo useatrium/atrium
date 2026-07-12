@@ -24,7 +24,5 @@ test('Claude Code spawn offers subscription auth without blocking default auth',
 
   await expect(page.getByRole('button', { name: 'Start session' })).toBeEnabled();
   await page.getByRole('button', { name: 'Start session' }).click();
-  await expect(
-    page.getByRole('log', { name: 'Messages' }).getByText('check claude provider wiring'),
-  ).toBeVisible();
+  await expect(page.getByRole('log', { name: 'Messages' }).getByText('check claude provider wiring')).toBeVisible();
 });

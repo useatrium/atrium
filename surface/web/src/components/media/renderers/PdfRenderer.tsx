@@ -71,7 +71,14 @@ export function PdfRenderer({ file, variant }: { file: PreviewFile; variant: Med
 
   if (variant === 'tile') {
     if (tileThumbnailUrl) {
-      return <img src={tileThumbnailUrl} alt={file.name} loading="lazy" className="h-full min-h-0 w-full bg-surface-raised object-cover" />;
+      return (
+        <img
+          src={tileThumbnailUrl}
+          alt={file.name}
+          loading="lazy"
+          className="h-full min-h-0 w-full bg-surface-raised object-cover"
+        />
+      );
     }
 
     return (

@@ -19,7 +19,7 @@ export function createQueueLockProvider(): OpQueueLockProvider | undefined {
   ).locks;
   if (!locks) return undefined;
   return {
-    request: <T,>(name: string, callback: () => Promise<T>) => locks.request<T>(name, callback),
+    request: <T>(name: string, callback: () => Promise<T>) => locks.request<T>(name, callback),
   };
 }
 

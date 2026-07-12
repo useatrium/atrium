@@ -111,29 +111,25 @@ export function registerEntryRoutes(app: FastifyInstance, deps: EntryRouteDeps):
     return foldAnnotations(pool, handle);
   });
 
-  app.post(
-    '/api/entries/references/query',
-    { config: { rateLimit: entryAnnotationRateLimit } },
-    async (req, reply) => {
-      const user = requireUser(req, reply);
-      if (!user) return;
-      const body = decodeRouteBody(EntryReferencesQueryBodySchema, req.body);
-      if (!Array.isArray(body.handles)) {
-        return reply.code(400).send({ error: 'bad_request', message: 'handles must be an array' });
+  app.post('/api/entries/references/query', { config: { rateLimit: entryAnnotationRateLimit } }, async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    const body = decodeRouteBody(EntryReferencesQueryBodySchema, req.body);
+    if (!Array.isArray(body.handles)) {
+      return reply.code(400).send({ error: 'bad_request', message: 'handles must be an array' });
+    }
+    if (body.handles.length > 200) {
+      return reply.code(400).send({ error: 'too_many_handles', message: 'handles is limited to 200' });
+    }
+    const handles: string[] = [];
+    for (const handle of body.handles) {
+      if (typeof handle !== 'string' || !tryDecodeHandle(handle)) {
+        return reply.code(400).send({ error: 'bad_handle' });
       }
-      if (body.handles.length > 200) {
-        return reply.code(400).send({ error: 'too_many_handles', message: 'handles is limited to 200' });
-      }
-      const handles: string[] = [];
-      for (const handle of body.handles) {
-        if (typeof handle !== 'string' || !tryDecodeHandle(handle)) {
-          return reply.code(400).send({ error: 'bad_handle' });
-        }
-        handles.push(handle);
-      }
-      return queryEntryReferences(pool, handles, user.id);
-    },
-  );
+      handles.push(handle);
+    }
+    return queryEntryReferences(pool, handles, user.id);
+  });
 
   app.post('/api/entries/:handle/extract', async (req, reply) => {
     const user = requireUser(req, reply);
@@ -143,18 +139,16 @@ export function registerEntryRoutes(app: FastifyInstance, deps: EntryRouteDeps):
     const { handle, entry } = resolved;
     try {
       const result = await extractEntryToMarkdownArtifact(pool, { handle, entry, userId: user.id });
-      return reply
-        .code(result.created ? 201 : 200)
-        .send({
-          artifactId: result.artifactId,
-          path: result.path,
-          seq: result.seq,
-          workspaceId: result.workspaceId,
-          // The current source text of the entry, so the markup UI can detect when the
-          // (persistent, shared) markup artifact has diverged from the live message and
-          // offer a reset. Null for artifact entries, whose "text" is just a filename.
-          sourceText: entry.targetType === 'artifact' ? null : entry.text,
-        });
+      return reply.code(result.created ? 201 : 200).send({
+        artifactId: result.artifactId,
+        path: result.path,
+        seq: result.seq,
+        workspaceId: result.workspaceId,
+        // The current source text of the entry, so the markup UI can detect when the
+        // (persistent, shared) markup artifact has diverged from the live message and
+        // offer a reset. Null for artifact entries, whose "text" is just a filename.
+        sourceText: entry.targetType === 'artifact' ? null : entry.text,
+      });
     } catch (err) {
       if ((err as { statusCode?: number; code?: string })?.statusCode === 422) {
         return reply.code(422).send({ error: (err as { code?: string }).code ?? 'unprocessable_entry' });

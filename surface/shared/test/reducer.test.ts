@@ -249,9 +249,7 @@ describe('threads and reply counts', () => {
       [1, null, 'confirmed'],
       [2, 'cm-b-ok', 'confirmed'],
     ]);
-    expect(t.threads[1]!.map((m) => [m.id, m.clientMsgId, m.status])).toEqual([
-      [2, 'cm-b-ok', 'confirmed'],
-    ]);
+    expect(t.threads[1]!.map((m) => [m.id, m.clientMsgId, m.status])).toEqual([[2, 'cm-b-ok', 'confirmed']]);
     expect(t.main[0]!.replyCount).toBe(1);
     expect(t.main[0]!.lastReplyId).toBe(2);
   });
@@ -272,9 +270,7 @@ describe('threads and reply counts', () => {
 
     expect(t.main.map((m) => [m.id, m.clientMsgId, m.status])).toEqual([[1, null, 'confirmed']]);
     expect(t.main.some((m) => m.clientMsgId === 'cm-strand')).toBe(false);
-    expect(t.threads[1]!.map((m) => [m.id, m.clientMsgId, m.status])).toEqual([
-      [2, 'cm-strand', 'confirmed'],
-    ]);
+    expect(t.threads[1]!.map((m) => [m.id, m.clientMsgId, m.status])).toEqual([[2, 'cm-strand', 'confirmed']]);
     expect(t.main[0]!.replyCount).toBe(1);
     expect(t.main[0]!.lastReplyId).toBe(2);
   });
@@ -423,10 +419,7 @@ describe('history pagination merge', () => {
   it('folds a raw cached message.deleted on hydrate', () => {
     const t = mergeHistory(
       emptyTimeline,
-      [
-        wire(3, 'doomed'),
-        { ...wire(4, ''), type: 'message.deleted', payload: { target: 'evt_3' } },
-      ],
+      [wire(3, 'doomed'), { ...wire(4, ''), type: 'message.deleted', payload: { target: 'evt_3' } }],
       { hasMoreBefore: false },
     );
     expect(t.main[0]!.deleted).toBe(true);
@@ -615,14 +608,10 @@ describe('optimistic edit/delete/reaction overlays', () => {
       userId: alice.id,
       action: 'add',
     });
-    expect(state.timelines[CH]!.main[0]!.reactions).toEqual([
-      { emoji: '👍', userIds: [bob.id, alice.id] },
-    ]);
+    expect(state.timelines[CH]!.main[0]!.reactions).toEqual([{ emoji: '👍', userIds: [bob.id, alice.id] }]);
 
     state = appReducer(state, { type: 'overlay-rejected', channelId: CH, opId: 'op-react' });
-    expect(state.timelines[CH]!.main[0]!.reactions).toEqual([
-      { emoji: '👍', userIds: [bob.id] },
-    ]);
+    expect(state.timelines[CH]!.main[0]!.reactions).toEqual([{ emoji: '👍', userIds: [bob.id] }]);
   });
 });
 
@@ -934,10 +923,11 @@ describe('archive and pin reducer actions', () => {
       lastEventId: 1,
       permalink: '/s/sess-pin',
     };
-    const state = appReducer(
-      appReducer(initialAppState, { type: 'session-upsert', session }),
-      { type: 'session-pin-changed', sessionId: session.id, pinned: true },
-    );
+    const state = appReducer(appReducer(initialAppState, { type: 'session-upsert', session }), {
+      type: 'session-pin-changed',
+      sessionId: session.id,
+      pinned: true,
+    });
     expect(state.sessions[session.id]).toMatchObject({ pinned: true, archivedAt: session.archivedAt });
   });
 });
@@ -977,7 +967,6 @@ describe('session spawn reconciliation', () => {
     expect(t.main[0]!.sessionId).toBe('sess-real');
     expect(t.main[0]!.status).toBe('confirmed');
   });
-
 });
 
 describe('live cold-counter advancement (unread divider depends on it)', () => {
@@ -1192,14 +1181,19 @@ describe('unified sync application', () => {
       },
     };
 
-    dispatchSyncResponse((action) => {
-      state = appReducer(state, action);
-    }, response, { onPrefs: (next) => { prefs = next; } });
+    dispatchSyncResponse(
+      (action) => {
+        state = appReducer(state, action);
+      },
+      response,
+      {
+        onPrefs: (next) => {
+          prefs = next;
+        },
+      },
+    );
 
-    expect(state.timelines[CH]!.main.map((m) => m.text)).toEqual([
-      'already loaded',
-      'synced row',
-    ]);
+    expect(state.timelines[CH]!.main.map((m) => m.text)).toEqual(['already loaded', 'synced row']);
     expect(state.channels.map((channel) => channel.id)).toEqual([CH, 'ch-muted']);
     expect(state.channels.find((channel) => channel.id === CH)!.lastReadEventId).toBe(9);
     expect(state.channels.find((channel) => channel.id === 'ch-muted')!.muted).toBe(true);

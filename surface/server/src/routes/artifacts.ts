@@ -248,9 +248,7 @@ export async function registerArtifactRoutes(app: FastifyInstance, deps: Artifac
     const user = await requireSessionAccess(req, reply);
     if (!user) return;
     if (isTopLevelDocumentNavigation(req)) {
-      return reply
-        .code(403)
-        .send({ error: 'preview_embed_required', message: 'artifact previews must be embedded' });
+      return reply.code(403).send({ error: 'preview_embed_required', message: 'artifact previews must be embedded' });
     }
     const { id } = req.params as { id: string };
     const q = req.query as { path?: string; at?: string; renderer?: string };

@@ -13,11 +13,7 @@ import type { AppMutationContext } from '../app-mutations.js';
 import type { Db } from '../db.js';
 import { DomainError, type UserRef, type WireEvent } from '../events.js';
 import { decodeRouteBody } from '../route-schema.js';
-import {
-  isSessionEffortLevel,
-  type SessionEffortLevel,
-  type SessionRuns,
-} from '../session-runs.js';
+import { isSessionEffortLevel, type SessionEffortLevel, type SessionRuns } from '../session-runs.js';
 import { parseAgentTurnAttachmentInputPayloads, resolveAgentTurnAttachments } from '../session-attachments.js';
 
 export interface SessionInteractionRouteDeps extends AppMutationContext {

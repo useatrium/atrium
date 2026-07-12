@@ -1,12 +1,7 @@
-import { Option, Schema } from "effect";
-import type { JsonObject, JsonValue } from "./types.js";
+import { Option, Schema } from 'effect';
+import type { JsonObject, JsonValue } from './types.js';
 
-export const JsonPrimitiveSchema = Schema.Union(
-  Schema.String,
-  Schema.Number,
-  Schema.Boolean,
-  Schema.Null,
-);
+export const JsonPrimitiveSchema = Schema.Union(Schema.String, Schema.Number, Schema.Boolean, Schema.Null);
 
 export const JsonValueSchema: Schema.Schema<JsonValue> = Schema.suspend(
   (): Schema.Schema<JsonValue> =>
@@ -59,7 +54,7 @@ export function parseJsonValue(raw: string): JsonValue | undefined {
 }
 
 export function jsonObjectFrom(input: unknown): JsonObject | undefined {
-  if (input === null || typeof input !== "object" || Array.isArray(input)) {
+  if (input === null || typeof input !== 'object' || Array.isArray(input)) {
     return undefined;
   }
   return decodeOptional(JsonObjectSchema, input);
@@ -71,19 +66,19 @@ export function isJsonObject(input: unknown): input is JsonObject {
 
 export function eventIdFrom(input: unknown): number | undefined {
   const value = decodeOptional(EventIdFieldSchema, input);
-  if (typeof value === "number") return value;
-  if (typeof value === "string" && /^\d+$/.test(value)) return Number(value);
+  if (typeof value === 'number') return value;
+  if (typeof value === 'string' && /^\d+$/.test(value)) return Number(value);
   return undefined;
 }
 
 export function stringField(data: JsonObject, key: string): string {
-  return decodeOptional(Schema.String, data[key]) ?? "";
+  return decodeOptional(Schema.String, data[key]) ?? '';
 }
 
 export function errorCodeFromBody(body: unknown): string | undefined {
   const decoded = decodeOptional(ErrorCodeBodySchema, body);
   if (!decoded) return undefined;
   if (decoded.code) return decoded.code;
-  if (typeof decoded.error === "string") return decoded.error;
+  if (typeof decoded.error === 'string') return decoded.error;
   return decoded.error?.code;
 }

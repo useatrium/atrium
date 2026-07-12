@@ -1,12 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AudioSession } from '@livekit/react-native';
-import {
-  Room,
-  RoomEvent,
-  Track,
-  type Participant,
-  type RemoteParticipant,
-} from 'livekit-client';
+import { Room, RoomEvent, Track, type Participant, type RemoteParticipant } from 'livekit-client';
 import {
   addCallAnsweredListener,
   addCallEndedListener,
@@ -70,9 +64,7 @@ function removeUser(users: UserRef[], userId: string): UserRef[] {
 }
 
 function participantsFor(call: CallWire, me: UserRef): UserRef[] {
-  return call.participants.some((u) => u.id === me.id)
-    ? call.participants
-    : [me, ...call.participants];
+  return call.participants.some((u) => u.id === me.id) ? call.participants : [me, ...call.participants];
 }
 
 function sortLiveCalls(calls: CallWire[]): CallWire[] {
@@ -89,11 +81,7 @@ function upsertLiveCall(calls: CallWire[], call: CallWire): CallWire[] {
   return sortLiveCalls(next);
 }
 
-function updateLiveCall(
-  calls: CallWire[],
-  callId: string,
-  update: (call: CallWire) => CallWire,
-): CallWire[] {
+function updateLiveCall(calls: CallWire[], callId: string, update: (call: CallWire) => CallWire): CallWire[] {
   let changed = false;
   const next = calls.map((call) => {
     if (call.id !== callId) return call;
@@ -147,15 +135,7 @@ function serverCallIdFromSession(session: CallSession | null | undefined): strin
   return session?.incomingCallEvent?.serverCallId ?? null;
 }
 
-export function useCall({
-  api,
-  me,
-  channels,
-}: {
-  api: Api;
-  me: UserRef;
-  channels: Channel[];
-}) {
+export function useCall({ api, me, channels }: { api: Api; me: UserRef; channels: Channel[] }) {
   const [incomingCall, setIncomingCall] = useState<CallWire | null>(null);
   const [activeCall, setActiveCall] = useState<ActiveCallState | null>(null);
   const [recoverableCalls, setRecoverableCalls] = useState<CallWire[]>([]);
@@ -270,9 +250,7 @@ export function useCall({
         updateActiveCall((current) => ({
           ...current,
           participants: removeUser(current.participants, participant.identity),
-          activeSpeakerIds: new Set(
-            [...current.activeSpeakerIds].filter((id) => id !== participant.identity),
-          ),
+          activeSpeakerIds: new Set([...current.activeSpeakerIds].filter((id) => id !== participant.identity)),
         }));
       };
       const onActiveSpeakersChanged = (speakers: Participant[]) => {
@@ -330,10 +308,7 @@ export function useCall({
   );
 
   const connectToCall = useCallback(
-    async (
-      join: CallJoin,
-      native?: { id: string; incomingRequestId?: string; outgoing?: boolean },
-    ) => {
+    async (join: CallJoin, native?: { id: string; incomingRequestId?: string; outgoing?: boolean }) => {
       const current = activeCallRef.current;
       if (current?.call.id === join.call.id && (roomRef.current || connectPromiseRef.current)) {
         return connectPromiseRef.current ?? Promise.resolve();
@@ -424,10 +399,7 @@ export function useCall({
       if (!NATIVE_CALL_UI) return;
       if (call.status !== 'ringing') return;
       if (call.initiatorId === me.id || nativeIdByCallIdRef.current[call.id]) return;
-      if (
-        nativeIncomingReportPendingRef.current.has(call.id) ||
-        nativeIncomingReportedRef.current.has(call.id)
-      ) {
+      if (nativeIncomingReportPendingRef.current.has(call.id) || nativeIncomingReportedRef.current.has(call.id)) {
         return;
       }
       const caller = userForCall(call, channelsRef.current, call.initiatorId);
@@ -465,14 +437,12 @@ export function useCall({
         return;
       }
 
-      const snapshotIncoming =
-        calls.find((call) => call.status === 'ringing' && call.initiatorId !== me.id) ?? null;
+      const snapshotIncoming = calls.find((call) => call.status === 'ringing' && call.initiatorId !== me.id) ?? null;
       const updatedCurrent = current
-        ? calls.find((call) => call.id === current.id && call.status === 'ringing') ?? null
+        ? (calls.find((call) => call.id === current.id && call.status === 'ringing') ?? null)
         : null;
       const nextIncoming =
-        updatedCurrent ??
-        (current && channelId && current.channelId !== channelId ? current : snapshotIncoming);
+        updatedCurrent ?? (current && channelId && current.channelId !== channelId ? current : snapshotIncoming);
 
       setIncomingCall(nextIncoming);
       if (nextIncoming) reportIncomingToNative(nextIncoming);
@@ -487,10 +457,7 @@ export function useCall({
         const liveCalls = sortLiveCalls(snapshot.calls);
         setRecoverableCalls((current) =>
           opts.channelId
-            ? sortLiveCalls([
-                ...current.filter((call) => call.channelId !== opts.channelId),
-                ...liveCalls,
-              ])
+            ? sortLiveCalls([...current.filter((call) => call.channelId !== opts.channelId), ...liveCalls])
             : liveCalls,
         );
         applyIncomingSnapshot(liveCalls, opts.channelId);
@@ -502,11 +469,11 @@ export function useCall({
   );
 
   const acceptCallById = useCallback(
-    async (
-      callId: string,
-      native?: { id: string; requestId?: string },
-    ): Promise<void> => {
-      if ((answeringRef.current && !native?.requestId) || answeredNativeRequestsRef.current.has(native?.requestId ?? '')) {
+    async (callId: string, native?: { id: string; requestId?: string }): Promise<void> => {
+      if (
+        (answeringRef.current && !native?.requestId) ||
+        answeredNativeRequestsRef.current.has(native?.requestId ?? '')
+      ) {
         return;
       }
       if (native?.requestId) answeredNativeRequestsRef.current.add(native.requestId);
@@ -579,9 +546,7 @@ export function useCall({
       }
 
       if (event.type === 'call.declined') {
-        setIncomingCall((call) =>
-          call?.id === event.callId && event.userId === me.id ? null : call,
-        );
+        setIncomingCall((call) => (call?.id === event.callId && event.userId === me.id ? null : call));
         if (event.userId === me.id) {
           setRecoverableCalls((calls) => removeLiveCall(calls, event.callId));
         }
@@ -605,9 +570,7 @@ export function useCall({
           return {
             ...current,
             participants,
-            activeSpeakerIds: new Set(
-              [...current.activeSpeakerIds].filter((id) => id !== event.userId),
-            ),
+            activeSpeakerIds: new Set([...current.activeSpeakerIds].filter((id) => id !== event.userId)),
           };
         });
         // Side effect outside the (possibly double-invoked) updater.
@@ -652,10 +615,7 @@ export function useCall({
             console.warn('[calls] failed to start native outgoing call', err);
           }
         }
-        await connectToCall(
-          join,
-          nativeCallId ? { id: nativeCallId, outgoing: true } : undefined,
-        );
+        await connectToCall(join, nativeCallId ? { id: nativeCallId, outgoing: true } : undefined);
       } catch (err) {
         if (callUnavailable(err)) {
           setNotice("Calls aren't available.");
@@ -755,14 +715,8 @@ export function useCall({
 
     const timeout = setTimeout(() => {
       const current = activeCallRef.current;
-      const remoteCount = current
-        ? current.participants.filter((participant) => participant.id !== me.id).length
-        : 0;
-      if (
-        current?.call.id !== activeCallId ||
-        current.call.status !== 'ringing' ||
-        remoteCount !== 0
-      ) {
+      const remoteCount = current ? current.participants.filter((participant) => participant.id !== me.id).length : 0;
+      if (current?.call.id !== activeCallId || current.call.status !== 'ringing' || remoteCount !== 0) {
         return;
       }
       setNotice('No answer.');
@@ -835,9 +789,7 @@ export function useCall({
 
   useEffect(() => () => clearRoom(), [clearRoom]);
 
-  const recoverableCall = activeCall
-    ? null
-    : recoverableCalls.find((call) => call.id !== incomingCall?.id) ?? null;
+  const recoverableCall = activeCall ? null : (recoverableCalls.find((call) => call.id !== incomingCall?.id) ?? null);
 
   return {
     incomingCall,

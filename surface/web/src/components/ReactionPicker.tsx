@@ -1,14 +1,5 @@
 import { REACTION_GROUPS, searchReactions } from '@atrium/surface-client/reactions';
-import {
-  useCallback,
-  useEffect,
-  useId,
-  useMemo,
-  useRef,
-  useState,
-  type KeyboardEvent,
-  type RefObject,
-} from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type RefObject } from 'react';
 import { useDialog } from '../useDialog';
 
 const GRID_COLUMNS = 8;

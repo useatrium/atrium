@@ -56,7 +56,9 @@ describe('referenced entries appendix', () => {
         text: 'event text',
       },
     ]);
-    expect(appendix).toContain('- /e/art_00000000-0000-0000-0000-000000000002 (artifact): "outside root artifact text"');
+    expect(appendix).toContain(
+      '- /e/art_00000000-0000-0000-0000-000000000002 (artifact): "outside root artifact text"',
+    );
     expect(appendix).toContain('- /e/evt_9 (Alice, message): "event text"');
   });
 
@@ -93,11 +95,14 @@ describe('referenced entries appendix', () => {
   });
 
   it('emits an omitted line when links still do not fit', () => {
-    const items = Array.from({ length: 8 }, (_, index): ReferencedEntryAppendixItem => ({
-      kind: 'local-file',
-      originalLink: `/e/art_00000000-0000-0000-0000-00000000000${index}`,
-      path: `shared/channels/ch-1/very-long-directory-${index}/x.md`,
-    }));
+    const items = Array.from(
+      { length: 8 },
+      (_, index): ReferencedEntryAppendixItem => ({
+        kind: 'local-file',
+        originalLink: `/e/art_00000000-0000-0000-0000-00000000000${index}`,
+        path: `shared/channels/ch-1/very-long-directory-${index}/x.md`,
+      }),
+    );
     const appendix = composeReferencedEntriesAppendix(items, 280)!;
     expect(Buffer.byteLength(appendix, 'utf8')).toBeLessThanOrEqual(280);
     expect(appendix).toMatch(/\(\d+ more omitted: \/e\/art_/);

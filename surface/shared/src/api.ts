@@ -21,12 +21,7 @@ import type {
   SessionSuggestionResolveBody,
   SessionWire,
 } from './sessions';
-import {
-  MessageHistoryResponseSchema,
-  ThreadMessagesResponseSchema,
-  type UserRef,
-  type WireEvent,
-} from './timeline';
+import { MessageHistoryResponseSchema, ThreadMessagesResponseSchema, type UserRef, type WireEvent } from './timeline';
 import type { EntryReferencesResponse, NormalizedEntry } from './entry-contracts';
 import type {
   HubFileConflict,
@@ -398,11 +393,7 @@ export function createApi(opts: ApiOptions = {}) {
         `/api/sessions/${encodeURIComponent(sessionId)}/profile-change-proposals/${encodeURIComponent(proposalId)}/save-current-profile`,
         { method: 'POST', body: JSON.stringify(body) },
       ),
-    saveSessionProfileProposalAsNew: (
-      sessionId: string,
-      proposalId: string,
-      body: SaveAgentProfileProposalAsNewBody,
-    ) =>
+    saveSessionProfileProposalAsNew: (sessionId: string, proposalId: string, body: SaveAgentProfileProposalAsNewBody) =>
       req<{ proposal: AgentProfileProposal; profile: AgentProfile; version: AgentProfileVersion }>(
         `/api/sessions/${encodeURIComponent(sessionId)}/profile-change-proposals/${encodeURIComponent(proposalId)}/save-new-profile`,
         { method: 'POST', body: JSON.stringify(body) },
@@ -500,11 +491,7 @@ export function createApi(opts: ApiOptions = {}) {
       return req<{ items: ActivityItem[]; nextCursor: string | null }>(`/api/activity${qs ? `?${qs}` : ''}`);
     },
     thread: (rootEventId: number) =>
-      req<{ events: WireEvent[] }>(
-        `/api/threads/${rootEventId}/messages`,
-        undefined,
-        decodeThreadMessagesResponse,
-      ),
+      req<{ events: WireEvent[] }>(`/api/threads/${rootEventId}/messages`, undefined, decodeThreadMessagesResponse),
     postMessage: (body: {
       channelId: string;
       text: string;
@@ -550,10 +537,14 @@ export function createApi(opts: ApiOptions = {}) {
       attachmentRefs?: AgentAttachmentRef[];
       opId?: string;
     }) =>
-      req<{ session: SessionWire }>('/api/sessions', {
-        method: 'POST',
-        body: JSON.stringify(body),
-      }, decodeSessionResponse),
+      req<{ session: SessionWire }>(
+        '/api/sessions',
+        {
+          method: 'POST',
+          body: JSON.stringify(body),
+        },
+        decodeSessionResponse,
+      ),
     createUpload: (body: {
       filename: string;
       contentType: string;
@@ -693,10 +684,14 @@ export function createApi(opts: ApiOptions = {}) {
     /** Start a call in a channel: creates the call, mints the caller's LiveKit
      * token, and rings the other channel members over the WS hub. */
     startCall: (channelId: string, op: OpOptions = {}) =>
-      req<CallJoin>('/api/calls', {
-        method: 'POST',
-        body: JSON.stringify({ channelId, ...(op.opId ? { opId: op.opId } : {}) }),
-      }, decodeCallJoinResponse),
+      req<CallJoin>(
+        '/api/calls',
+        {
+          method: 'POST',
+          body: JSON.stringify({ channelId, ...(op.opId ? { opId: op.opId } : {}) }),
+        },
+        decodeCallJoinResponse,
+      ),
     /** Snapshot of non-ended calls visible to this user. Used after reload/reconnect
      * because call lifecycle WS frames are intentionally ephemeral. */
     activeCalls: (opts: { channelId?: string } = {}) => {
@@ -711,11 +706,7 @@ export function createApi(opts: ApiOptions = {}) {
     },
     /** Accept a ringing call: mints this user's token + marks them joined. */
     acceptCall: (callId: string) =>
-      req<CallJoin>(
-        `/api/calls/${callId}/accept`,
-        { method: 'POST', body: '{}' },
-        decodeCallJoinResponse,
-      ),
+      req<CallJoin>(`/api/calls/${callId}/accept`, { method: 'POST', body: '{}' }, decodeCallJoinResponse),
     declineCall: (callId: string) => req<{ ok: true }>(`/api/calls/${callId}/decline`, { method: 'POST', body: '{}' }),
     /** Leave a call; the server ends it when the last participant leaves. */
     leaveCall: (callId: string) => req<{ ok: true }>(`/api/calls/${callId}/leave`, { method: 'POST', body: '{}' }),
@@ -775,12 +766,7 @@ export function createApi(opts: ApiOptions = {}) {
         body: JSON.stringify(body),
       });
     },
-    answerSessionQuestion: (
-      id: string,
-      questionId: string,
-      answers: SessionQuestionAnswers,
-      op: OpOptions = {},
-    ) => {
+    answerSessionQuestion: (id: string, questionId: string, answers: SessionQuestionAnswers, op: OpOptions = {}) => {
       const body: SessionAnswerQuestionBody = { questionId, answers, ...(op.opId ? { opId: op.opId } : {}) };
       return req<{ ok: true }>(`/api/sessions/${id}/answer`, {
         method: 'POST',
@@ -845,12 +831,7 @@ export function createApi(opts: ApiOptions = {}) {
         body: JSON.stringify(body),
       });
     },
-    proposeAnswer: (
-      id: string,
-      questionId: string,
-      answers: SessionQuestionAnswers,
-      op: OpOptions = {},
-    ) => {
+    proposeAnswer: (id: string, questionId: string, answers: SessionQuestionAnswers, op: OpOptions = {}) => {
       const body: SessionAnswerQuestionBody = { questionId, answers, ...(op.opId ? { opId: op.opId } : {}) };
       return req<{ ok: true }>(`/api/sessions/${id}/question-proposals`, {
         method: 'POST',

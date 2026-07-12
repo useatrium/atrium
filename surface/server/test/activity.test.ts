@@ -88,14 +88,10 @@ describe('/api/activity', () => {
     await addMember(alice.cookie, secret.id, bob.user.id);
     const mention = await post(alice.cookie, secret.id, 'private ping @bob');
 
-    expect((await activity(bob.cookie)).items.map((item: any) => Number(item.eventId))).toContain(
-      mention.id,
-    );
+    expect((await activity(bob.cookie)).items.map((item: any) => Number(item.eventId))).toContain(mention.id);
 
     await leaveChannel(bob.cookie, secret.id);
-    expect((await activity(bob.cookie)).items.map((item: any) => Number(item.eventId))).not.toContain(
-      mention.id,
-    );
+    expect((await activity(bob.cookie)).items.map((item: any) => Number(item.eventId))).not.toContain(mention.id);
   });
 });
 

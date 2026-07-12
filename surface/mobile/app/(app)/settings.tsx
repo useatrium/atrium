@@ -92,9 +92,7 @@ const providerConfigs: Record<
 
 const providers: ProviderCredentialProvider[] = ['claude-code', 'codex'];
 
-function disconnectedProviderStatus(
-  provider: ProviderCredentialProvider,
-): ProviderCredentialStatus {
+function disconnectedProviderStatus(provider: ProviderCredentialProvider): ProviderCredentialStatus {
   return {
     provider,
     connected: false,
@@ -342,9 +340,7 @@ function ProviderConnectionRow({
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={`${actionLabel} ${config.title}`}
-          accessibilityHint={
-            connected ? 'Removes this provider connection' : 'Opens the provider connection sheet'
-          }
+          accessibilityHint={connected ? 'Removes this provider connection' : 'Opens the provider connection sheet'}
           accessibilityState={{ disabled: busy }}
           disabled={busy}
           onPress={() => (connected ? onDisconnect(provider) : onConnect(provider))}
@@ -415,16 +411,8 @@ function ConnectProviderSheet({
   const canSubmit = value.trim().length > 0 && !busy;
 
   return (
-    <Modal
-      visible
-      transparent
-      animationType={reduceMotion ? 'none' : 'slide'}
-      onRequestClose={onClose}
-    >
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        style={{ flex: 1 }}
-      >
+    <Modal visible transparent animationType={reduceMotion ? 'none' : 'slide'} onRequestClose={onClose}>
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
         <View style={{ flex: 1, backgroundColor: colors.scrim, justifyContent: 'flex-end' }}>
           <Pressable
             accessible={false}
@@ -465,10 +453,7 @@ function ConnectProviderSheet({
                 >
                   {config.title}
                 </Text>
-                <Text
-                  maxFontSizeMultiplier={2}
-                  style={{ color: colors.textMuted, fontSize: font.xs, marginTop: 2 }}
-                >
+                <Text maxFontSizeMultiplier={2} style={{ color: colors.textMuted, fontSize: font.xs, marginTop: 2 }}>
                   {connected ? 'Connected' : 'Not connected'}
                 </Text>
               </View>
@@ -539,11 +524,7 @@ function ConnectProviderSheet({
                     borderRadius: radius.md,
                     borderWidth: 1,
                     color: colors.text,
-                    fontFamily: config.multiline
-                      ? Platform.OS === 'ios'
-                        ? 'Menlo'
-                        : 'monospace'
-                      : undefined,
+                    fontFamily: config.multiline ? (Platform.OS === 'ios' ? 'Menlo' : 'monospace') : undefined,
                     fontSize: config.multiline ? font.sm : font.md,
                     minHeight: config.multiline ? 148 : 48,
                     paddingHorizontal: space.md,
@@ -648,9 +629,7 @@ function ConnectProviderSheet({
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel={`${connected ? 'Reconnect' : 'Connect'} ${config.title}`}
-                  accessibilityHint={
-                    connected ? 'Replaces this provider credential' : 'Saves this provider credential'
-                  }
+                  accessibilityHint={connected ? 'Replaces this provider credential' : 'Saves this provider credential'}
                   accessibilityState={{ disabled: !canSubmit }}
                   disabled={!canSubmit}
                   onPress={onSubmit}
@@ -769,8 +748,7 @@ export default function SettingsScreen() {
   const [connectionsError, setConnectionsError] = useState<string | null>(null);
   const [githubBusy, setGithubBusy] = useState(false);
   const [devicePushEnabled, setDevicePushEnabledState] = useState<boolean | null>(null);
-  const [pushPermission, setPushPermission] =
-    useState<PushPermissionStatus>('undetermined');
+  const [pushPermission, setPushPermission] = useState<PushPermissionStatus>('undetermined');
   const [pushBusy, setPushBusy] = useState(false);
 
   useAccessibilityAnnouncement(providerStatusError ?? connectionsError);
@@ -1185,16 +1163,11 @@ export default function SettingsScreen() {
               onValueChange={updateDevicePush}
               trackColor={{ false: colors.switchTrackOff, true: colors.accent }}
               thumbColor={
-                devicePushEnabled === true && pushPermission !== 'denied'
-                  ? colors.onAccent
-                  : colors.switchThumbOff
+                devicePushEnabled === true && pushPermission !== 'denied' ? colors.onAccent : colors.switchThumbOff
               }
             />
             {pushPermission === 'denied' ? (
-              <Text
-                maxFontSizeMultiplier={2}
-                style={{ color: colors.textMuted, fontSize: font.xs, fontWeight: '600' }}
-              >
+              <Text maxFontSizeMultiplier={2} style={{ color: colors.textMuted, fontSize: font.xs, fontWeight: '600' }}>
                 Enable in system settings
               </Text>
             ) : null}

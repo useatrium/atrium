@@ -52,9 +52,7 @@ afterEach(() => {
 });
 
 function renderPane(session: Session = running) {
-  render(
-    <SessionPane session={session} me={me} watchers={[]} onClose={() => {}} onAnswerQuestion={async () => {}} />,
-  );
+  render(<SessionPane session={session} me={me} watchers={[]} onClose={() => {}} onAnswerQuestion={async () => {}} />);
   const src = FakeEventSource.last();
   src.open();
   return src;

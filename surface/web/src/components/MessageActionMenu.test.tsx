@@ -13,20 +13,14 @@ const ACTIONS: MessageActionMenuAction[] = [
 
 describe('MessageActionMenu sheetOnly actions', () => {
   it('renders sheetOnly actions in the touch sheet', () => {
-    render(
-      <MessageActionMenu state={{ mode: 'sheet' }} onClose={vi.fn()} actions={ACTIONS} />,
-    );
+    render(<MessageActionMenu state={{ mode: 'sheet' }} onClose={vi.fn()} actions={ACTIONS} />);
     expect(screen.getByRole('button', { name: 'Copy text' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Select text…' })).toBeTruthy();
   });
 
   it('hides sheetOnly actions in the pointer popover (mouse users select natively)', () => {
     render(
-      <MessageActionMenu
-        state={{ mode: 'popover', anchor: { x: 10, y: 10 } }}
-        onClose={vi.fn()}
-        actions={ACTIONS}
-      />,
+      <MessageActionMenu state={{ mode: 'popover', anchor: { x: 10, y: 10 } }} onClose={vi.fn()} actions={ACTIONS} />,
     );
     expect(screen.getByRole('button', { name: 'Copy text' })).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Select text…' })).toBeNull();

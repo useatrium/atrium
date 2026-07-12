@@ -41,10 +41,12 @@ afterEach(async () => {
   app = null;
 });
 
-async function startApp(creds: { apiKey: string; apiSecret: string } | null = {
-  apiKey: livekitApiKey,
-  apiSecret: livekitApiSecret,
-}) {
+async function startApp(
+  creds: { apiKey: string; apiSecret: string } | null = {
+    apiKey: livekitApiKey,
+    apiSecret: livekitApiSecret,
+  },
+) {
   app = Fastify({ logger: false });
   registerCallRoutes(app, {
     pool,

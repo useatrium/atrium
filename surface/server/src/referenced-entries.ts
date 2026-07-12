@@ -158,7 +158,10 @@ function renderItem(item: ReferencedEntryAppendixItem, excerptLimit: number): st
 }
 
 function renderOmittedLine(items: readonly ReferencedEntryAppendixItem[]): string {
-  const shown = items.slice(0, 2).map((item) => item.originalLink).join(', ');
+  const shown = items
+    .slice(0, 2)
+    .map((item) => item.originalLink)
+    .join(', ');
   return `(${items.length} more omitted: ${shown}${items.length > 2 ? ', …' : ''})`;
 }
 

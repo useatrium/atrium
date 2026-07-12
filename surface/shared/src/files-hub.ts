@@ -80,10 +80,7 @@ export function isAppPath(path: string): boolean {
 }
 
 /** Whether a file belongs under a given Gallery category chip. Non-exclusive. */
-export function matchesCategory(
-  file: Pick<HubFile, 'mediaKind' | 'path' | 'origin'>,
-  category: FileCategory,
-): boolean {
+export function matchesCategory(file: Pick<HubFile, 'mediaKind' | 'path' | 'origin'>, category: FileCategory): boolean {
   switch (category) {
     case 'image':
       return file.mediaKind === 'image';
@@ -199,10 +196,7 @@ export interface HubFileConflict {
 
 /** A user's conflict-resolution choice: keep the latest ('left'), keep the
  * incoming edit ('right'), or supply a hand-merged text. */
-export type HubFileResolveChoice =
-  | { kind: 'left' }
-  | { kind: 'right' }
-  | { kind: 'merged'; text: string };
+export type HubFileResolveChoice = { kind: 'left' } | { kind: 'right' } | { kind: 'merged'; text: string };
 
 export interface HubFileRevertResponse {
   artifactId: string;

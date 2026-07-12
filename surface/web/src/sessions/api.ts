@@ -147,16 +147,9 @@ async function doFetch(path: string, init?: RequestInit): Promise<Response> {
 function parseFrame(name: string, raw: string): CentaurEventFrame | null {
   try {
     const parsed = JSON.parse(raw) as Record<string, unknown>;
-    const data =
-      parsed.data && typeof parsed.data === 'object'
-        ? (parsed.data as Record<string, unknown>)
-        : parsed;
+    const data = parsed.data && typeof parsed.data === 'object' ? (parsed.data as Record<string, unknown>) : parsed;
     const eventId =
-      typeof parsed.event_id === 'number'
-        ? parsed.event_id
-        : typeof data.event_id === 'number'
-          ? data.event_id
-          : 0;
+      typeof parsed.event_id === 'number' ? parsed.event_id : typeof data.event_id === 'number' ? data.event_id : 0;
     const ts =
       typeof parsed.atrium_ts === 'string'
         ? parsed.atrium_ts
@@ -171,10 +164,14 @@ function parseFrame(name: string, raw: string): CentaurEventFrame | null {
 
 export const sessionsApi = {
   create(body: CreateSessionBody): Promise<{ session: SessionWire }> {
-    return reqJson<{ session: SessionWire }>('/api/sessions', {
-      method: 'POST',
-      body: JSON.stringify(body),
-    }, decodeSessionResponse);
+    return reqJson<{ session: SessionWire }>(
+      '/api/sessions',
+      {
+        method: 'POST',
+        body: JSON.stringify(body),
+      },
+      decodeSessionResponse,
+    );
   },
 
   get(id: string): Promise<{ session: SessionWire }> {
@@ -203,12 +200,7 @@ export const sessionsApi = {
     });
   },
 
-  answerQuestion(
-    id: string,
-    questionId: string,
-    answers: SessionQuestionAnswers,
-    opId?: string,
-  ): Promise<void> {
+  answerQuestion(id: string, questionId: string, answers: SessionQuestionAnswers, opId?: string): Promise<void> {
     const body: SessionAnswerQuestionBody = { questionId, answers, ...(opId ? { opId } : {}) };
     return reqAccepted(`/api/sessions/${id}/answer`, {
       method: 'POST',
@@ -225,9 +217,7 @@ export const sessionsApi = {
   },
 
   listPresentations(id: string): Promise<{ presentations: ArtifactPresentation[] }> {
-    return reqJson<{ presentations: ArtifactPresentation[] }>(
-      `/api/sessions/${id}/artifacts/presentations`,
-    );
+    return reqJson<{ presentations: ArtifactPresentation[] }>(`/api/sessions/${id}/artifacts/presentations`);
   },
 
   getCapabilities(id: string): Promise<SessionCapabilitiesResponse> {
@@ -309,12 +299,7 @@ export const sessionsApi = {
   // ---- HITL answer proposals (Phase 2) ----
 
   /** A watcher proposes an answer to the pending question. */
-  proposeAnswer(
-    id: string,
-    questionId: string,
-    answers: SessionQuestionAnswers,
-    opId?: string,
-  ): Promise<void> {
+  proposeAnswer(id: string, questionId: string, answers: SessionQuestionAnswers, opId?: string): Promise<void> {
     const body: SessionAnswerQuestionBody = { questionId, answers, ...(opId ? { opId } : {}) };
     return reqAccepted(`/api/sessions/${id}/question-proposals`, {
       method: 'POST',
@@ -338,14 +323,8 @@ export const sessionsApi = {
   },
 
   /** Cookie-authed SSE of Centaur frames, resumable via after_event_id. */
-  openStream(
-    sessionId: string,
-    afterEventId: number,
-    cb: SessionStreamCallbacks,
-  ): SessionStreamHandle {
-    const es = new EventSource(
-      withDesktopToken(`/api/sessions/${sessionId}/stream?after_event_id=${afterEventId}`),
-    );
+  openStream(sessionId: string, afterEventId: number, cb: SessionStreamCallbacks): SessionStreamHandle {
+    const es = new EventSource(withDesktopToken(`/api/sessions/${sessionId}/stream?after_event_id=${afterEventId}`));
     es.onopen = () => cb.onOpen?.();
     es.onerror = () => cb.onError?.();
     es.addEventListener('ping', (e) => {

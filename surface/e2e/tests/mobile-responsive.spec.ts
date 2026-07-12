@@ -18,8 +18,7 @@ import {
   uploadViaApi,
 } from './helpers.js';
 
-const e2eDatabaseUrl =
-  process.env.E2E_DATABASE_URL ?? 'postgres://atrium:atrium@localhost:5433/atrium_e2e';
+const e2eDatabaseUrl = process.env.E2E_DATABASE_URL ?? 'postgres://atrium:atrium@localhost:5433/atrium_e2e';
 
 // iPhone 14 and small-Android floor (Gary's 360px target).
 const WIDTHS = [390, 360];
@@ -114,10 +113,7 @@ async function seedSession(handle: string, ch: string, title: string): Promise<s
   try {
     await client.query('BEGIN');
     const user = await client.query<{ id: string }>('SELECT id FROM users WHERE handle=$1', [handle]);
-    const channel = await client.query<{ workspace_id: string }>(
-      'SELECT workspace_id FROM channels WHERE id=$1',
-      [ch],
-    );
+    const channel = await client.query<{ workspace_id: string }>('SELECT workspace_id FROM channels WHERE id=$1', [ch]);
     const userId = user.rows[0]!.id;
     const workspaceId = channel.rows[0]!.workspace_id;
     const session = await client.query<{ id: string }>(
@@ -181,10 +177,7 @@ async function expectChatAreaContained(page: Page, screen: string): Promise<void
     r.logScrollWidth!,
     `${screen}: chat history scrolls horizontally (scrollWidth ${r.logScrollWidth} > clientWidth ${r.logClientWidth})`,
   ).toBeLessThanOrEqual((r.logClientWidth ?? 0) + 1);
-  expect(
-    r.offenders,
-    `${screen}: elements extend past the viewport:\n${r.offenders.join('\n')}`,
-  ).toEqual([]);
+  expect(r.offenders, `${screen}: elements extend past the viewport:\n${r.offenders.join('\n')}`).toEqual([]);
 }
 
 for (const width of WIDTHS) {

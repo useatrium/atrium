@@ -283,9 +283,7 @@ export function VoiceRecorder({
         >
           {previewPlaying ? <PauseIcon /> : <PlayIcon />}
         </button>
-        <span className="w-12 text-xs tabular-nums text-fg-secondary">
-          {formatDuration(preview.durationMs)}
-        </span>
+        <span className="w-12 text-xs tabular-nums text-fg-secondary">{formatDuration(preview.durationMs)}</span>
         <MiniWaveform peaks={visiblePeaks} />
         <button
           type="button"

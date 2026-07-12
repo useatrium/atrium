@@ -29,9 +29,7 @@ beforeEach(async () => {
   delete process.env.ATRIUM_FILE_GC_DAYS;
 });
 
-function storage(
-  onDelete: (key: string) => Promise<void> | void = () => {},
-): FileStorageGc {
+function storage(onDelete: (key: string) => Promise<void> | void = () => {}): FileStorageGc {
   return {
     deleteObject: async (key: string) => {
       deleteCalls.push(key);
@@ -113,10 +111,16 @@ describe('pruneOrphanFiles', () => {
     const file = await insertFile(8);
     const err = new Error('s3 unavailable');
 
-    const result = await pruneOrphanFiles(pool, storage(() => { throw err; }), {
-      days: 7,
-      logger,
-    });
+    const result = await pruneOrphanFiles(
+      pool,
+      storage(() => {
+        throw err;
+      }),
+      {
+        days: 7,
+        logger,
+      },
+    );
 
     expect(result).toEqual({ scanned: 1, deleted: 0, skippedOnError: 1 });
     expect(deleteCalls).toEqual([file.s3Key]);
@@ -127,10 +131,16 @@ describe('pruneOrphanFiles', () => {
     const file = await insertFile(8);
     const err = Object.assign(new Error('missing'), { name: 'NoSuchKey' });
 
-    const result = await pruneOrphanFiles(pool, storage(() => { throw err; }), {
-      days: 7,
-      logger,
-    });
+    const result = await pruneOrphanFiles(
+      pool,
+      storage(() => {
+        throw err;
+      }),
+      {
+        days: 7,
+        logger,
+      },
+    );
 
     expect(result).toEqual({ scanned: 1, deleted: 1, skippedOnError: 0 });
     expect(deleteCalls).toEqual([file.s3Key]);

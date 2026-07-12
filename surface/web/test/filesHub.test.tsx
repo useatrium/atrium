@@ -3,7 +3,13 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { FILES_CHANGED_EVENT_TYPE, filesChangedWorkspaceId, useWs, type HubFile, type WireEvent } from '@atrium/surface-client';
+import {
+  FILES_CHANGED_EVENT_TYPE,
+  filesChangedWorkspaceId,
+  useWs,
+  type HubFile,
+  type WireEvent,
+} from '@atrium/surface-client';
 import { queryEntryReferencesForHandles } from '../src/components/EntryReferencesChip';
 import { FilesHub } from '../src/sessions/FilesHub';
 import { ThemeProvider } from '../src/theme';
@@ -188,7 +194,9 @@ describe('FilesHub', () => {
   it('copies artifact entry links from the lightbox copy-link action', async () => {
     const writeText = vi.fn(async () => {});
     vi.stubGlobal('navigator', { clipboard: { writeText } });
-    fetchMock.mockResolvedValue(filesResponse([hubFile({ artifactId: 'art-1', name: 'result.md', path: 'result.md' })]));
+    fetchMock.mockResolvedValue(
+      filesResponse([hubFile({ artifactId: 'art-1', name: 'result.md', path: 'result.md' })]),
+    );
 
     render(
       <ThemeProvider>
@@ -232,9 +240,7 @@ describe('FilesHub', () => {
       </ThemeProvider>,
     );
 
-    await waitFor(() =>
-      expect(queryEntryReferencesMock).toHaveBeenCalledWith(['art_art-1', 'art_art-2']),
-    );
+    await waitFor(() => expect(queryEntryReferencesMock).toHaveBeenCalledWith(['art_art-1', 'art_art-2']));
     expect(await screen.findByRole('button', { name: '2 discussions' })).toBeTruthy();
     expect(screen.getAllByRole('button', { name: /discussion/ })).toHaveLength(1);
   });

@@ -2,8 +2,7 @@ import { expect, test, type APIRequestContext } from '@playwright/test';
 import { Pool } from 'pg';
 import { apiAs, apiURL, channelId, login, unique } from './helpers.js';
 
-const e2eDatabaseUrl =
-  process.env.E2E_DATABASE_URL ?? 'postgres://atrium:atrium@localhost:5433/atrium_e2e';
+const e2eDatabaseUrl = process.env.E2E_DATABASE_URL ?? 'postgres://atrium:atrium@localhost:5433/atrium_e2e';
 
 interface SeededSession {
   rootId: number;
@@ -27,22 +26,15 @@ interface ArtifactConflictDetail {
   markers: string;
 }
 
-async function seedSession(args: {
-  handle: string;
-  channelId: string;
-  title: string;
-}): Promise<SeededSession> {
+async function seedSession(args: { handle: string; channelId: string; title: string }): Promise<SeededSession> {
   const pool = new Pool({ connectionString: e2eDatabaseUrl });
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const user = await client.query<{ id: string }>('SELECT id FROM users WHERE handle = $1', [
-      args.handle,
+    const user = await client.query<{ id: string }>('SELECT id FROM users WHERE handle = $1', [args.handle]);
+    const channel = await client.query<{ workspace_id: string }>('SELECT workspace_id FROM channels WHERE id = $1', [
+      args.channelId,
     ]);
-    const channel = await client.query<{ workspace_id: string }>(
-      'SELECT workspace_id FROM channels WHERE id = $1',
-      [args.channelId],
-    );
     if (!user.rows[0] || !channel.rows[0]) throw new Error('missing e2e user or channel');
 
     const userId = user.rows[0].id;
@@ -74,10 +66,7 @@ async function seedSession(args: {
       ],
     );
     const rootId = Number(root.rows[0]!.id);
-    await client.query('UPDATE sessions SET thread_root_event_id = $1 WHERE id = $2', [
-      rootId,
-      sessionId,
-    ]);
+    await client.query('UPDATE sessions SET thread_root_event_id = $1 WHERE id = $2', [rootId, sessionId]);
     await client.query('COMMIT');
     return { rootId, sessionId };
   } catch (err) {
@@ -127,14 +116,8 @@ async function writeArtifact(
   return (await res.json()) as ArtifactWriteResult;
 }
 
-async function loadConflict(
-  ctx: APIRequestContext,
-  sessionId: string,
-  path: string,
-): Promise<ArtifactConflictDetail> {
-  const res = await ctx.get(
-    `${apiURL}/api/sessions/${sessionId}/artifacts/conflict?path=${encodeURIComponent(path)}`,
-  );
+async function loadConflict(ctx: APIRequestContext, sessionId: string, path: string): Promise<ArtifactConflictDetail> {
+  const res = await ctx.get(`${apiURL}/api/sessions/${sessionId}/artifacts/conflict?path=${encodeURIComponent(path)}`);
   if (!res.ok()) {
     throw new Error(`conflict load failed (${res.status()}): ${await res.text()}`);
   }

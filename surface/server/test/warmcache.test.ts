@@ -123,10 +123,9 @@ async function manifestRowCount(lockfileHash: string, kind: string): Promise<num
 }
 
 async function blobExists(sha256: string): Promise<boolean> {
-  const res = await pool.query<{ exists: boolean }>(
-    'SELECT EXISTS (SELECT 1 FROM cas_blobs WHERE sha256 = $1)',
-    [sha256],
-  );
+  const res = await pool.query<{ exists: boolean }>('SELECT EXISTS (SELECT 1 FROM cas_blobs WHERE sha256 = $1)', [
+    sha256,
+  ]);
   return res.rows[0]!.exists;
 }
 
@@ -304,10 +303,14 @@ describe('warm-cache internal endpoints', () => {
       sizeCapBytes: 1024 * 1024,
       batchLimit: 10,
     });
-    const swept = await sweepUnreferencedBlobs(pool, { deleteObject: vi.fn(async (_key: string) => {}) }, {
-      graceMs: 24 * 3_600_000,
-      limit: 10,
-    });
+    const swept = await sweepUnreferencedBlobs(
+      pool,
+      { deleteObject: vi.fn(async (_key: string) => {}) },
+      {
+        graceMs: 24 * 3_600_000,
+        limit: 10,
+      },
+    );
 
     expect(evicted).toEqual({ evicted: 1 });
     expect(await manifestRowCount('lockstale', 'npm')).toBe(0);

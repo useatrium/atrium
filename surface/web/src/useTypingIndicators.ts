@@ -3,20 +3,12 @@ import type { UserRef } from '@atrium/surface-client';
 
 type TypingEntry = { user: UserRef; until: number };
 
-export function useTypingIndicators({
-  activeChannelId,
-  meId,
-}: {
-  activeChannelId: string | null;
-  meId: string;
-}) {
+export function useTypingIndicators({ activeChannelId, meId }: { activeChannelId: string | null; meId: string }) {
   const activeChannelIdRef = useRef(activeChannelId);
   activeChannelIdRef.current = activeChannelId;
 
   const [typing, setTyping] = useState<Record<string, TypingEntry>>({});
-  const [sessionTyping, setSessionTyping] = useState<Record<string, Record<string, TypingEntry>>>(
-    {},
-  );
+  const [sessionTyping, setSessionTyping] = useState<Record<string, Record<string, TypingEntry>>>({});
 
   const onTyping = useCallback(
     (channelId: string, user: UserRef) => {

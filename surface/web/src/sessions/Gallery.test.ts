@@ -114,7 +114,9 @@ describe('Gallery tiles', () => {
     render(createElement(Gallery, { workspaceId: WORKSPACE_ID }));
 
     expect(await screen.findByText(/First line of the brief/)).toBeTruthy();
-    expect(fetchMock.mock.calls.some(([input]) => requestPath(input) === '/api/files/artifact/art_markdown/content')).toBe(true);
+    expect(
+      fetchMock.mock.calls.some(([input]) => requestPath(input) === '/api/files/artifact/art_markdown/content'),
+    ).toBe(true);
   });
 
   it('keeps the type chip fallback for oversized text-like files', async () => {
@@ -136,7 +138,9 @@ describe('Gallery tiles', () => {
 
     expect(await screen.findByText('large.md')).toBeTruthy();
     expect(screen.getByText('MD')).toBeTruthy();
-    expect(fetchMock.mock.calls.some(([input]) => requestPath(input) === '/api/files/artifact/art_large_markdown/content')).toBe(false);
+    expect(
+      fetchMock.mock.calls.some(([input]) => requestPath(input) === '/api/files/artifact/art_large_markdown/content'),
+    ).toBe(false);
   });
 });
 

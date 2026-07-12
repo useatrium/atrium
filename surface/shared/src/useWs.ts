@@ -1,11 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { Option, Schema } from 'effect';
-import {
-  CallUserRefSchema,
-  CallWireSchema,
-  isCallEvent,
-  type CallEvent,
-} from './calls';
+import { CallUserRefSchema, CallWireSchema, isCallEvent, type CallEvent } from './calls';
 import { normalizePrefs, type UserPrefs } from './prefs';
 import { UserRefSchema, WireEventSchema, type UserRef, type WireEvent } from './timeline';
 
@@ -70,118 +65,152 @@ const WsFrameSeqSchema = {
   seq: Schema.optionalWith(Schema.Unknown, { exact: true }),
 };
 
-const WsEventFrameSchema = Schema.mutable(Schema.Struct({
-  type: Schema.Literal('event'),
-  event: WireEventSchema,
-  ...WsFrameSeqSchema,
-}));
+const WsEventFrameSchema = Schema.mutable(
+  Schema.Struct({
+    type: Schema.Literal('event'),
+    event: WireEventSchema,
+    ...WsFrameSeqSchema,
+  }),
+);
 
-const WsPresenceFrameSchema = Schema.mutable(Schema.Struct({
-  type: Schema.Literal('presence'),
-  channelId: Schema.String,
-  users: Schema.mutable(Schema.Array(UserRefSchema)),
-  ...WsFrameSeqSchema,
-}));
+const WsPresenceFrameSchema = Schema.mutable(
+  Schema.Struct({
+    type: Schema.Literal('presence'),
+    channelId: Schema.String,
+    users: Schema.mutable(Schema.Array(UserRefSchema)),
+    ...WsFrameSeqSchema,
+  }),
+);
 
-const WsChannelTypingFrameSchema = Schema.mutable(Schema.Struct({
-  type: Schema.Literal('typing'),
-  channelId: Schema.String,
-  user: UserRefSchema,
-  ...WsFrameSeqSchema,
-}));
+const WsChannelTypingFrameSchema = Schema.mutable(
+  Schema.Struct({
+    type: Schema.Literal('typing'),
+    channelId: Schema.String,
+    user: UserRefSchema,
+    ...WsFrameSeqSchema,
+  }),
+);
 
-const WsSessionTypingFrameSchema = Schema.mutable(Schema.Struct({
-  type: Schema.Literal('typing'),
-  sessionId: Schema.String,
-  user: UserRefSchema,
-  ...WsFrameSeqSchema,
-}));
+const WsSessionTypingFrameSchema = Schema.mutable(
+  Schema.Struct({
+    type: Schema.Literal('typing'),
+    sessionId: Schema.String,
+    user: UserRefSchema,
+    ...WsFrameSeqSchema,
+  }),
+);
 
-const WsReadFrameSchema = Schema.mutable(Schema.Struct({
-  type: Schema.Literal('read'),
-  channelId: Schema.String,
-  lastReadEventId: Schema.Number,
-  ...WsFrameSeqSchema,
-}));
+const WsReadFrameSchema = Schema.mutable(
+  Schema.Struct({
+    type: Schema.Literal('read'),
+    channelId: Schema.String,
+    lastReadEventId: Schema.Number,
+    ...WsFrameSeqSchema,
+  }),
+);
 
-const WsMutedFrameSchema = Schema.mutable(Schema.Struct({
-  type: Schema.Literal('muted'),
-  channelId: Schema.String,
-  muted: Schema.Boolean,
-  ...WsFrameSeqSchema,
-}));
+const WsMutedFrameSchema = Schema.mutable(
+  Schema.Struct({
+    type: Schema.Literal('muted'),
+    channelId: Schema.String,
+    muted: Schema.Boolean,
+    ...WsFrameSeqSchema,
+  }),
+);
 
-const WsChannelPinnedFrameSchema = Schema.mutable(Schema.Struct({
-  type: Schema.Literal('channel-pinned'),
-  channelId: Schema.String,
-  pinned: Schema.Boolean,
-  ...WsFrameSeqSchema,
-}));
+const WsChannelPinnedFrameSchema = Schema.mutable(
+  Schema.Struct({
+    type: Schema.Literal('channel-pinned'),
+    channelId: Schema.String,
+    pinned: Schema.Boolean,
+    ...WsFrameSeqSchema,
+  }),
+);
 
-const WsSessionPinnedFrameSchema = Schema.mutable(Schema.Struct({
-  type: Schema.Literal('session-pinned'),
-  sessionId: Schema.String,
-  pinned: Schema.Boolean,
-  ...WsFrameSeqSchema,
-}));
+const WsSessionPinnedFrameSchema = Schema.mutable(
+  Schema.Struct({
+    type: Schema.Literal('session-pinned'),
+    sessionId: Schema.String,
+    pinned: Schema.Boolean,
+    ...WsFrameSeqSchema,
+  }),
+);
 
-const WsChannelLeftFrameSchema = Schema.mutable(Schema.Struct({
-  type: Schema.Literal('channel-left'),
-  channelId: Schema.String,
-  ...WsFrameSeqSchema,
-}));
+const WsChannelLeftFrameSchema = Schema.mutable(
+  Schema.Struct({
+    type: Schema.Literal('channel-left'),
+    channelId: Schema.String,
+    ...WsFrameSeqSchema,
+  }),
+);
 
-const WsPrefsFrameSchema = Schema.mutable(Schema.Struct({
-  type: Schema.Literal('prefs'),
-  prefs: Schema.Unknown,
-  ...WsFrameSeqSchema,
-}));
+const WsPrefsFrameSchema = Schema.mutable(
+  Schema.Struct({
+    type: Schema.Literal('prefs'),
+    prefs: Schema.Unknown,
+    ...WsFrameSeqSchema,
+  }),
+);
 
-const WsPongFrameSchema = Schema.mutable(Schema.Struct({
-  type: Schema.Literal('pong'),
-  t: Schema.Number,
-  ...WsFrameSeqSchema,
-}));
+const WsPongFrameSchema = Schema.mutable(
+  Schema.Struct({
+    type: Schema.Literal('pong'),
+    t: Schema.Number,
+    ...WsFrameSeqSchema,
+  }),
+);
 
-const WsCallRingingFrameSchema = Schema.mutable(Schema.Struct({
-  type: Schema.Literal('call.ringing'),
-  call: CallWireSchema,
-  ...WsFrameSeqSchema,
-}));
+const WsCallRingingFrameSchema = Schema.mutable(
+  Schema.Struct({
+    type: Schema.Literal('call.ringing'),
+    call: CallWireSchema,
+    ...WsFrameSeqSchema,
+  }),
+);
 
-const WsCallAcceptedFrameSchema = Schema.mutable(Schema.Struct({
-  type: Schema.Literal('call.accepted'),
-  callId: Schema.String,
-  user: CallUserRefSchema,
-  ...WsFrameSeqSchema,
-}));
+const WsCallAcceptedFrameSchema = Schema.mutable(
+  Schema.Struct({
+    type: Schema.Literal('call.accepted'),
+    callId: Schema.String,
+    user: CallUserRefSchema,
+    ...WsFrameSeqSchema,
+  }),
+);
 
-const WsCallDeclinedFrameSchema = Schema.mutable(Schema.Struct({
-  type: Schema.Literal('call.declined'),
-  callId: Schema.String,
-  userId: Schema.String,
-  ...WsFrameSeqSchema,
-}));
+const WsCallDeclinedFrameSchema = Schema.mutable(
+  Schema.Struct({
+    type: Schema.Literal('call.declined'),
+    callId: Schema.String,
+    userId: Schema.String,
+    ...WsFrameSeqSchema,
+  }),
+);
 
-const WsCallParticipantJoinedFrameSchema = Schema.mutable(Schema.Struct({
-  type: Schema.Literal('call.participant_joined'),
-  callId: Schema.String,
-  user: CallUserRefSchema,
-  ...WsFrameSeqSchema,
-}));
+const WsCallParticipantJoinedFrameSchema = Schema.mutable(
+  Schema.Struct({
+    type: Schema.Literal('call.participant_joined'),
+    callId: Schema.String,
+    user: CallUserRefSchema,
+    ...WsFrameSeqSchema,
+  }),
+);
 
-const WsCallParticipantLeftFrameSchema = Schema.mutable(Schema.Struct({
-  type: Schema.Literal('call.participant_left'),
-  callId: Schema.String,
-  userId: Schema.String,
-  ...WsFrameSeqSchema,
-}));
+const WsCallParticipantLeftFrameSchema = Schema.mutable(
+  Schema.Struct({
+    type: Schema.Literal('call.participant_left'),
+    callId: Schema.String,
+    userId: Schema.String,
+    ...WsFrameSeqSchema,
+  }),
+);
 
-const WsCallEndedFrameSchema = Schema.mutable(Schema.Struct({
-  type: Schema.Literal('call.ended'),
-  callId: Schema.String,
-  ...WsFrameSeqSchema,
-}));
+const WsCallEndedFrameSchema = Schema.mutable(
+  Schema.Struct({
+    type: Schema.Literal('call.ended'),
+    callId: Schema.String,
+    ...WsFrameSeqSchema,
+  }),
+);
 
 const WsFrameSchema = Schema.Union(
   WsEventFrameSchema,
@@ -219,11 +248,7 @@ export function resetWsSequenceTracker(tracker: WsSequenceTracker): void {
   tracker.disabled = false;
 }
 
-export function handleWsFrameSequence(
-  tracker: WsSequenceTracker,
-  frame: { seq?: unknown },
-  onGap: () => void,
-): void {
+export function handleWsFrameSequence(tracker: WsSequenceTracker, frame: { seq?: unknown }, onGap: () => void): void {
   if (tracker.disabled) return;
   if (typeof frame.seq !== 'number' || !Number.isInteger(frame.seq) || frame.seq < 1) {
     tracker.disabled = true;
@@ -309,7 +334,7 @@ export function useWs(
       clearTimers();
       cbRef.current.onStatus('connecting');
       const url = urlRef.current;
-      const target = typeof url === 'function' ? url() : url ?? defaultUrl();
+      const target = typeof url === 'function' ? url() : (url ?? defaultUrl());
       const current = new WebSocket(target);
       ws = current;
       socketRef.current = current;
@@ -344,17 +369,10 @@ export function useWs(
         handleWsFrameSequence(seqTracker, msg, () => cbRef.current.onOpen());
         if (isCallEvent(msg)) cbRef.current.onCall?.(msg);
         else if (msg.type === 'event' && msg.event) cbRef.current.onEvent(msg.event);
-        else if (msg.type === 'presence' && msg.channelId)
-          cbRef.current.onPresence(msg.channelId, msg.users ?? []);
-        else if (msg.type === 'typing' && 'sessionId' in msg)
-          cbRef.current.onSessionTyping?.(msg.sessionId, msg.user);
-        else if (msg.type === 'typing' && 'channelId' in msg)
-          cbRef.current.onTyping?.(msg.channelId, msg.user);
-        else if (
-          msg.type === 'read' &&
-          msg.channelId &&
-          typeof msg.lastReadEventId === 'number'
-        )
+        else if (msg.type === 'presence' && msg.channelId) cbRef.current.onPresence(msg.channelId, msg.users ?? []);
+        else if (msg.type === 'typing' && 'sessionId' in msg) cbRef.current.onSessionTyping?.(msg.sessionId, msg.user);
+        else if (msg.type === 'typing' && 'channelId' in msg) cbRef.current.onTyping?.(msg.channelId, msg.user);
+        else if (msg.type === 'read' && msg.channelId && typeof msg.lastReadEventId === 'number')
           cbRef.current.onRead?.(msg.channelId, msg.lastReadEventId);
         else if (msg.type === 'muted' && msg.channelId && typeof msg.muted === 'boolean')
           cbRef.current.onMuted?.(msg.channelId, msg.muted);
@@ -362,10 +380,8 @@ export function useWs(
           cbRef.current.onChannelPinned?.(msg.channelId, msg.pinned);
         else if (msg.type === 'session-pinned' && msg.sessionId && typeof msg.pinned === 'boolean')
           cbRef.current.onSessionPinned?.(msg.sessionId, msg.pinned);
-        else if (msg.type === 'channel-left' && msg.channelId)
-          cbRef.current.onChannelLeft?.(msg.channelId);
-        else if (msg.type === 'prefs' && msg.prefs)
-          cbRef.current.onPrefs?.(normalizePrefs(msg.prefs));
+        else if (msg.type === 'channel-left' && msg.channelId) cbRef.current.onChannelLeft?.(msg.channelId);
+        else if (msg.type === 'prefs' && msg.prefs) cbRef.current.onPrefs?.(normalizePrefs(msg.prefs));
       };
 
       current.onclose = () => {

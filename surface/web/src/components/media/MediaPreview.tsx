@@ -20,11 +20,19 @@ export function MediaPreview({ file, variant }: { file: PreviewFile; variant: Me
   if (kind === 'video') return <VideoRenderer file={file} variant={variant} />;
   if (kind === 'audio') return <AudioRenderer file={file} variant={variant} />;
   if (kind === 'document') {
-    return isPdfFile(file) ? <PdfRenderer file={file} variant={variant} /> : <OpaqueRenderer file={file} variant={variant} />;
+    return isPdfFile(file) ? (
+      <PdfRenderer file={file} variant={variant} />
+    ) : (
+      <OpaqueRenderer file={file} variant={variant} />
+    );
   }
   if (kind === 'data') return <DataRenderer file={file} variant={variant} />;
   if (kind === 'text') {
-    return isMarkdownFile(file) ? <MarkdownRenderer file={file} variant={variant} /> : <CodeRenderer file={file} variant={variant} />;
+    return isMarkdownFile(file) ? (
+      <MarkdownRenderer file={file} variant={variant} />
+    ) : (
+      <CodeRenderer file={file} variant={variant} />
+    );
   }
   if (kind === 'code') return <CodeRenderer file={file} variant={variant} />;
   return <OpaqueRenderer file={file} variant={variant} />;

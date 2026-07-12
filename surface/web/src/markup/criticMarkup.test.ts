@@ -56,7 +56,9 @@ describe('serializeToCriticMarkup', () => {
     state = withSelection(state, 'beta');
     state = applyCommand(state, applyComment('Needs source.', 'c-test'));
 
-    expect(serializeToCriticMarkup(state.doc, { commentAuthor: 'agent' })).toBe('Alpha {==beta==}{>>@agent: Needs source.<<}.');
+    expect(serializeToCriticMarkup(state.doc, { commentAuthor: 'agent' })).toBe(
+      'Alpha {==beta==}{>>@agent: Needs source.<<}.',
+    );
   });
 
   it('serializes multi-paragraph suggestions without dropping structure', () => {
@@ -64,7 +66,9 @@ describe('serializeToCriticMarkup', () => {
     state = withRange(state, 7, 45);
     state = applyCommand(state, applySuggestEdit('combined replacement'));
 
-    expect(serializeToCriticMarkup(state.doc)).toBe('First {--paragraph here.--}\n\n{~~Second paragraph here~>combined replacement~~}.');
+    expect(serializeToCriticMarkup(state.doc)).toBe(
+      'First {--paragraph here.--}\n\n{~~Second paragraph here~>combined replacement~~}.',
+    );
   });
 
   it('serializes a whole code-fence comment as a block comment', () => {

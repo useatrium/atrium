@@ -108,9 +108,7 @@ describe('useSessionActions', () => {
         payload: { sessionId: 'session-2' },
       }),
     );
-    expect(clearFailedCancel.mock.invocationCallOrder[0]).toBeLessThan(
-      enqueueOp.mock.invocationCallOrder[0]!,
-    );
+    expect(clearFailedCancel.mock.invocationCallOrder[0]).toBeLessThan(enqueueOp.mock.invocationCallOrder[0]!);
   });
 
   it('queues session question answers without touching failure state', async () => {

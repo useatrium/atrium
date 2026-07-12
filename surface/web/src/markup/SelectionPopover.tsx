@@ -27,13 +27,7 @@ export interface SelectionPopoverProps {
   onStrike: () => void;
 }
 
-export function SelectionPopover({
-  state,
-  onModeChange,
-  onSuggest,
-  onComment,
-  onStrike,
-}: SelectionPopoverProps) {
+export function SelectionPopover({ state, onModeChange, onSuggest, onComment, onStrike }: SelectionPopoverProps) {
   const [replacement, setReplacement] = useState('');
   const [comment, setComment] = useState('');
   const popoverRef = useRef<HTMLDivElement | null>(null);

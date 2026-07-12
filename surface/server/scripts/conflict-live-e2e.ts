@@ -41,15 +41,23 @@ async function main() {
 
   const write = (path: string, text: string, baseSeq?: number) =>
     writeBackArtifact({
-      pool, storage, channelId: channel.id, sessionId, path,
-      bytes: Buffer.from(text, 'utf8'), mime: 'text/markdown',
-      author: `human:${user.rows[0]!.id}`, ...(baseSeq == null ? {} : { baseSeq }),
+      pool,
+      storage,
+      channelId: channel.id,
+      sessionId,
+      path,
+      bytes: Buffer.from(text, 'utf8'),
+      mime: 'text/markdown',
+      author: `human:${user.rows[0]!.id}`,
+      ...(baseSeq == null ? {} : { baseSeq }),
     });
 
   console.log('\n[1] create v1 + mark mergeable-doc');
   const v1 = await write('plan.md', 'intro\nstep two\nconclusion\n');
   ok(v1.ok && v1.seq === 1, 'v1 created (seq 1)');
-  await pool.query(`UPDATE artifacts SET merge_class='mergeable-doc' WHERE session_id=$1 AND path='plan.md'`, [sessionId]);
+  await pool.query(`UPDATE artifacts SET merge_class='mergeable-doc' WHERE session_id=$1 AND path='plan.md'`, [
+    sessionId,
+  ]);
 
   console.log('[2] writer A edits off base 1 (clean → v2)');
   const a = await write('plan.md', 'intro\nstep two — ALICE\nconclusion\n', 1);

@@ -63,10 +63,7 @@ function parseIntent(value: unknown): FeedbackIntent | null | undefined {
   return null;
 }
 
-export async function registerMarkupFeedbackRoutes(
-  app: FastifyInstance,
-  deps: MarkupFeedbackRouteDeps,
-): Promise<void> {
+export async function registerMarkupFeedbackRoutes(app: FastifyInstance, deps: MarkupFeedbackRouteDeps): Promise<void> {
   const { pool, sessionRuns, requireUser, optionalOpId, runMutation, publishEvent } = deps;
   const ledger = new ArtifactLedger(pool);
 
@@ -130,9 +127,7 @@ export async function registerMarkupFeedbackRoutes(
       return reply.code(410).send({ error: 'gone' });
     }
     if (current.isText !== true) {
-      return reply
-        .code(415)
-        .send({ error: 'binary_not_editable', mediaKind: current.mediaKind ?? 'binary' });
+      return reply.code(415).send({ error: 'binary_not_editable', mediaKind: current.mediaKind ?? 'binary' });
     }
 
     if (applyMode) {

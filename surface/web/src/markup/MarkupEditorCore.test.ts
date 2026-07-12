@@ -108,15 +108,19 @@ describe('MarkupEditorCore suggesting transactions', () => {
     expect(serializeToCriticMarkup(state.doc)).toBe('Hello {~~world~>there~~}.');
 
     let nextState = state;
-    expect(undo(state, (undoTransaction) => {
-      nextState = nextState.apply(undoTransaction);
-    })).toBe(true);
+    expect(
+      undo(state, (undoTransaction) => {
+        nextState = nextState.apply(undoTransaction);
+      }),
+    ).toBe(true);
     state = nextState;
     expect(serializeToCriticMarkup(state.doc)).toBe('Hello world.');
 
-    expect(redo(state, (redoTransaction) => {
-      nextState = nextState.apply(redoTransaction);
-    })).toBe(true);
+    expect(
+      redo(state, (redoTransaction) => {
+        nextState = nextState.apply(redoTransaction);
+      }),
+    ).toBe(true);
     state = nextState;
     expect(serializeToCriticMarkup(state.doc)).toBe('Hello {~~world~>there~~}.');
   });

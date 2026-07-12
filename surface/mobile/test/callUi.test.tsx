@@ -23,15 +23,7 @@ it('renders a compact rejoin action for a recovered call', () => {
     participants: [{ id: 'user-1', handle: 'gary', displayName: 'Gary' }],
   };
 
-  renderUI(
-    <JoinCallStrip
-      call={call}
-      meId="user-1"
-      channelName="Engineering"
-      joining={false}
-      onJoin={onJoin}
-    />,
-  );
+  renderUI(<JoinCallStrip call={call} meId="user-1" channelName="Engineering" joining={false} onJoin={onJoin} />);
 
   expect(screen.getByText('Live call')).toBeInTheDocument();
   expect(screen.getByText('Engineering')).toBeInTheDocument();

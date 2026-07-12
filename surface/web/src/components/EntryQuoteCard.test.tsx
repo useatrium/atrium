@@ -3,10 +3,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EntryInlineChip, EntryQuoteCard } from './EntryQuoteCard';
-import {
-  clearEntryResolveCacheForTests,
-  type ResolvedEntryQuote,
-} from '../lib/entryLinks';
+import { clearEntryResolveCacheForTests, type ResolvedEntryQuote } from '../lib/entryLinks';
 
 const resolveEntryMock = vi.hoisted(() => vi.fn());
 
@@ -117,17 +114,19 @@ describe('entry links', () => {
       vi.fn().mockResolvedValue({
         ok: true,
         headers,
-        text: vi.fn().mockResolvedValue(
-          [
-            '---',
-            'title: "Edited memo"',
-            '---',
-            '',
-            '# Memo',
-            'Keep {--old--}{++new++} wording.',
-            '{==Check this==}{>>needs source<<}',
-          ].join('\n'),
-        ),
+        text: vi
+          .fn()
+          .mockResolvedValue(
+            [
+              '---',
+              'title: "Edited memo"',
+              '---',
+              '',
+              '# Memo',
+              'Keep {--old--}{++new++} wording.',
+              '{==Check this==}{>>needs source<<}',
+            ].join('\n'),
+          ),
       }),
     );
 
@@ -189,5 +188,4 @@ describe('entry links', () => {
     expect(screen.queryByText('markup')).toBeNull();
     expect(screen.queryByRole('button', { name: /Show all changes/ })).toBeNull();
   });
-
 });
