@@ -124,7 +124,9 @@ function usePaneWidth(config: PaneWidthConfig): {
           ? clamp(
               config,
               drag.current.startWidth +
-                (config.dragDirection === 'right' ? ev.clientX - drag.current.startX : drag.current.startX - ev.clientX),
+                (config.dragDirection === 'right'
+                  ? ev.clientX - drag.current.startX
+                  : drag.current.startX - ev.clientX),
             )
           : null;
       const onMove = (ev: globalThis.PointerEvent) => {
