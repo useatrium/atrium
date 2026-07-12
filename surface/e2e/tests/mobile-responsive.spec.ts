@@ -11,6 +11,7 @@ import {
   channelId,
   createChannel,
   login,
+  loginViaForm,
   postMessage,
   postWithAttachment,
   unique,
@@ -200,7 +201,7 @@ for (const width of WIDTHS) {
       await expect(page.getByPlaceholder('gary', { exact: true })).toBeVisible();
       await expectNoHScroll(page, 'login');
 
-      await login(page, handle, 'Mobile Gate');
+      await loginViaForm(page, handle, 'Mobile Gate');
 
       // Seed a channel with content that stresses wrapping.
       const setup = await apiAs(unique('mobgate-seed'), 'Seed');

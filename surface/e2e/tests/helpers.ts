@@ -22,6 +22,20 @@ export function uniqueChannel(prefix: string): string {
 }
 
 export async function login(page: Page, handle: string, displayName = handle): Promise<void> {
+  const response = await page.context().request.post('/auth/login', {
+    data: { handle, displayName },
+  });
+  expect(response.ok(), `POST /auth/login (${response.status()})`).toBeTruthy();
+  await page.goto('/');
+  await expect(page.getByRole('heading', { name: '# general' })).toBeVisible();
+  await expect(page.getByRole('status', { name: 'connection: open' })).toBeVisible();
+}
+
+export async function loginViaForm(
+  page: Page,
+  handle: string,
+  displayName = handle,
+): Promise<void> {
   await page.goto('/');
   // Handle sign-in is the primary path when AUTH_OPEN is on (the e2e default):
   // the form is expanded by default (no "dev login" disclosure anymore).
