@@ -242,6 +242,7 @@ export function ChatProvider({ session, children }: { session: Session; children
   const resolveArtifactContent = useMemo(() => createArtifactContentResolver(session), [session]);
 
   const [state, dispatch] = useReducer(appReducer, initialAppState);
+  const mountedRef = useRef(false);
   const stateRef = useRef(state);
   stateRef.current = state;
   // Which channel screen is actually visible (null on the list screen).
@@ -268,6 +269,13 @@ export function ChatProvider({ session, children }: { session: Session; children
   const calls = useCall({ api, me, channels: state.channels, wsStatus: state.wsStatus });
   const refreshActiveCalls = calls.refreshActiveCalls;
   const refreshedCallsAfterChannelsLoadRef = useRef(false);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   const cacheMute = useCallback((channelId: string, muted: boolean) => {
     const channels = stateRef.current.channels.map((c) => (c.id === channelId ? { ...c, muted } : c));
@@ -817,6 +825,7 @@ export function ChatProvider({ session, children }: { session: Session; children
     api
       .channels()
       .then(({ channels }) => {
+        if (!mountedRef.current) return;
         setChannelsLoaded(true);
         dispatch({ type: 'channels-loaded', channels });
         void eventCache.saveChannels(channels).catch((err: unknown) => {
@@ -827,6 +836,7 @@ export function ChatProvider({ session, children }: { session: Session; children
         if (!focusedRef.current) dispatch({ type: 'select-channel', channelId: null });
       })
       .catch((err: unknown) => {
+        if (!mountedRef.current) return;
         setChannelsError(err instanceof Error ? err.message : 'Could not load channels');
         onApiError(err);
       });

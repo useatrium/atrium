@@ -63,4 +63,19 @@ describe('mobile tab attention semantics', () => {
 
     expect(getSessionNavigationCounts({ asking, authenticating, failed })).toEqual({ live: 2, attention: 3 });
   });
+
+  it('does not announce or badge archived sessions', () => {
+    const archivedRunning = session({ id: 'archived-running', archivedAt: '2026-07-11T01:00:00.000Z' });
+    const archivedFailed = session({
+      id: 'archived-failed',
+      status: 'failed',
+      archivedAt: '2026-07-11T01:01:00.000Z',
+    });
+    const visibleRunning = session({ id: 'visible-running' });
+
+    expect(getSessionNavigationCounts({ archivedRunning, archivedFailed, visibleRunning })).toEqual({
+      live: 1,
+      attention: 0,
+    });
+  });
 });

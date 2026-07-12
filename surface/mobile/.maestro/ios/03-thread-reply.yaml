@@ -8,6 +8,7 @@ tags: [ios, power-user]
     visible: ".*Message #general.*"
     timeout: 10000
 - tapOn: ".*Message #general.*"
+- eraseText
 - inputText: "Maestro iOS thread probe"
 - tapOn: "Send message"
 - extendedWaitUntil:
@@ -18,6 +19,7 @@ tags: [ios, power-user]
 - tapOn: "Reply in thread"
 - assertVisible: "Thread"
 - tapOn: ".*Reply in thread.*"
+- eraseText
 - inputText: "validated by iOS Maestro"
 - tapOn: "Send message"
 - assertVisible: ".*validated by iOS Maestro.*"

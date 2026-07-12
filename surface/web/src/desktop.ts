@@ -31,6 +31,7 @@ const bridge: DesktopBridge | null =
     : null;
 
 export const isDesktop = bridge !== null;
+export const isMacDesktop = bridge?.platform === 'darwin';
 
 let token: string | null = bridge?.session?.token ?? null;
 

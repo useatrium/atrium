@@ -8,7 +8,9 @@ import { navigationTargetSize, TabIcon } from '../../../src/components/PlatformT
 import { useTheme } from '../../../src/lib/theme';
 
 export function getSessionNavigationCounts(sessions: Record<string, Session | undefined>) {
-  const values = Object.values(sessions).filter((session): session is Session => !!session);
+  const values = Object.values(sessions).filter(
+    (session): session is Session => !!session && session.archivedAt === null,
+  );
   return {
     live: values.filter((session) => !isTerminalSessionStatus(session.status)).length,
     attention: values.filter((session) => sessionAttentionKind(session) !== null).length,
@@ -32,7 +34,7 @@ export default function TabsLayout() {
       screenOptions={{
         headerShown: false,
         tabBarPosition: expandedAndroid ? 'left' : 'bottom',
-        tabBarVariant: Platform.OS === 'android' ? 'material' : 'uikit',
+        tabBarVariant: expandedAndroid ? 'material' : 'uikit',
         tabBarLabelPosition: expandedAndroid ? 'beside-icon' : 'below-icon',
         tabBarActiveTintColor: colors.accent,
         tabBarInactiveTintColor: colors.textSecondary,
