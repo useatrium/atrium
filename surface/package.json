@@ -10,8 +10,8 @@
   "scripts": {
     "dev": "concurrently -n server,web -c blue,green \"pnpm --filter @atrium/server dev\" \"pnpm --filter @atrium/web dev\"",
     "e2e": "pnpm --filter @atrium/e2e e2e",
-    "lint": "biome lint . --diagnostic-level=error",
-    "lint:fix": "biome lint --write .",
+    "lint": "biome check . --diagnostic-level=error",
+    "lint:fix": "biome check --write .",
     "migrate": "pnpm --filter @atrium/server migrate",
     "check:migrations": "node server/scripts/check-migration-filenames.mjs",
     "test": "pnpm -r test",
