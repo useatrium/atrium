@@ -27,7 +27,7 @@ export default function TabsLayout() {
       screenOptions={{
         headerShown: false,
         tabBarPosition: expandedAndroid ? 'left' : 'bottom',
-        tabBarVariant: expandedAndroid ? 'material' : 'uikit',
+        tabBarVariant: Platform.OS === 'android' ? 'material' : 'uikit',
         tabBarLabelPosition: expandedAndroid ? 'beside-icon' : 'below-icon',
         tabBarActiveTintColor: colors.accent,
         tabBarInactiveTintColor: colors.textSecondary,
@@ -55,11 +55,19 @@ export default function TabsLayout() {
     >
       <Tabs.Screen
         name="index"
-        options={{ title: 'Chat', tabBarAccessibilityLabel: 'Chat', tabBarIcon: ({ color }) => <TabIcon name="chatbubbles" color={color} /> }}
+        options={{
+          title: 'Chat',
+          tabBarAccessibilityLabel: 'Chat',
+          tabBarIcon: ({ color }) => <TabIcon name="chatbubbles" color={color} />,
+        }}
       />
       <Tabs.Screen
         name="files"
-        options={{ title: 'Files', tabBarAccessibilityLabel: 'Files', tabBarIcon: ({ color }) => <TabIcon name="folder-open" color={color} /> }}
+        options={{
+          title: 'Files',
+          tabBarAccessibilityLabel: 'Files',
+          tabBarIcon: ({ color }) => <TabIcon name="folder-open" color={color} />,
+        }}
       />
       <Tabs.Screen
         name="sessions"
@@ -80,7 +88,11 @@ export default function TabsLayout() {
       />
       <Tabs.Screen
         name="search"
-        options={{ title: 'Search', tabBarAccessibilityLabel: 'Search', tabBarIcon: ({ color }) => <TabIcon name="search" color={color} /> }}
+        options={{
+          title: 'Search',
+          tabBarAccessibilityLabel: 'Search',
+          tabBarIcon: ({ color }) => <TabIcon name="search" color={color} />,
+        }}
       />
     </Tabs>
   );

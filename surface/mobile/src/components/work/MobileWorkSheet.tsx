@@ -4,7 +4,7 @@
 // behind a tab bar, the RN counterpart of web's WorkDrawer.
 import { useRef, type ReactNode } from 'react';
 import { Ionicons } from '@expo/vector-icons';
-import { Modal, Pressable, Text, View } from 'react-native';
+import { Modal, Pressable, ScrollView, Text, View } from 'react-native';
 import { useModalAccessibilityFocus } from '../../lib/accessibility';
 import { font, space, useTheme } from '../../lib/theme';
 
@@ -46,10 +46,15 @@ export function MobileWorkSheet({
             borderBottomWidth: 1,
             borderBottomColor: colors.border,
             paddingHorizontal: space.sm,
-            height: 48,
+            minHeight: 48,
           }}
         >
-          <View style={{ flexDirection: 'row', flex: 1, alignItems: 'center' }}>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={{ flex: 1 }}
+            contentContainerStyle={{ alignItems: 'stretch' }}
+          >
             {tabs.map((t) => {
               const isActive = t.key === active?.key;
               return (
@@ -83,7 +88,7 @@ export function MobileWorkSheet({
                 </Pressable>
               );
             })}
-          </View>
+          </ScrollView>
           <Pressable
             onPress={onClose}
             accessibilityRole="button"

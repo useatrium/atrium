@@ -7,7 +7,7 @@ This contract turns the audit into shared implementation decisions. Parallel lan
 **Communicate → attend → direct work → review outcomes.**
 
 - **Chat** is where people establish context, discuss work, and start delegation.
-- **Attention** contains only unseen or unresolved items that merit human awareness or intervention: mentions, DMs, agent questions, authentication problems, seat requests, failures or stalls, and newly completed work.
+- **Attention** contains unseen or unresolved items that merit human awareness or intervention: mentions, DMs, agent questions, authentication problems, seat requests, failures or stalls. Recent completions remain visible in its chronological feed, but do not create an urgency badge by themselves.
 - **Agents** is the authoritative global overview of active and historical delegated work. Normal running work belongs here, not in Attention.
 - **Session detail** is the contextual view of one delegated task. It can be reached from Chat, Attention, Agents, and an outcome, but does not create another global navigation model.
 - **Outcomes** connect the request to decisions, changes, files, artifacts, unresolved issues, and the next useful action. Completion is more than a terminal transcript state.
@@ -22,7 +22,7 @@ This contract turns the audit into shared implementation decisions. Parallel lan
 | Authentication required | Yes | Yes | Yes until seen/resolved |
 | Seat request | Yes | Yes | Yes until seen/resolved |
 | Failed or stalled | Yes | Yes | Yes until seen/resolved |
-| Newly completed | Yes | Historical | Yes until seen |
+| Newly completed | Feed only | Historical | No; completion is not an unresolved problem |
 | Completed and seen | No | Historical | No |
 | Mention or DM | Yes | n/a | Yes until seen |
 

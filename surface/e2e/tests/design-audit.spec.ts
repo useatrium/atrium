@@ -39,6 +39,10 @@ async function expectNoDocumentOverflow(page: Page, label: string): Promise<void
 }
 
 async function expectVisibleFocus(locator: Locator): Promise<void> {
+  // Enter keyboard modality before returning focus to the target. A bare
+  // programmatic focus does not necessarily match :focus-visible in Chromium.
+  await locator.focus();
+  await locator.press('Tab');
   await locator.focus();
   await expect(locator).toBeFocused();
   const indicator = await locator.evaluate((element) => {

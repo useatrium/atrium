@@ -21,7 +21,7 @@ This matrix is the evidence ledger for the design audit and fix pass. A row is c
 
 | Platform | Required sizes | Native concerns | Evidence status |
 |---|---|---|---|
-| Web | 1440×1000, 1024×768, 768×1024, 390×844 | keyboard, focus order, hover-independent actions, responsive panes, browser zoom | Automated partial — `surface/e2e/tests/design-audit.spec.ts` covers all four sizes, document overflow, required shell controls, and representative focus; browser zoom and full focus order remain pending |
+| Web | 1440×1000, 1024×768, 768×1024, 390×844 | keyboard, focus order, hover-independent actions, responsive panes, browser zoom | Automated partial — `surface/e2e/tests/design-audit.spec.ts` passed all 7 tests across all four sizes, document overflow, required shell controls, representative keyboard focus, themes, contrast, text scale, reduced motion, empty states, dense data, and terminal Results; browser zoom and full focus order remain pending |
 | Electron macOS | compact and expanded windows; main and popout | menus, shortcuts, deep links, multi-window state, title behavior, zoom | Pending |
 | iOS | compact iPhone and large iPhone; one iPad width | safe areas, edge-swipe Back, Dynamic Type, VoiceOver, sheets, 44 pt targets | Maestro journeys authored for first run, navigation, settings, demo work, comments, and stack Back; execution and assistive checks remain unverified because no simulator is available |
 | Android | compact phone and expanded/tablet width | system/predictive Back, edge-to-edge insets, IME, Material navigation adaptation, TalkBack, 48 dp targets | Maestro journeys authored for first run, adaptive navigation, settings, demo work, comments, and system Back; execution, predictive Back, and assistive checks remain unverified because `adb` is unavailable |
@@ -67,7 +67,7 @@ This matrix is the evidence ledger for the design audit and fix pass. A row is c
 
 The lane is intentionally partial evidence: it does not mark a workflow row complete because the ledger requires both full account states and all applicable accessibility modes.
 
-Validation in this worktree on 2026-07-11: `pnpm --filter @atrium/e2e typecheck` passed and Playwright discovered all 7 tests. The browser run could not start because `surface/web/node_modules` is symlinked to the parent worktree and Vite was denied permission to create its `.vite-temp` config bundle there (`EPERM`). The initial default-port attempt also found an unrelated existing Centaur stub on `127.0.0.1:18100`; the permission failure reproduced with isolated ports `3117`, `5287`, and `18117`. Therefore the named screenshot attachments describe what the suite emits when it runs, not reviewed artifacts from this blocked local run.
+Validation in this worktree on 2026-07-11: `pnpm --filter @atrium/e2e typecheck` passed. A clean isolated-port run on server `3117`, web `5287`, and Centaur stub `18117` passed all 7 Playwright tests in 16.8 seconds with one worker. The named screenshots were produced as transient Playwright attachments; they remain report artifacts rather than committed pixel baselines. The lane is strong representative browser evidence, but it does not substitute for the unexecuted full cross-platform matrix below.
 
 ### Native Maestro evidence lane
 
@@ -84,7 +84,7 @@ The flows are authored evidence, not completed runtime evidence. Maestro is not 
 
 ### Known evidence gaps before assessment synthesis
 
-- Native end-to-end coverage currently consists of one Maestro comment-on-message flow.
+- Native end-to-end coverage now has nine selector-based Maestro YAML files spanning shared setup plus three iOS and three Android journeys, but none has been executed in this environment.
 - There is no checked-in screenshot matrix spanning the required account, theme, contrast, font, motion, viewport, and device states.
 - Existing functional tests do not by themselves prove visual hierarchy, cognitive load, platform-native behavior, or screen-reader task completion.
 - Desktop visual behavior outside the smoke path relies primarily on a manual checklist.
