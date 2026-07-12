@@ -81,12 +81,12 @@ list`). Before you commit:
   - **Validate PR title** — checks the title is a valid Conventional Commit.
   - **CLA Assistant** — external contributors must have signed the CLA (see
     [Licensing and the CLA](#licensing-and-the-cla)).
-- PRs are **squash-merged**. The repo is configured so the squash commit's subject
-  is the **PR title** (`squash_merge_commit_title=PR_TITLE`).
-- The required workflows are ready for GitHub merge queue (`merge_group`) events, but
-  the queue is not currently enforceable while `gbasin/atrium` is a private
-  user-owned repo. If the repo moves to an eligible organization/plan, enable **Require
-  merge queue** for `master` and use **Merge when ready** instead of direct squash merge.
+- PRs are **squash-merged** through GitHub's merge queue. Once a PR is approved and its
+  checks are green, use **Merge when ready**. The queue tests the proposed merge result
+  before landing it on `master`.
+- The repo is configured so the squash commit's subject is the **PR title**
+  (`squash_merge_commit_title=PR_TITLE`). Required workflows run for both pull request
+  and merge queue (`merge_group`) events.
 
 ## PR titles (Conventional Commits)
 

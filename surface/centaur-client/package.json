@@ -5,11 +5,11 @@
   "license": "AGPL-3.0-or-later",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/gbasin/atrium.git",
+    "url": "git+https://github.com/useatrium/atrium.git",
     "directory": "surface/centaur-client"
   },
   "bugs": {
-    "url": "https://github.com/gbasin/atrium/issues"
+    "url": "https://github.com/useatrium/atrium/issues"
   },
   "type": "module",
   "exports": {

@@ -39,7 +39,7 @@ const popoutWindows = new Map<string, BrowserWindow>();
 const closedPopoutUrls: string[] = [];
 const pendingDeepLinkPaths: string[] = [];
 const CLOSED_POPOUT_LIMIT = 10;
-const DOCS_URL = 'https://github.com/gbasin/atrium';
+const DOCS_URL = 'https://github.com/useatrium/atrium';
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
 
 if (!hasSingleInstanceLock) {

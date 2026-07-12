@@ -17,6 +17,8 @@ name: CLA
 on:
   issue_comment:
     types: [created]
+  merge_group:
+    types: [checks_requested]
   pull_request_target:
     types: [opened, synchronize]
 
@@ -29,7 +31,7 @@ permissions:
 # Serialize runs per PR: overlapping runs read-modify-write the shared
 # signature file, and the loser of that race fails with a 409.
 concurrency:
-  group: cla-${{ github.event.pull_request.number || github.event.issue.number }}
+  group: cla-${{ github.event.pull_request.number || github.event.issue.number || github.ref }}
 
 jobs:
   cla:
@@ -39,23 +41,28 @@ jobs:
     # this job must never check out or execute PR code — it only reads/writes
     # signature state and PR comments via the API. The issue_comment gate
     # requires the comment to be on a PR (issues have no pull_request field).
-    if: (github.event_name == 'pull_request_target') || (github.event_name == 'issue_comment' && github.event.issue.pull_request && (contains(github.event.comment.body, 'I have read the CLA Document and I hereby sign the CLA') || github.event.comment.body == 'recheck'))
+    if: (github.event_name == 'merge_group') || (github.event_name == 'pull_request_target') || (github.event_name == 'issue_comment' && github.event.issue.pull_request && (contains(github.event.comment.body, 'I have read the CLA Document and I hereby sign the CLA') || github.event.comment.body == 'recheck'))
     steps:
+      - name: Skip CLA validation for merge queue
+        if: github.event_name == 'merge_group'
+        run: echo "The CLA was validated before entering the merge queue."
+
       - name: CLA Assistant Lite
+        if: github.event_name != 'merge_group'
         uses: contributor-assistant/github-action@ca4a40a7d1004f18d9960b404b97e5f30a505a08 # v2.6.1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           path-to-signatures: signatures/version1/cla.json
-          path-to-document: https://github.com/gbasin/atrium/blob/master/.github/cla/individual.md
+          path-to-document: https://github.com/useatrium/atrium/blob/master/.github/cla/individual.md
           branch: cla-signatures
           allowlist: gbasin,*[bot]
           custom-notsigned-prcomment: >-
             Thank you for your contribution! Before we can accept it, we ask
             that you sign our [Contributor License
-            Agreement](https://github.com/gbasin/atrium/blob/master/.github/cla/individual.md).
+            Agreement](https://github.com/useatrium/atrium/blob/master/.github/cla/individual.md).
             You can sign by posting the comment below. If you are contributing
             on behalf of your employer, your employer may also need to sign the
             [Corporate
-            CLA](https://github.com/gbasin/atrium/blob/master/.github/cla/corporate.md)
+            CLA](https://github.com/useatrium/atrium/blob/master/.github/cla/corporate.md)
             — see that document for how.
