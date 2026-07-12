@@ -8,6 +8,7 @@ import {
   expectRead,
   expectUnread,
   login,
+  loginViaForm,
   mainComposer,
   messageId,
   messageRow,
@@ -231,7 +232,7 @@ async function runCommandQuery(page: Page, query: string, options: { allowButton
 }
 
 test('login lands in #general; sent message appears', async ({ page }) => {
-  await login(page, unique('alice'), 'Alice');
+  await loginViaForm(page, unique('alice'), 'Alice');
 
   const text = unique('hello-general');
   await sendMessage(page, text);

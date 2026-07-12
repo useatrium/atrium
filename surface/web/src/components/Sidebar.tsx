@@ -10,7 +10,7 @@ import {
 } from 'react';
 import { api, type Channel } from '../api';
 import { MessageActionMenu, type MessageActionMenuState } from './MessageActionMenu';
-import type { QueueSyncState } from '@atrium/surface-client';
+import type { ActivityCounts, QueueSyncState } from '@atrium/surface-client';
 import type { UnreadLevel, UserRef } from '@atrium/surface-client';
 import { channelAvatarName, channelLabel, dmPartner } from '@atrium/surface-client';
 import { Avatar } from './Avatar';
@@ -70,6 +70,7 @@ export function Sidebar({
   onOpenAgents,
   // === mentions-activity additions ===
   onOpenActivity,
+  activityCounts,
   onOpenSettings,
   onLogout,
   isOpen = false,
@@ -97,6 +98,7 @@ export function Sidebar({
   onOpenAgents?: () => void;
   // === mentions-activity additions ===
   onOpenActivity?: () => void;
+  activityCounts?: ActivityCounts;
   onOpenSettings?: () => void;
   onLogout: () => void;
   isOpen?: boolean;
@@ -209,6 +211,25 @@ export function Sidebar({
       );
     }
     return null;
+  };
+
+  const inboxBadge = () => {
+    const attention = activityCounts?.attention ?? 0;
+    const unreadCount = activityCounts?.unread ?? 0;
+    const count = attention > 0 ? attention : unreadCount;
+    if (count <= 0) return null;
+    const label = count >= 99 ? '99+' : String(count);
+    const description = attention > 0 ? 'needs attention' : 'unread activity';
+    return (
+      <span
+        className={`ml-auto shrink-0 rounded-full px-1.5 py-px text-3xs font-bold leading-4 ${
+          attention > 0 ? 'bg-warning-tint text-warning-text-strong' : 'bg-surface-overlay text-fg-muted'
+        }`}
+      >
+        {label}
+        <span className="sr-only"> {description}</span>
+      </span>
+    );
   };
 
   const renderChannelRow = (c: Channel) => {
@@ -413,8 +434,14 @@ export function Sidebar({
                     : 'text-fg-tertiary hover:bg-surface-overlay/70 hover:text-fg-body'
                 }`}
               >
-                <span className="grid w-[15px] shrink-0 place-items-center text-xs font-bold text-fg-muted">@</span>
+                <span
+                  aria-hidden="true"
+                  className="grid w-[15px] shrink-0 place-items-center text-xs font-bold text-fg-muted"
+                >
+                  @
+                </span>
                 <span className="truncate">Attention</span>
+                {inboxBadge()}
               </button>
             </div>
           </section>
@@ -442,7 +469,7 @@ export function Sidebar({
                       setError(null);
                     }}
                     aria-label="Create channel"
-                    className="rounded px-1.5 text-sm leading-5 text-fg-muted hover:bg-surface-overlay hover:text-fg-body"
+                    className="grid min-h-6 min-w-6 place-items-center rounded px-1.5 text-sm leading-5 text-fg-muted hover:bg-surface-overlay hover:text-fg-body"
                   >
                     +
                   </button>
@@ -492,7 +519,7 @@ export function Sidebar({
                     type="button"
                     onClick={() => openDmPicker()}
                     aria-label="Start a DM"
-                    className="rounded px-1.5 text-sm leading-5 text-fg-muted hover:bg-surface-overlay hover:text-fg-body"
+                    className="grid min-h-6 min-w-6 place-items-center rounded px-1.5 text-sm leading-5 text-fg-muted hover:bg-surface-overlay hover:text-fg-body"
                   >
                     +
                   </button>

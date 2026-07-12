@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Channel } from '../src/api';
 import { Sidebar } from '../src/components/Sidebar';
@@ -93,6 +93,30 @@ describe('Sidebar', () => {
     fireEvent.click(unarchive);
     expect(onSetPinned).toHaveBeenCalledWith('ch-pinned', false);
     expect(onSetArchived).toHaveBeenCalledWith('ch-old', false);
+  });
+
+  it('prefers the attention badge over unread activity and caps its display', () => {
+    const channel = {
+      id: 'ch-general',
+      workspaceId: 'ws-1',
+      name: 'general',
+      kind: 'public' as const,
+      muted: false,
+      archivedAt: null,
+      pinned: false,
+      createdAt: '2026-01-01T00:00:00.000Z',
+    };
+    const { unmount } = renderSidebar([channel], { activityCounts: { attention: 99, unread: 12 } });
+
+    const attentionRow = screen.getByRole('button', { name: /Attention.*needs attention/ });
+    const attentionBadge = within(attentionRow).getByText('99+');
+    expect(attentionBadge.className).toContain('bg-warning-tint');
+
+    unmount();
+    renderSidebar([channel], { activityCounts: { attention: 0, unread: 3 } });
+    const unreadRow = screen.getByRole('button', { name: /Attention.*unread activity/ });
+    const unreadBadge = within(unreadRow).getByText('3');
+    expect(unreadBadge.className).toContain('bg-surface-overlay');
   });
 
   it('splits pinned channels into a Pinned section and hides archived behind a disclosure', () => {
@@ -304,7 +328,7 @@ describe('Sidebar', () => {
     expect(screen.getByText('Workspace')).toBeTruthy();
     expect(screen.getByText('Conversations')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Agents' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: '@ Attention' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Attention' })).toBeTruthy();
     expect(screen.queryByText('Sessions')).toBeNull();
   });
 

@@ -197,6 +197,113 @@ describe('/api/activity', () => {
     await leaveChannel(bob.cookie, secret.id);
     expect((await activity(bob.cookie)).items.map((item: any) => Number(item.eventId))).not.toContain(mention.id);
   });
+
+  it('returns read-state metadata and derives attention from current session state', async () => {
+    const bob = await login('bob', 'Bob');
+    const questionSessionId = await createActivitySession(bob.user.id, 'waiting for an answer');
+    await pool.query(`UPDATE sessions SET pending_question = $2::jsonb WHERE id = $1`, [
+      questionSessionId,
+      JSON.stringify({ questionId: 'q-1' }),
+    ]);
+    const question = await insertSessionEventFor(questionSessionId, bob.user.id, 'session.question_requested', {
+      questions: [{ id: 'q-1', question: 'Ship it?' }],
+    });
+
+    const authSessionId = await createActivitySession(bob.user.id, 'reconnect provider', 'queued');
+    await pool.query(`UPDATE sessions SET provider_auth_required = $2::jsonb WHERE id = $1`, [
+      authSessionId,
+      JSON.stringify({ provider: 'claude' }),
+    ]);
+    const auth = await insertSessionEventFor(authSessionId, bob.user.id, 'session.provider_auth_required', {
+      provider: 'claude',
+    });
+
+    const failedSessionId = await createActivitySession(bob.user.id, 'failed run', 'failed');
+    const failed = await insertSessionEventFor(failedSessionId, bob.user.id, 'session.status_changed', {
+      status: 'failed',
+    });
+
+    const initial = await activity(bob.cookie);
+    expect(initial).toMatchObject({
+      lastReadEventId: '0',
+      counts: { attention: 3, unread: 3 },
+    });
+    expect(initial.items.find((item: any) => Number(item.eventId) === question)).toMatchObject({
+      sessionId: questionSessionId,
+      attention: true,
+    });
+    expect(initial.items.find((item: any) => Number(item.eventId) === auth)).toMatchObject({
+      sessionId: authSessionId,
+      attention: true,
+    });
+    expect(initial.items.find((item: any) => Number(item.eventId) === failed)).toMatchObject({
+      sessionId: failedSessionId,
+      attention: true,
+    });
+
+    const read = await app.inject({
+      method: 'POST',
+      url: '/api/activity/read',
+      headers: { cookie: bob.cookie },
+      payload: { lastReadEventId: failed + 10_000 },
+    });
+    expect(read.statusCode).toBe(200);
+    expect(read.json()).toEqual({ lastReadEventId: String(failed) });
+
+    // Read cursors only move forward. A slower tab cannot make the failure
+    // unread again after this tab has acknowledged it.
+    const staleRead = await app.inject({
+      method: 'POST',
+      url: '/api/activity/read',
+      headers: { cookie: bob.cookie },
+      payload: { lastReadEventId: question },
+    });
+    expect(staleRead.statusCode).toBe(200);
+    expect(staleRead.json()).toEqual({ lastReadEventId: String(failed) });
+
+    const acknowledged = await activity(bob.cookie);
+    expect(acknowledged.counts).toEqual({ attention: 2, unread: 0 });
+    expect(acknowledged.items.find((item: any) => Number(item.eventId) === failed)).toMatchObject({ attention: false });
+
+    await pool.query('UPDATE sessions SET pending_question = NULL WHERE id = $1', [questionSessionId]);
+    await pool.query('UPDATE sessions SET provider_auth_required = NULL WHERE id = $1', [authSessionId]);
+    const cleared = await activity(bob.cookie);
+    expect(cleared.counts).toEqual({ attention: 0, unread: 0 });
+    expect(cleared.items.find((item: any) => Number(item.eventId) === question)).toMatchObject({ attention: false });
+    expect(cleared.items.find((item: any) => Number(item.eventId) === auth)).toMatchObject({ attention: false });
+  });
+
+  it('moves a pending question to history when its session has already left an active state', async () => {
+    const bob = await login('bob', 'Bob');
+    const sessionId = await createActivitySession(bob.user.id, 'already ended', 'completed');
+    await pool.query(`UPDATE sessions SET pending_question = $2::jsonb WHERE id = $1`, [
+      sessionId,
+      JSON.stringify({ questionId: 'q-ended' }),
+    ]);
+    const question = await insertSessionEventFor(sessionId, bob.user.id, 'session.question_requested', {
+      questions: [{ id: 'q-ended', question: 'Should not stay pinned?' }],
+    });
+
+    const body = await activity(bob.cookie);
+    expect(body.counts).toEqual({ attention: 0, unread: 1 });
+    expect(body.items.find((item: any) => Number(item.eventId) === question)).toMatchObject({
+      sessionId,
+      attention: false,
+    });
+  });
+
+  it('rejects non-numeric activity cursors', async () => {
+    const bob = await login('bob', 'Bob');
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/activity/read',
+      headers: { cookie: bob.cookie },
+      payload: { lastReadEventId: 'not-an-event-id' },
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toMatchObject({ error: 'bad_request' });
+  });
 });
 
 async function login(handle: string, displayName: string): Promise<Login> {
