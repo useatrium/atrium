@@ -51,6 +51,20 @@ describe("Codex reasoning", () => {
     const state = reduceAll([completedReasoning(1, { summary: "A summary" })]);
     expect(state.items[0]).toMatchObject({ type: "reasoning", summary: "A summary" });
   });
+
+  // Verbatim prod wire shape: the JSON-RPC dialect (`method`/`params`) with an
+  // encrypted-only reasoning item (`content: []`, `summary: []`) — the exact
+  // frames behind the empty expandable "Thinking" chips.
+  it("suppresses the empty item for the method/params dialect too", () => {
+    const rpc = (eventId: number, method: string, params: Record<string, unknown>): CentaurEventFrame =>
+      raw(eventId, { method, params } as never);
+    const item = { id: "rs_x", type: "reasoning", content: [], summary: [] };
+    const state = reduceAll([
+      rpc(1, "item/started", { item, turnId: "t", threadId: "th", startedAtMs: 1 }),
+      rpc(2, "item/completed", { item, turnId: "t", threadId: "th", completedAtMs: 2 }),
+    ]);
+    expect(state.items).toEqual([]);
+  });
 });
 
 const assistant = (eventId: number, content: Record<string, unknown>[]): CentaurEventFrame =>
