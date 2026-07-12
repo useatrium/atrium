@@ -5,12 +5,15 @@ import { type PendingOAuthStore, postForm, postJson } from './provider-oauth.js'
 
 type JsonObject = Record<string, unknown>;
 
-type CodexDeviceState = {
-  deviceAuthId: string;
-  // The poll endpoint (`/api/accounts/deviceauth/token`) requires the user_code
-  // alongside the device_auth_id, so we stash it with the handshake.
-  userCode: string;
-};
+type CodexDeviceState =
+  | {
+      stage?: 'device';
+      deviceAuthId: string;
+      // The poll endpoint (`/api/accounts/deviceauth/token`) requires the user_code
+      // alongside the device_auth_id, so we stash it with the handshake.
+      userCode: string;
+    }
+  | { stage: 'converge'; refreshToken: string; accountId: string };
 
 export async function startCodexDevice(
   deps: { pendingOAuth: PendingOAuthStore },
@@ -63,9 +66,13 @@ export async function pollCodexDevice(
   userId: string,
   workspaceId: string,
   pendingId: string,
-): Promise<{ status: 'expired' | 'pending' | 'connected' | 'error'; message?: string }> {
+): Promise<{ status: 'expired' | 'pending' | 'finalizing' | 'connected' | 'error'; message?: string }> {
   const pending = await deps.pendingOAuth.get<CodexDeviceState>(pendingId, userId);
   if (!pending) return { status: 'expired' };
+
+  if (pending.state.stage === 'converge') {
+    return convergeCodexDevice(deps, userId, workspaceId, pendingId, pending.state);
+  }
 
   const response = await postJson<unknown>(`${config.codexOauthIssuer}/api/accounts/deviceauth/token`, {
     device_auth_id: pending.state.deviceAuthId,
@@ -111,27 +118,49 @@ export async function pollCodexDevice(
       return { status: 'error', message: 'token exchange returned missing fields' };
     }
 
+    const convergeState: CodexDeviceState = { stage: 'converge', refreshToken, accountId };
+    const updated = await deps.pendingOAuth.updateState(pendingId, userId, convergeState);
+    if (!updated) {
+      return { status: 'expired' };
+    }
+    return convergeCodexDevice(deps, userId, workspaceId, pendingId, convergeState);
+  }
+
+  await deps.pendingOAuth.markError(pendingId, JSON.stringify(body).slice(0, 300));
+  return { status: 'error', message: 'device auth failed' };
+}
+
+async function convergeCodexDevice(
+  deps: { pendingOAuth: PendingOAuthStore; ironControl: IronControlAdminClient },
+  userId: string,
+  workspaceId: string,
+  pendingId: string,
+  state: Extract<CodexDeviceState, { stage: 'converge' }>,
+): Promise<{ status: 'finalizing' | 'connected' | 'error'; message?: string }> {
+  try {
     const outcome = await convergeCodexBrokerGrant(deps.ironControl, {
       workspaceId,
       userId,
-      refreshToken,
-      accountId,
+      refreshToken: state.refreshToken,
+      accountId: state.accountId,
     });
+    if (outcome === 'pending') return { status: 'finalizing' };
+
     await deps.pendingOAuth.consume(pendingId, userId);
     if (outcome === 'dead') {
-      // The refresh token was rejected when the broker tried to mint — don't
-      // report a false "connected". The handshake is consumed, so Try Again
-      // starts a fresh device flow.
       return {
         status: 'error',
         message: 'Codex sign-in could not be verified (token rejected). Please connect again.',
       };
     }
     return { status: 'connected' };
+  } catch (err) {
+    // The converge-stage state is already persisted, so the next poll retries
+    // without a new OpenAI approval; surface the cause since the client only
+    // ever sees "finalizing".
+    console.warn('codex broker converge failed; will retry on next poll', { userId, workspaceId, err });
+    return { status: 'finalizing' };
   }
-
-  await deps.pendingOAuth.markError(pendingId, JSON.stringify(body).slice(0, 300));
-  return { status: 'error', message: 'device auth failed' };
 }
 
 export class CodexOAuthError extends Error {

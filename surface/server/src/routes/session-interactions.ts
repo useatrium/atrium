@@ -93,13 +93,23 @@ export function registerSessionInteractionRoutes(app: FastifyInstance, deps: Ses
     if (body.effort !== undefined && !isSessionEffortLevel(body.effort)) {
       return reply.code(400).send({ error: 'invalid_effort', message: 'unknown effort level' });
     }
+    if (body.postToThread !== undefined && typeof body.postToThread !== 'boolean') {
+      return reply.code(400).send({ error: 'bad_request', message: 'postToThread must be boolean' });
+    }
     const effort = body.effort as SessionEffortLevel | undefined;
+    const postToThread = body.postToThread === true;
     try {
       await runMutation({
         userId: user.id,
         opId,
         opType: 'session.steer',
-        body: { sessionId: id, text, ...(effort ? { effort } : {}), attachments: attachmentInputs },
+        body: {
+          sessionId: id,
+          text,
+          ...(effort ? { effort } : {}),
+          ...(postToThread ? { postToThread: true } : {}),
+          attachments: attachmentInputs,
+        },
         fn: async (client) => {
           const attachments = await resolveAgentTurnAttachments(pool, {
             userId: user.id,
@@ -107,7 +117,15 @@ export function registerSessionInteractionRoutes(app: FastifyInstance, deps: Ses
             inputs: attachmentInputs,
             logger: req.log,
           });
-          const events = await sessionRuns.postUserMessageInTx(client, id, user.id, text, effort, attachments);
+          const events = await sessionRuns.postUserMessageInTx(
+            client,
+            id,
+            user.id,
+            text,
+            effort,
+            attachments,
+            postToThread,
+          );
           return { ok: true as const, events };
         },
         onApplied: (result) => {
@@ -213,18 +231,22 @@ export function registerSessionInteractionRoutes(app: FastifyInstance, deps: Ses
     if (Buffer.byteLength(text, 'utf8') > maxMessageBytes) {
       return reply.code(413).send({ error: 'message_too_large', message: 'suggestion exceeds 8KB' });
     }
-    let event: WireEvent | null = null;
+    if (body.postToThread !== undefined && typeof body.postToThread !== 'boolean') {
+      return reply.code(400).send({ error: 'bad_request', message: 'postToThread must be boolean' });
+    }
+    const postToThread = body.postToThread === true;
+    let events: WireEvent[] = [];
     await runMutation({
       userId: user.id,
       opId,
       opType: 'session.suggestion.create',
-      body: { sessionId: id, text },
+      body: { sessionId: id, text, ...(postToThread ? { postToThread: true } : {}) },
       fn: async (client) => {
-        event = await sessionRuns.createSuggestionInTx(client, id, user.id, text);
+        events = await sessionRuns.createSuggestionInTx(client, id, user.id, text, postToThread);
         return { ok: true as const };
       },
       onApplied: () => {
-        if (event) publishEvent(event);
+        for (const event of events) publishEvent(event);
       },
     });
     return reply.code(202).send({ ok: true });

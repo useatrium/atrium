@@ -401,6 +401,14 @@ export function githubPublicReadSecretForeignId(): string {
   return 'github-public-read-token';
 }
 
+export function githubAppFallbackSecretForeignId(): string {
+  return 'github-app-fallback-token';
+}
+
+export function githubAppFallbackBrokerCredentialForeignId(installationId: string): string {
+  return `github-app-fallback-installation-${installationId}`;
+}
+
 export function githubAppUserBrokerCredentialForeignId(workspaceId: string, userId: string): string {
   return `github-app-user-${atriumPrincipalForeignId(workspaceId, userId)}`;
 }

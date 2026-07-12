@@ -84,6 +84,7 @@ export function pendingSpawnFromPayload(
       clientMsgId: payload.clientSpawnId,
       channelId: payload.channelId,
       threadRootEventId: payload.threadRootEventId ?? null,
+      ...(payload.broadcastCard === true ? { broadcast: true } : {}),
       text: payload.task,
       edited: false,
       author: me,

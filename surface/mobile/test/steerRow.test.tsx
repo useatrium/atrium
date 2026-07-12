@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { formatExactTimestamp, formatTurnTime } from '@atrium/surface-client';
 import { SteerRow } from '../src/components/work/SteerRow';
 import type { ResolvedEntry } from '../src/lib/entryResolve';
-import { renderWithTheme } from './rnTestUtils';
+import { pressWhenReady, renderWithTheme } from './rnTestUtils';
 
 vi.mock('@expo/vector-icons', () => ({
   Ionicons: ({ name }: { name: string }) => <Text>{name}</Text>,
@@ -176,10 +176,10 @@ describe('SteerRow (mobile)', () => {
     expect(await screen.findByText('Riley: "Referenced entry excerpt"')).toBeTruthy();
     expect(resolveEntry).toHaveBeenCalledWith('evt_12');
 
-    // Await the clickable chip (its press handler commits a tick after the text
-    // node appears) and let the handler settle — fireEvent.click otherwise races
-    // the commit under CI scheduling (flaked: onOpenChannel 0 calls).
-    fireEvent.click(await screen.findByLabelText('Open Riley: "Referenced entry excerpt"'));
+    // RNW attaches Pressable DOM listeners in a passive effect AFTER the commit
+    // that makes the chip findable, so clicking straight after a findBy* can land
+    // before the handler is wired (flaked on CI: onOpenChannel 0 calls).
+    await pressWhenReady(screen.findByLabelText('Open Riley: "Referenced entry excerpt"'));
     await waitFor(() => expect(onOpenChannel).toHaveBeenCalledWith('ch-1'));
   });
 });

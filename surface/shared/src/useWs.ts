@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { Option, Schema } from 'effect';
 import { CallUserRefSchema, CallWireSchema, isCallEvent, type CallEvent } from './calls';
 import { normalizePrefs, type UserPrefs } from './prefs';
+import type { SessionActivity } from './sessions';
 import { UserRefSchema, WireEventSchema, type UserRef, type WireEvent } from './timeline';
 
 export type WsStatus = 'connecting' | 'open' | 'closed';
@@ -17,6 +18,8 @@ export interface WsCallbacks {
   onMuted?: (channelId: string, muted: boolean) => void;
   onChannelPinned?: (channelId: string, pinned: boolean) => void;
   onSessionPinned?: (sessionId: string, pinned: boolean) => void;
+  /** Latest ephemeral tool/activity ticker for one session. */
+  onSessionActivity?: (sessionId: string, activity: SessionActivity) => void;
   onChannelLeft?: (channelId: string) => void;
   /** Server-synced user preferences changed (this device or another). */
   onPrefs?: (prefs: UserPrefs) => void;
@@ -136,6 +139,19 @@ const WsSessionPinnedFrameSchema = Schema.mutable(
   }),
 );
 
+/** All fields default so a newer server cannot break a client during deploy
+ * skew. Empty/malformed activity is harmlessly retained as a no-op display
+ * value by the reducer. */
+const WsSessionActivityFrameSchema = Schema.mutable(
+  Schema.Struct({
+    type: Schema.Literal('session.activity'),
+    session_id: Schema.optionalWith(Schema.String, { default: () => '' }),
+    summary: Schema.optionalWith(Schema.String, { default: () => '' }),
+    at: Schema.optionalWith(Schema.String, { default: () => '' }),
+    ...WsFrameSeqSchema,
+  }),
+);
+
 const WsChannelLeftFrameSchema = Schema.mutable(
   Schema.Struct({
     type: Schema.Literal('channel-left'),
@@ -221,6 +237,7 @@ const WsFrameSchema = Schema.Union(
   WsMutedFrameSchema,
   WsChannelPinnedFrameSchema,
   WsSessionPinnedFrameSchema,
+  WsSessionActivityFrameSchema,
   WsChannelLeftFrameSchema,
   WsPrefsFrameSchema,
   WsPongFrameSchema,
@@ -380,6 +397,8 @@ export function useWs(
           cbRef.current.onChannelPinned?.(msg.channelId, msg.pinned);
         else if (msg.type === 'session-pinned' && msg.sessionId && typeof msg.pinned === 'boolean')
           cbRef.current.onSessionPinned?.(msg.sessionId, msg.pinned);
+        else if (msg.type === 'session.activity' && msg.session_id)
+          cbRef.current.onSessionActivity?.(msg.session_id, { summary: msg.summary, at: msg.at });
         else if (msg.type === 'channel-left' && msg.channelId) cbRef.current.onChannelLeft?.(msg.channelId);
         else if (msg.type === 'prefs' && msg.prefs) cbRef.current.onPrefs?.(normalizePrefs(msg.prefs));
       };

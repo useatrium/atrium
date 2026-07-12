@@ -2,6 +2,7 @@
 // skip, and dead-token pruning. Expo HTTP API is faked.
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { randomUUID } from 'node:crypto';
 import type pg from 'pg';
 import { config } from '../src/config.js';
 import { withTx } from '../src/db.js';
@@ -11,6 +12,7 @@ import {
   checkExpoPushReceipts,
   pushRecipientsFor,
   sendAuthRequiredPush,
+  sendMissedCallPush,
   sendQuestionPush,
   sendMessagePush,
   sendSessionCompletedPush,
@@ -146,6 +148,43 @@ async function appendSessionEvent(
   );
 }
 
+async function appendEndedCallEvent(
+  channelId: string,
+  participantIds: string[] = [fx.userId],
+  declinedIds: string[] = [],
+): Promise<WireEvent> {
+  const callId = randomUUID();
+  const startedAt = new Date().toISOString();
+  await pool.query(
+    `INSERT INTO calls (id, workspace_id, channel_id, initiator_id, room, status, started_at, ended_at)
+     VALUES ($1, $2, $3, $4, $5, 'ended', $6, now())`,
+    [callId, fx.workspaceId, channelId, fx.userId, `call:${callId}`, startedAt],
+  );
+  for (const userId of participantIds) {
+    await pool.query('INSERT INTO call_participants (call_id, user_id, left_at) VALUES ($1, $2, now())', [
+      callId,
+      userId,
+    ]);
+  }
+  for (const userId of declinedIds) {
+    await pool.query('INSERT INTO call_declines (call_id, user_id) VALUES ($1, $2)', [callId, userId]);
+  }
+  return withTx(pool, (client) =>
+    appendEvent(client, {
+      workspaceId: fx.workspaceId,
+      channelId,
+      type: 'call.ended',
+      actorId: fx.userId,
+      payload: {
+        callId,
+        initiatorId: fx.userId,
+        startedAt,
+        answered: participantIds.some((userId) => userId !== fx.userId),
+      },
+    }),
+  );
+}
+
 describe('mentionedHandles', () => {
   it('extracts deduped lowercase handles', () => {
     expect(mentionedHandles('hey @Ben and @alice and @ben!')).toEqual(['ben', 'alice']);
@@ -222,6 +261,90 @@ describe('pushRecipientsFor', () => {
 
     const recipients = await pushRecipientsFor(pool, reply);
     expect(recipients.recipients).toEqual([{ userId: fx.userId, reason: 'mention' }]);
+  });
+});
+
+describe('sendMissedCallPush', () => {
+  it('sends Expo and web pushes to a never-joined DM callee', async () => {
+    const { channel } = await getOrCreateDm(pool, {
+      workspaceId: fx.workspaceId,
+      userIdA: fx.userId,
+      userIdB: benId,
+    });
+    await registerToken(benId, 'ExponentPushToken[ben-missed-call]');
+    const subscription = webPushSubscription('https://push.example.test/subscriptions/ben-missed-call');
+    await registerWebPushToken(benId, subscription.endpoint, subscription);
+    const records: Array<{
+      subscription: WebPushSubscription;
+      payload: WebPushPayload;
+      urgency: WebPushUrgency;
+    }> = [];
+    const fetchImpl = okFetch();
+    const event = await appendEndedCallEvent(channel.id);
+
+    await sendMissedCallPush(pool, new WsHub(), event, {
+      fetchImpl,
+      webPushSender: fakeWebPushSender(records),
+    });
+
+    const sent = JSON.parse(fetchImpl.mock.calls[0]![1]!.body as string);
+    expect(sent).toEqual([
+      expect.objectContaining({
+        to: 'ExponentPushToken[ben-missed-call]',
+        title: 'Missed call from Alice',
+        body: 'Tap to call back',
+        data: { channelId: channel.id, eventId: event.id },
+      }),
+    ]);
+    expect(records).toEqual([
+      expect.objectContaining({
+        subscription,
+        urgency: 'high',
+        payload: expect.objectContaining({
+          title: 'Missed call from Alice',
+          tag: `call:${event.payload.callId}`,
+          data: { channelId: channel.id, eventId: event.id },
+        }),
+      }),
+    ]);
+  });
+
+  it('skips decliners, calls-disabled users, and muted channels', async () => {
+    const { channel } = await getOrCreateDm(pool, {
+      workspaceId: fx.workspaceId,
+      userIdA: fx.userId,
+      userIdB: benId,
+    });
+    await registerToken(benId, 'ExponentPushToken[ben-no-missed-call]');
+    const hub = new WsHub();
+
+    const declined = await appendEndedCallEvent(channel.id, [fx.userId], [benId]);
+    const declinedFetch = okFetch();
+    await sendMissedCallPush(pool, hub, declined, declinedFetch);
+    expect(declinedFetch).not.toHaveBeenCalled();
+
+    await pool.query(
+      `UPDATE users
+       SET prefs = jsonb_set(COALESCE(prefs, '{}'::jsonb), '{notifications}', $2::jsonb, true)
+       WHERE id = $1`,
+      [benId, JSON.stringify({ messages: 'mentions', sessions: true, calls: false })],
+    );
+    const callsDisabled = await appendEndedCallEvent(channel.id);
+    const callsDisabledFetch = okFetch();
+    await sendMissedCallPush(pool, hub, callsDisabled, callsDisabledFetch);
+    expect(callsDisabledFetch).not.toHaveBeenCalled();
+
+    await pool.query(
+      `UPDATE users
+       SET prefs = jsonb_set(COALESCE(prefs, '{}'::jsonb), '{notifications}', $2::jsonb, true)
+       WHERE id = $1`,
+      [benId, JSON.stringify({ messages: 'mentions', sessions: true, calls: true })],
+    );
+    await pool.query('INSERT INTO channel_mutes (user_id, channel_id) VALUES ($1, $2)', [benId, channel.id]);
+    const muted = await appendEndedCallEvent(channel.id);
+    const mutedFetch = okFetch();
+    await sendMissedCallPush(pool, hub, muted, mutedFetch);
+    expect(mutedFetch).not.toHaveBeenCalled();
   });
 });
 

@@ -17,6 +17,7 @@
 |  from: Gary Basin (@gary · human · driver)
 |  you: Rex — session "Fix the flaky e2e suite"
 |  channel: #testing (id: 00000000-0000-4000-8000-000000000000)
+|  tagged after: /e/evt_210
 |  thread: /e/evt_211
 |  sent: 2026-07-11T20:00:00Z
 |The `you:`, channel `(id: ...)`, and `thread:` fields are optional and may be absent in older sessions.
@@ -34,6 +35,7 @@
 |`~/context/sessions/index.md` is the entry point for prior sessions.
 |`~/context/channels/index.md` is the entry point for channels.
 |`~/context/channel/channel.md` points at the active channel.
+|If the context block has a "tagged after:" handle, your task came out of a live channel conversation. Before starting, run `rg -n "<handle>" ~/context/channels/*/chat.md` and read ~30 lines before the hit and everything after it — the task likely refers to that discussion.
 |Given an `/e/<handle>` link: run `rg -n "<handle>" ~/context/channels/*/chat.md`, then read about 30 lines around the hit.
 |To find a topic: run `rg -i "<topic>" ~/context/channels/*/chat.md ~/context/sessions/*/summary.md`.
 |To see who is here: run `cat ~/context/channel/channel.md`.

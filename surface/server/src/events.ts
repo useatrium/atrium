@@ -828,7 +828,7 @@ const MESSAGE_SELECT = `
     SELECT count(*) AS reply_count, max(x.id) AS last_reply_id
     FROM events x
     WHERE x.thread_root_event_id = e.id
-      AND x.type IN ('message.posted', 'session.question_requested', 'session.question_answered', 'session.question_resolved')
+      AND x.type IN ('message.posted', 'session.replied', 'session.question_requested', 'session.question_answered', 'session.question_resolved')
       AND NOT EXISTS (
         SELECT 1 FROM events d
         WHERE d.type = 'message.deleted'
@@ -875,7 +875,7 @@ const MESSAGE_SELECT = `
 // catch-up heals changes made while a client was disconnected (live clients
 // fold the same events from WS fanout).
 const TIMELINE_EVENT_TYPES =
-  "('message.posted', 'message.edited', 'message.deleted', 'reaction.added', 'reaction.removed', 'voice.transcribed', 'session.spawned', 'session.status_changed', 'session.effort_changed', 'session.completed', 'session.archived', 'session.unarchived', 'session.seat_requested', 'session.seat_changed', 'session.question_requested', 'session.question_answered', 'session.question_resolved', 'session.provider_auth_required', 'session.github_auth_required', 'session.provider_auth_resolved')";
+  "('message.posted', 'message.edited', 'message.deleted', 'reaction.added', 'reaction.removed', 'voice.transcribed', 'session.spawned', 'session.replied', 'session.status_changed', 'session.effort_changed', 'session.completed', 'session.archived', 'session.unarchived', 'session.seat_requested', 'session.seat_changed', 'session.question_requested', 'session.question_answered', 'session.question_resolved', 'session.provider_auth_required', 'session.github_auth_required', 'session.provider_auth_resolved')";
 const TIMELINE_ROOT_EVENT_TYPES =
   "('message.posted', 'session.spawned', 'session.question_requested', 'session.question_answered', 'session.question_resolved')";
 
@@ -981,7 +981,7 @@ export async function listThreadMessages(pool: Db, args: { rootEventId: number }
 // workspace.created is intentionally excluded: there is no live fanout today
 // and no client reducer consumes it.
 const SYNC_EVENT_TYPES =
-  "('message.posted', 'message.edited', 'message.deleted', 'reaction.added', 'reaction.removed', 'voice.transcribed', 'session.spawned', 'session.status_changed', 'session.effort_changed', 'session.completed', 'session.archived', 'session.unarchived', 'session.seat_requested', 'session.seat_changed', 'session.question_requested', 'session.question_answered', 'session.question_resolved', 'session.provider_auth_required', 'session.github_auth_required', 'session.provider_auth_resolved', 'channel.created', 'channel.archived', 'channel.unarchived', 'channel.member_joined', 'channel.member_left')";
+  "('message.posted', 'message.edited', 'message.deleted', 'reaction.added', 'reaction.removed', 'voice.transcribed', 'session.spawned', 'session.replied', 'session.status_changed', 'session.effort_changed', 'session.completed', 'session.archived', 'session.unarchived', 'session.seat_requested', 'session.seat_changed', 'session.question_requested', 'session.question_answered', 'session.question_resolved', 'session.provider_auth_required', 'session.github_auth_required', 'session.provider_auth_resolved', 'channel.created', 'channel.archived', 'channel.unarchived', 'channel.member_joined', 'channel.member_left', 'call.ended')";
 
 function syncVisibleCte(userUuidParam: string, userTextParam: string): string {
   const workspaceMember = workspaceMemberExists('e.workspace_id', userUuidParam);

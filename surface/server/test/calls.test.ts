@@ -512,6 +512,92 @@ describe('call routes', () => {
     );
     expect(state.rows[0]).toMatchObject({ status: 'ended' });
     expect(state.rows[0]?.ended_at).toBeTruthy();
+    const declines = await pool.query<{ user_id: string }>('SELECT user_id FROM call_declines WHERE call_id = $1', [
+      callId,
+    ]);
+    expect(declines.rows).toEqual([{ user_id: ben.id }]);
+    const endedEvents = await pool.query<{
+      actor_id: string;
+      payload: { callId: string; initiatorId: string; startedAt: string; answered: boolean };
+    }>(
+      `SELECT actor_id, payload
+       FROM events
+       WHERE type = 'call.ended' AND payload->>'callId' = $1`,
+      [callId],
+    );
+    expect(endedEvents.rows).toHaveLength(1);
+    expect(endedEvents.rows[0]).toMatchObject({
+      actor_id: alice.id,
+      payload: { callId, initiatorId: alice.id, answered: false },
+    });
+    expect(endedEvents.rows[0]!.payload.startedAt).toEqual(expect.any(String));
+  });
+
+  it('records repeated group-call declines once without ending the call', async () => {
+    const current = await startApp();
+    await seedMember(pool, fx.workspaceId, 'ben', 'Ben');
+    await seedMember(pool, fx.workspaceId, 'cara', 'Cara');
+    const { cookie: aliceCookie } = await login('alice', 'Alice');
+    const { cookie: benCookie, user: ben } = await login('ben', 'Ben');
+    const { user: cara } = await login('cara', 'Cara');
+
+    const gdm = await current.inject({
+      method: 'POST',
+      url: '/api/dms',
+      headers: { cookie: aliceCookie },
+      payload: { userIds: [ben.id, cara.id] },
+    });
+    expect(gdm.statusCode).toBe(201);
+    const start = await current.inject({
+      method: 'POST',
+      url: '/api/calls',
+      headers: { cookie: aliceCookie },
+      payload: { channelId: gdm.json().channel.id },
+    });
+    expect(start.statusCode).toBe(200);
+    const callId = start.json().call.id as string;
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const decline = await current.inject({
+        method: 'POST',
+        url: `/api/calls/${callId}/decline`,
+        headers: { cookie: benCookie },
+      });
+      expect(decline.statusCode).toBe(200);
+    }
+
+    const declines = await pool.query<{ count: string }>(
+      'SELECT COUNT(*)::text AS count FROM call_declines WHERE call_id = $1 AND user_id = $2',
+      [callId, ben.id],
+    );
+    expect(declines.rows[0]?.count).toBe('1');
+    const state = await pool.query<{ status: string }>('SELECT status FROM calls WHERE id = $1', [callId]);
+    expect(state.rows[0]?.status).toBe('ringing');
+  });
+
+  it('does not append a durable end event for public-channel calls', async () => {
+    const current = await startApp();
+    const { cookie: aliceCookie } = await login('alice', 'Alice');
+    const start = await current.inject({
+      method: 'POST',
+      url: '/api/calls',
+      headers: { cookie: aliceCookie },
+      payload: { channelId: fx.channelId },
+    });
+    expect(start.statusCode).toBe(200);
+    const callId = start.json().call.id as string;
+
+    const leave = await current.inject({
+      method: 'POST',
+      url: `/api/calls/${callId}/leave`,
+      headers: { cookie: aliceCookie },
+    });
+    expect(leave.statusCode).toBe(200);
+    const events = await pool.query("SELECT id FROM events WHERE type = $1 AND payload->>'callId' = $2", [
+      'call.ended',
+      callId,
+    ]);
+    expect(events.rows).toEqual([]);
   });
 
   it('returns active snapshots when LiveKit settings are absent but rejects call mutations', async () => {

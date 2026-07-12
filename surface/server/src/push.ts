@@ -514,6 +514,118 @@ export async function sendMessagePush(
   await sendWebPushes(pool, webPushSender, webMessages);
 }
 
+/**
+ * Notify direct-conversation members who never joined a finished call. The
+ * durable event is already committed before this runs, so one ending event
+ * yields at most one push per eligible recipient.
+ */
+export async function sendMissedCallPush(
+  pool: Db,
+  hub: Pick<WsHub, 'isUserPresent'>,
+  event: WireEvent,
+  fetchOrOpts: typeof fetch | SendMessagePushOptions = fetch,
+): Promise<void> {
+  if (event.type !== 'call.ended' || !event.channelId) return;
+  const callId = typeof event.payload.callId === 'string' ? event.payload.callId : null;
+  const initiatorId = typeof event.payload.initiatorId === 'string' ? event.payload.initiatorId : event.actorId;
+  if (!callId || !initiatorId) return;
+
+  const channel = await pool.query<{ kind: string }>('SELECT kind FROM channels WHERE id = $1', [event.channelId]);
+  const channelKind = channel.rows[0]?.kind;
+  if (channelKind !== 'dm' && channelKind !== 'gdm') return;
+
+  const recipientRows = await pool.query<{ user_id: string }>(
+    `SELECT cm.user_id
+     FROM channel_members cm
+     WHERE cm.channel_id = $1
+       AND cm.user_id <> $2
+       AND NOT EXISTS (
+         SELECT 1
+         FROM call_participants cp
+         WHERE cp.call_id = $3 AND cp.user_id = cm.user_id
+       )
+       AND NOT EXISTS (
+         SELECT 1
+         FROM call_declines cd
+         WHERE cd.call_id = $3 AND cd.user_id = cm.user_id
+       )`,
+    [event.channelId, initiatorId, callId],
+  );
+  const recipients = new Map<string, PushReason>();
+  for (const row of recipientRows.rows) recipients.set(row.user_id, 'dm');
+  await dropMutedRecipients(pool, event.channelId, recipients);
+  for (const userId of [...recipients.keys()]) {
+    if (hub.isUserPresent(event.channelId, userId)) recipients.delete(userId);
+  }
+  const prefs = await notificationPrefsFor(pool, [...recipients.keys()]);
+  for (const userId of [...recipients.keys()]) {
+    if (prefs.get(userId)?.calls === false) recipients.delete(userId);
+  }
+  if (recipients.size === 0) return;
+
+  const tokens = await pool.query<PushTokenRow>(
+    `SELECT token, user_id, kind, subscription
+     FROM push_tokens
+     WHERE user_id = ANY($1::uuid[]) AND kind IN ('expo', 'webpush')`,
+    [[...recipients.keys()]],
+  );
+  if (tokens.rows.length === 0) return;
+
+  let callerName = event.author?.displayName ?? null;
+  if (!callerName) {
+    const caller = await pool.query<{ display_name: string }>('SELECT display_name FROM users WHERE id = $1', [
+      initiatorId,
+    ]);
+    callerName = caller.rows[0]?.display_name ?? null;
+  }
+  let body = 'Tap to call back';
+  if (channelKind === 'gdm') {
+    const members = await pool.query<{ display_name: string }>(
+      `SELECT u.display_name
+       FROM channel_members cm
+       JOIN users u ON u.id = cm.user_id
+       WHERE cm.channel_id = $1
+       ORDER BY u.handle ASC`,
+      [event.channelId],
+    );
+    const names = members.rows.map((member) => member.display_name).filter(Boolean);
+    body = names.length > 0 ? `Group call with ${names.join(', ')}` : 'Group call';
+  }
+
+  const userIds = [...recipients.keys()];
+  const badges = await unreadCountsFor(pool, userIds);
+  const title = `Missed call from ${callerName ?? 'Someone'}`;
+  const data = { channelId: event.channelId, eventId: event.id };
+  const payloadFor = (userId: string): WebPushPayload => ({
+    title,
+    body,
+    tag: `call:${callId}`,
+    badge: badges.get(userId) ?? 0,
+    data,
+  });
+  const { fetchImpl, receiptDelayMs, webPushSender } = sendMessagePushOptions(fetchOrOpts);
+  const expoMessages = tokens.rows
+    .filter((row) => row.kind === 'expo')
+    .map((row) => ({
+      to: row.token,
+      title,
+      body,
+      sound: 'default' as const,
+      badge: badges.get(row.user_id) ?? 0,
+      data,
+    }));
+  const webMessages = tokens.rows
+    .filter((row) => row.kind === 'webpush' && row.subscription)
+    .map((row) => ({
+      token: row.token,
+      subscription: row.subscription!,
+      payload: payloadFor(row.user_id),
+      urgency: 'high' as WebPushUrgency,
+    }));
+  await sendExpoPushes(pool, expoMessages, fetchImpl, receiptDelayMs);
+  await sendWebPushes(pool, webPushSender, webMessages);
+}
+
 export async function sendQuestionPush(
   pool: Db,
   hub: WsHub,

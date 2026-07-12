@@ -26,6 +26,7 @@ import {
   type WireEvent,
 } from '@atrium/surface-client';
 import { useWs } from '@atrium/surface-client';
+import { encodeEventHandle } from '@atrium/surface-client/handle';
 import { Avatar } from './components/Avatar';
 import { AgentsSurface } from './components/AgentsSurface';
 import { ActivityView } from './components/ActivityView';
@@ -54,7 +55,6 @@ import { SessionPane, type TranscriptDiscussPayload } from './sessions/SessionPa
 import { loadSessionPaneWidth, sessionPaneSizing } from './sessions/useSessionPaneWidth';
 import { SessionsRail } from './sessions/SessionsRail';
 import { SpawnDialog } from './sessions/SpawnDialog';
-import { parseAgentTask } from './sessions/spawn';
 import { ViewToggle } from './sessions/ViewToggle';
 import { isPendingSessionId, isTerminalSessionStatus, sessionFromWire } from './sessions/types';
 import { adoptPrefs, useTheme } from './theme';
@@ -187,6 +187,12 @@ export function isActivityRefreshEvent(
   channels: readonly Channel[],
   sessions: Record<string, { spawnedBy: string }>,
 ): boolean {
+  if (event.type === 'call.ended') {
+    if (!event.channelId || !event.actorId || event.actorId === me.id) return false;
+    const channel = channels.find((candidate) => candidate.id === event.channelId);
+    return channel?.kind === 'dm' || channel?.kind === 'gdm';
+  }
+
   if (event.type === 'message.posted') {
     const text = typeof event.payload.text === 'string' ? event.payload.text : '';
     if (mentionsHandle(text, me.handle)) return true;
@@ -671,7 +677,7 @@ export function Chat({
   const channelMemberRequestsRef = useRef<Set<string>>(new Set());
   const [createChannelRequestSeq, setCreateChannelRequestSeq] = useState(0);
   const [startDmRequestSeq, setStartDmRequestSeq] = useState(0);
-  // Configured-spawn dialog (the @agent composer grammar is the quick path).
+  // Configured-spawn dialog (the summon sigil is the quick path).
   const [spawnOpen, setSpawnOpen] = useState(false);
   const [spawnInitialTask, setSpawnInitialTask] = useState('');
   const [configureRestore, setConfigureRestore] = useState<{ draftKey: string; text: string } | null>(null);
@@ -950,6 +956,8 @@ export function Chat({
       },
       onChannelPinned: (channelId, pinned) => dispatch({ type: 'channel-pin-changed', channelId, pinned }),
       onSessionPinned: (sessionId, pinned) => dispatch({ type: 'session-pin-changed', sessionId, pinned }),
+      onSessionActivity: (sessionId, activity) =>
+        dispatch({ type: 'session-activity', sessionId, summary: activity.summary, at: activity.at }),
       onChannelLeft: (channelId) => dispatch({ type: 'channel-removed', channelId }),
       onPrefs: adoptPrefs,
       onOpen: () => {
@@ -1281,16 +1289,6 @@ export function Chat({
     setSpawnOpen(true);
   }, []);
 
-  const configureAgentFromComposer = useCallback(
-    (fullText: string) => {
-      const captured = channelComposerRef.current?.captureForConfigure() ?? fullText;
-      const task = parseAgentTask(captured) ?? captured.replace(/^\s*@agent\b\s*/i, '');
-      setConfigureRestore({ draftKey: activeDraftKey, text: captured });
-      openSpawnWithInitialTask(task);
-    },
-    [activeDraftKey, openSpawnWithInitialTask],
-  );
-
   const cancelSpawnDialog = useCallback(() => {
     setSpawnOpen(false);
     setSpawnInitialTask('');
@@ -1517,16 +1515,17 @@ export function Chat({
   // not on every Chat render.
   const placeholderPaneSizing = useMemo(() => sessionPaneSizing(loadSessionPaneWidth()), [state.openSessionId]);
 
-  const { editMessage, reactToMessage, removeMessage, retry, send, startConfiguredSession } = useChatMessageActions({
-    activeChannel: active,
-    dispatch,
-    enqueueOp,
-    me,
-    onSpawnDialogClose: () => {
-      setSpawnOpen(false);
-      setSpawnInitialTask('');
-    },
-  });
+  const { editMessage, reactToMessage, removeMessage, retry, send, sendAgent, startConfiguredSession } =
+    useChatMessageActions({
+      activeChannel: active,
+      dispatch,
+      enqueueOp,
+      me,
+      onSpawnDialogClose: () => {
+        setSpawnOpen(false);
+        setSpawnInitialTask('');
+      },
+    });
 
   // ---- jump to a message from search: page history back until it's loaded ----
   const [highlightId, setHighlightId] = useState<number | null>(null);
@@ -2323,7 +2322,7 @@ export function Chat({
                 onOpenSession={openSession}
                 onRunDemoAgent={active ? startDemoSession : undefined}
                 demoAgentBusy={demoStarting}
-                onInsertAgentCommand={() => putTextInComposer('@agent ')}
+                onInsertAgentCommand={() => putTextInComposer('!!')}
                 onSayHello={() => putTextInComposer('Hello!')}
                 onConnectProvider={openProviderConnect}
                 onRetry={retry}
@@ -2332,6 +2331,13 @@ export function Chat({
                 onReact={reactToMessage}
                 resolveUser={active ? resolveActiveUser : undefined}
                 onMarkupEntry={(handle, message) => void openMarkupReply(handle, message)}
+                onDelegateToAgent={(message) =>
+                  message.id != null &&
+                  channelComposerRef.current?.activateAgentMode({
+                    eventId: message.id,
+                    label: `/e/${encodeEventHandle(message.id)}`,
+                  })
+                }
                 unreadDividerAfterId={unreadDividerAfterId}
                 dividerReady={dividerReady}
                 onReachBottom={handleReachBottom}
@@ -2365,8 +2371,14 @@ export function Chat({
                 onDraftPersisted={enqueueDraft}
                 onDraftTouched={markDraftTouched}
                 autoFocus={!state.openSessionId}
-                agentAware
-                onConfigureAgent={configureAgentFromComposer}
+                agentMode={{
+                  scope: 'channel',
+                  channelLabel:
+                    active.kind === 'dm' || active.kind === 'gdm' ? channelLabel(active, me.id) : `#${active.name}`,
+                }}
+                onAgentSend={(request, text, attachments, attachmentRefs) =>
+                  sendAgent(active.id, request, text, attachments, attachmentRefs)
+                }
                 previewEntryLinks
                 allowAttachments
                 mentionContext={{
@@ -2472,6 +2484,9 @@ export function Chat({
               onClose={() => goToRoute({ surface: 'chat', channelId: active.id, sessionId: null, focusSession: false })}
               onSend={(text, attachments, attachmentRefs, voice, broadcast) =>
                 send(active.id, text, openThreadRoot.id!, attachments, attachmentRefs, voice, broadcast)
+              }
+              onAgentSend={(request, text, attachments, attachmentRefs) =>
+                sendAgent(active.id, request, text, attachments, attachmentRefs)
               }
               queueUpload={queueUpload}
               onOpenSession={openSession}

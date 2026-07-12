@@ -286,6 +286,48 @@ describe('/api/activity', () => {
     expect((await activity(bob.cookie)).items.map((item: any) => Number(item.eventId))).not.toContain(mention.id);
   });
 
+  it('shows missed and declined direct calls only to members who never joined', async () => {
+    const alice = await login('alice', 'Alice');
+    const bob = await login('bob', 'Bob');
+    const cara = await login('cara', 'Cara');
+    const dm = await createDm(alice.cookie, bob.user.id);
+    const missed = await insertEndedCallActivity(dm.id, alice.user.id, [alice.user.id]);
+    const declined = await insertEndedCallActivity(dm.id, alice.user.id, [alice.user.id], [bob.user.id]);
+    const gdm = await createGdm(alice.cookie, [bob.user.id, cara.user.id]);
+    const groupCall = await insertEndedCallActivity(gdm.id, alice.user.id, [alice.user.id, bob.user.id]);
+
+    const bobItems = (await activity(bob.cookie)).items;
+    expect(bobItems.find((item: any) => Number(item.eventId) === missed.eventId)).toMatchObject({
+      kind: 'missed_call',
+      actorId: alice.user.id,
+      actorName: 'Alice',
+      snippet: 'You missed a call.',
+      sessionId: null,
+      sessionTitle: null,
+      sessionStatus: null,
+      attention: false,
+    });
+    expect(bobItems.find((item: any) => Number(item.eventId) === declined.eventId)).toMatchObject({
+      kind: 'call_declined',
+      actorId: alice.user.id,
+      snippet: 'You declined this call.',
+      attention: false,
+    });
+    expect(bobItems.map((item: any) => Number(item.eventId))).not.toContain(groupCall.eventId);
+
+    const caraItems = (await activity(cara.cookie)).items;
+    expect(caraItems.find((item: any) => Number(item.eventId) === groupCall.eventId)).toMatchObject({
+      kind: 'missed_call',
+      snippet: 'You missed a call.',
+      attention: false,
+    });
+
+    const aliceItems = (await activity(alice.cookie)).items;
+    for (const eventId of [missed.eventId, declined.eventId, groupCall.eventId]) {
+      expect(aliceItems.map((item: any) => Number(item.eventId))).not.toContain(eventId);
+    }
+  });
+
   it('returns read-state metadata and derives attention from current session state', async () => {
     const bob = await login('bob', 'Bob');
     const questionSessionId = await createActivitySession(bob.user.id, 'waiting for an answer');
@@ -427,6 +469,17 @@ async function createDm(cookie: string, userId: string) {
   return res.json().channel;
 }
 
+async function createGdm(cookie: string, userIds: string[]) {
+  const res = await app.inject({
+    method: 'POST',
+    url: '/api/dms',
+    headers: { cookie },
+    payload: { userIds },
+  });
+  expect(res.statusCode).toBe(201);
+  return res.json().channel;
+}
+
 async function createPrivate(cookie: string, name: string) {
   const res = await app.inject({
     method: 'POST',
@@ -467,6 +520,47 @@ async function post(cookie: string, channelId: string, text: string, threadRootE
   });
   expect(res.statusCode).toBe(201);
   return res.json().event as { id: number; channelId: string };
+}
+
+async function insertEndedCallActivity(
+  channelId: string,
+  initiatorId: string,
+  participantIds: string[],
+  declinedIds: string[] = [],
+): Promise<{ callId: string; eventId: number }> {
+  const callId = randomUUID();
+  const startedAt = new Date().toISOString();
+  await pool.query(
+    `INSERT INTO calls (id, workspace_id, channel_id, initiator_id, room, status, started_at, ended_at)
+     VALUES ($1, $2, $3, $4, $5, 'ended', $6, now())`,
+    [callId, fx.workspaceId, channelId, initiatorId, `call:${callId}`, startedAt],
+  );
+  for (const userId of participantIds) {
+    await pool.query('INSERT INTO call_participants (call_id, user_id, left_at) VALUES ($1, $2, now())', [
+      callId,
+      userId,
+    ]);
+  }
+  for (const userId of declinedIds) {
+    await pool.query('INSERT INTO call_declines (call_id, user_id) VALUES ($1, $2)', [callId, userId]);
+  }
+  const event = await pool.query<{ id: number }>(
+    `INSERT INTO events (workspace_id, channel_id, type, actor_id, payload)
+     VALUES ($1, $2, 'call.ended', $3, $4)
+     RETURNING id`,
+    [
+      fx.workspaceId,
+      channelId,
+      initiatorId,
+      JSON.stringify({
+        callId,
+        initiatorId,
+        startedAt,
+        answered: participantIds.some((userId) => userId !== initiatorId),
+      }),
+    ],
+  );
+  return { callId, eventId: event.rows[0]!.id };
 }
 
 async function insertSessionEvent(userId: string, type: string, payload: Record<string, unknown>): Promise<number> {

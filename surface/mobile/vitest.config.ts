@@ -1,4 +1,5 @@
 import { defineConfig } from 'vitest/config';
+import { FlakyReporter } from '../test-support/flaky-reporter';
 
 // Component tests render React Native components through react-native-web in
 // jsdom (opt in per file with `// @vitest-environment jsdom`), giving web-style
@@ -12,6 +13,8 @@ export default defineConfig({
     },
   },
   test: {
+    retry: process.env.CI ? 1 : 0,
+    reporters: process.env.CI ? ['default', new FlakyReporter('@atrium/mobile')] : ['default'],
     // React must run its development build for act()/Testing Library, even when
     // the invoking shell exports NODE_ENV=production (it does here). Mirrors the
     // web package's vitest config.

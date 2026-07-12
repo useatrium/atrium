@@ -8,8 +8,10 @@ import {
   activeCallById,
   channelRecipientIds,
   endCall,
+  finalizeEndedCall,
   loadActiveCallWiresForUser,
   loadCallWire,
+  type ActiveCallRow,
   type CallRow,
   type EndCallResult,
 } from '../calls.js';
@@ -17,6 +19,7 @@ import { canAccessChannel, DomainError, type UserRef } from '../events.js';
 import type { WsHub } from '../hub.js';
 import { createLiveKitWebhookReceiver, type CallTokenService } from '../livekit.js';
 import { workspaceMemberExists } from '../membership.js';
+import { sendMissedCallPush } from '../push.js';
 import { sendIncomingCallVoipPushes, type VoipPushSender } from '../voip.js';
 import { isUuid } from '../idempotency.js';
 import { decodeRouteBody, decodeRouteParams, decodeRouteQuery } from '../route-schema.js';
@@ -79,6 +82,7 @@ interface ParticipantLeftResult {
   callId: string;
   recipients: string[];
   ended: boolean;
+  event: EndCallResult['event'];
   left: boolean;
 }
 
@@ -100,7 +104,7 @@ function callIdFromLiveKitRoom(roomName: string | undefined): string | null {
 
 async function markParticipantLeftInCall(
   client: DbClient,
-  call: Pick<CallRow, 'id' | 'channel_id'>,
+  call: ActiveCallRow,
   userId: string,
 ): Promise<ParticipantLeftResult> {
   const left = await client.query(
@@ -112,28 +116,19 @@ async function markParticipantLeftInCall(
   );
   // Not an active participant (never joined / already left): no-op, no signal.
   if ((left.rowCount ?? 0) === 0) {
-    return { callId: call.id, recipients: [], ended: false, left: false };
+    return { callId: call.id, recipients: [], ended: false, event: null, left: false };
   }
   const remaining = await client.query<{ count: string }>(
     'SELECT COUNT(*) FROM call_participants WHERE call_id = $1 AND left_at IS NULL',
     [call.id],
   );
   const shouldEnd = Number(remaining.rows[0]!.count) === 0;
-  let ended = false;
-  if (shouldEnd) {
-    const updated = await client.query(
-      `UPDATE calls
-       SET status = 'ended', ended_at = COALESCE(ended_at, now())
-       WHERE id = $1 AND status <> 'ended'
-       RETURNING 1`,
-      [call.id],
-    );
-    ended = (updated.rowCount ?? 0) > 0;
-  }
+  const finalized = shouldEnd ? await finalizeEndedCall(client, call) : { ended: false, event: null };
   return {
     callId: call.id,
     recipients: await channelRecipientIds(client, call.channel_id),
-    ended,
+    ended: finalized.ended,
+    event: finalized.event,
     left: true,
   };
 }
@@ -174,6 +169,15 @@ export function registerCallRoutes(app: FastifyInstance, deps: CallRouteDeps): v
     livekitApiSecret: deps.livekitApiSecret ?? '',
   });
 
+  function publishEndedCall(result: Pick<EndCallResult, 'callId' | 'recipients' | 'event'>): void {
+    hub.publishCallToUsers(result.recipients, { type: 'call.ended', callId: result.callId });
+    if (!result.event) return;
+    hub.publishEvent(result.event);
+    void sendMissedCallPush(pool, hub, result.event).catch((err) => {
+      app.log.warn({ err }, 'missed call push failed');
+    });
+  }
+
   if (livekitWebhookReceiver) {
     app.addContentTypeParser('application/webhook+json', { parseAs: 'string' }, (_req, body, done) => done(null, body));
 
@@ -195,12 +199,7 @@ export function registerCallRoutes(app: FastifyInstance, deps: CallRouteDeps): v
           userId: event.participant!.identity!,
         });
       }
-      if (result?.result.ended) {
-        hub.publishCallToUsers(result.result.recipients, {
-          type: 'call.ended',
-          callId: result.result.callId,
-        });
-      }
+      if (result?.result.ended) publishEndedCall(result.result);
       return { ok: true };
     });
   }
@@ -353,26 +352,26 @@ export function registerCallRoutes(app: FastifyInstance, deps: CallRouteDeps): v
     if (!isUuid(id)) return reply.code(404).send({ error: 'call_not_found', message: 'call not found' });
     const result = await withTx(pool, async (client) => {
       const call = await requireAccessibleActiveCall(client, id, user.id);
+      await client.query(
+        `INSERT INTO call_declines (call_id, user_id)
+         VALUES ($1, $2)
+         ON CONFLICT DO NOTHING`,
+        [call.id, user.id],
+      );
       const recipients = await channelRecipientIds(client, call.channel_id);
       // A DM call has exactly two people: either the callee declining or the
       // caller cancelling ends it (otherwise it would hang in 'ringing' forever
       // with no GC). Group/public declines just dismiss the ring locally.
       const shouldEnd = call.channel_kind === 'dm';
-      if (shouldEnd) {
-        await client.query("UPDATE calls SET status = 'ended', ended_at = COALESCE(ended_at, now()) WHERE id = $1", [
-          call.id,
-        ]);
-      }
-      return { callId: call.id, recipients, ended: shouldEnd };
+      const finalized = shouldEnd ? await finalizeEndedCall(client, call) : { ended: false, event: null };
+      return { callId: call.id, recipients, ended: finalized.ended, event: finalized.event };
     });
     hub.publishCallToUsers(result.recipients, {
       type: 'call.declined',
       callId: result.callId,
       userId: user.id,
     });
-    if (result.ended) {
-      hub.publishCallToUsers(result.recipients, { type: 'call.ended', callId: result.callId });
-    }
+    if (result.ended) publishEndedCall(result);
     return { ok: true };
   });
 
@@ -392,9 +391,7 @@ export function registerCallRoutes(app: FastifyInstance, deps: CallRouteDeps): v
         userId: user.id,
       });
     }
-    if (result.ended) {
-      hub.publishCallToUsers(result.recipients, { type: 'call.ended', callId: result.callId });
-    }
+    if (result.ended) publishEndedCall(result);
     return { ok: true };
   });
 }

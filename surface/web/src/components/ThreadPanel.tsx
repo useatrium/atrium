@@ -8,8 +8,9 @@ import type {
   VoiceMeta,
 } from '@atrium/surface-client';
 import type { Session } from '../sessions/types';
-import { buildTimelineItems } from '@atrium/surface-client';
+import { sessionDriverId, buildTimelineItems } from '@atrium/surface-client';
 import { Composer } from './Composer';
+import type { AgentComposerRequest } from './Composer';
 import { XIcon } from './icons';
 import { MessageRow } from './MessageRow';
 import type { MentionContext } from './useMentionTypeahead';
@@ -46,6 +47,7 @@ export function ThreadPanel({
   onDraftPersisted,
   onDraftTouched,
   previewEntryLinks,
+  onAgentSend,
 }: {
   root: ChatMessage;
   replies: ChatMessage[];
@@ -78,6 +80,12 @@ export function ThreadPanel({
   onDraftPersisted?: (key: string, text: string) => void | Promise<void>;
   onDraftTouched?: (key: string) => void;
   previewEntryLinks?: boolean;
+  onAgentSend?: (
+    request: AgentComposerRequest,
+    text: string,
+    attachments?: AttachmentMeta[],
+    attachmentRefs?: AttachmentRef[],
+  ) => void;
 }) {
   const { width: paneWidth, resizing, startResize, resetWidth } = useThreadPaneWidth();
   const alsoSendToChannelId = useId();
@@ -87,7 +95,21 @@ export function ThreadPanel({
     typeof window === 'undefined'
       ? THREAD_PANE_FALLBACK_WIDTH
       : Math.max(THREAD_PANE_MIN_WIDTH, Math.round((window.innerWidth * THREAD_PANE_MAX_VW) / 100));
-  const sessionFor = (m: ChatMessage) => (m.sessionId != null ? sessions[m.sessionId] : undefined);
+  const sessionFor = (m: ChatMessage) =>
+    m.sessionId != null
+      ? sessions[m.sessionId]
+      : m.suggestedSessionId
+        ? sessions[m.suggestedSessionId]
+        : m.steeredSessionId
+          ? sessions[m.steeredSessionId]
+          : undefined;
+  const attachedSession = useMemo(
+    () =>
+      root.sessionId != null
+        ? sessions[root.sessionId]
+        : Object.values(sessions).find((session) => session.threadRootEventId === root.id),
+    [root.id, root.sessionId, sessions],
+  );
   const spectatorsFor = (m: ChatMessage) => (m.sessionId != null ? (spectators[m.sessionId] ?? 0) : 0);
   const scrollRef = useRef<HTMLDivElement>(null);
   const count = replies.length;
@@ -209,7 +231,24 @@ export function ThreadPanel({
         }}
         queueUpload={queueUpload}
         autoFocus
-        agentAware
+        agentMode={{
+          scope: 'thread',
+          channelLabel: 'this thread',
+          threadRootEventId: root.id ?? undefined,
+          ...(attachedSession
+            ? {
+                attachedSession: {
+                  id: attachedSession.id,
+                  title: attachedSession.title,
+                  // Canonical seat resolution: null driverId falls back to the spawner.
+                  driverId: sessionDriverId(attachedSession),
+                  modelEffort: attachedSession.modelEffort,
+                },
+              }
+            : {}),
+          meId,
+        }}
+        onAgentSend={onAgentSend}
         allowAttachments
         draftKey={draftKey}
         initialDraft={initialDraft}

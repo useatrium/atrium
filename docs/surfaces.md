@@ -35,13 +35,15 @@ work surface), `/search` (session search).
   unread dots, presence, create-channel / start-DM, mute, settings, log out.
 - **Channel timeline** (`components/Timeline.tsx`, `components/MessageRow.tsx`) —
   messages grouped by author/time, reactions, edit/delete, read marker, inline
-  session cards from `@agent` spawns, inline file-change cards, attachments,
+  session cards from agent summons, inline file-change cards, attachments,
   history paging.
 - **Thread panel** (`components/ThreadPanel.tsx`) — a root message and its
   replies (full-screen on mobile), with its own composer and draft.
-- **Composer** (`components/Composer.tsx`) — text + attachments + voice; detects
-  `@agent <task>` and opens the spawn dialog instead of posting; per-channel
-  drafts; typing indicators.
+- **Composer** (`components/Composer.tsx`) — text + attachments + voice; a
+  first-class **agent mode** (enter with `!!`, the ⚡ button, ⌘J, or "Delegate to
+  agent…" on a message) with a target pill (new agent / steer / suggest), anchor
+  chip, and effort tier — sends spawn or steer instead of posting; per-channel
+  drafts; typing indicators. `@agent` is retired; mentions are for people.
 - **Quick switcher** (`components/QuickSwitcher.tsx`) — keyboard jump to a
   channel or session.
 - **Toasts** (`components/Toasts.tsx`) — transient errors/confirmations.

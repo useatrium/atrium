@@ -29,6 +29,8 @@ export interface ChannelChatMessage {
   text: string;
   createdAt: Date;
   threadRootEventId: number | null;
+  /** Persisted `session.replied` events are authored by the session, not a user. */
+  isAgent?: boolean;
 }
 
 export const CHANNEL_CHAT_MAX_BYTES = 2_000_000;
@@ -153,25 +155,32 @@ export async function loadChannelChatMessages(pool: Db, channelId: string): Prom
   const res = await pool.query<{
     id: string | number;
     thread_root_event_id: string | number | null;
+    event_type: string;
     actor_id: string | null;
     payload_text: string | null;
+    payload_title: string | null;
     edited_text: string | null;
     is_deleted: boolean;
     created_at: Date;
     author_handle: string | null;
     author_display_name: string | null;
+    reply_session_title: string | null;
   }>(
     `SELECT e.id,
             e.thread_root_event_id,
+            e.type AS event_type,
             e.actor_id,
             e.payload->>'text' AS payload_text,
+            e.payload->>'title' AS payload_title,
             edit.text AS edited_text,
             (del.id IS NOT NULL) AS is_deleted,
             e.created_at,
             u.handle AS author_handle,
-            u.display_name AS author_display_name
+            u.display_name AS author_display_name,
+            replied_session.title AS reply_session_title
        FROM events e
        LEFT JOIN users u ON u.id = e.actor_id
+       LEFT JOIN sessions replied_session ON replied_session.id::text = e.payload->>'session_id'
        LEFT JOIN LATERAL (
          SELECT x.payload->>'text' AS text
            FROM events x
@@ -188,7 +197,7 @@ export async function loadChannelChatMessages(pool: Db, channelId: string): Prom
           LIMIT 1
        ) del ON true
       WHERE e.channel_id = $1::uuid
-        AND e.type = 'message.posted'
+        AND e.type IN ('message.posted', 'session.spawned', 'session.replied')
       ORDER BY e.id ASC`,
     [channelId],
   );
@@ -196,15 +205,22 @@ export async function loadChannelChatMessages(pool: Db, channelId: string): Prom
     .filter((row) => !row.is_deleted)
     .map((row) => {
       const id = Number(row.id);
-      const authorName = row.author_display_name ?? row.author_handle ?? row.actor_id ?? 'unknown';
+      const isAgent = row.event_type === 'session.replied';
+      const authorName = isAgent
+        ? (row.reply_session_title ?? 'agent')
+        : (row.author_display_name ?? row.author_handle ?? row.actor_id ?? 'unknown');
       return {
         id,
         handle: encodeEventHandle(id),
         authorName,
-        authorHandle: row.author_handle,
-        text: row.edited_text ?? row.payload_text ?? '',
+        authorHandle: isAgent ? null : row.author_handle,
+        text:
+          row.event_type === 'session.spawned'
+            ? (row.payload_title ?? 'Agent session')
+            : (row.edited_text ?? row.payload_text ?? ''),
         createdAt: new Date(row.created_at),
         threadRootEventId: row.thread_root_event_id == null ? null : Number(row.thread_root_event_id),
+        ...(isAgent ? { isAgent: true } : {}),
       };
     });
 }
@@ -286,6 +302,9 @@ function renderMessageGroup(group: ChannelChatMessage[]): string {
 }
 
 function authorLine(message: ChannelChatMessage, timestamp: string): string {
+  if (message.isAgent) {
+    return `**${message.authorName} (agent)** · ${timestamp} ⟨/e/${message.handle}⟩`;
+  }
   const handle = message.authorHandle ? ` (@${message.authorHandle})` : '';
   return `**${message.authorName}**${handle} · ${timestamp} ⟨/e/${message.handle}⟩`;
 }

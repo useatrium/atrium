@@ -61,6 +61,25 @@ describe('atrium channel projection', () => {
     expect(md).toContain('  ↳ **Bob Jones** (@bob) · 14:35 ⟨/e/evt_2⟩\n  Agreed, but cap page size.');
   });
 
+  it('renders a persisted agent reply under its session card root', () => {
+    const md = renderChannelChatMarkdown([
+      msg({ id: 10, text: 'Investigate the cache invalidation bug.' }),
+      msg({
+        id: 11,
+        authorName: 'Investigate the cache invalidation bug',
+        authorHandle: null,
+        text: 'I found the stale key path.',
+        createdAt: new Date('2026-07-07T14:36:00.000Z'),
+        threadRootEventId: 10,
+        isAgent: true,
+      }),
+    ]);
+
+    expect(md).toContain(
+      '  ↳ **Investigate the cache invalidation bug (agent)** · 14:36 ⟨/e/evt_11⟩\n  I found the stale key path.',
+    );
+  });
+
   it('tails oversized chat output with an elision note', () => {
     const md = renderChannelChatMarkdown(
       [
