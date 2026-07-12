@@ -41,7 +41,16 @@ import {
   type SteerProvenance,
 } from '@atrium/surface-client';
 import { HARNESS_EFFORT_PICKER_OPTIONS } from '@atrium/surface-client/effort';
-import type { QuestionItem, SessionItem, TextItem, ToolCallItem, UserMessageItem } from '@atrium/centaur-client';
+import {
+  focusTranscriptRows,
+  fullTranscriptRows,
+  toolDefaultOpen,
+  type QuestionItem,
+  type SessionItem,
+  type TextItem,
+  type ToolCallItem,
+  type UserMessageItem,
+} from '@atrium/centaur-client';
 import { useChat } from '../../../src/lib/chat';
 import { useAccessibilityAnnouncement, useModalAccessibilityFocus } from '../../../src/lib/accessibility';
 import { font, radius, space, useTheme, type Colors } from '../../../src/lib/theme';
@@ -98,7 +107,6 @@ import {
   persistTranscriptView,
   type TranscriptView,
 } from '../../../src/lib/prefsStorage';
-import { focusTranscriptRows, fullTranscriptRows, toolDefaultOpen } from '../../../src/lib/transcriptView';
 import {
   loadMarkupDraftFromEntry,
   putPendingMarkupDraft,
