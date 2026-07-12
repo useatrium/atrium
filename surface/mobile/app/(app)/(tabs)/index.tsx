@@ -2,7 +2,7 @@
 // screen is visible, so every channel accrues unreads.
 
 import { useCallback, useMemo, useState } from 'react';
-import { Alert, FlatList, Pressable, RefreshControl, Text, View } from 'react-native';
+import { FlatList, Pressable, RefreshControl, Text, View } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import type { ComponentProps } from 'react';
@@ -12,6 +12,8 @@ import { font, space, useTheme } from '../../../src/lib/theme';
 import { Avatar } from '../../../src/components/Avatar';
 import { ConnectionBanner, UnreadBadge } from '../../../src/components/bits';
 import { MobileHeader } from '../../../src/components/MobileHeader';
+import { MessageActionSheet, type MessageActionListItem } from '../../../src/components/MessageActions';
+import { selectionHaptic } from '../../../src/lib/haptics';
 
 type IoniconName = ComponentProps<typeof Ionicons>['name'];
 
@@ -64,6 +66,7 @@ export default function ChannelList() {
   } = useChat();
   const { colors } = useTheme();
   const [archivedOpen, setArchivedOpen] = useState(false);
+  const [actionChannel, setActionChannel] = useState<Channel | null>(null);
 
   useFocusEffect(
     useCallback(() => {
@@ -88,20 +91,9 @@ export default function ChannelList() {
     const unread = c.muted ? false : (state.unread[c.id] ?? false);
     const partner = dmPartner(c, me.id);
     const label = channelLabel(c, me.id);
-    const isArchived = c.archivedAt != null;
     const openActions = () => {
-      Alert.alert(label, undefined, [
-        ...(isArchived ? [] : [{ text: c.pinned ? 'Unpin' : 'Pin', onPress: () => setChannelPinned(c.id, !c.pinned) }]),
-        {
-          text: isArchived ? 'Unarchive' : 'Archive',
-          onPress: () => setChannelArchived(c.id, !isArchived),
-        },
-        {
-          text: c.muted ? 'Unmute' : 'Mute',
-          onPress: () => setMute(c.id, !c.muted),
-        },
-        { text: 'Cancel', style: 'cancel' },
-      ]);
+      selectionHaptic();
+      setActionChannel(c);
     };
     return (
       <Pressable
@@ -180,6 +172,43 @@ export default function ChannelList() {
         ]
       : []),
   ];
+
+  const actionChannelArchived = actionChannel?.archivedAt != null;
+  const channelActions: MessageActionListItem[] = actionChannel
+    ? [
+        ...(actionChannelArchived
+          ? []
+          : [
+              {
+                key: 'pin',
+                label: actionChannel.pinned ? 'Unpin' : 'Pin',
+                icon: 'pin-outline' as const,
+                onSelect: () => {
+                  setActionChannel(null);
+                  setChannelPinned(actionChannel.id, !actionChannel.pinned);
+                },
+              },
+            ]),
+        {
+          key: 'archive',
+          label: actionChannelArchived ? 'Unarchive' : 'Archive',
+          icon: actionChannelArchived ? 'arrow-undo-outline' : 'archive-outline',
+          onSelect: () => {
+            setActionChannel(null);
+            setChannelArchived(actionChannel.id, !actionChannelArchived);
+          },
+        },
+        {
+          key: 'mute',
+          label: actionChannel.muted ? 'Unmute' : 'Mute',
+          icon: actionChannel.muted ? 'notifications-outline' : 'notifications-off-outline',
+          onSelect: () => {
+            setActionChannel(null);
+            setMute(actionChannel.id, !actionChannel.muted);
+          },
+        },
+      ]
+    : [];
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg }}>
@@ -265,6 +294,12 @@ export default function ChannelList() {
           );
         }}
         ListFooterComponent={<View style={{ height: space.xl }} />}
+      />
+      <MessageActionSheet
+        visible={actionChannel != null}
+        title={actionChannel ? channelLabel(actionChannel, me.id) : undefined}
+        actions={channelActions}
+        onClose={() => setActionChannel(null)}
       />
     </View>
   );

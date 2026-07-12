@@ -119,6 +119,65 @@ describe('sessionSidebarPreview', () => {
 });
 
 describe('Sidebar', () => {
+  it('offers progressive inline pin, archive, and mute actions', () => {
+    const onSetPinned = vi.fn();
+    const onSetArchived = vi.fn();
+    renderSidebar(
+      [
+        {
+          id: 'ch-general',
+          workspaceId: 'ws-1',
+          name: 'general',
+          kind: 'public',
+          muted: false,
+          archivedAt: null,
+          pinned: false,
+          createdAt: '2026-01-01T00:00:00.000Z',
+        },
+      ],
+      { onSetPinned, onSetArchived },
+    );
+
+    const pin = screen.getByRole('button', { name: 'Pin general' });
+    const archive = screen.getByRole('button', { name: 'Archive general' });
+    expect(pin.className).toContain('@[12rem]:block');
+    expect(archive.className).toContain('@[15.5rem]:block');
+
+    fireEvent.click(pin);
+    fireEvent.click(archive);
+    expect(onSetPinned).toHaveBeenCalledWith('ch-general', true);
+    expect(onSetArchived).toHaveBeenCalledWith('ch-general', true);
+    expect(screen.getByRole('button', { name: 'Mute general' })).toBeTruthy();
+  });
+
+  it('shows unpin for pinned channels and only unarchive for archived channels', () => {
+    const onSetPinned = vi.fn();
+    const onSetArchived = vi.fn();
+    const base = {
+      workspaceId: 'ws-1',
+      kind: 'public' as const,
+      muted: false,
+      createdAt: '2026-01-01T00:00:00.000Z',
+    };
+    renderSidebar(
+      [
+        { ...base, id: 'ch-pinned', name: 'pinned', archivedAt: null, pinned: true },
+        { ...base, id: 'ch-old', name: 'old', archivedAt: '2026-07-01T00:00:00.000Z', pinned: false },
+      ],
+      { onSetPinned, onSetArchived },
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /Archived/ }));
+    const unpin = screen.getByRole('button', { name: 'Unpin pinned' });
+    const unarchive = screen.getByRole('button', { name: 'Unarchive old' });
+    expect(screen.queryByRole('button', { name: 'Pin old' })).toBeNull();
+
+    fireEvent.click(unpin);
+    fireEvent.click(unarchive);
+    expect(onSetPinned).toHaveBeenCalledWith('ch-pinned', false);
+    expect(onSetArchived).toHaveBeenCalledWith('ch-old', false);
+  });
+
   it('splits pinned channels into a Pinned section and hides archived behind a disclosure', () => {
     const base = {
       workspaceId: 'ws-1',

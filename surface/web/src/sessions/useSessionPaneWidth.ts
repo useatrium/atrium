@@ -19,6 +19,8 @@ interface PaneWidthConfig {
   minWidth: number;
   maxVw: number;
   fallbackWidth: number;
+  cssVar?: `--${string}`;
+  dragDirection?: 'left' | 'right';
 }
 
 function widthCss(config: PaneWidthConfig, width: number): string {
@@ -47,7 +49,12 @@ function paneSizing(
 } {
   return width === null
     ? { className: config.defaultClassName, style: undefined }
-    : { className: '', style: { width: widthCss(config, width) } };
+    : {
+        className: '',
+        style: config.cssVar
+          ? ({ [config.cssVar]: widthCss(config, width) } as CSSProperties)
+          : { width: widthCss(config, width) },
+      };
 }
 
 function maxWidth(config: PaneWidthConfig): number {
@@ -113,10 +120,19 @@ function usePaneWidth(config: PaneWidthConfig): {
       setResizing(true);
 
       const widthAt = (ev: globalThis.PointerEvent) =>
-        drag.current ? clamp(config, drag.current.startWidth + (drag.current.startX - ev.clientX)) : null;
+        drag.current
+          ? clamp(
+              config,
+              drag.current.startWidth +
+                (config.dragDirection === 'right' ? ev.clientX - drag.current.startX : drag.current.startX - ev.clientX),
+            )
+          : null;
       const onMove = (ev: globalThis.PointerEvent) => {
         const w = widthAt(ev);
-        if (w !== null && aside) aside.style.width = widthCss(config, w);
+        if (w !== null && aside) {
+          if (config.cssVar) aside.style.setProperty(config.cssVar, widthCss(config, w));
+          else aside.style.width = widthCss(config, w);
+        }
       };
       const onUp = (ev: globalThis.PointerEvent) => {
         const final = widthAt(ev);
@@ -191,4 +207,35 @@ export function useThreadPaneWidth(): {
   resetWidth: () => void;
 } {
   return usePaneWidth(threadPaneWidthConfig);
+}
+
+// === sidebar resize additions ===
+export const SIDEBAR_MIN_WIDTH = 180;
+export const SIDEBAR_MAX_VW = 40;
+export const SIDEBAR_FALLBACK_WIDTH = 224;
+
+const sidebarWidthConfig: PaneWidthConfig = {
+  storageKey: 'atrium.sidebarWidth',
+  defaultClassName: '',
+  minWidth: SIDEBAR_MIN_WIDTH,
+  maxVw: SIDEBAR_MAX_VW,
+  fallbackWidth: SIDEBAR_FALLBACK_WIDTH,
+  cssVar: '--sidebar-w',
+  dragDirection: 'right',
+};
+
+export function sidebarSizing(width: number | null): {
+  className: string;
+  style: CSSProperties | undefined;
+} {
+  return paneSizing(sidebarWidthConfig, width);
+}
+
+export function useSidebarWidth(): {
+  width: number | null;
+  resizing: boolean;
+  startResize: (e: ReactPointerEvent<HTMLElement>) => void;
+  resetWidth: () => void;
+} {
+  return usePaneWidth(sidebarWidthConfig);
 }
