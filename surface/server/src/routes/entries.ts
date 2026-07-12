@@ -68,31 +68,33 @@ export function registerEntryRoutes(app: FastifyInstance, deps: EntryRouteDeps):
     runMutation,
   } = deps;
 
-  app.get('/api/entries/:handle', async (req, reply) => {
-    const user = requireUser(req, reply);
-    if (!user) return;
+  async function requireEntry(req: FastifyRequest, reply: FastifyReply, user: UserRef) {
     const { handle } = decodeRouteParams(EntryHandleParamsSchema, req.params);
     if (typeof handle !== 'string' || !tryDecodeHandle(handle)) {
-      return reply.code(400).send({ error: 'bad_handle' });
+      reply.code(400).send({ error: 'bad_handle' });
+      return null;
     }
     const entry = await resolveEntry(pool, handle, user.id);
     if (!entry) {
-      return reply.code(404).send({ error: 'entry_not_found' });
+      reply.code(404).send({ error: 'entry_not_found' });
+      return null;
     }
-    return entry;
+    return { handle, entry };
+  }
+
+  app.get('/api/entries/:handle', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    const resolved = await requireEntry(req, reply, user);
+    return resolved?.entry;
   });
 
   app.get('/api/entries/:handle/annotations', async (req, reply) => {
     const user = requireUser(req, reply);
     if (!user) return;
-    const { handle } = decodeRouteParams(EntryHandleParamsSchema, req.params);
-    if (typeof handle !== 'string' || !tryDecodeHandle(handle)) {
-      return reply.code(400).send({ error: 'bad_handle' });
-    }
-    const entry = await resolveEntry(pool, handle, user.id);
-    if (!entry) {
-      return reply.code(404).send({ error: 'entry_not_found' });
-    }
+    const resolved = await requireEntry(req, reply, user);
+    if (!resolved) return;
+    const { handle } = resolved;
     return foldAnnotations(pool, handle);
   });
 
@@ -123,14 +125,9 @@ export function registerEntryRoutes(app: FastifyInstance, deps: EntryRouteDeps):
   app.post('/api/entries/:handle/extract', async (req, reply) => {
     const user = requireUser(req, reply);
     if (!user) return;
-    const { handle } = decodeRouteParams(EntryHandleParamsSchema, req.params);
-    if (typeof handle !== 'string' || !tryDecodeHandle(handle)) {
-      return reply.code(400).send({ error: 'bad_handle' });
-    }
-    const entry = await resolveEntry(pool, handle, user.id);
-    if (!entry) {
-      return reply.code(404).send({ error: 'entry_not_found' });
-    }
+    const resolved = await requireEntry(req, reply, user);
+    if (!resolved) return;
+    const { handle, entry } = resolved;
     try {
       const result = await extractEntryToMarkdownArtifact(pool, { handle, entry, userId: user.id });
       return reply
@@ -159,10 +156,6 @@ export function registerEntryRoutes(app: FastifyInstance, deps: EntryRouteDeps):
     async (req, reply) => {
       const user = requireUser(req, reply);
       if (!user) return;
-      const { handle } = decodeRouteParams(EntryHandleParamsSchema, req.params);
-      if (typeof handle !== 'string' || !tryDecodeHandle(handle)) {
-        return reply.code(400).send({ error: 'bad_handle' });
-      }
       const body = decodeRouteBody(EntryReactionBodySchema, req.body);
       const opId = optionalOpId(body);
       const emoji = body.emoji;
@@ -176,10 +169,9 @@ export function registerEntryRoutes(app: FastifyInstance, deps: EntryRouteDeps):
       if (action !== 'add' && action !== 'remove') {
         return reply.code(400).send({ error: 'bad_request', message: "action must be 'add' or 'remove'" });
       }
-      const entry = await resolveEntry(pool, handle, user.id);
-      if (!entry) {
-        return reply.code(404).send({ error: 'entry_not_found' });
-      }
+      const resolved = await requireEntry(req, reply, user);
+      if (!resolved) return;
+      const { handle } = resolved;
       return runMutation({
         userId: user.id,
         opId,
