@@ -1,8 +1,9 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { config } from '../config.js';
 import type { Db } from '../db.js';
+import { parseChangePage } from '../change-page.js';
 import type { UserRef } from '../events.js';
-import { ArtifactLedger, CHANGE_CURSOR_ZERO, type ChangeCursor } from '../artifact-ledger.js';
+import { ArtifactLedger, CHANGE_CURSOR_ZERO } from '../artifact-ledger.js';
 import { loadConflictDetail } from '../artifact-conflict.js';
 import { artifactPathInRoots, classifyScope, type ArtifactScopeRoot } from '../artifact-scope.js';
 import { displaySessionArtifactPath } from '../artifact-path.js';
@@ -280,26 +281,11 @@ export async function registerArtifactRoutes(app: FastifyInstance, deps: Artifac
     if (!user) return;
     const { id } = req.params as { id: string };
     const q = req.query as { since?: string; limit?: string };
-
-    let cursor: ChangeCursor = CHANGE_CURSOR_ZERO;
-    if (typeof q.since === 'string' && q.since.length > 0) {
-      const m = /^(\d+)\.(\d+)$/.exec(q.since);
-      if (!m) {
-        return reply.code(400).send({ error: 'bad_query', message: 'since must be "<xid>.<id>"' });
-      }
-      cursor = { xid: m[1]!, id: m[2]! };
-    }
-    let limit = 500;
-    if (typeof q.limit === 'string') {
-      const n = Number(q.limit);
-      if (!Number.isInteger(n) || n < 1 || n > 5000) {
-        return reply.code(400).send({ error: 'bad_query', message: 'limit must be 1..5000' });
-      }
-      limit = n;
-    }
+    const pageRequest = parseChangePage(reply, q, CHANGE_CURSOR_ZERO);
+    if (!pageRequest) return;
 
     const ledger = new ArtifactLedger(pool);
-    const page = await ledger.changesSince(id, cursor, limit);
+    const page = await ledger.changesSince(id, pageRequest.cursor, pageRequest.limit);
     const access = await sessionArtifactAccess(id, user.id);
     const channelId = access.channelId;
     const rows = page.rows

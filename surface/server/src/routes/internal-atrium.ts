@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { Db } from '../db.js';
+import { parseChangePage } from '../change-page.js';
 import type { UserRef } from '../events.js';
 import type { SessionRuns } from '../session-runs.js';
 
@@ -73,31 +74,16 @@ export function registerInternalAtriumRoutes(app: FastifyInstance, deps: Interna
     const q = req.query as { since?: string; limit?: string };
     const changefeed = await import('../session-record-changefeed.js');
 
-    let cursor = changefeed.SESSION_RECORD_CHANGE_CURSOR_ZERO;
-    if (typeof q.since === 'string' && q.since.length > 0) {
-      const m = /^(\d+)\.(\d+)$/.exec(q.since);
-      if (!m) {
-        return reply.code(400).send({ error: 'bad_query', message: 'since must be "<xid>.<id>"' });
-      }
-      cursor = { xid: m[1]!, id: m[2]! };
-    }
-
-    let limit = 500;
-    if (typeof q.limit === 'string') {
-      const n = Number(q.limit);
-      if (!Number.isInteger(n) || n < 1 || n > 5000) {
-        return reply.code(400).send({ error: 'bad_query', message: 'limit must be 1..5000' });
-      }
-      limit = n;
-    }
+    const pageRequest = parseChangePage(reply, q, changefeed.SESSION_RECORD_CHANGE_CURSOR_ZERO);
+    if (!pageRequest) return;
 
     const viewerUser = await resolveViewer(viewerId, reply);
     if (!viewerUser) return;
 
     const page = await changefeed.sessionRecordChangesSince(pool, {
       userId: viewerUser.id,
-      cursor,
-      limit,
+      cursor: pageRequest.cursor,
+      limit: pageRequest.limit,
     });
     return reply.send({
       rows: page.rows,
