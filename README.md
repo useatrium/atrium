@@ -46,9 +46,12 @@ Four things the product is built around:
    and keep a permanent link to the full transcript. Work stays in the shared
    place instead of living in one person's terminal.
 2. **Sealed sandboxes with host-side sync.** Agents run in no-ingress sandboxes
-   with ordinary folders. A host **node daemon** captures edits out, hydrates
-   shared files in, and mounts team context — without opening the sandbox. The
-   [Architecture](#architecture) diagram is this idea in one picture.
+   with ordinary folders and the usual Linux CLI tools coding models already know
+   (`rg`, `git`, shells, scripts) — not forced into proprietary Slack/Notion-style
+   APIs, CLIs, or MCP shapes. Models are sharper and more efficient in the
+   environment they were trained on. A host **node daemon** captures edits out,
+   hydrates shared files in, and mounts team context — without opening the
+   sandbox. The [Architecture](#architecture) diagram is this idea in one picture.
 3. **Shared files that keep both sides of a conflict.** People and agents co-edit
    through a versioned artifact store. When edits collide, both versions are kept
    and flagged rather than one silently overwriting the other.
