@@ -32,6 +32,21 @@ the Atrium repo (not a separate `gbasin/centaur`) is the source of truth.
 > `atrium/integration` branch rebuilt from topic branches. That's all retired — this is a
 > subtree in the Atrium repo now. Nothing was lost in the change.
 
+## Licensing
+
+- The subtree keeps upstream's terms: **Apache-2.0 OR MIT** (`LICENSE` here). The rest
+  of the Atrium repo is AGPL-3.0-or-later; the boundary is this directory.
+- **Fork edits and additions under `centaur/` stay Apache-2.0 OR MIT by default** —
+  same terms as the tree they live in. This keeps upstream pulls merge-clean and means
+  any fix we make could flow back upstream without a license question.
+- A deliberate exception (e.g. moving a fork-owned crate to another license) must carry
+  an explicit `license` in its own `Cargo.toml` plus a `LICENSE` file in its directory,
+  and be recorded in the repo-root `NOTICE` — never by editing this subtree's top-level
+  `LICENSE`. Note the trade-off before doing this: code that other centaur crates or
+  binaries link against can't be more restrictive than the binary it ends up in.
+- External contributions everywhere in the repo (including here) are covered by the
+  CLA — see the repo-root `CONTRIBUTING.md`.
+
 ## What's here (the Atrium surface)
 The substantive Atrium-only work this fork carries on top of upstream:
 

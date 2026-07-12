@@ -1,0 +1,50 @@
+# CLA gate — blocks PRs from external contributors until they have signed the
+# Individual CLA (.github/cla/individual.md). Signatures are recorded by the
+# CLA Assistant Lite action on the `cla-signatures` branch of this repo
+# (signatures/version1/cla.json), so no external service holds them.
+#
+# Signing flow: the bot comments on a first-time contributor's PR; they sign by
+# replying with the exact sentence below. `recheck` re-runs the check.
+name: CLA
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_target:
+    types: [opened, closed, synchronize]
+
+permissions:
+  actions: write
+  contents: write
+  pull-requests: write
+  statuses: write
+
+jobs:
+  cla:
+    name: CLA Assistant
+    runs-on: ubuntu-latest
+    # pull_request_target runs with repo-write token on the PR's behalf; this
+    # job must never check out or execute PR code — it only reads/writes
+    # signature state and PR comments via the API.
+    if: (github.event_name == 'pull_request_target') || (github.event_name == 'issue_comment' && (contains(github.event.comment.body, 'I have read the CLA Document and I hereby sign the CLA') || contains(github.event.comment.body, 'recheck')))
+    steps:
+      - name: CLA Assistant Lite
+        uses: contributor-assistant/github-action@v2.6.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          path-to-signatures: signatures/version1/cla.json
+          path-to-document: https://github.com/gbasin/atrium/blob/master/.github/cla/individual.md
+          branch: cla-signatures
+          allowlist: gbasin,dependabot[bot],*[bot]
+          custom-notsigned-comment: >-
+            Thank you for your contribution! Before we can accept it, we ask
+            that you sign our [Contributor License
+            Agreement](https://github.com/gbasin/atrium/blob/master/.github/cla/individual.md).
+            You can sign by posting the comment below. If you are contributing
+            on behalf of your employer, your employer may also need to sign the
+            [Corporate
+            CLA](https://github.com/gbasin/atrium/blob/master/.github/cla/corporate.md)
+            — see that document for how.
+          custom-pr-sign-comment: I have read the CLA Document and I hereby sign the CLA
+          lock-pullrequest-aftermerge: false
