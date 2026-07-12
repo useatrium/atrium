@@ -13,11 +13,7 @@ import { isWorkspaceMember } from '../membership.js';
 import { getObjectBytes, getObjectStream, headObject, presignGet, uploadObject } from '../s3.js';
 import { sanitizeFilename } from '../safe-filename.js';
 import { ensureThumbnailForBlobDeduped } from '../thumbnails.js';
-import {
-  writeBackArtifactById,
-  writeBackDeleteById,
-  type WriteBackArtifactByIdResult,
-} from '../artifact-writeback.js';
+import { writeBackArtifactById, writeBackDeleteById, type WriteBackArtifactByIdResult } from '../artifact-writeback.js';
 
 type FileCategory = 'image' | 'doc' | 'data' | 'app' | 'upload';
 const FILE_CATEGORY_VALUES: readonly FileCategory[] = ['image', 'doc', 'data', 'app', 'upload'];
@@ -112,7 +108,11 @@ function isoDate(value: Date | string): string {
   return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
 }
 
-function shouldProxyContent(file: { mime: string | null; mediaKind: string | null; sizeBytes: number | null }): boolean {
+function shouldProxyContent(file: {
+  mime: string | null;
+  mediaKind: string | null;
+  sizeBytes: number | null;
+}): boolean {
   if (file.mediaKind === 'video' || file.mediaKind === 'audio') return true;
   return (file.mime ?? '').toLowerCase() === 'application/pdf' && (file.sizeBytes ?? 0) >= 5 * 1024 * 1024;
 }
@@ -269,9 +269,7 @@ export async function registerFilesHubRoutes(app: FastifyInstance, deps: FilesHu
     const user = requireUser(req, reply);
     if (!user) return;
     if (isTopLevelDocumentNavigation(req)) {
-      return reply
-        .code(403)
-        .send({ error: 'preview_embed_required', message: 'artifact previews must be embedded' });
+      return reply.code(403).send({ error: 'preview_embed_required', message: 'artifact previews must be embedded' });
     }
     const artifactId = await requireReadableArtifact(ledger, req, reply, user);
     if (!artifactId) return;
@@ -425,10 +423,8 @@ export async function registerFilesHubRoutes(app: FastifyInstance, deps: FilesHu
   });
 
   app.register(async (editScope) => {
-    editScope.addContentTypeParser(
-      '*',
-      { parseAs: 'buffer', bodyLimit: config.maxUploadBytes },
-      (_req, body, done) => done(null, body),
+    editScope.addContentTypeParser('*', { parseAs: 'buffer', bodyLimit: config.maxUploadBytes }, (_req, body, done) =>
+      done(null, body),
     );
 
     editScope.put('/api/files/:artifactId/content', async (req, reply) => {
@@ -448,9 +444,7 @@ export async function registerFilesHubRoutes(app: FastifyInstance, deps: FilesHu
         return reply.code(410).send({ error: 'gone' });
       }
       if (current.isText !== true) {
-        return reply
-          .code(415)
-          .send({ error: 'binary_not_editable', mediaKind: current.mediaKind ?? 'binary' });
+        return reply.code(415).send({ error: 'binary_not_editable', mediaKind: current.mediaKind ?? 'binary' });
       }
 
       const body = Buffer.isBuffer(req.body)
@@ -579,7 +573,10 @@ export async function registerFilesHubRoutes(app: FastifyInstance, deps: FilesHu
     reply.header('X-Artifact-Seq', String(file.seq));
     reply.header('X-Artifact-Sha', file.blobSha);
     if (parsedRange) {
-      reply.header('Content-Range', object.contentRange ?? `bytes ${parsedRange.start}-${parsedRange.end}/${file.sizeBytes}`);
+      reply.header(
+        'Content-Range',
+        object.contentRange ?? `bytes ${parsedRange.start}-${parsedRange.end}/${file.sizeBytes}`,
+      );
       reply.header('Content-Length', String(object.contentLength ?? parsedRange.length));
       return reply.code(206).send(object.stream);
     }

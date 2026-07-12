@@ -1,9 +1,4 @@
-import {
-  createCipheriv,
-  createDecipheriv,
-  createHash,
-  randomBytes,
-} from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
 import { config } from './config.js';
 import type { Db, DbClient } from './db.js';
 
@@ -89,11 +84,7 @@ export class PendingOAuthStore {
   }
 
   /** Fetch the current pending handshake for (user, provider, kind), if any. */
-  async current<S>(
-    userId: string,
-    provider: string,
-    kind: OAuthKind,
-  ): Promise<PendingOAuthRow<S> | null> {
+  async current<S>(userId: string, provider: string, kind: OAuthKind): Promise<PendingOAuthRow<S> | null> {
     const res = await this.pool.query<RawRow>(
       `SELECT id, user_id, provider, kind, state_ciphertext, status, last_error, expires_at
        FROM oauth_pending
@@ -211,12 +202,7 @@ function seal(secret: string, value: unknown): string {
   const plaintext = JSON.stringify(value);
   const ciphertext = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
   const tag = cipher.getAuthTag();
-  return [
-    'v1',
-    iv.toString('base64url'),
-    tag.toString('base64url'),
-    ciphertext.toString('base64url'),
-  ].join(':');
+  return ['v1', iv.toString('base64url'), tag.toString('base64url'), ciphertext.toString('base64url')].join(':');
 }
 
 function unseal<S>(secret: string, value: string): S {
@@ -227,10 +213,9 @@ function unseal<S>(secret: string, value: string): S {
   const key = createHash('sha256').update(secret).digest();
   const decipher = createDecipheriv('aes-256-gcm', key, Buffer.from(iv64, 'base64url'));
   decipher.setAuthTag(Buffer.from(tag64, 'base64url'));
-  const plaintext = Buffer.concat([
-    decipher.update(Buffer.from(ciphertext64, 'base64url')),
-    decipher.final(),
-  ]).toString('utf8');
+  const plaintext = Buffer.concat([decipher.update(Buffer.from(ciphertext64, 'base64url')), decipher.final()]).toString(
+    'utf8',
+  );
   return JSON.parse(plaintext) as S;
 }
 

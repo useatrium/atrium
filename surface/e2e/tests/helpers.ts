@@ -15,9 +15,7 @@ export function uniqueChannel(prefix: string): string {
       .replace(/^[^a-z0-9]+/, '')
       .replace(/-+$/g, '')
       .slice(0, 16) || 'room';
-  const suffix = `${Date.now().toString(36).slice(-6)}-${Math.random()
-    .toString(36)
-    .slice(2, 7)}`;
+  const suffix = `${Date.now().toString(36).slice(-6)}-${Math.random().toString(36).slice(2, 7)}`;
   return `${stem}-${suffix}`.slice(0, 32);
 }
 
@@ -83,7 +81,9 @@ export function channelButton(page: Page, channelName: string) {
 }
 
 function unreadMarker(page: Page, channelName: string) {
-  return channelButton(page, channelName).locator('span.sr-only').filter({ hasText: /^unread$/ });
+  return channelButton(page, channelName)
+    .locator('span.sr-only')
+    .filter({ hasText: /^unread$/ });
 }
 
 // Unread/read state arrives either via a live WS event or — deterministically —
@@ -154,11 +154,7 @@ export async function channelId(ctx: APIRequestContext, name: string): Promise<s
   return found.id;
 }
 
-export async function postMessage(
-  ctx: APIRequestContext,
-  channelIdValue: string,
-  text: string,
-): Promise<number> {
+export async function postMessage(ctx: APIRequestContext, channelIdValue: string, text: string): Promise<number> {
   const res = await ctx.post('/api/messages', {
     data: { channelId: channelIdValue, text, clientMsgId: unique('api-msg') },
   });

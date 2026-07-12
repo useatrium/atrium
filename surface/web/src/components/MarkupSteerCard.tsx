@@ -55,7 +55,8 @@ function MarkupSteerBody({ steer }: { steer: ParsedMarkupSteer }) {
       <CriticMarkupView blocks={blocks} />
       {steer.truncated && (
         <div className="rounded-md border border-edge bg-surface-raised px-2.5 py-1.5 text-2xs text-fg-muted">
-          Excerpt of <code className="font-mono text-fg-secondary">{steer.path ?? 'document'}</code> — full document in Files
+          Excerpt of <code className="font-mono text-fg-secondary">{steer.path ?? 'document'}</code> — full document in
+          Files
         </div>
       )}
       {steer.note && (

@@ -16,10 +16,7 @@ export function mentionedHandles(text: string): string[] {
   return [...out];
 }
 
-export function mentionTargetUserIds(
-  users: Iterable<{ id: string }>,
-  actorId: string | null,
-): string[] {
+export function mentionTargetUserIds(users: Iterable<{ id: string }>, actorId: string | null): string[] {
   const out = new Set<string>();
   for (const user of users) {
     if (user.id !== actorId) out.add(user.id);
@@ -35,10 +32,7 @@ export async function persistMentions(
   const handles = mentionedHandles(text);
   if (handles.length === 0) return;
 
-  const users = await pool.query<{ id: string }>(
-    'SELECT id FROM users WHERE handle = ANY($1::text[])',
-    [handles],
-  );
+  const users = await pool.query<{ id: string }>('SELECT id FROM users WHERE handle = ANY($1::text[])', [handles]);
   const userIds = mentionTargetUserIds(users.rows, actorId);
   if (userIds.length === 0) return;
 

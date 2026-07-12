@@ -303,9 +303,7 @@ export function Timeline({
             <div className="flex h-full flex-col items-center justify-center px-6 text-center">
               <div className="w-full max-w-md rounded-lg border border-edge-strong bg-surface-raised/70 px-6 py-6 shadow-lg shadow-black/10">
                 <span className="sr-only">No messages yet.</span>
-                <div className="text-2xs font-semibold uppercase tracking-wider text-accent-text">
-                  First run
-                </div>
+                <div className="text-2xs font-semibold uppercase tracking-wider text-accent-text">First run</div>
                 <h2 className="mt-2 text-lg font-semibold text-fg">See an agent work</h2>
                 <p className="mx-auto mt-2 max-w-sm text-sm leading-6 text-fg-muted">
                   Start a no-setup demo, watch the transcript stream live, then connect a provider for real tasks.
@@ -325,7 +323,10 @@ export function Timeline({
                     disabled={!onInsertAgentCommand}
                     className="inline-flex h-9 items-center justify-center rounded-md border border-edge-strong bg-surface px-3 text-sm font-medium text-fg-secondary transition-colors hover:bg-surface-overlay hover:text-fg disabled:cursor-default disabled:text-fg-faint"
                   >
-                    Insert <code className="ml-1 rounded bg-surface-overlay/80 px-1 py-0.5 text-2xs text-accent-text">@agent</code>
+                    Insert{' '}
+                    <code className="ml-1 rounded bg-surface-overlay/80 px-1 py-0.5 text-2xs text-accent-text">
+                      @agent
+                    </code>
                   </button>
                 </div>
                 <div className="mt-4">
@@ -354,25 +355,17 @@ export function Timeline({
           )}
           {items.map((item) => {
             const showUnreadDivider =
-              item.kind === 'message' &&
-              firstUnreadId != null &&
-              item.message!.id === firstUnreadId;
+              item.kind === 'message' && firstUnreadId != null && item.message!.id === firstUnreadId;
             return item.kind === 'day' ? (
               <div key={item.key} className="my-3 flex items-center gap-3 px-4">
                 <div className="h-px flex-1 bg-surface-overlay" />
-                <span className="text-2xs font-medium uppercase tracking-wide text-fg-muted">
-                  {item.label}
-                </span>
+                <span className="text-2xs font-medium uppercase tracking-wide text-fg-muted">{item.label}</span>
                 <div className="h-px flex-1 bg-surface-overlay" />
               </div>
             ) : (
               <div key={item.key}>
                 {showUnreadDivider && (
-                  <section
-                    className="my-3 flex items-center gap-3 px-4"
-                    aria-label="New messages"
-                    data-unread-divider
-                  >
+                  <section className="my-3 flex items-center gap-3 px-4" aria-label="New messages" data-unread-divider>
                     <div className="h-px flex-1 bg-accent-border-muted/70" />
                     <span className="rounded-full border border-accent-border-muted/60 bg-accent-tint/30 px-2.5 py-0.5 text-2xs font-semibold uppercase tracking-wide text-accent-text-strong">
                       New messages
@@ -383,12 +376,8 @@ export function Timeline({
                 <MessageRow
                   message={item.message!}
                   grouped={item.grouped ?? false}
-                  session={
-                    item.message!.sessionId != null ? sessions[item.message!.sessionId] : undefined
-                  }
-                  spectators={
-                    item.message!.sessionId != null ? (spectators[item.message!.sessionId] ?? 0) : 0
-                  }
+                  session={item.message!.sessionId != null ? sessions[item.message!.sessionId] : undefined}
+                  spectators={item.message!.sessionId != null ? (spectators[item.message!.sessionId] ?? 0) : 0}
                   meId={meId}
                   meHandle={meHandle}
                   highlighted={highlightId != null && item.message!.id === highlightId}

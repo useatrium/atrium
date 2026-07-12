@@ -1,13 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import {
-  ActivityIndicator,
-  Alert,
-  Pressable,
-  RefreshControl,
-  SectionList,
-  Text,
-  View,
-} from 'react-native';
+import { ActivityIndicator, Alert, Pressable, RefreshControl, SectionList, Text, View } from 'react-native';
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import {
@@ -189,9 +181,7 @@ export default function SessionsScreen() {
       const fields = displayFields(item);
       const isArchived = fields.archivedAt != null;
       Alert.alert(fields.title, undefined, [
-        ...(isArchived
-          ? []
-          : [{ text: fields.pinned ? 'Unpin' : 'Pin', onPress: () => togglePin(item) }]),
+        ...(isArchived ? [] : [{ text: fields.pinned ? 'Unpin' : 'Pin', onPress: () => togglePin(item) }]),
         { text: isArchived ? 'Unarchive' : 'Archive', onPress: () => toggleArchive(item) },
         { text: 'Cancel', style: 'cancel' as const },
       ]);
@@ -233,9 +223,7 @@ export default function SessionsScreen() {
       >
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm }}>
           <StatusChip status={fields.status} />
-          {fields.pinned && (
-            <Ionicons name="pin" size={13} color={colors.textMuted} accessibilityLabel="Pinned" />
-          )}
+          {fields.pinned && <Ionicons name="pin" size={13} color={colors.textMuted} accessibilityLabel="Pinned" />}
           <Text
             style={{
               flex: 1,
@@ -259,9 +247,7 @@ export default function SessionsScreen() {
           <Text style={{ flex: 1, color: colors.textMuted, fontSize: font.sm }} numberOfLines={1}>
             #{item.channelName}
           </Text>
-          <Text style={{ color: colors.textFaint, fontSize: font.xs }}>
-            {terminal ? time : `started ${time}`}
-          </Text>
+          <Text style={{ color: colors.textFaint, fontSize: font.xs }}>{terminal ? time : `started ${time}`}</Text>
           {fields.costUsd > 0 && (
             <Text style={{ color: colors.textMuted, fontSize: font.xs, fontWeight: '700' }}>
               {formatCost(fields.costUsd)}
@@ -289,11 +275,7 @@ export default function SessionsScreen() {
           borderTopColor: colors.borderSoft,
         }}
       >
-        <Ionicons
-          name={archivedOpen ? 'chevron-down' : 'chevron-forward'}
-          size={14}
-          color={colors.textMuted}
-        />
+        <Ionicons name={archivedOpen ? 'chevron-down' : 'chevron-forward'} size={14} color={colors.textMuted} />
         <Text
           style={{
             color: colors.textMuted,
@@ -305,9 +287,7 @@ export default function SessionsScreen() {
         >
           Archived
         </Text>
-        {archived != null && (
-          <Text style={{ color: colors.textFaint, fontSize: font.xs }}>{archivedRows.length}</Text>
-        )}
+        {archived != null && <Text style={{ color: colors.textFaint, fontSize: font.xs }}>{archivedRows.length}</Text>}
       </Pressable>
       {archivedOpen &&
         (archivedLoading && archived == null ? (
@@ -315,11 +295,13 @@ export default function SessionsScreen() {
             <ActivityIndicator color={colors.textMuted} />
           </View>
         ) : archivedRows.length === 0 ? (
-          <Text style={{ color: colors.textMuted, fontSize: font.sm, padding: space.lg }}>
-            No archived agents.
-          </Text>
+          <Text style={{ color: colors.textMuted, fontSize: font.sm, padding: space.lg }}>No archived agents.</Text>
         ) : (
-          <View>{archivedRows.map((item) => <View key={item.id}>{renderRow(item)}</View>)}</View>
+          <View>
+            {archivedRows.map((item) => (
+              <View key={item.id}>{renderRow(item)}</View>
+            ))}
+          </View>
         ))}
       <View style={{ height: 96 }} />
     </View>
@@ -399,9 +381,7 @@ export default function SessionsScreen() {
                 onPress={() => void load()}
                 style={{ alignItems: 'center', justifyContent: 'center', padding: space.xl, minHeight: 44 }}
               >
-                <Text style={{ color: colors.danger, fontSize: font.sm }}>
-                  Agents failed to load — tap to retry
-                </Text>
+                <Text style={{ color: colors.danger, fontSize: font.sm }}>Agents failed to load — tap to retry</Text>
               </Pressable>
             ) : (
               <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: space.xl }}>
@@ -431,9 +411,7 @@ export default function SessionsScreen() {
                   >
                     First run
                   </Text>
-                  <Text style={{ color: colors.text, fontSize: font.lg, fontWeight: '700' }}>
-                    See an agent work
-                  </Text>
+                  <Text style={{ color: colors.text, fontSize: font.lg, fontWeight: '700' }}>See an agent work</Text>
                   <Text
                     style={{
                       color: colors.textSecondary,
@@ -442,8 +420,8 @@ export default function SessionsScreen() {
                       lineHeight: 20,
                     }}
                   >
-                    An agent takes a task, runs tools, makes changes, and streams it all back to you
-                    live. Start one from Chat, or run a 30-second demo.
+                    An agent takes a task, runs tools, makes changes, and streams it all back to you live. Start one
+                    from Chat, or run a 30-second demo.
                   </Text>
                   {hasChannels && (
                     <View style={{ width: '100%', alignItems: 'center', gap: space.sm, marginTop: space.xs }}>

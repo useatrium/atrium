@@ -21,9 +21,7 @@ export function registerClientErrorRoutes(
   deps: { pool: Db; userFromRequest: AppAuthContext['userFromRequest'] },
 ): void {
   app.post('/api/client-errors', async (req, reply) => {
-    const body: ClientErrorBody = isRecord(req.body)
-      ? decodeRouteBody(ClientErrorBodySchema, req.body)
-      : {};
+    const body: ClientErrorBody = isRecord(req.body) ? decodeRouteBody(ClientErrorBodySchema, req.body) : {};
     const user = await deps.userFromRequest(req).catch(() => null);
     const report = await recordClientErrorReport(deps.pool, {
       userId: user?.id ?? null,

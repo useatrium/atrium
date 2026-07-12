@@ -5,11 +5,7 @@ import * as Notifications from 'expo-notifications';
 import { useVoIPPushToken } from 'expo-callkit-telecom';
 import { useRequiredSession } from '../../src/lib/session';
 import { ChatProvider, useChat } from '../../src/lib/chat';
-import {
-  configureNotificationHandler,
-  registerForPush,
-  setRegisteredVoipPushToken,
-} from '../../src/lib/notifications';
+import { configureNotificationHandler, registerForPush, setRegisteredVoipPushToken } from '../../src/lib/notifications';
 import { useTheme } from '../../src/lib/theme';
 import { NATIVE_CALL_UI } from '../../src/lib/nativeCallUi';
 import { CallBannerLayout } from '../../src/components/GlobalCallUI';
@@ -61,9 +57,7 @@ function PushBridge() {
     };
 
     const destinationFrom = (resp: Notifications.NotificationResponse): NotificationDestination | null => {
-      const data = resp.notification.request.content.data as
-        | Record<string, unknown>
-        | undefined;
+      const data = resp.notification.request.content.data as Record<string, unknown> | undefined;
       const sessionId = routeIdFrom(data?.sessionId);
       const threadRootId = routeIdFrom(data?.threadRootId) ?? routeIdFrom(data?.rootId);
       const channelId = routeIdFrom(data?.channelId);
@@ -143,18 +137,9 @@ export default function AppLayout() {
           <Stack.Screen name="channel/[id]" options={{ title: '' }} />
           <Stack.Screen name="session/[id]" options={{ title: '' }} />
           <Stack.Screen name="thread/[rootId]" options={{ title: 'Thread' }} />
-          <Stack.Screen
-            name="session-search"
-            options={{ title: 'Search agents', presentation: 'modal' }}
-          />
-          <Stack.Screen
-            name="new-dm"
-            options={{ title: 'New message', presentation: 'modal' }}
-          />
-          <Stack.Screen
-            name="new-channel"
-            options={{ title: 'New channel', presentation: 'modal' }}
-          />
+          <Stack.Screen name="session-search" options={{ title: 'Search agents', presentation: 'modal' }} />
+          <Stack.Screen name="new-dm" options={{ title: 'New message', presentation: 'modal' }} />
+          <Stack.Screen name="new-channel" options={{ title: 'New channel', presentation: 'modal' }} />
           <Stack.Screen name="settings" options={{ title: 'Settings' }} />
         </Stack>
       </CallBannerLayout>

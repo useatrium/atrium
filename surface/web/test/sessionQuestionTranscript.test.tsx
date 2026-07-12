@@ -3,10 +3,7 @@
 import { cleanup, render, screen } from '@testing-library/react';
 import type { QuestionItem } from '@atrium/centaur-client';
 import { afterEach, describe, expect, it } from 'vitest';
-import {
-  groupQuestionEventsByQuestion,
-  QuestionTranscriptCard,
-} from '../src/sessions/SessionQuestionTranscript';
+import { groupQuestionEventsByQuestion, QuestionTranscriptCard } from '../src/sessions/SessionQuestionTranscript';
 import type { QuestionPrompt, SessionQuestionEvent } from '../src/sessions/types';
 
 afterEach(cleanup);

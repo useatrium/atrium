@@ -221,9 +221,7 @@
     "data": {
       "type": "obs.execution_summary",
       "engine": "claude-code",
-      "models": [
-        "claude-fable-5"
-      ],
+      "models": ["claude-fable-5"],
       "status": "completed",
       "harness": "claude-code",
       "ttft_ms": 293.4,

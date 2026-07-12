@@ -75,9 +75,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     // Every path out of a session (logout AND 401 invalidation) must clear the
     // local cache/outbox/drafts — a later login may be a different account,
     // and a stale outbox would flush as them.
-    await import('./cacheSqlite')
-      .then(({ clearCache }) => clearCache())
-      .catch(() => {});
+    await import('./cacheSqlite').then(({ clearCache }) => clearCache()).catch(() => {});
     await SecureStore.deleteItemAsync(STORE_KEY).catch(() => {});
     setSession(null);
   }, []);

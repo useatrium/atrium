@@ -38,9 +38,7 @@ describe('normalizeCodexAuthJson', () => {
   });
 
   it('rejects a missing access_token', () => {
-    expect(() => normalizeCodexAuthJson(JSON.stringify({ auth_mode: 'chatgpt', tokens: {} }))).toThrow(
-      /access_token/,
-    );
+    expect(() => normalizeCodexAuthJson(JSON.stringify({ auth_mode: 'chatgpt', tokens: {} }))).toThrow(/access_token/);
   });
 
   it('rejects non-JSON input', () => {

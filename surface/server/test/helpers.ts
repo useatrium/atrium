@@ -8,9 +8,7 @@ const ADMIN_URL = process.env.DATABASE_URL ?? 'postgres://atrium:atrium@localhos
 const DB_NAME_RE = /^[a-z0-9_]{1,40}$/;
 const PID_RE = /^[1-9]\d{0,9}$/;
 const POOL_ID_RE = /^\d{1,3}$/;
-const TEST_DB_BASE = DB_NAME_RE.test(process.env.ATRIUM_TEST_DB ?? '')
-  ? process.env.ATRIUM_TEST_DB!
-  : 'atrium_test';
+const TEST_DB_BASE = DB_NAME_RE.test(process.env.ATRIUM_TEST_DB ?? '') ? process.env.ATRIUM_TEST_DB! : 'atrium_test';
 const TEST_DB_SETUP_LOCK = 727272;
 
 interface TestDatabaseConfig {

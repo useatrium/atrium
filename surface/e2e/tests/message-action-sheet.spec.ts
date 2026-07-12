@@ -7,14 +7,9 @@ test.use({
   viewport: { width: 390, height: 844 },
 });
 
-test('message-action sheet opens on touch long-press without release click-through', async ({
-  context,
-  page,
-}) => {
+test('message-action sheet opens on touch long-press without release click-through', async ({ context, page }) => {
   await login(page, unique('press'), 'Press Tester');
-  const text = [unique('message-action-root'), ...Array.from({ length: 90 }, (_, index) => `hold-${index}`)].join(
-    ' ',
-  );
+  const text = [unique('message-action-root'), ...Array.from({ length: 90 }, (_, index) => `hold-${index}`)].join(' ');
   await sendMessage(page, text);
 
   const row = messageRow(page, text);
@@ -93,9 +88,7 @@ test('touch swipe right on a message opens the reply thread', async ({ context, 
 // on touch devices every ungrouped message rendered its exact-timestamp
 // tooltip OPEN on load, overlapping the message text. Touch now starts hidden
 // and pins on tap (the toggle the component always had).
-test('exact-timestamp tooltip is hidden on touch until the timestamp is tapped', async ({
-  page,
-}) => {
+test('exact-timestamp tooltip is hidden on touch until the timestamp is tapped', async ({ page }) => {
   await login(page, unique('tsq'), 'Timestamp Tester');
   const text = unique('timestamp-quirk');
   await sendMessage(page, text);
@@ -107,24 +100,26 @@ test('exact-timestamp tooltip is hidden on touch until the timestamp is tapped',
   const row = messageRow(page, text);
   const tooltip = row.getByRole('tooltip');
   await expect(tooltip).toHaveCount(1);
-  const opacityOf = () =>
-    tooltip.evaluate((el) => getComputedStyle(el).opacity);
+  const opacityOf = () => tooltip.evaluate((el) => getComputedStyle(el).opacity);
   expect(await opacityOf()).toBe('0');
 
-  await row.getByRole('button', { name: /Exact timestamp:/ }).first().tap();
+  await row
+    .getByRole('button', { name: /Exact timestamp:/ })
+    .first()
+    .tap();
   await expect.poll(opacityOf).toBe('1');
 
   // Tapping the timestamp again unpins it.
-  await row.getByRole('button', { name: /Exact timestamp:/ }).first().tap();
+  await row
+    .getByRole('button', { name: /Exact timestamp:/ })
+    .first()
+    .tap();
   await expect.poll(opacityOf).toBe('0');
 });
 
 // "Select text…" (touch-only): long-press is claimed by the action menu, so
 // this sheet is how touch users get partial text selection.
-test('Select text opens a selectable sheet with the rendered message', async ({
-  context,
-  page,
-}) => {
+test('Select text opens a selectable sheet with the rendered message', async ({ context, page }) => {
   await login(page, unique('seltext'), 'Select Tester');
   const marker = unique('select-me');
   // Not sendMessage(): it asserts the raw text is visible, but markdown

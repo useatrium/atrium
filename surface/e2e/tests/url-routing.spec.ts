@@ -2,25 +2,17 @@ import { expect, test } from '@playwright/test';
 import { Pool } from 'pg';
 import { channelId, createTestChannel, login, openChannel, unique } from './helpers.js';
 
-const e2eDatabaseUrl =
-  process.env.E2E_DATABASE_URL ?? 'postgres://atrium:atrium@localhost:5433/atrium_e2e';
+const e2eDatabaseUrl = process.env.E2E_DATABASE_URL ?? 'postgres://atrium:atrium@localhost:5433/atrium_e2e';
 
-async function injectSession(args: {
-  handle: string;
-  channelId: string;
-  title: string;
-}): Promise<string> {
+async function injectSession(args: { handle: string; channelId: string; title: string }): Promise<string> {
   const pool = new Pool({ connectionString: e2eDatabaseUrl });
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const user = await client.query<{ id: string }>('SELECT id FROM users WHERE handle = $1', [
-      args.handle,
+    const user = await client.query<{ id: string }>('SELECT id FROM users WHERE handle = $1', [args.handle]);
+    const channel = await client.query<{ workspace_id: string }>('SELECT workspace_id FROM channels WHERE id = $1', [
+      args.channelId,
     ]);
-    const channel = await client.query<{ workspace_id: string }>(
-      'SELECT workspace_id FROM channels WHERE id = $1',
-      [args.channelId],
-    );
     if (!user.rows[0] || !channel.rows[0]) throw new Error('missing e2e user or channel');
     const userId = user.rows[0].id;
     const workspaceId = channel.rows[0].workspace_id;
@@ -128,9 +120,7 @@ test('opening a session updates the URL and Back closes it without a document re
   await expect(page.getByRole('heading', { name: `# ${room}` })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Close agent pane' })).toHaveCount(0);
   await expect
-    .poll(() =>
-      page.evaluate(() => (window as Window & { __urlRoutingMarker?: string }).__urlRoutingMarker ?? null),
-    )
+    .poll(() => page.evaluate(() => (window as Window & { __urlRoutingMarker?: string }).__urlRoutingMarker ?? null))
     .toBe('kept');
 });
 

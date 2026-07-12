@@ -94,7 +94,10 @@ export function App() {
   useEffect(() => {
     if (!me || workspace) return;
     const currentUser = me;
-    api.workspaces().then(({ workspaces }) => setWorkspaces(workspaces)).catch(() => {});
+    api
+      .workspaces()
+      .then(({ workspaces }) => setWorkspaces(workspaces))
+      .catch(() => {});
     function setWorkspaces(list: Workspace[]) {
       const first = list[0] ?? null;
       setWorkspace(first);
@@ -113,12 +116,9 @@ export function App() {
   else if (!me) body = <Login onLogin={setMe} />;
   else if (!workspace)
     body = (
-      <div className="flex h-dvh items-center justify-center bg-surface text-sm text-fg-muted">
-        Loading workspace…
-      </div>
+      <div className="flex h-dvh items-center justify-center bg-surface text-sm text-fg-muted">Loading workspace…</div>
     );
-  else if (paneRoute)
-    body = <SessionPanePage key={paneRoute.sessionId} sessionId={paneRoute.sessionId} me={me} />;
+  else if (paneRoute) body = <SessionPanePage key={paneRoute.sessionId} sessionId={paneRoute.sessionId} me={me} />;
   else if (workRoute)
     // Detached work surface in its own tab — a focused, full-viewport view of one
     // surface, no channel shell (it folds the same live stream as the in-app pane).
@@ -136,11 +136,14 @@ export function App() {
             initialEntryHandle={destination.initialEntryHandle}
             initialThreadRootEventId={destination.initialThreadRootEventId}
             onLogout={() => {
-              api.logout().catch(() => {}).finally(() => {
-                void clearDesktopSession().finally(() => {
-                  clearCache().finally(() => location.reload());
+              api
+                .logout()
+                .catch(() => {})
+                .finally(() => {
+                  void clearDesktopSession().finally(() => {
+                    clearCache().finally(() => location.reload());
+                  });
                 });
-              });
             }}
           />
         )}
@@ -164,11 +167,14 @@ export function App() {
         onLogout={() => {
           // logout() first (still holds the token), then drop the keychain
           // session, then clear the cache and reload.
-          api.logout().catch(() => {}).finally(() => {
-            void clearDesktopSession().finally(() => {
-              clearCache().finally(() => location.reload());
+          api
+            .logout()
+            .catch(() => {})
+            .finally(() => {
+              void clearDesktopSession().finally(() => {
+                clearCache().finally(() => location.reload());
+              });
             });
-          });
         }}
       />
     );

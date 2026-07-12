@@ -112,8 +112,7 @@ export default function ChannelScreen() {
     commitUnreadDividerSnapshot({ channelId: id, value: null, ready: true });
   }, [state.remoteReadCursors, channel, commitUnreadDividerSnapshot, id]);
 
-  const activeUnreadDividerSnapshot =
-    unreadDividerSnapshot?.channelId === id ? unreadDividerSnapshot : null;
+  const activeUnreadDividerSnapshot = unreadDividerSnapshot?.channelId === id ? unreadDividerSnapshot : null;
 
   const markReadAtBottom = useCallback(() => {
     if (!id) return;
@@ -142,16 +141,13 @@ export default function ChannelScreen() {
   const isDm = channel?.kind === 'dm';
   const isGroupLike = channel?.kind === 'private' || channel?.kind === 'gdm';
   const draftKey = id ? `channel:${id}` : '';
-  const channelRecoverableCall = id
-    ? calls.recoverableCalls.find((call) => call.channelId === id) ?? null
-    : null;
+  const channelRecoverableCall = id ? (calls.recoverableCalls.find((call) => call.channelId === id) ?? null) : null;
   const channelCallAction = channelRecoverableCall
     ? channelRecoverableCall.participants.some((participant) => participant.id === me.id)
       ? 'Rejoin voice call'
       : 'Join voice call'
     : 'Start voice call';
-  const channelCallDisabled =
-    !channel || calls.starting || calls.answering || calls.activeCall != null;
+  const channelCallDisabled = !channel || calls.starting || calls.answering || calls.activeCall != null;
 
   useEffect(() => {
     if (!draftKey) return;
@@ -248,17 +244,13 @@ export default function ChannelScreen() {
         Alert.alert('Add person', 'Everyone is already a member.');
         return;
       }
-      Alert.alert(
-        'Add person',
-        undefined,
-        [
-          ...candidates.slice(0, 8).map((u) => ({
-            text: u.displayName,
-            onPress: () => void chat.addChannelMember(id, u.id),
-          })),
-          { text: 'Cancel', style: 'cancel' as const },
-        ],
-      );
+      Alert.alert('Add person', undefined, [
+        ...candidates.slice(0, 8).map((u) => ({
+          text: u.displayName,
+          onPress: () => void chat.addChannelMember(id, u.id),
+        })),
+        { text: 'Cancel', style: 'cancel' as const },
+      ]);
     } catch {
       Alert.alert('Add person', 'Could not load people.');
     }
@@ -293,10 +285,7 @@ export default function ChannelScreen() {
     ]);
   }, [addPerson, channel?.archivedAt, channel?.pinned, chat, id, leave, showMembers, title]);
 
-  const loadAgentProfiles = useCallback(
-    () => chat.api.agentProfiles().then(({ profiles }) => profiles),
-    [chat.api],
-  );
+  const loadAgentProfiles = useCallback(() => chat.api.agentProfiles().then(({ profiles }) => profiles), [chat.api]);
 
   const openNewAgentSheet = useCallback(() => {
     composerRestoreTextRef.current = null;
@@ -331,9 +320,7 @@ export default function ChannelScreen() {
       spawnSession(id, task, undefined, {
         harness,
         ...(repo ? { repo } : {}),
-        ...(agentProfileId && agentProfileVersionId
-          ? { agentProfileId, agentProfileVersionId }
-          : {}),
+        ...(agentProfileId && agentProfileVersionId ? { agentProfileId, agentProfileVersionId } : {}),
       });
       setSpawnSheetInitialTask('');
       setSpawnSheetVisible(false);
@@ -353,9 +340,7 @@ export default function ChannelScreen() {
                 {isDm || channel?.kind === 'gdm' ? title : `${channel?.kind === 'private' ? '🔒' : '#'}${title}`}
               </Text>
               {presentCount > 0 && (
-                <Text style={{ color: colors.textMuted, fontSize: font.xs }}>
-                  {presentCount} here now
-                </Text>
+                <Text style={{ color: colors.textMuted, fontSize: font.xs }}>{presentCount} here now</Text>
               )}
             </View>
           ),
@@ -458,7 +443,11 @@ export default function ChannelScreen() {
         <TypingLine typing={chat.typing} />
         <Composer
           ref={composerRef}
-          placeholder={isDm || channel?.kind === 'gdm' ? `Message ${title}` : `Message ${channel?.kind === 'private' ? '🔒' : '#'}${title}`}
+          placeholder={
+            isDm || channel?.kind === 'gdm'
+              ? `Message ${title}`
+              : `Message ${channel?.kind === 'private' ? '🔒' : '#'}${title}`
+          }
           onSend={(text, attachments, attachmentRefs, voice) =>
             chat.send(id, text, undefined, attachments, attachmentRefs, voice)
           }

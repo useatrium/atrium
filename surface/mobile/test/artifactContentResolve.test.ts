@@ -28,12 +28,9 @@ describe('createArtifactContentResolver', () => {
     expect(first).toHaveLength(64 * 1024);
     expect(second).toBe(first);
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(fetchMock).toHaveBeenCalledWith(
-      'https://atrium.example.test/api/files/artifact/art-1/content',
-      {
-        credentials: 'same-origin',
-        headers: { authorization: 'Bearer tok_123' },
-      },
-    );
+    expect(fetchMock).toHaveBeenCalledWith('https://atrium.example.test/api/files/artifact/art-1/content', {
+      credentials: 'same-origin',
+      headers: { authorization: 'Bearer tok_123' },
+    });
   });
 });

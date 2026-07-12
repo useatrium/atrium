@@ -21,9 +21,7 @@ describe('fileMatchesSessionScope', () => {
       ]),
     ).toBe(true);
     expect(
-      fileMatchesSessionScope('scratch/11111111-1111-4111-8111-111111111111/out/chart.png', [
-        'out\\chart.png',
-      ]),
+      fileMatchesSessionScope('scratch/11111111-1111-4111-8111-111111111111/out/chart.png', ['out\\chart.png']),
     ).toBe(true);
   });
 });

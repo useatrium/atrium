@@ -24,10 +24,10 @@ const userId =
   usr.rows[0]?.id ??
   (await pool.query<{ id: string }>(`SELECT id FROM users ORDER BY created_at ASC LIMIT 1`)).rows[0]!.id;
 // ensure workspace membership so public-channel sessions are visible
-await pool.query(
-  `INSERT INTO workspace_members (workspace_id, user_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
-  [workspaceId, userId],
-);
+await pool.query(`INSERT INTO workspace_members (workspace_id, user_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`, [
+  workspaceId,
+  userId,
+]);
 
 async function mk(title: string): Promise<string> {
   const r = await pool.query<{ id: string }>(
@@ -40,7 +40,10 @@ async function mk(title: string): Promise<string> {
 const viewer = await mk('Atrium e2e viewer');
 const target = await mk('Snorkelwacker indexing bug');
 
-const item = (id: string, t: string, x: Record<string, unknown>) => ({ type: 'item.completed', item: { id, type: t, ...x } });
+const item = (id: string, t: string, x: Record<string, unknown>) => ({
+  type: 'item.completed',
+  item: { id, type: t, ...x },
+});
 const frames = [
   item('u1', 'userMessage', { text: 'Why does the snorkelwacker index skip every third row?' }),
   item('a1', 'agentMessage', { text: 'The snorkelwacker cursor advances twice on a tie.' }),

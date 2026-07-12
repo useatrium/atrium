@@ -148,9 +148,7 @@ describe('human upload artifact on-ramp', () => {
       s3_key: await fileS3Key(fileId),
     });
 
-    const blob = await pool.query<{ s3_key: string }>('SELECT s3_key FROM cas_blobs WHERE sha256 = $1', [
-      contentHash,
-    ]);
+    const blob = await pool.query<{ s3_key: string }>('SELECT s3_key FROM cas_blobs WHERE sha256 = $1', [contentHash]);
     expect(blob.rows[0]?.s3_key).toBe(await fileS3Key(fileId));
   });
 

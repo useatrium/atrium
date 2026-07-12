@@ -48,8 +48,7 @@ function Harness({
       placeholder="reply"
       agentAware
       onSend={(text) => {
-        if (trySpawnFromComposer(text, { channelId: 'ch-1', threadRootEventId, me, dispatch, enqueueSpawn }))
-          return;
+        if (trySpawnFromComposer(text, { channelId: 'ch-1', threadRootEventId, me, dispatch, enqueueSpawn })) return;
         onPlainMessage(text);
       }}
     />
@@ -84,14 +83,7 @@ describe('composer @agent grammar', () => {
       });
     });
     const onPlain = vi.fn();
-    render(
-      <Harness
-        threadRootEventId={7}
-        dispatch={dispatch}
-        enqueueSpawn={enqueueSpawn}
-        onPlainMessage={onPlain}
-      />,
-    );
+    render(<Harness threadRootEventId={7} dispatch={dispatch} enqueueSpawn={enqueueSpawn} onPlainMessage={onPlain} />);
 
     const box = type('@agent fix the flaky test');
     // subtle hint chip while the grammar matches

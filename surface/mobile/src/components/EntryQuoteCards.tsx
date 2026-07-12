@@ -139,9 +139,7 @@ function EntryQuoteHeader({
       })}
     >
       <Ionicons name={iconFor(entry)} size={14} color={entry.tombstoned ? colors.textFaint : colors.textMuted} />
-      <Text style={{ color: colors.textMuted, fontSize: font.xs, fontWeight: '800' }}>
-        {labelFor(entry)}
-      </Text>
+      <Text style={{ color: colors.textMuted, fontSize: font.xs, fontWeight: '800' }}>{labelFor(entry)}</Text>
       <Text style={{ flex: 1, color: colors.textFaint, fontSize: font.xs }} numberOfLines={1}>
         {context}
       </Text>
@@ -263,9 +261,7 @@ function EntryQuoteCard({
     >
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
         <Ionicons name={iconFor(entry)} size={14} color={entry.tombstoned ? colors.textFaint : colors.textMuted} />
-        <Text style={{ color: colors.textMuted, fontSize: font.xs, fontWeight: '800' }}>
-          {labelFor(entry)}
-        </Text>
+        <Text style={{ color: colors.textMuted, fontSize: font.xs, fontWeight: '800' }}>{labelFor(entry)}</Text>
         <Text style={{ color: colors.textFaint, fontSize: font.xs }} numberOfLines={1}>
           {context}
         </Text>

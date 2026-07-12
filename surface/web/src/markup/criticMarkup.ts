@@ -22,9 +22,7 @@ export function serializeToCriticMarkup(doc: ProseMirrorNode, options: Serialize
 }
 
 function escapeCriticText(value: string): string {
-  return value
-    .replace(/\{(?=(?:\+\+|--|~~|==|>>))/g, '\\{')
-    .replace(/(\+\+|--|~~|==|>>|<<)\}/g, '$1\\}');
+  return value.replace(/\{(?=(?:\+\+|--|~~|==|>>))/g, '\\{').replace(/(\+\+|--|~~|==|>>|<<)\}/g, '$1\\}');
 }
 
 function renderInline(node: ProseMirrorNode, options: SerializeCriticMarkupOptions): string {
@@ -257,7 +255,11 @@ function indentMultiline(value: string, prefix: string): string {
     .join('\n');
 }
 
-function renderCommentPayload(comment: string, author: string | null | undefined, options: SerializeCriticMarkupOptions): string {
+function renderCommentPayload(
+  comment: string,
+  author: string | null | undefined,
+  options: SerializeCriticMarkupOptions,
+): string {
   const resolvedAuthor = normalizeAuthor(author) ?? normalizeAuthor(options.commentAuthor);
   return resolvedAuthor ? `@${resolvedAuthor}: ${comment}` : comment;
 }

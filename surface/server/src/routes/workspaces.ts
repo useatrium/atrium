@@ -54,9 +54,7 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: WorkspaceRou
     const body = decodeRouteBody(CreateWorkspaceBodySchema, req.body);
     const name = String(body.name ?? '').trim();
     if (name.length < 1 || name.length > 64) {
-      return reply
-        .code(400)
-        .send({ error: 'invalid_workspace_name', message: 'workspace name must be 1-64 chars' });
+      return reply.code(400).send({ error: 'invalid_workspace_name', message: 'workspace name must be 1-64 chars' });
     }
     try {
       const { workspace } = await createWorkspace(pool, { name, actorId: user.id });
@@ -64,9 +62,7 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: WorkspaceRou
       return reply.code(201).send({ workspace });
     } catch (err) {
       if (isUniqueViolation(err)) {
-        return reply
-          .code(409)
-          .send({ error: 'workspace_exists', message: 'workspace name already exists' });
+        return reply.code(409).send({ error: 'workspace_exists', message: 'workspace name already exists' });
       }
       throw err;
     }
@@ -80,7 +76,9 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: WorkspaceRou
       return reply.code(404).send({ error: 'workspace_not_found', message: 'workspace not found' });
     }
     const body = decodeRouteBody(AddWorkspaceMemberBodySchema, req.body);
-    const handle = String(body.handle ?? '').trim().toLowerCase();
+    const handle = String(body.handle ?? '')
+      .trim()
+      .toLowerCase();
     const target = await pool.query<{ id: string; handle: string; display_name: string }>(
       'SELECT id, handle, display_name FROM users WHERE handle = $1',
       [handle],

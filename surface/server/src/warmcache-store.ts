@@ -73,10 +73,11 @@ export async function registerWarmcacheManifest(
   const entries = [...byPath.values()];
 
   await withTx(pool, async (client) => {
-    await client.query(
-      `DELETE FROM warmcache_blobs WHERE workspace_id = $1 AND lockfile_hash = $2 AND kind = $3`,
-      [args.workspaceId, lockfileHash, kind],
-    );
+    await client.query(`DELETE FROM warmcache_blobs WHERE workspace_id = $1 AND lockfile_hash = $2 AND kind = $3`, [
+      args.workspaceId,
+      lockfileHash,
+      kind,
+    ]);
     if (entries.length > 0) {
       // Single round-trip bulk insert — a full node_modules manifest is tens of
       // thousands of rows, so per-row INSERTs would be a long-held transaction.

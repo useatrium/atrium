@@ -20,7 +20,12 @@ export function TimestampDisclosure({
   const tooltipId = useId();
   const [pinned, setPinned] = useState(false);
 
-  if (!exact) return <span data-testid={testId} className={className}>{children}</span>;
+  if (!exact)
+    return (
+      <span data-testid={testId} className={className}>
+        {children}
+      </span>
+    );
 
   const stopPointer = (event: PointerEvent<HTMLButtonElement>) => {
     event.stopPropagation();

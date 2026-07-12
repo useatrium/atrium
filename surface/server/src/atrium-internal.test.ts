@@ -88,13 +88,9 @@ async function login(handle: string, displayName = handle): Promise<string> {
   return res.headers['set-cookie'] as string;
 }
 
-async function insertSession(args: {
-  channelId?: string;
-  workspaceId?: string;
-  spawnedBy?: string;
-  driverId?: string | null;
-  title?: string;
-} = {}): Promise<string> {
+async function insertSession(
+  args: { channelId?: string; workspaceId?: string; spawnedBy?: string; driverId?: string | null; title?: string } = {},
+): Promise<string> {
   const res = await pool.query<{ id: string }>(
     `INSERT INTO sessions
        (workspace_id, channel_id, centaur_thread_key, harness, title, status, spawned_by, driver_id)
@@ -120,10 +116,7 @@ async function insertDmChannel(memberIds: string[]): Promise<string> {
     [fx.workspaceId, `dm-${randomUUID()}`, memberIds[0] ?? null],
   );
   for (const memberId of memberIds) {
-    await pool.query('INSERT INTO channel_members (channel_id, user_id) VALUES ($1, $2)', [
-      res.rows[0]!.id,
-      memberId,
-    ]);
+    await pool.query('INSERT INTO channel_members (channel_id, user_id) VALUES ($1, $2)', [res.rows[0]!.id, memberId]);
   }
   return res.rows[0]!.id;
 }
@@ -240,9 +233,7 @@ describe('internal /atrium node-facing routes', () => {
     }>();
     expect(firstBody.rows).toHaveLength(1);
     expect(firstBody.rows[0]!.sessionId).toBe(targetId);
-    expect(firstBody.next_cursor).toBe(
-      `${firstBody.rows[0]!.cursor.xid}.${firstBody.rows[0]!.cursor.id}`,
-    );
+    expect(firstBody.next_cursor).toBe(`${firstBody.rows[0]!.cursor.xid}.${firstBody.rows[0]!.cursor.id}`);
 
     const second = await app.inject({
       method: 'GET',
@@ -445,10 +436,9 @@ describe('internal /atrium node-facing routes', () => {
 
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({ projected: 1 });
-    const records = await pool.query<{ text: string }>(
-      `SELECT text FROM session_records WHERE session_id = $1`,
-      [targetId],
-    );
+    const records = await pool.query<{ text: string }>(`SELECT text FROM session_records WHERE session_id = $1`, [
+      targetId,
+    ]);
     expect(records.rows.map((row) => row.text)).toEqual(['Reprojected transcript text.']);
     const changes = await pool.query<{ count: string }>(
       `SELECT count(*)::text AS count FROM session_record_changes WHERE session_id = $1`,

@@ -3,9 +3,9 @@ import { extractEntryHandles, findEntryLinkCandidates, handleFromEntryUrl } from
 
 describe('entryLinks', () => {
   it('extracts entry handles from absolute links on any host', () => {
-    expect(
-      extractEntryHandles('see http://localhost:5177/e/art_00000000-0000-0000-0000-000000000001 here'),
-    ).toEqual(['art_00000000-0000-0000-0000-000000000001']);
+    expect(extractEntryHandles('see http://localhost:5177/e/art_00000000-0000-0000-0000-000000000001 here')).toEqual([
+      'art_00000000-0000-0000-0000-000000000001',
+    ]);
   });
 
   it('keeps validation and deduping behavior', () => {

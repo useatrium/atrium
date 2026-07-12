@@ -18,13 +18,7 @@ function hhmm(iso: string): string {
 }
 
 /** ChatGPT-style turn spine: ticks at the right edge, hover → floating turn list. */
-export function TurnRail({
-  turns,
-  onJump,
-}: {
-  turns: { id: string; text: string }[];
-  onJump: (id: string) => void;
-}) {
+export function TurnRail({ turns, onJump }: { turns: { id: string; text: string }[]; onJump: (id: string) => void }) {
   const [open, setOpen] = useState(false);
   if (turns.length === 0) return null;
   const shown = turns.slice(-14);
@@ -82,18 +76,9 @@ export function SessionTypingLine({ typers }: { typers: UserRef[] }) {
   );
 }
 
-export function SeatAuditLine({
-  entry,
-  nameFor,
-}: {
-  entry: SeatAuditEntry;
-  nameFor: (id: string | null) => string;
-}) {
+export function SeatAuditLine({ entry, nameFor }: { entry: SeatAuditEntry; nameFor: (id: string | null) => string }) {
   return (
-    <div
-      data-testid="seat-audit-line"
-      className="my-1 flex items-center gap-1.5 text-2xs text-fg-muted"
-    >
+    <div data-testid="seat-audit-line" className="my-1 flex items-center gap-1.5 text-2xs text-fg-muted">
       <span aria-hidden className="text-fg-faint">
         <ArrowUpIcon size={12} />
       </span>

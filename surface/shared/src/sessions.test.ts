@@ -174,11 +174,7 @@ describe('session question event helpers', () => {
   it('parses answer summaries with safe fallbacks', () => {
     expect(
       questionPayloadAnswers({
-        answers: [
-          null,
-          { header: 'missing id' },
-          { id: 'choice', answers: ['A', 2], count: Number.NaN },
-        ],
+        answers: [null, { header: 'missing id' }, { id: 'choice', answers: ['A', 2], count: Number.NaN }],
       }),
     ).toEqual([{ id: 'choice', header: 'choice', answers: ['A'], count: 1 }]);
   });
@@ -187,8 +183,6 @@ describe('session question event helpers', () => {
     expect(questionAnswerSummaryText({ id: 'q', header: 'Q', answers: ['A', 'B'], count: 2 })).toBe('A\nB');
     expect(questionAnswerSummaryText({ id: 'q', header: 'Q', answers: [], count: 1 })).toBe('1 answer recorded');
     expect(sessionQuestionEventLabel('question_requested', undefined)).toBe('Question asked');
-    expect(sessionQuestionEventLabel('question_resolved', 'empty')).toBe(
-      'Question expired without an answer',
-    );
+    expect(sessionQuestionEventLabel('question_resolved', 'empty')).toBe('Question expired without an answer');
   });
 });

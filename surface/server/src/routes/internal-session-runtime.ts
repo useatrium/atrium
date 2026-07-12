@@ -7,10 +7,7 @@ import {
   storeHarnessStateBundle,
   storeHarnessTranscript,
 } from '../harness-transcript.js';
-import {
-  deriveSessionCapabilitySnapshot,
-  storeSessionCapabilitySnapshot,
-} from '../session-capabilities.js';
+import { deriveSessionCapabilitySnapshot, storeSessionCapabilitySnapshot } from '../session-capabilities.js';
 import type { AgentProfiles } from '../agent-profiles.js';
 import {
   listSessionProfileBundles,

@@ -49,7 +49,11 @@ export interface LightboxCallbacks {
   /** Files Hub version history: un-delete a tombstoned file. */
   onRestoreFile?: (f: PreviewFile) => Promise<void> | void;
   // slice3: Files Hub text editing.
-  onSaveText?: (f: PreviewFile, text: string, baseSeq: number) => Promise<{ seq: number; status: 'normal' | 'conflict' }>;
+  onSaveText?: (
+    f: PreviewFile,
+    text: string,
+    baseSeq: number,
+  ) => Promise<{ seq: number; status: 'normal' | 'conflict' }>;
   // slice3: Files Hub text conflict detail.
   onLoadConflict?: (f: PreviewFile) => Promise<ArtifactConflict>;
   // slice3: Files Hub text conflict resolution.

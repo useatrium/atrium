@@ -129,10 +129,11 @@ describe('user drafts', () => {
     const { cookie, user } = await login();
     const opId = randomUUID();
     expect((await putDraft(cookie, 'channel:one', 'hello', opId)).statusCode).toBe(200);
-    await pool.query(
-      'UPDATE user_drafts SET text = $1 WHERE user_id = $2 AND draft_key = $3',
-      ['manual edit', user.id, 'channel:one'],
-    );
+    await pool.query('UPDATE user_drafts SET text = $1 WHERE user_id = $2 AND draft_key = $3', [
+      'manual edit',
+      user.id,
+      'channel:one',
+    ]);
 
     expect((await putDraft(cookie, 'channel:one', 'hello', opId)).statusCode).toBe(200);
     const row = await pool.query<{ text: string }>(

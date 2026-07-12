@@ -111,10 +111,7 @@ export function shouldMarkReadForVisibleLatest(
 ): boolean {
   if (!userDragged || latestMessageId == null) return false;
   return viewableItems.some(
-    (token) =>
-      token.isViewable &&
-      token.item.kind === 'message' &&
-      token.item.message?.id === latestMessageId,
+    (token) => token.isViewable && token.item.kind === 'message' && token.item.message?.id === latestMessageId,
   );
 }
 
@@ -209,31 +206,26 @@ export function Timeline({
     setAtBottom(next);
   }, []);
 
-  const startScrollToIndexRetry = useCallback(
-    (index: number, viewPosition: number, animated: boolean) => {
-      let cancelled = false;
-      let timer: ReturnType<typeof setTimeout> | null = null;
-      const scroll = (attempt: number) => {
-        if (cancelled) return;
-        try {
-          void listRef.current
-            ?.scrollToIndex({ index, animated, viewPosition })
-            ?.catch(() => {
-              /* row may not be measured yet; bounded retry below */
-            });
-        } catch {
+  const startScrollToIndexRetry = useCallback((index: number, viewPosition: number, animated: boolean) => {
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const scroll = (attempt: number) => {
+      if (cancelled) return;
+      try {
+        void listRef.current?.scrollToIndex({ index, animated, viewPosition })?.catch(() => {
           /* row may not be measured yet; bounded retry below */
-        }
-        if (attempt < 3) timer = setTimeout(() => scroll(attempt + 1), 250);
-      };
-      scroll(1);
-      return () => {
-        cancelled = true;
-        if (timer) clearTimeout(timer);
-      };
-    },
-    [],
-  );
+        });
+      } catch {
+        /* row may not be measured yet; bounded retry below */
+      }
+      if (attempt < 3) timer = setTimeout(() => scroll(attempt + 1), 250);
+    };
+    scroll(1);
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, []);
 
   useEffect(() => {
     latestMessageIdRef.current = latestMessageId;
@@ -306,13 +298,7 @@ export function Timeline({
 
   const handleViewableItemsChanged = useCallback(
     ({ viewableItems }: { viewableItems: ViewToken<TimelineItem>[] }) => {
-      if (
-        shouldMarkReadForVisibleLatest(
-          viewableItems,
-          latestMessageIdRef.current,
-          userDraggedRef.current,
-        )
-      ) {
+      if (shouldMarkReadForVisibleLatest(viewableItems, latestMessageIdRef.current, userDraggedRef.current)) {
         setAtBottomValue(true);
         onReachBottom?.();
       }
@@ -394,14 +380,9 @@ export function Timeline({
     ],
   );
 
-  const jumpControlLabel =
-    unreadCount > 0
-      ? `Jump to latest · ${unreadCount} new`
-      : 'Jump to latest';
+  const jumpControlLabel = unreadCount > 0 ? `Jump to latest · ${unreadCount} new` : 'Jump to latest';
   const jumpControlAccessibilityLabel =
-    unreadCount > 0
-      ? `Jump to latest messages, ${unreadCount} new`
-      : 'Jump to latest messages';
+    unreadCount > 0 ? `Jump to latest messages, ${unreadCount} new` : 'Jump to latest messages';
 
   if (!loaded) {
     return (
@@ -458,9 +439,7 @@ export function Timeline({
           accessibilityHint={
             unreadCount > 0 ? 'Jumps to the latest message. Use actions to jump to new messages.' : undefined
           }
-          accessibilityActions={
-            unreadCount > 0 ? [{ name: 'jumpToUnread', label: 'Jump to new messages' }] : undefined
-          }
+          accessibilityActions={unreadCount > 0 ? [{ name: 'jumpToUnread', label: 'Jump to new messages' }] : undefined}
           onAccessibilityAction={(event) => {
             if (event.nativeEvent.actionName === 'jumpToUnread') scrollToUnreadDivider();
           }}

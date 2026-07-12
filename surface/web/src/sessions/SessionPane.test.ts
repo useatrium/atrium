@@ -1,9 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import {
-  notifyUnseenOutputsChange,
-  seenOutputCountsAfterOpeningTab,
-  unseenOutputsForCounts,
-} from './SessionPane';
+import { notifyUnseenOutputsChange, seenOutputCountsAfterOpeningTab, unseenOutputsForCounts } from './SessionPane';
 
 const zeroCounts = {
   conflicts: 0,

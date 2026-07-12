@@ -108,7 +108,9 @@ export function SessionWorkPage({ sessionId, tab }: { sessionId: string; tab: Wo
           <div className="px-3 py-2 text-2xs text-fg-muted">loading files...</div>
         );
       case 'apps':
-        return <AppsSurface sessionId={sessionId} artifacts={artifacts} presentations={artifactPresentations} embedded />;
+        return (
+          <AppsSurface sessionId={sessionId} artifacts={artifacts} presentations={artifactPresentations} embedded />
+        );
       default:
         return assertNever(activeTab);
     }

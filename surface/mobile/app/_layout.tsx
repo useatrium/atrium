@@ -39,10 +39,7 @@ function prefsEqual(a: UserPrefs, b: UserPrefs): boolean {
   );
 }
 
-async function enqueuePrefsPatch(
-  queue: DurableOpQueue,
-  patch: Partial<UserPrefs>,
-): Promise<void> {
+async function enqueuePrefsPatch(queue: DurableOpQueue, patch: Partial<UserPrefs>): Promise<void> {
   const normalized = normalizePrefsPatch(patch);
   if (Object.keys(normalized).length === 0) return;
   const op = await queue.enqueue({

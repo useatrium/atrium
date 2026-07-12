@@ -96,20 +96,8 @@ describe('latest visible mark-read gate', () => {
     const latest = latestRealMessageId(items);
     const latestItem = items.find((item) => item.message?.id === latest)!;
 
-    expect(
-      shouldMarkReadForVisibleLatest(
-        [{ isViewable: true, item: latestItem }],
-        latest,
-        false,
-      ),
-    ).toBe(false);
-    expect(
-      shouldMarkReadForVisibleLatest(
-        [{ isViewable: true, item: latestItem }],
-        latest,
-        true,
-      ),
-    ).toBe(true);
+    expect(shouldMarkReadForVisibleLatest([{ isViewable: true, item: latestItem }], latest, false)).toBe(false);
+    expect(shouldMarkReadForVisibleLatest([{ isViewable: true, item: latestItem }], latest, true)).toBe(true);
   });
 
   it('does not mark read for visible older messages', () => {
@@ -119,12 +107,6 @@ describe('latest visible mark-read gate', () => {
     ]);
     const olderItem = items.find((item) => item.message?.id === 10)!;
 
-    expect(
-      shouldMarkReadForVisibleLatest(
-        [{ isViewable: true, item: olderItem }],
-        11,
-        true,
-      ),
-    ).toBe(false);
+    expect(shouldMarkReadForVisibleLatest([{ isViewable: true, item: olderItem }], 11, true)).toBe(false);
   });
 });

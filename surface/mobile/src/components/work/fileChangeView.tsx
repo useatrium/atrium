@@ -44,11 +44,7 @@ export function DiffView({ diff }: { diff: string }) {
       showsVerticalScrollIndicator
     >
       {diff.split('\n').map((line, index) => {
-        const color = line.startsWith('+')
-          ? colors.online
-          : line.startsWith('-')
-            ? colors.danger
-            : colors.textMuted;
+        const color = line.startsWith('+') ? colors.online : line.startsWith('-') ? colors.danger : colors.textMuted;
         return (
           <Text
             key={`${index}:${line}`}
@@ -112,9 +108,7 @@ export function InlineFileChange({
           backgroundColor: pressed ? colors.bgPressed : 'transparent',
         })}
       >
-        <Text style={{ color: colors.textMuted, fontSize: font.xs, width: 10 }}>
-          {open ? '▾' : '▸'}
-        </Text>
+        <Text style={{ color: colors.textMuted, fontSize: font.xs, width: 10 }}>{open ? '▾' : '▸'}</Text>
         <View
           style={{
             borderWidth: 1,

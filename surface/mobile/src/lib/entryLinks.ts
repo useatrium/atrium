@@ -3,8 +3,7 @@ import { tryDecodeHandle } from '@atrium/surface-client/handle';
 const MAX_ENTRY_LINKS = 3;
 const ENTRY_LINK_RE = /https?:\/\/[^\s<>()]+|\/e\/[^\s<>()]+/gi;
 const TRAILING_PUNCTUATION_RE = /[.,;:!?]+$/;
-const ARTIFACT_HANDLE_RE =
-  /^art_[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+const ARTIFACT_HANDLE_RE = /^art_[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 
 export interface EntryLinkMatch {
   raw: string;
@@ -92,11 +91,7 @@ export function extractEntryLinkHandles(text: string, _serverUrl: string, limit 
   return handles;
 }
 
-export function partitionEntryLinks(
-  text: string,
-  _serverUrl: string,
-  limit = MAX_ENTRY_LINKS,
-): PartitionedEntryLinks {
+export function partitionEntryLinks(text: string, _serverUrl: string, limit = MAX_ENTRY_LINKS): PartitionedEntryLinks {
   if (!text) return { bodyText: '', standaloneHandles: [] };
 
   const bodyLines: string[] = [];

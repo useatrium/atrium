@@ -89,12 +89,7 @@ function Action({
   );
 }
 
-export function MessageActionSheet({
-  visible,
-  actions,
-  onClose,
-  reactions,
-}: MessageActionSheetProps) {
+export function MessageActionSheet({ visible, actions, onClose, reactions }: MessageActionSheetProps) {
   const { colors, reduceMotion } = useTheme();
   const insets = useSafeAreaInsets();
   const [pickerVisible, setPickerVisible] = useState(false);
@@ -271,9 +266,7 @@ export function MessageActions({
   const canMarkupReplyAction = confirmed && canMarkupReply && !sessionBlock && onMarkupReply != null;
   const canMutateMessage = confirmed && mine && !sessionBlock;
 
-  useAccessibilityAnnouncement(
-    copied ? 'Message text copied.' : copiedLink ? 'Message link copied.' : null,
-  );
+  useAccessibilityAnnouncement(copied ? 'Message text copied.' : copiedLink ? 'Message link copied.' : null);
 
   useEffect(() => {
     setCopied(false);

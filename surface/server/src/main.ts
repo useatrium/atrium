@@ -35,27 +35,31 @@ export async function main() {
   const sttWorker = new SttWorker({ pool, hub });
   await sttWorker.sweepOnBoot();
   const heartbeat = hub.startHeartbeat(30_000);
-  const idempotencyPrune = setInterval(() => {
-    void pruneIdempotencyKeys(pool).catch((err) => {
-      console.warn('idempotency prune failed', err);
-    });
-    void pruneDraftTombstones(pool).catch((err) => {
-      console.warn('draft tombstone prune failed', err);
-    });
-  }, 24 * 60 * 60 * 1000);
+  const idempotencyPrune = setInterval(
+    () => {
+      void pruneIdempotencyKeys(pool).catch((err) => {
+        console.warn('idempotency prune failed', err);
+      });
+      void pruneDraftTombstones(pool).catch((err) => {
+        console.warn('draft tombstone prune failed', err);
+      });
+    },
+    24 * 60 * 60 * 1000,
+  );
   idempotencyPrune.unref?.();
-  const filePrune = setInterval(() => {
-    void pruneOrphanFiles(pool, { deleteObject }).catch((err) => {
-      console.warn('orphan file prune failed', err);
-    });
-    void archiveStaleSessions(pool, hub).catch((err) => {
-      console.warn('stale session archive failed', err);
-    });
-  }, 24 * 60 * 60 * 1000);
+  const filePrune = setInterval(
+    () => {
+      void pruneOrphanFiles(pool, { deleteObject }).catch((err) => {
+        console.warn('orphan file prune failed', err);
+      });
+      void archiveStaleSessions(pool, hub).catch((err) => {
+        console.warn('stale session archive failed', err);
+      });
+    },
+    24 * 60 * 60 * 1000,
+  );
   filePrune.unref?.();
-  const rateLimit = config.rateLimitEnabled
-    ? { max: config.rateLimitMax, loginMax: config.rateLimitLoginMax }
-    : false;
+  const rateLimit = config.rateLimitEnabled ? { max: config.rateLimitMax, loginMax: config.rateLimitLoginMax } : false;
   const app = await buildApp({ pool, hub, stt: sttWorker, rateLimit });
   const appsOrigin = config.appsPort > 0 ? await buildAppsOrigin({ pool }) : null;
 
@@ -88,9 +92,7 @@ export async function main() {
   process.on('SIGTERM', shutdown);
 
   await app.listen({ port: config.port, host: config.host });
-  console.log(
-    `atrium surface server on http://${config.host}:${config.port} (workspace "${workspace.name}")`,
-  );
+  console.log(`atrium surface server on http://${config.host}:${config.port} (workspace "${workspace.name}")`);
   if (appsOrigin) {
     await appsOrigin.listen({ port: config.appsPort, host: config.appsHost });
     console.log(`atrium apps origin on http://${config.appsHost}:${config.appsPort}`);

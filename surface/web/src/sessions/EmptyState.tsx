@@ -1,14 +1,6 @@
 import type { ReactNode } from 'react';
 
-export function EmptyState({
-  icon,
-  title,
-  hint,
-}: {
-  icon?: ReactNode;
-  title: string;
-  hint?: string;
-}) {
+export function EmptyState({ icon, title, hint }: { icon?: ReactNode; title: string; hint?: string }) {
   return (
     <div className="flex min-h-full flex-1 items-center justify-center p-6 text-center">
       <div className="max-w-xs">

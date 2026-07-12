@@ -116,11 +116,7 @@ export function visibleSessionPredicate(userParam: string): string {
                      WHERE cm.channel_id = c.id AND cm.user_id = ${userParam}))`;
 }
 
-export async function resolveEntry(
-  db: Db,
-  handle: string,
-  userId: string,
-): Promise<NormalizedEntry | null> {
+export async function resolveEntry(db: Db, handle: string, userId: string): Promise<NormalizedEntry | null> {
   const decoded = decodeHandle(handle);
   switch (decoded.type) {
     case 'event':
@@ -132,11 +128,7 @@ export async function resolveEntry(
   }
 }
 
-async function resolveEventEntry(
-  db: Db,
-  eventId: number,
-  userId: string,
-): Promise<NormalizedEntry | null> {
+async function resolveEventEntry(db: Db, eventId: number, userId: string): Promise<NormalizedEntry | null> {
   const res = await db.query<EventResolveRow>(
     `SELECT e.id,
             e.workspace_id::text,
@@ -197,11 +189,7 @@ async function resolveEventEntry(
   };
 }
 
-async function resolveRecordEntry(
-  db: Db,
-  entryUid: string,
-  userId: string,
-): Promise<NormalizedEntry | null> {
+async function resolveRecordEntry(db: Db, entryUid: string, userId: string): Promise<NormalizedEntry | null> {
   const res = await db.query<RecordResolveRow>(
     `SELECT r.entry_uid,
             s.workspace_id::text,
@@ -247,11 +235,7 @@ async function resolveRecordEntry(
   };
 }
 
-async function resolveArtifactEntry(
-  db: Db,
-  artifactId: string,
-  userId: string,
-): Promise<NormalizedEntry | null> {
+async function resolveArtifactEntry(db: Db, artifactId: string, userId: string): Promise<NormalizedEntry | null> {
   const res = await db.query<ArtifactResolveRow>(
     `SELECT a.id::text,
             a.workspace_id::text,

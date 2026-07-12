@@ -86,12 +86,7 @@ describe('ApplyMarkupMenu', () => {
   it('shows a no-markup toast for 400 no_markup responses', async () => {
     mocks.applyArtifactMarkup.mockRejectedValue(new mocks.MockApiError(400, 'no_markup'));
     render(
-      <ApplyMarkupMenu
-        artifactId="art-1"
-        path="docs/plan.md"
-        channelId="ch-1"
-        sessions={{ 'sess-1': session({}) }}
-      />,
+      <ApplyMarkupMenu artifactId="art-1" path="docs/plan.md" channelId="ch-1" sessions={{ 'sess-1': session({}) }} />,
     );
 
     await openApplyMenu();

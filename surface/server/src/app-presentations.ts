@@ -276,7 +276,5 @@ function stringField(record: Record<string, unknown>, key: string): string | nul
 
 function objectField(record: Record<string, unknown>, key: string): Record<string, unknown> | null {
   const value = record[key];
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
+  return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
 }

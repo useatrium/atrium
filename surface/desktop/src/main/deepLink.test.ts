@@ -51,14 +51,8 @@ test('maps the full grammar for https share links from any host', () => {
 });
 
 test('preserves the channel session route segment', () => {
-  assert.equal(
-    deepLinkToRoute('atrium://c/channel-123/s/session-123'),
-    '/c/channel-123/s/session-123',
-  );
-  assert.equal(
-    deepLinkToRoute('https://example.com/c/channel-123/s/session-123'),
-    '/c/channel-123/s/session-123',
-  );
+  assert.equal(deepLinkToRoute('atrium://c/channel-123/s/session-123'), '/c/channel-123/s/session-123');
+  assert.equal(deepLinkToRoute('https://example.com/c/channel-123/s/session-123'), '/c/channel-123/s/session-123');
 });
 
 test('preserves supported query params for atrium and https links', () => {

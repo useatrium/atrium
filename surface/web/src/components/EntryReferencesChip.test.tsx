@@ -53,12 +53,7 @@ describe('EntryReferencesChip', () => {
 
   it('navigates directly for one reference', () => {
     const onNavigate = vi.fn();
-    render(
-      <EntryReferencesChip
-        summary={{ count: 1, latest: [summary.latest[0]!] }}
-        onNavigate={onNavigate}
-      />,
-    );
+    render(<EntryReferencesChip summary={{ count: 1, latest: [summary.latest[0]!] }} onNavigate={onNavigate} />);
     fireEvent.click(screen.getByRole('button', { name: '1 discussion' }));
     expect(onNavigate).toHaveBeenCalledWith('evt_11');
   });
@@ -77,9 +72,11 @@ describe('EntryReferencesChip', () => {
 
   it('queries references in chunks', async () => {
     const query = vi.mocked(
-      (api as unknown as {
-        queryEntryReferences: (handles: string[]) => Promise<{ references: Record<string, never> }>;
-      }).queryEntryReferences,
+      (
+        api as unknown as {
+          queryEntryReferences: (handles: string[]) => Promise<{ references: Record<string, never> }>;
+        }
+      ).queryEntryReferences,
     );
     query.mockResolvedValue({ references: {} });
     const handles = Array.from({ length: ENTRY_REFERENCES_CHUNK_SIZE + 1 }, (_, i) => `rec_${i}`);

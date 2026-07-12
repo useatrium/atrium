@@ -26,11 +26,7 @@ export type StreamActivityKind = 'frame' | 'ping';
 /** `folded` is false for deduplicated replay frames — still liveness (bytes
  * are flowing; the watchdog must not recycle a healthy replay), but not a new
  * fold (the lastFrameAt clock only advances on real folds). */
-export type StreamActivityCallback = (
-  kind: StreamActivityKind,
-  serverTs: string | null,
-  folded?: boolean,
-) => void;
+export type StreamActivityCallback = (kind: StreamActivityKind, serverTs: string | null, folded?: boolean) => void;
 
 const SILENT_DEATH_MS = 45_000;
 const SILENT_DEATH_FALLBACK_MS = 4 * 60_000;
@@ -57,11 +53,7 @@ export function normalizeExecutionStatus(status: ExecutionStatus): SessionStatus
   }
 }
 
-export function frameFromParsedSse(parsed: {
-  event: string;
-  id?: string;
-  data: JsonValue;
-}): CentaurEventFrame | null {
+export function frameFromParsedSse(parsed: { event: string; id?: string; data: JsonValue }): CentaurEventFrame | null {
   if (!isJsonObject(parsed.data)) return null;
   const dataEventId = parsed.data.event_id;
   const eventId =
@@ -119,9 +111,7 @@ export async function streamSessionOnce(
   for await (const parsed of parseSseStream(response.body)) {
     if (parsed.event === 'ping') {
       const serverTs =
-        isJsonObject(parsed.data) && typeof parsed.data.atrium_ts === 'string'
-          ? parsed.data.atrium_ts
-          : null;
+        isJsonObject(parsed.data) && typeof parsed.data.atrium_ts === 'string' ? parsed.data.atrium_ts : null;
       onActivity?.('ping', serverTs);
       continue;
     }

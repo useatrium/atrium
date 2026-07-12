@@ -25,9 +25,7 @@ export const RENDERER_DEV_URL = process.env.ATRIUM_RENDERER_URL ?? null;
  */
 export const WEB_DIST =
   process.env.ATRIUM_WEB_DIST ??
-  (app.isPackaged
-    ? join(process.resourcesPath, 'web-dist')
-    : join(app.getAppPath(), '..', 'web', 'dist'));
+  (app.isPackaged ? join(process.resourcesPath, 'web-dist') : join(app.getAppPath(), '..', 'web', 'dist'));
 
 /** Menu-bar/tray template icon (dev: package resources/; packaged: Resources/). */
 export const TRAY_ICON = app.isPackaged

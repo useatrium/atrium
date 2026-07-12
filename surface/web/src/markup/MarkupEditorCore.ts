@@ -12,10 +12,7 @@ export interface MarkupEditorPluginOptions {
   onSelectionChange?: (state: EditorState) => void;
 }
 
-export function createMarkupEditorState(
-  initialMarkdown: string,
-  options: MarkupEditorPluginOptions = {},
-): EditorState {
+export function createMarkupEditorState(initialMarkdown: string, options: MarkupEditorPluginOptions = {}): EditorState {
   return EditorState.create({
     schema: markupSchema,
     doc: parseCriticMarkupToDoc(initialMarkdown),
@@ -112,7 +109,11 @@ export function documentHasMarkup(doc: ProseMirrorNode): boolean {
       found = true;
       return false;
     }
-    if (node.marks.some((mark) => mark.type.name === 'insertion' || mark.type.name === 'deletion' || mark.type.name === 'comment')) {
+    if (
+      node.marks.some(
+        (mark) => mark.type.name === 'insertion' || mark.type.name === 'deletion' || mark.type.name === 'comment',
+      )
+    ) {
       found = true;
       return false;
     }
@@ -147,10 +148,7 @@ export function createSuggestionTextTransaction(
   return transaction;
 }
 
-export function createDeletionTransaction(
-  state: EditorState,
-  direction: 'backward' | 'forward',
-): Transaction | null {
+export function createDeletionTransaction(state: EditorState, direction: 'backward' | 'forward'): Transaction | null {
   if (isInCodeBlock(state)) {
     return null;
   }

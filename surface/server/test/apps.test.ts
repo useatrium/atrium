@@ -73,11 +73,7 @@ beforeEach(async () => {
 describe('app registry publish/list/launch', () => {
   it('freezes exact source versions and validates entry-relative assets', async () => {
     const registry = await appRegistry();
-    await capture(
-      'apps/demo/index.html',
-      'a'.repeat(64),
-      '<!doctype html><script src="./app.js"></script>',
-    );
+    await capture('apps/demo/index.html', 'a'.repeat(64), '<!doctype html><script src="./app.js"></script>');
     await capture('apps/demo/app.js', 'b'.repeat(64), 'globalThis.demo = true;', 'text/javascript');
 
     const published = await registry.publish({
@@ -119,27 +115,31 @@ describe('app registry publish/list/launch', () => {
   it('rejects missing durable blobs, missing entries, deletes, and dangling assets', async () => {
     const registry = await appRegistry();
     await capture('apps/bad/index.html', 'd'.repeat(64), '<script src="missing.js"></script>');
-    await expect(registry.publish({
-      sessionId,
-      workspaceId: fx.workspaceId,
-      channelId: fx.channelId,
-      userId: fx.userId,
-      name: 'bad',
-      scope: 'channel',
-      entry: 'index.html',
-    })).rejects.toMatchObject({ code: 'app_asset_missing' });
+    await expect(
+      registry.publish({
+        sessionId,
+        workspaceId: fx.workspaceId,
+        channelId: fx.channelId,
+        userId: fx.userId,
+        name: 'bad',
+        scope: 'channel',
+        entry: 'index.html',
+      }),
+    ).rejects.toMatchObject({ code: 'app_asset_missing' });
 
     await capture('apps/pending/index.html', 'e'.repeat(64), 'pending');
     await pool.query('UPDATE cas_blobs SET s3_key = NULL WHERE sha256 = $1', ['e'.repeat(64)]);
-    await expect(registry.publish({
-      sessionId,
-      workspaceId: fx.workspaceId,
-      channelId: fx.channelId,
-      userId: fx.userId,
-      name: 'pending',
-      scope: 'channel',
-      entry: 'index.html',
-    })).rejects.toMatchObject({ code: 'blob_unavailable' });
+    await expect(
+      registry.publish({
+        sessionId,
+        workspaceId: fx.workspaceId,
+        channelId: fx.channelId,
+        userId: fx.userId,
+        name: 'pending',
+        scope: 'channel',
+        entry: 'index.html',
+      }),
+    ).rejects.toMatchObject({ code: 'blob_unavailable' });
 
     await capture('apps/deleted/index.html', 'f'.repeat(64), 'deleted');
     await ledger.commitVersion({
@@ -152,26 +152,30 @@ describe('app registry publish/list/launch', () => {
       author: `agent:${sessionId}`,
       kind: 'deleted',
     });
-    await expect(registry.publish({
-      sessionId,
-      workspaceId: fx.workspaceId,
-      channelId: fx.channelId,
-      userId: fx.userId,
-      name: 'deleted',
-      scope: 'channel',
-      entry: 'index.html',
-    })).rejects.toMatchObject({ code: 'app_source_deleted' });
+    await expect(
+      registry.publish({
+        sessionId,
+        workspaceId: fx.workspaceId,
+        channelId: fx.channelId,
+        userId: fx.userId,
+        name: 'deleted',
+        scope: 'channel',
+        entry: 'index.html',
+      }),
+    ).rejects.toMatchObject({ code: 'app_source_deleted' });
 
     await capture('apps/noentry/app.js', '1'.repeat(64), 'x', 'text/javascript');
-    await expect(registry.publish({
-      sessionId,
-      workspaceId: fx.workspaceId,
-      channelId: fx.channelId,
-      userId: fx.userId,
-      name: 'noentry',
-      scope: 'channel',
-      entry: 'index.html',
-    })).rejects.toMatchObject({ code: 'app_entry_missing' });
+    await expect(
+      registry.publish({
+        sessionId,
+        workspaceId: fx.workspaceId,
+        channelId: fx.channelId,
+        userId: fx.userId,
+        name: 'noentry',
+        scope: 'channel',
+        entry: 'index.html',
+      }),
+    ).rejects.toMatchObject({ code: 'app_entry_missing' });
   });
 
   it('publishes explicit workspace apps from shared/global/apps', async () => {
@@ -253,11 +257,13 @@ describe('app registry publish/list/launch', () => {
       const url = new URL(body.url);
       const parts = url.pathname.split('/');
       expect(parts.slice(-1)[0]).toBe('index.html');
-      expect(verifyAppLaunchSignature(
-        { appId: published.appId, version: body.version, relPath: '*', expires: body.expires },
-        parts[7]!,
-        config.appSigningSecret,
-      )).toBe(true);
+      expect(
+        verifyAppLaunchSignature(
+          { appId: published.appId, version: body.version, relPath: '*', expires: body.expires },
+          parts[7]!,
+          config.appSigningSecret,
+        ),
+      ).toBe(true);
     } finally {
       await app.close();
     }

@@ -18,10 +18,7 @@ export type Db = pg.Pool;
 export type DbClient = pg.PoolClient;
 
 /** Run fn inside a transaction. */
-export async function withTx<T>(
-  pool: pg.Pool,
-  fn: (client: pg.PoolClient) => Promise<T>,
-): Promise<T> {
+export async function withTx<T>(pool: pg.Pool, fn: (client: pg.PoolClient) => Promise<T>): Promise<T> {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');

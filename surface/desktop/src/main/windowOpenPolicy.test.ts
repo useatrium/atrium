@@ -1,10 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {
-  resolveSessionPopoutOpen,
-  resolveWindowOpen,
-  sessionIdFromPanePath,
-} from './windowOpenPolicy.js';
+import { resolveSessionPopoutOpen, resolveWindowOpen, sessionIdFromPanePath } from './windowOpenPolicy.js';
 
 const ctx = {
   appOrigin: 'app://atrium',

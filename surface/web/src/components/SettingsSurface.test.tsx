@@ -24,13 +24,7 @@ vi.mock('../notify', () => ({
 }));
 
 function renderSettings() {
-  render(
-    <SettingsSurface
-      connectionsAvailable
-      claudeStatus={undefined}
-      codexStatus={undefined}
-    />,
-  );
+  render(<SettingsSurface connectionsAvailable claudeStatus={undefined} codexStatus={undefined} />);
 }
 
 function activeSectionLabel() {

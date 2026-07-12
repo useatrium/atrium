@@ -21,9 +21,7 @@ function pathWithSearch(path: string, params: URLSearchParams): string {
 function detectAppRoots(artifacts: Artifact[]): DetectedAppRoot[] {
   const roots = new Map<string, DetectedAppRoot>();
   for (const artifact of artifacts) {
-    const match = /^(?:\/home\/agent\/workspace\/)?shared\/apps\/([a-z0-9][a-z0-9_-]*)\/(.+)$/i.exec(
-      artifact.path,
-    );
+    const match = /^(?:\/home\/agent\/workspace\/)?shared\/apps\/([a-z0-9][a-z0-9_-]*)\/(.+)$/i.exec(artifact.path);
     if (!match) continue;
     const [, name, relPath] = match;
     if (relPath !== 'index.html' && relPath !== 'atrium.app.json') continue;
@@ -80,7 +78,10 @@ export function AppsSurface({
   embedded?: boolean;
 }) {
   const location = useLocation();
-  const previewParam = useMemo(() => new URLSearchParams(location.search).get(URL_PARAMS.preview)?.trim() ?? '', [location.search]);
+  const previewParam = useMemo(
+    () => new URLSearchParams(location.search).get(URL_PARAMS.preview)?.trim() ?? '',
+    [location.search],
+  );
   const [apps, setApps] = useState<AppListRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
@@ -103,7 +104,9 @@ export function AppsSurface({
     () => new Map(presented.map(({ root, presentation }) => [root.name, presentation])),
     [presented],
   );
-  const unpublishedDetected = detected.filter((root) => !publishedNames.has(root.name) && !presentedNames.has(root.name));
+  const unpublishedDetected = detected.filter(
+    (root) => !publishedNames.has(root.name) && !presentedNames.has(root.name),
+  );
   const unpublishedPresented = presented.filter(({ root }) => !publishedNames.has(root.name));
 
   const updatePreviewUrl = (value: string | null, options: { replace?: boolean } = {}) => {
@@ -145,7 +148,9 @@ export function AppsSurface({
       setPreview(null);
       return;
     }
-    const match = presentations.find((presentation) => presentation.id === previewParam || presentation.path === previewParam) ?? null;
+    const match =
+      presentations.find((presentation) => presentation.id === previewParam || presentation.path === previewParam) ??
+      null;
     setPreview(match);
   }, [presentations, previewParam]);
 
@@ -182,7 +187,10 @@ export function AppsSurface({
   const body = (
     <div data-testid="apps-surface" className="min-h-0 flex-1 overflow-y-auto">
       {error && (
-        <div role="alert" className="border-b border-danger-border/40 bg-danger-tint/20 px-3 py-2 text-xs text-danger-text">
+        <div
+          role="alert"
+          className="border-b border-danger-border/40 bg-danger-tint/20 px-3 py-2 text-xs text-danger-text"
+        >
           {error}
         </div>
       )}
@@ -320,9 +328,5 @@ export function AppsSurface({
 
   if (embedded) return body;
 
-  return (
-    <div className="absolute inset-0 z-10 flex flex-col bg-surface/95 backdrop-blur-sm">
-      {body}
-    </div>
-  );
+  return <div className="absolute inset-0 z-10 flex flex-col bg-surface/95 backdrop-blur-sm">{body}</div>;
 }

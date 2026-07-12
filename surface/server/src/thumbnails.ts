@@ -245,7 +245,8 @@ async function webpImageThumbnail(bytes: Buffer, logger?: ThumbnailLogger): Prom
     warnDependencyOnce('sharp', err, logger, 'thumbnail generator dependency unavailable: sharp import failed');
     return null;
   }
-  const output = await sharp.default(bytes, { animated: false })
+  const output = await sharp
+    .default(bytes, { animated: false })
     .rotate()
     .resize({
       width: THUMBNAIL_WIDTH,
@@ -263,7 +264,12 @@ async function pdfThumbnail(bytes: Buffer, logger?: ThumbnailLogger): Promise<Ge
   try {
     ({ pdf } = await import('pdf-to-img'));
   } catch (err) {
-    warnDependencyOnce('pdf-to-img', err, logger, 'thumbnail generator dependency unavailable: pdf-to-img import failed');
+    warnDependencyOnce(
+      'pdf-to-img',
+      err,
+      logger,
+      'thumbnail generator dependency unavailable: pdf-to-img import failed',
+    );
     return null;
   }
   let document: Awaited<ReturnType<typeof import('pdf-to-img').pdf>> | null = null;
@@ -286,19 +292,23 @@ async function videoThumbnail(bytes: Buffer, logger?: ThumbnailLogger): Promise<
   const outputPath = join(dir, 'poster.jpg');
   try {
     await writeFile(sourcePath, bytes);
-    const result = await runProcess('ffmpeg', [
-      '-hide_banner',
-      '-loglevel',
-      'error',
-      '-y',
-      '-i',
-      sourcePath,
-      '-frames:v',
-      '1',
-      '-vf',
-      `scale=${THUMBNAIL_WIDTH}:-2`,
-      outputPath,
-    ], logger);
+    const result = await runProcess(
+      'ffmpeg',
+      [
+        '-hide_banner',
+        '-loglevel',
+        'error',
+        '-y',
+        '-i',
+        sourcePath,
+        '-frames:v',
+        '1',
+        '-vf',
+        `scale=${THUMBNAIL_WIDTH}:-2`,
+        outputPath,
+      ],
+      logger,
+    );
     if (!result) return null;
     const output = await readFile(outputPath).catch(() => null);
     return output && output.byteLength > 0 ? { bytes: output, mime: VIDEO_THUMBNAIL_MIME } : null;

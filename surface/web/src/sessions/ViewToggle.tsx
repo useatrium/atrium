@@ -24,11 +24,7 @@ export function ViewToggle({
 }) {
   return (
     // biome-ignore lint/a11y/useSemanticElements: compact segmented control already exposes a named group and pressed buttons; fieldset would alter toolbar layout.
-    <div
-      role="group"
-      aria-label="Layout"
-      className="flex shrink-0 rounded-md border border-edge bg-surface p-0.5"
-    >
+    <div role="group" aria-label="Layout" className="flex shrink-0 rounded-md border border-edge bg-surface p-0.5">
       {SEGMENTS.map((seg) => {
         const active = view === seg.value;
         const disabled = seg.value !== 'channel' && !hasSession;

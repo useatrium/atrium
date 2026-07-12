@@ -12,9 +12,11 @@ describe('normalizePrefs', () => {
   });
 
   it('keeps valid fields and drops invalid ones independently', () => {
-    expect(
-      normalizePrefs({ theme: 'light', accent: 'mauve', fontScale: 1.125 }),
-    ).toEqual({ ...DEFAULT_PREFS, theme: 'light', fontScale: 1.125 });
+    expect(normalizePrefs({ theme: 'light', accent: 'mauve', fontScale: 1.125 })).toEqual({
+      ...DEFAULT_PREFS,
+      theme: 'light',
+      fontScale: 1.125,
+    });
     expect(normalizePrefs({ highContrast: true, motion: 'reduced' })).toEqual({
       ...DEFAULT_PREFS,
       highContrast: true,
@@ -51,8 +53,17 @@ describe('userColorTokens', () => {
     const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
     const mm = l - c / 2;
     const rgb =
-      h < 60 ? [c, x, 0] : h < 120 ? [x, c, 0] : h < 180 ? [0, c, x]
-      : h < 240 ? [0, x, c] : h < 300 ? [x, 0, c] : [c, 0, x];
+      h < 60
+        ? [c, x, 0]
+        : h < 120
+          ? [x, c, 0]
+          : h < 180
+            ? [0, c, x]
+            : h < 240
+              ? [0, x, c]
+              : h < 300
+                ? [x, 0, c]
+                : [c, 0, x];
     const lin = (v: number) => {
       const sv = v + mm;
       return sv <= 0.04045 ? sv / 12.92 : ((sv + 0.055) / 1.055) ** 2.4;
@@ -64,8 +75,7 @@ describe('userColorTokens', () => {
   }
 
   function hexLuminance(hex: string): number {
-    const lin = (v: number) =>
-      v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+    const lin = (v: number) => (v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4);
     const ch = (i: number) => lin(parseInt(hex.slice(i, i + 2), 16) / 255);
     return 0.2126 * ch(1) + 0.7152 * ch(3) + 0.0722 * ch(5);
   }

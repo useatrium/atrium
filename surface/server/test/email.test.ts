@@ -8,8 +8,9 @@ const resendConfig: EmailConfig = {
 };
 
 function okFetch(status = 200) {
-  return vi.fn(async () => ({ ok: status < 400, status, json: async () => ({ id: 'e1' }) }) as Response) as unknown as typeof fetch &
-    ReturnType<typeof vi.fn>;
+  return vi.fn(
+    async () => ({ ok: status < 400, status, json: async () => ({ id: 'e1' }) }) as Response,
+  ) as unknown as typeof fetch & ReturnType<typeof vi.fn>;
 }
 
 describe('emailDeliveryConfigured', () => {

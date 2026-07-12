@@ -114,13 +114,7 @@ describe('sessionSidebarPreview', () => {
       }),
     );
 
-    expect(sessionSidebarPreview(sessions).map((item) => item.id)).toEqual([
-      's-5',
-      's-4',
-      's-3',
-      's-2',
-      's-1',
-    ]);
+    expect(sessionSidebarPreview(sessions).map((item) => item.id)).toEqual(['s-5', 's-4', 's-3', 's-2', 's-1']);
   });
 });
 
@@ -241,27 +235,27 @@ describe('Sidebar', () => {
 
   it('uses the DM partner display name, not the decorated label, for avatar initials', () => {
     renderSidebar([
-        {
-          id: 'ch-general',
-          workspaceId: 'ws-1',
-          name: 'general',
-          kind: 'public',
-          muted: false,
-          archivedAt: null,
-          pinned: false,
-          createdAt: '2026-01-01T00:00:00.000Z',
-        },
-        {
-          id: 'dm-self',
-          workspaceId: 'ws-1',
-          name: 'dm-self',
-          kind: 'dm',
-          muted: false,
-          archivedAt: null,
-          pinned: false,
-          createdAt: '2026-01-01T00:00:00.000Z',
-          members: [me],
-        },
+      {
+        id: 'ch-general',
+        workspaceId: 'ws-1',
+        name: 'general',
+        kind: 'public',
+        muted: false,
+        archivedAt: null,
+        pinned: false,
+        createdAt: '2026-01-01T00:00:00.000Z',
+      },
+      {
+        id: 'dm-self',
+        workspaceId: 'ws-1',
+        name: 'dm-self',
+        kind: 'dm',
+        muted: false,
+        archivedAt: null,
+        pinned: false,
+        createdAt: '2026-01-01T00:00:00.000Z',
+        members: [me],
+      },
     ]);
 
     expect(screen.getByText('Allan Niemerg (you)')).toBeTruthy();
@@ -400,7 +394,9 @@ describe('Sidebar', () => {
 
     const agentsSection = screen.getByRole('heading', { name: 'Agents' }).closest('section');
     expect(agentsSection).toBeTruthy();
-    const buttons = within(agentsSection!).getAllByRole('button').map((button) => button.textContent ?? '');
+    const buttons = within(agentsSection!)
+      .getAllByRole('button')
+      .map((button) => button.textContent ?? '');
 
     expect(buttons[0]).toContain('Newer queued');
     expect(buttons[1]).toContain('Older running');

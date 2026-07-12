@@ -1,7 +1,17 @@
 import { Ionicons } from '@expo/vector-icons';
 import { compactMarkdownSource } from '@atrium/surface-client';
 import * as Clipboard from 'expo-clipboard';
-import { Component, createContext, memo, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import {
+  Component,
+  createContext,
+  memo,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
 import { Linking, Platform, Pressable, ScrollView, Text, View, type TextStyle, type ViewStyle } from 'react-native';
 import MarkdownDisplay, {
   MarkdownIt,
@@ -46,8 +56,7 @@ export interface EntryReferenceMarkdownContextValue {
 }
 
 const emptyEntryReferenceContext: EntryReferenceMarkdownContextValue = {};
-const EntryReferenceMarkdownContext =
-  createContext<EntryReferenceMarkdownContextValue>(emptyEntryReferenceContext);
+const EntryReferenceMarkdownContext = createContext<EntryReferenceMarkdownContextValue>(emptyEntryReferenceContext);
 
 export function EntryReferenceMarkdownProvider({
   value,

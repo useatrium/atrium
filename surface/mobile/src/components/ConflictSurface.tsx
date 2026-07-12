@@ -70,7 +70,10 @@ export function ConflictSurface(props: {
           <Text style={{ color: colors.danger, fontSize: font.xs, fontWeight: '800' }}>Conflict</Text>
         </View>
         <View style={{ flex: 1, minWidth: 0 }}>
-          <Text style={{ color: colors.text, fontFamily: monoFont(), fontSize: font.xs, fontWeight: '700' }} numberOfLines={1}>
+          <Text
+            style={{ color: colors.text, fontFamily: monoFont(), fontSize: font.xs, fontWeight: '700' }}
+            numberOfLines={1}
+          >
             {conflict.path}
           </Text>
           <Text style={{ color: colors.textMuted, fontSize: font.xs }} numberOfLines={1}>
@@ -90,7 +93,10 @@ export function ConflictSurface(props: {
         </Pressable>
       </View>
 
-      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: space.md, gap: space.md, paddingBottom: space.xl }}>
+      <ScrollView
+        style={{ flex: 1 }}
+        contentContainerStyle={{ padding: space.md, gap: space.md, paddingBottom: space.xl }}
+      >
         <View
           style={{
             flexDirection: 'row',
@@ -218,7 +224,10 @@ function SideToggle({
         paddingHorizontal: space.sm,
       }}
     >
-      <Text style={{ color: selected ? colors.accent : colors.textSecondary, fontSize: font.xs, fontWeight: '800' }} numberOfLines={1}>
+      <Text
+        style={{ color: selected ? colors.accent : colors.textSecondary, fontSize: font.xs, fontWeight: '800' }}
+        numberOfLines={1}
+      >
         {label}
       </Text>
     </Pressable>

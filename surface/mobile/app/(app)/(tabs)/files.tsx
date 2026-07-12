@@ -37,7 +37,11 @@ import {
 import { ConnectionBanner } from '../../../src/components/bits';
 import { MobileHeader } from '../../../src/components/MobileHeader';
 import { font, radius, space, useTheme } from '../../../src/lib/theme';
-import { createEntryReferenceQuery, type EntryReferenceMap, type EntryReferenceSummary } from '../../../src/lib/entryReferences';
+import {
+  createEntryReferenceQuery,
+  type EntryReferenceMap,
+  type EntryReferenceSummary,
+} from '../../../src/lib/entryReferences';
 import { useRequiredSession } from '../../../src/lib/session';
 
 const PAGE_SIZE = 40;
@@ -74,15 +78,7 @@ function categoryParam(value: string | string[] | undefined): 'all' | FileCatego
   return isFileCategory(first) ? first : 'all';
 }
 
-function Chip({
-  label,
-  selected,
-  onPress,
-}: {
-  label: string;
-  selected: boolean;
-  onPress: () => void;
-}) {
+function Chip({ label, selected, onPress }: { label: string; selected: boolean; onPress: () => void }) {
   const { colors } = useTheme();
   return (
     <Pressable
@@ -217,7 +213,12 @@ function FileTile({
         {thumb ? (
           <Image source={thumb} style={{ width: '100%', height: '100%' }} contentFit="cover" transition={120} />
         ) : (
-          <TextSnippetTile file={file} fileContentUrl={fileContentUrl} fileHeaders={fileHeaders} fallback={iconFallback} />
+          <TextSnippetTile
+            file={file}
+            fileContentUrl={fileContentUrl}
+            fileHeaders={fileHeaders}
+            fallback={iconFallback}
+          />
         )}
         {file.tombstoned ? (
           <View
@@ -256,7 +257,11 @@ function FileTile({
             borderColor: colors.border,
           }}
         >
-          <Ionicons name={file.starred ? 'star' : 'star-outline'} size={17} color={file.starred ? colors.warning : colors.textMuted} />
+          <Ionicons
+            name={file.starred ? 'star' : 'star-outline'}
+            size={17}
+            color={file.starred ? colors.warning : colors.textMuted}
+          />
         </Pressable>
       </View>
       <View style={{ padding: space.sm, gap: 3 }}>
@@ -274,9 +279,7 @@ function FileTile({
               paddingVertical: 2,
             }}
           >
-            <Text style={{ color: colors.textSecondary, fontSize: font.xs, fontWeight: '900' }}>
-              {typeLabel}
-            </Text>
+            <Text style={{ color: colors.textSecondary, fontSize: font.xs, fontWeight: '900' }}>{typeLabel}</Text>
           </View>
           <Text style={{ flex: 1, color: colors.textMuted, fontSize: font.xs }} numberOfLines={1}>
             {metaLine(file)}
@@ -462,9 +465,7 @@ export default function FilesTab() {
   const searchActive = search.trim().length > 0;
   const visibleFiles = files;
   const visibleItemCount = visibleFiles.length;
-  const routedLightboxIndex = openFileId
-    ? visibleFiles.findIndex((file) => file.artifactId === openFileId)
-    : -1;
+  const routedLightboxIndex = openFileId ? visibleFiles.findIndex((file) => file.artifactId === openFileId) : -1;
   const lightboxVisible = routedLightboxIndex >= 0;
   const visibleEntryHandles = useMemo(() => {
     const seen = new Set<string>();
@@ -545,13 +546,16 @@ export default function FilesTab() {
     setRouteParams({ file: undefined });
   }, [loadedOnce, loadFiles, loading, nextCursor, openFileId, refreshing, setRouteParams, visibleFiles]);
 
-  const updateSearch = useCallback((value: string) => {
-    setSearch(value);
-    if (openFileId) {
-      setOpenFileId(null);
-      setRouteParams({ file: undefined });
-    }
-  }, [openFileId, setRouteParams]);
+  const updateSearch = useCallback(
+    (value: string) => {
+      setSearch(value);
+      if (openFileId) {
+        setOpenFileId(null);
+        setRouteParams({ file: undefined });
+      }
+    },
+    [openFileId, setRouteParams],
+  );
 
   const updateCategory = useCallback(
     (value: 'all' | FileCategory) => {
@@ -634,9 +638,7 @@ export default function FilesTab() {
       <MobileHeader
         title={title}
         right={
-          <Text style={{ color: colors.textMuted, fontSize: font.sm, fontWeight: '800' }}>
-            {visibleItemCount}
-          </Text>
+          <Text style={{ color: colors.textMuted, fontSize: font.sm, fontWeight: '800' }}>{visibleItemCount}</Text>
         }
       />
       <ConnectionBanner status={chat.state.wsStatus} />
@@ -750,7 +752,11 @@ export default function FilesTab() {
         columnWrapperStyle={{ gap: tileGap, paddingHorizontal: space.lg }}
         contentContainerStyle={{ gap: tileGap, paddingTop: space.md }}
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={() => void loadFiles({ reset: true })} tintColor={colors.textMuted} />
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => void loadFiles({ reset: true })}
+            tintColor={colors.textMuted}
+          />
         }
         renderItem={({ item }) => (
           <FileTile
@@ -766,7 +772,15 @@ export default function FilesTab() {
         )}
         ListEmptyComponent={
           !refreshing && !loading ? (
-            <View style={{ minHeight: 220, alignItems: 'center', justifyContent: 'center', padding: space.xl, gap: space.sm }}>
+            <View
+              style={{
+                minHeight: 220,
+                alignItems: 'center',
+                justifyContent: 'center',
+                padding: space.xl,
+                gap: space.sm,
+              }}
+            >
               <Ionicons name="images-outline" size={38} color={colors.textMuted} />
               <Text style={{ color: colors.text, fontSize: font.md, fontWeight: '800' }}>
                 {searchActive ? 'No matching files' : 'No files'}

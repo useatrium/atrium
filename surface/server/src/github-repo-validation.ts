@@ -89,18 +89,12 @@ export async function verifyGitHubAppInstallation(
   }
   const fetchImpl = config.fetchImpl ?? fetch;
   const jwt = githubAppJwt(config);
-  const res = await fetchImpl(
-    `https://api.github.com/app/installations/${encodeURIComponent(config.installationId)}`,
-    {
-      method: 'GET',
-      headers: githubHeaders({ authorization: `Bearer ${jwt}` }),
-    },
-  );
+  const res = await fetchImpl(`https://api.github.com/app/installations/${encodeURIComponent(config.installationId)}`, {
+    method: 'GET',
+    headers: githubHeaders({ authorization: `Bearer ${jwt}` }),
+  });
   if (!res.ok) {
-    throw new GitHubRepoValidationError(
-      'token_exchange_failed',
-      `GitHub installation lookup failed: ${res.status}`,
-    );
+    throw new GitHubRepoValidationError('token_exchange_failed', `GitHub installation lookup failed: ${res.status}`);
   }
   const body = await res.json().catch(() => null);
   if (!body || typeof body !== 'object' || Array.isArray(body)) {
@@ -108,7 +102,8 @@ export async function verifyGitHubAppInstallation(
   }
   const installation = body as Record<string, unknown>;
   const account = installation.account;
-  const accountRecord = account && typeof account === 'object' && !Array.isArray(account) ? account as Record<string, unknown> : null;
+  const accountRecord =
+    account && typeof account === 'object' && !Array.isArray(account) ? (account as Record<string, unknown>) : null;
   return {
     installationId: config.installationId,
     accountLogin: typeof accountRecord?.login === 'string' ? accountRecord.login : null,

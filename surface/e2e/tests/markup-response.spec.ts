@@ -3,8 +3,7 @@ import { expect, test, type APIRequestContext, type Page } from '@playwright/tes
 import { Pool } from 'pg';
 import { channelId, createTestChannel, login, unique } from './helpers.js';
 
-const e2eDatabaseUrl =
-  process.env.E2E_DATABASE_URL ?? 'postgres://atrium:atrium@localhost:5433/atrium_e2e';
+const e2eDatabaseUrl = process.env.E2E_DATABASE_URL ?? 'postgres://atrium:atrium@localhost:5433/atrium_e2e';
 const centaurStubUrl = `http://127.0.0.1:${Number(process.env.E2E_CENTAUR_PORT ?? 18100)}`;
 const entryText = '# Plan\n\nThe rollout has three phases.\n\nDone.';
 
@@ -30,13 +29,10 @@ async function injectSession(args: {
   const threadKey = `thread-${unique('markup')}`;
   try {
     await client.query('BEGIN');
-    const user = await client.query<{ id: string }>('SELECT id FROM users WHERE handle = $1', [
-      args.handle,
+    const user = await client.query<{ id: string }>('SELECT id FROM users WHERE handle = $1', [args.handle]);
+    const channel = await client.query<{ workspace_id: string }>('SELECT workspace_id FROM channels WHERE id = $1', [
+      args.channelId,
     ]);
-    const channel = await client.query<{ workspace_id: string }>(
-      'SELECT workspace_id FROM channels WHERE id = $1',
-      [args.channelId],
-    );
     if (!user.rows[0] || !channel.rows[0]) throw new Error('missing e2e user or channel');
     const userId = user.rows[0].id;
     const workspaceId = channel.rows[0].workspace_id;
@@ -76,23 +72,14 @@ async function injectSession(args: {
   }
 }
 
-async function seedAgentTextRecord(args: {
-  sessionId: string;
-  entryUid: string;
-  itemId: string;
-}): Promise<void> {
+async function seedAgentTextRecord(args: { sessionId: string; entryUid: string; itemId: string }): Promise<void> {
   const pool = new Pool({ connectionString: e2eDatabaseUrl });
   try {
     await pool.query(
       `INSERT INTO session_records
          (session_id, event_id, seq, entry_uid, kind, actor, driver, view_tier, text, meta, ts)
        VALUES ($1, 2, 1, $2, 'message', 'agent', 'codex', 'lean', $3, $4::jsonb, now())`,
-      [
-        args.sessionId,
-        args.entryUid,
-        entryText,
-        JSON.stringify({ itemId: args.itemId, messageId: args.itemId }),
-      ],
+      [args.sessionId, args.entryUid, entryText, JSON.stringify({ itemId: args.itemId, messageId: args.itemId })],
     );
   } finally {
     await pool.end();
@@ -164,15 +151,19 @@ async function openMarkupSession(
   return { sessionId, handle: entryHandle, threadKey };
 }
 
-async function openMarkupPane(page: Page, handle: string): Promise<{
+async function openMarkupPane(
+  page: Page,
+  handle: string,
+): Promise<{
   artifactId: string;
   path: string;
   seq: number;
   workspaceId: string;
 }> {
-  const extractResponse = page.waitForResponse((response) =>
-    response.request().method() === 'POST' &&
-    response.url().includes(`/api/entries/${encodeURIComponent(handle)}/extract`),
+  const extractResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === 'POST' &&
+      response.url().includes(`/api/entries/${encodeURIComponent(handle)}/extract`),
   );
   await page.getByText('The rollout has three phases.').hover();
   await page.getByRole('button', { name: 'Mark up & reply' }).click();
@@ -232,9 +223,9 @@ async function selectWordInMarkupEditor(page: Page, word: string): Promise<void>
   if (!selected) throw new Error(`word not found in markup editor: ${word}`);
 }
 
-async function centaurRequests(request: APIRequestContext): Promise<
-  Array<{ method: string; path: string; body: unknown }>
-> {
+async function centaurRequests(
+  request: APIRequestContext,
+): Promise<Array<{ method: string; path: string; body: unknown }>> {
   const response = await request.get(`${centaurStubUrl}/__requests`);
   expect(response.ok()).toBeTruthy();
   return (await response.json()) as Array<{ method: string; path: string; body: unknown }>;
@@ -245,10 +236,7 @@ function threadMessagePosts(
   threadKey: string,
 ): Array<{ method: string; path: string; body: unknown }> {
   return requests.filter(
-    (entry) =>
-      entry.method === 'POST' &&
-      entry.path.includes(threadKey) &&
-      /\/messages$/.test(entry.path),
+    (entry) => entry.method === 'POST' && entry.path.includes(threadKey) && /\/messages$/.test(entry.path),
   );
 }
 
@@ -259,10 +247,7 @@ function messageText(body: unknown): string {
   return typeof text === 'string' ? text : '';
 }
 
-test('marking up an agent transcript row sends CriticMarkup feedback to Centaur', async ({
-  page,
-  request,
-}) => {
+test('marking up an agent transcript row sends CriticMarkup feedback to Centaur', async ({ page, request }) => {
   const { handle, threadKey } = await openMarkupSession(page, 'markup-loop');
   const extracted = await openMarkupPane(page, handle);
 
@@ -282,8 +267,7 @@ test('marking up an agent transcript row sends CriticMarkup feedback to Centaur'
   expect(steer).toContain('This is my response to what you wrote');
   expect(
     requests.some(
-      (entry) =>
-        entry.method === 'POST' && entry.path.includes(threadKey) && /\/execute$/.test(entry.path),
+      (entry) => entry.method === 'POST' && entry.path.includes(threadKey) && /\/execute$/.test(entry.path),
     ),
   ).toBeTruthy();
 
@@ -299,10 +283,7 @@ test('marking up an agent transcript row sends CriticMarkup feedback to Centaur'
   await page.getByRole('button', { name: 'Cancel' }).click();
 });
 
-test('stale markup base keeps the pane open and does not steer Centaur', async ({
-  page,
-  request,
-}) => {
+test('stale markup base keeps the pane open and does not steer Centaur', async ({ page, request }) => {
   const { sessionId, handle, threadKey } = await openMarkupSession(page, 'markup-stale');
   const extracted = await openMarkupPane(page, handle);
   await suggestReplacement(page, 'three', 'two');
