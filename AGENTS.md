@@ -46,13 +46,16 @@ the wire protocol between them can now land as **one PR** across both.
 - **Pulling upstream** is a maintainer task: use `scripts/centaur-sync.sh` from the
   repo root. It creates a sibling integration worktree and runs
   `git subtree pull --prefix=centaur centaur-upstream main` there. **Never
-  `--squash`** (it silently drops our diverged edits).
+  `--squash`** (it silently drops our diverged edits). After review and green CI,
+  upstream-sync PRs must bypass the squash queue and land with
+  `gh pr merge --admin --merge` so Git retains the upstream parent commit.
 
 ## Contributing (people and agents)
 
 - Branch off `master`; open a PR into `master`; **PR title must be a Conventional Commit**
   (CI-enforced). Once approved and green, use **Merge when ready** to enter the squash
-  merge queue. Full flow: `CONTRIBUTING.md`.
+  merge queue. The only exception is a `scripts/centaur-sync.sh` upstream-sync PR, which
+  must preserve its merge commit as described above. Full flow: `CONTRIBUTING.md`.
 - This checkout is often shared by multiple agent sessions with extra branches in `git
   worktree`s. **Before committing, confirm the checked-out branch** (`git branch
   --show-current`) — it may not be `master` and may belong to another session. For

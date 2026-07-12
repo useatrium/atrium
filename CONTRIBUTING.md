@@ -87,6 +87,10 @@ list`). Before you commit:
 - The repo is configured so the squash commit's subject is the **PR title**
   (`squash_merge_commit_title=PR_TITLE`). Required workflows run for both pull request
   and merge queue (`merge_group`) events.
+- **Centaur upstream-sync exception:** PRs created from `scripts/centaur-sync.sh` must
+  preserve the subtree merge commit. After approval and green CI, a maintainer lands
+  them outside the queue with `gh pr merge --admin --merge`. Do not use this exception
+  for ordinary changes under `centaur/`; those still use the squash queue.
 
 ## PR titles (Conventional Commits)
 
