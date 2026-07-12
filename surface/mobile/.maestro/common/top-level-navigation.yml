@@ -1,0 +1,29 @@
+- tapOn: "Files"
+- extendedWaitUntil:
+    visible: "Search files"
+    timeout: 10000
+- takeScreenshot: "${SCREENSHOT_PREFIX}-02-files"
+- tapOn:
+    text: ".*Agents.*"
+- extendedWaitUntil:
+    visible: "Agents"
+    timeout: 10000
+- takeScreenshot: "${SCREENSHOT_PREFIX}-03-agents"
+- tapOn:
+    text: ".*Attention.*"
+- extendedWaitUntil:
+    visible: "Attention"
+    timeout: 10000
+- assertNotVisible: ".*running.*"
+- takeScreenshot: "${SCREENSHOT_PREFIX}-04-attention"
+- tapOn: "Search"
+- assertVisible: "Search messages"
+- inputText: "maestro-no-match"
+- extendedWaitUntil:
+    visible: "No results."
+    timeout: 10000
+- takeScreenshot: "${SCREENSHOT_PREFIX}-05-search-empty"
+- eraseText
+- tapOn: "Chat"
+- assertVisible: "Chat"
+

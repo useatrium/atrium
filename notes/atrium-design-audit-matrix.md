@@ -21,10 +21,10 @@ This matrix is the evidence ledger for the design audit and fix pass. A row is c
 
 | Platform | Required sizes | Native concerns | Evidence status |
 |---|---|---|---|
-| Web | 1440×1000, 1024×768, 768×1024, 390×844 | keyboard, focus order, hover-independent actions, responsive panes, browser zoom | Pending |
+| Web | 1440×1000, 1024×768, 768×1024, 390×844 | keyboard, focus order, hover-independent actions, responsive panes, browser zoom | Automated partial — `surface/e2e/tests/design-audit.spec.ts` covers all four sizes, document overflow, required shell controls, and representative focus; browser zoom and full focus order remain pending |
 | Electron macOS | compact and expanded windows; main and popout | menus, shortcuts, deep links, multi-window state, title behavior, zoom | Pending |
-| iOS | compact iPhone and large iPhone; one iPad width | safe areas, edge-swipe Back, Dynamic Type, VoiceOver, sheets, 44 pt targets | Pending |
-| Android | compact phone and expanded/tablet width | system/predictive Back, edge-to-edge insets, IME, Material navigation adaptation, TalkBack, 48 dp targets | Pending |
+| iOS | compact iPhone and large iPhone; one iPad width | safe areas, edge-swipe Back, Dynamic Type, VoiceOver, sheets, 44 pt targets | Maestro journeys authored for first run, navigation, settings, demo work, comments, and stack Back; execution and assistive checks remain unverified because no simulator is available |
+| Android | compact phone and expanded/tablet width | system/predictive Back, edge-to-edge insets, IME, Material navigation adaptation, TalkBack, 48 dp targets | Maestro journeys authored for first run, adaptive navigation, settings, demo work, comments, and system Back; execution, predictive Back, and assistive checks remain unverified because `adb` is unavailable |
 
 ## Workflow evidence ledger
 
@@ -52,6 +52,28 @@ This matrix is the evidence ledger for the design audit and fix pass. A row is c
 | Desktop windows and popouts | n/a | Pending | Pending | Pending | Electron smoke and manual QA checklist | Compact/expanded visual captures, focus restoration, failure and multi-window cases |
 
 ## Current automation baseline
+
+### Web design-audit evidence lane
+
+`surface/e2e/tests/design-audit.spec.ts` uses the isolated `atrium_e2e` database, the real authenticated web app, existing login/API helpers, and a direct E2E session fixture consistent with the existing session specs. Screenshots are attached to the Playwright report rather than committed as pixel baselines.
+
+| Evidence | State and modes proved | Playwright attachments | Remaining gap |
+|---|---|---|---|
+| Login, shell, and global navigation | Clean account at 390×844, 768×1024, 1024×768, and 1440×1000; Search, shortcuts, Files, Agents, and Attention are visible; compact navigation is operable without hover | `empty-phone-shell` | Invalid server/auth/retry, browser zoom, exhaustive focus order, and screen-reader task completion |
+| Empty orientation destinations | Clean account Attention, Agents, Files, and Settings rendered; empty Attention copy and basic body contrast checked | `empty-attention`, `empty-agents`, `empty-files`, `settings-default` | A connected first-run activation journey does not exist in the current fixture/product flow |
+| Populated collaboration | API-seeded dense `#general` timeline, uploaded text artifact, populated Files, and completed agent session | `dense-chat`, `populated-agents`, `populated-files` | The required full power-user fixture (DMs, approvals, conflicts, voice/calls, failures, and recovery history) is not safely seedable as one current helper |
+| Terminal outcome | Completed E2E session opens in the real session surface with visible terminal `Results` and completion language | `terminal-results` | Failed/cancelled outcomes, decisions/risks, rich changes, and produced-artifact linkage |
+| Preferences and accessibility | Light, dark, high contrast, 125% text, and reduced motion are applied through Settings and asserted on the rendered document; representative global-nav and Settings controls have computed focus indicators; deterministic primary text/control contrast checks | `settings-light`, `settings-dark`, `settings-high-contrast-125-reduced` | Every accent, forced colors, full keyboard order, axe/screen-reader coverage, and manual assistive-technology review |
+
+The lane is intentionally partial evidence: it does not mark a workflow row complete because the ledger requires both full account states and all applicable accessibility modes.
+
+Validation in this worktree on 2026-07-11: `pnpm --filter @atrium/e2e typecheck` passed and Playwright discovered all 7 tests. The browser run could not start because `surface/web/node_modules` is symlinked to the parent worktree and Vite was denied permission to create its `.vite-temp` config bundle there (`EPERM`). The initial default-port attempt also found an unrelated existing Centaur stub on `127.0.0.1:18100`; the permission failure reproduced with isolated ports `3117`, `5287`, and `18117`. Therefore the named screenshot attachments describe what the suite emits when it runs, not reviewed artifacts from this blocked local run.
+
+### Native Maestro evidence lane
+
+`surface/mobile/.maestro/` contains shared selector-based flows plus separate iOS and Android journeys for authenticated launch, all five top-level destinations, empty search, light/dark/high-contrast/XL-text/reduced-motion settings, the deterministic demo-agent loop, steering, result inspection, message comments, and platform Back behavior. The previous coordinate-based flow was removed. All nine YAML files parse and their selectors were checked against source.
+
+The flows are authored evidence, not completed runtime evidence. Maestro is not installed, `adb` is unavailable, and no iOS simulator is booted in this environment. Questions, approvals, authentication failures, artifacts, cancellation/recovery, offline/reconnect, VoiceOver, and TalkBack remain explicitly unverified; see `surface/mobile/.maestro/README.md` for the exact device matrix and reset/run procedure.
 
 ### Strong existing evidence
 

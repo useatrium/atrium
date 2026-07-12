@@ -1,0 +1,7 @@
+- launchApp:
+    clearState: false
+- extendedWaitUntil:
+    visible: "Chat"
+    timeout: 15000
+- assertVisible: "Settings"
+

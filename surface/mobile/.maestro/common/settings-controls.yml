@@ -1,0 +1,16 @@
+- tapOn: "Settings"
+- extendedWaitUntil:
+    visible: "Theme"
+    timeout: 10000
+- tapOn: "Light"
+- takeScreenshot: "${SCREENSHOT_PREFIX}-06-settings-light"
+- tapOn: "Dark"
+- tapOn: "High contrast"
+- tapOn: "XL text size"
+- tapOn: "Reduced"
+- takeScreenshot: "${SCREENSHOT_PREFIX}-07-settings-accessibility-preferences"
+# Restore deterministic defaults so later flows do not inherit audit preferences.
+- tapOn: "M text size"
+- tapOn: "System"
+- tapOn: "High contrast"
+- tapOn: "Full"

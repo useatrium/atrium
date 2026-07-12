@@ -1,0 +1,25 @@
+appId: chat.atrium.app
+name: iOS comment on a message
+tags: [ios, power-user]
+---
+- runFlow: ../common/authenticated-launch.yml
+- tapOn: "general"
+- extendedWaitUntil:
+    visible: "Message #general"
+    timeout: 10000
+- tapOn: "Message #general"
+- inputText: "Maestro iOS comment probe"
+- tapOn: "Send message"
+- extendedWaitUntil:
+    visible: ".*Maestro iOS comment probe.*"
+    timeout: 15000
+- tapOn:
+    text: "Comment"
+    below: ".*Maestro iOS comment probe.*"
+- assertVisible: "No comments yet."
+- takeScreenshot: "ios-comments-01-sheet"
+- tapOn: ".*Add a comment.*"
+- inputText: "validated by iOS Maestro"
+- tapOn: "Send comment"
+- assertVisible: ".*validated by iOS Maestro.*"
+- takeScreenshot: "ios-comments-02-posted"
