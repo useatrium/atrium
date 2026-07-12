@@ -17,6 +17,7 @@ import {
   formatExactTimestamp,
   formatTime,
   formatBytes,
+  mentionsUser,
   questionAnswerSummaryText,
   questionPayloadAnswers,
   questionPayloadPrompts,
@@ -655,6 +656,7 @@ export const MessageRow = memo(function MessageRow({
   const exactCreatedAt = formatExactTimestamp(m.createdAt);
   const rowLabel = `${m.author.displayName}, ${exactCreatedAt || formatTime(m.createdAt)}: ${rowText}`;
   const own = m.author.id === meId;
+  const mentionedMe = !tombstone && mentionsUser(m.text, { id: meId, handle: meHandle });
   const copyText = actionCopyTextForMessage(m, session, rowText);
   const entryHandle = entryHandleForAction(m);
   const copyLink = entryHandle ? `${serverUrl.replace(/\/+$/, '')}/e/${encodeURIComponent(entryHandle)}` : null;
@@ -758,7 +760,13 @@ export const MessageRow = memo(function MessageRow({
     <>
       {partitionedEntryLinks.bodyText ? (
         <EntryReferenceMarkdownProvider value={entryReferenceMarkdown}>
-          <MessageText text={partitionedEntryLinks.bodyText} meHandle={meHandle} muted={pending} />
+          <MessageText
+            text={partitionedEntryLinks.bodyText}
+            meHandle={meHandle}
+            meId={meId}
+            resolveUser={resolveUser}
+            muted={pending}
+          />
         </EntryReferenceMarkdownProvider>
       ) : null}
       {m.voice ? (
@@ -846,7 +854,9 @@ export const MessageRow = memo(function MessageRow({
         style={{
           position: 'relative',
           overflow: 'hidden',
-          backgroundColor: highlighted ? colors.accentBg : 'transparent',
+          backgroundColor: highlighted ? colors.accentBg : mentionedMe ? colors.warningSurface : 'transparent',
+          borderLeftWidth: mentionedMe ? 3 : 0,
+          borderLeftColor: mentionedMe ? colors.mention : 'transparent',
         }}
       >
         {canSwipeReply ? (

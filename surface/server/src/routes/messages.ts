@@ -246,6 +246,7 @@ export function registerMessageRoutes(app: FastifyInstance, deps: MessageRouteDe
         channelId: event.channelId,
         text,
         actorId: event.actorId,
+        presenceFor: (channelId) => hub.presenceFor(channelId),
       });
     } catch (err) {
       app.log.warn({ err }, 'mention persistence failed');

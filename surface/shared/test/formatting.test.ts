@@ -28,6 +28,27 @@ describe('tokenizeMessage', () => {
     ]);
   });
 
+  it('tokenizes stable-id and special wire mentions alongside legacy mentions', () => {
+    expect(tokenizeMessage('Hi <@123E4567-E89B-12D3-A456-426614174000> <!channel> <!HERE> @legacy')).toEqual([
+      { kind: 'text', text: 'Hi ' },
+      { kind: 'mentionId', userId: '123e4567-e89b-12d3-a456-426614174000' },
+      { kind: 'text', text: ' ' },
+      { kind: 'special', name: 'channel' },
+      { kind: 'text', text: ' ' },
+      { kind: 'special', name: 'here' },
+      { kind: 'text', text: ' ' },
+      { kind: 'mention', handle: 'legacy' },
+    ]);
+  });
+
+  it('keeps wire tokens literal inside inline and fenced code', () => {
+    expect(tokenizeMessage('`<@123e4567-e89b-12d3-a456-426614174000> <!here>` ```\n<!channel>\n```')).toEqual([
+      { kind: 'code', code: '<@123e4567-e89b-12d3-a456-426614174000> <!here>' },
+      { kind: 'text', text: ' ' },
+      { kind: 'codeblock', lang: '', code: '<!channel>' },
+    ]);
+  });
+
   it('tokenizes links outside code and leaves links inside code alone', () => {
     expect(tokenizeMessage('see `https://example.com/a` https://example.com/b.')).toEqual([
       { kind: 'text', text: 'see ' },

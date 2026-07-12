@@ -75,6 +75,23 @@ describe('notificationForWireEvent', () => {
     });
   });
 
+  it('treats stable-id and group mentions as mentions for dm_mention preferences', () => {
+    const prefs = { messages: 'dm_mention' as const, sessions: true, calls: true };
+    const stableMe = { ...me, id: '11111111-1111-4111-8111-111111111111' };
+    expect(
+      notificationForWireEvent(
+        event({ payload: { text: `hello <@${stableMe.id}>` } }),
+        stableMe,
+        [channel()],
+        {},
+        prefs,
+      ),
+    ).not.toBeNull();
+    expect(
+      notificationForWireEvent(event({ payload: { text: '<!channel>' } }), me, [channel()], {}, prefs),
+    ).not.toBeNull();
+  });
+
   it('notifies for DMs without a mention', () => {
     expect(
       notificationForWireEvent(event({ payload: { text: 'hello there' } }), me, [channel({ kind: 'dm' })], {}),
