@@ -133,6 +133,7 @@ export default function ThreadScreen() {
             serverUrl={chat.serverUrl}
             resolveEntry={chat.resolveEntry}
             resolveArtifactContent={chat.resolveArtifactContent}
+            resolveUser={chat.resolveUser}
             fileHeaders={chat.fileHeaders}
             onLoadEarlier={() => Promise.resolve()}
             onLongPress={setActionsTarget}
@@ -145,8 +146,8 @@ export default function ThreadScreen() {
         )}
         <Composer
           placeholder="Reply in thread"
-          onSend={(text, attachments, attachmentRefs, voice, broadcast) =>
-            chat.send(channelId, text, rootId, attachments, attachmentRefs, voice, broadcast)
+          onSend={(text, attachments, attachmentRefs, voice, broadcast, mentionRanges) =>
+            chat.send(channelId, text, rootId, attachments, attachmentRefs, voice, broadcast, mentionRanges)
           }
           onTyping={() => chat.notifyTyping(channelId)}
           draftKey={draftKey}
@@ -155,10 +156,18 @@ export default function ThreadScreen() {
           onDraftPersisted={chat.enqueueDraft}
           onDraftTouched={chat.markDraftTouched}
           mentionUsers={chat.mentionUsers}
-          onMentionTrigger={chat.loadMentionUsers}
+          mentionMembers={chat.mentionMembers[channelId] ?? null}
+          includeSpecialMentions={state.channels.some(
+            (candidate) => candidate.id === channelId && candidate.kind !== 'dm' && candidate.kind !== 'gdm',
+          )}
+          resolveUser={chat.resolveUser}
+          onMentionTrigger={() => {
+            chat.loadMentionUsers();
+            chat.loadMentionMembers(channelId);
+          }}
           editingText={editing?.text ?? null}
-          onSubmitEdit={(text) => {
-            if (editing) void chat.editMessage(editing, text);
+          onSubmitEdit={(text, mentionRanges) => {
+            if (editing) void chat.editMessage(editing, text, mentionRanges);
             setEditing(null);
           }}
           onCancelEdit={() => setEditing(null)}

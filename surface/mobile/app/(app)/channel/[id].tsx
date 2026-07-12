@@ -427,6 +427,7 @@ export default function ChannelScreen() {
           serverUrl={chat.serverUrl}
           resolveEntry={chat.resolveEntry}
           resolveArtifactContent={chat.resolveArtifactContent}
+          resolveUser={chat.resolveUser}
           fileHeaders={chat.fileHeaders}
           onLoadEarlier={() => chat.loadEarlier(id)}
           onLongPress={setActionsTarget}
@@ -448,8 +449,8 @@ export default function ChannelScreen() {
               ? `Message ${title}`
               : `Message ${channel?.kind === 'private' ? '🔒' : '#'}${title}`
           }
-          onSend={(text, attachments, attachmentRefs, voice) =>
-            chat.send(id, text, undefined, attachments, attachmentRefs, voice)
+          onSend={(text, attachments, attachmentRefs, voice, broadcast, mentionRanges) =>
+            chat.send(id, text, undefined, attachments, attachmentRefs, voice, broadcast, mentionRanges)
           }
           onTyping={() => chat.notifyTyping(id)}
           draftKey={draftKey}
@@ -458,10 +459,16 @@ export default function ChannelScreen() {
           onDraftPersisted={chat.enqueueDraft}
           onDraftTouched={chat.markDraftTouched}
           mentionUsers={chat.mentionUsers}
-          onMentionTrigger={chat.loadMentionUsers}
+          mentionMembers={chat.mentionMembers[id] ?? null}
+          includeSpecialMentions={channel != null && channel.kind !== 'dm' && channel.kind !== 'gdm'}
+          resolveUser={chat.resolveUser}
+          onMentionTrigger={() => {
+            chat.loadMentionUsers();
+            chat.loadMentionMembers(id);
+          }}
           editingText={editing?.text ?? null}
-          onSubmitEdit={(text) => {
-            if (editing) void chat.editMessage(editing, text);
+          onSubmitEdit={(text, mentionRanges) => {
+            if (editing) void chat.editMessage(editing, text, mentionRanges);
             setEditing(null);
           }}
           onCancelEdit={() => setEditing(null)}

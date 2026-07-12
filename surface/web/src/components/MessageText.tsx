@@ -7,21 +7,33 @@ import { findEntryLinkCandidates } from '../lib/entryLinks';
 import { EntryInlineChip, EntryQuoteCards } from './EntryQuoteCard';
 import { TimelineImage } from './TimelineImage';
 import '../sessions/Markdown.css';
+import { useUserDirectory } from '../userDirectory';
 
 type MarkdownMode = 'message' | 'compact';
 
 const MENTION_URL_PREFIX = 'atrium-mention:';
+const MENTION_ID_URL_PREFIX = 'atrium-mention-id:';
+const SPECIAL_MENTION_URL_PREFIX = 'atrium-special-mention:';
 const ENTRY_URL_PREFIX = 'atrium-entry:';
-const MENTION_RE = /@([a-z0-9][a-z0-9_-]{1,31})/gi;
+const UUID_SOURCE = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
+const MENTION_RE = new RegExp(`<@(${UUID_SOURCE})>|<!(channel|here)>|@([a-z0-9][a-z0-9_-]{1,31})`, 'gi');
 const COLLAPSE_LINE_THRESHOLD = 16;
 const COLLAPSE_CHAR_THRESHOLD = 1800;
 
 function remarkMentions() {
   return (tree: unknown) => {
     visitChildren(tree, (node) => {
-      if (!node || node.type !== 'text' || typeof node.value !== 'string') return null;
+      if (!node || typeof node.value !== 'string') return null;
+      if (node.type === 'html') {
+        // A line starting with <!channel>/<!here> parses as an HTML block whose
+        // value spans the whole line (react-markdown drops raw HTML nodes), so
+        // re-tokenize the block instead of matching the bare token only.
+        if (!/<!(channel|here)>/i.test(node.value)) return null;
+        return splitMentionText(node.value);
+      }
+      if (node.type !== 'text') return null;
       const pieces = splitMentionText(node.value);
-      return pieces.length > 1 ? pieces : null;
+      return pieces.some((piece) => piece.type === 'link') ? pieces : null;
     });
   };
 }
@@ -75,13 +87,19 @@ function splitMentionText(text: string): MutableNode[] {
   let last = 0;
   MENTION_RE.lastIndex = 0;
   for (let match = MENTION_RE.exec(text); match; match = MENTION_RE.exec(text)) {
-    const handle = match[1] ?? '';
+    const userId = match[1];
+    const special = match[2];
+    const handle = match[3];
     if (match.index > last) out.push({ type: 'text', value: text.slice(last, match.index) });
     out.push({
       type: 'link',
-      url: `${MENTION_URL_PREFIX}${handle}`,
+      url: userId
+        ? `${MENTION_ID_URL_PREFIX}${userId}`
+        : special
+          ? `${SPECIAL_MENTION_URL_PREFIX}${special.toLowerCase()}`
+          : `${MENTION_URL_PREFIX}${handle ?? ''}`,
       title: null,
-      children: [{ type: 'text', value: `@${handle}` }],
+      children: [{ type: 'text', value: userId ? `<@${userId}>` : `@${special ?? handle ?? ''}` }],
     });
     last = match.index + match[0].length;
   }
@@ -110,6 +128,8 @@ function splitEntryRefText(text: string): MutableNode[] {
 
 function safeUrlTransform(url: string) {
   if (url.startsWith(MENTION_URL_PREFIX)) return url;
+  if (url.startsWith(MENTION_ID_URL_PREFIX)) return url;
+  if (url.startsWith(SPECIAL_MENTION_URL_PREFIX)) return url;
   if (url.startsWith(ENTRY_URL_PREFIX)) return url;
   return defaultUrlTransform(url);
 }
@@ -160,6 +180,38 @@ function mentionSpan(handle: string, meHandle?: string) {
       }
     >
       @{handle}
+    </span>
+  );
+}
+
+function mentionIdSpan(
+  userId: string,
+  resolve: (id: string) => { displayName: string } | null,
+  meId: string | undefined,
+  compact: boolean,
+) {
+  const user = resolve(userId);
+  const isMe = meId != null && userId.toLowerCase() === meId.toLowerCase();
+  const label = user?.displayName ?? (compact ? 'someone' : 'unknown');
+  return (
+    <span
+      className={
+        isMe
+          ? 'rounded bg-warning-hover/20 px-0.5 font-medium text-warning-text'
+          : user
+            ? 'rounded bg-accent-hover/10 px-0.5 text-accent-text-strong'
+            : 'rounded bg-surface-overlay px-0.5 text-fg-muted'
+      }
+    >
+      @{label}
+    </span>
+  );
+}
+
+function specialMentionSpan(name: string) {
+  return (
+    <span className="rounded bg-warning-tint/30 px-0.5 font-medium text-warning-text ring-1 ring-inset ring-warning-border/40">
+      @{name}
     </span>
   );
 }
@@ -224,7 +276,12 @@ function CopyablePre({ children, ...props }: { children?: ReactNode }) {
   );
 }
 
-function componentsFor(mode: MarkdownMode, meHandle?: string): Components {
+function componentsFor(
+  mode: MarkdownMode,
+  meHandle: string | undefined,
+  meId: string | undefined,
+  resolveUser: (id: string) => { displayName: string } | null,
+): Components {
   const compact = mode === 'compact';
   return {
     h1: ({ children, node: _node, ...props }) => (
@@ -278,6 +335,12 @@ function componentsFor(mode: MarkdownMode, meHandle?: string): Components {
     a: ({ children, href, node: _node, ...props }) => {
       if (href?.startsWith(MENTION_URL_PREFIX)) {
         return mentionSpan(href.slice(MENTION_URL_PREFIX.length), meHandle);
+      }
+      if (href?.startsWith(MENTION_ID_URL_PREFIX)) {
+        return mentionIdSpan(href.slice(MENTION_ID_URL_PREFIX.length), resolveUser, meId, compact);
+      }
+      if (href?.startsWith(SPECIAL_MENTION_URL_PREFIX)) {
+        return specialMentionSpan(href.slice(SPECIAL_MENTION_URL_PREFIX.length));
       }
       if (href?.startsWith(ENTRY_URL_PREFIX)) {
         return <EntryInlineChip handle={href.slice(ENTRY_URL_PREFIX.length)} compact={compact} />;
@@ -385,9 +448,20 @@ function componentsFor(mode: MarkdownMode, meHandle?: string): Components {
   };
 }
 
-function MarkdownContent({ text, mode, meHandle }: { text: string; mode: MarkdownMode; meHandle?: string }) {
+function MarkdownContent({
+  text,
+  mode,
+  meHandle,
+  meId,
+}: {
+  text: string;
+  mode: MarkdownMode;
+  meHandle?: string;
+  meId?: string;
+}) {
   const source = mode === 'compact' ? compactMarkdownSource(text) : text;
-  const components = useMemo(() => componentsFor(mode, meHandle), [mode, meHandle]);
+  const { resolve } = useUserDirectory(text);
+  const components = useMemo(() => componentsFor(mode, meHandle, meId, resolve), [meHandle, meId, mode, resolve]);
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm, remarkMentions, remarkEntryRefs]}
@@ -404,23 +478,25 @@ function MarkdownContent({ text, mode, meHandle }: { text: string; mode: Markdow
 export const CompactMarkdownText = memo(function CompactMarkdownText({
   text,
   meHandle,
+  meId,
 }: {
   text: string;
   meHandle?: string;
+  meId?: string;
 }) {
   return (
     <span className="min-w-0 truncate">
-      <MarkdownContent text={text} mode="compact" meHandle={meHandle} />
+      <MarkdownContent text={text} mode="compact" meHandle={meHandle} meId={meId} />
     </span>
   );
 });
 
-export function MessageText({ text, meHandle }: { text: string; meHandle?: string }) {
+export function MessageText({ text, meHandle, meId }: { text: string; meHandle?: string; meId?: string }) {
   const { bodyText, standaloneHandles } = partitionEntryLinks(text);
   const shouldCollapse =
     bodyText.length > COLLAPSE_CHAR_THRESHOLD || bodyText.split(/\r\n|\r|\n/).length > COLLAPSE_LINE_THRESHOLD;
   const [expanded, setExpanded] = useState(!shouldCollapse);
-  const content: ReactNode = <MarkdownContent text={bodyText} mode="message" meHandle={meHandle} />;
+  const content: ReactNode = <MarkdownContent text={bodyText} mode="message" meHandle={meHandle} meId={meId} />;
 
   return (
     <>

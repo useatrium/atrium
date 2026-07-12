@@ -37,6 +37,7 @@ import {
   type DraftSnapshot,
   type EnqueueOpInput,
   type MsgSendPayload,
+  type MentionRange,
   type OpType,
   type QueuedOp,
   type ReactionSetPayload,
@@ -58,6 +59,7 @@ import {
 import { useTheme } from './theme';
 import { useCall } from './useCall';
 import type { VoiceSendMeta } from './voice';
+import { encodeMessageForSend } from './mentionComposer';
 
 const PAGE_SIZE = 50;
 const SYNC_LIMIT = 500;
@@ -118,12 +120,13 @@ interface ChatContextValue {
     attachmentRefs?: AttachmentRef[],
     voice?: VoiceSendMeta,
     broadcast?: boolean,
+    mentionRanges?: MentionRange[],
   ) => void;
   spawnSession: (channelId: string, task: string, threadRootEventId?: number, opts?: SpawnSessionOptions) => void;
   /** Spawn the zero-setup scripted demo agent into a channel (harness "demo"). */
   startDemoSession: (channelId: string) => void;
   retry: (m: ChatMessage) => void;
-  editMessage: (m: ChatMessage, text: string) => Promise<void>;
+  editMessage: (m: ChatMessage, text: string, mentionRanges?: MentionRange[]) => Promise<void>;
   deleteMessage: (m: ChatMessage) => Promise<void>;
   react: (m: ChatMessage, emoji: string) => Promise<void>;
   answerSessionQuestion: (
@@ -151,7 +154,10 @@ interface ChatContextValue {
   addChannelMember: (channelId: string, userId: string) => Promise<void>;
   leaveMembership: (channelId: string) => Promise<void>;
   mentionUsers: UserRef[] | null;
+  mentionMembers: Record<string, UserRef[]>;
   loadMentionUsers: () => void;
+  loadMentionMembers: (channelId: string) => void;
+  resolveUser: (id: string) => UserRef | undefined;
   setMute: (channelId: string, muted: boolean) => void;
   /** Global channel archive toggle (optimistic; rolls back on failure). */
   setChannelArchived: (channelId: string, archived: boolean) => void;
@@ -252,7 +258,11 @@ export function ChatProvider({ session, children }: { session: Session; children
   const [failedSessionCancels, setFailedSessionCancels] = useState<Record<string, true>>({});
   const flushOnWakeRef = useRef<() => void>(() => {});
   const [mentionUsers, setMentionUsers] = useState<UserRef[] | null>(null);
+  const [mentionMembers, setMentionMembers] = useState<Record<string, UserRef[]>>({});
   const loadingMentionUsersRef = useRef(false);
+  const loadingMentionMembersRef = useRef(new Set<string>());
+  const userDirectoryRef = useRef(new Map<string, UserRef>([[me.id.toLowerCase(), me]]));
+  const [userDirectoryVersion, setUserDirectoryVersion] = useState(0);
   const touchedDraftKeysRef = useRef<Set<string>>(new Set());
   const activeDraftKeysRef = useRef<Set<string>>(new Set());
   const calls = useCall({ api, me, channels: state.channels });
@@ -1231,6 +1241,7 @@ export function ChatProvider({ session, children }: { session: Session; children
       attachmentRefs?: AttachmentRef[],
       voice?: VoiceSendMeta,
       broadcast?: boolean,
+      mentionRanges: MentionRange[] = [],
     ) => {
       // Attachments can't ride along on a session spawn — let "@agent …"
       // with attachments fall through as a plain message rather than drop them.
@@ -1246,6 +1257,7 @@ export function ChatProvider({ session, children }: { session: Session; children
           return;
         }
       }
+      const wireText = encodeMessageForSend(text, mentionRanges);
       const clientMsgId = randomId();
       const createdAt = new Date().toISOString();
       const message: ChatMessage = {
@@ -1254,7 +1266,7 @@ export function ChatProvider({ session, children }: { session: Session; children
         channelId,
         threadRootEventId: threadRootEventId ?? null,
         ...(broadcast === true ? { broadcast: true } : {}),
-        text,
+        text: wireText,
         edited: false,
         author: me,
         createdAt,
@@ -1276,7 +1288,7 @@ export function ChatProvider({ session, children }: { session: Session; children
       const payload: MobileMsgSendPayload = {
         clientMsgId,
         channelId,
-        text,
+        text: wireText,
         threadRootEventId,
         ...(broadcast === true ? { broadcast: true } : {}),
         attachments,
@@ -1334,16 +1346,17 @@ export function ChatProvider({ session, children }: { session: Session; children
   );
 
   const editMessage = useCallback(
-    async (m: ChatMessage, text: string): Promise<void> => {
+    async (m: ChatMessage, text: string, mentionRanges: MentionRange[] = []): Promise<void> => {
       if (m.id == null) return;
       const eventId = m.id;
       const opId = randomId();
+      const wireText = encodeMessageForSend(text, mentionRanges);
       try {
         await enqueueOp(
           {
             opId,
             opType: 'msg.edit',
-            payload: { channelId: m.channelId, eventId, text },
+            payload: { channelId: m.channelId, eventId, text: wireText },
           },
           {
             onStored: () =>
@@ -1352,7 +1365,7 @@ export function ChatProvider({ session, children }: { session: Session; children
                 channelId: m.channelId,
                 opId,
                 targetEventId: eventId,
-                text,
+                text: wireText,
               }),
           },
         );
@@ -1450,6 +1463,9 @@ export function ChatProvider({ session, children }: { session: Session; children
   const channelMembers = useCallback(
     async (channelId: string) => {
       const { members } = await api.channelMembers(channelId);
+      setMentionMembers((current) => ({ ...current, [channelId]: members }));
+      for (const member of members) userDirectoryRef.current.set(member.id.toLowerCase(), member);
+      setUserDirectoryVersion((version) => version + 1);
       return members;
     },
     [api],
@@ -1490,12 +1506,54 @@ export function ChatProvider({ session, children }: { session: Session; children
     loadingMentionUsersRef.current = true;
     api
       .users()
-      .then(({ users }) => setMentionUsers(users))
+      .then(({ users }) => {
+        setMentionUsers(users);
+        for (const user of users) userDirectoryRef.current.set(user.id.toLowerCase(), user);
+        setUserDirectoryVersion((version) => version + 1);
+      })
       .catch(onApiError)
       .finally(() => {
         loadingMentionUsersRef.current = false;
       });
   }, [api, mentionUsers, onApiError]);
+
+  const loadMentionMembers = useCallback(
+    (channelId: string) => {
+      if (mentionMembers[channelId] || loadingMentionMembersRef.current.has(channelId)) return;
+      loadingMentionMembersRef.current.add(channelId);
+      void channelMembers(channelId)
+        .catch(onApiError)
+        .finally(() => loadingMentionMembersRef.current.delete(channelId));
+    },
+    [channelMembers, mentionMembers, onApiError],
+  );
+
+  const resolveUser = useCallback(
+    (id: string) => {
+      const user = userDirectoryRef.current.get(id.toLowerCase());
+      if (!user) loadMentionUsers();
+      return user;
+    },
+    // The version intentionally changes this callback's identity so token chips
+    // re-render after a lazy directory or roster fetch completes.
+    [loadMentionUsers, userDirectoryVersion],
+  );
+
+  useEffect(() => {
+    let changed = false;
+    userDirectoryRef.current.set(me.id.toLowerCase(), me);
+    for (const timeline of Object.values(state.timelines)) {
+      const messages = [...timeline.main, ...Object.values(timeline.threads).flat()];
+      for (const message of messages) {
+        const key = message.author.id.toLowerCase();
+        if (userDirectoryRef.current.get(key) !== message.author) {
+          userDirectoryRef.current.set(key, message.author);
+          changed = true;
+        }
+      }
+    }
+    if (changed) setUserDirectoryVersion((version) => version + 1);
+  }, [me, state.timelines]);
 
   const setMute = useCallback(
     (channelId: string, muted: boolean) => {
@@ -1740,7 +1798,10 @@ export function ChatProvider({ session, children }: { session: Session; children
       addChannelMember,
       leaveMembership,
       mentionUsers,
+      mentionMembers,
       loadMentionUsers,
+      loadMentionMembers,
+      resolveUser,
       setMute,
       setChannelArchived,
       setChannelPinned,
@@ -1803,7 +1864,10 @@ export function ChatProvider({ session, children }: { session: Session; children
       addChannelMember,
       leaveMembership,
       mentionUsers,
+      mentionMembers,
       loadMentionUsers,
+      loadMentionMembers,
+      resolveUser,
       setMute,
       setChannelArchived,
       setChannelPinned,

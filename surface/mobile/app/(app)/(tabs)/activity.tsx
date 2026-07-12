@@ -30,7 +30,7 @@ function statusColor(status: SessionStatus, colors: Colors): string {
 }
 
 export default function ActivityScreen() {
-  const { api, state } = useChat();
+  const { api, state, me, resolveUser } = useChat();
   const { colors } = useTheme();
   const [sessions, setSessions] = useState<SessionListItem[]>([]);
   const [activityItems, setActivityItems] = useState<ActivityItem[]>([]);
@@ -168,7 +168,13 @@ export default function ActivityScreen() {
             {title}
           </Text>
           <View style={{ maxHeight: 22, overflow: 'hidden' }}>
-            <MarkdownText text={item.snippet} variant="compact" />
+            <MarkdownText
+              text={item.snippet}
+              variant="compact"
+              meHandle={state.meHandle}
+              meId={me.id}
+              resolveUser={resolveUser}
+            />
           </View>
           <Text style={{ color: colors.textMuted, fontSize: font.xs }} numberOfLines={1}>
             {/* DM channel names are internal keys; the title already names the sender. */}
