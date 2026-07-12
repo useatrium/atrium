@@ -64,18 +64,22 @@ editor).
   start-DM, hover actions per channel (pin, archive, mute), settings, log out.
 - **Channel timeline** (`components/Timeline.tsx`, `components/MessageRow.tsx`)
   — messages grouped by author/time, reactions, edit/delete, unread divider and
-  jump-to-latest, inline session cards, file-change and entry-quote cards,
-  attachments, voice playback, history paging, a first-run empty state.
+  jump-to-latest, inline session cards from agent summons (with a live presence
+  ticker), file-change and entry-quote cards, attachments, voice playback,
+  history paging, a first-run empty state.
 - **Message actions** (`components/MessageActionMenu.tsx`,
-  `components/SelectTextSheet.tsx`) — reply in thread, mark up & reply, copy
-  link, copy text; a touch-friendly select-text sheet.
+  `components/SelectTextSheet.tsx`) — reply in thread, delegate to agent, mark
+  up & reply, copy link, copy text; a touch-friendly select-text sheet.
 - **Thread panel** (`components/ThreadPanel.tsx`) — a root message and its
   replies (full-screen on mobile), with its own composer, drafts, and a
   broadcast-reply toggle.
-- **Composer** (`components/Composer.tsx`) — text + attachments + voice; @
-  mention typeahead (`useMentionTypeahead.ts`) for people plus `@channel` /
-  `@here`; detects an agent-summon draft and offers the spawn dialog instead of
-  posting; per-channel drafts; typing indicators.
+- **Composer** (`components/Composer.tsx`) — text + attachments + voice; a
+  first-class **agent mode** (enter with `!!`, the ⚡ button, ⌘J, or "Delegate to
+  agent…" on a message) with a target pill (new agent / steer / suggest), anchor
+  chip, and effort tier — sends spawn or steer instead of posting; @ mention
+  typeahead (`useMentionTypeahead.ts`) for people plus `@channel` / `@here`
+  (`@agent` is retired; mentions are for people); per-channel drafts; typing
+  indicators.
 - **Quick switcher** (`components/QuickSwitcher.tsx`) — ⌘K: commands, channel
   jump, full-text message search, and agent/session search in one list.
 - **Toasts** (`components/Toasts.tsx`) — transient errors/confirmations.

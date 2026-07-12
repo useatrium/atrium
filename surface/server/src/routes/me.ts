@@ -24,14 +24,15 @@ import type { WsHub } from '../hub.js';
 import {
   type IronControlAdminClient,
   atriumPrincipalForeignId,
-  githubAppInstallationBrokerCredentialForeignId,
   githubAppUserBrokerCredentialForeignId,
 } from '../iron-control.js';
 import {
+  GitHubAppInstallationUnconfiguredError,
   convergeGitHubExistingIdentityGrant,
   convergeGitHubBrokerGrant,
   convergeGitHubPatGrant,
   convergeGitHubPublicReadFallback,
+  upsertGitHubInstallationBrokerCredential,
 } from '../github-iron-control.js';
 import { type AgentProfiles, providerFromProfileValue } from '../agent-profiles.js';
 import { CODEX_PROVIDER, type ProviderCredentials } from '../provider-credentials.js';
@@ -222,7 +223,7 @@ export function registerMeRoutes(app: FastifyInstance, deps: MeRouteDeps): void 
         } else {
           if (tokenKind === 'app_installation' && !brokerCredentialId && installationId) {
             verifiedInstallation = await verifyGitHubInstallationForConnect(installationId);
-            brokerCredentialId = await upsertGitHubInstallationBrokerCredential(ironControl, {
+            brokerCredentialId = await upsertGitHubInstallationBrokerCredentialForConnect(ironControl, {
               workspaceId: resolvedWorkspaceId,
               installationId,
             });
@@ -783,10 +784,6 @@ function githubAppOAuthEnabled(): boolean {
   return Boolean(config.githubAppClientId && config.githubAppClientSecret && config.githubAppRedirectUrl);
 }
 
-function githubAppInstallationEnabled(): boolean {
-  return Boolean(config.githubAppId && config.githubAppPrivateKey);
-}
-
 function githubAppAuthorizeUrl(args: { workspaceId: string; userId: string }): string {
   const url = new URL('https://github.com/login/oauth/authorize');
   url.searchParams.set('client_id', config.githubAppClientId);
@@ -944,37 +941,25 @@ class RouteResponse extends Error {
   }
 }
 
-async function upsertGitHubInstallationBrokerCredential(
+async function upsertGitHubInstallationBrokerCredentialForConnect(
   ironControl: IronControlAdminClient,
   args: {
     workspaceId: string;
     installationId: string;
   },
 ): Promise<string> {
-  if (!githubAppInstallationEnabled()) {
-    throw new RouteResponse(
-      503,
-      'github_app_installation_unconfigured',
-      'GitHub App installation credentials are not configured',
-    );
+  try {
+    return await upsertGitHubInstallationBrokerCredential(ironControl, args);
+  } catch (err) {
+    if (err instanceof GitHubAppInstallationUnconfiguredError) {
+      throw new RouteResponse(
+        503,
+        'github_app_installation_unconfigured',
+        'GitHub App installation credentials are not configured',
+      );
+    }
+    throw err;
   }
-  const foreignId = githubAppInstallationBrokerCredentialForeignId(args.workspaceId, args.installationId);
-  await ironControl.upsertGitHubAppInstallationBrokerCredential({
-    foreignId,
-    name: `GitHub App installation ${args.installationId} for workspace ${args.workspaceId}`,
-    githubAppId: config.githubAppId,
-    githubInstallationId: args.installationId,
-    githubPrivateKey: config.githubAppPrivateKey,
-    githubPrivateKeyId: config.githubAppPrivateKeyId || undefined,
-    labels: {
-      source: 'atrium',
-      provider: 'github',
-      token_kind: 'app_installation',
-      atrium_workspace_id: args.workspaceId,
-      github_installation_id: args.installationId,
-    },
-  });
-  return foreignId;
 }
 
 async function verifyGitHubInstallationForConnect(installationId: string): Promise<GitHubAppInstallationInfo> {

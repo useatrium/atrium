@@ -23,6 +23,8 @@ import type { SessionListItem, SessionRepoSpec, SessionWire } from './types';
 export interface CreateSessionBody {
   channelId: string;
   threadRootEventId?: number;
+  anchorEventId?: number;
+  broadcastCard?: boolean;
   task: string;
   harness?: string;
   repo?: string;
@@ -192,8 +194,12 @@ export const sessionsApi = {
     );
   },
 
-  sendMessage(id: string, text: string, effort?: string): Promise<void> {
-    const body: SessionSteerBody = { text, ...(effort ? { effort } : {}) };
+  sendMessage(id: string, text: string, effort?: string, postToThread?: boolean): Promise<void> {
+    const body: SessionSteerBody = {
+      text,
+      ...(effort ? { effort } : {}),
+      ...(postToThread === true ? { postToThread: true } : {}),
+    };
     return reqAccepted(`/api/sessions/${id}/messages`, {
       method: 'POST',
       body: JSON.stringify(body),
@@ -273,8 +279,12 @@ export const sessionsApi = {
   // ---- suggestion queue (Phase 2) ----
 
   /** A watcher proposes a steer the driver later sends or dismisses. */
-  createSuggestion(id: string, text: string, opId?: string): Promise<void> {
-    const body: SessionSuggestionCreateBody = { text, ...(opId ? { opId } : {}) };
+  createSuggestion(id: string, text: string, opId?: string, postToThread?: boolean): Promise<void> {
+    const body: SessionSuggestionCreateBody = {
+      text,
+      ...(postToThread === true ? { postToThread: true } : {}),
+      ...(opId ? { opId } : {}),
+    };
     return reqAccepted(`/api/sessions/${id}/suggestions`, {
       method: 'POST',
       body: JSON.stringify(body),

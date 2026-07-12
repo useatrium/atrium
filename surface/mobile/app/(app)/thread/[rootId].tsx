@@ -1,14 +1,15 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { KeyboardAvoidingView, Linking, Platform, Pressable, Text, View } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useHeaderHeight } from 'expo-router/react-navigation';
-import { emptyTimeline, type ChatMessage, type HubFile } from '@atrium/surface-client';
+import { emptyTimeline, sessionDriverId, type ChatMessage, type HubFile } from '@atrium/surface-client';
 import { useChat } from '../../../src/lib/chat';
 import { font, space, useTheme } from '../../../src/lib/theme';
 import { attachmentToHubFile } from '../../../src/components/attachmentPreview';
-import { Composer } from '../../../src/components/Composer';
+import { Composer, type ComposerHandle } from '../../../src/components/Composer';
 import { MediaLightbox } from '../../../src/components/MediaLightbox';
-import { MessageActions } from '../../../src/components/MessageActions';
+import { MessageActions, MessageActionSheet } from '../../../src/components/MessageActions';
+import { AgentModeConfig, type AgentEffort, type AgentModeTarget } from '../../../src/components/AgentModeConfig';
 import { Timeline } from '../../../src/components/Timeline';
 
 interface AttachmentLightboxState {
@@ -48,7 +49,23 @@ export default function ThreadScreen() {
   const [attachmentLightbox, setAttachmentLightbox] = useState<AttachmentLightboxState | null>(null);
   const [editing, setEditing] = useState<ChatMessage | null>(null);
   const [initialDraft, setInitialDraft] = useState('');
+  const [agentConfigVisible, setAgentConfigVisible] = useState(false);
+  const [agentTarget, setAgentTarget] = useState<AgentModeTarget>('steer');
+  const [agentEffort, setAgentEffort] = useState<AgentEffort>('medium');
+  const composerRef = useRef<ComposerHandle>(null);
   const draftKey = channelId && Number.isFinite(rootId) ? `channel:${channelId}:thread:${rootId}` : '';
+  const attachedSession = useMemo(
+    () =>
+      Object.values(state.sessions).find(
+        (session) => session.channelId === channelId && session.threadRootEventId === rootId,
+      ) ?? null,
+    [channelId, rootId, state.sessions],
+  );
+  // Canonical seat resolution: null driverId falls back to the spawner.
+  const isDriver = attachedSession != null && sessionDriverId(attachedSession) === me.id;
+  const agentTargetLabel = attachedSession
+    ? `${agentTarget === 'new' ? 'New session' : isDriver ? 'Steer' : 'Suggest'} · ${attachedSession.title}`
+    : 'New session in this thread';
 
   useEffect(() => {
     if (!draftKey) return;
@@ -145,6 +162,7 @@ export default function ThreadScreen() {
           />
         )}
         <Composer
+          ref={composerRef}
           placeholder="Reply in thread"
           onSend={(text, attachments, attachmentRefs, voice, broadcast, mentionRanges) =>
             chat.send(channelId, text, rootId, attachments, attachmentRefs, voice, broadcast, mentionRanges)
@@ -185,6 +203,19 @@ export default function ThreadScreen() {
           onOpenChannel={(channelId) => router.push(`/channel/${channelId}`)}
           onOpenSession={(sessionId) => router.push(`/session/${sessionId}`)}
           uploadFile={chat.uploadFile}
+          onAgentSend={(text, anchorEventId) => {
+            if (attachedSession && agentTarget === 'steer') {
+              if (isDriver) void chat.steerSession(attachedSession.id, text, agentEffort, { postToThread: true });
+              else void chat.suggestToSession(attachedSession.id, text);
+              return;
+            }
+            chat.spawnSession(channelId, text, rootId, {
+              broadcastCard: true,
+              ...(anchorEventId != null ? { anchorEventId } : {}),
+            });
+          }}
+          agentTargetLabel={agentTargetLabel}
+          onConfigureAgentMode={() => setAgentConfigVisible(true)}
         />
       </KeyboardAvoidingView>
 
@@ -198,6 +229,26 @@ export default function ThreadScreen() {
         onReply={() => {}}
         onEdit={setEditing}
         onDelete={(m) => void chat.deleteMessage(m)}
+        onDelegate={(m) => {
+          if (m.id == null) return;
+          composerRef.current?.activateAgentMode({ eventId: m.id, label: m.text || 'message' });
+        }}
+      />
+      <MessageActionSheet
+        visible={agentConfigVisible}
+        actions={[]}
+        onClose={() => setAgentConfigVisible(false)}
+        content={
+          <AgentModeConfig
+            sessionTitle={attachedSession?.title}
+            isDriver={isDriver}
+            target={agentTarget}
+            effort={agentEffort}
+            onTarget={setAgentTarget}
+            onEffort={setAgentEffort}
+            onClearAnchor={() => composerRef.current?.clearAgentAnchor()}
+          />
+        }
       />
       <MediaLightbox
         visible={attachmentLightbox != null}

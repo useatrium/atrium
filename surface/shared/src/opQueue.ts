@@ -128,6 +128,12 @@ export interface SessionSpawnPayload {
   task: string;
   clientSpawnId: string;
   threadRootEventId?: number;
+  /** Event that prompted the summon; the server validates it belongs to the channel. */
+  anchorEventId?: number;
+  /** Surface a thread-bound session card in the parent channel timeline too. */
+  broadcastCard?: boolean;
+  /** Initial reasoning-effort tier for the new session (validated per harness). */
+  effort?: string;
   harness?: string;
   /** Spawn-dialog git metadata (optional). */
   repo?: string;
@@ -166,6 +172,8 @@ export interface SessionAnswerPayload {
 export interface SessionSteerPayload {
   sessionId: string;
   text: string;
+  /** Also post the steer as a human message in the session's conversation thread. */
+  postToThread?: boolean;
   /** Per-turn reasoning-effort override (codex only). */
   effort?: string;
   attachments?: AttachmentMeta[];
@@ -980,6 +988,9 @@ export function createDefaultOpRegistry(): OpRegistry {
           channelId: payload.channelId,
           task: payload.task,
           ...optionalProp('threadRootEventId', payload.threadRootEventId),
+          ...optionalProp('anchorEventId', payload.anchorEventId),
+          ...optionalProp('broadcastCard', payload.broadcastCard),
+          ...optionalProp('effort', payload.effort),
           ...optionalProp('harness', payload.harness),
           ...optionalProp('repo', payload.repo),
           ...optionalProp('branch', payload.branch),
@@ -1040,6 +1051,7 @@ export function createDefaultOpRegistry(): OpRegistry {
           { opId: op.opId },
           {
             ...(payload.effort ? { effort: payload.effort } : {}),
+            ...(payload.postToThread === true ? { postToThread: true } : {}),
             ...(attachments && attachments.length > 0 ? { attachments } : {}),
             ...(payload.existingAttachmentRefs && payload.existingAttachmentRefs.length > 0
               ? { attachmentRefs: payload.existingAttachmentRefs }

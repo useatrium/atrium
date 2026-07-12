@@ -111,6 +111,11 @@ export interface VoiceMeta {
   transcript: VoiceTranscript;
 }
 
+/** Timeline-card events emitted by an agent session. `replied` uses the same
+ * row path today so clients can safely receive it before dedicated reply UI
+ * ships. */
+export type SessionEventRowType = 'question_requested' | 'question_answered' | 'question_resolved' | 'replied';
+
 export interface ChatMessage {
   /** Server event id; null while pending/failed. */
   id: number | null;
@@ -146,8 +151,12 @@ export interface ChatMessage {
   /** Set for agent-session rows (type session.spawned / optimistic spawns):
    * the row renders as a SessionCard looked up by this id. */
   sessionId?: string;
-  sessionEventType?: 'question_requested' | 'question_answered' | 'question_resolved';
+  sessionEventType?: SessionEventRowType;
   sessionEventPayload?: Record<string, unknown>;
+  /** Thread-visible steer/suggestion provenance for future chips. */
+  steeredSessionId?: string;
+  suggestedSessionId?: string;
+  suggestionId?: string;
   /** session.spawned only: the client's optimistic id echoed by the server —
    * reconciles a spawn whose POST response was lost (see upsertConfirmed). */
   spawnClientId?: string;
@@ -213,6 +222,7 @@ function isRowEvent(type: string): boolean {
   return (
     type === 'message.posted' ||
     type === 'session.spawned' ||
+    type === 'session.replied' ||
     type === 'session.question_requested' ||
     type === 'session.question_answered' ||
     type === 'session.question_resolved'
@@ -232,8 +242,13 @@ function isModifierEvent(type: string): boolean {
 
 export function messageFromEvent(ev: WireEvent): ChatMessage {
   const payload = ev.payload ?? {};
-  const sessionId =
-    ev.type.startsWith('session.') && typeof payload.sessionId === 'string' ? payload.sessionId : undefined;
+  const sessionId = ev.type.startsWith('session.')
+    ? typeof payload.sessionId === 'string'
+      ? payload.sessionId
+      : typeof payload.session_id === 'string'
+        ? payload.session_id
+        : undefined
+    : undefined;
   const spawnClientId =
     ev.type === 'session.spawned' && typeof payload.client_spawn_id === 'string' ? payload.client_spawn_id : undefined;
   const text =
@@ -247,7 +262,9 @@ export function messageFromEvent(ev: WireEvent): ChatMessage {
             ? 'Question answered'
             : ev.type === 'session.question_resolved'
               ? 'Question resolved'
-              : '';
+              : ev.type === 'session.replied'
+                ? 'Agent replied'
+                : '';
   const sessionEventType =
     ev.type === 'session.question_requested'
       ? 'question_requested'
@@ -255,7 +272,9 @@ export function messageFromEvent(ev: WireEvent): ChatMessage {
         ? 'question_answered'
         : ev.type === 'session.question_resolved'
           ? 'question_resolved'
-          : undefined;
+          : ev.type === 'session.replied'
+            ? 'replied'
+            : undefined;
   const voice = parseVoice(payload.voice);
   const reactions = parseReactions(payload.reactions);
   const attachments = parseAttachments(payload.attachments);
@@ -271,7 +290,11 @@ export function messageFromEvent(ev: WireEvent): ChatMessage {
     ...(reactions !== undefined ? { reactions } : {}),
     ...(attachments !== undefined ? { attachments } : {}),
     ...(voice !== undefined ? { voice } : {}),
-    author: ev.author ?? { id: ev.actorId ?? 'unknown', handle: 'unknown', displayName: 'Unknown' },
+    author:
+      ev.author ??
+      (ev.type === 'session.replied'
+        ? { id: sessionId ? `agent:${sessionId}` : 'agent', handle: 'agent', displayName: 'Agent' }
+        : { id: ev.actorId ?? 'unknown', handle: 'unknown', displayName: 'Unknown' }),
     createdAt: ev.createdAt,
     replyCount: ev.replyCount ?? 0,
     lastReplyId: ev.lastReplyId ?? 0,
@@ -279,6 +302,9 @@ export function messageFromEvent(ev: WireEvent): ChatMessage {
     status: 'confirmed',
     ...(sessionId !== undefined ? { sessionId } : {}),
     ...(sessionEventType !== undefined ? { sessionEventType, sessionEventPayload: payload } : {}),
+    ...(typeof payload.steered_session_id === 'string' ? { steeredSessionId: payload.steered_session_id } : {}),
+    ...(typeof payload.suggested_session_id === 'string' ? { suggestedSessionId: payload.suggested_session_id } : {}),
+    ...(typeof payload.suggestion_id === 'string' ? { suggestionId: payload.suggestion_id } : {}),
     ...(spawnClientId !== undefined ? { spawnClientId } : {}),
   };
 }

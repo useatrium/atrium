@@ -139,6 +139,12 @@ export const SHORTCUTS = {
     label: 'Edit your last message (empty composer)',
     group: 'Composer',
   },
+  toggleAgentMode: {
+    id: 'toggleAgentMode',
+    keys: ['Mod', 'J'],
+    label: 'Toggle agent mode',
+    group: 'Composer',
+  },
   spawnSession: {
     id: 'spawnSession',
     keys: ['Mod', 'Enter'],

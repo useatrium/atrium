@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applySessionEvent, isArchivedSession, sessionFromWire } from '../src/sessions';
+import { applySessionActivity, applySessionEvent, isArchivedSession, sessionFromWire } from '../src/sessions';
 import type { Session } from '../src/sessions';
 import type { WireEvent } from '../src/timeline';
 
@@ -189,5 +189,19 @@ describe('applySessionEvent archive fold', () => {
     });
     expect(revived['sess-1']!.archivedAt).toBeNull();
     expect(isArchivedSession(revived['sess-1']!)).toBe(false);
+  });
+});
+
+describe('applySessionActivity', () => {
+  it('stores the latest ephemeral activity without creating an unknown session', () => {
+    const active = applySessionActivity(optimistic({}), 'sess-1', {
+      summary: 'running tests: pnpm test',
+      at: '2026-07-12T12:00:00.000Z',
+    });
+    expect(active['sess-1']?.latestActivity).toEqual({
+      summary: 'running tests: pnpm test',
+      at: '2026-07-12T12:00:00.000Z',
+    });
+    expect(applySessionActivity({}, 'unknown', { summary: 'reading README.md', at: 'now' })).toEqual({});
   });
 });

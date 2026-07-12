@@ -1,6 +1,6 @@
 // Long-press action sheet: optional quick reactions + a data-driven action list.
 
-import { useEffect, useRef, useState, type ComponentProps, type Ref } from 'react';
+import { useEffect, useRef, useState, type ComponentProps, type ReactNode, type Ref } from 'react';
 import { Alert, Modal, Pressable, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Clipboard from 'expo-clipboard';
@@ -35,6 +35,8 @@ export interface MessageActionSheetProps {
     onQuickReact: (emoji: string) => void;
     onPickerReact: (emoji: string) => void;
   };
+  /** Shared bottom-sheet body for compact configuration surfaces. */
+  content?: ReactNode;
 }
 
 export interface MessageActionsProps {
@@ -48,6 +50,7 @@ export interface MessageActionsProps {
   onMarkupReply?: (m: ChatMessage) => void;
   onEdit: (m: ChatMessage) => void;
   onDelete: (m: ChatMessage) => void;
+  onDelegate?: (m: ChatMessage) => void;
 }
 
 function Action({
@@ -109,7 +112,7 @@ function Action({
   );
 }
 
-export function MessageActionSheet({ visible, actions, onClose, title, reactions }: MessageActionSheetProps) {
+export function MessageActionSheet({ visible, actions, onClose, title, reactions, content }: MessageActionSheetProps) {
   const { colors, reduceMotion } = useTheme();
   const insets = useSafeAreaInsets();
   const [pickerVisible, setPickerVisible] = useState(false);
@@ -169,6 +172,7 @@ export function MessageActionSheet({ visible, actions, onClose, title, reactions
             />
           ) : (
             <>
+              {content ? <View style={{ paddingHorizontal: space.lg, paddingBottom: space.sm }}>{content}</View> : null}
               {title ? (
                 <Text
                   accessibilityRole="header"
@@ -277,6 +281,7 @@ export function MessageActions({
   onMarkupReply,
   onEdit,
   onDelete,
+  onDelegate,
 }: MessageActionsProps) {
   const [copied, setCopied] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
@@ -337,6 +342,17 @@ export function MessageActions({
       hint: 'Opens the thread for this message',
       onSelect: () => {
         onReply(m);
+        onClose();
+      },
+    });
+  }
+  if (m && confirmed && !sessionBlock && onDelegate) {
+    actions.push({
+      key: 'delegate',
+      label: 'Delegate to agent…',
+      hint: 'Opens the agent composer anchored to this message',
+      onSelect: () => {
+        onDelegate(m);
         onClose();
       },
     });
