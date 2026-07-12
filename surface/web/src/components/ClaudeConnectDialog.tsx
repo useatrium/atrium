@@ -27,12 +27,14 @@ export function ClaudeConnectDialog({
   const [starting, setStarting] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [flowSucceeded, setFlowSucceeded] = useState(false);
   const connected = status?.connected === true;
   const titleId = 'claude-connect-title';
   const helpId = 'claude-connect-code-help';
   const statusErrorId = 'claude-connect-status-error';
   const errorId = 'claude-connect-error';
-  const codeDescription = [helpId, status?.lastError ? statusErrorId : null, error ? errorId : null]
+  const showStatusError = Boolean(status?.lastError) && !flowSucceeded && !error;
+  const codeDescription = [helpId, showStatusError ? statusErrorId : null, error ? errorId : null]
     .filter((id): id is string => Boolean(id))
     .join(' ');
 
@@ -49,6 +51,7 @@ export function ClaudeConnectDialog({
     setError(null);
     setFlow(null);
     setCode('');
+    setFlowSucceeded(false);
     try {
       setFlow(await startClaudeCodeOAuth());
     } catch (err) {
@@ -79,6 +82,7 @@ export function ClaudeConnectDialog({
         );
         return;
       }
+      setFlowSucceeded(true);
       await onSave(PROVIDER_CREDENTIALS_REFRESH_SENTINEL);
       setCode('');
       onCancel();
@@ -164,12 +168,13 @@ export function ClaudeConnectDialog({
               className="w-full rounded-md border border-edge bg-surface px-2.5 py-2 font-mono text-sm text-fg placeholder-fg-muted outline-none focus:border-edge-strong max-md:min-h-11"
             />
           </label>
-          {status?.lastError && (
+          {showStatusError && (
             <div
               id={statusErrorId}
               className="rounded-md border border-warning-border/50 bg-warning-tint/20 px-3 py-2 text-xs text-warning-text"
             >
-              {status.lastError}
+              <div className="font-semibold">Reconnecting because:</div>
+              <div>{status?.lastError}</div>
             </div>
           )}
           {error && (
