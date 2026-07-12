@@ -98,13 +98,13 @@ export function ActivityView({
   };
 
   if (loading) {
-    return <div className="flex flex-1 items-center justify-center text-sm text-fg-muted">Loading activity...</div>;
+    return <div className="flex flex-1 items-center justify-center text-sm text-fg-muted">Loading attention...</div>;
   }
 
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-surface">
       <div className="border-b border-edge px-4 py-3">
-        <h2 className="text-sm font-bold text-fg">Inbox</h2>
+        <h2 className="text-sm font-bold text-fg">Attention</h2>
       </div>
       {error && (
         <button
@@ -112,7 +112,7 @@ export function ActivityView({
           onClick={() => void load()}
           className="mx-4 mt-3 rounded-md border border-danger/30 bg-danger/10 px-3 py-2 text-left text-sm text-danger hover:bg-danger/15"
         >
-          Activity failed. Click to retry.
+          Attention couldn&apos;t load. Click to retry.
         </button>
       )}
       {items.length === 0 && !error ? (

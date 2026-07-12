@@ -99,17 +99,16 @@ export function Login({ onLogin }: { onLogin: (user: UserRef) => void }) {
   };
 
   return (
-    <div className="flex h-dvh items-center justify-center bg-surface">
-      <div className="w-80 rounded-xl border border-edge bg-surface-raised/60 p-6 shadow-2xl">
-        <h1 className="text-lg font-bold tracking-tight text-fg">Atrium</h1>
-        <p className="mb-5 mt-1 text-xs text-pretty text-fg-muted">Where your team and AI agents work side by side.</p>
+    <main id="main-content" className="flex h-dvh items-center justify-center bg-surface px-4">
+      <div className="w-full max-w-80 rounded-lg bg-surface-raised p-6">
+        <h1 className="text-xl font-semibold tracking-tight text-fg">Work with agents together.</h1>
+        <p className="mb-5 mt-2 text-sm text-pretty text-fg-muted">
+          Atrium keeps your team’s conversations, delegated work, and results in one shared place.
+        </p>
 
         {showHandle && (
           <form onSubmit={submitHandle} aria-busy={busy ? 'true' : undefined}>
-            <label
-              htmlFor="login-handle"
-              className="mb-1 block text-2xs font-medium uppercase tracking-wide text-fg-muted"
-            >
+            <label htmlFor="login-handle" className="mb-1 block text-xs font-medium text-fg-secondary">
               Handle
             </label>
             <input
@@ -125,10 +124,7 @@ export function Login({ onLogin }: { onLogin: (user: UserRef) => void }) {
               spellCheck={false}
               className="mb-3 w-full rounded-md border border-edge-strong bg-surface px-3 py-2 text-sm text-fg placeholder-fg-faint outline-none focus:border-accent-hover"
             />
-            <label
-              htmlFor="login-display-name"
-              className="mb-1 block text-2xs font-medium uppercase tracking-wide text-fg-muted"
-            >
+            <label htmlFor="login-display-name" className="mb-1 block text-xs font-medium text-fg-secondary">
               Display name <span className="font-normal normal-case text-fg-muted">· optional</span>
             </label>
             <input
@@ -169,10 +165,7 @@ export function Login({ onLogin }: { onLogin: (user: UserRef) => void }) {
 
         {showEmail && (
           <form onSubmit={path === 'email' ? requestCode : verifyCode} aria-busy={busy ? 'true' : undefined}>
-            <label
-              htmlFor="login-email"
-              className="mb-1 block text-2xs font-medium uppercase tracking-wide text-fg-muted"
-            >
+            <label htmlFor="login-email" className="mb-1 block text-xs font-medium text-fg-secondary">
               Email
             </label>
             <input
@@ -193,10 +186,7 @@ export function Login({ onLogin }: { onLogin: (user: UserRef) => void }) {
             />
             {path === 'code' && (
               <>
-                <label
-                  htmlFor="login-code"
-                  className="mb-1 block text-2xs font-medium uppercase tracking-wide text-fg-muted"
-                >
+                <label htmlFor="login-code" className="mb-1 block text-xs font-medium text-fg-secondary">
                   Code
                 </label>
                 <input
@@ -291,7 +281,14 @@ export function Login({ onLogin }: { onLogin: (user: UserRef) => void }) {
             Continue with Google
           </a>
         )}
+        <details className="mt-5 border-t border-edge pt-3 text-xs text-fg-muted">
+          <summary className="cursor-pointer font-medium text-fg-secondary">Server details</summary>
+          <p className="mt-2 text-pretty">
+            Connected to <span className="font-medium text-fg">{location.host}</span>. Sign-in methods are configured on
+            this Atrium server.
+          </p>
+        </details>
       </div>
-    </div>
+    </main>
   );
 }

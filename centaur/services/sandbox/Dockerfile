@@ -302,6 +302,9 @@ RUN --mount=type=cache,target=/opt/centaur/cargo/registry,uid=1001,gid=1001,shar
 
 # No RUN instructions after these — all repo-local content at the very end.
 COPY --link --chown=1001:1001 .agents/skills/ /opt/centaur/agents/skills/
+# NOTE: harness/ and crates/harness-server/ are agent-image INPUTS — deploy's
+# need_agent change-detection must include them (deploy/redeploy.sh), or edits
+# here ship as stale retags under a new SHA.
 COPY --link --chown=1001:1001 harness/ /opt/centaur/harness/
 COPY --link --chown=1001:1001 workflows/ /opt/centaur/workflows/
 COPY --link --chown=1001:1001 services/sandbox/SYSTEM_PROMPT.md /opt/centaur/AGENTS.md

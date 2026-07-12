@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { EditorState, TextSelection } from 'prosemirror-state';
+import { type EditorState, TextSelection } from 'prosemirror-state';
 
 import { applyComment, applyStrike, applySuggestEdit, createMarkupEditorState } from './MarkupEditorCore';
 import { serializeToCriticMarkup } from './criticMarkup';

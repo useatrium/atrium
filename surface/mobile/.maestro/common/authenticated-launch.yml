@@ -1,0 +1,8 @@
+appId: chat.atrium.app
+---
+- launchApp:
+    clearState: false
+- extendedWaitUntil:
+    visible: "Chat"
+    timeout: 45000
+- assertVisible: "Settings"
