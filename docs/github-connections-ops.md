@@ -33,6 +33,7 @@ from the installation id and these app credentials:
 GITHUB_APP_ID=...
 GITHUB_APP_PRIVATE_KEY='-----BEGIN RSA PRIVATE KEY-----...'
 GITHUB_APP_PRIVATE_KEY_ID=... # optional
+GITHUB_APP_FALLBACK_INSTALLATION_ID=... # optional, pins the github-default installation
 GITHUB_PUBLIC_READ_TOKEN=... # optional, seeds github-default fallback
 ```
 
@@ -50,13 +51,19 @@ console:
     enabled: true
 ```
 
-Provision the `github-default` role in the same namespace as Surface. If
+Provision the `github-default` role in the same namespace as Surface. When the
+GitHub App is configured (`GITHUB_APP_ID` + `GITHUB_APP_PRIVATE_KEY`), Surface
+backs the role with a `github_app_installation` broker secret instead of the
+static token: it uses `GITHUB_APP_FALLBACK_INSTALLATION_ID` when set, otherwise
+it auto-discovers the App's single installation (zero or multiple installations
+log a warning and keep the static path). Otherwise, if
 `GITHUB_PUBLIC_READ_TOKEN` is set, Surface seeds the role's minimal public-read
-GitHub fallback secret and role grant idempotently. Otherwise, pre-provision
-that static secret and grant in iron-control. The fallback secret must replace
-the placeholder `GITHUB_TOKEN` for `github.com` and `api.github.com`. Do not
-include `github-default` in Centaur's normal startup `assign_role_ids`; Atrium
-owns assignment and removal for workspace/user principals.
+GitHub fallback secret and role grant idempotently. If neither is available,
+pre-provision that static secret and grant in iron-control. The fallback secret
+must replace the placeholder `GITHUB_TOKEN` for `github.com` and
+`api.github.com`. Do not include `github-default` in Centaur's normal startup
+`assign_role_ids`; Atrium owns assignment and removal for workspace/user
+principals.
 
 The GitHub infra transform must be removed from
 `centaur/services/api-rs/crates/centaur-iron-proxy/src/infra.yaml` before the

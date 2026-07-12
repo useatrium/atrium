@@ -2,11 +2,15 @@ import {
   IronControlRequestError,
   type IronControlAdminClient,
   atriumPrincipalForeignId,
+  githubAppFallbackBrokerCredentialForeignId,
+  githubAppFallbackSecretForeignId,
+  githubAppInstallationBrokerCredentialForeignId,
   githubConnectionSecretForeignId,
   githubPatSecretForeignId,
 } from './iron-control.js';
 import { config } from './config.js';
 import { githubConnectionId } from './connections.js';
+import { listGitHubAppInstallations } from './github-repo-validation.js';
 
 export async function convergeGitHubPatGrant(
   ironControl: IronControlAdminClient,
@@ -167,24 +171,142 @@ async function assignInfraRole(ironControl: IronControlAdminClient, principalId:
   });
 }
 
+export class GitHubAppInstallationUnconfiguredError extends Error {
+  constructor() {
+    super('GitHub App installation credentials are not configured');
+  }
+}
+
+function githubAppConfigured(): boolean {
+  return Boolean(config.githubAppId && config.githubAppPrivateKey);
+}
+
+export async function upsertGitHubInstallationBrokerCredential(
+  ironControl: IronControlAdminClient,
+  args: {
+    workspaceId: string;
+    installationId: string;
+  },
+): Promise<string> {
+  if (!githubAppConfigured()) {
+    throw new GitHubAppInstallationUnconfiguredError();
+  }
+  return upsertGitHubAppInstallationCredential(ironControl, {
+    foreignId: githubAppInstallationBrokerCredentialForeignId(args.workspaceId, args.installationId),
+    name: `GitHub App installation ${args.installationId} for workspace ${args.workspaceId}`,
+    installationId: args.installationId,
+    labels: { atrium_workspace_id: args.workspaceId },
+  });
+}
+
+async function upsertGitHubAppInstallationCredential(
+  ironControl: IronControlAdminClient,
+  args: {
+    foreignId: string;
+    name: string;
+    installationId: string;
+    labels: Record<string, string>;
+  },
+): Promise<string> {
+  await ironControl.upsertGitHubAppInstallationBrokerCredential({
+    foreignId: args.foreignId,
+    name: args.name,
+    githubAppId: config.githubAppId,
+    githubInstallationId: args.installationId,
+    githubPrivateKey: config.githubAppPrivateKey,
+    githubPrivateKeyId: config.githubAppPrivateKeyId || undefined,
+    labels: {
+      source: 'atrium',
+      provider: 'github',
+      token_kind: 'app_installation',
+      ...args.labels,
+      github_installation_id: args.installationId,
+    },
+  });
+  return args.foreignId;
+}
+
 export async function convergeGitHubPublicReadRole(
   ironControl: IronControlAdminClient,
   publicReadToken = config.githubPublicReadToken,
+  listInstallations: typeof listGitHubAppInstallations = listGitHubAppInstallations,
 ) {
   const role = await ironControl.upsertRole({
     foreignId: 'github-default',
     name: 'GitHub public-read fallback',
     labels: { source: 'atrium', provider: 'github', kind: 'fallback' },
   });
+
+  if (githubAppConfigured()) {
+    const installationId = await resolveGitHubAppFallbackInstallationId(listInstallations);
+    if (installationId) {
+      const brokerCredentialId = await upsertGitHubAppInstallationCredential(ironControl, {
+        foreignId: githubAppFallbackBrokerCredentialForeignId(installationId),
+        name: `GitHub App installation ${installationId} fallback for unconnected users`,
+        installationId,
+        labels: { kind: 'fallback' },
+      });
+      const secret = await ironControl.upsertGitHubBrokerSecret({
+        foreignId: githubAppFallbackSecretForeignId(),
+        name: 'GitHub App installation fallback token',
+        brokerCredentialId,
+        labels: { source: 'atrium', provider: 'github', kind: 'fallback', token_kind: 'app_installation' },
+      });
+      await convergeGitHubRoleSecretGrant(ironControl, role.id, secret.id);
+      return role;
+    }
+  }
+
   if (!publicReadToken) return role;
 
   const secret = await ironControl.upsertGitHubPublicReadSecret({
     token: publicReadToken,
     labels: { source: 'atrium', provider: 'github', token_kind: 'public_read' },
   });
-  const grants = await ironControl.listRoleGrants(role.id);
-  if (!grants.some((grant) => grant.static_secret_id === secret.id)) {
-    await ironControl.createRoleStaticGrant(role.id, secret.id);
-  }
+  await convergeGitHubRoleSecretGrant(ironControl, role.id, secret.id);
   return role;
+}
+
+async function resolveGitHubAppFallbackInstallationId(
+  listInstallations: typeof listGitHubAppInstallations,
+): Promise<string | null> {
+  const explicit = config.githubAppFallbackInstallationId.trim();
+  if (explicit) return explicit;
+  let installations: Awaited<ReturnType<typeof listGitHubAppInstallations>>;
+  try {
+    installations = await listInstallations({
+      appId: config.githubAppId,
+      privateKey: config.githubAppPrivateKey,
+      privateKeyId: config.githubAppPrivateKeyId || undefined,
+    });
+  } catch (err) {
+    console.warn('GitHub App fallback installation discovery failed; using the static public-read fallback', { err });
+    return null;
+  }
+  if (installations.length === 1) return installations[0]!.installationId;
+  console.warn(
+    `GitHub App fallback expects exactly one installation but found ${installations.length}; ` +
+      'set GITHUB_APP_FALLBACK_INSTALLATION_ID to pick one. Using the static public-read fallback.',
+  );
+  return null;
+}
+
+// Converges the role to exactly one GitHub token grant: stale grants pointing
+// at a different secret (e.g. after switching between the static public-read
+// token and the App-backed broker secret) are removed, mirroring
+// convergeGitHubDirectGrant's stale cleanup for principals.
+async function convergeGitHubRoleSecretGrant(
+  ironControl: IronControlAdminClient,
+  roleId: string,
+  staticSecretId: string,
+): Promise<void> {
+  const grants = await ironControl.listRoleGrants(roleId);
+  for (const grant of grants) {
+    if (grant.id && grant.static_secret_id && grant.static_secret_id !== staticSecretId) {
+      await ironControl.deleteGrant(grant.id);
+    }
+  }
+  if (!grants.some((grant) => grant.static_secret_id === staticSecretId)) {
+    await ironControl.createRoleStaticGrant(roleId, staticSecretId);
+  }
 }
