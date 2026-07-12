@@ -21,6 +21,8 @@ import {
   collectSideEffects,
   deriveTurnStatus,
   fileChangeFromToolCall,
+  focusTranscriptRows,
+  fullTranscriptRows,
   turnStatusLabel,
   isTerminalExecutionStatus,
   sideEffectCount,
@@ -130,16 +132,6 @@ const ITEM_VIS: CSSProperties = { contentVisibility: 'auto', containIntrinsicSiz
 const ENTRY_REFERENCES_REFETCH_MS = 60_000;
 const MOBILE_MEDIA_QUERY = '(max-width: 767px)';
 const HOVER_NONE_MEDIA_QUERY = '(hover: none)';
-
-export function hiddenWorkRunLength(items: readonly { type: string }[], start: number): number {
-  let count = 0;
-  for (let i = start; i < items.length; i += 1) {
-    const type = items[i]?.type;
-    if (type !== 'reasoning' && type !== 'tool_call') break;
-    count += 1;
-  }
-  return count;
-}
 
 function HiddenWorkChip({ count, onClick }: { count: number; onClick: () => void }) {
   return (
@@ -1160,13 +1152,20 @@ export function SessionPane({
       (e) => Math.min(seatAnchors.get(e.id) ?? Number.MAX_SAFE_INTEGER, stream.items.length) === i,
     );
 
-  // Codex file edits render inline as diff cards (parity with Claude/amp edits,
-  // which are already transcript tool_call items). They live in stream.fileChanges
-  // rather than stream.items, so anchor each to the point in the transcript where
-  // it happened and splice it in at render time — same interleave-by-index shape
-  // as the seat-audit lines above.
+  // Codex file edits live outside stream.items, so anchor and splice them into
+  // the shared transcript row stream alongside seat-audit lines.
   const inlineCodexChanges = useMemo(() => codexInlineFileChanges(stream), [stream.items, stream.fileChanges]);
-  const codexChangesAt = (i: number) => inlineCodexChanges.filter((a) => a.index === i);
+  const codexChangesAt = useCallback(
+    (i: number) => inlineCodexChanges.filter((a) => a.index === i),
+    [inlineCodexChanges],
+  );
+  const rows = useMemo(
+    () =>
+      showAgentWork
+        ? fullTranscriptRows(stream.items, codexChangesAt)
+        : focusTranscriptRows(stream.items, codexChangesAt),
+    [codexChangesAt, showAgentWork, stream.items],
+  );
 
   // Manual expand/collapse overrides; default = open while running. When the
   // result arrives the card auto-collapses only if the view is pinned to the
@@ -1609,9 +1608,7 @@ export function SessionPane({
           data-testid="archived-banner"
           className="flex shrink-0 items-center gap-2 border-b border-edge bg-surface-raised/70 px-3 py-1.5 text-xs"
         >
-          <span className="min-w-0 flex-1 truncate text-fg-muted">
-            Archived — new activity will bring it back.
-          </span>
+          <span className="min-w-0 flex-1 truncate text-fg-muted">Archived — new activity will bring it back.</span>
           {onSetArchived && (
             <button
               type="button"
@@ -1808,114 +1805,115 @@ export function SessionPane({
                 )}
               </div>
             )}
-            {stream.items.map((item, i) => (
-              <Fragment key={i}>
-                {seatLinesAt(i).map((e) => (
-                  <SeatAuditLine key={e.id} entry={e} nameFor={nameFor} />
-                ))}
-                {showAgentWork &&
-                  codexChangesAt(i).map((a) => (
-                    <div key={a.change.id} className="pl-3.5">
-                      <InlineFileChange change={a.change} />
-                    </div>
-                  ))}
-                {!showAgentWork && codexChangesAt(i).length > 0 && (
-                  <HiddenWorkChip
-                    count={
-                      codexChangesAt(i).length +
-                      (item.type === 'reasoning' || item.type === 'tool_call'
-                        ? hiddenWorkRunLength(stream.items, i)
-                        : 0)
+            {(() => {
+              let seatCursor = 0;
+              const flushSeatLinesThrough = (index: number) => {
+                const lines: ReactNode[] = [];
+                while (seatCursor <= index) {
+                  lines.push(
+                    ...seatLinesAt(seatCursor).map((e) => <SeatAuditLine key={e.id} entry={e} nameFor={nameFor} />),
+                  );
+                  seatCursor += 1;
+                }
+                return lines;
+              };
+
+              return (
+                <>
+                  {rows.map((row) => {
+                    const rowStartIndex = row.kind === 'hidden' ? row.startIndex : row.index;
+                    const seatLinesBefore = flushSeatLinesThrough(rowStartIndex);
+
+                    if (row.kind === 'change') {
+                      return (
+                        <Fragment key={`change-${row.change.change.id}`}>
+                          {seatLinesBefore}
+                          <div className="pl-3.5">
+                            <InlineFileChange change={row.change.change} />
+                          </div>
+                        </Fragment>
+                      );
                     }
-                    onClick={() => setTranscriptView('full')}
-                  />
-                )}
-                {!showAgentWork && (item.type === 'reasoning' || item.type === 'tool_call') ? (
-                  codexChangesAt(i).length === 0 &&
-                  (i === 0 ||
-                    (stream.items[i - 1]?.type !== 'reasoning' && stream.items[i - 1]?.type !== 'tool_call')) && (
-                    <HiddenWorkChip
-                      count={hiddenWorkRunLength(stream.items, i)}
-                      onClick={() => setTranscriptView('full')}
-                    />
-                  )
-                ) : (
-                  <AnnotatedTranscriptRow
-                    handle={item.handle ?? null}
-                    onMarkupEntry={item.type === 'text' ? openMarkupFromEntry : undefined}
-                    markupLoading={markupLoadingHandle === item.handle}
-                    highlighted={item.handle != null && item.handle === flashEntryHandle}
-                    references={item.handle != null ? entryReferences[item.handle] : null}
-                    discussContext={discussContext}
-                    onDiscussEntry={onDiscussEntry}
-                    touchActionsEnabled={isHoverNone}
-                    touchActionsActive={item.handle != null && item.handle === activeTranscriptActionHandle}
-                    onActivateTouchActions={setActiveTranscriptActionHandle}
-                  >
-                    {/* `group` + title: every row gets a native mouseover timestamp;
+
+                    if (row.kind === 'hidden') {
+                      return (
+                        <Fragment key={row.key}>
+                          {seatLinesBefore}
+                          <HiddenWorkChip count={row.count} onClick={() => setTranscriptView('full')} />
+                          {flushSeatLinesThrough(row.endIndex)}
+                        </Fragment>
+                      );
+                    }
+
+                    const item = row.item;
+                    return (
+                      <Fragment key={item.id}>
+                        {seatLinesBefore}
+                        <AnnotatedTranscriptRow
+                          handle={item.handle ?? null}
+                          onMarkupEntry={item.type === 'text' ? openMarkupFromEntry : undefined}
+                          markupLoading={markupLoadingHandle === item.handle}
+                          highlighted={item.handle != null && item.handle === flashEntryHandle}
+                          references={item.handle != null ? entryReferences[item.handle] : null}
+                          discussContext={discussContext}
+                          onDiscussEntry={onDiscussEntry}
+                          touchActionsEnabled={isHoverNone}
+                          touchActionsActive={item.handle != null && item.handle === activeTranscriptActionHandle}
+                          onActivateTouchActions={setActiveTranscriptActionHandle}
+                        >
+                          {/* `group` + title: every row gets a native mouseover timestamp;
                   steer rows also reveal an inline one (their hover target is
                   obvious and they anchor turn navigation). */}
-                    <div className="group" title={turnExactTimes.get(item.id) || undefined}>
-                      {item.type === 'text' ? (
-                        <div className="pl-3.5">
-                          <TextBlock item={item} />
-                        </div>
-                      ) : item.type === 'user_message' ? (
-                        <div data-testid="user-steer" data-turn={item.id} className="pt-2 pb-0.5">
-                          <SteerAuthorLine
-                            author={steerAuthor}
-                            iso={item.ts}
-                            time={turnTimes.get(item.id)}
-                            provenance={steerProvenanceForMessage(item.id)}
-                          />
-                          <MarkupSteerCard text={item.text} />
-                        </div>
-                      ) : item.type === 'question' ? (
-                        <div className="pl-3.5">
-                          <QuestionTranscriptCard
-                            item={item}
-                            events={questionEventsByQuestion.get(item.questionId) ?? []}
-                          />
-                        </div>
-                      ) : item.type === 'reasoning' ? (
-                        <div className="pl-3.5">
-                          <ReasoningBlock item={item} />
-                        </div>
-                      ) : item.type === 'tool_call' ? (
-                        <div className="pl-3.5">
-                          <TranscriptTool
-                            item={item}
-                            expanded={toolOpen[item.id] ?? toolDefaultOpen(item)}
-                            onToggle={() =>
-                              setToolOpen((prev) => ({
-                                ...prev,
-                                [item.id]: !(prev[item.id] ?? toolDefaultOpen(item)),
-                              }))
-                            }
-                            clockSkewMs={clockSkewMs}
-                          />
-                        </div>
-                      ) : null}
-                    </div>
-                  </AnnotatedTranscriptRow>
-                )}
-              </Fragment>
-            ))}
-            {seatLinesAt(stream.items.length).map((e) => (
-              <SeatAuditLine key={e.id} entry={e} nameFor={nameFor} />
-            ))}
-            {showAgentWork &&
-              codexChangesAt(stream.items.length).map((a) => (
-                <div key={a.change.id} className="pl-3.5">
-                  <InlineFileChange change={a.change} />
-                </div>
-              ))}
-            {!showAgentWork && codexChangesAt(stream.items.length).length > 0 && (
-              <HiddenWorkChip
-                count={codexChangesAt(stream.items.length).length}
-                onClick={() => setTranscriptView('full')}
-              />
-            )}
+                          <div className="group" title={turnExactTimes.get(item.id) || undefined}>
+                            {item.type === 'text' ? (
+                              <div className="pl-3.5">
+                                <TextBlock item={item} />
+                              </div>
+                            ) : item.type === 'user_message' ? (
+                              <div data-testid="user-steer" data-turn={item.id} className="pt-2 pb-0.5">
+                                <SteerAuthorLine
+                                  author={steerAuthor}
+                                  iso={item.ts}
+                                  time={turnTimes.get(item.id)}
+                                  provenance={steerProvenanceForMessage(item.id)}
+                                />
+                                <MarkupSteerCard text={item.text} />
+                              </div>
+                            ) : item.type === 'question' ? (
+                              <div className="pl-3.5">
+                                <QuestionTranscriptCard
+                                  item={item}
+                                  events={questionEventsByQuestion.get(item.questionId) ?? []}
+                                />
+                              </div>
+                            ) : item.type === 'reasoning' ? (
+                              <div className="pl-3.5">
+                                <ReasoningBlock item={item} />
+                              </div>
+                            ) : item.type === 'tool_call' ? (
+                              <div className="pl-3.5">
+                                <TranscriptTool
+                                  item={item}
+                                  expanded={toolOpen[item.id] ?? toolDefaultOpen(item)}
+                                  onToggle={() =>
+                                    setToolOpen((prev) => ({
+                                      ...prev,
+                                      [item.id]: !(prev[item.id] ?? toolDefaultOpen(item)),
+                                    }))
+                                  }
+                                  clockSkewMs={clockSkewMs}
+                                />
+                              </div>
+                            ) : null}
+                          </div>
+                        </AnnotatedTranscriptRow>
+                      </Fragment>
+                    );
+                  })}
+                  {flushSeatLinesThrough(stream.items.length)}
+                </>
+              );
+            })()}
             {pendingSteers.map((p) => (
               <div
                 key={p.id}
