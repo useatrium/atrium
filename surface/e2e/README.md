@@ -23,6 +23,16 @@ The workspace root also exposes:
 pnpm e2e
 ```
 
+## Web serving mode
+
+Local runs serve the web client from the Vite dev server. CI serves a static
+development-mode build (`vite build --mode development` + `vite preview`)
+instead: the dev server's on-demand transforms starve 2-vCPU runners and made
+the first-scheduled spec chronically blow its 60s timeout. Force either mode
+with `E2E_WEB_SERVE=built` or `E2E_WEB_SERVE=dev`. The build must stay in
+development mode — the markup specs drive the ProseMirror editor through a
+DEV-only `__atriumMarkupEditorView` hook.
+
 ## Database
 
 The suite uses a dedicated `atrium_e2e` database, created by the Playwright server preflight through the admin connection `postgres://atrium:atrium@localhost:5433/atrium`. The preflight truncates the e2e database with `RESTART IDENTITY CASCADE` before the API server boots; the API server then runs migrations and bootstraps the default workspace and `#general`.

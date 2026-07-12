@@ -720,12 +720,24 @@ describe('session transcript rendering', () => {
     render(
       <SessionPane session={completed} me={me} watchers={[]} onClose={() => {}} onAnswerQuestion={async () => {}} />,
     );
-    // A subtle status line reports the turn; the old bordered card is gone and
-    // the read-only result block stays reserved for failed/cancelled sessions.
+    // The status line reports the turn and the compact outcome closes the loop.
     const status = screen.getByTestId('turn-status');
     expect(status.textContent).toContain('Turn complete');
     expect(screen.queryByTestId('turn-card')).toBeNull();
-    expect(screen.queryByTestId('session-result')).toBeNull();
+    expect(screen.getByTestId('session-result').textContent).toContain('shipped the fix');
+  });
+
+  it('closes the loop even when a completed session has no result payload', () => {
+    FakeEventSource.reset();
+    installFakeEventSource();
+    const completed: Session = { ...running, status: 'completed', resultText: null };
+    render(
+      <SessionPane session={completed} me={me} watchers={[]} onClose={() => {}} onAnswerQuestion={async () => {}} />,
+    );
+
+    expect(screen.getByTestId('session-result').textContent).toContain(
+      'Completed — review the work before continuing.',
+    );
   });
 
   it('optimistic steer: dimmed at send, undims once the turn is active, replaced by the codex echo', async () => {

@@ -1,6 +1,10 @@
 model = "gpt-5.5"
 model_reasoning_effort = "low"
 model_reasoning_summary = "auto"
+# gpt-5.5's model_info gates summaries off in codex 0.139 — without this flag,
+# model_reasoning_summary is silently ignored and reasoning items arrive with
+# summary: [] (verified live 2026-07-12).
+model_supports_reasoning_summaries = true
 personality = "pragmatic"
 model_verbosity = "low"
 service_tier = "fast"

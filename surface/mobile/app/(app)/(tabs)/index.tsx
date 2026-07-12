@@ -2,7 +2,7 @@
 // screen is visible, so every channel accrues unreads.
 
 import { useCallback, useMemo, useState } from 'react';
-import { Alert, FlatList, Pressable, RefreshControl, Text, View } from 'react-native';
+import { FlatList, Pressable, RefreshControl, Text, View } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import type { ComponentProps } from 'react';
@@ -12,6 +12,9 @@ import { font, space, useTheme } from '../../../src/lib/theme';
 import { Avatar } from '../../../src/components/Avatar';
 import { ConnectionBanner, UnreadBadge } from '../../../src/components/bits';
 import { MobileHeader } from '../../../src/components/MobileHeader';
+import { MessageActionSheet, type MessageActionListItem } from '../../../src/components/MessageActions';
+import { selectionHaptic } from '../../../src/lib/haptics';
+import { navigationTargetSize } from '../../../src/components/PlatformTabBar';
 
 type IoniconName = ComponentProps<typeof Ionicons>['name'];
 
@@ -23,7 +26,12 @@ function HeaderButton({ icon, label, onPress }: { icon: IoniconName; label: stri
       accessibilityLabel={label}
       onPress={onPress}
       hitSlop={6}
-      style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center' }}
+      style={{
+        width: navigationTargetSize,
+        height: navigationTargetSize,
+        alignItems: 'center',
+        justifyContent: 'center',
+      }}
     >
       <Ionicons name={icon} size={21} color={colors.textSecondary} />
     </Pressable>
@@ -64,6 +72,7 @@ export default function ChannelList() {
   } = useChat();
   const { colors } = useTheme();
   const [archivedOpen, setArchivedOpen] = useState(false);
+  const [actionChannel, setActionChannel] = useState<Channel | null>(null);
 
   useFocusEffect(
     useCallback(() => {
@@ -88,20 +97,9 @@ export default function ChannelList() {
     const unread = c.muted ? false : (state.unread[c.id] ?? false);
     const partner = dmPartner(c, me.id);
     const label = channelLabel(c, me.id);
-    const isArchived = c.archivedAt != null;
     const openActions = () => {
-      Alert.alert(label, undefined, [
-        ...(isArchived ? [] : [{ text: c.pinned ? 'Unpin' : 'Pin', onPress: () => setChannelPinned(c.id, !c.pinned) }]),
-        {
-          text: isArchived ? 'Unarchive' : 'Archive',
-          onPress: () => setChannelArchived(c.id, !isArchived),
-        },
-        {
-          text: c.muted ? 'Unmute' : 'Mute',
-          onPress: () => setMute(c.id, !c.muted),
-        },
-        { text: 'Cancel', style: 'cancel' },
-      ]);
+      selectionHaptic();
+      setActionChannel(c);
     };
     return (
       <Pressable
@@ -181,6 +179,43 @@ export default function ChannelList() {
       : []),
   ];
 
+  const actionChannelArchived = actionChannel?.archivedAt != null;
+  const channelActions: MessageActionListItem[] = actionChannel
+    ? [
+        ...(actionChannelArchived
+          ? []
+          : [
+              {
+                key: 'pin',
+                label: actionChannel.pinned ? 'Unpin' : 'Pin',
+                icon: 'pin-outline' as const,
+                onSelect: () => {
+                  setActionChannel(null);
+                  setChannelPinned(actionChannel.id, !actionChannel.pinned);
+                },
+              },
+            ]),
+        {
+          key: 'archive',
+          label: actionChannelArchived ? 'Unarchive' : 'Archive',
+          icon: actionChannelArchived ? 'arrow-undo-outline' : 'archive-outline',
+          onSelect: () => {
+            setActionChannel(null);
+            setChannelArchived(actionChannel.id, !actionChannelArchived);
+          },
+        },
+        {
+          key: 'mute',
+          label: actionChannel.muted ? 'Unmute' : 'Mute',
+          icon: actionChannel.muted ? 'notifications-outline' : 'notifications-off-outline',
+          onSelect: () => {
+            setActionChannel(null);
+            setMute(actionChannel.id, !actionChannel.muted);
+          },
+        },
+      ]
+    : [];
+
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg }}>
       <MobileHeader
@@ -252,19 +287,62 @@ export default function ChannelList() {
                 accessibilityRole="button"
                 accessibilityLabel="Channel list failed. Tap to retry."
                 onPress={refreshChannels}
-                style={{ minHeight: 44, justifyContent: 'center', paddingHorizontal: space.lg }}
+                style={{ minHeight: navigationTargetSize, justifyContent: 'center', paddingHorizontal: space.lg }}
               >
                 <Text style={{ color: colors.danger, fontSize: font.sm }}>Channels failed — tap to retry</Text>
               </Pressable>
             );
           }
           return (
-            <Text style={{ color: colors.textFaint, fontSize: font.sm, paddingHorizontal: space.lg }}>
-              No channels yet.
-            </Text>
+            <View style={{ paddingHorizontal: space.lg, paddingVertical: space.md, gap: space.md }}>
+              <View style={{ gap: space.xs }}>
+                <Text style={{ color: colors.text, fontSize: font.md, fontWeight: '700' }}>Start a conversation</Text>
+                <Text style={{ color: colors.textSecondary, fontSize: font.sm, lineHeight: 20 }}>
+                  Create a channel for shared work, or message someone directly.
+                </Text>
+              </View>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space.sm }}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Create a channel"
+                  onPress={() => router.push('/new-channel')}
+                  style={({ pressed }) => ({
+                    minHeight: navigationTargetSize,
+                    justifyContent: 'center',
+                    borderRadius: 6,
+                    paddingHorizontal: space.lg,
+                    backgroundColor: pressed ? colors.bgPressed : colors.accent,
+                  })}
+                >
+                  <Text style={{ color: colors.onAccent, fontSize: font.sm, fontWeight: '700' }}>Create a channel</Text>
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Start a direct message"
+                  onPress={() => router.push('/new-dm')}
+                  style={({ pressed }) => ({
+                    minHeight: navigationTargetSize,
+                    justifyContent: 'center',
+                    borderRadius: 6,
+                    paddingHorizontal: space.lg,
+                    backgroundColor: pressed ? colors.bgPressed : colors.bgElevated,
+                  })}
+                >
+                  <Text style={{ color: colors.textSecondary, fontSize: font.sm, fontWeight: '700' }}>
+                    Direct message
+                  </Text>
+                </Pressable>
+              </View>
+            </View>
           );
         }}
         ListFooterComponent={<View style={{ height: space.xl }} />}
+      />
+      <MessageActionSheet
+        visible={actionChannel != null}
+        title={actionChannel ? channelLabel(actionChannel, me.id) : undefined}
+        actions={channelActions}
+        onClose={() => setActionChannel(null)}
       />
     </View>
   );

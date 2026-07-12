@@ -702,6 +702,7 @@ export default function SessionScreen() {
   const [workTab, setWorkTab] = useState<string | null>(null);
   const [turnsOpen, setTurnsOpen] = useState(false);
   const [effortOpen, setEffortOpen] = useState(false);
+  const [headerActionsOpen, setHeaderActionsOpen] = useState(false);
   const [effortChoice, setEffortChoice] = useState<string | null>(null);
   const [seatAsk, setSeatAsk] = useState<'idle' | 'confirm-take'>('idle');
   const [ignoredSeatRequests, setIgnoredSeatRequests] = useState<ReadonlySet<string>>(() => new Set());
@@ -1238,26 +1239,45 @@ export default function SessionScreen() {
   // the title keeps room next to copy-link and cancel on small phones.
   const openHeaderActions = useCallback(() => {
     if (!session) return;
+    setHeaderActionsOpen(true);
+  }, [session]);
+
+  const headerActions = useMemo<MessageActionListItem[]>(() => {
+    if (!session) return [];
     const isArchived = session.archivedAt != null;
-    Alert.alert(session.title, undefined, [
+    return [
       ...(isArchived
         ? []
         : [
             {
-              text: session.pinned ? 'Unpin' : 'Pin',
-              onPress: () => chat.setSessionPinned(session.id, !session.pinned, session.pinned),
+              key: 'pin',
+              label: session.pinned ? 'Unpin' : 'Pin',
+              icon: 'pin-outline' as const,
+              onSelect: () => {
+                setHeaderActionsOpen(false);
+                chat.setSessionPinned(session.id, !session.pinned, session.pinned);
+              },
             },
           ]),
       {
-        text: isArchived ? 'Unarchive' : 'Archive',
-        onPress: () => chat.setSessionArchived(session.id, !isArchived, session.archivedAt),
+        key: 'archive',
+        label: isArchived ? 'Unarchive' : 'Archive',
+        icon: isArchived ? 'arrow-undo-outline' : 'archive-outline',
+        onSelect: () => {
+          setHeaderActionsOpen(false);
+          chat.setSessionArchived(session.id, !isArchived, session.archivedAt);
+        },
       },
       {
-        text: transcriptView === 'focus' ? 'Show full transcript' : 'Show focus transcript',
-        onPress: () => setTranscriptView(transcriptView === 'focus' ? 'full' : 'focus'),
+        key: 'transcript',
+        label: transcriptView === 'focus' ? 'Show full transcript' : 'Show focus transcript',
+        icon: 'list-outline',
+        onSelect: () => {
+          setHeaderActionsOpen(false);
+          setTranscriptView(transcriptView === 'focus' ? 'full' : 'focus');
+        },
       },
-      { text: 'Cancel', style: 'cancel' as const },
-    ]);
+    ];
   }, [chat, session, setTranscriptView, transcriptView]);
 
   const sendSteer = () => {
@@ -2291,6 +2311,12 @@ export default function SessionScreen() {
         visible={transcriptActionTarget != null}
         actions={transcriptActions}
         onClose={closeTranscriptActions}
+      />
+      <MessageActionSheet
+        visible={headerActionsOpen}
+        title={session?.title}
+        actions={headerActions}
+        onClose={() => setHeaderActionsOpen(false)}
       />
     </View>
   );

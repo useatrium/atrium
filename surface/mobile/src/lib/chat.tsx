@@ -265,7 +265,7 @@ export function ChatProvider({ session, children }: { session: Session; children
   const [userDirectoryVersion, setUserDirectoryVersion] = useState(0);
   const touchedDraftKeysRef = useRef<Set<string>>(new Set());
   const activeDraftKeysRef = useRef<Set<string>>(new Set());
-  const calls = useCall({ api, me, channels: state.channels });
+  const calls = useCall({ api, me, channels: state.channels, wsStatus: state.wsStatus });
   const refreshActiveCalls = calls.refreshActiveCalls;
   const refreshedCallsAfterChannelsLoadRef = useRef(false);
 

@@ -33,7 +33,7 @@ import { InvalidArtifactPathError } from './artifact-path.js';
 import { presignGet as s3PresignGet } from './s3.js';
 import { appendEvent, canAccessChannel, DomainError, type UserRef, type WireEvent } from './events.js';
 import type { WsHub } from './hub.js';
-import { sendQuestionPush, sendSessionCompletedPush } from './push.js';
+import { sendAuthRequiredPush, sendQuestionPush, sendSessionCompletedPush, sendSessionFailedPush } from './push.js';
 import {
   CLAUDE_CODE_PROVIDER,
   ProviderCredentials,
@@ -2171,6 +2171,15 @@ export class SessionRuns {
       return [authEvent, resolvedEvent];
     });
     for (const event of events) this.hub.publishEvent(event);
+    const authEvent = events.find((event) => event.type === 'session.provider_auth_required');
+    if (authEvent) {
+      void sendAuthRequiredPush(
+        this.pool,
+        this.hub,
+        authEvent,
+        this.questionPushFetchImpl ? { fetchImpl: this.questionPushFetchImpl } : undefined,
+      ).catch((err) => console.warn('provider auth required push fanout failed', { id, err }));
+    }
     if (events.some((event) => event.type === 'session.question_resolved')) {
       this.cancelScheduledQuestionRenotify(id);
     }
@@ -2231,6 +2240,12 @@ export class SessionRuns {
     });
     if (!event) return false;
     this.hub.publishEvent(event);
+    void sendAuthRequiredPush(
+      this.pool,
+      this.hub,
+      event,
+      this.questionPushFetchImpl ? { fetchImpl: this.questionPushFetchImpl } : undefined,
+    ).catch((err) => console.warn('github auth required push fanout failed', { id, err }));
     return true;
   }
 
@@ -2270,6 +2285,17 @@ export class SessionRuns {
       return [statusEvent, resolvedEvent];
     });
     for (const event of events) this.hub.publishEvent(event);
+    if (status === 'failed') {
+      const failedEvent = events.find((event) => event.type === 'session.status_changed');
+      if (failedEvent) {
+        void sendSessionFailedPush(
+          this.pool,
+          this.hub,
+          failedEvent,
+          this.questionPushFetchImpl ? { fetchImpl: this.questionPushFetchImpl } : undefined,
+        ).catch((err) => console.warn('session failed push fanout failed', { id, err }));
+      }
+    }
     if (events.some((event) => event.type === 'session.question_resolved')) {
       this.cancelScheduledQuestionRenotify(id);
     }

@@ -113,12 +113,12 @@ test('opening a session updates the URL and Back closes it without a document re
     .first()
     .click();
   await expect(page).toHaveURL(new RegExp(`/c/${roomId}/s/${sessionId}$`));
-  await expect(page.getByRole('button', { name: 'Close agent pane' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Close session details' })).toBeVisible();
 
   await page.goBack();
   await expect(page).toHaveURL(new RegExp(`/c/${roomId}$`));
   await expect(page.getByRole('heading', { name: `# ${room}` })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Close agent pane' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Close session details' })).toHaveCount(0);
   await expect
     .poll(() => page.evaluate(() => (window as Window & { __urlRoutingMarker?: string }).__urlRoutingMarker ?? null))
     .toBe('kept');

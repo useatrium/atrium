@@ -29,6 +29,16 @@ npx expo start            # press i for iOS simulator, a for Android
 Sign in with the server origin (simulator: `http://localhost:3001`; physical
 device: `http://<your-mac-LAN-IP>:3001`), a handle, and a display name.
 
+> **Loopback trap:** the API server binds `127.0.0.1` by default, so the
+> LAN-IP origin only works if you start it with `HOST=0.0.0.0`. A session
+> signed in against an origin the server no longer answers doesn't fail
+> loudly — the app keeps painting cached SQLite chat behind a permanent
+> "Reconnecting…" banner with zero live sockets. On a simulator always sign
+> in with `http://localhost:3001`; on a physical device use
+> `HOST=0.0.0.0 pnpm --filter @atrium/server dev` and keep Metro running.
+> After the server rebinds (or Metro dies), relaunch the dev client rather
+> than trusting a multi-day simulator process.
+
 Dev shortcut: auto-login on boot (dev builds only):
 
 ```bash

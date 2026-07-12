@@ -15,6 +15,8 @@ import { SttWorker } from './stt/worker.js';
 import { registerWhisperCppAdapter } from './stt/whispercpp.js';
 import { shutdownServerTelemetry } from './telemetry.js';
 import { startThumbnailBackfill } from './thumbnails.js';
+// === call-sweeper additions ===
+import { startCallSweeper } from './call-sweeper.js';
 
 export async function main() {
   if ((process.env.STT_PROVIDER ?? 'noop') === 'whispercpp') {
@@ -75,7 +77,13 @@ export async function main() {
     artifactGc = startArtifactGcWorker({ pool, storage: { deleteObject } });
   }
 
+  // === call-sweeper additions ===
+  const callSweeper = startCallSweeper({ pool, hub });
+  void callSweeper.runOnce();
+
   const shutdown = async () => {
+    // === call-sweeper additions ===
+    callSweeper.stop();
     sttWorker.stop();
     artifactGc?.stop();
     storageBootstrap.stop();

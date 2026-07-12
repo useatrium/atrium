@@ -1707,7 +1707,7 @@ export function Chat({
       },
       {
         id: 'open-activity',
-        label: 'Open Inbox',
+        label: 'Open Attention',
         subtitle: 'Review mentions and updates',
         group: 'Navigate',
         keywords: ['inbox', 'activity', 'mentions', 'notifications', 'updates'],
@@ -1873,10 +1873,6 @@ export function Chat({
         onSetPinned={setPinned}
         onCreateChannel={createChannel}
         onStartDm={startDm}
-        onOpenSession={(sessionId) => {
-          openSession(sessionId);
-          setIsSidebarOpen(false);
-        }}
         activeSurface={mainSurface}
         onOpenFiles={() => {
           openFilesSurface();
@@ -1895,7 +1891,6 @@ export function Chat({
           openSettingsSurface();
           setIsSidebarOpen(false);
         }}
-        sessionEventSeq={sessionEventSeq}
         onLogout={onLogout}
         isOpen={isSidebarOpen}
         onClose={() => setIsSidebarOpen(false)}
@@ -1926,7 +1921,7 @@ export function Chat({
                   : showAgentsSurface
                     ? 'Agents'
                     : showActivitySurface
-                      ? 'Inbox'
+                      ? 'Attention'
                       : showFilesSurface
                         ? `Files for ${active ? channelLabel(active, me.id) : workspace.name}`
                         : undefined
@@ -1950,7 +1945,7 @@ export function Chat({
                   <span className="grid size-4 shrink-0 place-items-center rounded bg-surface-raised text-2xs font-bold text-fg-muted">
                     @
                   </span>
-                  <span className="truncate">Inbox</span>
+                  <span className="truncate">Attention</span>
                 </>
               ) : showFilesSurface ? (
                 <>
@@ -2333,12 +2328,12 @@ export function Chat({
           style={isMobileViewport || view === 'focus' ? undefined : placeholderPaneSizing.style}
         >
           <header className="flex h-12 shrink-0 items-center justify-between border-b border-edge px-4">
-            <h2 className="text-sm font-semibold text-fg">Agent</h2>
-            <Tooltip content="Close agent pane">
+            <h2 className="text-sm font-semibold text-fg">Session</h2>
+            <Tooltip content="Close session details">
               <button
                 type="button"
                 onClick={closeSession}
-                aria-label="Close agent pane"
+                aria-label="Close session details"
                 className="rounded-md px-2 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg"
               >
                 <XIcon />

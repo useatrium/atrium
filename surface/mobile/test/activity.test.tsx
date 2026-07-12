@@ -37,6 +37,7 @@ vi.mock('expo-router', () => ({
 
 vi.mock('react-native-safe-area-context', () => ({
   SafeAreaView: ({ children }: { children: unknown }) => children,
+  useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
 
 vi.mock('../src/lib/chat', () => ({
@@ -65,7 +66,7 @@ beforeEach(() => {
 });
 
 describe('mobile Activity screen', () => {
-  it('adds server activity rows alongside session attention rows', async () => {
+  it('keeps healthy running work out of Attention while preserving server activity', async () => {
     chatMock.api.listSessions.mockResolvedValue({
       sessions: [
         {
@@ -124,19 +125,13 @@ describe('mobile Activity screen', () => {
     expect(await screen.findByText('Agent needs your input')).toBeInTheDocument();
     expect(screen.getByText('Alice mentioned you')).toBeInTheDocument();
     expect(screen.getByText(/hello @me with code and docs/)).toBeInTheDocument();
-    expect(screen.getByText('Investigate failure')).toBeInTheDocument();
+    expect(screen.queryByText('Investigate failure')).not.toBeInTheDocument();
     expect(
       screen.getByLabelText(`Agent needs your input, #general, ${formatExactTimestamp('2026-01-01T00:02:00.000Z')}`),
     ).toBeInTheDocument();
     expect(
       screen.getByLabelText(`Alice mentioned you, #general, ${formatExactTimestamp('2026-01-01T00:01:00.000Z')}`),
     ).toBeInTheDocument();
-    expect(
-      screen.getByLabelText(
-        `Investigate failure, running, #general, started ${formatExactTimestamp('2026-01-01T00:00:00.000Z')}`,
-      ),
-    ).toBeInTheDocument();
-
     fireEvent.click(screen.getByText('Alice mentioned you'));
     expect(routerMock.push).toHaveBeenCalledWith('/channel/ch-general');
 

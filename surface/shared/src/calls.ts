@@ -12,6 +12,17 @@ import { Schema } from 'effect';
 export const CallStatusSchema = Schema.Literal('ringing', 'active', 'ended');
 export type CallStatus = Schema.Schema.Type<typeof CallStatusSchema>;
 
+// Call lifecycle policy, shared so the server (read filter + sweeper) and the
+// clients (banner TTLs, snapshot age guards) can never disagree about when a
+// call is dead. Clients mirror these as a defense against older servers that
+// still serve stale rows.
+/** A ring older than this is dead: never surface it, and the sweeper ends it. */
+export const CALL_RING_TTL_MS = 60_000;
+/** An `active` call whose participants have all left is swept after this long. */
+export const CALL_EMPTY_ACTIVE_TTL_MS = 15 * 60_000;
+/** Hard backstop: no call row may outlive this, regardless of status. */
+export const CALL_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
 export const CallUserRefSchema = Schema.mutable(
   Schema.Struct({
     id: Schema.String,

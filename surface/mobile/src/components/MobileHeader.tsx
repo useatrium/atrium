@@ -3,7 +3,7 @@
 // title; right = optional per-tab actions.
 import type { ReactNode } from 'react';
 import { Pressable, Text, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useChat } from '../lib/chat';
@@ -13,8 +13,13 @@ import { Avatar } from './Avatar';
 export function MobileHeader({ title, right }: { title: string; right?: ReactNode }) {
   const { colors } = useTheme();
   const { me } = useChat();
+  // Deliberately NOT RNSAC's <SafeAreaView>: that native view pads by the
+  // window inset regardless of the JS SafeAreaInsetsContext, so
+  // CallBannerSafeArea's top-inset zeroing (while global call banners occupy
+  // the status-bar area) never reaches it and the header double-pads.
+  const insets = useSafeAreaInsets();
   return (
-    <SafeAreaView edges={['top']} style={{ backgroundColor: colors.bg }}>
+    <View style={{ paddingTop: insets.top, backgroundColor: colors.bg }}>
       <View
         style={{
           flexDirection: 'row',
@@ -64,6 +69,6 @@ export function MobileHeader({ title, right }: { title: string; right?: ReactNod
         </Text>
         {right ? <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2 }}>{right}</View> : null}
       </View>
-    </SafeAreaView>
+    </View>
   );
 }
