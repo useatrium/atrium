@@ -1,6 +1,6 @@
 import { CALL_MAX_AGE_MS, CALL_RING_TTL_MS } from '@atrium/surface-client/calls';
 import type { Db, DbClient } from './db.js';
-import type { UserRef } from './events.js';
+import { appendEvent, type UserRef, type WireEvent } from './events.js';
 import { workspaceMemberIds } from './membership.js';
 
 export type CallStatus = 'ringing' | 'active' | 'ended';
@@ -29,6 +29,7 @@ export interface EndCallResult {
   callId: string;
   recipients: string[];
   ended: boolean;
+  event: WireEvent | null;
 }
 
 export type ActiveCallRow = CallRow & { channel_kind: 'public' | 'private' | 'dm' | 'gdm' };
@@ -97,11 +98,14 @@ export async function activeCallById(client: DbClient, callId: string): Promise<
   return call.rows[0] ?? null;
 }
 
-/** End a live call while holding its row lock and collect its channel recipients. */
-export async function endCall(client: DbClient, callId: string): Promise<EndCallResult | null> {
-  const call = await activeCallById(client, callId);
-  if (!call) return null;
-  await client.query('UPDATE call_participants SET left_at = now() WHERE call_id = $1 AND left_at IS NULL', [call.id]);
+/**
+ * Mark a locked call as ended and, for direct conversations, append the one
+ * durable terminal event that feeds missed/declined-call history.
+ */
+export async function finalizeEndedCall(
+  client: DbClient,
+  call: ActiveCallRow,
+): Promise<{ ended: boolean; event: WireEvent | null }> {
   const ended = await client.query(
     `UPDATE calls
      SET status = 'ended', ended_at = COALESCE(ended_at, now())
@@ -109,13 +113,46 @@ export async function endCall(client: DbClient, callId: string): Promise<EndCall
      RETURNING 1`,
     [call.id],
   );
-  if ((ended.rowCount ?? 0) === 0) {
-    return { callId: call.id, recipients: [], ended: false };
+  if ((ended.rowCount ?? 0) === 0) return { ended: false, event: null };
+  if (call.channel_kind !== 'dm' && call.channel_kind !== 'gdm') return { ended: true, event: null };
+
+  const answered = await client.query<{ answered: boolean }>(
+    `SELECT EXISTS (
+       SELECT 1
+       FROM call_participants
+       WHERE call_id = $1 AND user_id <> $2
+     ) AS answered`,
+    [call.id, call.initiator_id],
+  );
+  const event = await appendEvent(client, {
+    workspaceId: call.workspace_id,
+    channelId: call.channel_id,
+    type: 'call.ended',
+    actorId: call.initiator_id,
+    payload: {
+      callId: call.id,
+      initiatorId: call.initiator_id,
+      startedAt: new Date(call.started_at).toISOString(),
+      answered: answered.rows[0]?.answered === true,
+    },
+  });
+  return { ended: true, event };
+}
+
+/** End a live call while holding its row lock and collect its channel recipients. */
+export async function endCall(client: DbClient, callId: string): Promise<EndCallResult | null> {
+  const call = await activeCallById(client, callId);
+  if (!call) return null;
+  await client.query('UPDATE call_participants SET left_at = now() WHERE call_id = $1 AND left_at IS NULL', [call.id]);
+  const finalized = await finalizeEndedCall(client, call);
+  if (!finalized.ended) {
+    return { callId: call.id, recipients: [], ended: false, event: null };
   }
   return {
     callId: call.id,
     recipients: await channelRecipientIds(client, call.channel_id),
     ended: true,
+    event: finalized.event,
   };
 }
 

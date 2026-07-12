@@ -68,6 +68,8 @@ export function activityItemTitle(item: ActivityItem): string {
   if (item.kind === 'reaction') return `${item.actorName ?? 'Someone'} reacted to your message`;
   if (item.kind === 'channel_invite') return `${item.actorName ?? 'Someone'} added you`;
   if (item.kind === 'seat_request') return `${item.actorName ?? 'Someone'} wants to drive · ${sessionTitle}`;
+  if (item.kind === 'missed_call') return `${item.actorName ?? 'Someone'} called you`;
+  if (item.kind === 'call_declined') return `${item.actorName ?? 'Someone'} called · you declined`;
   return 'Activity';
 }
 
@@ -82,6 +84,8 @@ export function activityItemMarker(item: ActivityItem): string {
   if (item.kind === 'reaction') return '☺';
   if (item.kind === 'channel_invite') return '+';
   if (item.kind === 'seat_request') return '⇄';
+  if (item.kind === 'missed_call') return '✆';
+  if (item.kind === 'call_declined') return '✆';
   return '•';
 }
 
