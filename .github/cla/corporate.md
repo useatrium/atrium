@@ -128,9 +128,9 @@ representations inaccurate in any respect.
 Contributor License Agreement v2.2.*
 
 **How to sign:** email a completed and signed copy of this Agreement,
-including the fields below, to the Project Steward (see the contact in the
-repository's SECURITY.md / git history), and have each designated employee
-also sign the Individual CLA on their first pull request.
+including the fields below, to the Project Steward at <gbasin@gmail.com>,
+and have each designated employee also sign the Individual CLA on their
+first pull request.
 
 ```
 Corporation name:    ________________________________

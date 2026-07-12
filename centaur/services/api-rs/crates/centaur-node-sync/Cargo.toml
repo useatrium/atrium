@@ -6,7 +6,9 @@ edition.workspace = true
 # subtree's Apache-2.0 OR MIT. Standalone binaries only; nothing in the workspace
 # may link this as a library dependency. See LICENSE here + repo-root NOTICE.
 license = "AGPL-3.0-or-later"
-repository.workspace = true
+# Not repository.workspace: that points at upstream paradigmxyz/centaur, which
+# doesn't contain this crate — AGPL source-availability must point at the fork.
+repository = "https://github.com/gbasin/atrium"
 
 # The node-side sync component (Track C4 + the inbound complement). Privileged,
 # one-per-node: scans each session's overlay `upper` (the changed set), classifies

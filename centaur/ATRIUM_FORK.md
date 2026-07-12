@@ -36,9 +36,13 @@ the Atrium repo (not a separate `gbasin/centaur`) is the source of truth.
 
 - The subtree keeps upstream's terms: **Apache-2.0 OR MIT** (`LICENSE` here). The rest
   of the Atrium repo is AGPL-3.0-or-later; the boundary is this directory.
-- **Fork edits and additions under `centaur/` stay Apache-2.0 OR MIT by default** —
-  same terms as the tree they live in. This keeps upstream pulls merge-clean and means
-  any fix we make could flow back upstream without a license question.
+- **Fork edits and additions under `centaur/` stay under those upstream terms by
+  default.** This keeps upstream pulls merge-clean and means any fix we make could flow
+  back upstream without a license question. Note the cargo metadata nuance: upstream's
+  api-rs workspace stamps `license = "MIT"` (`services/api-rs/Cargo.toml`
+  `[workspace.package]`), so crates using `license.workspace = true` report MIT — the
+  narrower of the two options in `LICENSE`. That's upstream's declaration; don't "fix"
+  it here (it would re-conflict on every pull).
 - A deliberate exception (e.g. moving a fork-owned crate to another license) must carry
   an explicit `license` in its own `Cargo.toml` plus a `LICENSE` file in its directory,
   and be recorded in the repo-root `NOTICE` — never by editing this subtree's top-level
@@ -49,7 +53,9 @@ the Atrium repo (not a separate `gbasin/centaur`) is the source of truth.
   subsystem), ships only standalone binaries (the node daemon + overlay/warmcache
   helpers), and nothing else in the workspace links it — the rest of Centaur talks to
   it via pod exec, mount conventions, and HTTP. Keep it that way: **don't add
-  `centaur-node-sync` as a library dependency of any Apache/MIT crate.**
+  `centaur-node-sync` as a library dependency of any Apache/MIT crate.** CI enforces
+  this — the "License boundary" job in the root `centaur-ci.yml` fails any PR that
+  makes another crate depend on it.
 - External contributions everywhere in the repo (including here) are covered by the
   CLA — see the repo-root `CONTRIBUTING.md`.
 

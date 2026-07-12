@@ -39,8 +39,8 @@ You keep the copyright to your contributions. The CLA grants the project a
 broad license to use, sublicense, and relicense them (which is what keeps
 commercial licensing and future license changes possible), and in return
 commits that every contribution also stays available under the open-source
-license it was submitted under. The CLA check (`.github/workflows/cla.yml`)
-is required for merge.
+license it was submitted under. The CLA status (**CLA Assistant**, from
+`.github/workflows/cla.yml`) is a required check for merging into `master`.
 
 ## Branching
 
@@ -79,7 +79,7 @@ list`). Before you commit:
   - **Centaur CI success** — runs the managed Centaur checks when runtime paths change.
   - **Gitleaks** — scans for committed secrets.
   - **Validate PR title** — checks the title is a valid Conventional Commit.
-  - **CLA** — external contributors must have signed the CLA (see
+  - **CLA Assistant** — external contributors must have signed the CLA (see
     [Licensing and the CLA](#licensing-and-the-cla)).
 - PRs are **squash-merged**. The repo is configured so the squash commit's subject
   is the **PR title** (`squash_merge_commit_title=PR_TITLE`).
