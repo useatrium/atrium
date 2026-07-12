@@ -2,7 +2,10 @@
 name = "centaur-node-sync"
 version = "0.1.0"
 edition.workspace = true
-license.workspace = true
+# Atrium-original crate (not part of upstream centaur) — licensed AGPL, not the
+# subtree's Apache-2.0 OR MIT. Standalone binaries only; nothing in the workspace
+# may link this as a library dependency. See LICENSE here + repo-root NOTICE.
+license = "AGPL-3.0-or-later"
 repository.workspace = true
 
 # The node-side sync component (Track C4 + the inbound complement). Privileged,

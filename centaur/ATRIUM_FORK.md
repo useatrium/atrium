@@ -44,6 +44,12 @@ the Atrium repo (not a separate `gbasin/centaur`) is the source of truth.
   and be recorded in the repo-root `NOTICE` — never by editing this subtree's top-level
   `LICENSE`. Note the trade-off before doing this: code that other centaur crates or
   binaries link against can't be more restrictive than the binary it ends up in.
+- **Current exception:** `services/api-rs/crates/centaur-node-sync` is
+  **AGPL-3.0-or-later**. It's an Atrium-original crate (upstream has no node-sync
+  subsystem), ships only standalone binaries (the node daemon + overlay/warmcache
+  helpers), and nothing else in the workspace links it — the rest of Centaur talks to
+  it via pod exec, mount conventions, and HTTP. Keep it that way: **don't add
+  `centaur-node-sync` as a library dependency of any Apache/MIT crate.**
 - External contributions everywhere in the repo (including here) are covered by the
   CLA — see the repo-root `CONTRIBUTING.md`.
 

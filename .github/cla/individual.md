@@ -75,7 +75,8 @@ Section 2, each Contribution as submitted will also be made available under
 the terms of the open-source license(s) applying, at the date of submission,
 to the Project files to which the Contribution was submitted (at the date of
 this Agreement: AGPL-3.0-or-later for Atrium code, and Apache-2.0 OR MIT for
-the vendored `centaur/` tree).
+the vendored `centaur/` tree, with per-directory exceptions recorded in the
+repository's NOTICE file).
 
 ## 5. Your Representations
 
