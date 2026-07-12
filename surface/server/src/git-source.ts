@@ -65,10 +65,7 @@ function requireRepoRoot(root: string | undefined): string {
   return root;
 }
 
-function safeGitPath(
-  rawPath: string,
-  opts: { allowEmpty?: boolean; trimTrailingSlash?: boolean } = {},
-): string {
+function safeGitPath(rawPath: string, opts: { allowEmpty?: boolean; trimTrailingSlash?: boolean } = {}): string {
   if (rawPath.includes('\0')) {
     throw new Error('unsafe git path');
   }
@@ -86,11 +83,11 @@ function safeGitPath(
 }
 
 async function git(repoRoot: string, args: string[]): Promise<Buffer> {
-  const result = await execFileAsync('git', args, {
+  const result = (await execFileAsync('git', args, {
     cwd: repoRoot,
     encoding: 'buffer',
     maxBuffer: MAX_GIT_OUTPUT_BYTES,
-  }) as { stdout: Buffer; stderr: Buffer };
+  })) as { stdout: Buffer; stderr: Buffer };
   return result.stdout;
 }
 
@@ -126,9 +123,11 @@ function parseHistory(stdout: Buffer): Array<{ sha: string; author: string; date
 
 function isMissingTreeish(err: unknown): boolean {
   const text = errorText(err).toLowerCase();
-  return text.includes('not a valid object name')
-    || text.includes('path ') && text.includes('does not exist')
-    || text.includes('exists on disk, but not in');
+  return (
+    text.includes('not a valid object name') ||
+    (text.includes('path ') && text.includes('does not exist')) ||
+    text.includes('exists on disk, but not in')
+  );
 }
 
 function errorText(err: unknown): string {

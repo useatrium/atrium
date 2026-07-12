@@ -33,9 +33,8 @@ export function GitHubConnectionDialog({
   const errorId = 'github-connection-error';
   const installationHelpId = 'github-installation-help';
   const patHelpId = 'github-pat-help';
-  const installationDescription = error && errorField === 'installation'
-    ? `${installationHelpId} ${errorId}`
-    : installationHelpId;
+  const installationDescription =
+    error && errorField === 'installation' ? `${installationHelpId} ${errorId}` : installationHelpId;
   const patDescription = error && errorField === 'token' ? `${patHelpId} ${errorId}` : patHelpId;
 
   useDialog({ open: true, containerRef, onClose: onCancel, closeOnOutsidePointer: true });
@@ -55,9 +54,7 @@ export function GitHubConnectionDialog({
   }
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-surface/60 p-4"
-    >
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-surface/60 p-4">
       <div
         ref={containerRef}
         role="dialog"
@@ -68,7 +65,9 @@ export function GitHubConnectionDialog({
       >
         <header className="flex items-center justify-between border-b border-edge px-4 py-3">
           <div>
-            <h2 id={titleId} className="text-sm font-semibold text-fg">GitHub connection</h2>
+            <h2 id={titleId} className="text-sm font-semibold text-fg">
+              GitHub connection
+            </h2>
             <p className="text-2xs text-fg-muted">
               {connected || needsAuth ? activeSummary : 'Use your GitHub account for repository access.'}
             </p>
@@ -185,8 +184,8 @@ export function GitHubConnectionDialog({
                     type="button"
                     disabled={busy || installationId.trim().length === 0}
                     onClick={() =>
-                      void run(() =>
-                        onConnect({ tokenKind: 'app_installation', installationId: installationId.trim() }),
+                      void run(
+                        () => onConnect({ tokenKind: 'app_installation', installationId: installationId.trim() }),
                         'installation',
                       )
                     }

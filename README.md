@@ -277,6 +277,6 @@ Atrium adds is in
 - **UI surfaces:** the screens and how they compose — [docs/surfaces.md](docs/surfaces.md).
 - **Desktop app:** build, signing, and auto-update — [surface/desktop/README.md](surface/desktop/README.md).
 - **Agent engine:** our Centaur fork in [`centaur/`](centaur/) — upstream [paradigmxyz/centaur](https://github.com/paradigmxyz/centaur) (Apache-2.0 OR MIT), pulled via subtree (see [`centaur/ATRIUM_FORK.md`](centaur/ATRIUM_FORK.md)).
-- **Contributing:** branch and PR/merge flow in [CONTRIBUTING.md](CONTRIBUTING.md).
+- **Contributing:** branch and PR/merge flow in [CONTRIBUTING.md](CONTRIBUTING.md). External contributions are accepted under a [Contributor License Agreement](.github/cla/individual.md), signed once on your first PR.
 - **Security:** report vulnerabilities privately; see [SECURITY.md](SECURITY.md).
 - **License:** Atrium is AGPL-3.0-or-later; vendored Centaur remains Apache-2.0 OR MIT. See [LICENSE](LICENSE), [NOTICE](NOTICE), and [centaur/LICENSE](centaur/LICENSE).

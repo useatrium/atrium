@@ -156,9 +156,7 @@ describe('POST /api/voice/:fileId/retranscribe', () => {
     const current = await startApp();
     const cookie = await login('alice', 'Alice');
     const { fileId } = await postVoiceMessage();
-    await pool.query("UPDATE transcripts SET status = 'done', text = 'already done' WHERE file_id = $1", [
-      fileId,
-    ]);
+    await pool.query("UPDATE transcripts SET status = 'done', text = 'already done' WHERE file_id = $1", [fileId]);
 
     const res = await current.inject({
       method: 'POST',

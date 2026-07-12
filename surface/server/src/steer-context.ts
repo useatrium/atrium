@@ -22,7 +22,10 @@ export interface SteerContextSuggestionAttribution {
 
 export interface SteerContextProvenance {
   from: SteerContextActor;
+  you: { name?: string | null; sessionTitle: string };
   channel: string;
+  channelId: string;
+  thread?: string | null;
   sent: Date | string;
   suggestion?: SteerContextSuggestionAttribution;
 }
@@ -32,7 +35,10 @@ export interface ParsedSteerContextBlock {
   handle: string | null;
   kind: SteerContextActorKind;
   seat: string | null;
+  you: string | null;
   channel: string | null;
+  channelId: string | null;
+  thread: string | null;
   sent: string | null;
   suggestedBy?: {
     name: string;
@@ -56,7 +62,9 @@ export function buildSteerContextBlock(provenance: SteerContextProvenance): stri
   const lines = [
     ATRIUM_CONTEXT_MARKER,
     `from: ${oneLine(from.name)} (${actorLabel(from.handle, from.kind, from.seat)})`,
-    `channel: #${channelLabel(provenance.channel)}`,
+    `you: ${oneLine(provenance.you.name ?? '') || 'agent'} — session "${sessionTitle(provenance.you.sessionTitle)}"`,
+    `channel: #${channelLabel(provenance.channel)} (id: ${oneLine(provenance.channelId)})`,
+    ...(provenance.thread ? [`thread: ${oneLine(provenance.thread)}`] : []),
     `sent: ${sentIso(provenance.sent)}`,
   ];
 
@@ -83,6 +91,8 @@ export function parseSteerContextBlock(text: string): ParsedSteerContextBlock | 
   if (!from) return null;
 
   const channelLine = lines.find((line) => line.startsWith('channel: '));
+  const youLine = lines.find((line) => line.startsWith('you: '));
+  const threadLine = lines.find((line) => line.startsWith('thread: '));
   const sentLine = lines.find((line) => line.startsWith('sent: '));
   const suggestionLine = lines.find((line) => line.startsWith('suggested by: '));
   const suggestion = suggestionLine ? parseSuggestionLine(suggestionLine) : null;
@@ -92,10 +102,21 @@ export function parseSteerContextBlock(text: string): ParsedSteerContextBlock | 
     handle: from.handle,
     kind: from.kind,
     seat: from.seat,
-    channel: channelLine ? channelLine.slice('channel: '.length).trim().replace(/^#/, '') || null : null,
+    you: youLine ? youLine.slice('you: '.length).trim() || null : null,
+    ...parseChannelLine(channelLine),
+    thread: threadLine ? threadLine.slice('thread: '.length).trim() || null : null,
     sent: sentLine ? sentLine.slice('sent: '.length).trim() || null : null,
     ...(suggestion ? suggestion : {}),
   };
+}
+
+function parseChannelLine(line: string | undefined): Pick<ParsedSteerContextBlock, 'channel' | 'channelId'> {
+  if (!line) return { channel: null, channelId: null };
+  const value = line.slice('channel: '.length).trim().replace(/^#/, '');
+  const match = /^(.*?) \(id: ([^)]+)\)$/.exec(value);
+  return match
+    ? { channel: match[1]!.trim() || null, channelId: match[2]!.trim() || null }
+    : { channel: value || null, channelId: null };
 }
 
 export function stripSteerContextPrefix(raw: string): SteerContextPrefix | null {
@@ -174,9 +195,7 @@ function parseActorLine(
   };
 }
 
-function parseSuggestionLine(
-  line: string,
-): Pick<ParsedSteerContextBlock, 'suggestedBy' | 'acceptedBy'> | null {
+function parseSuggestionLine(line: string): Pick<ParsedSteerContextBlock, 'suggestedBy' | 'acceptedBy'> | null {
   const parts = line.split(SUGGESTION_SEPARATOR);
   if (parts.length !== 2) return null;
   const suggestedBy = parseActorLine(parts[0]!, 'suggested by: ');
@@ -207,11 +226,7 @@ function parseActorKind(value: string | undefined): SteerContextActorKind | null
   return value === 'human' || value === 'agent' ? value : null;
 }
 
-function actorLabel(
-  handle: string | null | undefined,
-  kind: SteerContextActorKind,
-  seat?: string | null,
-): string {
+function actorLabel(handle: string | null | undefined, kind: SteerContextActorKind, seat?: string | null): string {
   const cleanSeat = oneLine(seat ?? '');
   return handleLabelParts(handle, cleanSeat ? `${kind}${ACTOR_SEAT_SEPARATOR}${cleanSeat}` : kind);
 }
@@ -223,6 +238,11 @@ function handleLabelParts(handle: string | null | undefined, rest: string): stri
 
 function channelLabel(channel: string): string {
   return oneLine(channel).replace(/^#+/, '') || 'unknown';
+}
+
+function sessionTitle(title: string): string {
+  const clean = oneLine(title);
+  return clean.length <= 80 ? clean : `${clean.slice(0, 79)}…`;
 }
 
 function sentIso(sent: Date | string): string {

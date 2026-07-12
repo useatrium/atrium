@@ -17,7 +17,8 @@ export function MarkdownRenderer({ file, variant }: { file: PreviewFile; variant
     fetchText(file, controller.signal)
       .then((text) => setState({ status: 'ready', text }))
       .catch((error: unknown) => {
-        if (!controller.signal.aborted) setState({ status: 'error', text: error instanceof Error ? error.message : 'Failed to load' });
+        if (!controller.signal.aborted)
+          setState({ status: 'error', text: error instanceof Error ? error.message : 'Failed to load' });
       });
     return () => controller.abort();
   }, [file]);
@@ -41,7 +42,11 @@ export function MarkdownRenderer({ file, variant }: { file: PreviewFile; variant
         <div className="text-sm text-danger-text">{state.text}</div>
       ) : (
         <div className="mx-auto max-w-3xl">
-          {containsCriticMarkup(state.text) ? <CriticMarkupView text={state.text} /> : <SessionMarkdown text={state.text} />}
+          {containsCriticMarkup(state.text) ? (
+            <CriticMarkupView text={state.text} />
+          ) : (
+            <SessionMarkdown text={state.text} />
+          )}
         </div>
       )}
     </div>

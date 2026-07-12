@@ -1,14 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import {
-  KeyboardAvoidingView,
-  Modal,
-  Platform,
-  Pressable,
-  ScrollView,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
+import { KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import type { AgentProfile } from '@atrium/surface-client';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -29,6 +20,58 @@ export interface SpawnSheetConfig {
   repo?: string;
   agentProfileId?: string;
   agentProfileVersionId?: string;
+}
+
+function SelectionCard({
+  label,
+  hint,
+  selected,
+  onPress,
+  accessibilityLabel = label,
+  accessibilityHint = hint,
+}: {
+  label: string;
+  hint: string;
+  selected: boolean;
+  onPress: () => void;
+  accessibilityLabel?: string;
+  accessibilityHint?: string;
+}) {
+  const { colors } = useTheme();
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel}
+      accessibilityHint={accessibilityHint}
+      accessibilityState={{ selected }}
+      onPress={onPress}
+      style={({ pressed }) => ({
+        borderColor: selected ? colors.accent : colors.border,
+        borderRadius: radius.md,
+        borderWidth: 1,
+        backgroundColor: pressed ? colors.bgPressed : selected ? colors.accentBg : colors.bgInput,
+        minHeight: 58,
+        paddingHorizontal: space.md,
+        paddingVertical: space.sm,
+      })}
+    >
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm }}>
+        <Ionicons
+          name={selected ? 'radio-button-on' : 'radio-button-off'}
+          size={18}
+          color={selected ? colors.accent : colors.textMuted}
+        />
+        <View style={{ flex: 1 }}>
+          <Text maxFontSizeMultiplier={2} style={{ color: colors.text, fontSize: font.sm, fontWeight: '800' }}>
+            {label}
+          </Text>
+          <Text maxFontSizeMultiplier={2} style={{ color: colors.textMuted, fontSize: font.xs, marginTop: 2 }}>
+            {hint}
+          </Text>
+        </View>
+      </View>
+    </Pressable>
+  );
 }
 
 export function SpawnSheet({
@@ -122,16 +165,8 @@ export function SpawnSheet({
   };
 
   return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType={reduceMotion ? 'none' : 'slide'}
-      onRequestClose={onClose}
-    >
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        style={{ flex: 1 }}
-      >
+    <Modal visible={visible} transparent animationType={reduceMotion ? 'none' : 'slide'} onRequestClose={onClose}>
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
         <View style={{ flex: 1, backgroundColor: colors.scrim, justifyContent: 'flex-end' }}>
           <Pressable
             accessible={false}
@@ -207,9 +242,7 @@ export function SpawnSheet({
               }}
             >
               <View style={{ gap: space.sm }}>
-                <Text style={{ color: colors.textMuted, fontSize: font.xs, fontWeight: '800' }}>
-                  Task
-                </Text>
+                <Text style={{ color: colors.textMuted, fontSize: font.xs, fontWeight: '800' }}>Task</Text>
                 <TextInput
                   ref={taskInputRef}
                   autoFocus
@@ -237,56 +270,18 @@ export function SpawnSheet({
               </View>
 
               <View style={{ gap: space.sm }}>
-                <Text style={{ color: colors.textMuted, fontSize: font.xs, fontWeight: '800' }}>
-                  Harness
-                </Text>
+                <Text style={{ color: colors.textMuted, fontSize: font.xs, fontWeight: '800' }}>Harness</Text>
                 <View style={{ gap: space.sm }}>
                   {HARNESSES.map((item) => {
                     const selected = harness === item.value;
                     return (
-                      <Pressable
+                      <SelectionCard
                         key={item.value}
-                        accessibilityRole="button"
-                        accessibilityLabel={item.label}
-                        accessibilityHint={item.hint}
-                        accessibilityState={{ selected }}
+                        label={item.label}
+                        hint={item.hint}
+                        selected={selected}
                         onPress={() => setHarness(item.value)}
-                        style={({ pressed }) => ({
-                          borderColor: selected ? colors.accent : colors.border,
-                          borderRadius: radius.md,
-                          borderWidth: 1,
-                          backgroundColor: pressed
-                            ? colors.bgPressed
-                            : selected
-                              ? colors.accentBg
-                              : colors.bgInput,
-                          minHeight: 58,
-                          paddingHorizontal: space.md,
-                          paddingVertical: space.sm,
-                        })}
-                      >
-                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm }}>
-                          <Ionicons
-                            name={selected ? 'radio-button-on' : 'radio-button-off'}
-                            size={18}
-                            color={selected ? colors.accent : colors.textMuted}
-                          />
-                          <View style={{ flex: 1 }}>
-                            <Text
-                              maxFontSizeMultiplier={2}
-                              style={{ color: colors.text, fontSize: font.sm, fontWeight: '800' }}
-                            >
-                              {item.label}
-                            </Text>
-                            <Text
-                              maxFontSizeMultiplier={2}
-                              style={{ color: colors.textMuted, fontSize: font.xs, marginTop: 2 }}
-                            >
-                              {item.hint}
-                            </Text>
-                          </View>
-                        </View>
-                      </Pressable>
+                      />
                     );
                   })}
                 </View>
@@ -294,99 +289,28 @@ export function SpawnSheet({
 
               {matchingProfiles.length > 0 ? (
                 <View style={{ gap: space.sm }}>
-                  <Text style={{ color: colors.textMuted, fontSize: font.xs, fontWeight: '800' }}>
-                    Profile
-                  </Text>
+                  <Text style={{ color: colors.textMuted, fontSize: font.xs, fontWeight: '800' }}>Profile</Text>
                   <View style={{ gap: space.sm }}>
-                    <Pressable
-                      accessibilityRole="button"
+                    <SelectionCard
+                      label="Default"
                       accessibilityLabel="Default profile"
-                      accessibilityHint="Use the default profile for this harness."
-                      accessibilityState={{ selected: agentProfileId === '' }}
+                      hint="Use the harness default."
+                      selected={agentProfileId === ''}
                       onPress={() => setAgentProfileId('')}
-                      style={({ pressed }) => ({
-                        borderColor: agentProfileId === '' ? colors.accent : colors.border,
-                        borderRadius: radius.md,
-                        borderWidth: 1,
-                        backgroundColor: pressed
-                          ? colors.bgPressed
-                          : agentProfileId === ''
-                            ? colors.accentBg
-                            : colors.bgInput,
-                        minHeight: 58,
-                        paddingHorizontal: space.md,
-                        paddingVertical: space.sm,
-                      })}
-                    >
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm }}>
-                        <Ionicons
-                          name={agentProfileId === '' ? 'radio-button-on' : 'radio-button-off'}
-                          size={18}
-                          color={agentProfileId === '' ? colors.accent : colors.textMuted}
-                        />
-                        <View style={{ flex: 1 }}>
-                          <Text
-                            maxFontSizeMultiplier={2}
-                            style={{ color: colors.text, fontSize: font.sm, fontWeight: '800' }}
-                          >
-                            Default
-                          </Text>
-                          <Text
-                            maxFontSizeMultiplier={2}
-                            style={{ color: colors.textMuted, fontSize: font.xs, marginTop: 2 }}
-                          >
-                            Use the harness default.
-                          </Text>
-                        </View>
-                      </View>
-                    </Pressable>
+                    />
 
                     {matchingProfiles.map((profile) => {
                       const selected = agentProfileId === profile.id;
                       return (
-                        <Pressable
+                        <SelectionCard
                           key={profile.id}
-                          accessibilityRole="button"
                           accessibilityLabel={`Profile ${profile.name}`}
                           accessibilityHint="Use this saved agent profile for the session."
-                          accessibilityState={{ selected }}
+                          label={profile.name}
+                          hint={`Saved ${itemLabelForHarness(harness)} profile.`}
+                          selected={selected}
                           onPress={() => setAgentProfileId(profile.id)}
-                          style={({ pressed }) => ({
-                            borderColor: selected ? colors.accent : colors.border,
-                            borderRadius: radius.md,
-                            borderWidth: 1,
-                            backgroundColor: pressed
-                              ? colors.bgPressed
-                              : selected
-                                ? colors.accentBg
-                                : colors.bgInput,
-                            minHeight: 58,
-                            paddingHorizontal: space.md,
-                            paddingVertical: space.sm,
-                          })}
-                        >
-                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm }}>
-                            <Ionicons
-                              name={selected ? 'radio-button-on' : 'radio-button-off'}
-                              size={18}
-                              color={selected ? colors.accent : colors.textMuted}
-                            />
-                            <View style={{ flex: 1 }}>
-                              <Text
-                                maxFontSizeMultiplier={2}
-                                style={{ color: colors.text, fontSize: font.sm, fontWeight: '800' }}
-                              >
-                                {profile.name}
-                              </Text>
-                              <Text
-                                maxFontSizeMultiplier={2}
-                                style={{ color: colors.textMuted, fontSize: font.xs, marginTop: 2 }}
-                              >
-                                Saved {itemLabelForHarness(harness)} profile.
-                              </Text>
-                            </View>
-                          </View>
-                        </Pressable>
+                        />
                       );
                     })}
                   </View>
@@ -394,9 +318,7 @@ export function SpawnSheet({
               ) : null}
 
               <View style={{ gap: space.sm }}>
-                <Text style={{ color: colors.textMuted, fontSize: font.xs, fontWeight: '800' }}>
-                  Repo optional
-                </Text>
+                <Text style={{ color: colors.textMuted, fontSize: font.xs, fontWeight: '800' }}>Repo optional</Text>
                 <TextInput
                   accessibilityLabel="Repository"
                   accessibilityHint="Optionally enter a repository for the agent session."

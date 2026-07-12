@@ -57,7 +57,7 @@ test('configured spawn posts working and reference repo specs', async ({ page })
   });
 
   await page.getByRole('button', { name: 'New agent' }).click();
-  const dialog = page.getByRole('dialog', { name: 'Start an agent session' });
+  const dialog = page.getByRole('dialog', { name: 'Start an agent' });
   await expect(dialog).toBeVisible();
 
   await fillField(dialog.getByPlaceholder('What should the agent do?'), 'inspect repo wiring');
@@ -232,7 +232,7 @@ test('configured spawn blocks private repos until GitHub is connected', async ({
   await fillField(page.getByPlaceholder('owner/name').first(), ' acme/private ');
   await page.getByRole('checkbox', { name: 'Private repo' }).check();
 
-  await expect(page.getByText('Connect GitHub before starting a session with private repositories.')).toBeVisible();
+  await expect(page.getByText('Connect GitHub before starting an agent with private repositories.')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Start session' })).toBeDisabled();
 
   await page.getByRole('button', { name: 'Connect GitHub' }).click();

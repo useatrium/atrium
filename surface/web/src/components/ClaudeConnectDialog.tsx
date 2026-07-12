@@ -32,11 +32,9 @@ export function ClaudeConnectDialog({
   const helpId = 'claude-connect-code-help';
   const statusErrorId = 'claude-connect-status-error';
   const errorId = 'claude-connect-error';
-  const codeDescription = [
-    helpId,
-    status?.lastError ? statusErrorId : null,
-    error ? errorId : null,
-  ].filter((id): id is string => Boolean(id)).join(' ');
+  const codeDescription = [helpId, status?.lastError ? statusErrorId : null, error ? errorId : null]
+    .filter((id): id is string => Boolean(id))
+    .join(' ');
 
   useDialog({
     open: true,
@@ -110,9 +108,7 @@ export function ClaudeConnectDialog({
   }
 
   return (
-    <div
-      className="fixed inset-0 z-[60] flex items-start justify-center overflow-y-auto bg-surface/60 p-4"
-    >
+    <div className="fixed inset-0 z-[60] flex items-start justify-center overflow-y-auto bg-surface/60 p-4">
       <form
         ref={containerRef}
         onSubmit={submit}
@@ -124,10 +120,10 @@ export function ClaudeConnectDialog({
       >
         <header className="flex items-center justify-between border-b border-edge px-4 py-3">
           <div>
-            <h2 id={titleId} className="text-sm font-semibold text-fg">Claude Code</h2>
-            <p className="text-2xs text-fg-muted">
-              {connected ? 'Connected' : 'Not connected'}
-            </p>
+            <h2 id={titleId} className="text-sm font-semibold text-fg">
+              Claude Code
+            </h2>
+            <p className="text-2xs text-fg-muted">{connected ? 'Connected' : 'Not connected'}</p>
           </div>
           <button
             type="button"
@@ -152,9 +148,7 @@ export function ClaudeConnectDialog({
             <span id={helpId}>Approve on claude.com, then paste the code it shows you.</span>
           </div>
           <label className="block">
-            <span className="mb-1 block text-2xs font-semibold uppercase tracking-wider text-fg-muted">
-              Code
-            </span>
+            <span className="mb-1 block text-2xs font-semibold uppercase tracking-wider text-fg-muted">Code</span>
             <input
               ref={codeInputRef}
               // biome-ignore lint/a11y/noAutofocus: dialog primary field is intentionally focused on open; useDialog manages focus containment and restore.

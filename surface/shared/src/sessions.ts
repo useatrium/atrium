@@ -5,22 +5,16 @@ import { Schema } from 'effect';
 const NullableStringSchema = Schema.Union(Schema.String, Schema.Null);
 const NullableNumberSchema = Schema.Union(Schema.Number, Schema.Null);
 
-export type SessionStatus =
-  | 'spawning'
-  | 'queued'
-  | 'running'
-  | 'completed'
-  | 'failed'
-  | 'cancelled';
+export type SessionStatus = 'spawning' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
 
-export const SessionStatusSchema = Schema.Literal(
-  'spawning',
-  'queued',
-  'running',
-  'completed',
-  'failed',
-  'cancelled',
-);
+export const SessionStatusSchema = Schema.Literal('spawning', 'queued', 'running', 'completed', 'failed', 'cancelled');
+
+/**
+ * Presentation category for the global Attention surface. Running work is
+ * deliberately excluded: activity is not the same thing as a person needing
+ * to intervene.
+ */
+export type SessionAttentionKind = 'question' | 'authentication' | 'seat-request' | 'failed';
 
 /** Seat-related user reference as serialized by the server. */
 export interface SessionSeatUser {
@@ -84,6 +78,57 @@ export interface SessionQuestionAnswerSummary {
   count: number;
 }
 
+export interface SessionQuestionPayloadPrompt {
+  question: string;
+}
+
+export function questionPayloadPrompts(payload: Record<string, unknown>): SessionQuestionPayloadPrompt[] {
+  if (!Array.isArray(payload.questions)) return [];
+  return payload.questions
+    .map((item): SessionQuestionPayloadPrompt | null => {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) return null;
+      const question = (item as Record<string, unknown>).question;
+      return typeof question === 'string' && question.trim() ? { question } : null;
+    })
+    .filter((item): item is SessionQuestionPayloadPrompt => item !== null);
+}
+
+export function questionPayloadAnswers(payload: Record<string, unknown>): SessionQuestionAnswerSummary[] {
+  if (!Array.isArray(payload.answers)) return [];
+  return payload.answers
+    .map((item): SessionQuestionAnswerSummary | null => {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) return null;
+      const raw = item as Record<string, unknown>;
+      if (typeof raw.id !== 'string') return null;
+      const answers = Array.isArray(raw.answers)
+        ? raw.answers.filter((answer): answer is string => typeof answer === 'string')
+        : [];
+      return {
+        id: raw.id,
+        header: typeof raw.header === 'string' ? raw.header : raw.id,
+        answers,
+        count: typeof raw.count === 'number' && Number.isFinite(raw.count) ? raw.count : answers.length,
+      };
+    })
+    .filter((item): item is SessionQuestionAnswerSummary => item !== null);
+}
+
+export function questionAnswerSummaryText(summary: SessionQuestionAnswerSummary): string {
+  if (summary.answers.length > 0) return summary.answers.join('\n');
+  return summary.count === 1 ? '1 answer recorded' : `${summary.count} answers recorded`;
+}
+
+export function sessionQuestionEventLabel(
+  type: 'question_requested' | 'question_answered' | 'question_resolved' | undefined,
+  reason: unknown,
+): string {
+  if (type === 'question_requested') return 'Question asked';
+  if (type === 'question_answered') return 'Question answered';
+  if (reason === 'empty') return 'Question expired without an answer';
+  if (reason === 'cancelled') return 'Question cancelled';
+  return 'Question resolved';
+}
+
 export interface SessionQuestionEvent {
   /** Workspace event id. Dedupe key across WS fanout + catch-up overlap. */
   id: number;
@@ -137,8 +182,17 @@ export interface SteerProvenanceUserMessage {
   ts?: string | number | null;
 }
 
-function normalizeSteerProvenanceText(text: string): string {
+export function normalizeSteerProvenanceText(text: string): string {
   return text.trim().replace(/\s+/g, ' ');
+}
+
+export function steerProvenanceKey(provenance: SteerProvenance): string {
+  return [
+    String(provenance.resolvedAt),
+    provenance.proposerName,
+    provenance.resolvedByName,
+    provenance.edited ? 'edited' : 'sent',
+  ].join('\u0000');
 }
 
 function steerProvenanceTime(value: string | number | null | undefined): number | null {
@@ -261,6 +315,8 @@ export interface SessionWire {
   resultText: string | null;
   createdAt: string;
   completedAt: string | null;
+  archivedAt: string | null;
+  pinned: boolean;
   lastEventId: number;
   permalink: string;
 }
@@ -277,6 +333,8 @@ export interface SessionListItem {
   costUsd: number;
   createdAt: string;
   completedAt: string | null;
+  archivedAt: string | null;
+  pinned: boolean;
 }
 
 /** Client-side session entity (wire shape + display-only extras). */
@@ -320,8 +378,25 @@ export interface Session {
   resultText: string | null;
   createdAt: string;
   completedAt: string | null;
+  archivedAt: string | null;
+  pinned: boolean;
   lastEventId: number;
   permalink: string;
+}
+
+/**
+ * Return the highest-priority reason a live session needs a person's
+ * attention. This stays in the shared client package so web and native do not
+ * drift back into counting every non-terminal session as urgent.
+ */
+export function sessionAttentionKind(
+  session: Pick<Session, 'status' | 'pendingQuestion' | 'providerAuthRequired' | 'pendingSeatRequests'>,
+): SessionAttentionKind | null {
+  if (session.pendingQuestion) return 'question';
+  if (session.providerAuthRequired) return 'authentication';
+  if (session.pendingSeatRequests.length > 0) return 'seat-request';
+  if (session.status === 'failed') return 'failed';
+  return null;
 }
 
 export interface SessionRepoSpec {
@@ -352,138 +427,175 @@ export interface SessionQuestionAnswers {
   };
 }
 
-export const SessionRepoSpecSchema = Schema.mutable(Schema.Struct({
-  repo: Schema.String,
-  ref: Schema.optionalWith(Schema.String, { exact: true }),
-  subdir: Schema.optionalWith(Schema.String, { exact: true }),
-  private: Schema.optionalWith(Schema.Boolean, { exact: true }),
-}));
+export const SessionRepoSpecSchema = Schema.mutable(
+  Schema.Struct({
+    repo: Schema.String,
+    ref: Schema.optionalWith(Schema.String, { exact: true }),
+    subdir: Schema.optionalWith(Schema.String, { exact: true }),
+    private: Schema.optionalWith(Schema.Boolean, { exact: true }),
+  }),
+);
 
-export const SessionSeatUserSchema = Schema.mutable(Schema.Struct({
-  userId: Schema.String,
-  displayName: Schema.String,
-}));
+export const SessionSeatUserSchema = Schema.mutable(
+  Schema.Struct({
+    userId: Schema.String,
+    displayName: Schema.String,
+  }),
+);
 
-export const QuestionOptionSchema = Schema.mutable(Schema.Struct({
-  label: Schema.String,
-  description: Schema.String,
-  preview: Schema.optionalWith(Schema.String, { exact: true }),
-  previewFormat: Schema.optionalWith(Schema.Literal('markdown', 'html'), { exact: true }),
-}));
+export const QuestionOptionSchema = Schema.mutable(
+  Schema.Struct({
+    label: Schema.String,
+    description: Schema.String,
+    preview: Schema.optionalWith(Schema.String, { exact: true }),
+    previewFormat: Schema.optionalWith(Schema.Literal('markdown', 'html'), { exact: true }),
+  }),
+);
 
-export const QuestionPromptSchema = Schema.mutable(Schema.Struct({
-  id: Schema.String,
-  header: Schema.String,
-  question: Schema.String,
-  multiSelect: Schema.optionalWith(Schema.Boolean, { exact: true }),
-  isOther: Schema.optionalWith(Schema.Boolean, { exact: true }),
-  isSecret: Schema.optionalWith(Schema.Boolean, { exact: true }),
-  options: Schema.optionalWith(Schema.mutable(Schema.Array(QuestionOptionSchema)), { exact: true }),
-}));
+export const QuestionPromptSchema = Schema.mutable(
+  Schema.Struct({
+    id: Schema.String,
+    header: Schema.String,
+    question: Schema.String,
+    multiSelect: Schema.optionalWith(Schema.Boolean, { exact: true }),
+    isOther: Schema.optionalWith(Schema.Boolean, { exact: true }),
+    isSecret: Schema.optionalWith(Schema.Boolean, { exact: true }),
+    options: Schema.optionalWith(Schema.mutable(Schema.Array(QuestionOptionSchema)), { exact: true }),
+  }),
+);
 
-export const SessionPendingQuestionSchema = Schema.mutable(Schema.Struct({
-  questionId: Schema.String,
-  turnId: Schema.optionalWith(Schema.String, { exact: true }),
-  questions: Schema.mutable(Schema.Array(QuestionPromptSchema)),
-  eventId: Schema.optionalWith(Schema.Number, { exact: true }),
-}));
+export const SessionPendingQuestionSchema = Schema.mutable(
+  Schema.Struct({
+    questionId: Schema.String,
+    turnId: Schema.optionalWith(Schema.String, { exact: true }),
+    questions: Schema.mutable(Schema.Array(QuestionPromptSchema)),
+    eventId: Schema.optionalWith(Schema.Number, { exact: true }),
+  }),
+);
 
-export const SessionProviderAuthRequiredSchema = Schema.mutable(Schema.Struct({
-  provider: Schema.Literal('claude-code', 'codex', 'github'),
-  userId: Schema.String,
-  reason: Schema.Literal('missing_token', 'invalid_token', 'auth_error'),
-  message: Schema.String,
-  at: Schema.String,
-}));
+export const SessionProviderAuthRequiredSchema = Schema.mutable(
+  Schema.Struct({
+    provider: Schema.Literal('claude-code', 'codex', 'github'),
+    userId: Schema.String,
+    reason: Schema.Literal('missing_token', 'invalid_token', 'auth_error'),
+    message: Schema.String,
+    at: Schema.String,
+  }),
+);
 
-export const SessionQuestionAnswersSchema = Schema.mutable(Schema.Record({
-  key: Schema.String,
-  value: Schema.mutable(Schema.Struct({
-    answers: Schema.mutable(Schema.Array(Schema.String)),
-  })),
-}));
+export const SessionQuestionAnswersSchema = Schema.mutable(
+  Schema.Record({
+    key: Schema.String,
+    value: Schema.mutable(
+      Schema.Struct({
+        answers: Schema.mutable(Schema.Array(Schema.String)),
+      }),
+    ),
+  }),
+);
 
-export const SessionSuggestionSchema = Schema.mutable(Schema.Struct({
-  id: Schema.String,
-  authorId: Schema.String,
-  authorName: Schema.optionalWith(Schema.String, { exact: true }),
-  text: Schema.String,
-  status: Schema.Literal('pending', 'sent', 'dismissed'),
-  resolvedBy: Schema.optionalWith(NullableStringSchema, { exact: true }),
-  resolvedByName: Schema.optionalWith(NullableStringSchema, { exact: true }),
-  sentText: Schema.optionalWith(NullableStringSchema, { exact: true }),
-  note: Schema.optionalWith(NullableStringSchema, { exact: true }),
-  createdAt: Schema.String,
-  resolvedAt: Schema.optionalWith(NullableStringSchema, { exact: true }),
-}));
+export const SessionSuggestionSchema = Schema.mutable(
+  Schema.Struct({
+    id: Schema.String,
+    authorId: Schema.String,
+    authorName: Schema.optionalWith(Schema.String, { exact: true }),
+    text: Schema.String,
+    status: Schema.Literal('pending', 'sent', 'dismissed'),
+    resolvedBy: Schema.optionalWith(NullableStringSchema, { exact: true }),
+    resolvedByName: Schema.optionalWith(NullableStringSchema, { exact: true }),
+    sentText: Schema.optionalWith(NullableStringSchema, { exact: true }),
+    note: Schema.optionalWith(NullableStringSchema, { exact: true }),
+    createdAt: Schema.String,
+    resolvedAt: Schema.optionalWith(NullableStringSchema, { exact: true }),
+  }),
+);
 
-export const SessionAnswerProposalSchema = Schema.mutable(Schema.Struct({
-  id: Schema.String,
-  questionId: Schema.String,
-  authorId: Schema.String,
-  authorName: Schema.optionalWith(Schema.String, { exact: true }),
-  answers: SessionQuestionAnswersSchema,
-  status: Schema.Literal('pending', 'submitted', 'dismissed'),
-  resolvedBy: Schema.optionalWith(NullableStringSchema, { exact: true }),
-  resolvedByName: Schema.optionalWith(NullableStringSchema, { exact: true }),
-  note: Schema.optionalWith(NullableStringSchema, { exact: true }),
-  createdAt: Schema.String,
-  resolvedAt: Schema.optionalWith(NullableStringSchema, { exact: true }),
-}));
+export const SessionAnswerProposalSchema = Schema.mutable(
+  Schema.Struct({
+    id: Schema.String,
+    questionId: Schema.String,
+    authorId: Schema.String,
+    authorName: Schema.optionalWith(Schema.String, { exact: true }),
+    answers: SessionQuestionAnswersSchema,
+    status: Schema.Literal('pending', 'submitted', 'dismissed'),
+    resolvedBy: Schema.optionalWith(NullableStringSchema, { exact: true }),
+    resolvedByName: Schema.optionalWith(NullableStringSchema, { exact: true }),
+    note: Schema.optionalWith(NullableStringSchema, { exact: true }),
+    createdAt: Schema.String,
+    resolvedAt: Schema.optionalWith(NullableStringSchema, { exact: true }),
+  }),
+);
 
-export const SessionWireSchema = Schema.mutable(Schema.Struct({
-  id: Schema.String,
-  workspaceId: Schema.String,
-  channelId: Schema.String,
-  threadRootEventId: NullableNumberSchema,
-  title: Schema.String,
-  status: SessionStatusSchema,
-  harness: Schema.String,
-  repo: Schema.optionalWith(NullableStringSchema, { exact: true }),
-  branch: Schema.optionalWith(NullableStringSchema, { exact: true }),
-  repos: Schema.optionalWith(Schema.Union(Schema.mutable(Schema.Array(SessionRepoSpecSchema)), Schema.Null), { exact: true }),
-  spawnedBy: Schema.String,
-  driverId: NullableStringSchema,
-  driver: Schema.optionalWith(Schema.Union(SessionSeatUserSchema, Schema.Null), { exact: true }),
-  pendingSeatRequests: Schema.optionalWith(Schema.mutable(Schema.Array(SessionSeatUserSchema)), { exact: true }),
-  suggestions: Schema.optionalWith(Schema.mutable(Schema.Array(SessionSuggestionSchema)), { exact: true }),
-  answerProposals: Schema.optionalWith(Schema.mutable(Schema.Array(SessionAnswerProposalSchema)), { exact: true }),
-  pendingQuestion: Schema.optionalWith(Schema.Union(SessionPendingQuestionSchema, Schema.Null), { exact: true }),
-  providerAuthRequired: Schema.optionalWith(Schema.Union(SessionProviderAuthRequiredSchema, Schema.Null), { exact: true }),
-  githubIdentityMode: Schema.optionalWith(NullableStringSchema, { exact: true }),
-  providerConnectionId: Schema.optionalWith(NullableStringSchema, { exact: true }),
-  agentProfileVersionId: Schema.optionalWith(NullableStringSchema, { exact: true }),
-  modelEffort: Schema.optionalWith(NullableStringSchema, { exact: true }),
-  viewerCount: Schema.optionalWith(Schema.Number, { exact: true }),
-  costUsd: Schema.Union(Schema.Number, Schema.String, Schema.Null),
-  resultText: NullableStringSchema,
-  createdAt: Schema.String,
-  completedAt: NullableStringSchema,
-  lastEventId: Schema.Number,
-  permalink: Schema.String,
-}));
+export const SessionWireSchema = Schema.mutable(
+  Schema.Struct({
+    id: Schema.String,
+    workspaceId: Schema.String,
+    channelId: Schema.String,
+    threadRootEventId: NullableNumberSchema,
+    title: Schema.String,
+    status: SessionStatusSchema,
+    harness: Schema.String,
+    repo: Schema.optionalWith(NullableStringSchema, { exact: true }),
+    branch: Schema.optionalWith(NullableStringSchema, { exact: true }),
+    repos: Schema.optionalWith(Schema.Union(Schema.mutable(Schema.Array(SessionRepoSpecSchema)), Schema.Null), {
+      exact: true,
+    }),
+    spawnedBy: Schema.String,
+    driverId: NullableStringSchema,
+    driver: Schema.optionalWith(Schema.Union(SessionSeatUserSchema, Schema.Null), { exact: true }),
+    pendingSeatRequests: Schema.optionalWith(Schema.mutable(Schema.Array(SessionSeatUserSchema)), { exact: true }),
+    suggestions: Schema.optionalWith(Schema.mutable(Schema.Array(SessionSuggestionSchema)), { exact: true }),
+    answerProposals: Schema.optionalWith(Schema.mutable(Schema.Array(SessionAnswerProposalSchema)), { exact: true }),
+    pendingQuestion: Schema.optionalWith(Schema.Union(SessionPendingQuestionSchema, Schema.Null), { exact: true }),
+    providerAuthRequired: Schema.optionalWith(Schema.Union(SessionProviderAuthRequiredSchema, Schema.Null), {
+      exact: true,
+    }),
+    githubIdentityMode: Schema.optionalWith(NullableStringSchema, { exact: true }),
+    providerConnectionId: Schema.optionalWith(NullableStringSchema, { exact: true }),
+    agentProfileVersionId: Schema.optionalWith(NullableStringSchema, { exact: true }),
+    modelEffort: Schema.optionalWith(NullableStringSchema, { exact: true }),
+    viewerCount: Schema.optionalWith(Schema.Number, { exact: true }),
+    costUsd: Schema.Union(Schema.Number, Schema.String, Schema.Null),
+    resultText: NullableStringSchema,
+    createdAt: Schema.String,
+    completedAt: NullableStringSchema,
+    // Decode-with-default so an old server (deploy skew) can't fail the decode.
+    archivedAt: Schema.optionalWith(NullableStringSchema, { default: () => null }),
+    pinned: Schema.optionalWith(Schema.Boolean, { default: () => false }),
+    lastEventId: Schema.Number,
+    permalink: Schema.String,
+  }),
+);
 
-export const SessionListItemSchema = Schema.mutable(Schema.Struct({
-  id: Schema.String,
-  channelId: Schema.String,
-  channelName: Schema.String,
-  title: Schema.String,
-  status: SessionStatusSchema,
-  harness: Schema.String,
-  spawnedBy: Schema.String,
-  spawnerName: Schema.String,
-  costUsd: Schema.Number,
-  createdAt: Schema.String,
-  completedAt: NullableStringSchema,
-}));
+export const SessionListItemSchema = Schema.mutable(
+  Schema.Struct({
+    id: Schema.String,
+    channelId: Schema.String,
+    channelName: Schema.String,
+    title: Schema.String,
+    status: SessionStatusSchema,
+    harness: Schema.String,
+    spawnedBy: Schema.String,
+    spawnerName: Schema.String,
+    costUsd: Schema.Number,
+    createdAt: Schema.String,
+    completedAt: NullableStringSchema,
+    archivedAt: Schema.optionalWith(NullableStringSchema, { default: () => null }),
+    pinned: Schema.optionalWith(Schema.Boolean, { default: () => false }),
+  }),
+);
 
-export const SessionResponseSchema = Schema.mutable(Schema.Struct({
-  session: SessionWireSchema,
-}));
+export const SessionResponseSchema = Schema.mutable(
+  Schema.Struct({
+    session: SessionWireSchema,
+  }),
+);
 
-export const SessionListResponseSchema = Schema.mutable(Schema.Struct({
-  sessions: Schema.mutable(Schema.Array(SessionListItemSchema)),
-}));
+export const SessionListResponseSchema = Schema.mutable(
+  Schema.Struct({
+    sessions: Schema.mutable(Schema.Array(SessionListItemSchema)),
+  }),
+);
 
 export interface SessionAttachmentRef {
   artifactId?: string;
@@ -596,6 +708,11 @@ export function isTerminalSessionStatus(s: SessionStatus): boolean {
   return s === 'completed' || s === 'failed' || s === 'cancelled';
 }
 
+/** Shared archive grouping definition for all client surfaces. */
+export function isArchivedSession(session: Pick<Session, 'archivedAt'>): boolean {
+  return session.archivedAt !== null;
+}
+
 /**
  * A session still claiming spawning/queued this long after creation has almost
  * certainly been lost by the control plane — render it as stalled (static, no
@@ -604,10 +721,7 @@ export function isTerminalSessionStatus(s: SessionStatus): boolean {
 export const STALLED_AFTER_MS = 10 * 60 * 1000;
 
 export function isStalledSessionStatus(s: Session, now: number): boolean {
-  return (
-    (s.status === 'spawning' || s.status === 'queued') &&
-    now - new Date(s.createdAt).getTime() > STALLED_AFTER_MS
-  );
+  return (s.status === 'spawning' || s.status === 'queued') && now - new Date(s.createdAt).getTime() > STALLED_AFTER_MS;
 }
 
 /** The further-along of two statuses — used to never regress from a stale fetch. */
@@ -643,9 +757,7 @@ const SESSION_STATUSES: readonly SessionStatus[] = [
 ];
 
 export function asSessionStatus(v: unknown): SessionStatus | null {
-  return typeof v === 'string' && (SESSION_STATUSES as readonly string[]).includes(v)
-    ? (v as SessionStatus)
-    : null;
+  return typeof v === 'string' && (SESSION_STATUSES as readonly string[]).includes(v) ? (v as SessionStatus) : null;
 }
 
 export function sessionFromWire(w: SessionWire): Session {
@@ -678,6 +790,8 @@ export function sessionFromWire(w: SessionWire): Session {
     resultText: w.resultText ?? null,
     createdAt: w.createdAt,
     completedAt: w.completedAt ?? null,
+    archivedAt: w.archivedAt ?? null,
+    pinned: w.pinned ?? false,
     lastEventId: w.lastEventId ?? 0,
     permalink: w.permalink || `/s/${w.id}`,
   };
@@ -708,16 +822,16 @@ export function mergeSpawnResponse(live: Session | undefined, resp: Session): Se
     costUsd: Math.max(live.costUsd, resp.costUsd),
     resultText: live.resultText ?? resp.resultText,
     completedAt: live.completedAt ?? resp.completedAt,
+    archivedAt: live.archivedAt ?? resp.archivedAt,
+    pinned: live.pinned ?? resp.pinned,
     ...optionalProp('spawnerName', spawnerName),
     // Seat state that moved via WS while the POST was in flight wins over the
     // insert-time snapshot (which always says driver = spawner, no requests).
     driverId: live.driverId ?? resp.driverId,
     ...optionalProp('driverName', driverName),
-    pendingSeatRequests:
-      live.pendingSeatRequests.length > 0 ? live.pendingSeatRequests : resp.pendingSeatRequests,
+    pendingSeatRequests: live.pendingSeatRequests.length > 0 ? live.pendingSeatRequests : resp.pendingSeatRequests,
     suggestions: live.suggestions.length > 0 ? live.suggestions : resp.suggestions,
-    answerProposals:
-      live.answerProposals.length > 0 ? live.answerProposals : resp.answerProposals,
+    answerProposals: live.answerProposals.length > 0 ? live.answerProposals : resp.answerProposals,
     pendingQuestion,
     // A live effort change (WS event mid-flight) wins over the fetch snapshot.
     modelEffort: live.modelEffort ?? resp.modelEffort ?? null,
@@ -732,10 +846,7 @@ export function mergeSpawnResponse(live: Session | undefined, resp: Session): Se
  * Fold a `session.*` wire event (WS fanout or history fetch) into the entity
  * map. Returns the same reference when nothing changed.
  */
-export function applySessionEvent(
-  sessions: Record<string, Session>,
-  ev: SessionFoldEvent,
-): Record<string, Session> {
+export function applySessionEvent(sessions: Record<string, Session>, ev: SessionFoldEvent): Record<string, Session> {
   const p = ev.payload ?? {};
   const sessionId = typeof p.sessionId === 'string' ? p.sessionId : null;
   if (!sessionId) return sessions;
@@ -760,16 +871,16 @@ export function applySessionEvent(
       answerProposals: [],
       pendingQuestion: null,
       providerAuthRequired: null,
-      githubIdentityMode:
-        typeof p.githubIdentityMode === 'string' ? p.githubIdentityMode : null,
-      providerConnectionId:
-        typeof p.providerConnectionId === 'string' ? p.providerConnectionId : null,
+      githubIdentityMode: typeof p.githubIdentityMode === 'string' ? p.githubIdentityMode : null,
+      providerConnectionId: typeof p.providerConnectionId === 'string' ? p.providerConnectionId : null,
       questionEvents: [],
       seatEvents: [],
       costUsd: 0,
       resultText: null,
       createdAt: ev.createdAt,
       completedAt: null,
+      archivedAt: null,
+      pinned: false,
       lastEventId: 0,
       permalink: `/s/${sessionId}`,
     };
@@ -798,6 +909,17 @@ export function applySessionEvent(
   }
 
   if (!prev) return sessions; // status for a session we never saw spawn — ignore
+
+  if (ev.type === 'session.archived') {
+    const archivedAt = typeof p.archivedAt === 'string' ? p.archivedAt : ev.createdAt;
+    if (prev.archivedAt === archivedAt) return sessions;
+    return { ...sessions, [sessionId]: { ...prev, archivedAt } };
+  }
+
+  if (ev.type === 'session.unarchived') {
+    if (prev.archivedAt === null) return sessions;
+    return { ...sessions, [sessionId]: { ...prev, archivedAt: null } };
+  }
 
   if (ev.type === 'session.effort_changed') {
     const effort = typeof p.effort === 'string' ? p.effort : null;
@@ -1002,7 +1124,7 @@ export function applySessionEvent(
     const idx = prev.suggestions.findIndex((s) => s.id === suggestionId);
     if (idx < 0) return sessions; // resolve for a suggestion we never folded — GET will carry it
     const existing = prev.suggestions[idx]!;
-    const resolvedBy = typeof p.resolvedBy === 'string' ? p.resolvedBy : ev.actorId ?? undefined;
+    const resolvedBy = typeof p.resolvedBy === 'string' ? p.resolvedBy : (ev.actorId ?? undefined);
     const resolved: SessionSuggestion = {
       ...existing,
       status,
@@ -1050,7 +1172,7 @@ export function applySessionEvent(
     const idx = prev.answerProposals.findIndex((pr) => pr.id === proposalId);
     if (idx < 0) return sessions;
     const existing = prev.answerProposals[idx]!;
-    const resolvedBy = typeof p.resolvedBy === 'string' ? p.resolvedBy : ev.actorId ?? undefined;
+    const resolvedBy = typeof p.resolvedBy === 'string' ? p.resolvedBy : (ev.actorId ?? undefined);
     const resolved: SessionAnswerProposal = {
       ...existing,
       status,
@@ -1154,11 +1276,7 @@ function parseProviderAuthRequired(value: unknown): SessionProviderAuthRequired 
   const raw = value as Record<string, unknown>;
   if (raw.provider !== 'claude-code' && raw.provider !== 'codex' && raw.provider !== 'github') return null;
   if (typeof raw.userId !== 'string') return null;
-  if (
-    raw.reason !== 'missing_token' &&
-    raw.reason !== 'invalid_token' &&
-    raw.reason !== 'auth_error'
-  ) {
+  if (raw.reason !== 'missing_token' && raw.reason !== 'invalid_token' && raw.reason !== 'auth_error') {
     return null;
   }
   return {
@@ -1172,7 +1290,7 @@ function parseProviderAuthRequired(value: unknown): SessionProviderAuthRequired 
           ? 'Reconnect Codex to continue this session.'
           : raw.provider === 'github'
             ? 'Reconnect GitHub before retrying private repository access.'
-          : 'Reconnect Claude Code to continue this session.',
+            : 'Reconnect Claude Code to continue this session.',
     at: typeof raw.at === 'string' ? raw.at : new Date().toISOString(),
   };
 }

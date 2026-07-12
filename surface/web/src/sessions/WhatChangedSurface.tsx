@@ -35,15 +35,7 @@ function FilterChip({
   );
 }
 
-function Section({
-  title,
-  count,
-  children,
-}: {
-  title: string;
-  count: number;
-  children: ReactNode;
-}) {
+function Section({ title, count, children }: { title: string; count: number; children: ReactNode }) {
   const [open, setOpen] = useState(true);
   return (
     <section className="border-b border-edge last:border-b-0">
@@ -94,7 +86,9 @@ export function WhatChangedSurface({
           const tile = artifactTiles.find(({ artifact }) => artifact.path === presentation.path);
           return tile ? { ...tile, presentation } : null;
         })
-        .filter((tile): tile is { artifact: Artifact; versions: number; presentation: ArtifactPresentation } => tile !== null),
+        .filter(
+          (tile): tile is { artifact: Artifact; versions: number; presentation: ArtifactPresentation } => tile !== null,
+        ),
     [artifactTiles, presentations],
   );
   const otherArtifactTiles = useMemo(

@@ -998,8 +998,10 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "centaur-sandbox-core",
+ "centaur-session-core",
  "centaur-session-sqlx",
  "centaur-telemetry",
+ "sqlx",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -1048,6 +1050,7 @@ dependencies = [
  "centaur-telemetry",
  "dashmap",
  "futures-util",
+ "reqwest",
  "serde",
  "serde_json",
  "sha2 0.10.9",

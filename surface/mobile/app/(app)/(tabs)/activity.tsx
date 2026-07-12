@@ -5,7 +5,7 @@ import {
   type ActivityItem,
   formatExactTimestamp,
   formatRelativeTimestamp,
-  isTerminalSessionStatus,
+  sessionAttentionKind,
   type Session,
   type SessionListItem,
   type SessionStatus,
@@ -15,6 +15,7 @@ import { font, space, useTheme, type Colors } from '../../../src/lib/theme';
 import { ConnectionBanner } from '../../../src/components/bits';
 import { MobileHeader } from '../../../src/components/MobileHeader';
 import { MarkdownText } from '../../../src/components/Markdown';
+import { navigationTargetSize } from '../../../src/components/PlatformTabBar';
 
 interface DisplaySession extends SessionListItem {
   live?: Session;
@@ -82,14 +83,22 @@ export default function ActivityScreen() {
     void load('initial');
   }, [load]);
 
-  // "Needs attention": non-terminal sessions (running / queued / awaiting input),
-  // newest first. Live state overrides the fetched snapshot.
+  // Only unresolved agent states belong in Attention. Healthy progress stays
+  // visible on Agents, while completion/mention/DM/question activity comes from
+  // the server feed (which owns its read semantics).
   const rows = useMemo<ActivityRow[]>(() => {
     const merged = sessions.map((s) => ({ ...s, live: state.sessions[s.id] }));
     const attention = merged
       .filter((s) => {
-        const status = s.live?.status ?? s.status;
-        return !isTerminalSessionStatus(status);
+        if (s.live) return sessionAttentionKind(s.live) !== null;
+        return (
+          sessionAttentionKind({
+            status: s.status,
+            pendingQuestion: null,
+            providerAuthRequired: null,
+            pendingSeatRequests: [],
+          }) !== null
+        );
       })
       .map((session): ActivityRow => ({ rowType: 'session', session }));
     const feedRows = activityItems.map((activity): ActivityRow => ({ rowType: 'activity', activity }));
@@ -101,7 +110,12 @@ export default function ActivityScreen() {
   }, [activityItems, sessions, state.sessions]);
 
   const openActivity = async (item: ActivityItem) => {
-    if (item.kind !== 'agent_question' && item.kind !== 'session_completed') {
+    if (
+      item.kind !== 'agent_question' &&
+      item.kind !== 'session_completed' &&
+      item.kind !== 'session_failed' &&
+      item.kind !== 'agent_auth'
+    ) {
       router.push(`/channel/${item.channelId}`);
       return;
     }
@@ -123,20 +137,49 @@ export default function ActivityScreen() {
   const renderActivityItem = (item: ActivityItem) => {
     const time = formatRelativeTimestamp(item.createdAt) || item.createdAt;
     const exactTime = formatExactTimestamp(item.createdAt) || item.createdAt;
+    const sessionTitle = item.sessionTitle ?? 'Agent';
     const title =
       item.kind === 'mention'
         ? `${item.actorName ?? 'Someone'} mentioned you`
         : item.kind === 'dm'
           ? `${item.actorName ?? 'Someone'} sent a DM`
-          : item.kind === 'agent_question'
-            ? 'Agent needs your input'
-            : 'Agent session completed';
+          : item.kind === 'thread_reply'
+            ? `${item.actorName ?? 'Someone'} replied in a thread`
+            : item.kind === 'agent_question'
+              ? item.sessionTitle
+                ? `${item.sessionTitle} · needs your answer`
+                : 'Agent needs your input'
+              : item.kind === 'session_completed'
+                ? item.sessionTitle
+                  ? `${item.sessionTitle} · completed`
+                  : 'Agent session completed'
+                : item.kind === 'session_failed'
+                  ? `${sessionTitle} failed`
+                  : item.kind === 'agent_auth'
+                    ? `${sessionTitle} is blocked — reconnect provider`
+                    : 'Activity';
     const marker =
-      item.kind === 'mention' ? '@' : item.kind === 'dm' ? 'DM' : item.kind === 'agent_question' ? '?' : 'OK';
+      item.kind === 'mention'
+        ? '@'
+        : item.kind === 'dm'
+          ? 'DM'
+          : item.kind === 'thread_reply'
+            ? '↩'
+            : item.kind === 'agent_question'
+              ? '?'
+              : item.kind === 'session_completed'
+                ? 'OK'
+                : item.kind === 'session_failed'
+                  ? '!'
+                  : item.kind === 'agent_auth'
+                    ? '⚿'
+                    : '•';
     return (
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={item.kind === 'dm' ? `${title}, ${exactTime}` : `${title}, #${item.channelName}, ${exactTime}`}
+        accessibilityLabel={
+          item.kind === 'dm' ? `${title}, ${exactTime}` : `${title}, #${item.channelName}, ${exactTime}`
+        }
         onPress={() => void openActivity(item)}
         style={({ pressed }) => ({
           flexDirection: 'row',
@@ -170,9 +213,7 @@ export default function ActivityScreen() {
           </View>
           <Text style={{ color: colors.textMuted, fontSize: font.xs }} numberOfLines={1}>
             {/* DM channel names are internal keys; the title already names the sender. */}
-            {item.kind === 'dm'
-              ? time
-              : `#${item.channelName} · ${time}`}
+            {item.kind === 'dm' ? time : `#${item.channelName} · ${time}`}
           </Text>
         </View>
       </Pressable>
@@ -217,7 +258,7 @@ export default function ActivityScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg }}>
-      <MobileHeader title="Inbox" />
+      <MobileHeader title="Attention" />
       <ConnectionBanner status={state.wsStatus} />
       {loading ? (
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
@@ -254,7 +295,7 @@ export default function ActivityScreen() {
                   Needs your attention
                 </Text>
                 <Text style={{ color: colors.textMuted, fontSize: font.sm, lineHeight: 20 }}>
-                  Mentions, DMs, agent questions, and live agent work that may need you.
+                  Mentions, DMs, agent questions, failed work, and recent completions.
                 </Text>
               </View>
             ) : null
@@ -268,7 +309,12 @@ export default function ActivityScreen() {
                 accessibilityRole="button"
                 accessibilityLabel="Activity failed. Tap to retry."
                 onPress={() => void load()}
-                style={{ alignItems: 'center', justifyContent: 'center', padding: space.xl, minHeight: 44 }}
+                style={{
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  padding: space.xl,
+                  minHeight: navigationTargetSize,
+                }}
               >
                 <Text style={{ color: colors.danger, fontSize: font.sm }}>Activity failed — tap to retry</Text>
               </Pressable>
@@ -276,11 +322,9 @@ export default function ActivityScreen() {
               <View
                 style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: space.xl, gap: space.sm }}
               >
-                <Text style={{ color: colors.text, fontSize: font.md, fontWeight: '700' }}>
-                  You're all caught up
-                </Text>
+                <Text style={{ color: colors.text, fontSize: font.md, fontWeight: '700' }}>You're all caught up</Text>
                 <Text style={{ color: colors.textMuted, fontSize: font.sm, textAlign: 'center', lineHeight: 20 }}>
-                  Mentions, DMs, agent questions, and live agent work will appear here when they need you.
+                  Mentions, DMs, agent questions, failed work, and recent completions will appear here.
                 </Text>
               </View>
             )
@@ -296,7 +340,7 @@ export default function ActivityScreen() {
                   disabled={loadingMore}
                   style={({ pressed }) => ({
                     alignSelf: 'flex-start',
-                    minHeight: 36,
+                    minHeight: navigationTargetSize,
                     justifyContent: 'center',
                     borderRadius: 8,
                     paddingHorizontal: space.md,

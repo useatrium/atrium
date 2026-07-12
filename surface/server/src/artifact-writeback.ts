@@ -180,9 +180,7 @@ export async function writeBackArtifact(params: WriteBackArtifactParams): Promis
   });
 }
 
-export async function writeBackArtifactById(
-  params: WriteBackArtifactByIdParams,
-): Promise<WriteBackArtifactByIdResult> {
+export async function writeBackArtifactById(params: WriteBackArtifactByIdParams): Promise<WriteBackArtifactByIdResult> {
   if (params.baseSeq == null) {
     return { ok: false, reason: 'base_required' };
   }
@@ -213,106 +211,111 @@ export async function writeBackArtifactById(
     classification,
   });
 
-  const tx = await withTx(params.pool, async (client): Promise<{
-    result: WriteBackArtifactByIdResult;
-    thumbnail?: DeferredThumbnail;
-  }> => {
-    const locked = await client.query<ArtifactByIdWritebackRow>(
-      `SELECT id, workspace_id, channel_id, path, merge_class, tombstoned_at
+  const tx = await withTx(
+    params.pool,
+    async (
+      client,
+    ): Promise<{
+      result: WriteBackArtifactByIdResult;
+      thumbnail?: DeferredThumbnail;
+    }> => {
+      const locked = await client.query<ArtifactByIdWritebackRow>(
+        `SELECT id, workspace_id, channel_id, path, merge_class, tombstoned_at
          FROM artifacts
         WHERE id = $1
         FOR UPDATE`,
-      [params.artifactId],
-    );
-    const row = locked.rows[0];
-    if (!row) {
-      return { result: { ok: false, reason: 'base_not_found', baseSeq } };
-    }
-    if (row.tombstoned_at != null) {
-      return { result: { ok: false, reason: 'gone' } };
-    }
-
-    const latest = await ledger.latestVersion(client, params.artifactId);
-    if (!latest) {
-      return { result: { ok: false, reason: 'base_not_found', baseSeq } };
-    }
-
-    if (baseSeq === latest.seq) {
-      if (latest.kind !== 'deleted' && latest.blobSha === sha) {
-        return { result: { ok: true, seq: latest.seq, status: 'normal', idempotent: true } };
+        [params.artifactId],
+      );
+      const row = locked.rows[0];
+      if (!row) {
+        return { result: { ok: false, reason: 'base_not_found', baseSeq } };
       }
-      const seq = latest.seq + 1;
-      await ledger.insertVersion(client, {
-        artifactId: params.artifactId,
-        seq,
-        blobSha: sha,
-        baseSeq: latest.seq,
-        author: params.author,
-        kind: latest.kind === 'deleted' ? 'created' : 'modified',
-        status: 'normal',
-      });
-      await ledger.advancePointer(client, params.artifactId, 'latest', seq);
-      await client.query('UPDATE artifacts SET tombstoned_at = NULL WHERE id = $1', [params.artifactId]);
-      return {
-        result: { ok: true, seq, status: 'normal', idempotent: false },
-        thumbnail: {
-          sourceSha: sha,
-          bytes: params.bytes,
-          mime: classification.detectedMime,
-          mediaKind: classification.mediaKind,
-        },
-      };
-    }
+      if (row.tombstoned_at != null) {
+        return { result: { ok: false, reason: 'gone' } };
+      }
 
-    const baseRow = await versionBlob(client, params.artifactId, baseSeq);
-    if (!baseRow) {
-      return {
-        result: { ok: false, reason: 'base_not_found', baseSeq, latestSeq: latest.seq },
-      };
-    }
+      const latest = await ledger.latestVersion(client, params.artifactId);
+      if (!latest) {
+        return { result: { ok: false, reason: 'base_not_found', baseSeq } };
+      }
 
-    if (latest.kind === 'deleted' || latest.blobSha == null) {
-      return {
-        result: await recordDeleteVsEditConflictById({
-          client,
-          ledger,
+      if (baseSeq === latest.seq) {
+        if (latest.kind !== 'deleted' && latest.blobSha === sha) {
+          return { result: { ok: true, seq: latest.seq, status: 'normal', idempotent: true } };
+        }
+        const seq = latest.seq + 1;
+        await ledger.insertVersion(client, {
           artifactId: params.artifactId,
-          incomingSha: sha,
+          seq,
+          blobSha: sha,
+          baseSeq: latest.seq,
           author: params.author,
-          baseSeq,
-          deletedSeq: latest.seq,
-          deletedAuthor: 'latest',
-        }),
-        thumbnail: {
-          sourceSha: sha,
-          bytes: params.bytes,
-          mime: classification.detectedMime,
-          mediaKind: classification.mediaKind,
-        },
-      };
-    }
+          kind: latest.kind === 'deleted' ? 'created' : 'modified',
+          status: 'normal',
+        });
+        await ledger.advancePointer(client, params.artifactId, 'latest', seq);
+        await client.query('UPDATE artifacts SET tombstoned_at = NULL WHERE id = $1', [params.artifactId]);
+        return {
+          result: { ok: true, seq, status: 'normal', idempotent: false },
+          thumbnail: {
+            sourceSha: sha,
+            bytes: params.bytes,
+            mime: classification.detectedMime,
+            mediaKind: classification.mediaKind,
+          },
+        };
+      }
 
-    if (row.merge_class !== 'mergeable-doc') {
-      return {
-        result: { ok: false, reason: 'stale_base', baseSeq, latestSeq: latest.seq },
-      };
-    }
+      const baseRow = await versionBlob(client, params.artifactId, baseSeq);
+      if (!baseRow) {
+        return {
+          result: { ok: false, reason: 'base_not_found', baseSeq, latestSeq: latest.seq },
+        };
+      }
 
-    return applyThreeWayMerge({
-      pool: params.pool,
-      client,
-      ledger,
-      storage: params.storage,
-      artifactId: params.artifactId,
-      baseSeq,
-      latestSeq: latest.seq,
-      incomingBytes: params.bytes,
-      incomingSha: sha,
-      mime: params.mime,
-      author: params.author,
-      path: row.path,
-    });
-  });
+      if (latest.kind === 'deleted' || latest.blobSha == null) {
+        return {
+          result: await recordDeleteVsEditConflictById({
+            client,
+            ledger,
+            artifactId: params.artifactId,
+            incomingSha: sha,
+            author: params.author,
+            baseSeq,
+            deletedSeq: latest.seq,
+            deletedAuthor: 'latest',
+          }),
+          thumbnail: {
+            sourceSha: sha,
+            bytes: params.bytes,
+            mime: classification.detectedMime,
+            mediaKind: classification.mediaKind,
+          },
+        };
+      }
+
+      if (row.merge_class !== 'mergeable-doc') {
+        return {
+          result: { ok: false, reason: 'stale_base', baseSeq, latestSeq: latest.seq },
+        };
+      }
+
+      return applyThreeWayMerge({
+        pool: params.pool,
+        client,
+        ledger,
+        storage: params.storage,
+        artifactId: params.artifactId,
+        baseSeq,
+        latestSeq: latest.seq,
+        incomingBytes: params.bytes,
+        incomingSha: sha,
+        mime: params.mime,
+        author: params.author,
+        path: row.path,
+      });
+    },
+  );
 
   if (tx.result.ok && tx.thumbnail) {
     enqueueThumbnailGeneration({
@@ -346,10 +349,7 @@ async function findArtifact(pool: Db, sessionId: string, path: string): Promise<
 }
 
 async function findArtifactById(pool: Db, artifactId: string): Promise<ArtifactRow | null> {
-  const res = await pool.query<ArtifactRow>(
-    `SELECT id, merge_class FROM artifacts WHERE id = $1`,
-    [artifactId],
-  );
+  const res = await pool.query<ArtifactRow>(`SELECT id, merge_class FROM artifacts WHERE id = $1`, [artifactId]);
   return res.rows[0] ?? null;
 }
 
@@ -408,51 +408,58 @@ async function ensureCasBlobStored(args: {
   });
 }
 
-async function mergeStaleWrite(args: WriteBackArtifactParams & {
-  ledger: ArtifactLedger;
-  incomingSha: string;
-  incomingBytes: Buffer;
-  baseSeq: number;
-}): Promise<WriteBackArtifactResult> {
-  const tx = await withTx(args.pool, async (client): Promise<{
-    result: WriteBackArtifactResult;
-    thumbnail?: DeferredThumbnail;
-  }> => {
-    const artifactId = await args.ledger.resolveOrCreateArtifactLocked(client, {
-      sessionId: args.sessionId,
-      channelId: args.channelId,
-      path: args.path,
-    });
-    const artifact = await client.query<{ merge_class: MergeClass }>(
-      `SELECT merge_class FROM artifacts WHERE id = $1`,
-      [artifactId],
-    );
-    if (artifact.rows[0]?.merge_class !== 'mergeable-doc') {
-      const latest = await args.ledger.latestVersion(client, artifactId);
-      return {
-        result: { ok: false, reason: 'stale_base', baseSeq: args.baseSeq, latestSeq: latest?.seq },
-      };
-    }
-
-    const latest = await args.ledger.latestVersion(client, artifactId);
-    if (!latest) {
-      return { result: { ok: false, reason: 'base_not_found', baseSeq: args.baseSeq } };
-    }
-    return applyThreeWayMerge({
-      pool: args.pool,
+async function mergeStaleWrite(
+  args: WriteBackArtifactParams & {
+    ledger: ArtifactLedger;
+    incomingSha: string;
+    incomingBytes: Buffer;
+    baseSeq: number;
+  },
+): Promise<WriteBackArtifactResult> {
+  const tx = await withTx(
+    args.pool,
+    async (
       client,
-      ledger: args.ledger,
-      storage: args.storage,
-      artifactId,
-      baseSeq: args.baseSeq,
-      latestSeq: latest.seq,
-      incomingBytes: args.incomingBytes,
-      incomingSha: args.incomingSha,
-      mime: args.mime,
-      author: args.author,
-      path: args.path,
-    });
-  });
+    ): Promise<{
+      result: WriteBackArtifactResult;
+      thumbnail?: DeferredThumbnail;
+    }> => {
+      const artifactId = await args.ledger.resolveOrCreateArtifactLocked(client, {
+        sessionId: args.sessionId,
+        channelId: args.channelId,
+        path: args.path,
+      });
+      const artifact = await client.query<{ merge_class: MergeClass }>(
+        `SELECT merge_class FROM artifacts WHERE id = $1`,
+        [artifactId],
+      );
+      if (artifact.rows[0]?.merge_class !== 'mergeable-doc') {
+        const latest = await args.ledger.latestVersion(client, artifactId);
+        return {
+          result: { ok: false, reason: 'stale_base', baseSeq: args.baseSeq, latestSeq: latest?.seq },
+        };
+      }
+
+      const latest = await args.ledger.latestVersion(client, artifactId);
+      if (!latest) {
+        return { result: { ok: false, reason: 'base_not_found', baseSeq: args.baseSeq } };
+      }
+      return applyThreeWayMerge({
+        pool: args.pool,
+        client,
+        ledger: args.ledger,
+        storage: args.storage,
+        artifactId,
+        baseSeq: args.baseSeq,
+        latestSeq: latest.seq,
+        incomingBytes: args.incomingBytes,
+        incomingSha: args.incomingSha,
+        mime: args.mime,
+        author: args.author,
+        path: args.path,
+      });
+    },
+  );
   if (tx.result.ok && tx.thumbnail) {
     enqueueThumbnailGeneration({
       pool: args.pool,
@@ -496,12 +503,9 @@ async function applyThreeWayMerge(args: {
     args.storage.getObjectBytes(baseRow.s3_key),
     args.storage.getObjectBytes(latestRow.s3_key),
   ]);
-  const merged = mergeDiff3(
-    splitLines(latestBytes),
-    splitLines(baseBytes),
-    splitLines(args.incomingBytes),
-    { label: { a: `latest:${args.latestSeq}`, o: `base:${args.baseSeq}`, b: 'incoming' } },
-  );
+  const merged = mergeDiff3(splitLines(latestBytes), splitLines(baseBytes), splitLines(args.incomingBytes), {
+    label: { a: `latest:${args.latestSeq}`, o: `base:${args.baseSeq}`, b: 'incoming' },
+  });
   const mergedBytes = Buffer.from(merged.result.join('\n'), 'utf8');
   const mergedSha = sha256(mergedBytes);
   const mergedClassification = classifyMedia(mergedBytes, { declaredMime: args.mime, filename: args.path });
@@ -582,12 +586,14 @@ async function latestVersionRow(pool: Db, artifactId: string): Promise<LatestRow
 /** Record a delete-vs-edit conflict: the incoming edit lands as a
  * `status=conflict` version (bytes preserved = resurrect-as-conflict) noting the
  * competing delete. Never auto-picks a side (Gary's decision). */
-async function recordDeleteVsEditConflict(args: WriteBackArtifactParams & {
-  ledger: ArtifactLedger;
-  incomingSha: string;
-  deletedSeq: number;
-  deletedAuthor: string;
-}): Promise<WriteBackArtifactResult> {
+async function recordDeleteVsEditConflict(
+  args: WriteBackArtifactParams & {
+    ledger: ArtifactLedger;
+    incomingSha: string;
+    deletedSeq: number;
+    deletedAuthor: string;
+  },
+): Promise<WriteBackArtifactResult> {
   return withTx(args.pool, async (client) => {
     const artifactId = await args.ledger.resolveOrCreateArtifactLocked(client, {
       sessionId: args.sessionId,
@@ -684,8 +690,13 @@ export async function writeBackDelete(params: {
       }
       const seq = latest.seq + 1;
       await ledger.insertVersion(client, {
-        artifactId, seq, blobSha: null, baseSeq: latest.seq,
-        author: params.author, kind: 'deleted', status: 'normal',
+        artifactId,
+        seq,
+        blobSha: null,
+        baseSeq: latest.seq,
+        author: params.author,
+        kind: 'deleted',
+        status: 'normal',
       });
       await ledger.advancePointer(client, artifactId, 'latest', seq);
       return { ok: true, seq, status: 'normal', idempotent: false };
@@ -694,8 +705,13 @@ export async function writeBackDelete(params: {
     // Stale: the latest is a competing edit → edit-vs-delete conflict (preserve it).
     const seq = latest.seq + 1;
     await ledger.insertVersion(client, {
-      artifactId, seq, blobSha: latest.blobSha, baseSeq: latest.seq,
-      author: params.author, kind: 'modified', status: 'conflict',
+      artifactId,
+      seq,
+      blobSha: latest.blobSha,
+      baseSeq: latest.seq,
+      author: params.author,
+      kind: 'modified',
+      status: 'conflict',
       conflict: {
         kind: 'edit_vs_delete',
         base_seq: params.baseSeq ?? null,
@@ -733,8 +749,13 @@ export async function writeBackDeleteById(params: {
       }
       const seq = latest.seq + 1;
       await ledger.insertVersion(client, {
-        artifactId: params.artifactId, seq, blobSha: null, baseSeq: latest.seq,
-        author: params.author, kind: 'deleted', status: 'normal',
+        artifactId: params.artifactId,
+        seq,
+        blobSha: null,
+        baseSeq: latest.seq,
+        author: params.author,
+        kind: 'deleted',
+        status: 'normal',
       });
       await ledger.advancePointer(client, params.artifactId, 'latest', seq);
       await client.query('UPDATE artifacts SET tombstoned_at = COALESCE(tombstoned_at, now()) WHERE id = $1', [
@@ -745,8 +766,13 @@ export async function writeBackDeleteById(params: {
 
     const seq = latest.seq + 1;
     await ledger.insertVersion(client, {
-      artifactId: params.artifactId, seq, blobSha: latest.blobSha, baseSeq: latest.seq,
-      author: params.author, kind: 'modified', status: 'conflict',
+      artifactId: params.artifactId,
+      seq,
+      blobSha: latest.blobSha,
+      baseSeq: latest.seq,
+      author: params.author,
+      kind: 'modified',
+      status: 'conflict',
       conflict: {
         kind: 'edit_vs_delete',
         base_seq: params.baseSeq ?? null,
@@ -759,11 +785,7 @@ export async function writeBackDeleteById(params: {
   });
 }
 
-async function versionBlob(
-  client: DbClient,
-  artifactId: string,
-  seq: number,
-): Promise<VersionBlobRow | null> {
+async function versionBlob(client: DbClient, artifactId: string, seq: number): Promise<VersionBlobRow | null> {
   const res = await client.query<VersionBlobRow>(
     `SELECT v.seq, v.blob_sha, v.author, v.kind, v.status, b.s3_key, b.mime, b.size_bytes
        FROM artifact_versions v

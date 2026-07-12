@@ -56,13 +56,11 @@ export function StatusChip({
   const animatedDot = !stalled && (status === 'queued' || status === 'running');
   return (
     <span
-      className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-2 py-0.5 text-3xs font-semibold uppercase tracking-wide ${
+      className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-semibold ${
         stalled ? 'bg-surface-overlay/80 text-fg-tertiary' : CHIP_STYLES[status]
       }`}
     >
-      <span
-        className={`size-1.5 rounded-full bg-current ${animatedDot ? 'animate-pulse' : ''}`}
-      />
+      <span className={`size-1.5 rounded-full bg-current ${animatedDot ? 'animate-pulse' : ''}`} />
       {label ?? (stalled ? 'stalled' : (CHIP_LABELS[status] ?? status))}
     </span>
   );
@@ -146,9 +144,7 @@ export function SessionCard({
         {session.driverId !== null && session.driverId !== session.spawnedBy && (
           <>
             <span className="text-fg-faint">·</span>
-            <span className="truncate text-fg-tertiary">
-              driver: {session.driverName ?? session.driverId}
-            </span>
+            <span className="truncate text-fg-tertiary">driver: {session.driverName ?? session.driverId}</span>
           </>
         )}
         <span className="text-fg-faint">·</span>
@@ -176,18 +172,14 @@ export function SessionCard({
         {spectators > 0 && (
           <>
             <span className="text-fg-faint">·</span>
-            <span className="tabular-nums">
-              {spectators} watching
-            </span>
+            <span className="tabular-nums">{spectators} watching</span>
           </>
         )}
       </div>
 
       {terminal && session.resultText && (
         <div className="mt-1.5 border-l-2 border-edge-strong pl-2 text-xs leading-relaxed text-fg-secondary">
-          <span className="line-clamp-3 whitespace-pre-wrap break-words">
-            {session.resultText}
-          </span>
+          <span className="line-clamp-3 whitespace-pre-wrap break-words">{session.resultText}</span>
           <a
             href={session.permalink}
             onClick={(e) => {
@@ -197,7 +189,7 @@ export function SessionCard({
             }}
             className="mt-0.5 inline-block text-2xs font-medium text-accent-text hover:underline"
           >
-            Open full transcript
+            Open session
           </a>
         </div>
       )}

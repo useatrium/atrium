@@ -94,8 +94,7 @@ const GITLAB_PAT_RE = /\bglpat-[A-Za-z0-9_-]{20,}\b/g;
 const JWT_RE = /\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\b/g;
 const BEARER_RE = /\bBearer\s+[A-Za-z0-9._~+/=-]{10,}/gi;
 const BASIC_AUTH_RE = /\b(Authorization\s*:\s*Basic\s+)[A-Za-z0-9._~+/=-]{8,}/gi;
-const PRIVATE_KEY_RE =
-  /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----/g;
+const PRIVATE_KEY_RE = /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----/g;
 const ASSIGNMENT_SECRET_RE =
   /\b(password|passwd|api[_-]?key|private[_-]?key|client[_-]?secret|secret|token|access[_-]?token|refresh[_-]?token)\b(\s*[:=]\s*)(["']?)([^\s"'`,;&]+)/gi;
 const HEX_KEY_ASSIGNMENT_RE =
@@ -123,13 +122,7 @@ const CODEX_FILE_KIND: Record<string, 'add' | 'update' | 'delete'> = {
   removed: 'delete',
 };
 
-const SHELL_TOOL_NAMES = new Set([
-  'bash',
-  'shell',
-  'terminal',
-  'command',
-  'run_shell_command',
-]);
+const SHELL_TOOL_NAMES = new Set(['bash', 'shell', 'terminal', 'command', 'run_shell_command']);
 
 /**
  * Best-effort content scrubber for indexed/rendered text. It catches common
@@ -174,10 +167,7 @@ export function redactText(text: string): string {
  * should read both tiers, while `view_tier = 'full'` selects only full-only rows
  * such as reasoning, plan, and dynamic non-shell tool calls.
  */
-export function projectFrames(
-  frames: CentaurEventFrame[],
-  opts: ProjectFramesOptions = {},
-): SessionRecord[] {
+export function projectFrames(frames: CentaurEventFrame[], opts: ProjectFramesOptions = {}): SessionRecord[] {
   const state = createProjectionState(opts);
 
   for (const frame of frames) {
@@ -196,9 +186,7 @@ export async function projectSessionIncremental(
   sessionId: string,
   opts: Omit<ProjectFramesOptions, 'sessionId'> = {},
 ): Promise<{ projected: number; total: number }> {
-  return runSessionProjectionLocked(sessionId, () =>
-    projectSessionIncrementalUnlocked(pool, sessionId, opts),
-  );
+  return runSessionProjectionLocked(sessionId, () => projectSessionIncrementalUnlocked(pool, sessionId, opts));
 }
 
 export async function rebuildSessionRecords(
@@ -224,17 +212,14 @@ export async function rebuildSessionRecords(
         (row) => ({ ...row.frame, created_at: row.created_at }) as RawFrameWithTs,
       ) as CentaurEventFrame[];
       const records = projectFrames(frames, { ...opts, sessionId });
-      const maxEventId =
-        rows.rows.length > 0 ? rows.rows[rows.rows.length - 1]!.centaur_event_id : null;
+      const maxEventId = rows.rows.length > 0 ? rows.rows[rows.rows.length - 1]!.centaur_event_id : null;
 
       await client.query('DELETE FROM session_records WHERE session_id = $1', [sessionId]);
       for (const record of records) {
         await insertSessionRecord(client, record);
       }
       if (maxEventId === null) {
-        await client.query('DELETE FROM session_projection_state WHERE session_id = $1', [
-          sessionId,
-        ]);
+        await client.query('DELETE FROM session_projection_state WHERE session_id = $1', [sessionId]);
       } else {
         await upsertProjectionCursor(client, sessionId, maxEventId);
       }
@@ -345,10 +330,7 @@ function createProjectionState(opts: ProjectFramesOptions = {}): MutableProjecti
   };
 }
 
-async function runSessionProjectionLocked<T>(
-  sessionId: string,
-  fn: () => Promise<T>,
-): Promise<T> {
+async function runSessionProjectionLocked<T>(sessionId: string, fn: () => Promise<T>): Promise<T> {
   const previous = sessionProjectionLocks.get(sessionId) ?? Promise.resolve();
   const run = previous.catch(() => undefined).then(fn);
   sessionProjectionLocks.set(sessionId, run);
@@ -422,11 +404,7 @@ async function upsertSessionRecord(client: DbClient, record: SessionRecord): Pro
   );
 }
 
-async function upsertProjectionCursor(
-  client: DbClient,
-  sessionId: string,
-  lastEventId: number,
-): Promise<void> {
+async function upsertProjectionCursor(client: DbClient, sessionId: string, lastEventId: number): Promise<void> {
   await client.query(
     `INSERT INTO session_projection_state (session_id, last_event_id)
      VALUES ($1, $2)
@@ -618,10 +596,7 @@ function projectAmpAssistant(
             uuid: event.uuid,
             messageId: event.message.id,
             streaming: false,
-            sourceEventIds: appendSourceEventId(
-              state.records[state.openAmpTextIndex]!.meta,
-              eventId,
-            ),
+            sourceEventIds: appendSourceEventId(state.records[state.openAmpTextIndex]!.meta, eventId),
           }),
         });
         state.openAmpTextIndex = null;
@@ -748,16 +723,10 @@ function projectToolUse(
   state.lastToolRecordIndex = index;
 }
 
-function projectAmpToolResult(
-  state: MutableProjectionState,
-  eventId: number,
-  event: AmpToolEvent,
-  _ts: Date,
-): void {
+function projectAmpToolResult(state: MutableProjectionState, eventId: number, event: AmpToolEvent, _ts: Date): void {
   for (const result of event.content) {
     const index =
-      (result.tool_use_id ? state.toolRecordById.get(result.tool_use_id) : undefined) ??
-      state.lastToolRecordIndex;
+      (result.tool_use_id ? state.toolRecordById.get(result.tool_use_id) : undefined) ?? state.lastToolRecordIndex;
     if (index === null || index === undefined) continue;
     const existing = state.records[index];
     if (!existing) continue;
@@ -791,7 +760,7 @@ function projectCodexCompletedItem(
   driver: SessionRecordDriver | null,
 ): void {
   if (item.type === 'userMessage') {
-    const projected = projectUserMessageEcho(state, codexItemText(item));
+    const projected = projectUserMessageEcho(state, codexItemText(item), Array.isArray(item.content));
     if (!projected) return;
     const { text, author } = projected;
     if (!text) return;
@@ -962,13 +931,8 @@ function upsertQuestionRecord(
   const existingIndex = state.questionRecordById.get(questionId);
   if (existingIndex !== undefined) {
     const existing = state.records[existingIndex]!;
-    const existingQuestions = Array.isArray(existing.meta.questions)
-      ? (existing.meta.questions as JsonValue[])
-      : [];
-    const questions =
-      update.questions.length > 0
-        ? sanitizeQuestions(update.questions)
-        : existingQuestions;
+    const existingQuestions = Array.isArray(existing.meta.questions) ? (existing.meta.questions as JsonValue[]) : [];
+    const questions = update.questions.length > 0 ? sanitizeQuestions(update.questions) : existingQuestions;
     const meta = mergeMeta(existing.meta, {
       turnId: update.turnId ?? existing.meta.turnId,
       questions,
@@ -1057,29 +1021,21 @@ export function deriveEntryUid(
   if (itemId) {
     const changeIndex = meta.changeIndex;
     const rawKey =
-      typeof changeIndex === 'string' || typeof changeIndex === 'number'
-        ? `change|${itemId}|${changeIndex}`
-        : itemId;
+      typeof changeIndex === 'string' || typeof changeIndex === 'number' ? `change|${itemId}|${changeIndex}` : itemId;
     return entryUidFromRawKey('item', rawKey);
   }
 
   const questionId = stringFromMeta(meta, 'questionId');
   if (questionId) return entryUidFromRawKey('q', questionId);
 
-  return entryUidFromRawKey(
-    'fb',
-    `${sourceEventKey(meta) ?? 'unknown'}|${kind}|${fallbackOrdinalFromMeta(meta)}`,
-  );
+  return entryUidFromRawKey('fb', `${sourceEventKey(meta) ?? 'unknown'}|${kind}|${fallbackOrdinalFromMeta(meta)}`);
 }
 
 function entryUidFromRawKey(
   source: EntryUidSource,
   rawKeyString: string,
 ): { entryUid: string; source: EntryUidSource } {
-  const digest = createHash('sha256')
-    .update(`${source}|${rawKeyString}`)
-    .digest('hex')
-    .slice(0, 24);
+  const digest = createHash('sha256').update(`${source}|${rawKeyString}`).digest('hex').slice(0, 24);
   return { entryUid: `${source}_${digest}`, source };
 }
 
@@ -1176,12 +1132,7 @@ function renderExecutionSummary(data: Extract<CentaurEventFrame, { event: 'execu
   return parts.join(', ');
 }
 
-function renderCommand(
-  command: string,
-  output?: string,
-  exitCode?: number,
-  statusOrError?: string | boolean,
-): string {
+function renderCommand(command: string, output?: string, exitCode?: number, statusOrError?: string | boolean): string {
   const lines = [`$ ${command}`];
   if (output) lines.push(excerpt(output, MAX_TEXT_EXCERPT));
   if (typeof exitCode === 'number') lines.push(`[exit ${exitCode}]`);
@@ -1194,12 +1145,7 @@ function renderFileChange(path: string, kind: string, diff?: string): string {
   return [`File ${kind}: ${path}`, diff ? excerpt(diff, MAX_TEXT_EXCERPT) : ''].filter(Boolean).join('\n');
 }
 
-function renderToolCall(
-  toolName: string,
-  input?: JsonObject,
-  result?: string,
-  isError?: boolean,
-): string {
+function renderToolCall(toolName: string, input?: JsonObject, result?: string, isError?: boolean): string {
   return renderToolCallWithExcerpt(
     toolName,
     input ? excerpt(stableJson(input), MAX_TEXT_EXCERPT) : undefined,
@@ -1208,12 +1154,7 @@ function renderToolCall(
   );
 }
 
-function renderToolCallWithExcerpt(
-  toolName: string,
-  argsExcerpt?: string,
-  result?: string,
-  isError?: boolean,
-): string {
+function renderToolCallWithExcerpt(toolName: string, argsExcerpt?: string, result?: string, isError?: boolean): string {
   const lines = [`Tool: ${toolName}`];
   if (argsExcerpt) lines.push(`Arguments: ${argsExcerpt}`);
   if (result) lines.push(`Result: ${excerpt(result, MAX_TEXT_EXCERPT)}`);
@@ -1248,10 +1189,12 @@ function renderQuestion(
 
 function codexItemText(item: CodexItem): string {
   if (typeof item.text === 'string') return item.text;
-  return item.content
-    ?.filter((content) => content.type === 'text')
-    .map((content) => content.text)
-    .join('') ?? '';
+  return (
+    item.content
+      ?.filter((content) => content.type === 'text')
+      .map((content) => content.text)
+      .join('') ?? ''
+  );
 }
 
 function codexItemTextOrJson(item: CodexItem): string {
@@ -1296,27 +1239,21 @@ function isLikelyDynamicToolItem(item: CodexItem): boolean {
 }
 
 function codexToolName(item: CodexItem): string {
-  return (
-    stringField(item, 'toolName') ??
-    stringField(item, 'tool_name') ??
-    stringField(item, 'name') ??
-    item.type
-  );
+  return stringField(item, 'toolName') ?? stringField(item, 'tool_name') ?? stringField(item, 'name') ?? item.type;
 }
 
 function projectUserMessageEcho(
   state: MutableProjectionState,
   raw: string,
+  canMergeContextPart: boolean,
 ): { text: string; author?: JsonObject } | null {
-  const prefixed = stripSteerContextPrefix(raw);
+  const prefixed = canMergeContextPart ? stripSteerContextPrefix(raw) : null;
   if (prefixed && prefixed.text.length === 0) {
     state.pendingUserMessageAuthor = authorMetaFromContext(prefixed.context);
     return null;
   }
 
-  const author = prefixed
-    ? authorMetaFromContext(prefixed.context)
-    : (state.pendingUserMessageAuthor ?? undefined);
+  const author = prefixed ? authorMetaFromContext(prefixed.context) : (state.pendingUserMessageAuthor ?? undefined);
   if (author) state.pendingUserMessageAuthor = null;
 
   return {
@@ -1365,10 +1302,7 @@ function sanitizeQuestions(questions: QuestionPrompt[]): JsonValue[] {
   );
 }
 
-function inferDriver(
-  state: MutableProjectionState,
-  frame: CentaurEventFrame,
-): SessionRecordDriver | null {
+function inferDriver(state: MutableProjectionState, frame: CentaurEventFrame): SessionRecordDriver | null {
   if (state.driver) return state.driver;
   const harness = isJsonObject(frame.data) ? stringField(frame.data, 'harness') : null;
   if (harness === 'claude' || harness === 'codex') return harness;
@@ -1385,10 +1319,10 @@ function frameTs(frame: CentaurEventFrame, fallback: Date): Date {
     coerceDate(raw.created_at) ??
     coerceDate(raw.createdAt) ??
     (isJsonObject(frame.data)
-      ? coerceDate(frame.data.ts) ??
+      ? (coerceDate(frame.data.ts) ??
         coerceDate(frame.data.timestamp) ??
         coerceDate(frame.data.created_at) ??
-        coerceDate(frame.data.createdAt)
+        coerceDate(frame.data.createdAt))
       : null) ??
     fallback
   );

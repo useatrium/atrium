@@ -1,8 +1,7 @@
 import net from 'node:net';
 import pg from 'pg';
 
-const databaseUrl =
-  process.env.DATABASE_URL ?? 'postgres://atrium:atrium@localhost:5433/atrium_e2e';
+const databaseUrl = process.env.DATABASE_URL ?? 'postgres://atrium:atrium@localhost:5433/atrium_e2e';
 const adminUrl = databaseUrl.replace(/\/[^/]*$/, '/atrium');
 const dbName = databaseUrl.match(/\/([^/?]+)(?:[?].*)?$/)?.[1] ?? 'atrium_e2e';
 const serverPort = Number(process.env.E2E_SERVER_PORT ?? process.env.PORT ?? 3101);
@@ -70,9 +69,6 @@ async function truncateDatabase() {
   }
 }
 
-await Promise.all([
-  assertPortFree(serverPort, 'API server'),
-  assertPortFree(webPort, 'web client'),
-]);
+await Promise.all([assertPortFree(serverPort, 'API server'), assertPortFree(webPort, 'web client')]);
 await createDatabase();
 await truncateDatabase();

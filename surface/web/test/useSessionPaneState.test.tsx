@@ -2,13 +2,7 @@
 
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type {
-  AppAction,
-  Channel,
-  Session,
-  SessionWire,
-  UserRef,
-} from '@atrium/surface-client';
+import type { AppAction, Channel, Session, SessionWire, UserRef } from '@atrium/surface-client';
 import { useSessionPaneState, sessionSpectatorCounts } from '../src/useSessionPaneState';
 
 const createdAt = '2026-06-28T17:00:00.000Z';
@@ -21,6 +15,8 @@ function channel(overrides: Partial<Channel> = {}): Channel {
     name: 'general',
     createdAt,
     kind: 'public',
+    archivedAt: null,
+    pinned: false,
     ...overrides,
   };
 }
@@ -46,6 +42,8 @@ function session(overrides: Partial<Session> = {}): Session {
     completedAt: null,
     lastEventId: 1,
     permalink: '/s/s-1',
+    archivedAt: null,
+    pinned: false,
     ...overrides,
   };
 }
@@ -67,6 +65,8 @@ function wire(overrides: Partial<SessionWire> = {}): SessionWire {
     completedAt: null,
     lastEventId: 2,
     permalink: '/s/s-2',
+    archivedAt: null,
+    pinned: false,
     ...overrides,
   };
 }
@@ -80,9 +80,7 @@ function renderPaneState({
   sessions = { 's-1': session() },
 }: Partial<Parameters<typeof useSessionPaneState>[0]> = {}) {
   const dispatch = vi.fn<(action: AppAction) => void>();
-  const view = renderHook((props: Parameters<typeof useSessionPaneState>[0]) =>
-    useSessionPaneState(props),
-  {
+  const view = renderHook((props: Parameters<typeof useSessionPaneState>[0]) => useSessionPaneState(props), {
     initialProps: {
       activeChannel,
       client,

@@ -21,9 +21,7 @@ export function MarkupSteerCard({ steer }: { steer: ParsedMarkupSteer }) {
       }}
     >
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm }}>
-        <Text style={{ flex: 1, color: colors.text, fontSize: font.sm, fontWeight: '800' }}>
-          Marked up {title}
-        </Text>
+        <Text style={{ flex: 1, color: colors.text, fontSize: font.sm, fontWeight: '800' }}>Marked up {title}</Text>
         <Text
           style={{
             color: colors.accent,

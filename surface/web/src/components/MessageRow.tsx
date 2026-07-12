@@ -11,7 +11,15 @@ import {
   type PointerEvent as ReactPointerEvent,
   type SVGProps,
 } from 'react';
-import type { ChatMessage, UserRef } from '@atrium/surface-client';
+import {
+  isStructuredTextForMarkup,
+  questionAnswerSummaryText,
+  questionPayloadAnswers,
+  questionPayloadPrompts,
+  sessionQuestionEventLabel,
+  type ChatMessage,
+  type UserRef,
+} from '@atrium/surface-client';
 import { encodeEventHandle } from '@atrium/surface-client/handle';
 import { SessionCard } from '../sessions/SessionCard';
 import type { Session } from '../sessions/types';
@@ -22,6 +30,7 @@ import { CornerUpLeftIcon, FileIcon, SmilePlusIcon } from './icons';
 import { Lightbox } from './media';
 import type { PreviewFile } from './media';
 import { MessageActionMenu, type MessageActionMenuAction, type MessageActionMenuState } from './MessageActionMenu';
+import { SelectTextSheet } from './SelectTextSheet';
 import { CompactMarkdownText, MessageText } from './MessageText';
 import { ReactionPicker } from './ReactionPicker';
 import { TimestampDisclosure } from './TimestampDisclosure';
@@ -58,15 +67,7 @@ function reactionUserName(user: UserRef | undefined): string {
   return 'Unknown';
 }
 
-function ReactionUsersPopover({
-  id,
-  emoji,
-  users,
-}: {
-  id: string;
-  emoji: string;
-  users: ReactionDisplayUser[];
-}) {
+function ReactionUsersPopover({ id, emoji, users }: { id: string; emoji: string; users: ReactionDisplayUser[] }) {
   return (
     <div
       id={id}
@@ -180,6 +181,8 @@ export const MessageRow = memo(function MessageRow({
   const reactionButtonRef = useRef<HTMLButtonElement | null>(null);
   const mouseOpenedPickerRef = useRef(false);
   const [actionMenu, setActionMenu] = useState<MessageActionMenuState | null>(null);
+  const [selectTextOpen, setSelectTextOpen] = useState(false);
+  const closeSelectText = useCallback(() => setSelectTextOpen(false), []);
   const swipeRef = useRef<SwipeState | null>(null);
   const [swipeOffset, setSwipeOffset] = useState(0);
   const [swiping, setSwiping] = useState(false);
@@ -358,6 +361,15 @@ export const MessageRow = memo(function MessageRow({
           copyBlockText();
         },
       });
+      actions.push({
+        key: 'select-text',
+        label: 'Select text…',
+        sheetOnly: true,
+        onSelect: () => {
+          setPickerOpen(false);
+          setSelectTextOpen(true);
+        },
+      });
     }
     if (canEdit) {
       actions.push({
@@ -395,7 +407,8 @@ export const MessageRow = memo(function MessageRow({
     threadTargetEventId,
   ]);
 
-  const actionMenuAllowed = (canThread || canEdit || canDelete || canReact || canAnnotate || canMarkupReply) && !editing;
+  const actionMenuAllowed =
+    (canThread || canEdit || canDelete || canReact || canAnnotate || canMarkupReply) && !editing;
   const closeActionMenu = useCallback(() => setActionMenu(null), []);
   const openSheetMenu = useCallback(() => {
     if (!actionMenuAllowed) return;
@@ -736,7 +749,11 @@ export const MessageRow = memo(function MessageRow({
           </div>
         )}
         {failed && (
-          <button type="button" onClick={() => onRetry?.(m)} className="mt-0.5 text-xs font-medium text-danger hover:underline">
+          <button
+            type="button"
+            onClick={() => onRetry?.(m)}
+            className="mt-0.5 text-xs font-medium text-danger hover:underline"
+          >
             {isSessionRow ? 'Failed to spawn — click to retry' : 'Failed to send — click to retry'}
           </button>
         )}
@@ -881,19 +898,12 @@ export const MessageRow = memo(function MessageRow({
         actions={actionMenuActions}
         reactions={canReact ? { onSelect: react } : undefined}
       />
+      <SelectTextSheet open={selectTextOpen} onClose={closeSelectText} restoreFocusRef={rowRef}>
+        <MessageText text={m.text} meHandle={meHandle} />
+      </SelectTextSheet>
     </div>
   );
 });
-
-const MARKDOWN_BLOCK_RE = /(^|\n)\s{0,3}(#{1,6}\s+\S|([-*+]|\d+[.)])\s+\S|>\s+\S|```)/;
-
-export function isStructuredTextForMarkup(text: string): boolean {
-  const nonEmptyLines = text
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
-  return nonEmptyLines.length >= 2 || MARKDOWN_BLOCK_RE.test(text);
-}
 
 function mediaKindForContentType(contentType: string): PreviewFile['mediaKind'] {
   if (contentType.startsWith('image/')) return 'image';
@@ -909,7 +919,10 @@ function isTouchContextMenu(event: MouseEvent): boolean {
 }
 
 function isInteractiveTarget(target: EventTarget): boolean {
-  return target instanceof Element && target.closest('button,a,input,textarea,select,[role="button"],[contenteditable="true"]') != null;
+  return (
+    target instanceof Element &&
+    target.closest('button,a,input,textarea,select,[role="button"],[contenteditable="true"]') != null
+  );
 }
 
 function RemovedAttachmentPlaceholder({ filename }: { filename: string }) {
@@ -1045,15 +1058,7 @@ function SessionEventCard({
                 {answer.header}
               </div>
               <div className="mt-0.5 whitespace-pre-wrap break-words text-fg-body">
-                <CompactMarkdownText
-                  text={
-                    answer.answers.length > 0
-                      ? answer.answers.join('\n')
-                      : answer.count === 1
-                        ? '1 answer recorded'
-                        : `${answer.count} answers recorded`
-                  }
-                />
+                <CompactMarkdownText text={questionAnswerSummaryText(answer)} />
               </div>
             </div>
           ))}
@@ -1071,45 +1076,4 @@ function SessionEventCard({
       )}
     </div>
   );
-}
-
-function questionPayloadPrompts(payload: Record<string, unknown>): Array<{ question: string }> {
-  if (!Array.isArray(payload.questions)) return [];
-  return payload.questions
-    .map((item): { question: string } | null => {
-      if (!item || typeof item !== 'object' || Array.isArray(item)) return null;
-      const raw = item as Record<string, unknown>;
-      return typeof raw.question === 'string' && raw.question.trim() ? { question: raw.question } : null;
-    })
-    .filter((item): item is { question: string } => item !== null);
-}
-
-function questionPayloadAnswers(
-  payload: Record<string, unknown>,
-): Array<{ id: string; header: string; answers: string[]; count: number }> {
-  if (!Array.isArray(payload.answers)) return [];
-  return payload.answers
-    .map((item): { id: string; header: string; answers: string[]; count: number } | null => {
-      if (!item || typeof item !== 'object' || Array.isArray(item)) return null;
-      const raw = item as Record<string, unknown>;
-      if (typeof raw.id !== 'string') return null;
-      const answers = Array.isArray(raw.answers)
-        ? raw.answers.filter((answer): answer is string => typeof answer === 'string')
-        : [];
-      return {
-        id: raw.id,
-        header: typeof raw.header === 'string' ? raw.header : raw.id,
-        answers,
-        count: typeof raw.count === 'number' && Number.isFinite(raw.count) ? raw.count : answers.length,
-      };
-    })
-    .filter((item): item is { id: string; header: string; answers: string[]; count: number } => item !== null);
-}
-
-function sessionQuestionEventLabel(type: ChatMessage['sessionEventType'], reason: unknown): string {
-  if (type === 'question_requested') return 'Question asked';
-  if (type === 'question_answered') return 'Question answered';
-  if (reason === 'empty') return 'Question expired without an answer';
-  if (reason === 'cancelled') return 'Question cancelled';
-  return 'Question resolved';
 }

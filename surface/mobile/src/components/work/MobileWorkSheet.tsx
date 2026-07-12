@@ -3,7 +3,8 @@
 // detach). This is the full-screen container; it hosts one surface at a time
 // behind a tab bar, the RN counterpart of web's WorkDrawer.
 import { useRef, type ReactNode } from 'react';
-import { Modal, Pressable, Text, View } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { Modal, Pressable, ScrollView, Text, View } from 'react-native';
 import { useModalAccessibilityFocus } from '../../lib/accessibility';
 import { font, space, useTheme } from '../../lib/theme';
 
@@ -37,11 +38,7 @@ export function MobileWorkSheet({
 
   return (
     <Modal visible={visible && tabs.length > 0} animationType="slide" onRequestClose={onClose}>
-      <View
-        testID="mobile-work-sheet"
-        accessibilityViewIsModal
-        style={{ flex: 1, backgroundColor: colors.bg }}
-      >
+      <View testID="mobile-work-sheet" accessibilityViewIsModal style={{ flex: 1, backgroundColor: colors.bg }}>
         <View
           style={{
             flexDirection: 'row',
@@ -49,10 +46,15 @@ export function MobileWorkSheet({
             borderBottomWidth: 1,
             borderBottomColor: colors.border,
             paddingHorizontal: space.sm,
-            height: 48,
+            minHeight: 48,
           }}
         >
-          <View style={{ flexDirection: 'row', flex: 1, alignItems: 'center' }}>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={{ flex: 1 }}
+            contentContainerStyle={{ alignItems: 'stretch' }}
+          >
             {tabs.map((t) => {
               const isActive = t.key === active?.key;
               return (
@@ -64,8 +66,9 @@ export function MobileWorkSheet({
                   accessibilityHint={`Shows the ${t.label} work surface`}
                   accessibilityState={{ selected: isActive }}
                   style={{
+                    minHeight: 48,
+                    justifyContent: 'center',
                     paddingHorizontal: space.sm,
-                    paddingVertical: space.sm,
                     borderBottomWidth: 2,
                     borderBottomColor: isActive ? colors.accent : 'transparent',
                   }}
@@ -85,14 +88,21 @@ export function MobileWorkSheet({
                 </Pressable>
               );
             })}
-          </View>
+          </ScrollView>
           <Pressable
             onPress={onClose}
             accessibilityRole="button"
             accessibilityLabel="Close work surfaces"
-            style={{ paddingHorizontal: space.sm, paddingVertical: space.sm }}
+            hitSlop={space.xs}
+            style={{
+              width: 48,
+              height: 48,
+              alignItems: 'center',
+              justifyContent: 'center',
+              borderRadius: 6,
+            }}
           >
-            <Text style={{ color: colors.textMuted, fontSize: font.lg }}>✕</Text>
+            <Ionicons name="close" size={22} color={colors.textSecondary} />
           </Pressable>
         </View>
         <View style={{ flex: 1 }}>{active?.render()}</View>

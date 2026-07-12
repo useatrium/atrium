@@ -13,6 +13,7 @@ import type {
   SlackbotV2ExecuteSessionRequest,
   SlackbotV2ExecuteSessionResponse,
   SlackbotV2Fetch,
+  SlackbotV2InterruptSessionResponse,
   SlackbotV2Options,
   SlackbotV2RendererSource,
   SlackbotV2SessionMessage
@@ -62,8 +63,17 @@ export function isRetryableSessionApiError(error: unknown): boolean {
   return error.name === 'AbortError' || error.name === 'TypeError'
 }
 
+export const DEFAULT_SESSION_IDLE_TIMEOUT_MS = 3 * 60 * 60 * 1000
 const DEFAULT_SESSION_API_TIMEOUT_MS = 30_000
 const DEFAULT_SLACK_API_TIMEOUT_MS = 5_000
+
+function sessionIdleTimeoutMs(options: SlackbotV2Options): number {
+  if (options.idleTimeoutMs !== undefined) return options.idleTimeoutMs
+  if (options.maxDurationMs !== undefined) {
+    return Math.min(DEFAULT_SESSION_IDLE_TIMEOUT_MS, options.maxDurationMs)
+  }
+  return DEFAULT_SESSION_IDLE_TIMEOUT_MS
+}
 
 class FetchTimeoutError extends Error {
   constructor(action: string, timeoutMs: number) {
@@ -140,8 +150,16 @@ function sessionApiTimeoutMs(options: SlackbotV2Options): number {
   return options.sessionApiTimeoutMs ?? DEFAULT_SESSION_API_TIMEOUT_MS
 }
 
-function slackApiTimeoutMs(options: SlackbotV2Options): number {
+export function slackApiTimeoutMs(options: SlackbotV2Options): number {
   return options.slackApiTimeoutMs ?? DEFAULT_SLACK_API_TIMEOUT_MS
+}
+
+export async function withSlackApiTimeout<T>(
+  options: SlackbotV2Options | undefined,
+  action: string,
+  fn: () => Promise<T>
+): Promise<T> {
+  return options ? withTimeout(action, slackApiTimeoutMs(options), fn) : fn()
 }
 
 type ForwardSessionApiCallbacks = {
@@ -149,7 +167,7 @@ type ForwardSessionApiCallbacks = {
   onMessagesAppended?(): Promise<void>
   /**
    * Fires when session creation restarted the thread onto a new harness
-   * (explicit --claude/--amp/--codex on a thread pinned to another harness).
+   * (sticky --claude/--amp/--codex state on a thread pinned to another harness).
    * Runs before append/execute, so the callback may set
    * `input.contextPreamble` to re-feed thread history to the fresh harness.
    */
@@ -158,7 +176,8 @@ type ForwardSessionApiCallbacks = {
 
 export async function collectInitialContext(
   thread: { allMessages: AsyncIterable<Message> },
-  currentMessage: Message
+  currentMessage: Message,
+  options?: SlackbotV2Options
 ): Promise<SlackbotV2ApiMessage[]> {
   const messages: Message[] = []
   try {
@@ -167,7 +186,7 @@ export async function collectInitialContext(
     }
   } catch (error) {
     if (!isSlackThreadNotFoundError(error)) throw error
-    return [await serializeMessage(currentMessage)]
+    return [await serializeMessage(currentMessage, options)]
   }
 
   const currentIndex = messages.findIndex(message => message.id === currentMessage.id)
@@ -179,7 +198,7 @@ export async function collectInitialContext(
 
   const serialized: SlackbotV2ApiMessage[] = []
   for (const message of messages) {
-    serialized.push(await serializeMessage(message))
+    serialized.push(await serializeMessage(message, options))
   }
   return serialized
 }
@@ -196,10 +215,18 @@ function isSlackThreadNotFoundError(error: unknown): boolean {
   return error instanceof Error && error.message.includes('thread_not_found')
 }
 
-export async function serializeMessage(message: Message): Promise<SlackbotV2ApiMessage> {
+export async function serializeMessage(
+  message: Message,
+  options?: SlackbotV2Options
+): Promise<SlackbotV2ApiMessage> {
   const attachments: SlackbotV2ApiAttachment[] = []
   for (const attachment of message.attachments) {
-    attachments.push(await serializeAttachment(attachment))
+    attachments.push(await serializeAttachment(attachment, options))
+  }
+  if (attachments.length === 0) {
+    for (const attachment of slackRawFileAttachments(message.raw, options)) {
+      attachments.push(await serializeAttachment(attachment, options))
+    }
   }
   const displayText = renderSlackDisplayText({ raw: message.raw, text: message.text })
 
@@ -225,6 +252,71 @@ export async function serializeMessage(message: Message): Promise<SlackbotV2ApiM
     threadId: message.threadId,
     timestamp: message.metadata.dateSent.toISOString()
   }
+}
+
+function slackRawFileAttachments(raw: unknown, options?: SlackbotV2Options): Attachment[] {
+  const files = slackRawFiles(raw)
+  if (files.length === 0) return []
+  return files.map(file => slackRawFileAttachment(file, raw, options))
+}
+
+function slackRawFiles(raw: unknown): JsonObject[] {
+  const records = slackRawRecords(raw)
+  const files: JsonObject[] = []
+  for (const record of records) {
+    const rawFiles = record.files
+    if (!Array.isArray(rawFiles)) continue
+    for (const file of rawFiles) {
+      if (isJsonObject(file)) files.push(file)
+    }
+  }
+  return files
+}
+
+function slackRawFileAttachment(
+  file: JsonObject,
+  raw: unknown,
+  options?: SlackbotV2Options
+): Attachment {
+  const url = stringValue(file.url_private_download) ?? stringValue(file.url_private)
+  const mimeType = stringValue(file.mimetype)
+  const fetchMetadata: Record<string, string> = {}
+  const teamId = slackTeamId(raw)
+  if (url) fetchMetadata.url = url
+  if (teamId) fetchMetadata.teamId = teamId
+  return {
+    fetchData: url && options ? () => fetchSlackRawFile(options, url) : undefined,
+    fetchMetadata: Object.keys(fetchMetadata).length > 0 ? fetchMetadata : undefined,
+    height: numberValue(file.original_h),
+    mimeType,
+    name: stringValue(file.name) ?? stringValue(file.title) ?? stringValue(file.id),
+    size: numberValue(file.size),
+    type: slackRawFileAttachmentType(mimeType),
+    url,
+    width: numberValue(file.original_w)
+  }
+}
+
+async function fetchSlackRawFile(options: SlackbotV2Options, url: string): Promise<Buffer> {
+  const fetchFn = options.fetch ?? fetch
+  const response = await fetchFn(url, {
+    headers: { authorization: `Bearer ${options.botToken}` }
+  })
+  if (!response.ok) {
+    throw new Error(`failed to fetch Slack file: ${response.status} ${response.statusText}`)
+  }
+  return Buffer.from(await response.arrayBuffer())
+}
+
+function slackRawFileAttachmentType(mimeType: string | undefined): Attachment['type'] {
+  if (mimeType?.startsWith('image/')) return 'image'
+  if (mimeType?.startsWith('video/')) return 'video'
+  if (mimeType?.startsWith('audio/')) return 'audio'
+  return 'file'
+}
+
+function numberValue(value: JsonValue | undefined): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined
 }
 
 const SLACK_MESSAGE_URL_PATTERN = /^https:\/\/[^/\s]+\.slack\.com\/archives\/[A-Z0-9]+\/p\d+/i
@@ -426,7 +518,8 @@ export async function forwardToSessionApi(
       input.executeContextMessages,
       input.contextPreamble,
       input.reasoning,
-      input.provider
+      input.provider,
+      input.metadataModel
     ),
     sessionApiTimeoutMs(options),
     'execute session'
@@ -463,6 +556,19 @@ export async function openSessionEventStream(
     phase_ms: elapsedMs(streamStartedAtMs)
   })
   return stream
+}
+
+export async function interruptSessionExecution(
+  options: SlackbotV2Options,
+  threadId: string,
+  reason: string
+): Promise<SlackbotV2InterruptSessionResponse> {
+  return recordSessionApiOperation(
+    'interrupt_session',
+    () => postInterruptSessionExecution(options, threadId, reason),
+    sessionApiTimeoutMs(options),
+    'interrupt session'
+  )
 }
 
 const RESTART_CONTEXT_MAX_CHARS = 24_000
@@ -512,7 +618,10 @@ export const MAX_INLINE_ATTACHMENT_BYTES = 100 * 1024 * 1024
 const MAX_CODEX_INPUT_LINE_CHARS = 900 * 1024
 const STAGED_ATTACHMENT_CHUNK_CHARS = 700 * 1024
 
-export async function serializeAttachment(attachment: Attachment): Promise<SlackbotV2ApiAttachment> {
+export async function serializeAttachment(
+  attachment: Attachment,
+  options?: SlackbotV2Options
+): Promise<SlackbotV2ApiAttachment> {
   const serialized: SlackbotV2ApiAttachment = {
     fetchMetadata: attachment.fetchMetadata,
     height: attachment.height,
@@ -530,7 +639,7 @@ export async function serializeAttachment(attachment: Attachment): Promise<Slack
   }
 
   try {
-    const data = attachment.data ?? (await attachment.fetchData?.())
+    const data = attachment.data ?? (await fetchAttachmentData(attachment, options))
     if (data) {
       // Re-check the actual byte count: Slack size metadata can be absent.
       const byteLength = Buffer.isBuffer(data) ? data.length : data.size
@@ -545,6 +654,17 @@ export async function serializeAttachment(attachment: Attachment): Promise<Slack
   }
 
   return serialized
+}
+
+async function fetchAttachmentData(
+  attachment: Attachment,
+  options?: SlackbotV2Options
+): Promise<Buffer | Blob | undefined> {
+  if (!attachment.fetchData) return undefined
+  if (!options) return attachment.fetchData()
+  return withSlackApiTimeout(options, 'fetch Slack attachment', () =>
+    attachment.fetchData?.() ?? Promise.resolve(undefined)
+  )
 }
 
 function attachmentTooLargeError(bytes: number): string {
@@ -565,6 +685,7 @@ type RequesterIdentity = {
   githubUnavailableReason?: string
   slackDisplayName?: string
   slackMention?: string
+  slackTeamId?: string
   slackUserId?: string
   slackUserName?: string
 }
@@ -607,8 +728,8 @@ async function createSession(
   message?: SlackbotV2ApiMessage
 ): Promise<CreateSessionOutcome> {
   const requested = harnessType ?? options.defaultHarnessType ?? DEFAULT_HARNESS_TYPE
-  // An explicit --claude/--amp/--codex restarts a thread pinned to another
-  // harness; the implicit default never forces a switch.
+  // A sticky --claude/--amp/--codex selection restarts a thread pinned to
+  // another harness; the implicit default never forces a switch.
   const response = await postCreateSession(
     options,
     threadId,
@@ -712,14 +833,21 @@ function sessionRequesterMetadata(
   identity?: RequesterIdentity
 ): JsonObject {
   const slackUserId = identity?.slackUserId ?? messageRequesterUserId(message)
+  const slackTeamId = identity?.slackTeamId ?? messageSlackTeamId(message)
   const slackUserName = identity?.slackUserName ?? message?.author.userName
   const slackDisplayName = identity?.slackDisplayName ?? message?.author.fullName
   return {
     ...(slackUserId ? { slack_user_id: slackUserId } : {}),
+    ...(slackTeamId ? { slack_team_id: slackTeamId } : {}),
     ...(slackUserName ? { slack_user_name: slackUserName } : {}),
     ...(slackDisplayName ? { slack_display_name: slackDisplayName } : {}),
     ...(identity?.githubHandle ? { github_handle: identity.githubHandle } : {})
   }
+}
+
+function messageSlackTeamId(message: SlackbotV2ApiMessage | undefined): string | undefined {
+  if (!message) return undefined
+  return message.teamId || slackTeamId(message.raw) || rawSlackString(message.raw, 'team_id')
 }
 
 function messageRequesterUserId(message: SlackbotV2ApiMessage | undefined): string | undefined {
@@ -737,6 +865,7 @@ async function resolveRequesterIdentity(
   const identity: RequesterIdentity = {
     slackDisplayName: stringValue(message.author.fullName),
     slackMention: slackUserId ? `<@${slackUserId}>` : undefined,
+    slackTeamId: messageSlackTeamId(message),
     slackUserId,
     slackUserName: stringValue(message.author.userName)
   }
@@ -809,6 +938,7 @@ function mergeRequesterIdentity(
     ...cached,
     slackDisplayName: cached.slackDisplayName ?? fallback.slackDisplayName,
     slackMention: fallback.slackMention ?? cached.slackMention,
+    slackTeamId: fallback.slackTeamId ?? cached.slackTeamId,
     slackUserId: fallback.slackUserId ?? cached.slackUserId,
     slackUserName: cached.slackUserName ?? fallback.slackUserName
   }
@@ -941,7 +1071,7 @@ async function slackApiGet(
 ): Promise<JsonObject | null> {
   const url = slackApiMethodUrl(options.slackApiUrl, method)
   for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value)
-  return withTimeout(`Slack API ${method}`, slackApiTimeoutMs(options), async () => {
+  return withSlackApiTimeout(options, `Slack API ${method}`, async () => {
     const response = await fetchWithTimeout(
       fetch,
       url,
@@ -1066,13 +1196,24 @@ async function executeSession(
   contextMessages?: SlackbotV2ApiMessage[],
   contextPreamble?: string,
   reasoning?: string,
-  provider?: string
+  provider?: string,
+  metadataModel?: string
 ): Promise<SlackbotV2ExecuteSessionResponse> {
   const fetchFn = options.fetch ?? fetch
   const requesterIdentity = await resolveRequesterIdentity(options, message)
+  const idleTimeoutMs = sessionIdleTimeoutMs(options)
+  const recordedModel = metadataModel ?? model
   const body: SlackbotV2ExecuteSessionRequest = {
     idempotency_key: message.id,
-    metadata: sessionMetadata(message, { action: 'execute' }, requesterIdentity),
+    // Record the model this execution runs on (explicit override, else the
+    // configured/baked harness default) so readers like the Console can show
+    // it. Metadata only; the harness receives `model` via input_lines and only
+    // when explicitly overridden.
+    metadata: sessionMetadata(
+      message,
+      { action: 'execute', ...(recordedModel ? { model: recordedModel } : {}) },
+      requesterIdentity
+    ),
     input_lines: toCodexInputLines(
       message,
       threadId,
@@ -1083,7 +1224,7 @@ async function executeSession(
       reasoning,
       provider
     ),
-    ...(options.idleTimeoutMs === undefined ? {} : { idle_timeout_ms: options.idleTimeoutMs }),
+    idle_timeout_ms: idleTimeoutMs,
     ...(options.maxDurationMs === undefined ? {} : { max_duration_ms: options.maxDurationMs })
   }
   const response = await fetchWithTimeout(
@@ -1099,6 +1240,27 @@ async function executeSession(
   )
   await ensureApiOk(response, 'execute session')
   return (await response.json()) as SlackbotV2ExecuteSessionResponse
+}
+
+async function postInterruptSessionExecution(
+  options: SlackbotV2Options,
+  threadId: string,
+  reason: string
+): Promise<SlackbotV2InterruptSessionResponse> {
+  const fetchFn = options.fetch ?? fetch
+  const response = await fetchWithTimeout(
+    fetchFn,
+    apiSessionUrl(options.apiUrl, threadId, 'interrupt'),
+    {
+      method: 'POST',
+      headers: apiHeaders(options),
+      body: JSON.stringify({ reason })
+    },
+    sessionApiTimeoutMs(options),
+    'interrupt session'
+  )
+  await ensureApiOk(response, 'interrupt session')
+  return (await response.json()) as SlackbotV2InterruptSessionResponse
 }
 
 async function ensureApiOk(response: Response, action: string): Promise<void> {
@@ -1151,7 +1313,7 @@ async function streamSessionNotifications(
 function apiSessionUrl(
   apiUrl: string,
   threadId: string,
-  suffix?: 'messages' | 'execute' | 'events'
+  suffix?: 'messages' | 'execute' | 'events' | 'interrupt'
 ): string {
   const path = `/api/session/${encodeURIComponent(threadId)}${suffix ? `/${suffix}` : ''}`
   return new URL(path, ensureTrailingSlash(apiUrl)).toString()
@@ -1597,18 +1759,6 @@ function codexAttachmentInput(
       size: attachment.size
     }
   }
-  const dataUrl =
-    attachment.dataBase64 && attachment.mimeType
-      ? `data:${attachment.mimeType};base64,${attachment.dataBase64}`
-      : undefined
-  if (attachment.type === 'image' && (dataUrl || attachment.url)) {
-    return {
-      type: 'image',
-      url: dataUrl ?? attachment.url,
-      detail: 'auto',
-      name: attachment.name
-    }
-  }
   if (attachment.dataBase64) {
     return {
       type: 'attachment',
@@ -1659,6 +1809,15 @@ async function* parseSessionEventStream(
       if (isTerminalCodexOutputLine(event.data)) return
       continue
     }
+    if (event.event === 'session.activity_summary') {
+      yield {
+        data: sessionEventData(event),
+        event: event.event,
+        eventId: event.id,
+        eventKind: event.event
+      } satisfies RustSessionStreamEvent
+      continue
+    }
     if (event.event === 'session.execution_failed' || event.event === 'session.stream_error') {
       yield {
         data: { error: sessionErrorMessage(event) },
@@ -1670,7 +1829,7 @@ async function* parseSessionEventStream(
     }
     if (event.event === 'session.execution_cancelled') {
       yield {
-        data: { error: sessionErrorMessage(event, 'Execution cancelled') },
+        data: { error: sessionErrorMessage(event, 'Execution interrupted') },
         event: event.event,
         eventId: event.id,
         eventKind: event.event
@@ -1691,38 +1850,70 @@ async function* parseSessionEventStream(
 
 async function* parseSseEvents(stream: ReadableStream<Uint8Array>): AsyncIterable<ParsedSessionEvent> {
   const reader = stream.getReader()
+  // Tracks the underlying network connection. Each open stream occupies one
+  // slot of Bun's global fetch pool (BUN_CONFIG_MAX_HTTP_REQUESTS, default
+  // 256); the 2026-07-06 incident wedged Slackbot by leaking one abandoned
+  // stream per completed turn until the pool was exhausted.
+  slackbotMetrics.sessionEventStreamsOpen.inc()
+  let connectionReleased = false
+  const releaseConnection = (reason: 'cancelled' | 'done' | 'error') => {
+    if (connectionReleased) return
+    connectionReleased = true
+    slackbotMetrics.sessionEventStreamsOpen.dec()
+    slackbotMetrics.sessionEventStreamClosures.inc({ reason })
+  }
   const decoder = new TextDecoder()
   let buffer = ''
   let eventName: string | undefined
   let eventId: number | undefined
   let data: string[] = []
 
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
-    buffer += decoder.decode(value, { stream: true })
-    const lines = buffer.split(/\r?\n/)
-    buffer = lines.pop() ?? ''
+  try {
+    while (true) {
+      let done: boolean
+      let value: Uint8Array | undefined
+      try {
+        ;({ done, value } = await reader.read())
+      } catch (error) {
+        releaseConnection('error')
+        throw error
+      }
+      if (done) {
+        releaseConnection('done')
+        break
+      }
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split(/\r?\n/)
+      buffer = lines.pop() ?? ''
 
-    for (const line of lines) {
-      const emitted = parseSseLine(line, { data, eventId, eventName })
+      for (const line of lines) {
+        const emitted = parseSseLine(line, { data, eventId, eventName })
+        data = emitted.state.data
+        eventId = emitted.state.eventId
+        eventName = emitted.state.eventName
+        if (emitted.event) yield emitted.event
+      }
+    }
+
+    buffer += decoder.decode()
+    if (buffer) {
+      const emitted = parseSseLine(buffer, { data, eventId, eventName })
       data = emitted.state.data
       eventId = emitted.state.eventId
       eventName = emitted.state.eventName
       if (emitted.event) yield emitted.event
     }
-  }
-
-  buffer += decoder.decode()
-  if (buffer) {
-    const emitted = parseSseLine(buffer, { data, eventId, eventName })
-    data = emitted.state.data
-    eventId = emitted.state.eventId
-    eventName = emitted.state.eventName
-    if (emitted.event) yield emitted.event
-  }
-  if (data.length > 0) {
-    yield { data: data.join('\n'), event: eventName, id: eventId }
+    if (data.length > 0) {
+      yield { data: data.join('\n'), event: eventName, id: eventId }
+    }
+  } finally {
+    // Runs when a consumer abandons this generator early — typically
+    // parseSessionEventStream returning on a terminal event. Cancelling the
+    // reader closes the connection, freeing its fetch-pool slot and letting
+    // api-rs drop the stream's server-side resources. Without this, every
+    // completed turn leaked one connection until all outbound HTTP wedged.
+    releaseConnection('cancelled')
+    await reader.cancel().catch(() => {})
   }
 }
 

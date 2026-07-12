@@ -8,10 +8,10 @@
 // between), but streams token deltas continuously while thinking, so only
 // thinking-phase silence is meaningful. Harness-agnostic.
 
-import type { SessionItem, SessionState, ToolCallItem } from "./reducer.js";
-import { toolDisplay } from "./toolDisplay.js";
+import type { SessionItem, SessionState, ToolCallItem } from './reducer.js';
+import { toolDisplay } from './toolDisplay.js';
 
-export type TurnPhase = "thinking" | "tool" | "waiting" | "done";
+export type TurnPhase = 'thinking' | 'tool' | 'waiting' | 'done';
 
 /** How alive the turn actually is, judged from the stream (not assumed):
  *  - live: frames are arriving (or silence is expected, e.g. a tool is running)
@@ -20,7 +20,7 @@ export type TurnPhase = "thinking" | "tool" | "waiting" | "done";
  *  - reconnecting: the client's SSE to the server is down
  *  - reattaching: the server lost the sandbox stdout pipe and is re-attaching
  */
-export type TurnLiveness = "live" | "quiet" | "stuck" | "reconnecting" | "reattaching";
+export type TurnLiveness = 'live' | 'quiet' | 'stuck' | 'reconnecting' | 'reattaching';
 
 // Thinking-phase silence thresholds (tool runs are exempt). Quiet is
 // informational; stuck offers the exit.
@@ -94,12 +94,12 @@ function parseTs(ts: string | undefined): number | null {
 function openToolCall(items: SessionItem[], turnStartMs: number | null): ToolCallItem | null {
   let candidate: ToolCallItem | null = null;
   for (const item of items) {
-    if (item.type === "tool_call") {
+    if (item.type === 'tool_call') {
       if (item.result !== undefined) continue;
       const startedMs = parseTs(item.ts);
       if (startedMs !== null && turnStartMs !== null && startedMs < turnStartMs) continue;
       candidate = item;
-    } else if (item.type === "text" && candidate !== null) {
+    } else if (item.type === 'text' && candidate !== null) {
       candidate = null;
     }
   }
@@ -110,11 +110,11 @@ function openToolCall(items: SessionItem[], turnStartMs: number | null): ToolCal
  * the reasoning it is streaming right now (i.e. the transcript's last item). */
 function reasoningHeadline(items: SessionItem[]): string | null {
   const last = items[items.length - 1];
-  if (!last || last.type !== "reasoning") return null;
+  if (!last || last.type !== 'reasoning') return null;
   const source = last.summary?.trim() ? last.summary : last.text;
-  const lines = (source ?? "")
-    .split("\n")
-    .map((line) => line.replace(/\*\*/g, "").trim())
+  const lines = (source ?? '')
+    .split('\n')
+    .map((line) => line.replace(/\*\*/g, '').trim())
     .filter(Boolean);
   const tail = lines[lines.length - 1];
   if (!tail) return null;
@@ -141,11 +141,11 @@ export function turnStatusLabel(args: {
   waitingLabel: string;
 }): string {
   const { phase, starting, headline, openTool, waitingLabel } = args;
-  if (phase === "tool" && openTool) return `Working: ${toolDisplay(openTool).title}`;
-  if (phase === "waiting") return waitingLabel;
-  if (phase === "done") return "Turn complete";
-  if (starting) return "Starting";
-  return headline ?? "Thinking";
+  if (phase === 'tool' && openTool) return `Working: ${toolDisplay(openTool).title}`;
+  if (phase === 'waiting') return waitingLabel;
+  if (phase === 'done') return 'Turn complete';
+  if (starting) return 'Starting';
+  return headline ?? 'Thinking';
 }
 
 /** Item-derived pieces cached on the items array's identity — the reducer
@@ -175,7 +175,7 @@ function itemDerived(items: SessionItem[], turnStartMs: number | null): ItemDeri
 
 function questionAskedTs(derived: ItemDerived, items: SessionItem[], questionId: string): number | null {
   if (derived.questionTs.has(questionId)) return derived.questionTs.get(questionId) ?? null;
-  const question = items.find((item) => item.type === "question" && item.questionId === questionId);
+  const question = items.find((item) => item.type === 'question' && item.questionId === questionId);
   const ts = parseTs(question?.ts);
   derived.questionTs.set(questionId, ts);
   return ts;
@@ -228,9 +228,7 @@ export function deriveTurnStatus(inputs: TurnStatusInputs): TurnStatusSnapshot {
   // mid-silence resumes the true count instead of restarting at zero. With no
   // frames at all (e.g. the stream never came up), silence counts from mount.
   const quietMs =
-    lastFrameTsMs !== null
-      ? Math.max(0, serverNowMs - lastFrameTsMs)
-      : Math.max(0, now - (lastFrameAt ?? mountedAt));
+    lastFrameTsMs !== null ? Math.max(0, serverNowMs - lastFrameTsMs) : Math.max(0, now - (lastFrameAt ?? mountedAt));
 
   // The waiting clock anchors to the question's own frame stamp — quietMs
   // would reset on unrelated frames (artifact captures, usage) and undercount
@@ -253,13 +251,13 @@ export function deriveTurnStatus(inputs: TurnStatusInputs): TurnStatusSnapshot {
   const phase: TurnPhase | null = suppressed
     ? null
     : activeTurn && pendingQuestionId !== null
-      ? "waiting"
+      ? 'waiting'
       : activeTurn && openTool
-        ? "tool"
+        ? 'tool'
         : activeTurn
-          ? "thinking"
+          ? 'thinking'
           : completed
-            ? "done"
+            ? 'done'
             : null;
 
   // Judge aliveness from evidence. Spawning/queued sessions can't have frames
@@ -268,18 +266,18 @@ export function deriveTurnStatus(inputs: TurnStatusInputs): TurnStatusSnapshot {
   // moment (NOT quietMs — the agent may have been legitimately quiet for
   // longer than the grace when a 1s transport blip happens).
   const disconnectedMs = connected ? 0 : Math.max(0, now - disconnectedAt);
-  const silenceMatters = phase === "thinking" && !starting;
+  const silenceMatters = phase === 'thinking' && !starting;
   const liveness: TurnLiveness = !activeTurn
-    ? "live"
+    ? 'live'
     : !connected && disconnectedMs >= RECONNECT_GRACE_MS
-      ? "reconnecting"
-      : stream.transport === "reattaching"
-        ? "reattaching"
+      ? 'reconnecting'
+      : stream.transport === 'reattaching'
+        ? 'reattaching'
         : silenceMatters && quietMs >= STUCK_AFTER_QUIET_MS
-          ? "stuck"
+          ? 'stuck'
           : silenceMatters && quietMs >= QUIET_AFTER_MS
-            ? "quiet"
-            : "live";
+            ? 'quiet'
+            : 'live';
 
   // Output tokens so far: real when the stream reports usage (codex
   // snapshots, usage_observed), else streamed-chars ÷ 4 marked estimated. A
@@ -298,7 +296,7 @@ export function deriveTurnStatus(inputs: TurnStatusInputs): TurnStatusSnapshot {
     quietMs,
     waitingMs,
     openTool,
-    headline: phase === "thinking" && liveness === "live" ? derived.headline : null,
+    headline: phase === 'thinking' && liveness === 'live' ? derived.headline : null,
     tokens,
   };
 }

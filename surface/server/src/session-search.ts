@@ -100,10 +100,7 @@ export async function searchSessionRecords(
 
 async function canViewFullSearchTier(pool: Db, userId: string): Promise<boolean> {
   if (!config.fullViewEnabled) return false;
-  const res = await pool.query<{ raw_access: boolean }>(
-    `SELECT raw_access FROM users WHERE id = $1`,
-    [userId],
-  );
+  const res = await pool.query<{ raw_access: boolean }>(`SELECT raw_access FROM users WHERE id = $1`, [userId]);
   return res.rows[0]?.raw_access === true;
 }
 

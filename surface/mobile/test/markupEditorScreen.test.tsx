@@ -2,7 +2,8 @@
 
 import '@testing-library/jest-dom/vitest';
 import { act, cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
-import React, { forwardRef, useImperativeHandle } from 'react';
+import type React from 'react';
+import { forwardRef, useImperativeHandle } from 'react';
 import type { HubFileVersion } from '@atrium/surface-client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import MarkupEditorScreen from '../app/(app)/markup-editor';
@@ -40,7 +41,11 @@ const version: HubFileVersion = {
 
 vi.mock('expo-router', () => ({
   Stack: {
-    Screen: ({ options }: { options?: { headerLeft?: () => React.ReactNode; headerRight?: () => React.ReactNode } }) => (
+    Screen: ({
+      options,
+    }: {
+      options?: { headerLeft?: () => React.ReactNode; headerRight?: () => React.ReactNode };
+    }) => (
       <>
         {options?.headerLeft?.()}
         {options?.headerRight?.()}
@@ -78,7 +83,10 @@ vi.mock('../src/lib/chat', () => ({
 }));
 
 vi.mock('react-native-webview', () => ({
-  WebView: forwardRef(function MockWebView(props: { onMessage?: (event: { nativeEvent: { data: string } }) => void }, ref) {
+  WebView: forwardRef(function MockWebView(
+    props: { onMessage?: (event: { nativeEvent: { data: string } }) => void },
+    ref,
+  ) {
     lastWebViewProps = props;
     useImperativeHandle(ref, () => ({
       postMessage: postMessageToWebView,

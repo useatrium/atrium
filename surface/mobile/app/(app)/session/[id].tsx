@@ -27,9 +27,12 @@ import {
   isTerminalSessionStatus,
   matchSteerProvenance,
   mergeSpawnResponse,
+  normalizeSteerProvenanceText,
+  questionAnswerSummaryText,
   randomId,
   sessionDriverId,
   sessionFromWire,
+  steerProvenanceKey,
   type QuestionPrompt,
   type Session,
   type SessionQuestionAnswerSummary,
@@ -38,7 +41,16 @@ import {
   type SteerProvenance,
 } from '@atrium/surface-client';
 import { HARNESS_EFFORT_PICKER_OPTIONS } from '@atrium/surface-client/effort';
-import type { QuestionItem, SessionItem, TextItem, ToolCallItem, UserMessageItem } from '@atrium/centaur-client';
+import {
+  focusTranscriptRows,
+  fullTranscriptRows,
+  toolDefaultOpen,
+  type QuestionItem,
+  type SessionItem,
+  type TextItem,
+  type ToolCallItem,
+  type UserMessageItem,
+} from '@atrium/centaur-client';
 import { useChat } from '../../../src/lib/chat';
 import { useAccessibilityAnnouncement, useModalAccessibilityFocus } from '../../../src/lib/accessibility';
 import { font, radius, space, useTheme, type Colors } from '../../../src/lib/theme';
@@ -69,16 +81,14 @@ import { TranscriptActiveEntryFrame } from '../../../src/components/work/Transcr
 import { SteerRow, type SteerRowProvenance } from '../../../src/components/work/SteerRow';
 import { deriveTurns } from '../../../src/components/work/turns';
 import { SeatRequestBanner, SeatFooter } from '../../../src/components/work/SeatControls';
-import {
-  SuggestionsStrip,
-  type OptimisticSuggestionSend,
-} from '../../../src/components/work/SuggestionsStrip';
+import { SuggestionsStrip, type OptimisticSuggestionSend } from '../../../src/components/work/SuggestionsStrip';
 import { AnswerProposals } from '../../../src/components/work/AnswerProposals';
 import { EntryInlineChip } from '../../../src/components/EntryQuoteCards';
 import { SessionMarkdown } from '../../../src/components/Markdown';
 import { PlanPanel } from '../../../src/components/PlanPanel';
 import { ReasoningBlock } from '../../../src/components/ReasoningBlock';
 import { TurnStatusLine } from '../../../src/components/TurnStatusLine';
+import { HiddenWorkChip } from '../../../src/components/HiddenWorkChip';
 import { MessageActionSheet, type MessageActionListItem } from '../../../src/components/MessageActions';
 import {
   createEntryReferenceQuery,
@@ -89,10 +99,8 @@ import {
 import { useRequiredSession, useSession } from '../../../src/lib/session';
 import { extractEntryLinkHandles, isEntryHandle } from '../../../src/lib/entryLinks';
 import { lightImpactHaptic, selectionHaptic } from '../../../src/lib/haptics';
-import {
-  loadMarkupDraftFromEntry,
-  putPendingMarkupDraft,
-} from '../../../src/lib/markupAuthoring';
+import { loadTranscriptView, persistTranscriptView, type TranscriptView } from '../../../src/lib/prefsStorage';
+import { loadMarkupDraftFromEntry, putPendingMarkupDraft } from '../../../src/lib/markupAuthoring';
 
 function transcriptEntryHandle(item: SessionItem): string | null {
   const handle = item.handle;
@@ -115,19 +123,6 @@ function sessionLink(serverUrl: string, sessionId: string): string {
   return `${serverUrl.replace(/\/+$/, '')}/s/${encodeURIComponent(sessionId)}`;
 }
 
-function normalizeSteerEchoText(text: string): string {
-  return text.trim().replace(/\s+/g, ' ');
-}
-
-function steerProvenanceKey(provenance: SteerProvenance): string {
-  return [
-    String(provenance.resolvedAt),
-    provenance.proposerName,
-    provenance.resolvedByName,
-    provenance.edited ? 'edited' : 'sent',
-  ].join('\u0000');
-}
-
 type PendingSteer = {
   id: string;
   text: string;
@@ -142,13 +137,7 @@ function referenceLabel(ref: EntryReference): string {
   return excerpt ? `${actor}: ${excerpt}` : actor;
 }
 
-function DiscussedChip({
-  count,
-  onPress,
-}: {
-  count: number;
-  onPress: () => void;
-}) {
+function DiscussedChip({ count, onPress }: { count: number; onPress: () => void }) {
   const { colors } = useTheme();
   return (
     <Pressable
@@ -165,9 +154,7 @@ function DiscussedChip({
         paddingVertical: 3,
       })}
     >
-      <Text style={{ color: colors.textSecondary, fontSize: font.xs, fontWeight: '900' }}>
-        ↗ {count}
-      </Text>
+      <Text style={{ color: colors.textSecondary, fontSize: font.xs, fontWeight: '900' }}>↗ {count}</Text>
     </Pressable>
   );
 }
@@ -246,11 +233,17 @@ function StatusChip({ status, stalled }: { status: SessionStatus; stalled: boole
   );
 }
 
-function ToolCard({ item, onLongPress }: { item: ToolCallItem; onLongPress?: () => void }) {
+export function ToolCard({ item, onLongPress }: { item: ToolCallItem; onLongPress?: () => void }) {
   const { colors } = useTheme();
-  const [open, setOpen] = useState(false);
-  const descriptor = toolDisplay(item);
   const running = item.result === undefined;
+  const [open, setOpen] = useState(() => toolDefaultOpen(item));
+  const manuallyToggled = useRef(false);
+  const wasRunning = useRef(running);
+  useEffect(() => {
+    if (wasRunning.current && !running && !manuallyToggled.current) setOpen(false);
+    wasRunning.current = running;
+  }, [running]);
+  const descriptor = toolDisplay(item);
   const isError = item.result?.is_error === true;
   const command = typeof item.input.command === 'string' ? item.input.command : null;
   const rest = Object.fromEntries(Object.entries(item.input).filter(([key]) => key !== 'command'));
@@ -266,7 +259,10 @@ function ToolCard({ item, onLongPress }: { item: ToolCallItem; onLongPress?: () 
       }}
     >
       <Pressable
-        onPress={() => setOpen((value) => !value)}
+        onPress={() => {
+          manuallyToggled.current = true;
+          setOpen((value) => !value);
+        }}
         onLongPress={onLongPress}
         delayLongPress={250}
         accessibilityRole="button"
@@ -280,9 +276,7 @@ function ToolCard({ item, onLongPress }: { item: ToolCallItem; onLongPress?: () 
           backgroundColor: pressed ? colors.bgPressed : 'transparent',
         })}
       >
-        <Text style={{ color: colors.textMuted, fontSize: font.xs, width: 10 }}>
-          {open ? '▾' : '▸'}
-        </Text>
+        <Text style={{ color: colors.textMuted, fontSize: font.xs, width: 10 }}>{open ? '▾' : '▸'}</Text>
         <Text
           numberOfLines={1}
           style={{
@@ -352,16 +346,19 @@ function ToolCard({ item, onLongPress }: { item: ToolCallItem; onLongPress?: () 
             </Text>
           ) : null}
           {item.result ? (
-            <Text
-              style={{
-                color: isError ? colors.danger : colors.textSecondary,
-                fontSize: font.xs,
-                fontFamily: 'monospace',
-                lineHeight: 16,
-              }}
-            >
-              {item.result.content}
-            </Text>
+            <ScrollView style={{ maxHeight: 288 }} nestedScrollEnabled showsVerticalScrollIndicator>
+              <Text
+                selectable
+                style={{
+                  color: isError ? colors.danger : colors.textSecondary,
+                  fontSize: font.xs,
+                  fontFamily: 'monospace',
+                  lineHeight: 16,
+                }}
+              >
+                {item.result.content}
+              </Text>
+            </ScrollView>
           ) : null}
         </View>
       ) : null}
@@ -390,7 +387,10 @@ function groupQuestionEventsByQuestion(events: SessionQuestionEvent[]): Map<stri
     grouped.set(event.questionId, current);
   }
   for (const [questionId, current] of grouped) {
-    grouped.set(questionId, [...current].sort((a, b) => a.id - b.id));
+    grouped.set(
+      questionId,
+      [...current].sort((a, b) => a.id - b.id),
+    );
   }
   return grouped;
 }
@@ -425,11 +425,6 @@ function questionStatusLabel(item: QuestionItem, events: SessionQuestionEvent[])
   return questionResolutionText(reason);
 }
 
-function answerValueText(summary: SessionQuestionAnswerSummary): string {
-  if (summary.answers.length > 0) return summary.answers.join('\n');
-  return summary.count === 1 ? '1 answer recorded' : `${summary.count} answers recorded`;
-}
-
 function MobileQuestionTranscriptCard({
   item,
   events,
@@ -441,7 +436,7 @@ function MobileQuestionTranscriptCard({
 }) {
   const { colors } = useTheme();
   const requested = latestQuestionEvent(events, 'requested');
-  const prompts = item.questions.length > 0 ? item.questions : requested?.questions ?? [];
+  const prompts = item.questions.length > 0 ? item.questions : (requested?.questions ?? []);
   const answerSummaries = answerByPromptId(events);
   const status = questionStatusLabel(item, events);
   const Root = onLongPress ? Pressable : View;
@@ -465,12 +460,8 @@ function MobileQuestionTranscriptCard({
       }}
     >
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 6 }}>
-        <Text style={{ color: colors.text, fontSize: font.xs, fontWeight: '900' }}>
-          AGENT QUESTION
-        </Text>
-        <Text style={{ color: colors.warning, fontSize: font.xs, fontWeight: '800' }}>
-          {status.toUpperCase()}
-        </Text>
+        <Text style={{ color: colors.text, fontSize: font.xs, fontWeight: '900' }}>AGENT QUESTION</Text>
+        <Text style={{ color: colors.warning, fontSize: font.xs, fontWeight: '800' }}>{status.toUpperCase()}</Text>
       </View>
       {prompts.length > 0 ? (
         prompts.map((question) => {
@@ -478,16 +469,10 @@ function MobileQuestionTranscriptCard({
           return (
             <View key={question.id} style={{ gap: 6 }}>
               <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
-                <Text style={{ color: colors.textMuted, fontSize: font.xs, fontWeight: '800' }}>
-                  {question.header}
-                </Text>
-                {question.isSecret ? (
-                  <Text style={{ color: colors.textMuted, fontSize: font.xs }}>secret</Text>
-                ) : null}
+                <Text style={{ color: colors.textMuted, fontSize: font.xs, fontWeight: '800' }}>{question.header}</Text>
+                {question.isSecret ? <Text style={{ color: colors.textMuted, fontSize: font.xs }}>secret</Text> : null}
               </View>
-              <Text style={{ color: colors.text, fontSize: font.sm, lineHeight: 20 }}>
-                {question.question}
-              </Text>
+              <Text style={{ color: colors.text, fontSize: font.sm, lineHeight: 20 }}>{question.question}</Text>
               {question.options?.length ? (
                 <View style={{ gap: 6 }}>
                   {question.options.map((option) => (
@@ -502,12 +487,8 @@ function MobileQuestionTranscriptCard({
                         gap: 2,
                       }}
                     >
-                      <Text style={{ color: colors.text, fontSize: font.sm, fontWeight: '800' }}>
-                        {option.label}
-                      </Text>
-                      <Text style={{ color: colors.textMuted, fontSize: font.xs }}>
-                        {option.description}
-                      </Text>
+                      <Text style={{ color: colors.text, fontSize: font.sm, fontWeight: '800' }}>{option.label}</Text>
+                      <Text style={{ color: colors.textMuted, fontSize: font.xs }}>{option.description}</Text>
                     </View>
                   ))}
                 </View>
@@ -523,11 +504,9 @@ function MobileQuestionTranscriptCard({
                     gap: 3,
                   }}
                 >
-                  <Text style={{ color: colors.accent, fontSize: font.xs, fontWeight: '900' }}>
-                    ANSWER
-                  </Text>
+                  <Text style={{ color: colors.accent, fontSize: font.xs, fontWeight: '900' }}>ANSWER</Text>
                   <Text style={{ color: colors.text, fontSize: font.sm, lineHeight: 20 }}>
-                    {answerValueText(summary)}
+                    {questionAnswerSummaryText(summary)}
                   </Text>
                 </View>
               ) : null}
@@ -563,12 +542,7 @@ function MobileQuestionBanner({
   useAccessibilityAnnouncement(error);
   const toggleOption = (q: QuestionPrompt, label: string) => {
     const current = answerArrayValue(values[q.id]);
-    setValue(
-      q.id,
-      current.includes(label)
-        ? current.filter((selected) => selected !== label)
-        : [...current, label],
-    );
+    setValue(q.id, current.includes(label) ? current.filter((selected) => selected !== label) : [...current, label]);
   };
   return (
     <View
@@ -581,17 +555,11 @@ function MobileQuestionBanner({
         gap: space.sm,
       }}
     >
-      <Text style={{ color: colors.warning, fontSize: font.xs, fontWeight: '900' }}>
-        NEEDS INPUT
-      </Text>
+      <Text style={{ color: colors.warning, fontSize: font.xs, fontWeight: '900' }}>NEEDS INPUT</Text>
       {pending.questions.map((q) => (
         <View key={q.id} style={{ gap: 6 }}>
-          <Text style={{ color: colors.textMuted, fontSize: font.xs, fontWeight: '800' }}>
-            {q.header}
-          </Text>
-          <Text style={{ color: colors.text, fontSize: font.sm, lineHeight: 20 }}>
-            {q.question}
-          </Text>
+          <Text style={{ color: colors.textMuted, fontSize: font.xs, fontWeight: '800' }}>{q.header}</Text>
+          <Text style={{ color: colors.text, fontSize: font.sm, lineHeight: 20 }}>{q.question}</Text>
           {q.options?.length ? (
             <View style={{ gap: 6 }}>
               {q.options.map((option) => {
@@ -616,12 +584,8 @@ function MobileQuestionBanner({
                       opacity: submitting ? 0.6 : 1,
                     }}
                   >
-                    <Text style={{ color: colors.text, fontSize: font.sm, fontWeight: '800' }}>
-                      {option.label}
-                    </Text>
-                    <Text style={{ color: colors.textMuted, fontSize: font.xs }}>
-                      {option.description}
-                    </Text>
+                    <Text style={{ color: colors.text, fontSize: font.sm, fontWeight: '800' }}>{option.label}</Text>
+                    <Text style={{ color: colors.textMuted, fontSize: font.xs }}>{option.description}</Text>
                     {option.preview ? (
                       <Text
                         style={{
@@ -687,13 +651,7 @@ function MobileQuestionBanner({
         }}
       >
         <Text style={{ color: complete ? colors.onAccent : colors.textFaint, fontSize: font.sm, fontWeight: '900' }}>
-          {isDriver
-            ? submitting
-              ? 'Answering...'
-              : 'Submit answer'
-            : submitting
-              ? 'Proposing...'
-              : 'Propose answer'}
+          {isDriver ? (submitting ? 'Answering...' : 'Submit answer') : submitting ? 'Proposing...' : 'Propose answer'}
         </Text>
       </Pressable>
     </View>
@@ -744,6 +702,7 @@ export default function SessionScreen() {
   const [workTab, setWorkTab] = useState<string | null>(null);
   const [turnsOpen, setTurnsOpen] = useState(false);
   const [effortOpen, setEffortOpen] = useState(false);
+  const [headerActionsOpen, setHeaderActionsOpen] = useState(false);
   const [effortChoice, setEffortChoice] = useState<string | null>(null);
   const [seatAsk, setSeatAsk] = useState<'idle' | 'confirm-take'>('idle');
   const [ignoredSeatRequests, setIgnoredSeatRequests] = useState<ReadonlySet<string>>(() => new Set());
@@ -757,6 +716,7 @@ export default function SessionScreen() {
   const [transcriptActionTarget, setTranscriptActionTarget] = useState<TranscriptActionTarget | null>(null);
   const [activeTranscriptEntryId, setActiveTranscriptEntryId] = useState<string | null>(null);
   const [transcriptCopied, setTranscriptCopied] = useState<'text' | 'link' | null>(null);
+  const [transcriptView, setTranscriptViewState] = useState<TranscriptView>('focus');
   const [sessionLinkCopied, setSessionLinkCopied] = useState(false);
   const referenceCache = useRef<Record<string, EntryReferenceMap>>({});
   const referenceFetchKeys = useRef<Set<string>>(new Set());
@@ -769,6 +729,23 @@ export default function SessionScreen() {
   // Transcript item y-offsets (captured via onLayout) so the Turns▾ sheet can
   // jump to a turn — ScrollView has no scrollToItem the way FlatList does.
   const itemOffsets = useRef<Record<string, number>>({});
+
+  useEffect(() => {
+    let active = true;
+    void loadTranscriptView().then((view) => {
+      if (active) setTranscriptViewState(view);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const setTranscriptView = useCallback((view: TranscriptView) => {
+    setTranscriptViewState(view);
+    void persistTranscriptView(view).catch((err: unknown) => {
+      console.warn('failed to persist transcript view', err);
+    });
+  }, []);
 
   useFocusEffect(
     useCallback(() => {
@@ -805,7 +782,10 @@ export default function SessionScreen() {
   const streamStatus = stream.status !== 'idle' ? normalizeExecutionStatus(stream.status) : null;
   const displayStatus = (streamStatus ?? session?.status ?? 'spawning') as SessionStatus;
   const terminal = isTerminalSessionStatus(displayStatus);
-  const isEnded = displayStatus === 'failed' || displayStatus === 'cancelled';
+  // Folded from the durable terminal event (reducer `stoppedByUser`) — same for
+  // every viewer, survives replay/reload, clears when a new turn starts.
+  const stoppedByUser = stream.stoppedByUser === true;
+  const isEnded = displayStatus === 'failed' || (displayStatus === 'cancelled' && !stoppedByUser);
   const now = useNow(!terminal);
   const stalled = session ? !terminal && isStalledSessionStatus(session, now) : false;
   const costUsd = Math.max(session?.costUsd ?? 0, stream.costUsd);
@@ -961,7 +941,7 @@ export default function SessionScreen() {
     const echoed = new Map<string, UserMessageItem[]>();
     for (const item of stream.items) {
       if (item.type !== 'user_message') continue;
-      const text = normalizeSteerEchoText(item.text);
+      const text = normalizeSteerProvenanceText(item.text);
       const matches = echoed.get(text);
       if (matches) matches.push(item);
       else echoed.set(text, [item]);
@@ -970,7 +950,7 @@ export default function SessionScreen() {
     const consumedEchoes = new Set<string>();
     const carriedProvenance = new Map<string, SteerRowProvenance>();
     const keep = pendingSteers.filter((pending) => {
-      const text = normalizeSteerEchoText(pending.text);
+      const text = normalizeSteerProvenanceText(pending.text);
       const match = echoed.get(text)?.find((item) => !consumedEchoes.has(item.id));
       if (!match) return true;
       consumedEchoes.add(match.id);
@@ -995,13 +975,17 @@ export default function SessionScreen() {
   // web — Changes · Side-effects · Artifacts. Each non-empty surface gets a strip
   // chip + a full-screen sheet tab.
   const fileChanges = useMemo(() => collectFileChanges(stream), [stream.items, stream.fileChanges]);
-  const inlineCodexChanges = useMemo(
-    () => codexInlineFileChanges(stream),
-    [stream.items, stream.fileChanges],
-  );
+  const inlineCodexChanges = useMemo(() => codexInlineFileChanges(stream), [stream.items, stream.fileChanges]);
   const codexChangesAt = useCallback(
     (index: number) => inlineCodexChanges.filter((change) => change.index === index),
     [inlineCodexChanges],
+  );
+  const transcriptRows = useMemo(
+    () =>
+      transcriptView === 'focus'
+        ? focusTranscriptRows(stream.items, codexChangesAt)
+        : fullTranscriptRows(stream.items, codexChangesAt),
+    [codexChangesAt, stream.items, transcriptView],
   );
   const changedFileCount = useMemo(() => changedPaths(fileChanges).length, [fileChanges]);
   const sideEffects = useMemo(() => collectSideEffects(stream.items), [stream.items]);
@@ -1054,17 +1038,7 @@ export default function SessionScreen() {
       });
     }
     return tabs;
-  }, [
-    fileChanges,
-    changedFileCount,
-    sideEffects,
-    sideEffectsN,
-    sideEffectsDanger,
-    artifacts,
-    artifactsN,
-    chat,
-    id,
-  ]);
+  }, [fileChanges, changedFileCount, sideEffects, sideEffectsN, sideEffectsDanger, artifacts, artifactsN, chat, id]);
   const workStripItems = useMemo<WorkStripItem[]>(
     () => workTabs.map((t) => ({ key: t.key, label: t.label, count: t.count, danger: t.danger })),
     [workTabs],
@@ -1090,7 +1064,7 @@ export default function SessionScreen() {
   const cancelErrorMessage =
     displayCancelAsk === 'failed'
       ? canStopTurn
-        ? 'Cancel turn failed. Tap retry.'
+        ? 'Stop turn failed. Tap retry.'
         : 'Cancel failed. Tap retry cancel.'
       : null;
   useModalAccessibilityFocus(effortTitleRef, effortOpen && canPickEffort);
@@ -1104,20 +1078,10 @@ export default function SessionScreen() {
   );
   useAccessibilityAnnouncement(cancelErrorMessage);
   useAccessibilityAnnouncement(visibleSteerError ? `Message did not send: ${visibleSteerError}` : null);
-  // Folded from the durable terminal event (reducer `stoppedByUser`) — same for
-  // every viewer, survives replay/reload, clears when a new turn starts.
-  const stoppedByUser = stream.stoppedByUser === true;
-  const elapsedMsForHeader = session
-    ? terminal
-      ? sessionElapsedMs(session, now)
-      : turnStatus.elapsedMs
-    : 0;
+  const elapsedMsForHeader = session ? (terminal ? sessionElapsedMs(session, now) : turnStatus.elapsedMs) : 0;
   const elapsed = elapsedMsForHeader > 0 ? formatElapsed(elapsedMsForHeader) : '';
   const questionEvents = session?.questionEvents ?? [];
-  const questionEventsByQuestion = useMemo(
-    () => groupQuestionEventsByQuestion(questionEvents),
-    [questionEvents],
-  );
+  const questionEventsByQuestion = useMemo(() => groupQuestionEventsByQuestion(questionEvents), [questionEvents]);
 
   // Control loop (Phase 4 parity): seat hand-off, suggestion queue, answer
   // proposals — read off the WS-folded entity (mergeSpawnResponse keeps the live
@@ -1133,12 +1097,9 @@ export default function SessionScreen() {
         starting,
         headline: turnStatus.headline,
         openTool: turnStatus.openTool,
-        waitingLabel:
-          driverId === me.id ? 'Waiting for your reply' : `Waiting for ${waitingDriverName}`,
+        waitingLabel: driverId === me.id ? 'Waiting for your reply' : `Waiting for ${waitingDriverName}`,
       });
-  const visibleSeatRequests = (session?.pendingSeatRequests ?? []).filter(
-    (r) => !ignoredSeatRequests.has(r.userId),
-  );
+  const visibleSeatRequests = (session?.pendingSeatRequests ?? []).filter((r) => !ignoredSeatRequests.has(r.userId));
   const firstSeatRequest = visibleSeatRequests[0] ?? null;
   const iRequestedSeat = (session?.pendingSeatRequests ?? []).some((r) => r.userId === me.id);
   const seatFooterMode: 'request' | 'take' | 'confirm' | 'waiting' = iRequestedSeat
@@ -1235,8 +1196,7 @@ export default function SessionScreen() {
   const onScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
     setActiveTranscriptEntryId(null);
     const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
-    stickRef.current =
-      contentSize.height - contentOffset.y - layoutMeasurement.height < 96;
+    stickRef.current = contentSize.height - contentOffset.y - layoutMeasurement.height < 96;
   };
 
   // The server re-attaches the recorded effort to effort-less steers; the
@@ -1274,6 +1234,51 @@ export default function SessionScreen() {
       })
       .catch(() => {});
   }, [chat.serverUrl, id]);
+
+  // Header overflow: pin/archive/transcript-view live behind one ⋯ button so
+  // the title keeps room next to copy-link and cancel on small phones.
+  const openHeaderActions = useCallback(() => {
+    if (!session) return;
+    setHeaderActionsOpen(true);
+  }, [session]);
+
+  const headerActions = useMemo<MessageActionListItem[]>(() => {
+    if (!session) return [];
+    const isArchived = session.archivedAt != null;
+    return [
+      ...(isArchived
+        ? []
+        : [
+            {
+              key: 'pin',
+              label: session.pinned ? 'Unpin' : 'Pin',
+              icon: 'pin-outline' as const,
+              onSelect: () => {
+                setHeaderActionsOpen(false);
+                chat.setSessionPinned(session.id, !session.pinned, session.pinned);
+              },
+            },
+          ]),
+      {
+        key: 'archive',
+        label: isArchived ? 'Unarchive' : 'Archive',
+        icon: isArchived ? 'arrow-undo-outline' : 'archive-outline',
+        onSelect: () => {
+          setHeaderActionsOpen(false);
+          chat.setSessionArchived(session.id, !isArchived, session.archivedAt);
+        },
+      },
+      {
+        key: 'transcript',
+        label: transcriptView === 'focus' ? 'Show full transcript' : 'Show focus transcript',
+        icon: 'list-outline',
+        onSelect: () => {
+          setHeaderActionsOpen(false);
+          setTranscriptView(transcriptView === 'focus' ? 'full' : 'focus');
+        },
+      },
+    ];
+  }, [chat, session, setTranscriptView, transcriptView]);
 
   const sendSteer = () => {
     if (!id) return;
@@ -1353,16 +1358,17 @@ export default function SessionScreen() {
     setSeatAsk('idle');
     api.takeSeat(id).catch((err) => {
       if (err instanceof ApiError && err.status === 409) {
-        api.requestSeat(id).catch((requestErr: unknown) =>
-          reportSessionActionError(requestErr, "Couldn't request the seat."),
-        );
+        api
+          .requestSeat(id)
+          .catch((requestErr: unknown) => reportSessionActionError(requestErr, "Couldn't request the seat."));
         return;
       }
       reportSessionActionError(err, "Couldn't take the seat.");
     });
   };
   const grantSeatAction = (userId: string) => {
-    if (id) api.grantSeat(id, userId).catch((err: unknown) => reportSessionActionError(err, "Couldn't grant the seat."));
+    if (id)
+      api.grantSeat(id, userId).catch((err: unknown) => reportSessionActionError(err, "Couldn't grant the seat."));
   };
   const ignoreSeatRequest = (userId: string) =>
     setIgnoredSeatRequests((prev) => {
@@ -1416,17 +1422,13 @@ export default function SessionScreen() {
         openReference(latest[0]!);
         return;
       }
-      Alert.alert(
-        'Discussed in',
-        undefined,
-        [
-          ...latest.slice(0, 6).map((ref) => ({
-            text: referenceLabel(ref),
-            onPress: () => openReference(ref),
-          })),
-          { text: 'Cancel', style: 'cancel' as const },
-        ],
-      );
+      Alert.alert('Discussed in', undefined, [
+        ...latest.slice(0, 6).map((ref) => ({
+          text: referenceLabel(ref),
+          onPress: () => openReference(ref),
+        })),
+        { text: 'Cancel', style: 'cancel' as const },
+      ]);
     },
     [openReference],
   );
@@ -1619,9 +1621,7 @@ export default function SessionScreen() {
     return (
       <View style={{ flex: 1, backgroundColor: colors.bg, padding: space.lg, gap: space.md }}>
         <Stack.Screen options={{ title: 'Session' }} />
-        <Text style={{ color: colors.text, fontSize: font.lg, fontWeight: '800' }}>
-          Session unavailable
-        </Text>
+        <Text style={{ color: colors.text, fontSize: font.lg, fontWeight: '800' }}>Session unavailable</Text>
         <Text style={{ color: colors.textSecondary, fontSize: font.sm }}>
           {loadError ?? 'This session could not be loaded.'}
         </Text>
@@ -1668,7 +1668,7 @@ export default function SessionScreen() {
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.xs }}>
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel={sessionLinkCopied ? 'Copied session link' : 'Copy link to this session'}
+                accessibilityLabel={sessionLinkCopied ? 'Copied agent link' : 'Copy link to this agent'}
                 onPress={copySessionLink}
                 hitSlop={8}
                 style={{ minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center', padding: 6 }}
@@ -1679,17 +1679,26 @@ export default function SessionScreen() {
                   color={sessionLinkCopied ? colors.accent : colors.textSecondary}
                 />
               </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Agent actions"
+                onPress={openHeaderActions}
+                hitSlop={8}
+                style={{ minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center', padding: 6 }}
+              >
+                <Ionicons name="ellipsis-horizontal" size={18} color={colors.textSecondary} />
+              </Pressable>
               {canCancel ? (
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel={
                     canStopTurn
                       ? displayCancelAsk === 'failed'
-                        ? 'Retry cancel turn'
-                        : 'Cancel current turn'
+                        ? 'Retry stop turn'
+                        : 'Stop current turn'
                       : displayCancelAsk === 'confirm'
-                        ? 'Confirm cancel session'
-                        : 'Cancel session'
+                        ? 'Confirm cancel agent'
+                        : 'Cancel agent'
                   }
                   accessibilityState={{ disabled: false }}
                   onPress={cancel}
@@ -1711,7 +1720,7 @@ export default function SessionScreen() {
                     {canStopTurn
                       ? displayCancelAsk === 'failed'
                         ? 'RETRY TURN'
-                        : 'CANCEL TURN'
+                        : 'STOP TURN'
                       : displayCancelAsk === 'confirm'
                         ? 'CONFIRM'
                         : displayCancelAsk === 'failed'
@@ -1726,13 +1735,35 @@ export default function SessionScreen() {
         }}
       />
       {cancelErrorMessage && (
+        <View accessibilityLiveRegion="polite" style={{ backgroundColor: colors.dangerSurface, padding: space.sm }}>
+          <Text style={{ color: colors.danger, fontSize: font.xs, textAlign: 'center' }}>{cancelErrorMessage}</Text>
+        </View>
+      )}
+      {session.archivedAt != null && (
         <View
-          accessibilityLiveRegion="polite"
-          style={{ backgroundColor: colors.dangerSurface, padding: space.sm }}
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: space.sm,
+            backgroundColor: colors.bgElevated,
+            borderBottomWidth: 1,
+            borderBottomColor: colors.borderSoft,
+            paddingHorizontal: space.lg,
+            paddingVertical: space.sm,
+          }}
         >
-          <Text style={{ color: colors.danger, fontSize: font.xs, textAlign: 'center' }}>
-            {cancelErrorMessage}
+          <Text style={{ flex: 1, color: colors.textMuted, fontSize: font.xs }}>
+            Archived — new activity will bring it back.
           </Text>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Unarchive this agent"
+            onPress={() => chat.setSessionArchived(session.id, false, session.archivedAt)}
+            hitSlop={8}
+            style={{ minHeight: 32, justifyContent: 'center' }}
+          >
+            <Text style={{ color: colors.textSecondary, fontSize: font.xs, fontWeight: '700' }}>UNARCHIVE</Text>
+          </Pressable>
         </View>
       )}
       <KeyboardAvoidingView
@@ -1774,9 +1805,7 @@ export default function SessionScreen() {
         >
           <PlanPanel todos={stream.todos} plan={stream.plan} />
 
-          {terminal ? (
-            <TurnCard status={displayStatus} resultText={resultText} costUsd={costUsd} />
-          ) : null}
+          {terminal ? <TurnCard status={displayStatus} resultText={resultText} costUsd={costUsd} /> : null}
 
           {pendingQuestion && pendingQuestion.questionId !== questionCleared && !terminal ? (
             <MobileQuestionBanner
@@ -1810,7 +1839,20 @@ export default function SessionScreen() {
             </View>
           ) : null}
 
-          {stream.items.map((item, index) => {
+          {transcriptRows.map((row) => {
+            if (row.kind === 'hidden') {
+              return (
+                <HiddenWorkChip
+                  key={`hidden-${row.key}`}
+                  count={row.count}
+                  onShowFull={() => setTranscriptView('full')}
+                />
+              );
+            }
+            if (row.kind === 'change') {
+              return <InlineFileChange key={row.change.change.id} change={row.change.change} />;
+            }
+            const { item } = row;
             const handle = transcriptEntryHandle(item);
             const reference = handle ? (references[handle] ?? null) : null;
             const hasActions = handle != null;
@@ -1831,27 +1873,19 @@ export default function SessionScreen() {
             };
             return (
               <Fragment key={item.id}>
-                {codexChangesAt(index).map((anchored) => (
-                  <InlineFileChange key={anchored.change.id} change={anchored.change} />
-                ))}
                 <View
                   onLayout={(e) => {
                     itemOffsets.current[item.id] = e.nativeEvent.layout.y;
                   }}
                 >
-                  <TranscriptRowFrame
-                    reference={reference}
-                    onOpenReference={() => openReferenceSummary(reference)}
-                  >
+                  <TranscriptRowFrame reference={reference} onOpenReference={() => openReferenceSummary(reference)}>
                     <TranscriptActiveEntryFrame active={showReveal} onActions={openActionsFromButton}>
                       {item.type === 'text' ? (
                         hasActions ? (
                           <Pressable
                             testID={`transcript-entry-${item.type}`}
                             accessibilityRole="button"
-                            accessibilityLabel={
-                              item.text.trim() ? `Message actions: ${item.text}` : 'Message actions'
-                            }
+                            accessibilityLabel={item.text.trim() ? `Message actions: ${item.text}` : 'Message actions'}
                             onPress={revealOrMoveActions}
                             onLongPress={openActionsWithHaptic}
                             delayLongPress={250}
@@ -1885,9 +1919,7 @@ export default function SessionScreen() {
                           <Pressable
                             testID={`transcript-entry-${item.type}`}
                             accessibilityRole="button"
-                            accessibilityLabel={
-                              item.text.trim() ? `Message actions: ${item.text}` : 'Message actions'
-                            }
+                            accessibilityLabel={item.text.trim() ? `Message actions: ${item.text}` : 'Message actions'}
                             onPress={revealOrMoveActions}
                             onLongPress={openActionsWithHaptic}
                             delayLongPress={250}
@@ -1908,9 +1940,6 @@ export default function SessionScreen() {
               </Fragment>
             );
           })}
-          {codexChangesAt(stream.items.length).map((anchored) => (
-            <InlineFileChange key={anchored.change.id} change={anchored.change} />
-          ))}
           {pendingSteers.map((pending) => (
             <SteerRow
               key={pending.id}
@@ -1939,13 +1968,7 @@ export default function SessionScreen() {
             costUsd={costUsd}
             models={stream.models}
             effort={modelEffort}
-            cancelLabel={
-              canStopTurn
-                ? 'Cancel turn'
-                : displayCancelAsk === 'confirm'
-                  ? 'Confirm cancel'
-                  : 'Cancel'
-            }
+            cancelLabel={canStopTurn ? 'Stop' : displayCancelAsk === 'confirm' ? 'Confirm cancel' : 'Cancel'}
             onCancel={isSpawner || isDriver ? cancel : undefined}
           />
         ) : null}
@@ -2062,9 +2085,7 @@ export default function SessionScreen() {
                     paddingHorizontal: space.xs,
                   }}
                 >
-                  <Text style={{ color: colors.textMuted, fontSize: font.xs, fontWeight: '700' }}>
-                    referencing:
-                  </Text>
+                  <Text style={{ color: colors.textMuted, fontSize: font.xs, fontWeight: '700' }}>referencing:</Text>
                   {steerEntryLinkHandles.map((handle) => (
                     <EntryInlineChip
                       key={handle}
@@ -2077,10 +2098,10 @@ export default function SessionScreen() {
                 </View>
               ) : null}
               <TextInput
-                accessibilityLabel="Session message"
+                accessibilityLabel="Agent message"
                 value={steerText}
                 onChangeText={setSteerText}
-                placeholder="Message this session"
+                placeholder="Message this agent"
                 placeholderTextColor={colors.textFaint}
                 multiline
                 style={{
@@ -2241,9 +2262,7 @@ export default function SessionScreen() {
                   backgroundColor: pressed ? colors.bgPressed : colors.bg,
                 })}
               >
-                <Text style={{ color: colors.text, fontSize: font.sm, fontWeight: '700' }}>
-                  default
-                </Text>
+                <Text style={{ color: colors.text, fontSize: font.sm, fontWeight: '700' }}>default</Text>
               </Pressable>
             ) : null}
             {(effortOptions ?? []).map((level) => (
@@ -2260,12 +2279,7 @@ export default function SessionScreen() {
                 style={({ pressed }) => ({
                   paddingHorizontal: space.md,
                   paddingVertical: space.md,
-                  backgroundColor:
-                    effortSelection === level
-                      ? colors.accentBg
-                      : pressed
-                        ? colors.bgPressed
-                        : colors.bg,
+                  backgroundColor: effortSelection === level ? colors.accentBg : pressed ? colors.bgPressed : colors.bg,
                 })}
               >
                 <Text
@@ -2291,17 +2305,18 @@ export default function SessionScreen() {
         onClose={() => setWorkTab(null)}
       />
 
-      <TurnsSheet
-        visible={turnsOpen}
-        turns={turns}
-        onJump={jumpToItem}
-        onClose={() => setTurnsOpen(false)}
-      />
+      <TurnsSheet visible={turnsOpen} turns={turns} onJump={jumpToItem} onClose={() => setTurnsOpen(false)} />
 
       <MessageActionSheet
         visible={transcriptActionTarget != null}
         actions={transcriptActions}
         onClose={closeTranscriptActions}
+      />
+      <MessageActionSheet
+        visible={headerActionsOpen}
+        title={session?.title}
+        actions={headerActions}
+        onClose={() => setHeaderActionsOpen(false)}
       />
     </View>
   );

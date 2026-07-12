@@ -136,7 +136,9 @@ describe('/api/sync', () => {
     let bobSync = await sync(bob.cookie, 0, 1000);
     expect(bobSync.events.map((event: any) => event.id)).toContain(publicEvent.id);
     expect(bobSync.events.map((event: any) => event.id)).not.toContain(beforeJoin.id);
-    expect(bobSync.events.some((event: any) => event.type === 'channel.created' && event.channelId === privateChannel.id)).toBe(false);
+    expect(
+      bobSync.events.some((event: any) => event.type === 'channel.created' && event.channelId === privateChannel.id),
+    ).toBe(false);
 
     await addMember(alice.cookie, privateChannel.id, bob.user.id);
     const afterJoin = await post(alice.cookie, privateChannel.id, 'after join');
@@ -165,9 +167,7 @@ describe('/api/sync', () => {
     expect(healed.state.prefs).toEqual({ ...DEFAULT_PREFS, theme: 'dark', accent: 'teal' });
     expect(healed.state.drafts[`channel:${fx.channelId}`]).toMatchObject({ text: 'draft text' });
     expect(healed.state.drafts).not.toHaveProperty(`channel:${fx.otherChannelId}`);
-    expect(Date.parse(healed.state.draftDeletions[`channel:${fx.otherChannelId}`])).toBeGreaterThan(
-      0,
-    );
+    expect(Date.parse(healed.state.draftDeletions[`channel:${fx.otherChannelId}`])).toBeGreaterThan(0);
     expect(healed.state.channels.find((channel: any) => channel.id === fx.channelId)).toMatchObject({
       lastReadEventId: message.id,
     });
@@ -206,9 +206,7 @@ describe('/api/sync', () => {
 
     // Residue of a workspace alice no longer belongs to: her own cursor/mute
     // rows survive on a channel whose workspace she isn't a member of.
-    const wsB = await pool.query<{ id: string }>(
-      `INSERT INTO workspaces (name) VALUES ('elsewhere') RETURNING id`,
-    );
+    const wsB = await pool.query<{ id: string }>(`INSERT INTO workspaces (name) VALUES ('elsewhere') RETURNING id`);
     const channelB = await pool.query<{ id: string }>(
       `INSERT INTO channels (workspace_id, name, kind) VALUES ($1, 'b-general', 'public')
        RETURNING id`,

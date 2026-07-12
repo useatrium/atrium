@@ -423,7 +423,7 @@ describe('SpawnDialog', () => {
     const submit = screen.getByRole('button', { name: 'Start session' });
     expect(submit.getAttribute('aria-disabled')).toBe('true');
     fireEvent.click(submit);
-    expect(screen.getByText('Connect GitHub before starting a session with private repositories.')).toBeTruthy();
+    expect(screen.getByText('Connect GitHub before starting an agent with private repositories.')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Connect GitHub' }));
     expect(onConnectGitHub).toHaveBeenCalled();
     expect(onSpawn).not.toHaveBeenCalled();
@@ -458,6 +458,6 @@ describe('SpawnDialog', () => {
     fireEvent.click(screen.getByLabelText('Private'));
 
     expect(screen.getByRole('button', { name: 'Start session' }).getAttribute('aria-disabled')).toBe('true');
-    expect(screen.getByText('Connect GitHub before starting a session with private repositories.')).toBeTruthy();
+    expect(screen.getByText('Connect GitHub before starting an agent with private repositories.')).toBeTruthy();
   });
 });

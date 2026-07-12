@@ -2,25 +2,17 @@ import { expect, test } from '@playwright/test';
 import { Pool } from 'pg';
 import { channelId, createTestChannel, login, openChannel, unique } from './helpers.js';
 
-const e2eDatabaseUrl =
-  process.env.E2E_DATABASE_URL ?? 'postgres://atrium:atrium@localhost:5433/atrium_e2e';
+const e2eDatabaseUrl = process.env.E2E_DATABASE_URL ?? 'postgres://atrium:atrium@localhost:5433/atrium_e2e';
 
-async function injectSession(args: {
-  handle: string;
-  channelId: string;
-  title: string;
-}): Promise<string> {
+async function injectSession(args: { handle: string; channelId: string; title: string }): Promise<string> {
   const pool = new Pool({ connectionString: e2eDatabaseUrl });
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const user = await client.query<{ id: string }>('SELECT id FROM users WHERE handle = $1', [
-      args.handle,
+    const user = await client.query<{ id: string }>('SELECT id FROM users WHERE handle = $1', [args.handle]);
+    const channel = await client.query<{ workspace_id: string }>('SELECT workspace_id FROM channels WHERE id = $1', [
+      args.channelId,
     ]);
-    const channel = await client.query<{ workspace_id: string }>(
-      'SELECT workspace_id FROM channels WHERE id = $1',
-      [args.channelId],
-    );
     if (!user.rows[0] || !channel.rows[0]) throw new Error('missing e2e user or channel');
     const userId = user.rows[0].id;
     const workspaceId = channel.rows[0].workspace_id;
@@ -74,6 +66,24 @@ test('selecting a channel updates the URL and reload restores it', async ({ page
   await expect(page.getByRole('heading', { name: `# ${room}` })).toBeVisible();
 });
 
+test('creating a channel navigates to its URL and reload restores it', async ({ page }) => {
+  const room = unique('created-url');
+  await login(page, unique('created-channel'), 'Created Channel');
+
+  await page.getByRole('button', { name: 'Create channel' }).click();
+  await page.getByRole('textbox', { name: 'Channel name' }).fill(room);
+  await page.getByRole('textbox', { name: 'Channel name' }).press('Enter');
+
+  await expect(page).toHaveURL(/\/c\/[^/]+$/);
+  await expect(page.getByRole('heading', { name: `# ${room}` })).toBeVisible();
+  const roomId = new URL(page.url()).pathname.split('/').at(-1);
+  if (!roomId) throw new Error('created channel URL is missing an id');
+
+  await page.reload();
+  await expect(page).toHaveURL(new RegExp(`/c/${roomId}$`));
+  await expect(page.getByRole('heading', { name: `# ${room}` })).toBeVisible();
+});
+
 test('opening a session updates the URL and Back closes it without a document reload', async ({ page }) => {
   const room = await createTestChannel('urlsession');
   const handle = unique('url-session');
@@ -103,16 +113,14 @@ test('opening a session updates the URL and Back closes it without a document re
     .first()
     .click();
   await expect(page).toHaveURL(new RegExp(`/c/${roomId}/s/${sessionId}$`));
-  await expect(page.getByRole('button', { name: 'Close session pane' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Close session details' })).toBeVisible();
 
   await page.goBack();
   await expect(page).toHaveURL(new RegExp(`/c/${roomId}$`));
   await expect(page.getByRole('heading', { name: `# ${room}` })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Close session pane' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Close session details' })).toHaveCount(0);
   await expect
-    .poll(() =>
-      page.evaluate(() => (window as Window & { __urlRoutingMarker?: string }).__urlRoutingMarker ?? null),
-    )
+    .poll(() => page.evaluate(() => (window as Window & { __urlRoutingMarker?: string }).__urlRoutingMarker ?? null))
     .toBe('kept');
 });
 

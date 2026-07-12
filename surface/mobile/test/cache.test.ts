@@ -76,6 +76,8 @@ function channel(id: string): Channel {
     workspaceId: 'workspace-1',
     name: id,
     createdAt: '2026-06-11T12:00:00.000Z',
+    archivedAt: null,
+    pinned: false,
   };
 }
 

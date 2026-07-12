@@ -17,6 +17,8 @@ function session(overrides: Partial<Session> = {}): Session {
     repos: null,
     spawnedBy: 'u-1',
     driverId: 'u-1',
+    archivedAt: null,
+    pinned: false,
     pendingSeatRequests: [],
     suggestions: [],
     answerProposals: [],

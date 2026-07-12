@@ -1,5 +1,5 @@
 import type { Db } from './db.js';
-import { deleteObject } from './s3.js';
+import type { deleteObject } from './s3.js';
 
 export interface FileStorageGc {
   deleteObject: typeof deleteObject;
@@ -84,12 +84,7 @@ export async function pruneOrphanFiles(
   return result;
 }
 
-async function findOrphanFiles(
-  pool: Db,
-  days: number,
-  batchSize: number,
-  excludedIds: string[],
-): Promise<FileRow[]> {
+async function findOrphanFiles(pool: Db, days: number, batchSize: number, excludedIds: string[]): Promise<FileRow[]> {
   const res = await pool.query<FileRow>(
     `SELECT f.id::text AS id, f.s3_key
        FROM files f

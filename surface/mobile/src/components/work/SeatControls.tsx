@@ -155,12 +155,7 @@ export function SeatFooter({
             tone="accent"
             onPress={onConfirmTake}
           />
-          <SeatButton
-            label="Keep watching"
-            accessibilityLabel="Keep watching"
-            tone="muted"
-            onPress={onCancelTake}
-          />
+          <SeatButton label="Keep watching" accessibilityLabel="Keep watching" tone="muted" onPress={onCancelTake} />
         </>
       ) : null}
       {mode === 'waiting' ? (

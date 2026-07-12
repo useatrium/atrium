@@ -25,24 +25,16 @@ export async function workspaceIdsFor(db: Db | DbClient, userId: string): Promis
   return res.rows.map((r) => r.workspace_id);
 }
 
-export async function isWorkspaceMember(
-  db: Db | DbClient,
-  userId: string,
-  workspaceId: string,
-): Promise<boolean> {
-  const res = await db.query(
-    'SELECT 1 FROM workspace_members WHERE workspace_id = $1 AND user_id = $2',
-    [workspaceId, userId],
-  );
+export async function isWorkspaceMember(db: Db | DbClient, userId: string, workspaceId: string): Promise<boolean> {
+  const res = await db.query('SELECT 1 FROM workspace_members WHERE workspace_id = $1 AND user_id = $2', [
+    workspaceId,
+    userId,
+  ]);
   return (res.rowCount ?? 0) > 0;
 }
 
 /** Idempotent; safe to call on signup and on explicit invite. */
-export async function addWorkspaceMember(
-  db: Db | DbClient,
-  workspaceId: string,
-  userId: string,
-): Promise<void> {
+export async function addWorkspaceMember(db: Db | DbClient, workspaceId: string, userId: string): Promise<void> {
   await db.query(
     `INSERT INTO workspace_members (workspace_id, user_id)
      VALUES ($1, $2) ON CONFLICT DO NOTHING`,
@@ -51,13 +43,9 @@ export async function addWorkspaceMember(
 }
 
 /** All member user ids of a workspace (for scoped WS fanout). */
-export async function workspaceMemberIds(
-  db: Db | DbClient,
-  workspaceId: string,
-): Promise<string[]> {
-  const res = await db.query<{ user_id: string }>(
-    'SELECT user_id FROM workspace_members WHERE workspace_id = $1',
-    [workspaceId],
-  );
+export async function workspaceMemberIds(db: Db | DbClient, workspaceId: string): Promise<string[]> {
+  const res = await db.query<{ user_id: string }>('SELECT user_id FROM workspace_members WHERE workspace_id = $1', [
+    workspaceId,
+  ]);
   return res.rows.map((r) => r.user_id);
 }

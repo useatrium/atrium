@@ -1,10 +1,30 @@
-import { forwardRef, useEffect, useImperativeHandle, useRef, useState, type Dispatch, type SetStateAction } from 'react';
+import {
+  forwardRef,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+  type Dispatch,
+  type SetStateAction,
+} from 'react';
 import { EditorView } from 'prosemirror-view';
 import type { Command } from 'prosemirror-state';
 
-import { applyComment, applyStrike, applySuggestEdit, createMarkupEditorState, documentHasMarkup, isInCodeBlock } from './MarkupEditorCore';
+import {
+  applyComment,
+  applyStrike,
+  applySuggestEdit,
+  createMarkupEditorState,
+  documentHasMarkup,
+  isInCodeBlock,
+} from './MarkupEditorCore';
 import { serializeToCriticMarkup } from './criticMarkup';
-import { closedSelectionPopover, SelectionPopover, type SelectionPopoverMode, type SelectionPopoverState } from './SelectionPopover';
+import {
+  closedSelectionPopover,
+  SelectionPopover,
+  type SelectionPopoverMode,
+  type SelectionPopoverState,
+} from './SelectionPopover';
 import './MarkupEditor.css';
 
 export interface MarkupEditorProps {
@@ -23,6 +43,8 @@ export interface MarkupEditorHandle {
   /** True if the doc contains any tracked change or comment. */
   hasMarkup(): boolean;
 }
+
+type MarkupEditorDom = HTMLElement & { __atriumMarkupEditorView?: EditorView };
 
 export const MarkupEditor = forwardRef<MarkupEditorHandle, MarkupEditorProps>(function MarkupEditor(
   { initialMarkdown, commentAuthor = null, onDirtyChange, className },
@@ -91,9 +113,15 @@ export const MarkupEditor = forwardRef<MarkupEditorHandle, MarkupEditorProps>(fu
     });
 
     viewRef.current = view;
+    if (import.meta.env.DEV) {
+      (view.dom as MarkupEditorDom).__atriumMarkupEditorView = view;
+    }
     updateDirty(view);
 
     return () => {
+      if (import.meta.env.DEV) {
+        delete (view.dom as MarkupEditorDom).__atriumMarkupEditorView;
+      }
       view.destroy();
       viewRef.current = null;
     };

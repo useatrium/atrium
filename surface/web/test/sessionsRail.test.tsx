@@ -23,6 +23,8 @@ function session(overrides: Partial<Session> = {}): Session {
     spawnedBy: me.id,
     spawnerName: me.displayName,
     driverId: null,
+    archivedAt: null,
+    pinned: false,
     pendingSeatRequests: [],
     suggestions: [],
     answerProposals: [],
@@ -54,13 +56,7 @@ describe('SessionsRail', () => {
     const done = session({ title: 'finished up', status: 'completed', completedAt: new Date().toISOString() });
     const other = session({ title: 'other channel', channelId: 'ch-2' });
 
-    render(
-      <SessionsRail
-        channelId="ch-1"
-        sessions={asMap(needs, active, done, other)}
-        onOpenSession={() => {}}
-      />,
-    );
+    render(<SessionsRail channelId="ch-1" sessions={asMap(needs, active, done, other)} onOpenSession={() => {}} />);
 
     expect(screen.getByText('Needs you')).toBeTruthy();
     expect(screen.getByText('Active')).toBeTruthy();
@@ -74,10 +70,22 @@ describe('SessionsRail', () => {
     expect(screen.getByText('3')).toBeTruthy();
   });
 
+  it('excludes archived sessions from the rail', () => {
+    const live = session({ title: 'still working', status: 'running' });
+    const archived = session({
+      title: 'tucked away',
+      status: 'completed',
+      archivedAt: new Date().toISOString(),
+    });
+
+    render(<SessionsRail channelId="ch-1" sessions={asMap(live, archived)} onOpenSession={() => {}} />);
+
+    expect(screen.getByText('still working')).toBeTruthy();
+    expect(screen.queryByText('tucked away')).toBeNull();
+  });
+
   it('shows an empty state when the channel has no sessions', () => {
-    render(
-      <SessionsRail channelId="ch-1" sessions={{}} onOpenSession={() => {}} />,
-    );
+    render(<SessionsRail channelId="ch-1" sessions={{}} onOpenSession={() => {}} />);
     expect(screen.getByText('No sessions yet')).toBeTruthy();
     expect(screen.queryByText('Active')).toBeNull();
   });

@@ -148,6 +148,8 @@ describe('permalink failure and status regression guards', () => {
       harness: 'claude-code',
       spawnedBy: me.id,
       driverId: null,
+      archivedAt: null,
+      pinned: false,
       pendingSeatRequests: [],
       suggestions: [],
       answerProposals: [],
@@ -180,6 +182,8 @@ describe('stalled session detection', () => {
     harness: 'claude-code',
     spawnedBy: me.id,
     driverId: null,
+    archivedAt: null,
+    pinned: false,
     pendingSeatRequests: [],
     suggestions: [],
     answerProposals: [],
@@ -526,6 +530,8 @@ describe('terminal session pane', () => {
       spawnerName: 'Alice',
       driverId: 'u-alice',
       driverName: 'Alice',
+      archivedAt: null,
+      pinned: false,
       pendingSeatRequests: [],
       suggestions: [],
       answerProposals: [],
@@ -538,7 +544,7 @@ describe('terminal session pane', () => {
       permalink: '/s/s-done',
     };
     render(<SessionPane session={done} me={me} watchers={[]} onClose={() => {}} onAnswerQuestion={async () => {}} />);
-    expect(screen.getByText(/Session ended/)).toBeTruthy();
+    expect(screen.getByText(/Agent ended/)).toBeTruthy();
     expect(screen.queryByText('Take seat')).toBeNull();
     expect(screen.queryByText('Request seat')).toBeNull();
     expect(screen.queryByPlaceholderText(/Message this session/)).toBeNull();
@@ -562,6 +568,8 @@ describe('terminal session pane', () => {
       spawnerName: 'Alice',
       driverId: 'u-alice',
       driverName: 'Alice',
+      archivedAt: null,
+      pinned: false,
       pendingSeatRequests: [],
       suggestions: [],
       answerProposals: [],
@@ -578,7 +586,7 @@ describe('terminal session pane', () => {
     );
     // completed is idle/resumable — no read-only notice; a subtle status line
     // (not a card) reports the completed turn.
-    expect(screen.queryByText(/Session ended/)).toBeNull();
+    expect(screen.queryByText(/Agent ended/)).toBeNull();
     expect(screen.getByTestId('turn-status').textContent).toContain('Turn complete');
   });
 });
@@ -596,6 +604,8 @@ describe('session transcript rendering', () => {
     spawnerName: 'Alice',
     driverId: 'u-alice',
     driverName: 'Alice',
+    archivedAt: null,
+    pinned: false,
     pendingSeatRequests: [],
     suggestions: [],
     answerProposals: [],
@@ -656,12 +666,24 @@ describe('session transcript rendering', () => {
     render(
       <SessionPane session={completed} me={me} watchers={[]} onClose={() => {}} onAnswerQuestion={async () => {}} />,
     );
-    // A subtle status line reports the turn; the old bordered card is gone and
-    // the read-only result block stays reserved for failed/cancelled sessions.
+    // The status line reports the turn and the compact outcome closes the loop.
     const status = screen.getByTestId('turn-status');
     expect(status.textContent).toContain('Turn complete');
     expect(screen.queryByTestId('turn-card')).toBeNull();
-    expect(screen.queryByTestId('session-result')).toBeNull();
+    expect(screen.getByTestId('session-result').textContent).toContain('shipped the fix');
+  });
+
+  it('closes the loop even when a completed session has no result payload', () => {
+    FakeEventSource.reset();
+    installFakeEventSource();
+    const completed: Session = { ...running, status: 'completed', resultText: null };
+    render(
+      <SessionPane session={completed} me={me} watchers={[]} onClose={() => {}} onAnswerQuestion={async () => {}} />,
+    );
+
+    expect(screen.getByTestId('session-result').textContent).toContain(
+      'Completed — review the work before continuing.',
+    );
   });
 
   it('optimistic steer: dimmed at send, undims once the turn is active, replaced by the codex echo', async () => {

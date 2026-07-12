@@ -1,4 +1,4 @@
-@import 'tailwindcss';
+@import "tailwindcss";
 
 @theme inline {
   --color-surface: var(--surface);
@@ -104,11 +104,11 @@
   --code: #fda4af;
 }
 
-:root[data-theme='dark'] {
+:root[data-theme="dark"] {
   color-scheme: dark;
 }
 
-:root[data-theme='light'] {
+:root[data-theme="light"] {
   color-scheme: light;
   --surface: #fafafa;
   --surface-raised: #fdfdff;
@@ -158,7 +158,7 @@
   --code: #be123c;
 }
 
-:root[data-theme='dark'][data-accent='teal'] {
+:root[data-theme="dark"][data-accent="teal"] {
   --accent: #0d9488;
   --accent-hover: #14b8a6;
   --accent-text: #5eead4;
@@ -169,7 +169,7 @@
   --on-accent: #18181b;
 }
 
-:root[data-theme='dark'][data-accent='amber'] {
+:root[data-theme="dark"][data-accent="amber"] {
   --accent: #f59e0b;
   --accent-hover: #fbbf24;
   --accent-text: #fcd34d;
@@ -180,7 +180,7 @@
   --on-accent: #18181b;
 }
 
-:root[data-theme='dark'][data-accent='rose'] {
+:root[data-theme="dark"][data-accent="rose"] {
   --accent: #e11d48;
   --accent-hover: #f43f5e;
   --accent-text: #fb7185;
@@ -191,7 +191,7 @@
   --on-accent: #ffffff;
 }
 
-:root[data-theme='light'][data-accent='teal'] {
+:root[data-theme="light"][data-accent="teal"] {
   --accent: #0d9488;
   --accent-hover: #0f766e;
   --accent-text: #0f766e;
@@ -202,7 +202,7 @@
   --on-accent: #18181b;
 }
 
-:root[data-theme='light'][data-accent='amber'] {
+:root[data-theme="light"][data-accent="amber"] {
   --accent: #d97706;
   --accent-hover: #b45309;
   --accent-text: #92400e;
@@ -213,7 +213,7 @@
   --on-accent: #18181b;
 }
 
-:root[data-theme='light'][data-accent='rose'] {
+:root[data-theme="light"][data-accent="rose"] {
   --accent: #e11d48;
   --accent-hover: #be123c;
   --accent-text: #be123c;
@@ -224,29 +224,29 @@
   --on-accent: #ffffff;
 }
 
-:root[data-theme='dark'][data-contrast='high'] {
+:root[data-theme="dark"][data-contrast="high"] {
   --fg-muted: #a1a1aa;
   --fg-faint: #8f8f98;
   --edge: #3f3f46;
   --edge-strong: #52525b;
 }
 
-:root[data-theme='light'][data-contrast='high'] {
+:root[data-theme="light"][data-contrast="high"] {
   --fg-muted: #52525b;
   --fg-faint: #52525b;
   --edge: #a1a1aa;
   --edge-strong: #71717a;
 }
 
-:root[data-fontscale='0.875'] {
+:root[data-fontscale="0.875"] {
   font-size: 87.5%;
 }
 
-:root[data-fontscale='1.125'] {
+:root[data-fontscale="1.125"] {
   font-size: 112.5%;
 }
 
-:root[data-fontscale='1.25'] {
+:root[data-fontscale="1.25"] {
   font-size: 125%;
 }
 
@@ -254,14 +254,7 @@ body {
   background-color: var(--color-surface);
   color: var(--color-fg-body);
   -webkit-font-smoothing: antialiased;
-  font-family:
-    ui-sans-serif,
-    system-ui,
-    -apple-system,
-    'Segoe UI',
-    Roboto,
-    'Helvetica Neue',
-    sans-serif;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
 }
 
 .markup-shell-page {
@@ -299,10 +292,21 @@ body {
   text-align: center;
 }
 
-/* Visible keyboard focus on command controls. Form fields use local border focus states. */
-:where(button, [role='button'], a):focus-visible {
+/* A shared keyboard focus fallback. Components with an explicit ring/outline
+   keep their local treatment instead of receiving a second indicator. */
+:where(button, [role="button"], a, input, select, textarea):focus-visible:not([class*="focus-visible:ring"]):not(
+  [class*="focus:ring"]
+):not([class*="focus-visible:outline"]) {
   outline: 2px solid var(--color-accent-text);
   outline-offset: 1px;
+}
+
+@media (forced-colors: active) {
+  :where(button, [role="button"], a, input, select, textarea):focus-visible {
+    box-shadow: none !important;
+    outline: 2px solid Highlight !important;
+    outline-offset: 2px;
+  }
 }
 
 /* Thin dark scrollbars */
@@ -367,36 +371,52 @@ body {
   animation: entry-flash 2s ease-out;
 }
 
-:root[data-motion='reduced'] .heartbeat-blip {
+:root[data-motion="reduced"] .heartbeat-blip {
   animation: none;
 }
 
-:root[data-motion='reduced'] .entry-flash {
+:root[data-motion="reduced"] .entry-flash {
   animation: none;
 }
 
-:root[data-motion='reduced'] .animate-pulse {
+:root[data-motion="reduced"] .animate-pulse {
   animation: none;
 }
 
-:root[data-motion='reduced'] :where(.transition, .transition-all, .transition-colors, .transition-opacity, .transition-shadow, .transition-transform) {
+:root[data-motion="reduced"]
+  :where(
+    .transition,
+    .transition-all,
+    .transition-colors,
+    .transition-opacity,
+    .transition-shadow,
+    .transition-transform
+  ) {
   transition-duration: 0s;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  :root:not([data-motion='full']) .heartbeat-blip {
+  :root:not([data-motion="full"]) .heartbeat-blip {
     animation: none;
   }
 
-  :root:not([data-motion='full']) .entry-flash {
+  :root:not([data-motion="full"]) .entry-flash {
     animation: none;
   }
 
-  :root:not([data-motion='full']) .animate-pulse {
+  :root:not([data-motion="full"]) .animate-pulse {
     animation: none;
   }
 
-  :root:not([data-motion='full']) :where(.transition, .transition-all, .transition-colors, .transition-opacity, .transition-shadow, .transition-transform) {
+  :root:not([data-motion="full"])
+    :where(
+      .transition,
+      .transition-all,
+      .transition-colors,
+      .transition-opacity,
+      .transition-shadow,
+      .transition-transform
+    ) {
     transition-duration: 0s;
   }
 }
@@ -408,7 +428,7 @@ body {
    wins over Tailwind's layered utilities without !important; a control that
    deliberately needs a larger mobile size should set one explicitly (>=16px). */
 @media (max-width: 767px) {
-  input:not([type='checkbox']):not([type='radio']):not([type='range']),
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
   textarea,
   select {
     font-size: 16px;

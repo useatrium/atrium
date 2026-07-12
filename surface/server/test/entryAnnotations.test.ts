@@ -184,9 +184,7 @@ describe('entry annotations', () => {
     expect(addEventAgain.statusCode).toBe(200);
     expect(addEventAgain.json()).toEqual({ event: null, applied: false });
     expect(await reactionNet(eventHandle, fx.userId, '👍')).toBe(1);
-    expect((await annotations(cookie, eventHandle)).reactions).toEqual([
-      { emoji: '👍', userIds: [fx.userId] },
-    ]);
+    expect((await annotations(cookie, eventHandle)).reactions).toEqual([{ emoji: '👍', userIds: [fx.userId] }]);
 
     await insertRecord('annotation_record_reaction');
     const recordHandle = encodeRecordHandle('annotation_record_reaction');
@@ -212,9 +210,7 @@ describe('entry annotations', () => {
     expect(addRecordAgain.statusCode).toBe(200);
     expect(addRecordAgain.json()).toEqual({ event: null, applied: false });
     expect(await reactionNet(recordHandle, fx.userId, '🎉')).toBe(1);
-    expect((await annotations(cookie, recordHandle)).reactions).toEqual([
-      { emoji: '🎉', userIds: [fx.userId] },
-    ]);
+    expect((await annotations(cookie, recordHandle)).reactions).toEqual([{ emoji: '🎉', userIds: [fx.userId] }]);
   });
 
   it('serializes concurrent record reaction removes with the handle advisory lock', async () => {

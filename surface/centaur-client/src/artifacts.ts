@@ -3,10 +3,10 @@
 // through Atrium's by-path CAS route; legacy `artifact.captured` frames remain
 // display metadata in older transcripts.
 
-import type { Artifact, SessionState } from "./reducer.js";
-import { displayPath } from "./fileChanges.js";
+import type { Artifact, SessionState } from './reducer.js';
+import { displayPath } from './fileChanges.js';
 
-export type { Artifact, ArtifactKind, ArtifactPresentation } from "./reducer.js";
+export type { Artifact, ArtifactKind, ArtifactPresentation } from './reducer.js';
 
 /** Every captured artifact, paths stripped to display form. A file captured
  * across turns yields one entry per distinct content (version history). */

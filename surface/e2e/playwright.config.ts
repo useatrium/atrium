@@ -7,8 +7,19 @@ delete process.env.NO_COLOR;
 const serverPort = Number(process.env.E2E_SERVER_PORT ?? 3101);
 const webPort = Number(process.env.E2E_WEB_PORT ?? 5273);
 const centaurPort = Number(process.env.E2E_CENTAUR_PORT ?? 18100);
-const databaseUrl =
-  process.env.E2E_DATABASE_URL ?? 'postgres://atrium:atrium@localhost:5433/atrium_e2e';
+const webServerTimeout = Number(process.env.E2E_WEBSERVER_TIMEOUT ?? 60_000);
+// CI serves the web app as a static development-mode build (`vite build
+// --mode development` + `vite preview`) instead of the dev server. The dev
+// server's on-demand transforms + dep optimizer eat a 2-vCPU runner for the
+// first minute — the alphabetically-first spec lands on that cold path and
+// blew its 60s test timeout in 3 of 3 recent runs — and every later page load
+// keeps competing with tests for CPU. `--mode development` (not a prod build)
+// keeps import.meta.env.DEV true, which the markup specs' editor hook needs;
+// `vite preview` inherits server.proxy, so /api, /auth and /ws keep working.
+// Local runs keep the dev server for fast iteration; override either way with
+// E2E_WEB_SERVE=built|dev.
+const builtWeb = (process.env.E2E_WEB_SERVE ?? (process.env.CI ? 'built' : 'dev')) === 'built';
+const databaseUrl = process.env.E2E_DATABASE_URL ?? 'postgres://atrium:atrium@localhost:5433/atrium_e2e';
 const baseURL = `http://127.0.0.1:${webPort}`;
 const apiTarget = `http://127.0.0.1:${serverPort}`;
 
@@ -32,6 +43,10 @@ export default defineConfig({
     ...devices['Desktop Chrome'],
     baseURL,
     trace: 'on-first-retry',
+    // First attempts record no trace ('on-first-retry'); a failure screenshot
+    // in test-results/ is the only artifact that shows what a first-attempt
+    // timeout was looking at.
+    screenshot: 'only-on-failure',
   },
   projects: [{ name: 'chromium', use: { browserName: 'chromium' } }],
   webServer: [
@@ -42,7 +57,7 @@ export default defineConfig({
       command: `node db-reset.mjs && pnpm --filter @atrium/server start`,
       url: `${apiTarget}/healthz`,
       reuseExistingServer: false,
-      timeout: 60_000,
+      timeout: webServerTimeout,
       env: {
         DATABASE_URL: databaseUrl,
         E2E_SERVER_PORT: String(serverPort),
@@ -59,23 +74,28 @@ export default defineConfig({
       command: `node centaur-stub.mjs`,
       url: `http://127.0.0.1:${centaurPort}/healthz`,
       reuseExistingServer: false,
-      timeout: 60_000,
+      timeout: webServerTimeout,
       env: {
         PORT: String(centaurPort),
       },
     },
     {
-      command: `pnpm --filter @atrium/web exec vite --host 127.0.0.1 --port ${webPort} --strictPort`,
+      command: builtWeb
+        ? `pnpm --filter @atrium/web exec vite build --mode development && pnpm --filter @atrium/web exec vite preview --host 127.0.0.1 --port ${webPort} --strictPort`
+        : `pnpm --filter @atrium/web exec vite --host 127.0.0.1 --port ${webPort} --strictPort`,
       url: baseURL,
       reuseExistingServer: false,
-      timeout: 60_000,
+      // The built path pays a one-time `vite build` before the port opens.
+      timeout: builtWeb ? Math.max(webServerTimeout, 180_000) : webServerTimeout,
       env: {
         ATRIUM_API_TARGET: apiTarget,
         VITE_ATRIUM_WS_URL: `${apiTarget.replace(/^http/, 'ws')}/ws`,
         // A shell exporting NODE_ENV=production skews plugin-react on Vite 8:
         // the oxc refresh transform keys on `command === "serve"` but the
         // preamble injection keys on isProduction, so served modules reference
-        // an undefined $RefreshSig$. Dev servers must run in development.
+        // an undefined $RefreshSig$. Dev servers must run in development. The
+        // built path needs it too: NODE_ENV=production would force
+        // import.meta.env.DEV to false even under `--mode development`.
         NODE_ENV: 'development',
       },
     },

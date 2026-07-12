@@ -8,12 +8,15 @@ import { buildAppsOrigin } from './apps-origin.js';
 import { pruneIdempotencyKeys } from './idempotency.js';
 import { pruneDraftTombstones } from './drafts.js';
 import { pruneOrphanFiles } from './gc.js';
+import { archiveStaleSessions } from './session-archive.js';
 import { deleteObject, startStorageBootstrap } from './s3.js';
 import { startArtifactGcWorker, type ArtifactGcWorker } from './artifact-ledger-gc.js';
 import { SttWorker } from './stt/worker.js';
 import { registerWhisperCppAdapter } from './stt/whispercpp.js';
 import { shutdownServerTelemetry } from './telemetry.js';
 import { startThumbnailBackfill } from './thumbnails.js';
+// === call-sweeper additions ===
+import { startCallSweeper } from './call-sweeper.js';
 
 export async function main() {
   if ((process.env.STT_PROVIDER ?? 'noop') === 'whispercpp') {
@@ -21,34 +24,44 @@ export async function main() {
   }
   const pool = createPool(config.databaseUrl);
   await runMigrations(pool);
+  const hub = new WsHub();
   await pruneIdempotencyKeys(pool);
   await pruneDraftTombstones(pool);
   await pruneOrphanFiles(pool, { deleteObject }).catch((err) => {
     console.warn('orphan file prune failed', err);
   });
+  await archiveStaleSessions(pool, hub).catch((err) => {
+    console.warn('stale session archive failed', err);
+  });
   const workspace = await ensureDefaultWorkspace(pool);
-  const hub = new WsHub();
   const sttWorker = new SttWorker({ pool, hub });
   await sttWorker.sweepOnBoot();
   const heartbeat = hub.startHeartbeat(30_000);
-  const idempotencyPrune = setInterval(() => {
-    void pruneIdempotencyKeys(pool).catch((err) => {
-      console.warn('idempotency prune failed', err);
-    });
-    void pruneDraftTombstones(pool).catch((err) => {
-      console.warn('draft tombstone prune failed', err);
-    });
-  }, 24 * 60 * 60 * 1000);
+  const idempotencyPrune = setInterval(
+    () => {
+      void pruneIdempotencyKeys(pool).catch((err) => {
+        console.warn('idempotency prune failed', err);
+      });
+      void pruneDraftTombstones(pool).catch((err) => {
+        console.warn('draft tombstone prune failed', err);
+      });
+    },
+    24 * 60 * 60 * 1000,
+  );
   idempotencyPrune.unref?.();
-  const filePrune = setInterval(() => {
-    void pruneOrphanFiles(pool, { deleteObject }).catch((err) => {
-      console.warn('orphan file prune failed', err);
-    });
-  }, 24 * 60 * 60 * 1000);
+  const filePrune = setInterval(
+    () => {
+      void pruneOrphanFiles(pool, { deleteObject }).catch((err) => {
+        console.warn('orphan file prune failed', err);
+      });
+      void archiveStaleSessions(pool, hub).catch((err) => {
+        console.warn('stale session archive failed', err);
+      });
+    },
+    24 * 60 * 60 * 1000,
+  );
   filePrune.unref?.();
-  const rateLimit = config.rateLimitEnabled
-    ? { max: config.rateLimitMax, loginMax: config.rateLimitLoginMax }
-    : false;
+  const rateLimit = config.rateLimitEnabled ? { max: config.rateLimitMax, loginMax: config.rateLimitLoginMax } : false;
   const app = await buildApp({ pool, hub, stt: sttWorker, rateLimit });
   const appsOrigin = config.appsPort > 0 ? await buildAppsOrigin({ pool }) : null;
 
@@ -64,7 +77,13 @@ export async function main() {
     artifactGc = startArtifactGcWorker({ pool, storage: { deleteObject } });
   }
 
+  // === call-sweeper additions ===
+  const callSweeper = startCallSweeper({ pool, hub });
+  void callSweeper.runOnce();
+
   const shutdown = async () => {
+    // === call-sweeper additions ===
+    callSweeper.stop();
     sttWorker.stop();
     artifactGc?.stop();
     storageBootstrap.stop();
@@ -81,9 +100,7 @@ export async function main() {
   process.on('SIGTERM', shutdown);
 
   await app.listen({ port: config.port, host: config.host });
-  console.log(
-    `atrium surface server on http://${config.host}:${config.port} (workspace "${workspace.name}")`,
-  );
+  console.log(`atrium surface server on http://${config.host}:${config.port} (workspace "${workspace.name}")`);
   if (appsOrigin) {
     await appsOrigin.listen({ port: config.appsPort, host: config.appsHost });
     console.log(`atrium apps origin on http://${config.appsHost}:${config.appsPort}`);

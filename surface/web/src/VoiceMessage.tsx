@@ -130,13 +130,7 @@ export function VoiceMessage({ voice }: { voice: VoiceMeta }) {
   );
 }
 
-function Transcript({
-  transcript,
-  fileId,
-}: {
-  transcript: VoiceMeta['transcript'];
-  fileId: string;
-}) {
+function Transcript({ transcript, fileId }: { transcript: VoiceMeta['transcript']; fileId: string }) {
   const [retrying, setRetrying] = useState(false);
   const [retryError, setRetryError] = useState<string | null>(null);
 
@@ -185,11 +179,7 @@ function Transcript({
   }
   const text = transcript.text?.trim() ?? '';
   if (!text) return <div className="mt-1.5 text-xs text-fg-muted">No speech detected</div>;
-  return (
-    <div className="mt-1.5 select-text whitespace-pre-wrap text-sm leading-relaxed text-fg-body">
-      {text}
-    </div>
-  );
+  return <div className="mt-1.5 select-text whitespace-pre-wrap text-sm leading-relaxed text-fg-body">{text}</div>;
 }
 
 function formatTime(seconds: number): string {
@@ -203,14 +193,7 @@ function fallbackPeaks(): number[] {
   return Array.from({ length: 48 }, (_, index) => 0.12 + (index % 4) * 0.04);
 }
 
-function roundRect(
-  ctx: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  width: number,
-  height: number,
-  radius: number,
-) {
+function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, width: number, height: number, radius: number) {
   const r = Math.min(radius, width / 2, height / 2);
   ctx.beginPath();
   ctx.moveTo(x + r, y);

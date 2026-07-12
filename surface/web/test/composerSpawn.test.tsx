@@ -21,6 +21,8 @@ const wireSession: SessionWire = {
   harness: 'claude-code',
   spawnedBy: me.id,
   driverId: null,
+  archivedAt: null,
+  pinned: false,
   costUsd: 0,
   resultText: null,
   createdAt: new Date().toISOString(),
@@ -46,8 +48,7 @@ function Harness({
       placeholder="reply"
       agentAware
       onSend={(text) => {
-        if (trySpawnFromComposer(text, { channelId: 'ch-1', threadRootEventId, me, dispatch, enqueueSpawn }))
-          return;
+        if (trySpawnFromComposer(text, { channelId: 'ch-1', threadRootEventId, me, dispatch, enqueueSpawn })) return;
         onPlainMessage(text);
       }}
     />
@@ -82,18 +83,11 @@ describe('composer @agent grammar', () => {
       });
     });
     const onPlain = vi.fn();
-    render(
-      <Harness
-        threadRootEventId={7}
-        dispatch={dispatch}
-        enqueueSpawn={enqueueSpawn}
-        onPlainMessage={onPlain}
-      />,
-    );
+    render(<Harness threadRootEventId={7} dispatch={dispatch} enqueueSpawn={enqueueSpawn} onPlainMessage={onPlain} />);
 
     const box = type('@agent fix the flaky test');
     // subtle hint chip while the grammar matches
-    expect(screen.getByText(/spawns an agent session/)).toBeTruthy();
+    expect(screen.getByText(/— spawns an agent/)).toBeTruthy();
     fireEvent.keyDown(box, { key: 'Enter' });
 
     expect(onPlain).not.toHaveBeenCalled();
@@ -135,14 +129,14 @@ describe('composer @agent grammar', () => {
     render(<Harness dispatch={vi.fn()} enqueueSpawn={enqueueSpawn} onPlainMessage={onPlain} />);
 
     let box = type('deploying in 5');
-    expect(screen.queryByText(/spawns an agent session/)).toBeNull();
+    expect(screen.queryByText(/— spawns an agent/)).toBeNull();
     fireEvent.keyDown(box, { key: 'Enter' });
     expect(onPlain).toHaveBeenLastCalledWith('deploying in 5');
 
     // "@agent" with no task never posts the literal string — it keeps the
     // text and asks for a task instead.
     box = type('@agent');
-    expect(screen.getByText(/spawns an agent session/)).toBeTruthy();
+    expect(screen.getByText(/— spawns an agent/)).toBeTruthy();
     fireEvent.keyDown(box, { key: 'Enter' });
     expect(screen.getByText(/Add a task/)).toBeTruthy();
     expect(onPlain).toHaveBeenCalledTimes(1);

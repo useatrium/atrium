@@ -1,10 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import {
-  createWsSequenceTracker,
-  decodeWsFrame,
-  handleWsFrameSequence,
-  resetWsSequenceTracker,
-} from '../src/useWs';
+import { createWsSequenceTracker, decodeWsFrame, handleWsFrameSequence, resetWsSequenceTracker } from '../src/useWs';
 import type { WireEvent } from '../src/timeline';
 
 const user = { id: 'u1', handle: 'alice', displayName: 'Alice' };
@@ -84,6 +79,8 @@ describe('websocket frame decoding', () => {
     ['session typing', { type: 'typing', sessionId: 's1', user }],
     ['read', { type: 'read', channelId: 'c1', lastReadEventId: 4 }],
     ['muted', { type: 'muted', channelId: 'c1', muted: true }],
+    ['channel pinned', { type: 'channel-pinned', channelId: 'c1', pinned: true }],
+    ['session pinned', { type: 'session-pinned', sessionId: 's1', pinned: true }],
     ['channel-left', { type: 'channel-left', channelId: 'c1' }],
     ['prefs', { type: 'prefs', prefs: { theme: 'dark' } }],
     ['pong', { type: 'pong', t: 123 }],
@@ -121,18 +118,22 @@ describe('websocket frame decoding', () => {
   });
 
   it('rejects event frames with malformed stable event fields', () => {
-    expect(decodeWsFrame({
-      type: 'event',
-      event: { ...wireEvent, id: 'not-a-number' },
-    })).toBeNull();
+    expect(
+      decodeWsFrame({
+        type: 'event',
+        event: { ...wireEvent, id: 'not-a-number' },
+      }),
+    ).toBeNull();
   });
 
   it('rejects frames with malformed stable user fields', () => {
-    expect(decodeWsFrame({
-      type: 'typing',
-      channelId: 'c1',
-      user: { id: 'u1', handle: 'alice' },
-    })).toBeNull();
+    expect(
+      decodeWsFrame({
+        type: 'typing',
+        channelId: 'c1',
+        user: { id: 'u1', handle: 'alice' },
+      }),
+    ).toBeNull();
   });
 
   it('keeps prefs payloads loose for normalizePrefs', () => {

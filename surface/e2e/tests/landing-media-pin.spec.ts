@@ -13,8 +13,7 @@ import {
   uploadViaApi,
 } from './helpers.js';
 
-const e2eDatabaseUrl =
-  process.env.E2E_DATABASE_URL ?? 'postgres://atrium:atrium@localhost:5433/atrium_e2e';
+const e2eDatabaseUrl = process.env.E2E_DATABASE_URL ?? 'postgres://atrium:atrium@localhost:5433/atrium_e2e';
 
 const PNG_CRC_TABLE = new Uint32Array(256);
 for (let i = 0; i < PNG_CRC_TABLE.length; i += 1) {
@@ -76,17 +75,11 @@ function generatedPng(width: number, height: number): Buffer {
 
 const LATE_IMAGE_PNG = generatedPng(640, 480);
 
-async function setReadCursor(args: {
-  handle: string;
-  channelId: string;
-  lastReadEventId: number;
-}): Promise<void> {
+async function setReadCursor(args: { handle: string; channelId: string; lastReadEventId: number }): Promise<void> {
   const pool = new Pool({ connectionString: e2eDatabaseUrl });
   const client = await pool.connect();
   try {
-    const user = await client.query<{ id: string }>('SELECT id FROM users WHERE handle = $1', [
-      args.handle,
-    ]);
+    const user = await client.query<{ id: string }>('SELECT id FROM users WHERE handle = $1', [args.handle]);
     const userId = user.rows[0]?.id;
     if (!userId) throw new Error(`missing e2e user: ${args.handle}`);
     await client.query(
@@ -114,9 +107,7 @@ async function scrollHeight(log: Locator): Promise<number> {
   return log.evaluate((node) => (node as HTMLElement).scrollHeight);
 }
 
-test('fully read channel stays pinned when a landing image finishes loading late', async ({
-  page,
-}) => {
+test('fully read channel stays pinned when a landing image finishes loading late', async ({ page }) => {
   test.slow();
   const room = await createTestChannel('mediapin');
   const readerHandle = unique('reader');
@@ -145,11 +136,15 @@ test('fully read channel stays pinned when a landing image finishes loading late
     const imageResponseReleased = new Promise<void>((resolve) => {
       releaseImageResponse = resolve;
     });
-    await page.route(`**/api/files/${fileId}**`, async (route) => {
-      imageRequestSeen = true;
-      await imageResponseReleased;
-      await route.continue();
-    }, { times: 1 });
+    await page.route(
+      `**/api/files/${fileId}**`,
+      async (route) => {
+        imageRequestSeen = true;
+        await imageResponseReleased;
+        await route.continue();
+      },
+      { times: 1 },
+    );
 
     await login(page, readerHandle, 'Reader');
     await openChannel(page, room);

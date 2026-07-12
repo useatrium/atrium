@@ -79,10 +79,10 @@ beforeEach(async () => {
 
 describe('ArtifactLedger commitVersionGroup', () => {
   it('commits an N-file manifest as one version set', async () => {
-    const result = await group([
-      file('a.md', 'a'.repeat(64), 'created'),
-      file('b.md', 'b'.repeat(64), 'created'),
-    ], 'happy-group');
+    const result = await group(
+      [file('a.md', 'a'.repeat(64), 'created'), file('b.md', 'b'.repeat(64), 'created')],
+      'happy-group',
+    );
 
     expect(result).toEqual({
       ok: true,
@@ -104,10 +104,7 @@ describe('ArtifactLedger commitVersionGroup', () => {
   });
 
   it('aborts the whole group when one file has a stale base', async () => {
-    await group([
-      file('a.md', 'a'.repeat(64), 'created'),
-      file('b.md', 'b'.repeat(64), 'created'),
-    ], 'seed-group');
+    await group([file('a.md', 'a'.repeat(64), 'created'), file('b.md', 'b'.repeat(64), 'created')], 'seed-group');
     await ledger.commitVersion({
       sessionId,
       channelId: fx.channelId,
@@ -121,11 +118,14 @@ describe('ArtifactLedger commitVersionGroup', () => {
     });
     const before = await versionCount();
 
-    const stale = await group([
-      file('a.md', 'd'.repeat(64), 'modified', 1),
-      file('b.md', 'e'.repeat(64), 'modified', 1),
-      file('c.md', 'f'.repeat(64), 'created'),
-    ], 'stale-group');
+    const stale = await group(
+      [
+        file('a.md', 'd'.repeat(64), 'modified', 1),
+        file('b.md', 'e'.repeat(64), 'modified', 1),
+        file('c.md', 'f'.repeat(64), 'created'),
+      ],
+      'stale-group',
+    );
 
     expect(stale).toEqual({
       ok: false,
@@ -145,17 +145,14 @@ describe('ArtifactLedger commitVersionGroup', () => {
   });
 
   it('replays an already committed group_id without double-applying', async () => {
-    const files = [
-      file('a.md', 'a'.repeat(64), 'created'),
-      file('b.md', 'b'.repeat(64), 'created'),
-    ];
+    const files = [file('a.md', 'a'.repeat(64), 'created'), file('b.md', 'b'.repeat(64), 'created')];
     const first = await group(files, 'replay-group');
     const before = await versionCount();
 
-    const replay = await group([
-      file('a.md', 'c'.repeat(64), 'modified'),
-      file('b.md', 'd'.repeat(64), 'modified'),
-    ], 'replay-group');
+    const replay = await group(
+      [file('a.md', 'c'.repeat(64), 'modified'), file('b.md', 'd'.repeat(64), 'modified')],
+      'replay-group',
+    );
 
     expect(replay).toEqual(first);
     expect(await versionCount()).toBe(before);
@@ -169,10 +166,10 @@ describe('ArtifactLedger commitVersionGroup', () => {
     await group([file('a.md', 'a'.repeat(64), 'created')], 'dedup-seed');
     const before = await versionCount();
 
-    const result = await group([
-      file('a.md', 'a'.repeat(64), 'modified', 1),
-      file('b.md', 'b'.repeat(64), 'created'),
-    ], 'dedup-group');
+    const result = await group(
+      [file('a.md', 'a'.repeat(64), 'modified', 1), file('b.md', 'b'.repeat(64), 'created')],
+      'dedup-group',
+    );
 
     expect(result).toEqual({
       ok: true,
@@ -190,11 +187,14 @@ describe('ArtifactLedger commitVersionGroup', () => {
   });
 
   it('emits gap-free change rows carrying the group_id', async () => {
-    await group([
-      file('a.md', 'a'.repeat(64), 'created'),
-      file('b.md', 'b'.repeat(64), 'created'),
-      file('c.md', 'c'.repeat(64), 'created'),
-    ], 'feed-group');
+    await group(
+      [
+        file('a.md', 'a'.repeat(64), 'created'),
+        file('b.md', 'b'.repeat(64), 'created'),
+        file('c.md', 'c'.repeat(64), 'created'),
+      ],
+      'feed-group',
+    );
 
     const rows = await pool.query<{ id: number; xid: string; path: string; group_id: string | null }>(
       `SELECT id, xid::text AS xid, path, group_id
@@ -203,11 +203,7 @@ describe('ArtifactLedger commitVersionGroup', () => {
         ORDER BY xid, id`,
       [sessionId],
     );
-    expect(rows.rows.map((r) => r.path)).toEqual([
-      activePath('a.md'),
-      activePath('b.md'),
-      activePath('c.md'),
-    ]);
+    expect(rows.rows.map((r) => r.path)).toEqual([activePath('a.md'), activePath('b.md'), activePath('c.md')]);
     expect(rows.rows.map((r) => r.group_id)).toEqual(['feed-group', 'feed-group', 'feed-group']);
     const firstId = rows.rows[0]!.id;
     expect(rows.rows.map((r) => r.id)).toEqual([firstId, firstId + 1, firstId + 2]);

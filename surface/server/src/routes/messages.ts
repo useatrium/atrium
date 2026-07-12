@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { Schema } from 'effect';
+import type { AppMutationContext } from '../app-mutations.js';
 import { config } from '../config.js';
-import type { Db, DbClient } from '../db.js';
+import type { Db } from '../db.js';
 import { withTx } from '../db.js';
 import {
   appendVoiceTranscribedEventTx,
@@ -74,20 +75,11 @@ const MessageReactionBodySchema = Schema.Struct({
   opId: Schema.optional(Schema.Unknown),
 });
 
-export interface MessageRouteDeps {
+export interface MessageRouteDeps extends AppMutationContext {
   pool: Db;
   hub: WsHub;
   stt?: { enqueue(): void };
   requireUser(req: FastifyRequest, reply: FastifyReply): UserRef | null;
-  optionalOpId(body: unknown): string | undefined;
-  runMutation<T>(args: {
-    userId: string;
-    opId?: string;
-    opType: string;
-    body: unknown;
-    fn: (client: DbClient) => Promise<T>;
-    onApplied?: (response: T) => void | Promise<void>;
-  }): Promise<T>;
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -235,7 +227,7 @@ export function registerMessageRoutes(app: FastifyInstance, deps: MessageRouteDe
     if (!channel.rows[0] || !(await canAccessChannel(pool, user.id, body.channelId))) {
       return reply.code(404).send({ error: 'channel_not_found', message: 'channel not found' });
     }
-    const event = await postMessage(pool, {
+    const posted = await postMessage(pool, {
       workspaceId: channel.rows[0].workspace_id,
       channelId: body.channelId,
       actorId: user.id,
@@ -246,6 +238,8 @@ export function registerMessageRoutes(app: FastifyInstance, deps: MessageRouteDe
       attachments,
       voice,
     });
+    const { channelUnarchivedEvent, ...event } = posted;
+    if (channelUnarchivedEvent) hub.publishEvent(channelUnarchivedEvent);
     try {
       await persistMentions(pool, {
         eventId: event.id,

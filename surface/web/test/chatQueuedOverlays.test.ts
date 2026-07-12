@@ -1,16 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type {
-  MsgSendPayload,
-  OpType,
-  ReactionSetPayload,
-  SessionSpawnPayload,
-  UserRef,
-} from '@atrium/surface-client';
-import {
-  pendingMessageFromSendPayload,
-  pendingSpawnFromPayload,
-  queuedOverlayAction,
-} from '../src/chatQueuedOverlays';
+import type { MsgSendPayload, OpType, ReactionSetPayload, SessionSpawnPayload, UserRef } from '@atrium/surface-client';
+import { pendingMessageFromSendPayload, pendingSpawnFromPayload, queuedOverlayAction } from '../src/chatQueuedOverlays';
 
 const me: UserRef = { id: 'user-1', handle: 'me', displayName: 'Me User' };
 
@@ -167,24 +157,21 @@ describe('chatQueuedOverlays', () => {
       action: 'add',
       userId: 'user-1',
     };
-    expect(
-      queuedOverlayAction({ opId: 'reaction-op', opType: 'reaction.set', payload: reaction }, me)
-        ?.action,
-    ).toEqual({
-      type: 'reaction-overlay-pending',
-      channelId: 'ch-1',
-      opId: 'reaction-op',
-      targetEventId: 13,
-      emoji: ':thumbsup:',
-      userId: 'user-1',
-      action: 'add',
-    });
+    expect(queuedOverlayAction({ opId: 'reaction-op', opType: 'reaction.set', payload: reaction }, me)?.action).toEqual(
+      {
+        type: 'reaction-overlay-pending',
+        channelId: 'ch-1',
+        opId: 'reaction-op',
+        targetEventId: 13,
+        emoji: ':thumbsup:',
+        userId: 'user-1',
+        action: 'add',
+      },
+    );
 
     expect(
-      queuedOverlayAction(
-        { opId: 'mute-op', opType: 'mute.set', payload: { channelId: 'ch-1', muted: true } },
-        me,
-      )?.action,
+      queuedOverlayAction({ opId: 'mute-op', opType: 'mute.set', payload: { channelId: 'ch-1', muted: true } }, me)
+        ?.action,
     ).toEqual({ type: 'mute-changed', channelId: 'ch-1', muted: true });
   });
 
@@ -206,10 +193,7 @@ describe('chatQueuedOverlays', () => {
 
   it('ignores queued ops without optimistic overlays', () => {
     expect(
-      queuedOverlayAction(
-        { opId: 'upload-op', opType: 'upload' as OpType, payload: { uploadKey: 'upload-1' } },
-        me,
-      ),
+      queuedOverlayAction({ opId: 'upload-op', opType: 'upload' as OpType, payload: { uploadKey: 'upload-1' } }, me),
     ).toBeNull();
   });
 });

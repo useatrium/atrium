@@ -2,8 +2,7 @@ import { expect, test } from '@playwright/test';
 import { Pool } from 'pg';
 import { channelButton, login, openChannel, unique } from './helpers.js';
 
-const e2eDatabaseUrl =
-  process.env.E2E_DATABASE_URL ?? 'postgres://atrium:atrium@localhost:5433/atrium_e2e';
+const e2eDatabaseUrl = process.env.E2E_DATABASE_URL ?? 'postgres://atrium:atrium@localhost:5433/atrium_e2e';
 
 interface WorkspaceSeed {
   workspaceId: string;
@@ -20,16 +19,13 @@ async function seedWorkspaceB(args: {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const user = await client.query<{ id: string }>('SELECT id FROM users WHERE handle = $1', [
-      args.memberHandle,
-    ]);
+    const user = await client.query<{ id: string }>('SELECT id FROM users WHERE handle = $1', [args.memberHandle]);
     const actorId = user.rows[0]?.id;
     if (!actorId) throw new Error(`missing e2e user: ${args.memberHandle}`);
 
-    const workspace = await client.query<{ id: string }>(
-      'INSERT INTO workspaces (name) VALUES ($1) RETURNING id',
-      [args.workspaceName],
-    );
+    const workspace = await client.query<{ id: string }>('INSERT INTO workspaces (name) VALUES ($1) RETURNING id', [
+      args.workspaceName,
+    ]);
     const workspaceId = workspace.rows[0]!.id;
     const channel = await client.query<{ id: string }>(
       `INSERT INTO channels (workspace_id, name, kind, created_by)
@@ -88,9 +84,7 @@ test('public workspace channels are visible only to workspace members', async ({
     const sync = await nonMemberPage.context().request.get('/api/sync?after=0&limit=1000');
     expect(sync.ok()).toBeTruthy();
     const syncBody = (await sync.json()) as { events: Array<{ workspaceId: string }> };
-    expect
-      .soft(syncBody.events.filter((event) => event.workspaceId === seeded.workspaceId))
-      .toHaveLength(0); // red-until-merge: V
+    expect.soft(syncBody.events.filter((event) => event.workspaceId === seeded.workspaceId)).toHaveLength(0); // red-until-merge: V
 
     await expect(channelButton(memberPage, 'b-general')).toBeVisible();
     await openChannel(memberPage, 'b-general');
@@ -106,9 +100,7 @@ test('public workspace channels are visible only to workspace members', async ({
     const workspacesBody = (await workspaces.json()) as {
       workspaces: Array<{ id: string }>;
     };
-    expect
-      .soft(workspacesBody.workspaces.some((workspace) => workspace.id === seeded.workspaceId))
-      .toBe(false); // red-until-merge: R
+    expect.soft(workspacesBody.workspaces.some((workspace) => workspace.id === seeded.workspaceId)).toBe(false); // red-until-merge: R
   } finally {
     await nonMember.close();
     await member.close();

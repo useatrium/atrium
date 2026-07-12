@@ -24,3 +24,6 @@ export * from './useWs';
 export * from './util';
 export * from './agentProfiles';
 export * from './files-hub';
+export * from './markup';
+export * from './sessionCapabilities';
+export * from './textDiff';

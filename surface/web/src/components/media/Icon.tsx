@@ -1,28 +1,4 @@
-import type { ReactNode, SVGProps } from 'react';
-
-type IconProps = Omit<SVGProps<SVGSVGElement>, 'children'> & {
-  size?: number;
-};
-
-function Icon({ size = 16, className, children, ...props }: IconProps & { children: ReactNode }) {
-  return (
-    <svg
-      aria-hidden="true"
-      viewBox="0 0 24 24"
-      width={size}
-      height={size}
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={2}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
-      {...props}
-    >
-      {children}
-    </svg>
-  );
-}
+import { Icon, type IconProps } from '../icons';
 
 export function ChevronLeftIcon(props: IconProps) {
   return (
@@ -106,14 +82,6 @@ export function TrashIcon(props: IconProps) {
       <path d="M19 6l-1 15H6L5 6" />
       <path d="M10 11v6" />
       <path d="M14 11v6" />
-    </Icon>
-  );
-}
-
-export function MessageIcon(props: IconProps) {
-  return (
-    <Icon {...props}>
-      <path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z" />
     </Icon>
   );
 }

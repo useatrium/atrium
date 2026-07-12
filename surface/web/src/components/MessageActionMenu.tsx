@@ -3,9 +3,7 @@ import { useCallback, useEffect, useRef, useState, type MouseEvent, type ReactNo
 import { useDialog } from '../useDialog';
 import { ReactionPicker } from './ReactionPicker';
 
-export type MessageActionMenuState =
-  | { mode: 'sheet' }
-  | { mode: 'popover'; anchor: { x: number; y: number } };
+export type MessageActionMenuState = { mode: 'sheet' } | { mode: 'popover'; anchor: { x: number; y: number } };
 
 export type MessageActionMenuAction = {
   key: string;
@@ -14,6 +12,8 @@ export type MessageActionMenuAction = {
   onSelect: () => void;
   variant?: 'default' | 'danger';
   closeOnSelect?: boolean;
+  /** Only rendered in the touch bottom sheet — for affordances that are redundant with a mouse (e.g. Select text). */
+  sheetOnly?: boolean;
 };
 
 export type MessageActionMenuReactions = {
@@ -30,12 +30,14 @@ export function MessageActionMenu({
   restoreFocusRef,
   actions,
   reactions,
+  label = 'Message actions',
 }: {
   state: MessageActionMenuState | null;
   onClose: () => void;
   restoreFocusRef?: RefObject<HTMLElement | null>;
   actions: MessageActionMenuAction[];
   reactions?: MessageActionMenuReactions;
+  label?: string;
 }) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
@@ -107,7 +109,7 @@ export function MessageActionMenu({
     <div
       ref={menuRef}
       role="dialog"
-      aria-label="Message actions"
+      aria-label={label}
       style={mode === 'popover' ? popoverStyle(state.anchor) : undefined}
       className={
         mode === 'sheet'
@@ -116,7 +118,13 @@ export function MessageActionMenu({
       }
     >
       {reactions && (
-        <div className={compact ? 'mb-1 flex items-center gap-1 border-b border-edge pb-1' : 'mb-2 flex items-center gap-1 border-b border-edge pb-2'}>
+        <div
+          className={
+            compact
+              ? 'mb-1 flex items-center gap-1 border-b border-edge pb-1'
+              : 'mb-2 flex items-center gap-1 border-b border-edge pb-2'
+          }
+        >
           {QUICK_REACTIONS.map((emoji) => (
             <button
               type="button"
@@ -165,19 +173,21 @@ export function MessageActionMenu({
         />
       )}
       <div className={compact ? 'space-y-0.5' : 'space-y-1'}>
-        {actions.map((action) => (
-          <button
-            key={action.key}
-            type="button"
-            onClick={(event) => {
-              if (canActivateFromClick(event)) runAction(action);
-            }}
-            className={action.variant === 'danger' ? destructiveRowClass : actionRowClass}
-          >
-            {action.icon && <span className="mr-2 inline-flex shrink-0 items-center">{action.icon}</span>}
-            {action.label}
-          </button>
-        ))}
+        {actions
+          .filter((action) => mode === 'sheet' || !action.sheetOnly)
+          .map((action) => (
+            <button
+              key={action.key}
+              type="button"
+              onClick={(event) => {
+                if (canActivateFromClick(event)) runAction(action);
+              }}
+              className={action.variant === 'danger' ? destructiveRowClass : actionRowClass}
+            >
+              {action.icon && <span className="mr-2 inline-flex shrink-0 items-center">{action.icon}</span>}
+              {action.label}
+            </button>
+          ))}
         {mode === 'sheet' && (
           <button
             type="button"
@@ -199,7 +209,7 @@ export function MessageActionMenu({
     <div className="fixed inset-0 z-40" onPointerDownCapture={markFreshSheetPointerDown}>
       <button
         type="button"
-        aria-label="Close message actions"
+        aria-label={`Close ${label.toLowerCase()}`}
         onClick={(event) => {
           if (canActivateFromClick(event)) closeMenu();
         }}

@@ -35,10 +35,12 @@ RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
     google-api-python-client>=2.100.0 \
     google-auth-httplib2>=0.2.0 \
     google-auth-oauthlib>=1.2.0 \
+    feedparser>=6.0.0 \
     httplib2>=0.20.0 \
     httpx>=0.28.0 \
     opentelemetry-proto==1.42.1 \
     pysocks>=1.7.1 \
+    rich>=13.0.0 \
     slack-sdk==3.39.0 \
     tomli-w==1.2.0 \
     && find /usr/local/lib/python3.12 /usr/lib/python3 -type d -name __pycache__ -prune -exec rm -rf '{}' +
@@ -188,11 +190,15 @@ ARG BUN_VERSION=bun-v1.3.13
 
 # ── Agent-scoped toolchains ─────────────────────────────────────────────────
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-      | sh -s -- -y --profile minimal --component rustfmt --component clippy \
+      | sh -s -- -y --profile minimal --default-toolchain nightly --component rustfmt --component clippy \
+    && rustup toolchain install stable --profile minimal \
     && rustc --version \
     && cargo --version \
     && rustfmt --version \
     && clippy-driver --version \
+    && cargo +stable --version \
+    && cargo +nightly fmt --version \
+    && cargo +nightly clippy --version \
     && rm -rf "$RUSTUP_HOME/toolchains"/*/share/doc "$RUSTUP_HOME/toolchains"/*/share/man
 RUN --mount=type=cache,target=/opt/centaur/cargo/registry,uid=1001,gid=1001,sharing=locked \
     --mount=type=cache,target=/opt/centaur/cargo/git,uid=1001,gid=1001,sharing=locked \
@@ -240,6 +246,7 @@ ENV GIT_CONFIG_GLOBAL=/opt/centaur/gitconfig
 RUN mkdir -p ~/.config/amp ~/.codex ~/.pi/agent ~/repos ~/workspace \
     && git config --global init.defaultBranch main \
     && git config --global push.autoSetupRemote true \
+    && git config --global core.hooksPath /opt/centaur/git-hooks \
     && git config --global --add safe.directory '*' \
     && git config --global user.name "Centaur AI" \
     && git config --global user.email "ai@centaur.local"
@@ -261,48 +268,51 @@ RUN rm -f /etc/sudoers.d/agent
 RUN install -d -m 0755 /etc/centaur \
     && install -d -m 0775 -o agent -g agent /opt/centaur
 COPY --link centaur_sdk/ /opt/centaur/centaur_sdk/
+COPY --link --chmod=0755 services/sandbox/git-hooks/ /opt/centaur/git-hooks/
 COPY --link --chown=1001:1001 tools/ /opt/centaur/tools/
 COPY --link --chmod=644 services/sandbox/codex-auth.json /etc/centaur/codex-auth.default.json
 COPY --link --chmod=644 services/sandbox/claude-credentials.json /etc/centaur/claude-credentials.default.json
 COPY --link --chmod=755 services/sandbox/md2docx.py /usr/local/bin/md2docx
 COPY --link --chmod=755 services/workflow-python/workflow_host.py /usr/local/bin/workflow-host
+COPY --link services/workflow-python/api/ /usr/local/bin/api/
 COPY --link --chmod=755 services/sandbox/git-branch.sh /usr/local/bin/git-branch
 COPY --link --chmod=755 services/sandbox/claude-sdk-bridge.mjs /usr/local/bin/claude-sdk-bridge
 COPY --link --chmod=755 services/sandbox/install_tool_shims.py /usr/local/bin/install-tool-shims
+COPY --link --chmod=755 services/sandbox/centaur_tool_host.py /usr/local/bin/centaur-tool-host
+COPY --link --chmod=755 services/sandbox/repo_cache_sync.py /usr/local/bin/repo-cache-sync
+COPY --link --chmod=755 services/sandbox/repo_cache_watch.py /usr/local/bin/repo-cache-watch
 COPY --link --chmod=755 services/sandbox/entrypoint.sh /entrypoint.sh
+COPY --link --chown=1001:1001 crates/harness-server/ /opt/centaur/harness-server-src/
 
 USER agent
 WORKDIR /home/agent
 
 ARG RUST_BUILD_PROFILE=release
-# Build from a bind mount instead of COPY: COPY --link into /tmp rebuilds the
-# parent directory chain in its own layer, clobbering /tmp's root:root 1777
-# sticky metadata with agent:agent 0755, which broke /tmp writes for any
-# non-1001 user (e.g. the root-with-dropped-caps repo-cache). A bind mount
-# leaves no trace in the image and caches on source content just like COPY.
-RUN --mount=type=bind,source=crates/harness-server,target=/harness-server-src \
-    --mount=type=cache,target=/opt/centaur/cargo/registry,uid=1001,gid=1001,sharing=locked \
+# Keep harness-server source as a real image input so crate changes invalidate
+# the install layer. Do not COPY into /tmp; that can clobber /tmp's sticky bit.
+RUN --mount=type=cache,target=/opt/centaur/cargo/registry,uid=1001,gid=1001,sharing=locked \
     --mount=type=cache,target=/opt/centaur/cargo/git,uid=1001,gid=1001,sharing=locked \
     --mount=type=cache,target=/home/agent/.cache/harness-server-target,uid=1001,gid=1001,sharing=locked \
     export CARGO_TARGET_DIR=/home/agent/.cache/harness-server-target; \
     case "$RUST_BUILD_PROFILE" in \
-      release) cargo install --locked --path /harness-server-src --root /opt/centaur/local ;; \
-      debug|dev) cargo install --debug --locked --path /harness-server-src --root /opt/centaur/local ;; \
+      release) cargo install --locked --path /opt/centaur/harness-server-src --root /opt/centaur/local ;; \
+      debug|dev) cargo install --debug --locked --path /opt/centaur/harness-server-src --root /opt/centaur/local ;; \
       *) echo "unsupported RUST_BUILD_PROFILE=$RUST_BUILD_PROFILE" >&2; exit 2 ;; \
     esac
 
 # No RUN instructions after these — all repo-local content at the very end.
 COPY --link --chown=1001:1001 .agents/skills/ /opt/centaur/agents/skills/
+# NOTE: harness/ and crates/harness-server/ are agent-image INPUTS — deploy's
+# need_agent change-detection must include them (deploy/redeploy.sh), or edits
+# here ship as stale retags under a new SHA.
 COPY --link --chown=1001:1001 harness/ /opt/centaur/harness/
 COPY --link --chown=1001:1001 workflows/ /opt/centaur/workflows/
 COPY --link --chown=1001:1001 services/sandbox/SYSTEM_PROMPT.md /opt/centaur/AGENTS.md
-# Atrium fork: bake the org prompt overlay into the image. The chart's
+# Atrium fork: bake the Atrium-native base prompt into the image. The chart's
 # overlay.systemPrompt ConfigMap only reaches the api-rs pod — sandbox pods are
-# created dynamically and never mount it — so the entrypoint's
-# ${CENTAUR_OVERLAY_DIR}/services/sandbox/SYSTEM_PROMPT.md append is satisfied
-# from a baked path instead. A pod-level CENTAUR_OVERLAY_DIR env still wins
-# over this image default (external overlay-repo deployments keep working).
-COPY --link --chown=1001:1001 services/sandbox/ATRIUM_OVERLAY_PROMPT.md /opt/centaur-overlay/services/sandbox/SYSTEM_PROMPT.md
+# created dynamically and never mount it. A pod-level CENTAUR_OVERLAY_DIR env
+# still wins over this image default (external overlay-repo deployments work).
+COPY --link --chown=1001:1001 services/sandbox/ATRIUM_BASE_PROMPT.md /opt/centaur-overlay/services/sandbox/BASE_PROMPT.md
 ENV CENTAUR_OVERLAY_DIR=/opt/centaur-overlay
 
 ENTRYPOINT ["/entrypoint.sh"]

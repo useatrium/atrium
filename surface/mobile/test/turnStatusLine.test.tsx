@@ -49,7 +49,7 @@ describe('TurnStatusLine (mobile)', () => {
     expect(screen.getByText('— quiet for 0:31')).toBeTruthy();
   });
 
-  it('renders stuck thinking and fires cancel', () => {
+  it('renders stuck thinking and fires stop', () => {
     const onCancel = vi.fn();
     renderWithTheme(
       <TurnStatusLine
@@ -67,7 +67,7 @@ describe('TurnStatusLine (mobile)', () => {
     );
 
     expect(screen.getByText('Still working? No output for 5:30')).toBeTruthy();
-    fireEvent.click(screen.getByText('Cancel'));
+    fireEvent.click(screen.getByText('Stop'));
     expect(onCancel).toHaveBeenCalledTimes(1);
   });
 

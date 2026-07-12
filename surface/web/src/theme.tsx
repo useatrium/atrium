@@ -7,14 +7,7 @@ import {
   randomId,
   type UserPrefs,
 } from '@atrium/surface-client';
-import {
-  createContext,
-  useContext,
-  useEffect,
-  useMemo,
-  useState,
-  type ReactNode,
-} from 'react';
+import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { api } from './api';
 import { eventCache } from './cacheIdb';
 import { showErrorToast } from './components/Toasts';
@@ -72,7 +65,7 @@ function syncThemeColor(scheme: Scheme): void {
   meta.content = THEME_META[scheme];
 }
 
-export function loadPrefs(): UserPrefs {
+function loadPrefs(): UserPrefs {
   if (!canUseDom()) return DEFAULT_PREFS;
   try {
     return normalizePrefs(JSON.parse(window.localStorage.getItem(PREFS_KEY) ?? 'null'));
@@ -81,7 +74,7 @@ export function loadPrefs(): UserPrefs {
   }
 }
 
-export function applyPrefs(prefs: UserPrefs): Scheme {
+function applyPrefs(prefs: UserPrefs): Scheme {
   const resolved = resolveScheme(prefs);
   if (!canUseDom()) return resolved;
   const root = document.documentElement;

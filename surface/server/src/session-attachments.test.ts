@@ -75,7 +75,8 @@ describe('agent turn attachments', () => {
   });
 
   it('prepends exactly one context part to durable and execute message content', () => {
-    const contextBlock = '[atrium context]\nfrom: Alice (human · driver)\nchannel: #general\nsent: 2026-07-08T14:32:05Z';
+    const contextBlock =
+      '[atrium context]\nfrom: Alice (human · driver)\nchannel: #general\nsent: 2026-07-08T14:32:05Z';
 
     expect(agentTurnMessageParts('review this', [], contextBlock)).toEqual([
       { type: 'context', text: contextBlock },

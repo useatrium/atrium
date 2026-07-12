@@ -17,6 +17,10 @@ import {
   formatExactTimestamp,
   formatTime,
   formatBytes,
+  questionAnswerSummaryText,
+  questionPayloadAnswers,
+  questionPayloadPrompts,
+  sessionQuestionEventLabel,
   type Api,
   type ChatMessage,
   type MessageReaction,
@@ -63,7 +67,12 @@ type AnimatedViewComponent = ComponentType<{
 type ReanimatedRuntime = {
   default: { View: AnimatedViewComponent };
   Extrapolation: { CLAMP: string | number };
-  interpolate: (value: number, input: readonly number[], output: readonly number[], extrapolate?: string | number) => number;
+  interpolate: (
+    value: number,
+    input: readonly number[],
+    output: readonly number[],
+    extrapolate?: string | number,
+  ) => number;
   runOnJS: <T extends () => void>(fn: T) => T;
   useAnimatedStyle: <T>(updater: () => T) => T;
   useSharedValue: <T>(initialValue: T) => SharedValue<T>;
@@ -456,7 +465,7 @@ function SessionCard({
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`Open session transcript: ${session?.title ?? message.text}`}
+      accessibilityLabel={`Open agent transcript: ${session?.title ?? message.text}`}
       accessibilityState={{ disabled: !message.sessionId || !onOpen }}
       disabled={!message.sessionId || !onOpen}
       onPress={() => {
@@ -474,7 +483,7 @@ function SessionCard({
     >
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
         <Ionicons name="hardware-chip-outline" size={13} color={colors.textMuted} />
-        <Text style={{ fontSize: font.xs, color: colors.textMuted, fontWeight: '700' }}>AGENT SESSION</Text>
+        <Text style={{ fontSize: font.xs, color: colors.textMuted, fontWeight: '700' }}>AGENT</Text>
         <Text style={{ fontSize: font.xs, color: statusColor, fontWeight: '700' }}>
           {needsInput ? 'NEEDS INPUT' : status.toUpperCase()}
         </Text>
@@ -528,16 +537,7 @@ function SessionEventLine({ message, onOpen }: { message: ChatMessage; onOpen?: 
           }}
         >
           <Text style={{ color: colors.accent, fontSize: font.xs, fontWeight: '900' }}>{answer.header}</Text>
-          <MarkdownText
-            text={
-              answer.answers.length > 0
-                ? answer.answers.join('\n')
-                : answer.count === 1
-                  ? '1 answer recorded'
-                  : `${answer.count} answers recorded`
-            }
-            variant="compact"
-          />
+          <MarkdownText text={questionAnswerSummaryText(answer)} variant="compact" />
         </View>
       ))}
       {message.sessionId && onOpen ? (
@@ -555,52 +555,11 @@ function SessionEventLine({ message, onOpen }: { message: ChatMessage; onOpen?: 
   );
 }
 
-function questionPayloadPrompts(payload: Record<string, unknown>): Array<{ question: string }> {
-  if (!Array.isArray(payload.questions)) return [];
-  return payload.questions
-    .map((item): { question: string } | null => {
-      if (!item || typeof item !== 'object' || Array.isArray(item)) return null;
-      const raw = item as Record<string, unknown>;
-      return typeof raw.question === 'string' && raw.question.trim() ? { question: raw.question } : null;
-    })
-    .filter((item): item is { question: string } => item !== null);
-}
-
-function questionPayloadAnswers(
-  payload: Record<string, unknown>,
-): Array<{ id: string; header: string; answers: string[]; count: number }> {
-  if (!Array.isArray(payload.answers)) return [];
-  return payload.answers
-    .map((item): { id: string; header: string; answers: string[]; count: number } | null => {
-      if (!item || typeof item !== 'object' || Array.isArray(item)) return null;
-      const raw = item as Record<string, unknown>;
-      if (typeof raw.id !== 'string') return null;
-      const answers = Array.isArray(raw.answers)
-        ? raw.answers.filter((answer): answer is string => typeof answer === 'string')
-        : [];
-      return {
-        id: raw.id,
-        header: typeof raw.header === 'string' ? raw.header : raw.id,
-        answers,
-        count: typeof raw.count === 'number' && Number.isFinite(raw.count) ? raw.count : answers.length,
-      };
-    })
-    .filter((item): item is { id: string; header: string; answers: string[]; count: number } => item !== null);
-}
-
 function compactLines(lines: Array<string | null | undefined>): string {
   return lines
     .map((line) => line?.trim() ?? '')
     .filter((line) => line.length > 0)
     .join('\n');
-}
-
-function sessionQuestionEventLabel(type: ChatMessage['sessionEventType'], reason: unknown): string {
-  if (type === 'question_requested') return 'Question asked';
-  if (type === 'question_answered') return 'Question answered';
-  if (reason === 'empty') return 'Question expired without an answer';
-  if (reason === 'cancelled') return 'Question cancelled';
-  return 'Question resolved';
 }
 
 function sessionEventVisibleText(message: ChatMessage): string {
@@ -612,13 +571,7 @@ function sessionEventVisibleText(message: ChatMessage): string {
   if (message.sessionEventType === 'question_requested') lines.push(questionText);
   for (const answer of answers) {
     lines.push(answer.header);
-    lines.push(
-      answer.answers.length > 0
-        ? answer.answers.join('\n')
-        : answer.count === 1
-          ? '1 answer recorded'
-          : `${answer.count} answers recorded`,
-    );
+    lines.push(questionAnswerSummaryText(answer));
   }
   return compactLines(lines);
 }
@@ -647,7 +600,9 @@ function entryHandleForAction(message: ChatMessage): string | null {
 
 function actionTargetForMessage(message: ChatMessage, copyText: string | null, copyLink: string | null): ChatMessage {
   const target =
-    copyText == null || copyText === message.text ? message : ({ ...message, actionCopyText: copyText } as MessageActionTarget);
+    copyText == null || copyText === message.text
+      ? message
+      : ({ ...message, actionCopyText: copyText } as MessageActionTarget);
   if (copyLink == null) return target;
   return { ...target, actionCopyLink: copyLink } as MessageActionTarget;
 }
@@ -686,7 +641,11 @@ export const MessageRow = memo(function MessageRow({
     ? m.attachments.map((a) => `attachment ${a.filename}`).join(', ')
     : '';
   const blockRowText =
-    m.sessionEventType != null ? sessionEventVisibleText(m) : m.sessionId != null ? sessionCardVisibleText(m, session) : '';
+    m.sessionEventType != null
+      ? sessionEventVisibleText(m)
+      : m.sessionId != null
+        ? sessionCardVisibleText(m, session)
+        : '';
   const rowText = tombstone
     ? 'Message deleted'
     : (sessionBlock ? blockRowText : m.text.trim()) ||
@@ -741,12 +700,7 @@ export const MessageRow = memo(function MessageRow({
   });
   const replyRevealStyle = useAnimatedStyle(() => {
     'worklet';
-    const progress = interpolate(
-      swipeTranslateX.value,
-      [0, SWIPE_REPLY_THRESHOLD],
-      [0, 1],
-      Extrapolation.CLAMP,
-    );
+    const progress = interpolate(swipeTranslateX.value, [0, SWIPE_REPLY_THRESHOLD], [0, 1], Extrapolation.CLAMP);
     return {
       opacity: progress,
       transform: [
@@ -767,9 +721,7 @@ export const MessageRow = memo(function MessageRow({
   }, [canSwipeReply, resetSwipe]);
   const accessibilityActions = [
     ...(failed ? [{ name: 'retry', label: 'Retry sending' }] : []),
-    ...(!tombstone && !sessionBlock && onOpenThread && !inThread
-      ? [{ name: 'reply', label: 'Reply in thread' }]
-      : []),
+    ...(!tombstone && !sessionBlock && onOpenThread && !inThread ? [{ name: 'reply', label: 'Reply in thread' }] : []),
     ...(!tombstone && !sessionBlock ? [{ name: 'react', label: 'React' }] : []),
     ...(copyText != null ? [{ name: 'copy', label: 'Copy text' }] : []),
     ...(copyLink != null ? [{ name: 'copy_link', label: 'Copy link' }] : []),

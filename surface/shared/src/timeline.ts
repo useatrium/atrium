@@ -6,11 +6,13 @@ import { eventIdFromTarget } from './handle';
 const NullableNumberSchema = Schema.Union(Schema.Number, Schema.Null);
 const NullableStringSchema = Schema.Union(Schema.String, Schema.Null);
 
-export const UserRefSchema = Schema.mutable(Schema.Struct({
-  id: Schema.String,
-  handle: Schema.String,
-  displayName: Schema.String,
-}));
+export const UserRefSchema = Schema.mutable(
+  Schema.Struct({
+    id: Schema.String,
+    handle: Schema.String,
+    displayName: Schema.String,
+  }),
+);
 
 export interface UserRef {
   id: string;
@@ -34,35 +36,37 @@ export interface WireEvent {
   lastReplyId?: number;
   // === foundation additions: thread broadcast ===
   broadcast?: boolean;
-  /** DEV MOCK only (sessions/devMock.ts): synthetic events that must not
-   * advance the catch-up cursor. Never set on real server events. */
-  mock?: boolean;
 }
 
-export const WireEventSchema = Schema.mutable(Schema.Struct({
-  id: Schema.Number,
-  workspaceId: Schema.String,
-  channelId: NullableStringSchema,
-  threadRootEventId: NullableNumberSchema,
-  type: Schema.String,
-  actorId: NullableStringSchema,
-  payload: Schema.mutable(Schema.Record({ key: Schema.String, value: Schema.Unknown })),
-  createdAt: Schema.String,
-  author: Schema.Union(UserRefSchema, Schema.Null),
-  replyCount: Schema.optionalWith(Schema.Number, { exact: true }),
-  lastReplyId: Schema.optionalWith(Schema.Number, { exact: true }),
-  broadcast: Schema.optionalWith(Schema.Boolean, { exact: true }),
-  mock: Schema.optionalWith(Schema.Boolean, { exact: true }),
-}));
+export const WireEventSchema = Schema.mutable(
+  Schema.Struct({
+    id: Schema.Number,
+    workspaceId: Schema.String,
+    channelId: NullableStringSchema,
+    threadRootEventId: NullableNumberSchema,
+    type: Schema.String,
+    actorId: NullableStringSchema,
+    payload: Schema.mutable(Schema.Record({ key: Schema.String, value: Schema.Unknown })),
+    createdAt: Schema.String,
+    author: Schema.Union(UserRefSchema, Schema.Null),
+    replyCount: Schema.optionalWith(Schema.Number, { exact: true }),
+    lastReplyId: Schema.optionalWith(Schema.Number, { exact: true }),
+    broadcast: Schema.optionalWith(Schema.Boolean, { exact: true }),
+  }),
+);
 
-export const MessageHistoryResponseSchema = Schema.mutable(Schema.Struct({
-  events: Schema.mutable(Schema.Array(WireEventSchema)),
-  hasMore: Schema.Boolean,
-}));
+export const MessageHistoryResponseSchema = Schema.mutable(
+  Schema.Struct({
+    events: Schema.mutable(Schema.Array(WireEventSchema)),
+    hasMore: Schema.Boolean,
+  }),
+);
 
-export const ThreadMessagesResponseSchema = Schema.mutable(Schema.Struct({
-  events: Schema.mutable(Schema.Array(WireEventSchema)),
-}));
+export const ThreadMessagesResponseSchema = Schema.mutable(
+  Schema.Struct({
+    events: Schema.mutable(Schema.Array(WireEventSchema)),
+  }),
+);
 
 export function filesChangedWorkspaceId(ev: WireEvent): string | null {
   if (ev.type !== FILES_CHANGED_EVENT_TYPE) return null;
@@ -130,6 +134,12 @@ export interface ChatMessage {
   replyCount: number;
   /** Highest reply event id already included in replyCount. */
   lastReplyId: number;
+  /** Pending thread replies only: this overlay's optimistic +1 is included in
+   * the root row's current replyCount. Lets the confirm (or a server count
+   * that already covered the send) settle the bump exactly instead of
+   * guessing — a queued op restored after reload may confirm into an event
+   * the server counted before the page ever loaded. */
+  countedInRoot?: boolean;
   // === foundation additions: thread broadcast ===
   broadcast?: boolean;
   status: MessageStatus;
@@ -223,13 +233,9 @@ function isModifierEvent(type: string): boolean {
 export function messageFromEvent(ev: WireEvent): ChatMessage {
   const payload = ev.payload ?? {};
   const sessionId =
-    ev.type.startsWith('session.') && typeof payload.sessionId === 'string'
-      ? payload.sessionId
-      : undefined;
+    ev.type.startsWith('session.') && typeof payload.sessionId === 'string' ? payload.sessionId : undefined;
   const spawnClientId =
-    ev.type === 'session.spawned' && typeof payload.client_spawn_id === 'string'
-      ? payload.client_spawn_id
-      : undefined;
+    ev.type === 'session.spawned' && typeof payload.client_spawn_id === 'string' ? payload.client_spawn_id : undefined;
   const text =
     typeof payload.text === 'string'
       ? payload.text
@@ -241,7 +247,7 @@ export function messageFromEvent(ev: WireEvent): ChatMessage {
             ? 'Question answered'
             : ev.type === 'session.question_resolved'
               ? 'Question resolved'
-        : '';
+              : '';
   const sessionEventType =
     ev.type === 'session.question_requested'
       ? 'question_requested'
@@ -336,12 +342,7 @@ function parseReactions(v: unknown): MessageReaction[] | undefined {
 }
 
 /** Toggle one user's emoji on a message (pure; used by the reaction fold). */
-export function foldReaction(
-  m: ChatMessage,
-  emoji: string,
-  userId: string,
-  add: boolean,
-): ChatMessage {
+export function foldReaction(m: ChatMessage, emoji: string, userId: string, add: boolean): ChatMessage {
   const list = m.reactions ?? [];
   const i = list.findIndex((r) => r.emoji === emoji);
   if (add) {
@@ -360,9 +361,7 @@ export function foldReaction(
 
 /** Confirmed messages sorted by id asc; pending/failed keep send order at the end. */
 function resort(list: ChatMessage[]): ChatMessage[] {
-  const confirmed = list
-    .filter((m) => m.status === 'confirmed')
-    .sort((a, b) => (a.id ?? 0) - (b.id ?? 0));
+  const confirmed = list.filter((m) => m.status === 'confirmed').sort((a, b) => (a.id ?? 0) - (b.id ?? 0));
   const rest = list.filter((m) => m.status !== 'confirmed');
   return [...confirmed, ...rest];
 }
@@ -407,51 +406,56 @@ function dropUnconfirmedByClientMsgId(list: ChatMessage[], clientMsgId: string |
   return list.filter((m) => !(m.status !== 'confirmed' && m.clientMsgId === clientMsgId));
 }
 
-function hasPendingReply(t: ChannelTimeline, msg: ChatMessage): boolean {
-  if (msg.clientMsgId == null || msg.threadRootEventId == null) return false;
+function findPendingReply(t: ChannelTimeline, msg: ChatMessage): ChatMessage | null {
+  if (msg.clientMsgId == null || msg.threadRootEventId == null) return null;
   const matches = (m: ChatMessage) =>
-    m.status !== 'confirmed' &&
-    m.clientMsgId === msg.clientMsgId &&
-    m.threadRootEventId === msg.threadRootEventId;
-  return t.main.some(matches) || (t.threads[msg.threadRootEventId]?.some(matches) ?? false);
+    m.status !== 'confirmed' && m.clientMsgId === msg.clientMsgId && m.threadRootEventId === msg.threadRootEventId;
+  // Thread copy first: mergeThread stamps countedInRoot there.
+  return t.threads[msg.threadRootEventId]?.find(matches) ?? t.main.find(matches) ?? null;
 }
 
-function bumpRootReplyCount(
-  main: ChatMessage[],
-  rootId: number,
-  replyId: number | null,
-  alreadyCounted = false,
-): ChatMessage[] {
-  return main.map((m) => {
-    if (m.id !== rootId) return m;
-    if (replyId != null && replyId <= m.lastReplyId) return m;
-    return {
-      ...m,
-      replyCount: alreadyCounted ? m.replyCount : m.replyCount + 1,
-      ...(replyId != null ? { lastReplyId: replyId } : {}),
-    };
-  });
+function hasConfirmedByClientMsgId(t: ChannelTimeline, msg: ChatMessage): boolean {
+  if (msg.clientMsgId == null) return false;
+  const matches = (m: ChatMessage) => m.status === 'confirmed' && m.clientMsgId === msg.clientMsgId;
+  if (t.main.some(matches)) return true;
+  if (msg.threadRootEventId == null) return false;
+  return t.threads[msg.threadRootEventId]?.some(matches) ?? false;
+}
+
+/** Optimistic +1 for a new pending reply; the confirm settles it exactly. */
+function bumpRootReplyCount(main: ChatMessage[], rootId: number): ChatMessage[] {
+  return main.map((m) => (m.id === rootId ? { ...m, replyCount: m.replyCount + 1 } : m));
 }
 
 export function addPending(t: ChannelTimeline, msg: ChatMessage): ChannelTimeline {
+  // A queued op re-materialized after reload can trail its own confirmation:
+  // if the send already landed (history or WS delivered the confirmed row
+  // first), overlaying it again would render a phantom duplicate and bump the
+  // root's reply count for a reply the server already counted.
+  if (hasConfirmedByClientMsgId(t, msg)) return t;
   if (msg.threadRootEventId != null) {
-    const main = bumpRootReplyCount(t.main, msg.threadRootEventId, null);
+    const existingPending = findPendingReply(t, msg);
+    const rootPresent = t.main.some((m) => m.id === msg.threadRootEventId);
+    const bumped = existingPending == null && rootPresent;
+    const pending: ChatMessage = {
+      ...msg,
+      countedInRoot: bumped || existingPending?.countedInRoot === true,
+    };
+    const main = existingPending != null ? t.main : bumpRootReplyCount(t.main, msg.threadRootEventId);
     const existing = t.threads[msg.threadRootEventId] ?? [];
     return {
       ...t,
-      main: msg.broadcast === true ? upsertPending(main, msg) : main,
-      threads: { ...t.threads, [msg.threadRootEventId]: [...existing, msg] },
+      main: msg.broadcast === true ? upsertPending(main, pending) : main,
+      threads: { ...t.threads, [msg.threadRootEventId]: upsertPending(existing, pending) },
     };
   }
-  return { ...t, main: [...t.main, msg] };
+  return { ...t, main: upsertPending(t.main, msg) };
 }
 
 export function markFailed(t: ChannelTimeline, clientMsgId: string): ChannelTimeline {
   const mark = (list: ChatMessage[]) =>
     list.map((m) =>
-      m.clientMsgId === clientMsgId && m.status === 'pending'
-        ? { ...m, status: 'failed' as const }
-        : m,
+      m.clientMsgId === clientMsgId && m.status === 'pending' ? { ...m, status: 'failed' as const } : m,
     );
   const threads: Record<number, ChatMessage[]> = {};
   for (const [k, v] of Object.entries(t.threads)) threads[Number(k)] = mark(v);
@@ -464,13 +468,8 @@ export function markFailed(t: ChannelTimeline, clientMsgId: string): ChannelTime
  * the response, in which case the confirmed row already exists and the
  * optimistic one is dropped.
  */
-export function resolveSpawn(
-  t: ChannelTimeline,
-  tempId: string,
-  sessionId: string,
-): ChannelTimeline {
-  const hasConfirmed = (list: ChatMessage[]) =>
-    list.some((m) => m.status === 'confirmed' && m.sessionId === sessionId);
+export function resolveSpawn(t: ChannelTimeline, tempId: string, sessionId: string): ChannelTimeline {
+  const hasConfirmed = (list: ChatMessage[]) => list.some((m) => m.status === 'confirmed' && m.sessionId === sessionId);
   const confirmed = hasConfirmed(t.main) || Object.values(t.threads).some(hasConfirmed);
   const fix = (list: ChatMessage[]) =>
     confirmed
@@ -559,10 +558,7 @@ function rematerializeAll(t: ChannelTimeline): ChannelTimeline {
   return next;
 }
 
-function rebaseTextSnapshot(
-  previous: TextOverlaySnapshot,
-  ev: WireEvent,
-): TextOverlaySnapshot {
+function rebaseTextSnapshot(previous: TextOverlaySnapshot, ev: WireEvent): TextOverlaySnapshot {
   if (ev.type === 'message.deleted') return { ...previous, text: '', deleted: true };
   if (ev.type === 'message.edited') {
     return { ...previous, text: String((ev.payload ?? {}).text ?? previous.text), edited: true };
@@ -575,8 +571,7 @@ function reconcileLocalOverlays(t: ChannelTimeline, ev: WireEvent, targetEventId
   const text = typeof (ev.payload ?? {}).text === 'string' ? String((ev.payload ?? {}).text) : null;
   const emoji = typeof (ev.payload ?? {}).emoji === 'string' ? String((ev.payload ?? {}).emoji) : '';
   const userId = ev.actorId;
-  const action =
-    ev.type === 'reaction.added' ? 'add' : ev.type === 'reaction.removed' ? 'remove' : null;
+  const action = ev.type === 'reaction.added' ? 'add' : ev.type === 'reaction.removed' ? 'remove' : null;
 
   const localOverlays = t.localOverlays.flatMap((overlay): TimelineOverlay[] => {
     if (overlay.targetEventId !== targetEventId) return [overlay];
@@ -628,19 +623,13 @@ export function applyLocalEditOverlay(
     previous: existing?.previous ?? textSnapshot(target),
   };
   const localOverlays = [
-    ...t.localOverlays.filter(
-      (current) => !(current.kind === 'edit' && current.targetEventId === targetEventId),
-    ),
+    ...t.localOverlays.filter((current) => !(current.kind === 'edit' && current.targetEventId === targetEventId)),
     overlay,
   ];
   return rematerializeTarget({ ...t, localOverlays }, targetEventId);
 }
 
-export function applyLocalDeleteOverlay(
-  t: ChannelTimeline,
-  opId: string,
-  targetEventId: number,
-): ChannelTimeline {
+export function applyLocalDeleteOverlay(t: ChannelTimeline, opId: string, targetEventId: number): ChannelTimeline {
   const target = findTargetMessage(t, targetEventId);
   if (!target) return t;
   const previousEdit = t.localOverlays.find(
@@ -657,9 +646,7 @@ export function applyLocalDeleteOverlay(
   };
   const localOverlays = [
     ...t.localOverlays.filter(
-      (current) =>
-        current.targetEventId !== targetEventId ||
-        (current.kind !== 'edit' && current.kind !== 'delete'),
+      (current) => current.targetEventId !== targetEventId || (current.kind !== 'edit' && current.kind !== 'delete'),
     ),
     overlay,
   ];
@@ -742,7 +729,31 @@ export function rejectLocalOverlay(t: ChannelTimeline, opId: string): ChannelTim
  * Idempotent by event id.
  */
 export function applyEvent(t: ChannelTimeline, ev: WireEvent): ChannelTimeline {
-  if (t.seenIds.has(ev.id)) return bumpLastEvent(t, ev.id);
+  if (t.seenIds.has(ev.id)) {
+    // Re-delivery of a known event — usually a queued op restored after
+    // reload whose re-send the server deduped by clientMsgId into an event
+    // history already delivered. The row is confirmed; a pending overlay from
+    // the restored op may still sit next to it, so drop that instead of
+    // returning a timeline with a phantom duplicate. A seen event is already
+    // reflected in its root's count, so an overlay that optimistically
+    // bumped it is surplus — take that bump back with the row.
+    if (isRowEvent(ev.type)) {
+      const msg = messageFromEvent(ev);
+      if (msg.clientMsgId != null) {
+        const pending = findPendingReply(t, msg);
+        let next = removeByClientMsgId(t, msg.clientMsgId);
+        if (pending?.countedInRoot === true && msg.threadRootEventId != null) {
+          const rootId = msg.threadRootEventId;
+          next = {
+            ...next,
+            main: next.main.map((m) => (m.id === rootId ? { ...m, replyCount: Math.max(0, m.replyCount - 1) } : m)),
+          };
+        }
+        return bumpLastEvent(next, ev.id);
+      }
+    }
+    return bumpLastEvent(t, ev.id);
+  }
 
   if (ev.type === 'message.edited' || ev.type === 'message.deleted') {
     const p = ev.payload ?? {};
@@ -762,20 +773,9 @@ export function applyEvent(t: ChannelTimeline, ev: WireEvent): ChannelTimeline {
     let main = fold(t.main);
     // Deleting a thread reply: the root's visible reply count shrinks by one.
     if (ev.type === 'message.deleted' && ev.threadRootEventId != null) {
-      main = main.map((m) =>
-        m.id === ev.threadRootEventId
-          ? { ...m, replyCount: Math.max(0, m.replyCount - 1) }
-          : m,
-      );
+      main = main.map((m) => (m.id === ev.threadRootEventId ? { ...m, replyCount: Math.max(0, m.replyCount - 1) } : m));
     }
-    return bumpLastEvent(
-      reconcileLocalOverlays(
-        { ...t, main, threads, seenIds },
-        ev,
-        targetId,
-      ),
-      ev.id,
-    );
+    return bumpLastEvent(reconcileLocalOverlays({ ...t, main, threads, seenIds }, ev, targetId), ev.id);
   }
 
   if (ev.type === 'reaction.added' || ev.type === 'reaction.removed') {
@@ -788,14 +788,10 @@ export function applyEvent(t: ChannelTimeline, ev: WireEvent): ChannelTimeline {
       return bumpLastEvent({ ...t, seenIds }, ev.id);
     }
     const add = ev.type === 'reaction.added';
-    const fold = (list: ChatMessage[]) =>
-      list.map((m) => (m.id === targetId ? foldReaction(m, emoji, uid, add) : m));
+    const fold = (list: ChatMessage[]) => list.map((m) => (m.id === targetId ? foldReaction(m, emoji, uid, add) : m));
     const threads: Record<number, ChatMessage[]> = {};
     for (const [k, v] of Object.entries(t.threads)) threads[Number(k)] = fold(v);
-    return bumpLastEvent(
-      reconcileLocalOverlays({ ...t, main: fold(t.main), threads, seenIds }, ev, targetId),
-      ev.id,
-    );
+    return bumpLastEvent(reconcileLocalOverlays({ ...t, main: fold(t.main), threads, seenIds }, ev, targetId), ev.id);
   }
 
   if (ev.type === 'voice.transcribed') {
@@ -807,9 +803,7 @@ export function applyEvent(t: ChannelTimeline, ev: WireEvent): ChannelTimeline {
       return bumpLastEvent({ ...t, seenIds }, ev.id);
     }
     const fold = (list: ChatMessage[]) =>
-      list.map((m) =>
-        m.id === targetId && m.voice ? { ...m, voice: { ...m.voice, transcript } } : m,
-      );
+      list.map((m) => (m.id === targetId && m.voice ? { ...m, voice: { ...m.voice, transcript } } : m));
     const threads: Record<number, ChatMessage[]> = {};
     for (const [k, v] of Object.entries(t.threads)) threads[Number(k)] = fold(v);
     return bumpLastEvent({ ...t, main: fold(t.main), threads, seenIds }, ev.id);
@@ -823,18 +817,30 @@ export function applyEvent(t: ChannelTimeline, ev: WireEvent): ChannelTimeline {
   const seenIds = new Set(t.seenIds).add(ev.id);
 
   if (msg.threadRootEventId != null) {
-    // Thread reply: update the root's reply count (guarded by lastReplyId so
-    // counts computed server-side and live increments never double-count),
-    // and insert into the thread list if that thread is loaded.
+    // Thread reply: settle the root's reply count exactly. The server keeps
+    // the watermark invariant (replyCount covers reply ids <= lastReplyId),
+    // and countedInRoot records whether a pending overlay's optimistic +1 is
+    // in the current count — together they decide bump / no-op / un-bump for
+    // every ordering, including a queue op restored after reload whose
+    // re-send dedupes into an event the loaded root already counted.
     const rootId = msg.threadRootEventId;
-    const main = bumpRootReplyCount(t.main, rootId, ev.id, hasPendingReply(t, msg));
+    const optimisticallyCounted = findPendingReply(t, msg)?.countedInRoot === true;
+    const main = t.main.map((m) => {
+      if (m.id !== rootId) return m;
+      if (ev.id <= m.lastReplyId) {
+        return optimisticallyCounted ? { ...m, replyCount: Math.max(0, m.replyCount - 1) } : m;
+      }
+      return {
+        ...m,
+        replyCount: optimisticallyCounted ? m.replyCount : m.replyCount + 1,
+        lastReplyId: ev.id,
+      };
+    });
     const threads = { ...t.threads };
     const thread = threads[rootId];
     if (thread) threads[rootId] = upsertConfirmed(thread, msg);
     const withBroadcast =
-      msg.broadcast === true
-        ? upsertConfirmed(main, msg)
-        : dropUnconfirmedByClientMsgId(main, msg.clientMsgId);
+      msg.broadcast === true ? upsertConfirmed(main, msg) : dropUnconfirmedByClientMsgId(main, msg.clientMsgId);
     return bumpLastEvent({ ...t, main: withBroadcast, threads, seenIds }, ev.id);
   }
 
@@ -899,9 +905,21 @@ export function resetToLatest(
   opts: { hasMoreBefore: boolean },
 ): ChannelTimeline {
   const maxPageId = events.reduce((acc, e) => Math.max(acc, e.id), 0);
-  let main = t.main.filter(
-    (m) => m.status !== 'confirmed' || (m.id != null && m.id > maxPageId),
-  );
+  // Roots at or below the snapshot horizon get rebuilt from server rows whose
+  // counts don't carry local optimistic bumps — the surviving overlays'
+  // countedInRoot claims are stale for those roots.
+  const clearStaleCountFlags = (m: ChatMessage): ChatMessage =>
+    m.status !== 'confirmed' &&
+    m.countedInRoot === true &&
+    m.threadRootEventId != null &&
+    m.threadRootEventId <= maxPageId
+      ? { ...m, countedInRoot: false }
+      : m;
+  let main = t.main
+    .filter((m) => m.status !== 'confirmed' || (m.id != null && m.id > maxPageId))
+    .map(clearStaleCountFlags);
+  const threads: Record<number, ChatMessage[]> = {};
+  for (const [k, v] of Object.entries(t.threads)) threads[Number(k)] = v.map(clearStaleCountFlags);
   const seenIds = new Set<number>();
   for (const m of main) if (m.id != null) seenIds.add(m.id);
   for (const ev of events) {
@@ -913,6 +931,7 @@ export function resetToLatest(
   return rematerializeAll({
     ...t,
     main,
+    threads,
     seenIds,
     lastEventId: Math.max(t.lastEventId, maxPageId),
     hasMoreBefore: opts.hasMoreBefore,
@@ -921,11 +940,7 @@ export function resetToLatest(
 }
 
 /** Merge a fetched thread (replies oldest-first). */
-export function mergeThread(
-  t: ChannelTimeline,
-  rootEventId: number,
-  events: WireEvent[],
-): ChannelTimeline {
+export function mergeThread(t: ChannelTimeline, rootEventId: number, events: WireEvent[]): ChannelTimeline {
   const seenIds = new Set(t.seenIds);
   let thread = t.threads[rootEventId] ?? [];
   let mainRows = t.main;
@@ -943,14 +958,23 @@ export function mergeThread(
       mainRows = upsertConfirmed(mainRows, msg);
     }
   }
-  // Thread fetch is authoritative for the root's count (tombstones excluded).
+  // Thread fetch is authoritative for the root's count (tombstones excluded):
+  // server-confirmed replies plus local overlays. Math.max here could never
+  // heal an overcount — e.g. a phantom bump left by a queue op restored after
+  // its send already landed — so recompute instead of only raising.
   const confirmedCount = thread.filter((m) => m.status === 'confirmed' && !m.deleted).length;
+  const overlayCount = thread.filter((m) => m.status !== 'confirmed' && !m.deleted).length;
+  // The recomputed count includes those overlays — stamp them so their
+  // confirms don't bump again.
+  thread = thread.map((m) =>
+    m.status !== 'confirmed' && !m.deleted && m.countedInRoot !== true ? { ...m, countedInRoot: true } : m,
+  );
   const maxReplyId = thread.reduce((acc, m) => Math.max(acc, m.id ?? 0), 0);
   const main = mainRows.map((m) =>
     m.id === rootEventId
       ? {
           ...m,
-          replyCount: Math.max(m.replyCount, confirmedCount),
+          replyCount: confirmedCount + overlayCount,
           lastReplyId: Math.max(m.lastReplyId, maxReplyId),
         }
       : m,

@@ -13,14 +13,14 @@ type NotebookCell = {
 type NotebookOutput = NonNullable<NotebookCell['outputs']>[number];
 
 function sourceText(source?: string | string[]) {
-  return Array.isArray(source) ? source.join('') : source ?? '';
+  return Array.isArray(source) ? source.join('') : (source ?? '');
 }
 
 function outputText(output: NotebookOutput) {
   if (!output) return '';
   if (output.text) return sourceText(output.text);
   const text = output.data?.['text/plain'];
-  return Array.isArray(text) ? text.join('') : text ?? '';
+  return Array.isArray(text) ? text.join('') : (text ?? '');
 }
 
 export function PreviewTable({ rows, compact }: { rows: string[][]; compact: boolean }) {
@@ -44,7 +44,10 @@ export function PreviewTable({ rows, compact }: { rows: string[][]; compact: boo
           {body.map((row, rowIdx) => (
             <tr key={rowIdx} className="odd:bg-surface-raised/25">
               {headers.map((_, colIdx) => (
-                <td key={colIdx} className="max-w-64 border-b border-r border-edge/80 px-2 py-1.5 align-top text-fg-body">
+                <td
+                  key={colIdx}
+                  className="max-w-64 border-b border-r border-edge/80 px-2 py-1.5 align-top text-fg-body"
+                >
                   <span className="line-clamp-3 break-words">{row[colIdx] ?? ''}</span>
                 </td>
               ))}
@@ -124,7 +127,8 @@ export function DataRenderer({ file, variant }: { file: PreviewFile; variant: Me
     fetchText(file, controller.signal)
       .then((text) => setState({ status: 'ready', text }))
       .catch((error: unknown) => {
-        if (!controller.signal.aborted) setState({ status: 'error', text: error instanceof Error ? error.message : 'Failed to load' });
+        if (!controller.signal.aborted)
+          setState({ status: 'error', text: error instanceof Error ? error.message : 'Failed to load' });
       });
     return () => controller.abort();
   }, [file]);
@@ -149,5 +153,9 @@ export function DataRenderer({ file, variant }: { file: PreviewFile; variant: Me
     pretty = state.text;
   }
 
-  return <pre className="h-full overflow-auto whitespace-pre-wrap bg-surface p-4 font-mono text-xs leading-relaxed text-fg-body">{pretty}</pre>;
+  return (
+    <pre className="h-full overflow-auto whitespace-pre-wrap bg-surface p-4 font-mono text-xs leading-relaxed text-fg-body">
+      {pretty}
+    </pre>
+  );
 }

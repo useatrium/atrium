@@ -21,15 +21,17 @@ import {
   type UserRef,
   type WireEvent,
 } from './timeline';
-import {
-  applySessionEvent,
-  maxSessionStatus,
-  mergeSpawnResponse,
-  type Session,
-} from './sessions';
+import { applySessionEvent, maxSessionStatus, mergeSpawnResponse, type Session } from './sessions';
 
 /** 'mention' outranks plain unread — it renders as a red @ badge. */
 export type UnreadLevel = false | true | 'mention';
+
+/** Older cached channel snapshots predate archive/pin. Normalize them at the
+ * reducer boundary while keeping live `Channel` entities fully typed. */
+type ChannelSnapshot = Omit<Channel, 'archivedAt' | 'pinned'> & {
+  archivedAt?: string | null;
+  pinned?: boolean;
+};
 
 export interface AppState {
   channels: Channel[];
@@ -79,7 +81,7 @@ export const initialAppState: AppState = {
 
 export type AppAction =
   | { type: 'init-me'; handle: string; id?: string }
-  | { type: 'channels-loaded'; channels: Channel[] }
+  | { type: 'channels-loaded'; channels: ChannelSnapshot[] }
   | {
       type: 'read-cursor';
       channelId: string;
@@ -93,7 +95,10 @@ export type AppAction =
       source?: 'self' | 'remote';
     }
   | { type: 'mute-changed'; channelId: string; muted: boolean }
-  | { type: 'channel-added'; channel: Channel }
+  | { type: 'channel-archive-changed'; channelId: string; archivedAt: string | null }
+  | { type: 'channel-pin-changed'; channelId: string; pinned: boolean }
+  | { type: 'session-pin-changed'; sessionId: string; pinned: boolean }
+  | { type: 'channel-added'; channel: ChannelSnapshot }
   | { type: 'channel-removed'; channelId: string }
   | { type: 'select-channel'; channelId: string | null }
   | {
@@ -187,12 +192,15 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       return { ...state, meHandle: action.handle, meId: action.id ?? state.meId };
 
     case 'channels-loaded': {
-      const channels = [...action.channels].sort((a, b) => a.name.localeCompare(b.name));
+      const channels = action.channels
+        .map((channel) => ({
+          ...channel,
+          archivedAt: channel.archivedAt ?? null,
+          pinned: channel.pinned ?? false,
+        }))
+        .sort((a, b) => a.name.localeCompare(b.name));
       const activeChannelId =
-        state.activeChannelId ??
-        channels.find((c) => c.name === 'general')?.id ??
-        channels[0]?.id ??
-        null;
+        state.activeChannelId ?? channels.find((c) => c.name === 'general')?.id ?? channels[0]?.id ?? null;
       let unread = state.unread;
       for (const ch of channels) {
         if (ch.muted) {
@@ -210,8 +218,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     case 'read-cursor': {
       // Keep the cold counter current too — the unread divider and unmute
       // re-derivation compare against it long after channels-loaded.
-      const currentLastReadEventId =
-        state.channels.find((c) => c.id === action.channelId)?.lastReadEventId ?? 0;
+      const currentLastReadEventId = state.channels.find((c) => c.id === action.channelId)?.lastReadEventId ?? 0;
       const channels = state.channels.map((c) =>
         c.id === action.channelId && (c.lastReadEventId ?? 0) < action.lastReadEventId
           ? { ...c, lastReadEventId: action.lastReadEventId }
@@ -238,9 +245,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     }
 
     case 'mute-changed': {
-      const channels = state.channels.map((c) =>
-        c.id === action.channelId ? { ...c, muted: action.muted } : c,
-      );
+      const channels = state.channels.map((c) => (c.id === action.channelId ? { ...c, muted: action.muted } : c));
       let level: UnreadLevel = false;
       if (!action.muted) {
         // Unmuting re-derives unread from the cold counters — messages that
@@ -252,11 +257,40 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       return { ...state, channels, unread: { ...state.unread, [action.channelId]: level } };
     }
 
+    case 'channel-archive-changed': {
+      const channels = state.channels.map((channel) =>
+        channel.id === action.channelId ? { ...channel, archivedAt: action.archivedAt } : channel,
+      );
+      return { ...state, channels };
+    }
+
+    case 'channel-pin-changed': {
+      const channels = state.channels.map((channel) =>
+        channel.id === action.channelId ? { ...channel, pinned: action.pinned } : channel,
+      );
+      return { ...state, channels };
+    }
+
+    case 'session-pin-changed': {
+      const session = state.sessions[action.sessionId];
+      if (!session || session.pinned === action.pinned) return state;
+      return {
+        ...state,
+        sessions: {
+          ...state.sessions,
+          [action.sessionId]: { ...session, pinned: action.pinned },
+        },
+      };
+    }
+
     case 'channel-added': {
       if (state.channels.some((c) => c.id === action.channel.id)) return state;
-      const channels = [...state.channels, action.channel].sort((a, b) =>
-        a.name.localeCompare(b.name),
-      );
+      const channel = {
+        ...action.channel,
+        archivedAt: action.channel.archivedAt ?? null,
+        pinned: action.channel.pinned ?? false,
+      };
+      const channels = [...state.channels, channel].sort((a, b) => a.name.localeCompare(b.name));
       return { ...state, channels };
     }
 
@@ -276,10 +310,8 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         timelineEpochs,
         presence,
         unread,
-        activeChannelId:
-          state.activeChannelId === action.channelId ? null : state.activeChannelId,
-        openThreadRootId:
-          state.activeChannelId === action.channelId ? null : state.openThreadRootId,
+        activeChannelId: state.activeChannelId === action.channelId ? null : state.activeChannelId,
+        openThreadRootId: state.activeChannelId === action.channelId ? null : state.openThreadRootId,
       };
     }
 
@@ -289,9 +321,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         ...state,
         activeChannelId: action.channelId,
         openThreadRootId: null,
-        unread: action.channelId
-          ? { ...state.unread, [action.channelId]: false }
-          : state.unread,
+        unread: action.channelId ? { ...state.unread, [action.channelId]: false } : state.unread,
       };
 
     case 'history-loaded':
@@ -350,11 +380,21 @@ export function appReducer(state: AppState, action: AppAction): AppState {
 
     case 'server-event': {
       const ev = action.event;
-      const withEventCursor = (next: AppState) =>
-        ev.mock ? next : withSyncCursor(next, ev.id);
+      const withEventCursor = (next: AppState) => withSyncCursor(next, ev.id);
       if (ev.type === 'channel.created') {
         const ch = ev.payload?.channel as Channel | undefined;
         return withEventCursor(ch ? appReducer(state, { type: 'channel-added', channel: ch }) : state);
+      }
+      if (ev.type === 'channel.archived' || ev.type === 'channel.unarchived') {
+        const channelId = typeof ev.payload?.channelId === 'string' ? ev.payload.channelId : ev.channelId;
+        if (!channelId) return withEventCursor(state);
+        const archivedAt =
+          ev.type === 'channel.archived'
+            ? typeof ev.payload?.archivedAt === 'string'
+              ? ev.payload.archivedAt
+              : ev.createdAt
+            : null;
+        return withEventCursor(appReducer(state, { type: 'channel-archive-changed', channelId, archivedAt }));
       }
       if (ev.type === 'channel.member_left' && ev.payload?.userId === state.meId) {
         return withEventCursor(
@@ -372,24 +412,16 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       // channels fetch their history on first open. But always track unread.
       const alreadySeen = t.seenIds.has(ev.id);
       if (t.loaded || t.main.length > 0) {
-        let folded = applyEvent(t, ev);
-        // DEV MOCK: synthetic events must not advance the catch-up cursor.
-        if (ev.mock && folded.lastEventId !== t.lastEventId) {
-          folded = { ...folded, lastEventId: t.lastEventId };
-        }
-        next = withTimeline(next, ev.channelId, folded);
+        next = withTimeline(next, ev.channelId, applyEvent(t, ev));
       }
-      const isNewMessage =
-        (ev.type === 'message.posted' || ev.type === 'session.spawned') && !alreadySeen;
-      if (isNewMessage && isMainTimelineVisibleEvent(ev) && !ev.mock && typeof ev.id === 'number') {
+      const isNewMessage = (ev.type === 'message.posted' || ev.type === 'session.spawned') && !alreadySeen;
+      if (isNewMessage && isMainTimelineVisibleEvent(ev)) {
         // Live events must advance the cold counter — the unread divider and
         // unmute re-derivation compare latestEventId against lastReadEventId.
         next = {
           ...next,
           channels: next.channels.map((c) =>
-            c.id === ev.channelId && (c.latestEventId ?? 0) < ev.id
-              ? { ...c, latestEventId: ev.id }
-              : c,
+            c.id === ev.channelId && (c.latestEventId ?? 0) < ev.id ? { ...c, latestEventId: ev.id } : c,
           ),
         };
       }
@@ -398,10 +430,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         const channel = state.channels.find((c) => c.id === ev.channelId);
         if (channel?.muted) return withEventCursor(next);
         const isDm = channel?.kind === 'dm' || channel?.kind === 'gdm';
-        const mentioned =
-          isDm || (ev.actorId !== null && mentionsHandle(text, state.meHandle))
-            ? 'mention'
-            : true;
+        const mentioned = isDm || (ev.actorId !== null && mentionsHandle(text, state.meHandle)) ? 'mention' : true;
         // A mention badge sticks until the channel is read.
         const level = next.unread[ev.channelId] === 'mention' ? 'mention' : mentioned;
         next = { ...next, unread: { ...next.unread, [ev.channelId]: level } };
@@ -413,18 +442,10 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       return withSyncCursor(state, action.cursor);
 
     case 'send-pending':
-      return withTimeline(
-        state,
-        action.channelId,
-        addPending(timeline(state, action.channelId), action.message),
-      );
+      return withTimeline(state, action.channelId, addPending(timeline(state, action.channelId), action.message));
 
     case 'send-failed':
-      return withTimeline(
-        state,
-        action.channelId,
-        markFailed(timeline(state, action.channelId), action.clientMsgId),
-      );
+      return withTimeline(state, action.channelId, markFailed(timeline(state, action.channelId), action.clientMsgId));
 
     case 'retry-remove': {
       const next = withTimeline(
@@ -445,23 +466,14 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       return withTimeline(
         state,
         action.channelId,
-        applyLocalEditOverlay(
-          timeline(state, action.channelId),
-          action.opId,
-          action.targetEventId,
-          action.text,
-        ),
+        applyLocalEditOverlay(timeline(state, action.channelId), action.opId, action.targetEventId, action.text),
       );
 
     case 'delete-overlay-pending':
       return withTimeline(
         state,
         action.channelId,
-        applyLocalDeleteOverlay(
-          timeline(state, action.channelId),
-          action.opId,
-          action.targetEventId,
-        ),
+        applyLocalDeleteOverlay(timeline(state, action.channelId), action.opId, action.targetEventId),
       );
 
     case 'reaction-overlay-pending':
@@ -479,18 +491,10 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       );
 
     case 'overlay-confirmed':
-      return withTimeline(
-        state,
-        action.channelId,
-        confirmLocalOverlay(timeline(state, action.channelId), action.opId),
-      );
+      return withTimeline(state, action.channelId, confirmLocalOverlay(timeline(state, action.channelId), action.opId));
 
     case 'overlay-rejected':
-      return withTimeline(
-        state,
-        action.channelId,
-        rejectLocalOverlay(timeline(state, action.channelId), action.opId),
-      );
+      return withTimeline(state, action.channelId, rejectLocalOverlay(timeline(state, action.channelId), action.opId));
 
     case 'presence':
       return { ...state, presence: { ...state.presence, [action.channelId]: action.users } };
@@ -502,21 +506,14 @@ export function appReducer(state: AppState, action: AppAction): AppState {
 
     case 'session-spawn-pending':
       return {
-        ...withTimeline(
-          state,
-          action.channelId,
-          addPending(timeline(state, action.channelId), action.message),
-        ),
+        ...withTimeline(state, action.channelId, addPending(timeline(state, action.channelId), action.message)),
         sessions: { ...state.sessions, [action.session.id]: action.session },
       };
 
     case 'session-created': {
       const sessions = { ...state.sessions };
       delete sessions[action.tempId];
-      sessions[action.session.id] = mergeSpawnResponse(
-        state.sessions[action.session.id],
-        action.session,
-      );
+      sessions[action.session.id] = mergeSpawnResponse(state.sessions[action.session.id], action.session);
       return {
         ...withTimeline(
           state,
@@ -528,11 +525,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     }
 
     case 'session-spawn-failed': {
-      const next = withTimeline(
-        state,
-        action.channelId,
-        markFailed(timeline(state, action.channelId), action.tempId),
-      );
+      const next = withTimeline(state, action.channelId, markFailed(timeline(state, action.channelId), action.tempId));
       const temp = next.sessions[action.tempId];
       if (!temp) return next;
       return {
@@ -546,20 +539,15 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       const questionEvents =
         action.session.questionEvents && action.session.questionEvents.length > 0
           ? action.session.questionEvents
-          : existing?.questionEvents ?? [];
+          : (existing?.questionEvents ?? []);
       const seatEvents =
-        action.session.seatEvents.length > 0
-          ? action.session.seatEvents
-          : existing?.seatEvents ?? [];
+        action.session.seatEvents.length > 0 ? action.session.seatEvents : (existing?.seatEvents ?? []);
       const session: Session = {
         ...action.session,
         // A slow GET must never roll back a status WS already advanced.
-        status: existing
-          ? maxSessionStatus(existing.status, action.session.status)
-          : action.session.status,
+        status: existing ? maxSessionStatus(existing.status, action.session.status) : action.session.status,
         pendingQuestion: action.session.pendingQuestion ?? existing?.pendingQuestion ?? null,
-        providerAuthRequired:
-          action.session.providerAuthRequired ?? existing?.providerAuthRequired ?? null,
+        providerAuthRequired: action.session.providerAuthRequired ?? existing?.providerAuthRequired ?? null,
         questionEvents,
         // GET /api/sessions/:id carries no audit history, so keep what
         // live session.* folds already accumulated.

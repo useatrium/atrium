@@ -1,6 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_PREFS } from '@atrium/surface-client';
-import { loadStoredPrefs, persistPrefs, PREFS_STORAGE_KEY } from '../src/lib/prefsStorage';
+import {
+  loadStoredPrefs,
+  loadTranscriptView,
+  persistPrefs,
+  persistTranscriptView,
+  PREFS_STORAGE_KEY,
+  TRANSCRIPT_VIEW_STORAGE_KEY,
+} from '../src/lib/prefsStorage';
 
 const store = new Map<string, string>();
 
@@ -59,5 +66,12 @@ describe('prefs storage', () => {
       accent: 'teal',
       fontScale: 1.25,
     });
+  });
+
+  it('defaults transcript view to focus and persists full view', async () => {
+    await expect(loadTranscriptView()).resolves.toBe('focus');
+    await persistTranscriptView('full');
+    expect(store.get(TRANSCRIPT_VIEW_STORAGE_KEY)).toBe('full');
+    await expect(loadTranscriptView()).resolves.toBe('full');
   });
 });

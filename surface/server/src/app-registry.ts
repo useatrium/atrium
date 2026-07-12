@@ -160,7 +160,11 @@ export class AppRegistry {
     }));
   }
 
-  async launch(appId: string, userId: string, version?: number): Promise<{ url: string; expires: number; version: number }> {
+  async launch(
+    appId: string,
+    userId: string,
+    version?: number,
+  ): Promise<{ url: string; expires: number; version: number }> {
     const app = await this.pool.query<{ current_version: number; entry_path: string; status: string }>(
       `SELECT current_version, entry_path, status
          FROM apps a
@@ -184,7 +188,10 @@ export class AppRegistry {
     if (!entry) throw new DomainError(404, 'app_entry_missing', 'entry file is missing');
 
     const expires = Math.floor(Date.now() / 1000) + this.options.launchTtlSeconds;
-    const sig = appLaunchSignature({ appId, version: launchVersion, relPath: '*', expires }, this.options.signingSecret);
+    const sig = appLaunchSignature(
+      { appId, version: launchVersion, relPath: '*', expires },
+      this.options.signingSecret,
+    );
     const base = this.options.appsOrigin.replace(/\/+$/, '');
     const url = `${base}/apps/${appId}/v/${launchVersion}/g/${expires}/${encodeURIComponent(sig)}/${encodeRelPath(row.entry_path)}`;
     return { url, expires, version: launchVersion };
@@ -221,11 +228,7 @@ export class AppRegistry {
     };
   }
 
-  private async validateEntryAssets(
-    entry: string,
-    entryS3Key: string,
-    files: Map<string, FrozenFile>,
-  ): Promise<void> {
+  private async validateEntryAssets(entry: string, entryS3Key: string, files: Map<string, FrozenFile>): Promise<void> {
     const entryFile = files.get(entry);
     if (!entryFile) return;
     const mime = entryFile.mime.toLowerCase();
@@ -253,7 +256,11 @@ interface FrozenFile {
   s3_key: string | null;
 }
 
-async function freezeSourceFiles(client: DbClient, workspaceId: string, prefixes: readonly string[]): Promise<FrozenFile[]> {
+async function freezeSourceFiles(
+  client: DbClient,
+  workspaceId: string,
+  prefixes: readonly string[],
+): Promise<FrozenFile[]> {
   for (const prefix of prefixes) {
     const res = await client.query<{
       artifact_id: string;
@@ -283,7 +290,7 @@ async function freezeSourceFiles(client: DbClient, workspaceId: string, prefixes
       rel_path: normalizeAppRelPath(row.rel_path),
       blob_sha: row.blob_sha,
       kind: row.kind,
-      mime: appFileMime(row.rel_path, row.mime),
+      mime: appAssetMime(row.rel_path, row.mime),
       size_bytes: Number(row.size_bytes ?? 0),
       s3_key: row.s3_key,
     }));
@@ -291,7 +298,7 @@ async function freezeSourceFiles(client: DbClient, workspaceId: string, prefixes
   return [];
 }
 
-function appFileMime(relPath: string, storedMime: string | null | undefined): string {
+export function appAssetMime(relPath: string, storedMime: string | null | undefined): string {
   const mime = (storedMime ?? '').split(';', 1)[0]!.trim().toLowerCase();
   if (mime && mime !== 'application/octet-stream') return mime;
   if (/\.html?$/i.test(relPath)) return 'text/html; charset=utf-8';
@@ -359,7 +366,11 @@ function normalizeAppName(value: string): string {
 }
 
 export function normalizeAppRelPath(value: string): string {
-  const normalized = value.trim().replace(/\\/g, '/').replace(/^\.\/+/, '').replace(/\/+/g, '/');
+  const normalized = value
+    .trim()
+    .replace(/\\/g, '/')
+    .replace(/^\.\/+/, '')
+    .replace(/\/+/g, '/');
   if (!normalized || normalized.startsWith('/') || normalized.includes('\0')) {
     throw new DomainError(400, 'bad_app_path', 'app path must be relative');
   }

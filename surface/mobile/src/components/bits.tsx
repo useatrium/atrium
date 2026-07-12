@@ -37,11 +37,12 @@ export function ConnectionBanner({ status }: { status: 'connecting' | 'open' | '
         backgroundColor: colors.warningSurface,
         borderBottomColor: colors.warningBorder,
         borderBottomWidth: 1,
-        paddingVertical: 3,
+        minHeight: 24,
+        paddingVertical: 4,
         alignItems: 'center',
       }}
     >
-      <Text style={{ color: colors.warning, fontSize: font.xs }}>{label}</Text>
+      <Text style={{ color: colors.warning, fontSize: font.xs, lineHeight: 15 }}>{label}</Text>
     </View>
   );
 }

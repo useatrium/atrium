@@ -14,9 +14,7 @@ describe('server telemetry', () => {
 
     expect(metrics.statusCode).toBe(200);
     expect(metrics.headers['content-type']).toContain('text/plain');
-    expect(metrics.body).toContain(
-      'atrium_http_requests_total{method="GET",route="/probe/:id",status_class="2xx"} 1',
-    );
+    expect(metrics.body).toContain('atrium_http_requests_total{method="GET",route="/probe/:id",status_class="2xx"} 1');
     expect(metrics.body).not.toContain('/probe/abc');
   });
 });

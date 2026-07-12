@@ -70,11 +70,7 @@ function VersionRow({
               {authorLabel(version.author)}
             </span>
             <span className="shrink-0">/</span>
-            <TimestampDisclosure
-              iso={version.createdAt}
-              label={createdAtLabel}
-              className="shrink-0 text-fg-muted"
-            >
+            <TimestampDisclosure iso={version.createdAt} label={createdAtLabel} className="shrink-0 text-fg-muted">
               {createdAtLabel}
             </TimestampDisclosure>
           </div>

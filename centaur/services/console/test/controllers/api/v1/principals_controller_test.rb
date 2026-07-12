@@ -42,8 +42,10 @@ module Api
         assert_equal "acme", data["namespace"]
         assert_equal "C0123456789", data["foreign_id"]
         assert_equal({ "kind" => "slack_channel", "team" => "platform" }, data["labels"])
-        assert_equal true, data["sandbox_repo_cache_enabled"]
+        assert_equal "all", data["sandbox_repo_cache"]
+        assert_not data.key?("sandbox_repo_cache_enabled")
         assert_equal true, data["sandbox_observability_enabled"]
+        assert_equal true, data["sandbox_api_server_enabled"]
       end
 
       test "GET returns 404 for an unknown oid" do
@@ -77,8 +79,10 @@ module Api
         assert_equal "acme", data["namespace"]
         assert_equal "U-new-id", data["foreign_id"]
         assert_equal({ "kind" => "user", "team" => "platform" }, data["labels"])
-        assert_equal true, data["sandbox_repo_cache_enabled"]
+        assert_equal "all", data["sandbox_repo_cache"]
+        assert_not data.key?("sandbox_repo_cache_enabled")
         assert_equal true, data["sandbox_observability_enabled"]
+        assert_equal true, data["sandbox_api_server_enabled"]
       end
 
       test "POST creates a Principal with only a human-readable name" do
@@ -98,8 +102,9 @@ module Api
       test "PUT updates the human-readable name" do
         principal = principals(:acme_channel)
         principal.update!(
-          sandbox_repo_cache_enabled: false,
-          sandbox_observability_enabled: false
+          sandbox_repo_cache: "none",
+          sandbox_observability_enabled: false,
+          sandbox_api_server_enabled: false
         )
         body = { data: { name: "Acme Slack channel" } }
 
@@ -108,16 +113,19 @@ module Api
 
         principal.reload
         assert_equal "Acme Slack channel", principal.name
+        assert_equal "none", principal.sandbox_repo_cache
         assert_equal false, principal.sandbox_repo_cache_enabled
         assert_equal false, principal.sandbox_observability_enabled
+        assert_equal false, principal.sandbox_api_server_enabled
       end
 
       test "PUT updates sandbox access flags" do
         principal = principals(:acme_channel)
         body = {
           data: {
-            sandbox_repo_cache_enabled: false,
-            sandbox_observability_enabled: false
+            sandbox_repo_cache: "public",
+            sandbox_observability_enabled: false,
+            sandbox_api_server_enabled: false
           }
         }
 
@@ -125,12 +133,16 @@ module Api
         assert_response :ok
 
         principal.reload
+        assert_equal "public", principal.sandbox_repo_cache
         assert_equal false, principal.sandbox_repo_cache_enabled
         assert_equal false, principal.sandbox_observability_enabled
+        assert_equal false, principal.sandbox_api_server_enabled
 
         data = json_body.fetch("data")
-        assert_equal false, data["sandbox_repo_cache_enabled"]
+        assert_equal "public", data["sandbox_repo_cache"]
+        assert_not data.key?("sandbox_repo_cache_enabled")
         assert_equal false, data["sandbox_observability_enabled"]
+        assert_equal false, data["sandbox_api_server_enabled"]
       end
 
       test "POST returns 422 when (namespace, foreign_id) already exists" do

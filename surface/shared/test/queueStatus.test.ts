@@ -14,13 +14,7 @@ describe('reconnecting label', () => {
 
 describe('queued-change counting', () => {
   it('counts pending and inflight ops but excludes completed markers', () => {
-    expect(
-      countActiveQueuedChanges([
-        { status: 'pending' },
-        { status: 'inflight' },
-        { status: 'completed' },
-      ]),
-    ).toBe(2);
+    expect(countActiveQueuedChanges([{ status: 'pending' }, { status: 'inflight' }, { status: 'completed' }])).toBe(2);
   });
 });
 

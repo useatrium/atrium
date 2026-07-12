@@ -9,12 +9,16 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from api.vm_metrics import (
+from workflows.etl_metrics import (
     record_etl_items_deleted,
     record_etl_items_enqueued,
     record_etl_items_failed,
     record_etl_items_seen,
     record_etl_items_upserted,
+    set_etl_backfill_job_age_seconds,
+    set_etl_backfill_jobs,
+)
+from workflows.slack.metrics import (
     observe_slack_retention_run_duration,
     record_slack_retention_api_rate_limited,
     record_slack_retention_api_request,
@@ -26,8 +30,6 @@ from api.vm_metrics import (
     record_slack_retention_run,
     set_slack_retention_last_failure_timestamp,
     set_slack_retention_watermark_lag_seconds,
-    set_etl_backfill_job_age_seconds,
-    set_etl_backfill_jobs,
 )
 from api.workflow_engine import WorkflowContext
 from workflows.slack.shared import (
@@ -53,6 +55,7 @@ from workflows.slack.shared import (
     record_run_finish,
     record_run_start,
     replace_thread_replies,
+    touch_backfill_job_started,
     upsert_messages,
     workflow_run_id_to_sync_run_id,
 )
@@ -293,6 +296,7 @@ async def handler(inp: Input, ctx: WorkflowContext) -> dict[str, Any]:
         job_type = str(job.get("job_type") or "backfill")
         record_slack_retention_backfill_job(job_type, "claimed")
         try:
+            await touch_backfill_job_started(ctx._pool, job_id)
             if job_type == BACKFILL_JOB_THREAD_REFRESH:
                 payload = _thread_refresh_payload(job)
                 thread_ts = str(payload["thread_ts"])
@@ -442,6 +446,7 @@ async def handler(inp: Input, ctx: WorkflowContext) -> dict[str, Any]:
                         run_id=run_id,
                         priority=200,
                         refresh_completed=False,
+                        refresh_pending=False,
                     )
                     record_etl_items_enqueued(
                         "slack", "channel", "thread_refresh_job", 1

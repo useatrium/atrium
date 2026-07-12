@@ -48,11 +48,8 @@ describe('notification settings', () => {
 
     expect(screen.getByText('Notifications')).toBeTruthy();
     expect(screen.getByRole('button', { name: /Device notifications off/ })).toBeTruthy();
-    expect(screen.getByRole('combobox', { name: 'Message notifications' })).toHaveProperty(
-      'value',
-      'dm_mention',
-    );
-    expect(screen.getByRole('button', { name: 'Agent sessions notifications' })).toBeTruthy();
+    expect(screen.getByRole('combobox', { name: 'Message notifications' })).toHaveProperty('value', 'dm_mention');
+    expect(screen.getByRole('button', { name: 'Agent notifications' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Call notifications' })).toBeTruthy();
   });
 
@@ -66,7 +63,7 @@ describe('notification settings', () => {
       notifications: { messages: 'all', sessions: true, calls: true },
     });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Agent sessions notifications' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Agent notifications' }));
     expect(mockTheme.setPrefs).toHaveBeenLastCalledWith({
       notifications: { messages: 'dm_mention', sessions: false, calls: true },
     });

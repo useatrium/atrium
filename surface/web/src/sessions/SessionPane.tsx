@@ -21,6 +21,8 @@ import {
   collectSideEffects,
   deriveTurnStatus,
   fileChangeFromToolCall,
+  focusTranscriptRows,
+  fullTranscriptRows,
   turnStatusLabel,
   isTerminalExecutionStatus,
   sideEffectCount,
@@ -49,15 +51,21 @@ import {
   queryEntryReferencesForHandles,
   type EntryReferenceSummary,
 } from '../components/EntryReferencesChip';
-import { MarkupPane, splitMarkdownFrontmatter, type MarkupPaneSource } from '../components/MarkupPane';
+import { splitMarkdownFrontmatter } from '@atrium/surface-client';
+import { MarkupPane, type MarkupPaneSource } from '../components/MarkupPane';
 import { MarkupSteerCard } from '../components/MarkupSteerCard';
 import { Tooltip } from '../components/a11y';
 import {
+  ArchiveIcon,
+  ArchiveRestoreIcon,
   ChevronDownIcon,
   ChevronRightIcon,
   CornerUpLeftIcon,
   ExpandIcon,
   ExternalLinkIcon,
+  GearIcon,
+  PinIcon,
+  PinOffIcon,
   ShrinkIcon,
   XIcon,
 } from '../components/icons';
@@ -67,7 +75,9 @@ import {
   formatTime,
   formatTurnTime,
   matchSteerProvenance,
+  normalizeSteerProvenanceText,
   randomId,
+  steerProvenanceKey,
   type SteerProvenance,
 } from '@atrium/surface-client';
 import { sessionsApi } from './api';
@@ -110,10 +120,12 @@ import {
   type MessageActionMenuAction,
   type MessageActionMenuState,
 } from '../components/MessageActionMenu';
+import { SelectTextSheet } from '../components/SelectTextSheet';
 import { useLongPress } from '../components/useLongPress';
 import { entryParamFromSearch, stripEntryParamFromLocation } from '../EntryLinkRoute';
 import { entryShareUrl, sessionShareUrl } from '../lib/publicUrl';
 import { navigate, URL_PARAMS, useLocation } from '../router';
+import { useTranscriptView } from './useTranscriptView';
 
 // Skip offscreen rendering work so 500+ item transcripts scroll smoothly.
 const ITEM_VIS: CSSProperties = { contentVisibility: 'auto', containIntrinsicSize: 'auto 32px' };
@@ -121,10 +133,44 @@ const ENTRY_REFERENCES_REFETCH_MS = 60_000;
 const MOBILE_MEDIA_QUERY = '(max-width: 767px)';
 const HOVER_NONE_MEDIA_QUERY = '(hover: none)';
 
+function HiddenWorkChip({ count, onClick }: { count: number; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      data-testid="hidden-work-chip"
+      onClick={onClick}
+      className="my-1 flex items-center gap-1 pl-3.5 text-2xs text-fg-faint hover:text-fg-muted"
+    >
+      <GearIcon size={11} />
+      {count} work {count === 1 ? 'step' : 'steps'}
+    </button>
+  );
+}
+
 function isMobileViewportNow(): boolean {
   return typeof window !== 'undefined' && typeof window.matchMedia === 'function'
     ? window.matchMedia(MOBILE_MEDIA_QUERY).matches
     : false;
+}
+
+function isTextEditingEscapeTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) return false;
+  if (target.closest('input, textarea, select, .ProseMirror')) return true;
+  if (target instanceof HTMLElement && target.isContentEditable) return true;
+  const editable = target.closest('[contenteditable]');
+  return editable instanceof HTMLElement && editable.isContentEditable;
+}
+
+function escapeHasLocalMeaning(event: KeyboardEvent): boolean {
+  const target = event.target instanceof Element ? event.target : document.activeElement;
+  if (isTextEditingEscapeTarget(target)) return true;
+  return Boolean(target?.closest('[role="dialog"], [role="menu"], [role="listbox"], [aria-modal="true"]'));
+}
+
+function isPlainEscape(event: KeyboardEvent): boolean {
+  return (
+    event.key === 'Escape' && !event.repeat && !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey
+  );
 }
 
 function useIsMobileViewport(): boolean {
@@ -172,19 +218,6 @@ function isInteractiveTarget(target: EventTarget): boolean {
 
 export function isTranscriptEntryHandle(handle: string | null): handle is string {
   return typeof handle === 'string' && handle.startsWith('rec_');
-}
-
-function normalizeSteerEchoText(text: string): string {
-  return text.trim().replace(/\s+/g, ' ');
-}
-
-function steerProvenanceKey(provenance: SteerProvenance): string {
-  return [
-    String(provenance.resolvedAt),
-    provenance.proposerName,
-    provenance.resolvedByName,
-    provenance.edited ? 'edited' : 'sent',
-  ].join('\u0000');
 }
 
 type OutputSurface = 'conflicts' | 'changes' | 'sideEffects' | 'artifacts';
@@ -293,7 +326,7 @@ function OutputLabel({ children, unseen, danger = false }: { children: ReactNode
         />
       )}
       <span
-        className={`font-semibold uppercase tracking-wider ${
+        className={`font-semibold ${
           unseen ? (danger ? 'text-danger-text-strong' : 'text-accent-text-strong') : 'text-fg-muted'
         }`}
       >
@@ -319,6 +352,8 @@ export function SessionPane({
   onStopTurn = async () => {},
   failedCancel = false,
   onClearFailedCancel = () => {},
+  onSetArchived,
+  onSetPinned,
   providerCredentials,
   githubConnection,
   onConnectProvider,
@@ -361,6 +396,10 @@ export function SessionPane({
   onStopTurn?: (sessionId: string) => Promise<void>;
   failedCancel?: boolean;
   onClearFailedCancel?: () => void;
+  /** Global archive toggle; omit to hide the header control. */
+  onSetArchived?: (sessionId: string, archived: boolean, previousArchivedAt: string | null) => void;
+  /** Per-user pin toggle; omit to hide the header control. */
+  onSetPinned?: (sessionId: string, pinned: boolean, previousPinned: boolean) => void;
   providerCredentials?: Record<string, ProviderCredentialStatus | undefined>;
   githubConnection?: ConnectionStatus;
   onConnectProvider?: (provider: ProviderCredentialProvider) => void;
@@ -386,6 +425,8 @@ export function SessionPane({
   onApiError?: (err: unknown) => void;
 }) {
   const locationState = useLocation();
+  const [transcriptView, setTranscriptView] = useTranscriptView();
+  const showAgentWork = transcriptView === 'full';
   // `active` re-opens the SSE the server closes after a terminal session's
   // replay, so a follow-up steer (which flips the session back to running over
   // WS) streams live instead of appearing only on the next pane mount.
@@ -480,7 +521,7 @@ export function SessionPane({
   const urlWorkTab = useMemo(() => {
     if (popout || !isInPaneSessionRoute(locationState.pathname, session.id)) return null;
     const raw = new URLSearchParams(locationState.search).get(URL_PARAMS.work);
-    return raw ? SLUG_TAB[raw] ?? null : null;
+    return raw ? (SLUG_TAB[raw] ?? null) : null;
   }, [locationState.pathname, locationState.search, popout, session.id]);
   useEffect(() => {
     if (urlWorkTab) {
@@ -583,9 +624,13 @@ export function SessionPane({
       ? normalizeExecutionStatus(stream.status)
       : session.status;
   const displayTerminal = isTerminalSessionStatus(displayStatus);
+  // "stopped by you" is folded from the durable terminal event (reducer
+  // `stoppedByUser`), so every viewer sees it and it survives replay/reload; it
+  // clears automatically when a new turn starts.
+  const stoppedByUser = stream.stoppedByUser === true;
   // A completed session is idle/resumable (a steer regresses completed→queued),
   // NOT ended — only failed/cancelled are truly read-only.
-  const isEnded = displayStatus === 'failed' || displayStatus === 'cancelled';
+  const isEnded = displayStatus === 'failed' || (displayStatus === 'cancelled' && !stoppedByUser);
   const now = useNow(!displayTerminal);
   const stalled = !displayTerminal && stream.status === 'idle' && isStalledSessionStatus(session, now);
   const costUsd = Math.max(session.costUsd, stream.costUsd);
@@ -610,10 +655,6 @@ export function SessionPane({
   const activeTurn = !displayTerminal && !stalled;
   const starting = displayStatus === 'spawning' || displayStatus === 'queued';
   const canStopTurn = activeTurn && !starting;
-  // "stopped by you" is folded from the durable terminal event (reducer
-  // `stoppedByUser`), so every viewer sees it and it survives replay/reload; it
-  // clears automatically when a new turn starts.
-  const stoppedByUser = stream.stoppedByUser === true;
   // Silence counts from mount when no frame ever arrived; the reconnect grace
   // anchors to the actual disconnect moment (see deriveTurnStatus).
   const mountedAtRef = useRef(Date.now());
@@ -727,7 +768,7 @@ export function SessionPane({
     const echoed = new Map<string, UserMessageItem[]>();
     for (const it of stream.items) {
       if (it.type === 'user_message') {
-        const t = normalizeSteerEchoText(it.text);
+        const t = normalizeSteerProvenanceText(it.text);
         const matches = echoed.get(t);
         if (matches) matches.push(it);
         else echoed.set(t, [it]);
@@ -736,7 +777,7 @@ export function SessionPane({
     const consumedEchoes = new Set<string>();
     const carriedProvenance = new Map<string, { provenance: SteerProvenance; acceptedByMe: boolean }>();
     const keep = pendingSteers.filter((p) => {
-      const t = normalizeSteerEchoText(p.text);
+      const t = normalizeSteerProvenanceText(p.text);
       const match = echoed.get(t)?.find((it) => !consumedEchoes.has(it.id));
       if (match) {
         consumedEchoes.add(match.id);
@@ -778,7 +819,7 @@ export function SessionPane({
   };
   const driverName = nameFor(driverId);
   const composerStatusText = isDriver
-    ? "You're driving this session"
+    ? "You're driving this agent"
     : driverPresent
       ? `You're watching — ${driverName} is driving`
       : "You're watching";
@@ -837,8 +878,7 @@ export function SessionPane({
     if (!provenance) return null;
     return {
       provenance,
-      acceptedByMe:
-        optimistic?.acceptedByMe === true || acceptedByMeProvenanceKeys.has(steerProvenanceKey(provenance)),
+      acceptedByMe: optimistic?.acceptedByMe === true || acceptedByMeProvenanceKeys.has(steerProvenanceKey(provenance)),
     };
   };
 
@@ -1046,7 +1086,7 @@ export function SessionPane({
     const t = setTimeout(() => setCancelAsk('idle'), 5000);
     return () => clearTimeout(t);
   }, [cancelAsk]);
-  const onCancel = () => {
+  const onCancel = useCallback(() => {
     if (canStopTurn) {
       setCancelAsk('idle');
       onClearFailedCancel();
@@ -1066,7 +1106,27 @@ export function SessionPane({
       setCancelAsk('failed');
       reportSessionActionError(err, "Couldn't cancel the session.", { toast: false });
     });
-  };
+  }, [
+    canStopTurn,
+    displayCancelAsk,
+    onCancelSession,
+    onClearFailedCancel,
+    onStopTurn,
+    reportSessionActionError,
+    session.id,
+  ]);
+
+  useEffect(() => {
+    if (!canStopTurn || (!isSpawner && !isDriver)) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!isPlainEscape(event) || escapeHasLocalMeaning(event)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      onCancel();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [canStopTurn, isDriver, isSpawner, onCancel]);
 
   // Driver-side grant banner; Ignore is a local dismissal only.
   const [ignoredRequests, setIgnoredRequests] = useState<ReadonlySet<string>>(new Set());
@@ -1092,13 +1152,20 @@ export function SessionPane({
       (e) => Math.min(seatAnchors.get(e.id) ?? Number.MAX_SAFE_INTEGER, stream.items.length) === i,
     );
 
-  // Codex file edits render inline as diff cards (parity with Claude/amp edits,
-  // which are already transcript tool_call items). They live in stream.fileChanges
-  // rather than stream.items, so anchor each to the point in the transcript where
-  // it happened and splice it in at render time — same interleave-by-index shape
-  // as the seat-audit lines above.
+  // Codex file edits live outside stream.items, so anchor and splice them into
+  // the shared transcript row stream alongside seat-audit lines.
   const inlineCodexChanges = useMemo(() => codexInlineFileChanges(stream), [stream.items, stream.fileChanges]);
-  const codexChangesAt = (i: number) => inlineCodexChanges.filter((a) => a.index === i);
+  const codexChangesAt = useCallback(
+    (i: number) => inlineCodexChanges.filter((a) => a.index === i),
+    [inlineCodexChanges],
+  );
+  const rows = useMemo(
+    () =>
+      showAgentWork
+        ? fullTranscriptRows(stream.items, codexChangesAt)
+        : focusTranscriptRows(stream.items, codexChangesAt),
+    [codexChangesAt, showAgentWork, stream.items],
+  );
 
   // Manual expand/collapse overrides; default = open while running. When the
   // result arrives the card auto-collapses only if the view is pinned to the
@@ -1276,7 +1343,7 @@ export function SessionPane({
       setMarkupLoadingHandle(handle);
       try {
         const extracted = await api.extractEntry(handle);
-        const response = await fetch(`/api/files/artifact/${extracted.artifactId}/content`, {
+        const response = await fetch(`/api/files/artifact/${encodeURIComponent(extracted.artifactId)}/content`, {
           credentials: 'same-origin',
         });
         if (!response.ok) throw new Error('Could not load markup source');
@@ -1314,7 +1381,7 @@ export function SessionPane({
           role="separator"
           tabIndex={0}
           aria-orientation="vertical"
-          aria-label="Resize session panel"
+          aria-label="Resize agent panel"
           aria-valuemin={SESSION_PANE_MIN_WIDTH}
           aria-valuemax={paneMaxWidth}
           aria-valuenow={paneWidth ?? SESSION_PANE_FALLBACK_WIDTH}
@@ -1399,7 +1466,7 @@ export function SessionPane({
           </div>
         </div>
         {(isSpawner || isDriver) && !displayTerminal && (
-          <Tooltip content={canStopTurn ? 'Cancel the current turn' : 'Cancel this session'}>
+          <Tooltip content={canStopTurn ? 'Stop current turn' : 'Cancel this agent'}>
             <button
               type="button"
               onClick={onCancel}
@@ -1415,13 +1482,40 @@ export function SessionPane({
             >
               {canStopTurn
                 ? displayCancelAsk === 'failed'
-                  ? 'Cancel turn failed — retry'
-                  : 'Cancel turn'
+                  ? 'Stop failed — retry'
+                  : 'Stop turn'
                 : displayCancelAsk === 'confirm'
                   ? 'Confirm cancel'
                   : displayCancelAsk === 'failed'
                     ? 'Cancel failed — retry'
                     : 'Cancel'}
+            </button>
+          </Tooltip>
+        )}
+        {onSetPinned && (
+          <Tooltip content={session.pinned ? 'Unpin this agent' : 'Pin this agent'}>
+            <button
+              type="button"
+              onClick={() => onSetPinned(session.id, !session.pinned, session.pinned)}
+              aria-label={session.pinned ? 'Unpin this agent' : 'Pin this agent'}
+              aria-pressed={session.pinned}
+              className={`rounded-md px-2 py-1 hover:bg-surface-overlay hover:text-fg max-md:inline-flex max-md:size-11 max-md:items-center max-md:justify-center max-md:p-0 [@media(pointer:coarse)]:inline-flex [@media(pointer:coarse)]:size-11 [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center [@media(pointer:coarse)]:p-0 ${
+                session.pinned ? 'text-accent-text-strong' : 'text-fg-tertiary'
+              }`}
+            >
+              {session.pinned ? <PinOffIcon size={15} /> : <PinIcon size={15} />}
+            </button>
+          </Tooltip>
+        )}
+        {onSetArchived && (
+          <Tooltip content={session.archivedAt ? 'Unarchive this agent' : 'Archive this agent'}>
+            <button
+              type="button"
+              onClick={() => onSetArchived(session.id, session.archivedAt == null, session.archivedAt)}
+              aria-label={session.archivedAt ? 'Unarchive this agent' : 'Archive this agent'}
+              className="rounded-md px-2 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg max-md:inline-flex max-md:size-11 max-md:items-center max-md:justify-center max-md:p-0 [@media(pointer:coarse)]:inline-flex [@media(pointer:coarse)]:size-11 [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center [@media(pointer:coarse)]:p-0"
+            >
+              {session.archivedAt ? <ArchiveRestoreIcon size={15} /> : <ArchiveIcon size={15} />}
             </button>
           </Tooltip>
         )}
@@ -1447,11 +1541,11 @@ export function SessionPane({
           />
         </div>
         {canDetach && (
-          <Tooltip content={sessionLinkCopied ? 'Copied session link' : 'Copy link to this session'}>
+          <Tooltip content={sessionLinkCopied ? 'Copied agent link' : 'Copy link to this agent'}>
             <button
               type="button"
               onClick={copySessionLink}
-              aria-label={sessionLinkCopied ? 'Copied session link' : 'Copy link to this session'}
+              aria-label={sessionLinkCopied ? 'Copied agent link' : 'Copy link to this agent'}
               className={`rounded-md px-2 py-1 hover:bg-surface-overlay hover:text-fg max-md:inline-flex max-md:size-11 max-md:items-center max-md:justify-center max-md:p-0 [@media(pointer:coarse)]:inline-flex [@media(pointer:coarse)]:size-11 [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center [@media(pointer:coarse)]:p-0 ${
                 sessionLinkCopied ? 'text-accent-text-strong' : 'text-fg-tertiary'
               }`}
@@ -1461,18 +1555,29 @@ export function SessionPane({
           </Tooltip>
         )}
         {canDetach && (
-          <Tooltip content={popout ? 'Open in full app' : 'Open session in a new tab'}>
+          <Tooltip content={popout ? 'Open in full app' : 'Open agent in a new tab'}>
             <a
               href={popout ? `/s/${session.id}` : `/s/${session.id}/pane`}
               target={popout ? undefined : '_blank'}
               rel={popout ? undefined : 'noopener noreferrer'}
-              aria-label={popout ? 'Open in full app' : 'Open session in a new tab'}
+              aria-label={popout ? 'Open in full app' : 'Open agent in a new tab'}
               className="rounded-md px-2 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg max-md:inline-flex max-md:size-11 max-md:items-center max-md:justify-center max-md:p-0 [@media(pointer:coarse)]:inline-flex [@media(pointer:coarse)]:size-11 [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center [@media(pointer:coarse)]:p-0"
             >
               <ExternalLinkIcon size={15} />
             </a>
           </Tooltip>
         )}
+        <Tooltip content={showAgentWork ? 'Hide agent work' : 'Show agent work'}>
+          <button
+            type="button"
+            onClick={() => setTranscriptView(showAgentWork ? 'focus' : 'full')}
+            aria-label={showAgentWork ? 'Hide agent work' : 'Show agent work'}
+            aria-pressed={showAgentWork}
+            className="rounded-md px-2 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg max-md:inline-flex max-md:size-11 max-md:items-center max-md:justify-center max-md:p-0 [@media(pointer:coarse)]:inline-flex [@media(pointer:coarse)]:size-11 [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center [@media(pointer:coarse)]:p-0"
+          >
+            <GearIcon size={15} />
+          </button>
+        </Tooltip>
         {onToggleFocus && (
           <Tooltip content={focused ? 'Collapse to split view' : 'Expand to focus view'}>
             <button
@@ -1486,17 +1591,35 @@ export function SessionPane({
             </button>
           </Tooltip>
         )}
-        <Tooltip content="Close session pane">
+        <Tooltip content="Close session details">
           <button
             type="button"
             onClick={closePane}
-            aria-label="Close session pane"
+            aria-label="Close session details"
             className="rounded-md px-2 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg max-md:inline-flex max-md:size-11 max-md:items-center max-md:justify-center max-md:p-0 [@media(pointer:coarse)]:inline-flex [@media(pointer:coarse)]:size-11 [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center [@media(pointer:coarse)]:p-0"
           >
             <XIcon />
           </button>
         </Tooltip>
       </header>
+
+      {session.archivedAt != null && (
+        <div
+          data-testid="archived-banner"
+          className="flex shrink-0 items-center gap-2 border-b border-edge bg-surface-raised/70 px-3 py-1.5 text-xs"
+        >
+          <span className="min-w-0 flex-1 truncate text-fg-muted">Archived — new activity will bring it back.</span>
+          {onSetArchived && (
+            <button
+              type="button"
+              onClick={() => onSetArchived(session.id, false, session.archivedAt)}
+              className="rounded-md px-2 py-0.5 text-2xs font-medium text-fg-tertiary hover:bg-surface-overlay hover:text-fg-body"
+            >
+              Unarchive
+            </button>
+          )}
+        </div>
+      )}
 
       {seatRequest && !displayTerminal && (
         <div
@@ -1566,13 +1689,44 @@ export function SessionPane({
         />
       )}
 
-      {isEnded && resultText && (
-        <div data-testid="session-result" className="shrink-0 border-b border-edge bg-surface-raised px-4 py-2">
-          <div className="text-3xs font-semibold uppercase tracking-wider text-fg-muted">Result</div>
-          <div className="mt-0.5 max-h-36 overflow-y-auto whitespace-pre-wrap break-words text-xs leading-relaxed text-fg-body">
-            {resultText}
+      {displayTerminal && (
+        <section
+          data-testid="session-result"
+          aria-labelledby="session-results-heading"
+          className="shrink-0 border-b border-edge bg-surface-raised px-4 py-3"
+        >
+          <div className="flex items-baseline gap-2">
+            <h3 id="session-results-heading" className="text-xs font-semibold text-fg">
+              Results
+            </h3>
+            <span className={`text-xs ${isEnded ? 'text-danger-text' : 'text-fg-muted'}`}>
+              {displayStatus === 'failed'
+                ? 'Failed — review the transcript before retrying.'
+                : displayStatus === 'cancelled'
+                  ? 'Cancelled — review completed work before continuing.'
+                  : 'Completed — review the work before continuing.'}
+            </span>
           </div>
-        </div>
+          {resultText && (
+            <div className="mt-1 max-h-24 overflow-y-auto whitespace-pre-wrap break-words text-xs leading-relaxed text-fg-body">
+              {resultText}
+            </div>
+          )}
+          {(changedFileCount > 0 || artifactsN > 0) && (
+            <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-fg-muted">
+              {changedFileCount > 0 && (
+                <span>
+                  {changedFileCount} changed {changedFileCount === 1 ? 'file' : 'files'}
+                </span>
+              )}
+              {artifactsN > 0 && (
+                <span>
+                  {artifactsN} {artifactsN === 1 ? 'artifact' : 'artifacts'} produced
+                </span>
+              )}
+            </div>
+          )}
+        </section>
       )}
 
       <button
@@ -1582,7 +1736,7 @@ export function SessionPane({
         aria-expanded={outputHubOpen}
         className={outputStripClass({})}
       >
-        <OutputLabel unseen={false}>Files & apps</OutputLabel>
+        <OutputLabel unseen={false}>Files</OutputLabel>
         <span className="ml-auto text-fg-tertiary">{outputHubOpen ? 'Hide' : 'Open'}</span>
       </button>
       {conflictsN > 0 && (
@@ -1621,7 +1775,7 @@ export function SessionPane({
           aria-expanded={workTab === 'sideEffects'}
           className={outputStripClass({ unseen: unseenOutputs.sideEffects })}
         >
-          <OutputLabel unseen={unseenOutputs.sideEffects}>Side-effects</OutputLabel>
+          <OutputLabel unseen={unseenOutputs.sideEffects}>Actions</OutputLabel>
           <span className={`tabular-nums ${sideEffectsDanger ? 'text-danger-text' : ''}`}>· {sideEffectsN}</span>
           <span className="ml-auto text-fg-tertiary">{workTab === 'sideEffects' ? 'Hide' : 'View'}</span>
         </button>
@@ -1682,84 +1836,115 @@ export function SessionPane({
                 )}
               </div>
             )}
-            {stream.items.map((item, i) => (
-              <Fragment key={i}>
-                {seatLinesAt(i).map((e) => (
-                  <SeatAuditLine key={e.id} entry={e} nameFor={nameFor} />
-                ))}
-                {codexChangesAt(i).map((a) => (
-                  <div key={a.change.id} className="pl-3.5">
-                    <InlineFileChange change={a.change} />
-                  </div>
-                ))}
-                <AnnotatedTranscriptRow
-                  handle={item.handle ?? null}
-                  onMarkupEntry={item.type === 'text' ? openMarkupFromEntry : undefined}
-                  markupLoading={markupLoadingHandle === item.handle}
-                  highlighted={item.handle != null && item.handle === flashEntryHandle}
-                  references={item.handle != null ? entryReferences[item.handle] : null}
-                  discussContext={discussContext}
-                  onDiscussEntry={onDiscussEntry}
-                  touchActionsEnabled={isHoverNone}
-                  touchActionsActive={item.handle != null && item.handle === activeTranscriptActionHandle}
-                  onActivateTouchActions={setActiveTranscriptActionHandle}
-                >
-                  {/* `group` + title: every row gets a native mouseover timestamp;
+            {(() => {
+              let seatCursor = 0;
+              const flushSeatLinesThrough = (index: number) => {
+                const lines: ReactNode[] = [];
+                while (seatCursor <= index) {
+                  lines.push(
+                    ...seatLinesAt(seatCursor).map((e) => <SeatAuditLine key={e.id} entry={e} nameFor={nameFor} />),
+                  );
+                  seatCursor += 1;
+                }
+                return lines;
+              };
+
+              return (
+                <>
+                  {rows.map((row) => {
+                    const rowStartIndex = row.kind === 'hidden' ? row.startIndex : row.index;
+                    const seatLinesBefore = flushSeatLinesThrough(rowStartIndex);
+
+                    if (row.kind === 'change') {
+                      return (
+                        <Fragment key={`change-${row.change.change.id}`}>
+                          {seatLinesBefore}
+                          <div className="pl-3.5">
+                            <InlineFileChange change={row.change.change} />
+                          </div>
+                        </Fragment>
+                      );
+                    }
+
+                    if (row.kind === 'hidden') {
+                      return (
+                        <Fragment key={row.key}>
+                          {seatLinesBefore}
+                          <HiddenWorkChip count={row.count} onClick={() => setTranscriptView('full')} />
+                          {flushSeatLinesThrough(row.endIndex)}
+                        </Fragment>
+                      );
+                    }
+
+                    const item = row.item;
+                    return (
+                      <Fragment key={item.id}>
+                        {seatLinesBefore}
+                        <AnnotatedTranscriptRow
+                          handle={item.handle ?? null}
+                          onMarkupEntry={item.type === 'text' ? openMarkupFromEntry : undefined}
+                          markupLoading={markupLoadingHandle === item.handle}
+                          highlighted={item.handle != null && item.handle === flashEntryHandle}
+                          references={item.handle != null ? entryReferences[item.handle] : null}
+                          discussContext={discussContext}
+                          onDiscussEntry={onDiscussEntry}
+                          touchActionsEnabled={isHoverNone}
+                          touchActionsActive={item.handle != null && item.handle === activeTranscriptActionHandle}
+                          onActivateTouchActions={setActiveTranscriptActionHandle}
+                        >
+                          {/* `group` + title: every row gets a native mouseover timestamp;
                   steer rows also reveal an inline one (their hover target is
                   obvious and they anchor turn navigation). */}
-                  <div className="group" title={turnExactTimes.get(item.id) || undefined}>
-                    {item.type === 'text' ? (
-                      <div className="pl-3.5">
-                        <TextBlock item={item} />
-                      </div>
-                    ) : item.type === 'user_message' ? (
-                      <div data-testid="user-steer" data-turn={item.id} className="pt-2 pb-0.5">
-                        <SteerAuthorLine
-                          author={steerAuthor}
-                          iso={item.ts}
-                          time={turnTimes.get(item.id)}
-                          provenance={steerProvenanceForMessage(item.id)}
-                        />
-                        <MarkupSteerCard text={item.text} />
-                      </div>
-                    ) : item.type === 'question' ? (
-                      <div className="pl-3.5">
-                        <QuestionTranscriptCard
-                          item={item}
-                          events={questionEventsByQuestion.get(item.questionId) ?? []}
-                        />
-                      </div>
-                    ) : item.type === 'reasoning' ? (
-                      <div className="pl-3.5">
-                        <ReasoningBlock item={item} />
-                      </div>
-                    ) : item.type === 'tool_call' ? (
-                      <div className="pl-3.5">
-                        <TranscriptTool
-                          item={item}
-                          expanded={toolOpen[item.id] ?? toolDefaultOpen(item)}
-                          onToggle={() =>
-                            setToolOpen((prev) => ({
-                              ...prev,
-                              [item.id]: !(prev[item.id] ?? toolDefaultOpen(item)),
-                            }))
-                          }
-                          clockSkewMs={clockSkewMs}
-                        />
-                      </div>
-                    ) : null}
-                  </div>
-                </AnnotatedTranscriptRow>
-              </Fragment>
-            ))}
-            {seatLinesAt(stream.items.length).map((e) => (
-              <SeatAuditLine key={e.id} entry={e} nameFor={nameFor} />
-            ))}
-            {codexChangesAt(stream.items.length).map((a) => (
-              <div key={a.change.id} className="pl-3.5">
-                <InlineFileChange change={a.change} />
-              </div>
-            ))}
+                          <div className="group" title={turnExactTimes.get(item.id) || undefined}>
+                            {item.type === 'text' ? (
+                              <div className="pl-3.5">
+                                <TextBlock item={item} />
+                              </div>
+                            ) : item.type === 'user_message' ? (
+                              <div data-testid="user-steer" data-turn={item.id} className="pt-2 pb-0.5">
+                                <SteerAuthorLine
+                                  author={steerAuthor}
+                                  iso={item.ts}
+                                  time={turnTimes.get(item.id)}
+                                  provenance={steerProvenanceForMessage(item.id)}
+                                />
+                                <MarkupSteerCard text={item.text} />
+                              </div>
+                            ) : item.type === 'question' ? (
+                              <div className="pl-3.5">
+                                <QuestionTranscriptCard
+                                  item={item}
+                                  events={questionEventsByQuestion.get(item.questionId) ?? []}
+                                />
+                              </div>
+                            ) : item.type === 'reasoning' ? (
+                              <div className="pl-3.5">
+                                <ReasoningBlock item={item} />
+                              </div>
+                            ) : item.type === 'tool_call' ? (
+                              <div className="pl-3.5">
+                                <TranscriptTool
+                                  item={item}
+                                  expanded={toolOpen[item.id] ?? toolDefaultOpen(item)}
+                                  onToggle={() =>
+                                    setToolOpen((prev) => ({
+                                      ...prev,
+                                      [item.id]: !(prev[item.id] ?? toolDefaultOpen(item)),
+                                    }))
+                                  }
+                                  clockSkewMs={clockSkewMs}
+                                />
+                              </div>
+                            ) : null}
+                          </div>
+                        </AnnotatedTranscriptRow>
+                      </Fragment>
+                    );
+                  })}
+                  {flushSeatLinesThrough(stream.items.length)}
+                </>
+              );
+            })()}
             {pendingSteers.map((p) => (
               <div
                 key={p.id}
@@ -1771,9 +1956,7 @@ export function SessionPane({
                   author={steerAuthor}
                   iso={p.ts}
                   time={formatTurnTime(p.ts)}
-                  provenance={
-                    p.provenance ? { provenance: p.provenance, acceptedByMe: p.acceptedByMe === true } : null
-                  }
+                  provenance={p.provenance ? { provenance: p.provenance, acceptedByMe: p.acceptedByMe === true } : null}
                 />
                 <div className="whitespace-pre-wrap text-sm leading-relaxed text-fg-body">{p.text}</div>
               </div>
@@ -1849,14 +2032,14 @@ export function SessionPane({
           costUsd={costUsd}
           models={stream.models}
           effort={modelEffort}
-          cancelLabel={canStopTurn ? 'Cancel turn' : displayCancelAsk === 'confirm' ? 'Confirm cancel' : 'Cancel'}
+          cancelLabel={canStopTurn ? 'Stop turn' : displayCancelAsk === 'confirm' ? 'Confirm cancel' : 'Cancel'}
           onCancel={isSpawner || isDriver ? onCancel : undefined}
         />
       )}
 
       {isEnded ? (
         <div className="shrink-0 border-t border-edge px-4 py-2.5 text-2xs text-fg-muted">
-          Session ended — transcript is read-only.
+          Agent ended — transcript is read-only.
         </div>
       ) : (
         <>
@@ -2127,6 +2310,7 @@ export function AnnotatedTranscriptRow({
   const [textCopied, setTextCopied] = useState(false);
   const [hasCopyableText, setHasCopyableText] = useState(false);
   const [actionMenu, setActionMenu] = useState<MessageActionMenuState | null>(null);
+  const [selectTextContent, setSelectTextContent] = useState<string | null>(null);
   const suppressTapRevealUntilRef = useRef(0);
 
   const rowText = useCallback(() => {
@@ -2186,6 +2370,16 @@ export function AnnotatedTranscriptRow({
       .catch(() => {});
   }, [rowText]);
 
+  // Transcript rows have no raw-markdown string — capture the rendered DOM's
+  // innerText at open time (same source Copy block text uses) so the sheet
+  // stays stable even if the row re-renders underneath it.
+  const openSelectText = useCallback(() => {
+    const text = rowText();
+    if (!text) return;
+    setSelectTextContent(text);
+  }, [rowText]);
+  const closeSelectText = useCallback(() => setSelectTextContent(null), []);
+
   const discussEntry = useCallback(() => {
     if (!handle || !discussContext || !onDiscussEntry) return;
     onDiscussEntry({
@@ -2216,6 +2410,12 @@ export function AnnotatedTranscriptRow({
         label: 'Copy block text',
         onSelect: copyBlockText,
       });
+      actions.push({
+        key: 'select-text',
+        label: 'Select text…',
+        sheetOnly: true,
+        onSelect: openSelectText,
+      });
     }
     if (canDiscuss) {
       actions.push({
@@ -2243,6 +2443,7 @@ export function AnnotatedTranscriptRow({
     hasCopyableText,
     markupEntry,
     markupLoading,
+    openSelectText,
   ]);
   const actionMenuAllowed = transcriptActions.length > 0;
   const openSheetMenu = useCallback(() => {
@@ -2282,10 +2483,7 @@ export function AnnotatedTranscriptRow({
   if (!handle) return <>{children}</>;
 
   return (
-    <div
-      data-entry-handle={handle}
-      className={`group relative ${highlighted ? 'entry-flash bg-accent-hover/10' : ''}`}
-    >
+    <div data-entry-handle={handle} className={`group relative ${highlighted ? 'entry-flash bg-accent-hover/10' : ''}`}>
       {/* biome-ignore lint/a11y: touch/context handlers expose the existing transcript actions without changing keyboard access. */}
       <div
         ref={contentRef}
@@ -2327,74 +2525,77 @@ export function AnnotatedTranscriptRow({
         reserves flex space, which would push the ⋯ (and the references chip)
         into the middle of the entry text. Touch gets the ⋯ + sheet instead. */}
         {!touchActionsEnabled && (
-        <div data-testid="transcript-entry-action-bar" className="pointer-events-none flex gap-1 opacity-0 focus-within:pointer-events-auto focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100">
-          <Tooltip content={linkCopied ? 'Copied entry link' : 'Copy entry link'}>
-            <button
-              type="button"
-              onClick={copyEntryLink}
-              aria-label={linkCopied ? 'Copied entry link' : 'Copy entry link'}
-              className={`inline-flex h-7 w-8 items-center justify-center rounded-md border border-edge-strong bg-surface-overlay text-xs shadow-sm transition-colors hover:bg-edge-strong hover:text-fg ${
-                linkCopied ? 'text-accent-text-strong' : 'text-fg-secondary'
-              }`}
-            >
-              {linkCopied ? <CheckIcon /> : <LinkIcon />}
-            </button>
-          </Tooltip>
-          {hasCopyableText && (
-            <Tooltip content={textCopied ? 'Copied block text' : 'Copy block text'}>
+          <div
+            data-testid="transcript-entry-action-bar"
+            className="pointer-events-none flex gap-1 opacity-0 focus-within:pointer-events-auto focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100"
+          >
+            <Tooltip content={linkCopied ? 'Copied entry link' : 'Copy entry link'}>
               <button
                 type="button"
-                onClick={copyBlockText}
-                aria-label={textCopied ? 'Copied block text' : 'Copy block text'}
+                onClick={copyEntryLink}
+                aria-label={linkCopied ? 'Copied entry link' : 'Copy entry link'}
                 className={`inline-flex h-7 w-8 items-center justify-center rounded-md border border-edge-strong bg-surface-overlay text-xs shadow-sm transition-colors hover:bg-edge-strong hover:text-fg ${
-                  textCopied ? 'text-accent-text-strong' : 'text-fg-secondary'
+                  linkCopied ? 'text-accent-text-strong' : 'text-fg-secondary'
                 }`}
               >
-                {textCopied ? <CheckIcon /> : <CopyIcon />}
+                {linkCopied ? <CheckIcon /> : <LinkIcon />}
               </button>
             </Tooltip>
-          )}
-          {canDiscuss && (
-            <Tooltip content="Discuss in thread">
-              <button
-                type="button"
-                onClick={() => {
-                  onDiscussEntry({
-                    handle,
-                    channelId: discussContext.channelId,
-                    threadRootEventId: discussContext.threadRootEventId,
-                    draft: `/e/${handle} `,
-                  });
-                }}
-                aria-label="Discuss in thread"
-                className="inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-edge-strong bg-surface-overlay px-2 py-1 text-xs text-fg-secondary shadow-sm hover:bg-edge-strong hover:text-fg"
-              >
-                <MessageSquarePlusIcon />
-                Discuss
-              </button>
-            </Tooltip>
-          )}
-          {canMarkup && (
-            <Tooltip content={markupLoading ? 'Opening markup…' : 'Mark up & reply'}>
-              <button
-                type="button"
-                onClick={(e) => {
-                  if (markupLoading) {
-                    e.preventDefault();
-                    return;
-                  }
-                  onMarkupEntry(handle);
-                }}
-                aria-disabled={markupLoading || undefined}
-                aria-label="Mark up & reply"
-                className="inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-edge-strong bg-surface-overlay px-2 py-1 text-xs text-fg-secondary shadow-sm hover:bg-edge-strong hover:text-fg aria-disabled:cursor-default aria-disabled:text-fg-faint"
-              >
-                <PenLineIcon />
-                {markupLoading ? 'Opening...' : 'Mark up'}
-              </button>
-            </Tooltip>
-          )}
-        </div>
+            {hasCopyableText && (
+              <Tooltip content={textCopied ? 'Copied block text' : 'Copy block text'}>
+                <button
+                  type="button"
+                  onClick={copyBlockText}
+                  aria-label={textCopied ? 'Copied block text' : 'Copy block text'}
+                  className={`inline-flex h-7 w-8 items-center justify-center rounded-md border border-edge-strong bg-surface-overlay text-xs shadow-sm transition-colors hover:bg-edge-strong hover:text-fg ${
+                    textCopied ? 'text-accent-text-strong' : 'text-fg-secondary'
+                  }`}
+                >
+                  {textCopied ? <CheckIcon /> : <CopyIcon />}
+                </button>
+              </Tooltip>
+            )}
+            {canDiscuss && (
+              <Tooltip content="Discuss in thread">
+                <button
+                  type="button"
+                  onClick={() => {
+                    onDiscussEntry({
+                      handle,
+                      channelId: discussContext.channelId,
+                      threadRootEventId: discussContext.threadRootEventId,
+                      draft: `/e/${handle} `,
+                    });
+                  }}
+                  aria-label="Discuss in thread"
+                  className="inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-edge-strong bg-surface-overlay px-2 py-1 text-xs text-fg-secondary shadow-sm hover:bg-edge-strong hover:text-fg"
+                >
+                  <MessageSquarePlusIcon />
+                  Discuss
+                </button>
+              </Tooltip>
+            )}
+            {canMarkup && (
+              <Tooltip content={markupLoading ? 'Opening markup…' : 'Mark up & reply'}>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    if (markupLoading) {
+                      e.preventDefault();
+                      return;
+                    }
+                    onMarkupEntry(handle);
+                  }}
+                  aria-disabled={markupLoading || undefined}
+                  aria-label="Mark up & reply"
+                  className="inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-edge-strong bg-surface-overlay px-2 py-1 text-xs text-fg-secondary shadow-sm hover:bg-edge-strong hover:text-fg aria-disabled:cursor-default aria-disabled:text-fg-faint"
+                >
+                  <PenLineIcon />
+                  {markupLoading ? 'Opening...' : 'Mark up'}
+                </button>
+              </Tooltip>
+            )}
+          </div>
         )}
       </div>
       <MessageActionMenu
@@ -2403,6 +2604,9 @@ export function AnnotatedTranscriptRow({
         restoreFocusRef={contentRef}
         actions={transcriptActions}
       />
+      <SelectTextSheet open={selectTextContent != null} onClose={closeSelectText} restoreFocusRef={contentRef}>
+        <div className="whitespace-pre-wrap break-words text-sm leading-relaxed text-fg-body">{selectTextContent}</div>
+      </SelectTextSheet>
     </div>
   );
 }

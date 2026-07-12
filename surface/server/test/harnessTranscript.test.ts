@@ -92,7 +92,10 @@ async function login(): Promise<string> {
 describe('harness-transcript internal endpoints', () => {
   it('requires the api key for PUT and GET', async () => {
     const sid = await session();
-    const get = await app.inject({ method: 'GET', url: `/api/internal/sessions/${sid}/harness-transcript?harness=claude` });
+    const get = await app.inject({
+      method: 'GET',
+      url: `/api/internal/sessions/${sid}/harness-transcript?harness=claude`,
+    });
     expect(get.statusCode).toBe(401);
     const put = await app.inject({
       method: 'PUT',

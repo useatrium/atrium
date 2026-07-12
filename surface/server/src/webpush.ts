@@ -1,11 +1,4 @@
-import {
-  createCipheriv,
-  createECDH,
-  createHmac,
-  createPrivateKey,
-  randomBytes,
-  sign,
-} from 'node:crypto';
+import { createCipheriv, createECDH, createHmac, createPrivateKey, randomBytes, sign } from 'node:crypto';
 
 export interface WebPushSubscription {
   endpoint: string;
@@ -111,10 +104,7 @@ export function buildVapidAuthorization(
   options: { nowSeconds?: number } = {},
 ): string {
   const publicKey = config.vapidPublicKey.trim();
-  const privateKey = p256PrivateKeyFromRaw(
-    decodeBase64url(config.vapidPrivateKey.trim()),
-    decodeBase64url(publicKey),
-  );
+  const privateKey = p256PrivateKeyFromRaw(decodeBase64url(config.vapidPrivateKey.trim()), decodeBase64url(publicKey));
   const nowSeconds = options.nowSeconds ?? Math.floor(Date.now() / 1000);
   const jwt = jwtEs256(
     { typ: 'JWT', alg: 'ES256' },
@@ -152,12 +142,7 @@ export function encryptWebPushPayload(
   const ecdhSecret = ecdh.computeSecret(uaPublic);
 
   const prkKey = hmacSha256(authSecret, ecdhSecret);
-  const keyInfo = Buffer.concat([
-    Buffer.from('WebPush: info', 'utf8'),
-    Buffer.from([0]),
-    uaPublic,
-    asPublic,
-  ]);
+  const keyInfo = Buffer.concat([Buffer.from('WebPush: info', 'utf8'), Buffer.from([0]), uaPublic, asPublic]);
   const ikm = hkdfExpand(prkKey, keyInfo, 32);
 
   const salt = options.salt ?? randomBytes(16);
@@ -168,11 +153,7 @@ export function encryptWebPushPayload(
     Buffer.concat([Buffer.from('Content-Encoding: aes128gcm', 'utf8'), Buffer.from([0])]),
     16,
   );
-  const nonce = hkdfExpand(
-    prk,
-    Buffer.concat([Buffer.from('Content-Encoding: nonce', 'utf8'), Buffer.from([0])]),
-    12,
-  );
+  const nonce = hkdfExpand(prk, Buffer.concat([Buffer.from('Content-Encoding: nonce', 'utf8'), Buffer.from([0])]), 12);
 
   const recordSize = options.recordSize ?? 4096;
   const header = Buffer.alloc(21 + asPublic.length);
@@ -190,15 +171,8 @@ export function encryptWebPushPayload(
   return { body: Buffer.concat([header, ciphertext]), salt, publicKey: asPublic };
 }
 
-export function getWebPushSender(
-  config: WebPushConfig,
-  fetchImpl: typeof fetch = fetch,
-): WebPushSender {
-  if (
-    !config.vapidPublicKey.trim() ||
-    !config.vapidPrivateKey.trim() ||
-    !config.vapidSubject.trim()
-  ) {
+export function getWebPushSender(config: WebPushConfig, fetchImpl: typeof fetch = fetch): WebPushSender {
+  if (!config.vapidPublicKey.trim() || !config.vapidPrivateKey.trim() || !config.vapidSubject.trim()) {
     return noopWebPushSender;
   }
 

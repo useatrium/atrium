@@ -52,9 +52,7 @@ describe('deriveTurns', () => {
   });
 
   it('shortens long steer excerpts in labels', () => {
-    const [turn] = deriveTurns([
-      steerItem('steer-1', 'Please summarize the deployment plan and include blockers'),
-    ]);
+    const [turn] = deriveTurns([steerItem('steer-1', 'Please summarize the deployment plan and include blockers')]);
 
     expect(turn?.label).toBe('Turn 1 - Please summarize the deployment plan...');
   });

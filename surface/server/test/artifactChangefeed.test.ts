@@ -32,10 +32,10 @@ function capture(path: string, sha: string, kind: 'created' | 'modified' | 'dele
 }
 
 async function artifactIdFor(path: string): Promise<string> {
-  const r = await pool.query<{ id: string }>(
-    `SELECT id FROM artifacts WHERE workspace_id = $1 AND path = $2`,
-    [fx.workspaceId, path],
-  );
+  const r = await pool.query<{ id: string }>(`SELECT id FROM artifacts WHERE workspace_id = $1 AND path = $2`, [
+    fx.workspaceId,
+    path,
+  ]);
   return r.rows[0]!.id;
 }
 

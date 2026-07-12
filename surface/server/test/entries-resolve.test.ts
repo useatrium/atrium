@@ -56,12 +56,9 @@ async function authCookie(userId: string): Promise<string> {
   return `${config.sessionCookie}=${token}`;
 }
 
-async function insertSession(args: {
-  channelId?: string;
-  workspaceId?: string;
-  spawnedBy?: string;
-  title?: string;
-} = {}): Promise<string> {
+async function insertSession(
+  args: { channelId?: string; workspaceId?: string; spawnedBy?: string; title?: string } = {},
+): Promise<string> {
   const res = await pool.query<{ id: string }>(
     `INSERT INTO sessions
        (workspace_id, channel_id, centaur_thread_key, harness, title, status, spawned_by)

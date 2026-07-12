@@ -15,6 +15,11 @@ const item: ReasoningItem = {
 };
 
 describe('ReasoningBlock (web)', () => {
+  it('does not render empty reasoning', () => {
+    const { container } = render(<ReasoningBlock item={{ ...item, text: '  ', summary: '\n' }} />);
+    expect(container.innerHTML).toBe('');
+  });
+
   it('renders collapsed and expands to show reasoning text', () => {
     render(<ReasoningBlock item={item} />);
 

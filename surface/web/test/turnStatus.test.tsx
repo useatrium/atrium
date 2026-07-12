@@ -44,15 +44,7 @@ describe('TurnStatusLine', () => {
 
   it('stuck: offers the exit and routes the cancel click', () => {
     const onCancel = vi.fn();
-    render(
-      <TurnStatusLine
-        {...base}
-        liveness="stuck"
-        quietMs={6 * 60_000}
-        cancelLabel="Cancel"
-        onCancel={onCancel}
-      />,
-    );
+    render(<TurnStatusLine {...base} liveness="stuck" quietMs={6 * 60_000} cancelLabel="Cancel" onCancel={onCancel} />);
     const status = screen.getByTestId('turn-status');
     expect(status.textContent).toContain('Still working? No output for 6:00');
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
@@ -96,9 +88,7 @@ describe('TurnStatusLine', () => {
   });
 
   it('token counter: k-format, estimated shows ≈, real shows the bare count', () => {
-    const { rerender } = render(
-      <TurnStatusLine {...base} tokens={{ count: 2413, estimated: true }} />,
-    );
+    const { rerender } = render(<TurnStatusLine {...base} tokens={{ count: 2413, estimated: true }} />);
     expect(screen.getByTestId('token-count').textContent).toBe('≈2.4k tok');
     rerender(<TurnStatusLine {...base} tokens={{ count: 2413, estimated: false }} />);
     expect(screen.getByTestId('token-count').textContent).toBe('2.4k tok');
@@ -119,24 +109,14 @@ describe('TurnStatusLine', () => {
   });
 
   it('waiting: no spinner — the human is the blocker, and the wait clock says for how long', () => {
-    render(
-      <TurnStatusLine {...base} phase="waiting" label="Waiting for your reply" elapsedMs={0} />,
-    );
+    render(<TurnStatusLine {...base} phase="waiting" label="Waiting for your reply" elapsedMs={0} />);
     const status = screen.getByTestId('turn-status');
     expect(status.textContent).toBe('Waiting for your reply');
     expect(screen.queryByTestId('heartbeat-dot')).toBeNull();
   });
 
   it('waiting: shows how long the agent has been blocked on a reply', () => {
-    render(
-      <TurnStatusLine
-        {...base}
-        phase="waiting"
-        label="Waiting for Gary"
-        elapsedMs={0}
-        quietMs={12 * 60_000}
-      />,
-    );
+    render(<TurnStatusLine {...base} phase="waiting" label="Waiting for Gary" elapsedMs={0} quietMs={12 * 60_000} />);
     expect(screen.getByTestId('turn-status').textContent).toBe('Waiting for Gary12:00');
   });
 });

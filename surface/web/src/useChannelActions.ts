@@ -1,15 +1,11 @@
 import { useCallback } from 'react';
-import {
-  randomId,
-  type AppAction,
-  type Channel,
-  type EnqueueOpInput,
-} from '@atrium/surface-client';
+import { randomId, type AppAction, type Channel, type EnqueueOpInput } from '@atrium/surface-client';
 import { api } from './api';
 import { showErrorToast } from './components/Toasts';
 
 type DispatchAppAction = (action: AppAction) => void;
-type MuteEnqueue = (input: EnqueueOpInput<'mute.set'>) => Promise<unknown>;
+type ChannelOpType = 'mute.set' | 'channel.archive' | 'channel.pin';
+type MuteEnqueue = <T extends ChannelOpType>(input: EnqueueOpInput<T>) => Promise<unknown>;
 
 export type ChannelActionsApi = Pick<typeof api, 'createChannel' | 'createDmWithUsers'>;
 
@@ -18,26 +14,26 @@ export function useChannelActions({
   dispatch,
   enqueueOp,
   getChannels,
-  selectChannel,
+  navigateToChannel,
 }: {
   client?: ChannelActionsApi;
   dispatch: DispatchAppAction;
   enqueueOp: MuteEnqueue;
   getChannels: () => readonly Channel[];
-  selectChannel: (channelId: string) => void;
+  navigateToChannel: (channelId: string) => void;
 }) {
   const createChannel = useCallback(
     async (name: string, isPrivate = false) => {
       try {
         const { channel } = await client.createChannel(name, { private: isPrivate });
         dispatch({ type: 'channel-added', channel });
-        selectChannel(channel.id);
+        navigateToChannel(channel.id);
       } catch (err) {
         showErrorToast("Couldn't create the channel — try again.");
         throw err;
       }
     },
-    [client, dispatch, selectChannel],
+    [client, dispatch, navigateToChannel],
   );
 
   const startDm = useCallback(
@@ -46,11 +42,11 @@ export function useChannelActions({
         .createDmWithUsers(userIds)
         .then(({ channel }) => {
           dispatch({ type: 'channel-added', channel });
-          selectChannel(channel.id);
+          navigateToChannel(channel.id);
         })
         .catch(() => showErrorToast("Couldn't start the conversation — try again."));
     },
-    [client, dispatch, selectChannel],
+    [client, dispatch, navigateToChannel],
   );
 
   const setMute = useCallback(
@@ -69,5 +65,41 @@ export function useChannelActions({
     [dispatch, enqueueOp, getChannels],
   );
 
-  return { createChannel, setMute, startDm };
+  const setArchived = useCallback(
+    (channelId: string, archived: boolean) => {
+      const previousArchivedAt = getChannels().find((c) => c.id === channelId)?.archivedAt ?? null;
+      dispatch({
+        type: 'channel-archive-changed',
+        channelId,
+        archivedAt: archived ? new Date().toISOString() : null,
+      });
+      void enqueueOp({
+        opId: randomId(),
+        opType: 'channel.archive',
+        payload: { channelId, archived, previousArchivedAt },
+      }).catch(() => {
+        dispatch({ type: 'channel-archive-changed', channelId, archivedAt: previousArchivedAt });
+        showErrorToast("Couldn't queue the archive change.");
+      });
+    },
+    [dispatch, enqueueOp, getChannels],
+  );
+
+  const setPinned = useCallback(
+    (channelId: string, pinned: boolean) => {
+      const previousPinned = getChannels().find((c) => c.id === channelId)?.pinned === true;
+      dispatch({ type: 'channel-pin-changed', channelId, pinned });
+      void enqueueOp({
+        opId: randomId(),
+        opType: 'channel.pin',
+        payload: { channelId, pinned, previousPinned },
+      }).catch(() => {
+        dispatch({ type: 'channel-pin-changed', channelId, pinned: previousPinned });
+        showErrorToast("Couldn't queue the pin change.");
+      });
+    },
+    [dispatch, enqueueOp, getChannels],
+  );
+
+  return { createChannel, setArchived, setMute, setPinned, startDm };
 }

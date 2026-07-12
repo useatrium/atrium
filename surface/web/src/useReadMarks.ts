@@ -1,9 +1,5 @@
 import { useCallback, useEffect, useRef } from 'react';
-import {
-  randomId,
-  type AppAction,
-  type EnqueueOpInput,
-} from '@atrium/surface-client';
+import { randomId, type AppAction, type EnqueueOpInput } from '@atrium/surface-client';
 
 type ReadMarkEnqueue = (input: EnqueueOpInput<'read.mark'>) => Promise<unknown>;
 type DispatchAppAction = (action: AppAction) => void;
@@ -30,10 +26,7 @@ export function useReadMarks({
   const readTimersRef = useRef<Record<string, PendingReadMark>>({});
 
   const noteReadCursor = useCallback((channelId: string, lastReadEventId: number) => {
-    lastReadSentRef.current[channelId] = Math.max(
-      lastReadSentRef.current[channelId] ?? 0,
-      lastReadEventId,
-    );
+    lastReadSentRef.current[channelId] = Math.max(lastReadSentRef.current[channelId] ?? 0, lastReadEventId);
   }, []);
 
   const markRead = useCallback(

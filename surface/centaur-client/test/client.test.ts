@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
-import { CentaurApiError, CentaurClient } from "../src/client.js";
-import { parseSseStream } from "../src/stream.js";
+import { describe, expect, it } from 'vitest';
+import { CentaurApiError, CentaurClient } from '../src/client.js';
+import { parseSseStream } from '../src/stream.js';
 
 function captureFetch(captured: { url?: string; body?: unknown; headers?: Headers }) {
   return (async (url: URL | RequestInfo, init?: RequestInit) => {
@@ -9,273 +9,269 @@ function captureFetch(captured: { url?: string; body?: unknown; headers?: Header
     captured.headers = new Headers(init?.headers);
     return new Response(JSON.stringify({ ok: true }), {
       status: 200,
-      headers: { "content-type": "application/json" },
+      headers: { 'content-type': 'application/json' },
     });
   }) as typeof fetch;
 }
 
-describe("CentaurClient endpoint paths", () => {
-  it("maps spawn, message, and execute calls onto api-rs session endpoints", async () => {
+describe('CentaurClient endpoint paths', () => {
+  it('maps spawn, message, and execute calls onto api-rs session endpoints', async () => {
     const bodies: unknown[] = [];
     const urls: string[] = [];
     const client = new CentaurClient({
-      baseUrl: "http://centaur.test:8000",
-      apiKey: "k",
+      baseUrl: 'http://centaur.test:8000',
+      apiKey: 'k',
       fetchImpl: (async (url: URL | RequestInfo, init?: RequestInit) => {
         urls.push(String(url));
         bodies.push(init?.body ? JSON.parse(String(init.body)) : undefined);
-        return new Response(JSON.stringify({ thread_key: "thread:1", execution_id: "exe_1" }), {
+        return new Response(JSON.stringify({ thread_key: 'thread:1', execution_id: 'exe_1' }), {
           status: 200,
-          headers: { "content-type": "application/json" },
+          headers: { 'content-type': 'application/json' },
         });
       }) as typeof fetch,
     });
 
-    await client.spawn("thread:1", "codex", { spawnId: "spawn-1" });
-    await client.postMessage("thread:1", 1, [{ type: "text", text: "hi" }], {}, { messageId: "msg-1" });
-    await client.execute("thread:1", 1, "codex", {
-      executeId: "exec-1",
+    await client.spawn('thread:1', 'codex', { spawnId: 'spawn-1' });
+    await client.postMessage('thread:1', 1, [{ type: 'text', text: 'hi' }], {}, { messageId: 'msg-1' });
+    await client.execute('thread:1', 1, 'codex', {
+      executeId: 'exec-1',
       inputLines: ['{"type":"user"}'],
     });
 
     expect(urls).toEqual([
-      "http://centaur.test:8000/api/session/thread%3A1",
-      "http://centaur.test:8000/api/session/thread%3A1/messages",
-      "http://centaur.test:8000/api/session/thread%3A1/execute",
+      'http://centaur.test:8000/api/session/thread%3A1',
+      'http://centaur.test:8000/api/session/thread%3A1/messages',
+      'http://centaur.test:8000/api/session/thread%3A1/execute',
     ]);
     expect(bodies).toEqual([
       {
-        harness_type: "codex",
-        metadata: { source: "atrium", harness: "codex", spawn_id: "spawn-1" },
+        harness_type: 'codex',
+        metadata: { source: 'atrium', harness: 'codex', spawn_id: 'spawn-1' },
       },
       {
         messages: [
           {
-            client_message_id: "msg-1",
-            role: "user",
-            parts: [{ type: "text", text: "hi" }],
+            client_message_id: 'msg-1',
+            role: 'user',
+            parts: [{ type: 'text', text: 'hi' }],
             metadata: {},
           },
         ],
       },
       {
-        idempotency_key: "exec-1",
-        metadata: { source: "atrium", harness: "codex" },
+        idempotency_key: 'exec-1',
+        metadata: { source: 'atrium', harness: 'codex' },
         input_lines: ['{"type":"user"}'],
       },
     ]);
   });
 
-  it("adds caller-provided trace headers to requests", async () => {
+  it('adds caller-provided trace headers to requests', async () => {
     const captured: { headers?: Headers } = {};
     const client = new CentaurClient({
-      baseUrl: "http://centaur.test:8000",
-      apiKey: "k",
+      baseUrl: 'http://centaur.test:8000',
+      apiKey: 'k',
       fetchImpl: captureFetch(captured),
       headers: () => ({
-        traceparent: "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01",
+        traceparent: '00-0123456789abcdef0123456789abcdef-0123456789abcdef-01',
         empty: undefined,
       }),
     });
 
-    await client.spawn("thread:1", "codex");
+    await client.spawn('thread:1', 'codex');
 
-    expect(captured.headers?.get("x-api-key")).toBe("k");
-    expect(captured.headers?.get("traceparent")).toBe(
-      "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01",
-    );
-    expect(captured.headers?.has("empty")).toBe(false);
+    expect(captured.headers?.get('x-api-key')).toBe('k');
+    expect(captured.headers?.get('traceparent')).toBe('00-0123456789abcdef0123456789abcdef-0123456789abcdef-01');
+    expect(captured.headers?.has('empty')).toBe(false);
   });
 
-  it("includes repos in the spawn body when provided, omits the key otherwise", async () => {
+  it('includes repos in the spawn body when provided, omits the key otherwise', async () => {
     const withRepos: { url?: string; body?: unknown } = {};
     const clientA = new CentaurClient({
-      baseUrl: "http://centaur.test:8000",
-      apiKey: "k",
+      baseUrl: 'http://centaur.test:8000',
+      apiKey: 'k',
       fetchImpl: captureFetch(withRepos),
     });
-    await clientA.spawn("thread:1", "codex", {
-      spawnId: "spawn-1",
-      repos: [{ repo: "owner/name", ref: "main", private: true }],
+    await clientA.spawn('thread:1', 'codex', {
+      spawnId: 'spawn-1',
+      repos: [{ repo: 'owner/name', ref: 'main', private: true }],
     });
     expect(withRepos.body).toEqual({
-      harness_type: "codex",
-      metadata: { source: "atrium", harness: "codex", spawn_id: "spawn-1" },
-      repos: [{ repo: "owner/name", ref: "main", private: true }],
+      harness_type: 'codex',
+      metadata: { source: 'atrium', harness: 'codex', spawn_id: 'spawn-1' },
+      repos: [{ repo: 'owner/name', ref: 'main', private: true }],
     });
 
     const noRepos: { url?: string; body?: unknown } = {};
     const clientB = new CentaurClient({
-      baseUrl: "http://centaur.test:8000",
-      apiKey: "k",
+      baseUrl: 'http://centaur.test:8000',
+      apiKey: 'k',
       fetchImpl: captureFetch(noRepos),
     });
-    await clientB.spawn("thread:1", "codex", { spawnId: "spawn-1" });
+    await clientB.spawn('thread:1', 'codex', { spawnId: 'spawn-1' });
     expect(noRepos.body).toEqual({
-      harness_type: "codex",
-      metadata: { source: "atrium", harness: "codex", spawn_id: "spawn-1" },
+      harness_type: 'codex',
+      metadata: { source: 'atrium', harness: 'codex', spawn_id: 'spawn-1' },
     });
   });
 
-  it("merges caller-provided metadata into the spawn body", async () => {
+  it('merges caller-provided metadata into the spawn body', async () => {
     const captured: { url?: string; body?: unknown } = {};
     const client = new CentaurClient({
-      baseUrl: "http://centaur.test:8000",
-      apiKey: "k",
+      baseUrl: 'http://centaur.test:8000',
+      apiKey: 'k',
       fetchImpl: captureFetch(captured),
     });
 
-    await client.spawn("thread:1", "codex", {
-      spawnId: "spawn-1",
+    await client.spawn('thread:1', 'codex', {
+      spawnId: 'spawn-1',
       metadata: {
-        atrium_workspace_id: "workspace-1",
-        atrium_user_id: "user-1",
-        github_identity_mode: "automatic",
+        atrium_workspace_id: 'workspace-1',
+        atrium_user_id: 'user-1',
+        github_identity_mode: 'automatic',
       },
     });
 
     expect(captured.body).toEqual({
-      harness_type: "codex",
+      harness_type: 'codex',
       metadata: {
-        source: "atrium",
-        harness: "codex",
-        atrium_workspace_id: "workspace-1",
-        atrium_user_id: "user-1",
-        github_identity_mode: "automatic",
-        spawn_id: "spawn-1",
+        source: 'atrium',
+        harness: 'codex',
+        atrium_workspace_id: 'workspace-1',
+        atrium_user_id: 'user-1',
+        github_identity_mode: 'automatic',
+        spawn_id: 'spawn-1',
       },
     });
   });
 
-  it("throws typed api errors with Centaur error codes when present", async () => {
+  it('throws typed api errors with Centaur error codes when present', async () => {
     const client = new CentaurClient({
-      baseUrl: "http://centaur.test:8000",
-      apiKey: "k",
+      baseUrl: 'http://centaur.test:8000',
+      apiKey: 'k',
       fetchImpl: (async () =>
-        new Response(JSON.stringify({ code: "ASSIGNMENT_GENERATION_STALE" }), {
+        new Response(JSON.stringify({ code: 'ASSIGNMENT_GENERATION_STALE' }), {
           status: 409,
-          statusText: "Conflict",
-          headers: { "content-type": "application/json" },
+          statusText: 'Conflict',
+          headers: { 'content-type': 'application/json' },
         })) as typeof fetch,
     });
 
-    await expect(client.execute("thread:1", 1, "codex")).rejects.toMatchObject({
+    await expect(client.execute('thread:1', 1, 'codex')).rejects.toMatchObject({
       status: 409,
-      code: "ASSIGNMENT_GENERATION_STALE",
+      code: 'ASSIGNMENT_GENERATION_STALE',
     });
-    await expect(client.execute("thread:1", 1, "codex")).rejects.toBeInstanceOf(CentaurApiError);
+    await expect(client.execute('thread:1', 1, 'codex')).rejects.toBeInstanceOf(CentaurApiError);
   });
 
-  it("extracts nested Centaur error codes from error envelopes", async () => {
+  it('extracts nested Centaur error codes from error envelopes', async () => {
     const client = new CentaurClient({
-      baseUrl: "http://centaur.test:8000",
-      apiKey: "k",
+      baseUrl: 'http://centaur.test:8000',
+      apiKey: 'k',
       fetchImpl: (async () =>
-        new Response(JSON.stringify({ error: { code: "EXECUTION_NOT_FOUND", message: "missing" } }), {
+        new Response(JSON.stringify({ error: { code: 'EXECUTION_NOT_FOUND', message: 'missing' } }), {
           status: 404,
-          statusText: "Not Found",
-          headers: { "content-type": "application/json" },
+          statusText: 'Not Found',
+          headers: { 'content-type': 'application/json' },
         })) as typeof fetch,
     });
 
-    await expect(client.execute("thread:1", 1, "codex")).rejects.toMatchObject({
+    await expect(client.execute('thread:1', 1, 'codex')).rejects.toMatchObject({
       status: 404,
-      code: "EXECUTION_NOT_FOUND",
+      code: 'EXECUTION_NOT_FOUND',
     });
   });
 
-  it("rejects successful Centaur responses that are not JSON objects", async () => {
+  it('rejects successful Centaur responses that are not JSON objects', async () => {
     const client = new CentaurClient({
-      baseUrl: "http://centaur.test:8000",
-      apiKey: "k",
+      baseUrl: 'http://centaur.test:8000',
+      apiKey: 'k',
       fetchImpl: (async () =>
-        new Response(JSON.stringify(["not", "an", "object"]), {
+        new Response(JSON.stringify(['not', 'an', 'object']), {
           status: 200,
-          headers: { "content-type": "application/json" },
+          headers: { 'content-type': 'application/json' },
         })) as typeof fetch,
     });
 
-    await expect(client.execute("thread:1", 1, "codex")).rejects.toMatchObject({
-      code: "invalid_json_object_response",
+    await expect(client.execute('thread:1', 1, 'codex')).rejects.toMatchObject({
+      code: 'invalid_json_object_response',
     });
   });
 
-  it("maps cancelling release calls onto the api-rs session cancel endpoint", async () => {
+  it('maps cancelling release calls onto the api-rs session cancel endpoint', async () => {
     const captured: { url?: string; body?: unknown } = {};
     const client = new CentaurClient({
-      baseUrl: "http://centaur.test:8000",
-      apiKey: "k",
+      baseUrl: 'http://centaur.test:8000',
+      apiKey: 'k',
       fetchImpl: captureFetch(captured),
     });
-    await expect(client.release("probe:x/1", "rel-1", false)).resolves.toMatchObject({
+    await expect(client.release('probe:x/1', 'rel-1', false)).resolves.toMatchObject({
       ok: true,
       cancel_inflight: false,
     });
     expect(captured.url).toBeUndefined();
 
-    await expect(client.release("probe:x/1", "rel-1", true)).resolves.toMatchObject({
+    await expect(client.release('probe:x/1', 'rel-1', true)).resolves.toMatchObject({
       ok: true,
       cancel_inflight: true,
     });
-    expect(captured.url).toBe("http://centaur.test:8000/api/session/probe%3Ax%2F1/cancel");
-    expect(captured.body).toEqual({ release_id: "rel-1", cancel_inflight: true });
+    expect(captured.url).toBe('http://centaur.test:8000/api/session/probe%3Ax%2F1/cancel');
+    expect(captured.body).toEqual({ release_id: 'rel-1', cancel_inflight: true });
   });
 
-  it("rejects cancelling release calls when api-rs reports a stop failure", async () => {
+  it('rejects cancelling release calls when api-rs reports a stop failure', async () => {
     const client = new CentaurClient({
-      baseUrl: "http://centaur.test:8000",
-      apiKey: "k",
+      baseUrl: 'http://centaur.test:8000',
+      apiKey: 'k',
       fetchImpl: (async () =>
-        new Response(JSON.stringify({ ok: false, stop_error: "delete failed" }), {
+        new Response(JSON.stringify({ ok: false, stop_error: 'delete failed' }), {
           status: 200,
-          headers: { "content-type": "application/json" },
+          headers: { 'content-type': 'application/json' },
         })) as typeof fetch,
     });
 
-    await expect(client.release("thread:1", "rel-1", true)).rejects.toThrow(
-      "Centaur session cancel failed: delete failed",
+    await expect(client.release('thread:1', 'rel-1', true)).rejects.toThrow(
+      'Centaur session cancel failed: delete failed',
     );
   });
 
-  it("rejects turn interrupts when api-rs reports an interrupt failure", async () => {
+  it('rejects turn interrupts when api-rs reports an interrupt failure', async () => {
     const client = new CentaurClient({
-      baseUrl: "http://centaur.test:8000",
-      apiKey: "k",
+      baseUrl: 'http://centaur.test:8000',
+      apiKey: 'k',
       fetchImpl: (async () =>
-        new Response(JSON.stringify({ ok: false, interrupted: false, error: "signal failed" }), {
+        new Response(JSON.stringify({ ok: false, interrupted: false, error: 'signal failed' }), {
           status: 200,
-          headers: { "content-type": "application/json" },
+          headers: { 'content-type': 'application/json' },
         })) as typeof fetch,
     });
 
-    await expect(client.interruptTurn("thread:1")).rejects.toMatchObject({
+    await expect(client.interruptTurn('thread:1')).rejects.toMatchObject({
       status: 502,
-      code: "centaur_interrupt_failed",
+      code: 'centaur_interrupt_failed',
     });
   });
 
-  it("maps question answers onto the api-rs execution answer endpoint", async () => {
+  it('maps question answers onto the api-rs execution answer endpoint', async () => {
     const captured: { url?: string; body?: unknown } = {};
     const client = new CentaurClient({
-      baseUrl: "http://centaur.test:8000",
-      apiKey: "k",
+      baseUrl: 'http://centaur.test:8000',
+      apiKey: 'k',
       fetchImpl: captureFetch(captured),
     });
     await expect(
-      client.answerQuestion("thread:1", "exe/1", "q-1", { choice: { answers: ["A"] } }),
+      client.answerQuestion('thread:1', 'exe/1', 'q-1', { choice: { answers: ['A'] } }),
     ).resolves.toMatchObject({ ok: true });
-    expect(captured.url).toBe(
-      "http://centaur.test:8000/api/session/thread%3A1/executions/exe%2F1/answer",
-    );
+    expect(captured.url).toBe('http://centaur.test:8000/api/session/thread%3A1/executions/exe%2F1/answer');
     expect(captured.body).toEqual({
-      question_id: "q-1",
-      answers: { choice: { answers: ["A"] } },
+      question_id: 'q-1',
+      answers: { choice: { answers: ['A'] } },
     });
   });
 });
 
-describe("SSE id-less frame handling", () => {
-  it("parser surfaces frames without ids; normalize layer must skip them (no throw)", async () => {
+describe('SSE id-less frame handling', () => {
+  it('parser surfaces frames without ids; normalize layer must skip them (no throw)', async () => {
     const bytes = new TextEncoder().encode(
       'event: ping\ndata: {"type":"ping"}\n\n' +
         'event: execution_state\ndata: {"type":"execution.state","status":"completed","event_id":7}\n\n',

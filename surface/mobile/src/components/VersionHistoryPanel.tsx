@@ -1,19 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { JSX } from 'react';
-import {
-  ActivityIndicator,
-  FlatList,
-  Modal,
-  Pressable,
-  ScrollView,
-  Text,
-  View,
-} from 'react-native';
+import { ActivityIndicator, FlatList, Modal, Pressable, ScrollView, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   formatBytes,
   formatRelativeTimestamp,
+  lineDiffOps,
   type Api,
   type HubFile,
   type HubFileVersion,
@@ -21,8 +14,6 @@ import {
 import { useAccessibilityAnnouncement, useModalAccessibilityFocus } from '../lib/accessibility';
 import { font, radius, space, useTheme } from '../lib/theme';
 import { TimestampText } from './TimestampText';
-
-type DiffLine = { kind: 'context' | 'add' | 'remove'; text: string };
 
 function authorLabel(author: string): string {
   const stripped = author
@@ -32,74 +23,8 @@ function authorLabel(author: string): string {
   return stripped || author || 'Unknown';
 }
 
-function splitLines(text: string): string[] {
-  return text.replace(/\r\n/g, '\n').split('\n');
-}
-
 function bytesLabel(value: number | null | undefined): string {
   return value == null ? 'Unknown size' : formatBytes(value);
-}
-
-function simpleLineDiff(oldText: string, newText: string): DiffLine[] {
-  const oldLines = splitLines(oldText);
-  const newLines = splitLines(newText);
-  const max = Math.max(oldLines.length, newLines.length);
-  const out: DiffLine[] = [];
-  for (let index = 0; index < max; index += 1) {
-    const oldLine = oldLines[index];
-    const newLine = newLines[index];
-    if (oldLine === newLine) {
-      out.push({ kind: 'context', text: oldLine ?? '' });
-    } else {
-      if (oldLine !== undefined) out.push({ kind: 'remove', text: oldLine });
-      if (newLine !== undefined) out.push({ kind: 'add', text: newLine });
-    }
-  }
-  return out;
-}
-
-function lineDiff(oldText: string, newText: string): DiffLine[] {
-  const oldLines = splitLines(oldText);
-  const newLines = splitLines(newText);
-  if (oldLines.length * newLines.length > 200_000) return simpleLineDiff(oldText, newText);
-
-  const dp = Array.from({ length: oldLines.length + 1 }, () =>
-    Array<number>(newLines.length + 1).fill(0),
-  );
-  for (let i = oldLines.length - 1; i >= 0; i -= 1) {
-    for (let j = newLines.length - 1; j >= 0; j -= 1) {
-      dp[i]![j] =
-        oldLines[i] === newLines[j]
-          ? dp[i + 1]![j + 1]! + 1
-          : Math.max(dp[i + 1]![j]!, dp[i]![j + 1]!);
-    }
-  }
-
-  const out: DiffLine[] = [];
-  let i = 0;
-  let j = 0;
-  while (i < oldLines.length && j < newLines.length) {
-    if (oldLines[i] === newLines[j]) {
-      out.push({ kind: 'context', text: oldLines[i] ?? '' });
-      i += 1;
-      j += 1;
-    } else if (dp[i + 1]![j]! >= dp[i]![j + 1]!) {
-      out.push({ kind: 'remove', text: oldLines[i] ?? '' });
-      i += 1;
-    } else {
-      out.push({ kind: 'add', text: newLines[j] ?? '' });
-      j += 1;
-    }
-  }
-  while (i < oldLines.length) {
-    out.push({ kind: 'remove', text: oldLines[i] ?? '' });
-    i += 1;
-  }
-  while (j < newLines.length) {
-    out.push({ kind: 'add', text: newLines[j] ?? '' });
-    j += 1;
-  }
-  return out;
 }
 
 function errorMessage(error: unknown, fallback: string): string {
@@ -116,11 +41,7 @@ function VersionBadge({ version }: { version: HubFileVersion }) {
         borderWidth: 1,
         borderColor: conflict ? colors.dangerBorder : version.isLatest ? colors.accent : colors.border,
         borderRadius: radius.sm,
-        backgroundColor: conflict
-          ? colors.dangerSurface
-          : version.isLatest
-            ? colors.accentBg
-            : colors.bgPressed,
+        backgroundColor: conflict ? colors.dangerSurface : version.isLatest ? colors.accentBg : colors.bgPressed,
         paddingHorizontal: space.sm,
         paddingVertical: 2,
       }}
@@ -179,7 +100,7 @@ function DiffViewer({
   const mountedRef = useRef(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [lines, setLines] = useState<DiffLine[]>([]);
+  const [lines, setLines] = useState<ReturnType<typeof lineDiffOps>>([]);
 
   useAccessibilityAnnouncement(error);
 
@@ -211,7 +132,7 @@ function DiffViewer({
         return Promise.all([selectedResponse.text(), latestResponse.text()]);
       })
       .then(([selectedText, latestText]) => {
-        if (!cancelled && mountedRef.current) setLines(lineDiff(selectedText, latestText));
+        if (!cancelled && mountedRef.current) setLines(lineDiffOps(selectedText, latestText));
       })
       .catch((err: unknown) => {
         if (!cancelled && mountedRef.current) setError(errorMessage(err, 'Could not load version diff.'));
@@ -265,15 +186,10 @@ function DiffViewer({
   if (error) return <InlineNotice tone="error" message={error} />;
 
   return (
-    <ScrollView
-      horizontal
-      style={{ borderWidth: 1, borderColor: colors.border, borderRadius: radius.md }}
-    >
+    <ScrollView horizontal style={{ borderWidth: 1, borderColor: colors.border, borderRadius: radius.md }}>
       <View style={{ minWidth: '100%', backgroundColor: colors.bg }}>
         {lines.length === 0 ? (
-          <Text style={{ color: colors.textMuted, fontSize: font.sm, padding: space.md }}>
-            No text changes.
-          </Text>
+          <Text style={{ color: colors.textMuted, fontSize: font.sm, padding: space.md }}>No text changes.</Text>
         ) : (
           lines.slice(0, 600).map((line, index) => {
             const added = line.kind === 'add';
@@ -283,11 +199,7 @@ function DiffViewer({
                 key={`${index}-${line.kind}`}
                 style={{
                   flexDirection: 'row',
-                  backgroundColor: added
-                    ? 'rgba(52, 211, 153, 0.14)'
-                    : removed
-                      ? colors.dangerSurface
-                      : colors.bg,
+                  backgroundColor: added ? 'rgba(52, 211, 153, 0.14)' : removed ? colors.dangerSurface : colors.bg,
                   borderBottomWidth: 1,
                   borderBottomColor: colors.borderSoft,
                 }}
@@ -349,11 +261,7 @@ function VersionRow({
 }) {
   const { colors } = useTheme();
   const revertable =
-    canManage &&
-    !fileTombstoned &&
-    !version.isLatest &&
-    version.kind !== 'deleted' &&
-    version.status === 'normal';
+    canManage && !fileTombstoned && !version.isLatest && version.kind !== 'deleted' && version.status === 'normal';
   const createdAtText = formatRelativeTimestamp(version.createdAt) || version.createdAt;
 
   return (
@@ -370,9 +278,7 @@ function VersionRow({
       <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: space.sm }}>
         <View style={{ flex: 1, minWidth: 0 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm }}>
-            <Text style={{ color: colors.text, fontSize: font.sm, fontWeight: '800' }}>
-              v{version.seq}
-            </Text>
+            <Text style={{ color: colors.text, fontSize: font.sm, fontWeight: '800' }}>v{version.seq}</Text>
             <VersionBadge version={version} />
           </View>
           <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: space.xs, minWidth: 0 }}>
@@ -408,9 +314,7 @@ function VersionRow({
               paddingHorizontal: space.md,
             })}
           >
-            <Text style={{ color: colors.textSecondary, fontSize: font.xs, fontWeight: '800' }}>
-              Compare
-            </Text>
+            <Text style={{ color: colors.textSecondary, fontSize: font.xs, fontWeight: '800' }}>Compare</Text>
           </Pressable>
         ) : null}
         {revertable ? (
@@ -463,10 +367,7 @@ export function VersionHistoryPanel(props: {
   const [restoringFile, setRestoringFile] = useState(false);
   const [compareSeq, setCompareSeq] = useState<number | null>(null);
 
-  const latestVersion = useMemo(
-    () => versions.find((version) => version.isLatest) ?? versions[0] ?? null,
-    [versions],
-  );
+  const latestVersion = useMemo(() => versions.find((version) => version.isLatest) ?? versions[0] ?? null, [versions]);
   const selectedVersion = useMemo(
     () => versions.find((version) => version.seq === compareSeq) ?? null,
     [compareSeq, versions],
@@ -546,12 +447,7 @@ export function VersionHistoryPanel(props: {
   }, [api, busySeq, file.artifactId, loadVersions, onChanged, restoringFile]);
 
   return (
-    <Modal
-      visible
-      transparent
-      animationType={reduceMotion ? 'none' : 'fade'}
-      onRequestClose={onClose}
-    >
+    <Modal visible transparent animationType={reduceMotion ? 'none' : 'fade'} onRequestClose={onClose}>
       <Pressable
         accessible={false}
         importantForAccessibility="no"
@@ -667,14 +563,10 @@ export function VersionHistoryPanel(props: {
                 {loading ? (
                   <>
                     <ActivityIndicator color={colors.textMuted} />
-                    <Text style={{ color: colors.textMuted, fontSize: font.sm }}>
-                      Loading versions...
-                    </Text>
+                    <Text style={{ color: colors.textMuted, fontSize: font.sm }}>Loading versions...</Text>
                   </>
                 ) : (
-                  <Text style={{ color: colors.textMuted, fontSize: font.sm }}>
-                    No versions found.
-                  </Text>
+                  <Text style={{ color: colors.textMuted, fontSize: font.sm }}>No versions found.</Text>
                 )}
               </View>
             }
@@ -703,9 +595,7 @@ export function VersionHistoryPanel(props: {
             }}
           >
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm }}>
-              <Text style={{ flex: 1, color: colors.text, fontSize: font.sm, fontWeight: '800' }}>
-                Diff
-              </Text>
+              <Text style={{ flex: 1, color: colors.text, fontSize: font.sm, fontWeight: '800' }}>Diff</Text>
               {selectedVersion && latestVersion ? (
                 <Text style={{ color: colors.textMuted, fontSize: font.xs }}>
                   v{selectedVersion.seq} {'->'} v{latestVersion.seq}

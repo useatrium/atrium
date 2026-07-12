@@ -1,13 +1,12 @@
 import { useId, type CSSProperties } from 'react';
 import type { QuestionItem } from '@atrium/centaur-client';
+import { questionAnswerSummaryText } from '@atrium/surface-client';
 import type { SessionQuestionAnswerSummary, SessionQuestionEvent } from './types';
 
 // Skip offscreen rendering work so 500+ item transcripts scroll smoothly.
 const ITEM_VIS: CSSProperties = { contentVisibility: 'auto', containIntrinsicSize: 'auto 32px' };
 
-export function groupQuestionEventsByQuestion(
-  events: SessionQuestionEvent[],
-): Map<string, SessionQuestionEvent[]> {
+export function groupQuestionEventsByQuestion(events: SessionQuestionEvent[]): Map<string, SessionQuestionEvent[]> {
   const grouped = new Map<string, SessionQuestionEvent[]>();
   for (const event of events) {
     const current = grouped.get(event.questionId) ?? [];
@@ -15,7 +14,10 @@ export function groupQuestionEventsByQuestion(
     grouped.set(event.questionId, current);
   }
   for (const [questionId, current] of grouped) {
-    grouped.set(questionId, [...current].sort((a, b) => a.id - b.id));
+    grouped.set(
+      questionId,
+      [...current].sort((a, b) => a.id - b.id),
+    );
   }
   return grouped;
 }
@@ -58,28 +60,17 @@ function questionStatusLabel(
   return { label: 'Answered', tone: 'answered' };
 }
 
-function answerValueText(summary: SessionQuestionAnswerSummary): string {
-  if (summary.answers.length > 0) return summary.answers.join('\n');
-  return summary.count === 1 ? '1 answer recorded' : `${summary.count} answers recorded`;
-}
-
 function hhmm(iso: string): string {
   const date = new Date(iso);
   return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
 }
 
-export function QuestionTranscriptCard({
-  item,
-  events,
-}: {
-  item: QuestionItem;
-  events: SessionQuestionEvent[];
-}) {
+export function QuestionTranscriptCard({ item, events }: { item: QuestionItem; events: SessionQuestionEvent[] }) {
   const labelId = useId();
   const requested = latestQuestionEvent(events, 'requested');
   const answered = latestQuestionEvent(events, 'answered');
   const resolved = latestQuestionEvent(events, 'resolved');
-  const prompts = item.questions.length > 0 ? item.questions : requested?.questions ?? [];
+  const prompts = item.questions.length > 0 ? item.questions : (requested?.questions ?? []);
   const status = questionStatusLabel(item, events);
   const answerSummaries = answerByPromptId(events);
   const statusClass =
@@ -102,7 +93,9 @@ export function QuestionTranscriptCard({
         <span id={labelId} className="font-semibold text-fg">
           Agent question
         </span>
-        <span className={`rounded-full border px-2 py-0.5 text-3xs font-semibold uppercase tracking-wide ${statusClass}`}>
+        <span
+          className={`rounded-full border px-2 py-0.5 text-3xs font-semibold uppercase tracking-wide ${statusClass}`}
+        >
           {status.label}
         </span>
         {answered && (
@@ -141,11 +134,9 @@ export function QuestionTranscriptCard({
                 ) : null}
                 {summary && (
                   <div className="rounded border border-accent-border-muted/40 bg-accent-tint/10 px-2 py-1">
-                    <div className="text-3xs font-semibold uppercase tracking-wide text-accent-text-strong">
-                      Answer
-                    </div>
+                    <div className="text-3xs font-semibold uppercase tracking-wide text-accent-text-strong">Answer</div>
                     <div className="mt-0.5 whitespace-pre-wrap break-words text-xs text-fg-body">
-                      {answerValueText(summary)}
+                      {questionAnswerSummaryText(summary)}
                     </div>
                   </div>
                 )}
@@ -153,16 +144,12 @@ export function QuestionTranscriptCard({
             );
           })
         ) : (
-          <div className="whitespace-pre-wrap break-words text-sm text-fg">
-            Agent asked a question.
-          </div>
+          <div className="whitespace-pre-wrap break-words text-sm text-fg">Agent asked a question.</div>
         )}
       </div>
 
       <details className="mt-2 text-2xs text-fg-muted">
-        <summary className="cursor-pointer text-fg-tertiary hover:text-fg-body">
-          Show event details
-        </summary>
+        <summary className="cursor-pointer text-fg-tertiary hover:text-fg-body">Show event details</summary>
         <dl className="mt-1 grid grid-cols-[auto_1fr] gap-x-2 gap-y-1">
           <dt>Question id</dt>
           <dd className="break-all font-mono">{item.questionId}</dd>

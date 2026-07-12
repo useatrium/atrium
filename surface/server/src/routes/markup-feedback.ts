@@ -1,9 +1,10 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { Schema } from 'effect';
 import { ArtifactLedger } from '../artifact-ledger.js';
+import type { AppMutationContext } from '../app-mutations.js';
 import { normalizeMime } from '../artifact-route-utils.js';
 import { writeBackArtifactById } from '../artifact-writeback.js';
-import type { Db, DbClient } from '../db.js';
+import type { Db } from '../db.js';
 import { DomainError, type UserRef, type WireEvent } from '../events.js';
 import {
   composeFeedbackSteer,
@@ -17,19 +18,10 @@ import { getObjectBytes, headObject, uploadObject } from '../s3.js';
 import { decodeRouteBody, decodeRouteParams } from '../route-schema.js';
 import type { SessionRuns } from '../session-runs.js';
 
-export interface MarkupFeedbackRouteDeps {
+export interface MarkupFeedbackRouteDeps extends AppMutationContext {
   pool: Db;
   sessionRuns: SessionRuns;
   requireUser(req: FastifyRequest, reply: FastifyReply): UserRef | null;
-  optionalOpId(body: unknown): string | undefined;
-  runMutation<T>(args: {
-    userId: string;
-    opId?: string;
-    opType: string;
-    body: unknown;
-    fn: (client: DbClient) => Promise<T>;
-    onApplied?: (response: T) => void | Promise<void>;
-  }): Promise<T>;
   publishEvent(event: WireEvent): void;
 }
 
@@ -71,10 +63,7 @@ function parseIntent(value: unknown): FeedbackIntent | null | undefined {
   return null;
 }
 
-export async function registerMarkupFeedbackRoutes(
-  app: FastifyInstance,
-  deps: MarkupFeedbackRouteDeps,
-): Promise<void> {
+export async function registerMarkupFeedbackRoutes(app: FastifyInstance, deps: MarkupFeedbackRouteDeps): Promise<void> {
   const { pool, sessionRuns, requireUser, optionalOpId, runMutation, publishEvent } = deps;
   const ledger = new ArtifactLedger(pool);
 
@@ -138,9 +127,7 @@ export async function registerMarkupFeedbackRoutes(
       return reply.code(410).send({ error: 'gone' });
     }
     if (current.isText !== true) {
-      return reply
-        .code(415)
-        .send({ error: 'binary_not_editable', mediaKind: current.mediaKind ?? 'binary' });
+      return reply.code(415).send({ error: 'binary_not_editable', mediaKind: current.mediaKind ?? 'binary' });
     }
 
     if (applyMode) {
@@ -176,11 +163,11 @@ export async function registerMarkupFeedbackRoutes(
               sourceEntryHandle,
               status: 'normal',
             });
-            const event = await sessionRuns.postUserMessageInTx(client, sessionId, user.id, text);
-            return { seq: current.seq, event };
+            const events = await sessionRuns.postUserMessageInTx(client, sessionId, user.id, text);
+            return { seq: current.seq, events };
           },
           onApplied: (result) => {
-            if (result.event) publishEvent(result.event);
+            for (const event of result.events) publishEvent(event);
             sessionRuns.afterPostUserMessage(sessionId);
           },
         });
@@ -250,16 +237,16 @@ export async function registerMarkupFeedbackRoutes(
             note: typeof body.note === 'string' ? body.note : undefined,
             status: write.status,
           });
-          const event = await sessionRuns.postUserMessageInTx(client, sessionId, user.id, text);
+          const events = await sessionRuns.postUserMessageInTx(client, sessionId, user.id, text);
           return {
             seq: write.seq,
             status: write.status as 'normal' | 'conflict',
             steered: true as const,
-            event,
+            events,
           };
         },
         onApplied: (result) => {
-          if (result.event) publishEvent(result.event);
+          for (const event of result.events) publishEvent(event);
           sessionRuns.afterPostUserMessage(sessionId);
         },
       });

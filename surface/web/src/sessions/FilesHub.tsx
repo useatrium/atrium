@@ -1,7 +1,14 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { JSX, KeyboardEvent } from 'react';
-import { containsCriticMarkup, type FileOrigin, type HubFile, type HubFileListResult, type HubFileVersionsResponse } from '@atrium/surface-client';
-import { MarkupPane, splitMarkdownFrontmatter, type MarkupPaneSource } from '../components/MarkupPane';
+import {
+  containsCriticMarkup,
+  splitMarkdownFrontmatter,
+  type FileOrigin,
+  type HubFile,
+  type HubFileListResult,
+  type HubFileVersionsResponse,
+} from '@atrium/surface-client';
+import { MarkupPane, type MarkupPaneSource } from '../components/MarkupPane';
 import { showErrorToast } from '../components/Toasts';
 import { Tooltip } from '../components/a11y';
 import { FileIcon, SearchIcon } from '../components/icons';
@@ -12,10 +19,19 @@ import {
   queryEntryReferencesForHandles,
   type EntryReferenceSummary,
 } from '../components/EntryReferencesChip';
-import { entryShareUrl } from '../lib/publicUrl';
 import { navigate, URL_PARAMS, useLocation } from '../router';
-import type { ArtifactConflict, ResolveChoice } from './ConflictSurface';
 import { EmptyState } from './EmptyState';
+import {
+  artifactContentUrl as contentUrl,
+  artifactEntryHandle,
+  artifactEntryUrl as absoluteArtifactEntryUrl,
+  cleanId,
+  createFileLightboxCallbacks,
+  lightboxPanelFromSearch,
+  pathWithSearch,
+  responseError,
+  updateFile,
+} from './fileHubCore';
 import type { Session } from './types';
 
 type SortMode = 'recent' | 'name' | 'size';
@@ -53,54 +69,10 @@ function asMediaKind(value: string | null): MediaKind {
   return value && mediaKindSet.has(value as MediaKind) ? (value as MediaKind) : 'opaque';
 }
 
-function cleanId(value: string | null | undefined): string {
-  return value?.trim() ?? '';
-}
-
-function pathWithSearch(path: string, params: URLSearchParams): string {
-  const query = params.toString();
-  return query ? `${path}?${query}` : path;
-}
-
-function lightboxPanelFromSearch(search: string): 'info' | 'history' | null {
-  const value = new URLSearchParams(search).get(URL_PARAMS.panel);
-  return value === 'info' || value === 'history' ? value : null;
-}
-
 function dirFromSearch(search: string): string {
   const value = new URLSearchParams(search).get(URL_PARAMS.dir);
   if (!value) return '';
-  return value
-    .replace(/\\/g, '/')
-    .replace(/\/+/g, '/')
-    .replace(/^\/+/, '')
-    .replace(/\/+$/, '');
-}
-
-function contentUrl(artifactId: string): string {
-  return `/api/files/artifact/${artifactId}/content`;
-}
-
-function artifactEntryHandle(artifactId: string): string {
-  return `art_${artifactId}`;
-}
-
-function absoluteArtifactEntryUrl(artifactId: string): string {
-  return entryShareUrl(artifactEntryHandle(artifactId));
-}
-
-async function responseError(response: Response, fallback: string): Promise<string> {
-  try {
-    const body = (await response.clone().json()) as { message?: string; error?: string };
-    return body.message ?? body.error ?? fallback;
-  } catch {
-    try {
-      const text = await response.text();
-      return text.trim() || fallback;
-    } catch {
-      return fallback;
-    }
-  }
+  return value.replace(/\\/g, '/').replace(/\/+/g, '/').replace(/^\/+/, '').replace(/\/+$/, '');
 }
 
 function formatBytes(bytes?: number | null): string {
@@ -125,12 +97,6 @@ function fileLocation(file: HubFile): string {
 function fileBadge(file: HubFile): string {
   const uploader = file.uploader?.name ?? file.uploader?.id;
   return uploader ? `${file.origin} / ${uploader}` : file.origin;
-}
-
-function resolvedTextForChoice(conflict: ArtifactConflict, choice: ResolveChoice): string {
-  if (choice.kind === 'left') return conflict.left.text;
-  if (choice.kind === 'right') return conflict.right.text;
-  return choice.text;
 }
 
 export function hubFileToPreview(f: HubFile): PreviewFile {
@@ -171,14 +137,6 @@ function queryFor(filters: Filters, q: string, cursor?: string | null): URLSearc
   params.set('limit', String(PAGE_SIZE));
   if (cursor) params.set('cursor', cursor);
   return params;
-}
-
-function mergeFile(files: HubFile[], next: HubFile): HubFile[] {
-  return files.map((file) => (file.artifactId === next.artifactId ? next : file));
-}
-
-function updateFile(files: HubFile[], artifactId: string, patch: Partial<HubFile>): HubFile[] {
-  return files.map((file) => (file.artifactId === artifactId ? { ...file, ...patch } : file));
 }
 
 function pathSegments(path: string): string[] {
@@ -335,13 +293,7 @@ function FolderTile({ folder, onOpen }: { folder: FolderEntry; onOpen: () => voi
   );
 }
 
-function FolderBreadcrumb({
-  currentDir,
-  onNavigate,
-}: {
-  currentDir: string;
-  onNavigate: (dir: string) => void;
-}) {
+function FolderBreadcrumb({ currentDir, onNavigate }: { currentDir: string; onNavigate: (dir: string) => void }) {
   const segments = dirSegments(currentDir);
 
   return (
@@ -646,10 +598,10 @@ function FileTile({
               key={label}
               className="inline-flex max-w-full items-center gap-1 rounded bg-surface-overlay px-1.5 py-px text-3xs text-fg-secondary"
             >
-                <span className="truncate">{label}</span>
-                {/* biome-ignore lint/a11y/useSemanticElements: keyboard-activatable inline label control; a button would alter compact chip layout. */}
-                <span
-                  role="button"
+              <span className="truncate">{label}</span>
+              {/* biome-ignore lint/a11y/useSemanticElements: keyboard-activatable inline label control; a button would alter compact chip layout. */}
+              <span
+                role="button"
                 tabIndex={0}
                 aria-label={`Remove ${label} label`}
                 className="text-fg-faint hover:text-danger-text"
@@ -740,7 +692,10 @@ export function FilesHub({
 }): JSX.Element {
   const location = useLocation();
   const currentDir = useMemo(() => dirFromSearch(location.search), [location.search]);
-  const urlFileArtifactId = useMemo(() => cleanId(new URLSearchParams(location.search).get(URL_PARAMS.file)), [location.search]);
+  const urlFileArtifactId = useMemo(
+    () => cleanId(new URLSearchParams(location.search).get(URL_PARAMS.file)),
+    [location.search],
+  );
   const urlPanel = useMemo(() => lightboxPanelFromSearch(location.search), [location.search]);
   const resolvedDefaultScope: FileHubScope =
     defaultScope === 'session' && sessionScope
@@ -775,9 +730,15 @@ export function FilesHub({
   const [error, setError] = useState<string | null>(null);
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const [markupSource, setMarkupSource] = useState<MarkupPaneSource | null>(null);
-  const [applyMarkupCandidate, setApplyMarkupCandidate] = useState<{ artifactId: string; path: string; seq: number } | null>(null);
+  const [applyMarkupCandidate, setApplyMarkupCandidate] = useState<{
+    artifactId: string;
+    path: string;
+    seq: number;
+  } | null>(null);
   const [markupNotice, setMarkupNotice] = useState<string | null>(null);
-  const [artifactEntryReferences, setArtifactEntryReferences] = useState<Record<string, EntryReferenceSummary | null>>({});
+  const [artifactEntryReferences, setArtifactEntryReferences] = useState<Record<string, EntryReferenceSummary | null>>(
+    {},
+  );
   const searchActive = search.trim().length > 0 || debouncedSearch.trim().length > 0;
   const artifactEntryReferencesFetchedAtRef = useRef(0);
   const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -940,27 +901,22 @@ export function FilesHub({
     return () => controller.abort();
   }, [debouncedSearch, endpoint, effectiveFilters, filesEventSeq]);
 
-  const replaceFile = useCallback((next: HubFile) => setFiles((current) => mergeFile(current, next)), []);
-
-  const toggleStar = useCallback(
-    async (file: HubFile) => {
-      const previous = file.starred;
-      setFiles((current) => updateFile(current, file.artifactId, { starred: !previous }));
-      try {
-        const response = await fetch(`/api/files/${file.artifactId}/star`, {
-          method: previous ? 'DELETE' : 'POST',
-          credentials: 'same-origin',
-        });
-        if (!response.ok) throw new Error(await responseError(response, 'Could not update star'));
-        const body = (await response.json()) as { artifactId: string; starred: boolean };
-        setFiles((current) => updateFile(current, body.artifactId, { starred: body.starred }));
-      } catch (err) {
-        setFiles((current) => updateFile(current, file.artifactId, { starred: previous }));
-        showErrorToast(err instanceof Error ? err.message : 'Could not update star');
-      }
-    },
-    [],
-  );
+  const toggleStar = useCallback(async (file: HubFile) => {
+    const previous = file.starred;
+    setFiles((current) => updateFile(current, file.artifactId, { starred: !previous }));
+    try {
+      const response = await fetch(`/api/files/${file.artifactId}/star`, {
+        method: previous ? 'DELETE' : 'POST',
+        credentials: 'same-origin',
+      });
+      if (!response.ok) throw new Error(await responseError(response, 'Could not update star'));
+      const body = (await response.json()) as { artifactId: string; starred: boolean };
+      setFiles((current) => updateFile(current, body.artifactId, { starred: body.starred }));
+    } catch (err) {
+      setFiles((current) => updateFile(current, file.artifactId, { starred: previous }));
+      showErrorToast(err instanceof Error ? err.message : 'Could not update star');
+    }
+  }, []);
 
   const addLabel = useCallback(async (file: HubFile) => {
     const label = window.prompt('Label this file')?.trim();
@@ -985,7 +941,9 @@ export function FilesHub({
 
   const removeLabel = useCallback(async (file: HubFile, label: string) => {
     const previous = file.labels;
-    setFiles((current) => updateFile(current, file.artifactId, { labels: previous.filter((value) => value !== label) }));
+    setFiles((current) =>
+      updateFile(current, file.artifactId, { labels: previous.filter((value) => value !== label) }),
+    );
     try {
       const response = await fetch(`/api/files/${file.artifactId}/labels/${encodeURIComponent(label)}`, {
         method: 'DELETE',
@@ -1011,11 +969,21 @@ export function FilesHub({
     }
   }, []);
 
+  const sharedCallbacks = useMemo(
+    () =>
+      createFileLightboxCallbacks({
+        files,
+        setFiles,
+        includeDeleted: filters.includeDeleted,
+        reload: loadFiles,
+        showError: showErrorToast,
+      }),
+    [files, filters.includeDeleted, loadFiles],
+  );
+
   const callbacks: LightboxCallbacks = useMemo(
     () => ({
-      onDownload: (file) => {
-        window.open(contentUrl(file.id), '_blank', 'noopener,noreferrer');
-      },
+      ...sharedCallbacks,
       onCopyLink: async (file) => {
         try {
           // Entry links unfurl as quote cards in chat, record references, and navigate via /e/;
@@ -1023,46 +991,6 @@ export function FilesHub({
           await navigator.clipboard.writeText(absoluteArtifactEntryUrl(file.id));
         } catch {
           showErrorToast('Could not copy file link.');
-        }
-      },
-      onRename: async (file, name) => {
-        const previous = files.find((item) => item.artifactId === file.id);
-        if (!previous) return;
-        setFiles((current) => updateFile(current, file.id, { name }));
-        try {
-          const response = await fetch(`/api/files/${file.id}`, {
-            method: 'PATCH',
-            credentials: 'same-origin',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ name }),
-          });
-          if (!response.ok) throw new Error(await responseError(response, response.status === 409 ? 'A file with that name already exists' : 'Could not rename file'));
-          const body = (await response.json()) as { artifactId: string; path: string; name: string };
-          setFiles((current) => updateFile(current, body.artifactId, { name: body.name, path: body.path }));
-        } catch (err) {
-          replaceFile(previous);
-          showErrorToast(err instanceof Error ? err.message : 'Could not rename file');
-          throw err;
-        }
-      },
-      onDelete: async (file) => {
-        const previous = files.find((item) => item.artifactId === file.id);
-        if (!previous) return;
-        if (filters.includeDeleted) setFiles((current) => updateFile(current, file.id, { tombstoned: true }));
-        else setFiles((current) => current.filter((item) => item.artifactId !== file.id));
-        try {
-          const response = await fetch(`/api/files/${file.id}`, { method: 'DELETE', credentials: 'same-origin' });
-          if (!response.ok) {
-            const fallback = response.status === 403 ? 'You do not have permission to delete this file' : 'Could not delete file';
-            throw new Error(await responseError(response, fallback));
-          }
-        } catch (err) {
-          setFiles((current) => {
-            const exists = current.some((item) => item.artifactId === previous.artifactId);
-            return exists ? mergeFile(current, previous) : [...current, previous];
-          });
-          showErrorToast(err instanceof Error ? err.message : 'Could not delete file');
-          throw err;
         }
       },
       onDiscuss: async (_file, draft) => {
@@ -1078,160 +1006,6 @@ export function FilesHub({
         } catch {
           showErrorToast('Could not copy file link.');
         }
-      },
-      onListVersions: async (file, signal) => {
-        try {
-          const response = await fetch(`/api/files/${file.id}/versions`, {
-            credentials: 'same-origin',
-            signal,
-          });
-          if (!response.ok) throw new Error(await responseError(response, 'Could not load version history'));
-          const body = (await response.json()) as HubFileVersionsResponse;
-          return body.versions;
-        } catch (err) {
-          if (!(err instanceof DOMException && err.name === 'AbortError')) {
-            showErrorToast(err instanceof Error ? err.message : 'Could not load version history');
-          }
-          throw err;
-        }
-      },
-      onFetchVersionContent: async (file, seq, signal) => {
-        const params = new URLSearchParams();
-        if (seq != null) params.set('at', String(seq));
-        const suffix = params.toString() ? `?${params.toString()}` : '';
-        try {
-          const response = await fetch(`/api/files/artifact/${file.id}/content${suffix}`, {
-            credentials: 'same-origin',
-            signal,
-          });
-          if (!response.ok) throw new Error(await responseError(response, 'Could not load version content'));
-          return await response.blob();
-        } catch (err) {
-          if (!(err instanceof DOMException && err.name === 'AbortError')) {
-            showErrorToast(err instanceof Error ? err.message : 'Could not load version content');
-          }
-          throw err;
-        }
-      },
-      onRevertVersion: async (file, seq) => {
-        try {
-          const response = await fetch(`/api/files/${file.id}/revert`, {
-            method: 'POST',
-            credentials: 'same-origin',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ seq }),
-          });
-          if (!response.ok)
-            throw new Error(
-              await responseError(
-                response,
-                response.status === 409 ? 'That version cannot be restored' : 'Could not restore version',
-              ),
-            );
-          const body = (await response.json()) as { artifactId: string; seq: number; tombstoned: false };
-          setFiles((current) => updateFile(current, body.artifactId, { versionSeq: body.seq, tombstoned: false }));
-          await loadFiles();
-        } catch (err) {
-          showErrorToast(err instanceof Error ? err.message : 'Could not restore version');
-          throw err;
-        }
-      },
-      onRestoreFile: async (file) => {
-        try {
-          const response = await fetch(`/api/files/${file.id}/restore`, {
-            method: 'POST',
-            credentials: 'same-origin',
-          });
-          if (!response.ok) throw new Error(await responseError(response, 'Could not restore file'));
-          const body = (await response.json()) as { artifactId: string; tombstoned: false };
-          setFiles((current) => updateFile(current, body.artifactId, { tombstoned: body.tombstoned }));
-          await loadFiles();
-        } catch (err) {
-          showErrorToast(err instanceof Error ? err.message : 'Could not restore file');
-          throw err;
-        }
-      },
-      onSaveText: async (file, text, baseSeq) => {
-        const response = await fetch(`/api/files/${file.id}/content`, {
-          method: 'PUT',
-          credentials: 'same-origin',
-          headers: {
-            'X-Artifact-Base-Seq': String(baseSeq),
-            'Content-Type': file.mime || 'text/plain',
-          },
-          body: text,
-        });
-
-        if (response.status === 409) {
-          const message = 'File changed on the server — reload and retry';
-          showErrorToast(message);
-          await loadFiles();
-          throw new Error(message);
-        }
-        if (response.status === 415) {
-          const message = 'This file cannot be edited as text.';
-          showErrorToast(message);
-          throw new Error(message);
-        }
-        if (response.status === 403) {
-          const message = "You don't have permission to edit this file.";
-          showErrorToast(message);
-          throw new Error(message);
-        }
-        if (!response.ok) {
-          const message = await responseError(response, 'Could not save file');
-          showErrorToast(message);
-          throw new Error(message);
-        }
-
-        const body = (await response.json()) as { seq: number; status: 'normal' | 'conflict' };
-        setFiles((current) => updateFile(current, file.id, { versionSeq: body.seq, tombstoned: false }));
-        await loadFiles();
-        return body;
-      },
-      onLoadConflict: async (file) => {
-        const response = await fetch(`/api/files/${file.id}/conflict`, {
-          credentials: 'same-origin',
-        });
-        if (!response.ok) {
-          const fallback = response.status === 404 ? 'No conflict found for this file' : 'Could not load file conflict';
-          const message = await responseError(response, fallback);
-          showErrorToast(message);
-          throw new Error(message);
-        }
-        return (await response.json()) as ArtifactConflict;
-      },
-      onResolveConflict: async (file, conflict, choice) => {
-        const headers: Record<string, string> = {
-          'X-Artifact-Base-Seq': String(conflict.conflictSeq),
-          'Content-Type': file.mime || 'text/plain',
-        };
-        if (
-          (choice.kind === 'left' && conflict.left.sha === null) ||
-          (choice.kind === 'right' && conflict.right.sha === null)
-        ) {
-          headers['X-Artifact-Delete'] = 'true';
-        }
-        const response = await fetch(`/api/files/${file.id}/resolve`, {
-          method: 'POST',
-          credentials: 'same-origin',
-          headers,
-          body: resolvedTextForChoice(conflict, choice),
-        });
-        if (response.status === 403) {
-          const message = "You don't have permission to edit this file.";
-          showErrorToast(message);
-          throw new Error(message);
-        }
-        if (!response.ok) {
-          const message = await responseError(response, 'Could not resolve file conflict');
-          showErrorToast(message);
-          throw new Error(message);
-        }
-        const body = (await response.json()) as { seq: number; status: string };
-        setFiles((current) => updateFile(current, file.id, { versionSeq: body.seq, tombstoned: false }));
-        await loadFiles();
-        return body;
       },
       onMarkup: async (file) => {
         if (!sessionId) return;
@@ -1264,9 +1038,8 @@ export function FilesHub({
           throw err;
         }
       },
-      canManage: () => true,
     }),
-    [channelId, files, filters.includeDeleted, loadFiles, onSeedChannelComposer, replaceFile, sessionId, showMarkupNotice, updateUrlParams, workspaceId],
+    [channelId, onSeedChannelComposer, sessionId, sharedCallbacks, showMarkupNotice, updateUrlParams, workspaceId],
   );
 
   const scopedFiles = useMemo(() => {
@@ -1330,7 +1103,7 @@ export function FilesHub({
   const empty = !loading && !error && visibleItemCount === 0;
   const emptyTitle =
     scope === 'session'
-      ? 'No session files'
+      ? 'No agent files'
       : searchActive
         ? 'No matching files'
         : currentDir
@@ -1341,8 +1114,8 @@ export function FilesHub({
     : scope === 'session'
       ? 'Files touched by this session will appear here.'
       : currentDir
-      ? 'Files added to this folder will appear here.'
-      : 'Files matching the current filters will appear here.';
+        ? 'Files added to this folder will appear here.'
+        : 'Files matching the current filters will appear here.';
 
   useEffect(() => {
     if (!loadedOnce) return;
@@ -1450,7 +1223,7 @@ export function FilesHub({
           // biome-ignore lint/a11y/useSemanticElements: compact segmented control already exposes a named group and pressed buttons; fieldset would alter toolbar layout.
           <div
             role="group"
-            aria-label="Session file scope"
+            aria-label="Agent file scope"
             className="flex rounded-md border border-edge bg-surface p-0.5 max-md:min-w-0 max-md:flex-1 md:shrink-0"
           >
             {(['session', 'channel'] as const).map((nextScope) => {
@@ -1501,7 +1274,7 @@ export function FilesHub({
           </div>
         )}
         <span className="text-2xs text-fg-muted max-md:ml-auto md:shrink-0">
-          {scope === 'session' ? 'Session files' : scopedChannel ? 'Channel files' : 'Workspace files'}
+          {scope === 'session' ? 'Agent files' : scopedChannel ? 'Channel files' : 'Workspace files'}
         </span>
       </div>
       <FilterBar
@@ -1512,9 +1285,7 @@ export function FilesHub({
         scopedChannel={scopedChannel}
       />
       <div className="min-h-0 flex-1 overflow-y-auto p-3">
-        {loading && visibleItemCount === 0 && (
-          <div className="px-1 py-2 text-2xs text-fg-muted">loading files...</div>
-        )}
+        {loading && visibleItemCount === 0 && <div className="px-1 py-2 text-2xs text-fg-muted">loading files...</div>}
         {error && (
           <div role="alert" className="px-1 py-2 text-2xs text-danger-text">
             {error}

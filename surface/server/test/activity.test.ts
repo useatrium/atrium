@@ -66,6 +66,8 @@ describe('/api/activity', () => {
       actorId: bob.user.id,
       actorName: 'Bob',
       snippet: 'Finished the requested change.',
+      sessionTitle: 'activity test',
+      sessionStatus: 'running',
     });
     expect(body.items.find((item: any) => item.kind === 'agent_question')).toMatchObject({
       snippet: 'Deploy now?',
@@ -81,6 +83,108 @@ describe('/api/activity', () => {
     expect(body.nextCursor).toBeNull();
   });
 
+  it('classifies failed completion and crash rows without duplicating terminal failures', async () => {
+    const bob = await login('bob', 'Bob');
+    const terminalSessionId = await createActivitySession(bob.user.id, 'terminal failure', 'failed');
+    const duplicateStatus = await insertSessionEventFor(terminalSessionId, bob.user.id, 'session.status_changed', {
+      status: 'failed',
+    });
+    const terminalCompleted = await insertSessionEventFor(terminalSessionId, bob.user.id, 'session.completed', {
+      status: 'failed',
+      resultExcerpt: '',
+    });
+    const excerptSessionId = await createActivitySession(bob.user.id, 'failure with excerpt', 'failed');
+    const failedWithExcerpt = await insertSessionEventFor(excerptSessionId, bob.user.id, 'session.completed', {
+      status: 'failed',
+      resultExcerpt: 'The provider timed out.',
+    });
+    const crashedSessionId = await createActivitySession(bob.user.id, 'crashed run', 'failed');
+    const crash = await insertSessionEventFor(crashedSessionId, bob.user.id, 'session.status_changed', {
+      status: 'failed',
+    });
+
+    const body = await activity(bob.cookie);
+
+    expect(body.items.map((item: any) => [item.kind, Number(item.eventId)])).toEqual([
+      ['session_failed', crash],
+      ['session_failed', failedWithExcerpt],
+      ['session_failed', terminalCompleted],
+    ]);
+    expect(body.items.map((item: any) => Number(item.eventId))).not.toContain(duplicateStatus);
+    expect(body.items.find((item: any) => Number(item.eventId) === terminalCompleted)).toMatchObject({
+      snippet: 'No result — the run ended with an error.',
+      sessionTitle: 'terminal failure',
+      sessionStatus: 'failed',
+    });
+    expect(body.items.find((item: any) => Number(item.eventId) === crash)).toMatchObject({
+      snippet: 'The run crashed before finishing.',
+      sessionTitle: 'crashed run',
+      sessionStatus: 'failed',
+    });
+    expect(body.items.find((item: any) => Number(item.eventId) === failedWithExcerpt)).toMatchObject({
+      snippet: 'The provider timed out.',
+    });
+  });
+
+  it('returns auth blocks and marks truncated snippets with an ellipsis', async () => {
+    const alice = await login('alice', 'Alice');
+    const bob = await login('bob', 'Bob');
+    const authSessionId = await createActivitySession(bob.user.id, 'provider reconnect', 'queued');
+    const auth = await insertSessionEventFor(authSessionId, bob.user.id, 'session.provider_auth_required', {
+      provider: 'claude',
+      reason: 'invalid_token',
+    });
+    const longText = `@bob ${'x'.repeat(160)}`;
+    const mention = await post(alice.cookie, fx.channelId, longText);
+
+    const body = await activity(bob.cookie);
+
+    expect(body.items.find((item: any) => Number(item.eventId) === auth)).toMatchObject({
+      kind: 'agent_auth',
+      snippet: 'Blocked until you reconnect claude.',
+      sessionTitle: 'provider reconnect',
+      sessionStatus: 'queued',
+    });
+    expect(body.items.find((item: any) => Number(item.eventId) === mention.id)).toMatchObject({
+      kind: 'mention',
+      snippet: `${longText.slice(0, 139)}…`,
+    });
+  });
+
+  it('returns thread replies to thread participants and leaves mentioned replies to the mention feed', async () => {
+    const alice = await login('alice', 'Alice');
+    const bob = await login('bob', 'Bob');
+    const cara = await login('cara', 'Cara');
+    const dave = await login('dave', 'Dave');
+    const root = await post(alice.cookie, fx.channelId, 'thread root');
+    await post(bob.cookie, fx.channelId, 'earlier reply', root.id);
+    const reply = await post(cara.cookie, fx.channelId, 'ordinary thread reply', root.id);
+    const mentionedReply = await post(cara.cookie, fx.channelId, 'thread ping @bob', root.id);
+    const dm = await createDm(alice.cookie, bob.user.id);
+    const dmRoot = await post(alice.cookie, dm.id, 'DM thread root');
+    const dmReply = await post(bob.cookie, dm.id, 'DM thread reply', dmRoot.id);
+
+    const aliceItems = (await activity(alice.cookie)).items;
+    const bobItems = (await activity(bob.cookie)).items;
+    const daveItems = (await activity(dave.cookie)).items;
+
+    expect(aliceItems.find((item: any) => Number(item.eventId) === reply.id)).toMatchObject({
+      kind: 'thread_reply',
+      snippet: 'ordinary thread reply',
+      actorId: cara.user.id,
+    });
+    expect(bobItems.find((item: any) => Number(item.eventId) === reply.id)).toMatchObject({
+      kind: 'thread_reply',
+    });
+    expect(bobItems.filter((item: any) => Number(item.eventId) === mentionedReply.id)).toEqual([
+      expect.objectContaining({ kind: 'mention' }),
+    ]);
+    expect(aliceItems.filter((item: any) => Number(item.eventId) === dmReply.id)).toEqual([
+      expect.objectContaining({ kind: 'thread_reply' }),
+    ]);
+    expect(daveItems.map((item: any) => Number(item.eventId))).not.toContain(reply.id);
+  });
+
   it('does not leak stale private-channel mentions after membership changes', async () => {
     const alice = await login('alice', 'Alice');
     const bob = await login('bob', 'Bob');
@@ -88,14 +192,117 @@ describe('/api/activity', () => {
     await addMember(alice.cookie, secret.id, bob.user.id);
     const mention = await post(alice.cookie, secret.id, 'private ping @bob');
 
-    expect((await activity(bob.cookie)).items.map((item: any) => Number(item.eventId))).toContain(
-      mention.id,
-    );
+    expect((await activity(bob.cookie)).items.map((item: any) => Number(item.eventId))).toContain(mention.id);
 
     await leaveChannel(bob.cookie, secret.id);
-    expect((await activity(bob.cookie)).items.map((item: any) => Number(item.eventId))).not.toContain(
-      mention.id,
-    );
+    expect((await activity(bob.cookie)).items.map((item: any) => Number(item.eventId))).not.toContain(mention.id);
+  });
+
+  it('returns read-state metadata and derives attention from current session state', async () => {
+    const bob = await login('bob', 'Bob');
+    const questionSessionId = await createActivitySession(bob.user.id, 'waiting for an answer');
+    await pool.query(`UPDATE sessions SET pending_question = $2::jsonb WHERE id = $1`, [
+      questionSessionId,
+      JSON.stringify({ questionId: 'q-1' }),
+    ]);
+    const question = await insertSessionEventFor(questionSessionId, bob.user.id, 'session.question_requested', {
+      questions: [{ id: 'q-1', question: 'Ship it?' }],
+    });
+
+    const authSessionId = await createActivitySession(bob.user.id, 'reconnect provider', 'queued');
+    await pool.query(`UPDATE sessions SET provider_auth_required = $2::jsonb WHERE id = $1`, [
+      authSessionId,
+      JSON.stringify({ provider: 'claude' }),
+    ]);
+    const auth = await insertSessionEventFor(authSessionId, bob.user.id, 'session.provider_auth_required', {
+      provider: 'claude',
+    });
+
+    const failedSessionId = await createActivitySession(bob.user.id, 'failed run', 'failed');
+    const failed = await insertSessionEventFor(failedSessionId, bob.user.id, 'session.status_changed', {
+      status: 'failed',
+    });
+
+    const initial = await activity(bob.cookie);
+    expect(initial).toMatchObject({
+      lastReadEventId: '0',
+      counts: { attention: 3, unread: 3 },
+    });
+    expect(initial.items.find((item: any) => Number(item.eventId) === question)).toMatchObject({
+      sessionId: questionSessionId,
+      attention: true,
+    });
+    expect(initial.items.find((item: any) => Number(item.eventId) === auth)).toMatchObject({
+      sessionId: authSessionId,
+      attention: true,
+    });
+    expect(initial.items.find((item: any) => Number(item.eventId) === failed)).toMatchObject({
+      sessionId: failedSessionId,
+      attention: true,
+    });
+
+    const read = await app.inject({
+      method: 'POST',
+      url: '/api/activity/read',
+      headers: { cookie: bob.cookie },
+      payload: { lastReadEventId: failed + 10_000 },
+    });
+    expect(read.statusCode).toBe(200);
+    expect(read.json()).toEqual({ lastReadEventId: String(failed) });
+
+    // Read cursors only move forward. A slower tab cannot make the failure
+    // unread again after this tab has acknowledged it.
+    const staleRead = await app.inject({
+      method: 'POST',
+      url: '/api/activity/read',
+      headers: { cookie: bob.cookie },
+      payload: { lastReadEventId: question },
+    });
+    expect(staleRead.statusCode).toBe(200);
+    expect(staleRead.json()).toEqual({ lastReadEventId: String(failed) });
+
+    const acknowledged = await activity(bob.cookie);
+    expect(acknowledged.counts).toEqual({ attention: 2, unread: 0 });
+    expect(acknowledged.items.find((item: any) => Number(item.eventId) === failed)).toMatchObject({ attention: false });
+
+    await pool.query('UPDATE sessions SET pending_question = NULL WHERE id = $1', [questionSessionId]);
+    await pool.query('UPDATE sessions SET provider_auth_required = NULL WHERE id = $1', [authSessionId]);
+    const cleared = await activity(bob.cookie);
+    expect(cleared.counts).toEqual({ attention: 0, unread: 0 });
+    expect(cleared.items.find((item: any) => Number(item.eventId) === question)).toMatchObject({ attention: false });
+    expect(cleared.items.find((item: any) => Number(item.eventId) === auth)).toMatchObject({ attention: false });
+  });
+
+  it('moves a pending question to history when its session has already left an active state', async () => {
+    const bob = await login('bob', 'Bob');
+    const sessionId = await createActivitySession(bob.user.id, 'already ended', 'completed');
+    await pool.query(`UPDATE sessions SET pending_question = $2::jsonb WHERE id = $1`, [
+      sessionId,
+      JSON.stringify({ questionId: 'q-ended' }),
+    ]);
+    const question = await insertSessionEventFor(sessionId, bob.user.id, 'session.question_requested', {
+      questions: [{ id: 'q-ended', question: 'Should not stay pinned?' }],
+    });
+
+    const body = await activity(bob.cookie);
+    expect(body.counts).toEqual({ attention: 0, unread: 1 });
+    expect(body.items.find((item: any) => Number(item.eventId) === question)).toMatchObject({
+      sessionId,
+      attention: false,
+    });
+  });
+
+  it('rejects non-numeric activity cursors', async () => {
+    const bob = await login('bob', 'Bob');
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/activity/read',
+      headers: { cookie: bob.cookie },
+      payload: { lastReadEventId: 'not-an-event-id' },
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toMatchObject({ error: 'bad_request' });
   });
 });
 
@@ -163,34 +370,43 @@ async function leaveChannel(cookie: string, channelId: string) {
   expect(res.statusCode).toBe(200);
 }
 
-async function post(cookie: string, channelId: string, text: string) {
+async function post(cookie: string, channelId: string, text: string, threadRootEventId?: number) {
   const res = await app.inject({
     method: 'POST',
     url: '/api/messages',
     headers: { cookie },
-    payload: { channelId, text, clientMsgId: randomUUID() },
+    payload: { channelId, text, clientMsgId: randomUUID(), ...(threadRootEventId ? { threadRootEventId } : {}) },
   });
   expect(res.statusCode).toBe(201);
   return res.json().event as { id: number; channelId: string };
 }
 
-async function insertSessionEvent(
-  userId: string,
-  type: 'session.question_requested' | 'session.completed',
-  payload: Record<string, unknown>,
-): Promise<number> {
+async function insertSessionEvent(userId: string, type: string, payload: Record<string, unknown>): Promise<number> {
+  const sessionId = await createActivitySession(userId);
+  return insertSessionEventFor(sessionId, userId, type, payload);
+}
+
+async function createActivitySession(userId: string, title = 'activity test', status = 'running'): Promise<string> {
   const session = await pool.query<{ id: string }>(
     `INSERT INTO sessions (workspace_id, channel_id, centaur_thread_key, title, status, spawned_by, driver_id)
-     VALUES ($1, $2, $3, 'activity test', 'running', $4, $4)
+     VALUES ($1, $2, $3, $4, $5, $6, $6)
      RETURNING id`,
-    [fx.workspaceId, fx.channelId, `test:${randomUUID()}`, userId],
+    [fx.workspaceId, fx.channelId, `test:${randomUUID()}`, title, status, userId],
   );
-  const sessionId = session.rows[0]!.id;
+  return session.rows[0]!.id;
+}
+
+async function insertSessionEventFor(
+  sessionId: string,
+  userId: string,
+  type: string,
+  payload: Record<string, unknown>,
+): Promise<number> {
   const event = await pool.query<{ id: number }>(
     `INSERT INTO events (workspace_id, channel_id, type, actor_id, payload)
      VALUES ($1, $2, $3, $4, $5)
      RETURNING id`,
-    [fx.workspaceId, fx.channelId, type, userId, JSON.stringify({ sessionId, ...payload })],
+    [fx.workspaceId, fx.channelId, type, userId, JSON.stringify({ ...payload, sessionId })],
   );
   return event.rows[0]!.id;
 }

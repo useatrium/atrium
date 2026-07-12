@@ -6,8 +6,8 @@ import type { Channel } from '../src/api';
 import { QuickSwitcher, type QuickSwitcherCommand } from '../src/components/QuickSwitcher';
 
 const channels: Channel[] = [
-  { id: 'ch-1', workspaceId: 'ws-1', name: 'general', createdAt: '' },
-  { id: 'ch-2', workspaceId: 'ws-1', name: 'ops', createdAt: '' },
+  { id: 'ch-1', workspaceId: 'ws-1', name: 'general', createdAt: '', archivedAt: null, pinned: false },
+  { id: 'ch-2', workspaceId: 'ws-1', name: 'ops', createdAt: '', archivedAt: null, pinned: false },
 ];
 
 afterEach(cleanup);

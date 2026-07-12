@@ -7,6 +7,8 @@ export const ReasoningBlock = memo(
     const [open, setOpen] = useState(false);
     const hasSummary = Boolean(item.summary?.trim());
 
+    if (!item.text.trim() && !hasSummary) return null;
+
     return (
       <section
         data-testid="reasoning-block"
@@ -22,9 +24,7 @@ export const ReasoningBlock = memo(
             {open ? <ChevronDownIcon size={12} /> : <ChevronRightIcon size={12} />}
           </span>
           <span className="shrink-0 font-semibold">Thinking</span>
-          {!open && hasSummary ? (
-            <span className="min-w-0 flex-1 truncate text-fg-muted">{item.summary}</span>
-          ) : null}
+          {!open && hasSummary ? <span className="min-w-0 flex-1 truncate text-fg-muted">{item.summary}</span> : null}
         </button>
         {open ? (
           <div className="space-y-2 border-t border-edge/80 px-2 py-2 text-2xs leading-relaxed text-fg-muted">
@@ -35,6 +35,5 @@ export const ReasoningBlock = memo(
       </section>
     );
   },
-  (prev, next) =>
-    prev.item.text === next.item.text && prev.item.summary === next.item.summary,
+  (prev, next) => prev.item.text === next.item.text && prev.item.summary === next.item.summary,
 );

@@ -7,49 +7,59 @@ const NullableNonNegativeIntegerSchema = Schema.Union(NonNegativeIntegerSchema, 
 export const NormalizedEntryTargetTypeSchema = Schema.Literal('event', 'record', 'artifact');
 export type NormalizedEntryTargetType = Schema.Schema.Type<typeof NormalizedEntryTargetTypeSchema>;
 
-export const NormalizedEntryLocationSchema = Schema.mutable(Schema.Struct({
-  workspaceId: Schema.String,
-  channelId: NullableStringSchema,
-  channelName: NullableStringSchema,
-  threadRootEventId: NullableNonNegativeIntegerSchema,
-  sessionId: NullableStringSchema,
-  sessionTitle: NullableStringSchema,
-}));
+export const NormalizedEntryLocationSchema = Schema.mutable(
+  Schema.Struct({
+    workspaceId: Schema.String,
+    channelId: NullableStringSchema,
+    channelName: NullableStringSchema,
+    threadRootEventId: NullableNonNegativeIntegerSchema,
+    sessionId: NullableStringSchema,
+    sessionTitle: NullableStringSchema,
+  }),
+);
 
-export const NormalizedEntrySchema = Schema.mutable(Schema.Struct({
-  handle: Schema.String,
-  kind: Schema.String,
-  actor: NullableStringSchema,
-  actorLabel: NullableStringSchema,
-  text: Schema.String,
-  meta: Schema.mutable(Schema.Record({ key: Schema.String, value: Schema.Unknown })),
-  targetType: NormalizedEntryTargetTypeSchema,
-  sourceRefs: Schema.mutable(Schema.Array(Schema.String)),
-  tombstoned: Schema.Boolean,
-  location: NormalizedEntryLocationSchema,
-}));
+export const NormalizedEntrySchema = Schema.mutable(
+  Schema.Struct({
+    handle: Schema.String,
+    kind: Schema.String,
+    actor: NullableStringSchema,
+    actorLabel: NullableStringSchema,
+    text: Schema.String,
+    meta: Schema.mutable(Schema.Record({ key: Schema.String, value: Schema.Unknown })),
+    targetType: NormalizedEntryTargetTypeSchema,
+    sourceRefs: Schema.mutable(Schema.Array(Schema.String)),
+    tombstoned: Schema.Boolean,
+    location: NormalizedEntryLocationSchema,
+  }),
+);
 export type NormalizedEntry = Schema.Schema.Type<typeof NormalizedEntrySchema>;
 
-export const EntryReferenceLatestSchema = Schema.mutable(Schema.Struct({
-  eventId: NonNegativeIntegerSchema,
-  handle: Schema.String,
-  channelId: Schema.String,
-  threadRootEventId: NullableNonNegativeIntegerSchema,
-  actorLabel: NullableStringSchema,
-  excerpt: Schema.String,
-  ts: Schema.String,
-}));
+export const EntryReferenceLatestSchema = Schema.mutable(
+  Schema.Struct({
+    eventId: NonNegativeIntegerSchema,
+    handle: Schema.String,
+    channelId: Schema.String,
+    threadRootEventId: NullableNonNegativeIntegerSchema,
+    actorLabel: NullableStringSchema,
+    excerpt: Schema.String,
+    ts: Schema.String,
+  }),
+);
 export type EntryReferenceLatest = Schema.Schema.Type<typeof EntryReferenceLatestSchema>;
 
-export const EntryReferenceSummarySchema = Schema.mutable(Schema.Struct({
-  count: NonNegativeIntegerSchema,
-  latest: Schema.mutable(Schema.Array(EntryReferenceLatestSchema)),
-}));
+export const EntryReferenceSummarySchema = Schema.mutable(
+  Schema.Struct({
+    count: NonNegativeIntegerSchema,
+    latest: Schema.mutable(Schema.Array(EntryReferenceLatestSchema)),
+  }),
+);
 export type EntryReferenceSummary = Schema.Schema.Type<typeof EntryReferenceSummarySchema>;
 
-export const EntryReferencesResponseSchema = Schema.mutable(Schema.Struct({
-  references: Schema.mutable(Schema.Record({ key: Schema.String, value: EntryReferenceSummarySchema })),
-}));
+export const EntryReferencesResponseSchema = Schema.mutable(
+  Schema.Struct({
+    references: Schema.mutable(Schema.Record({ key: Schema.String, value: EntryReferenceSummarySchema })),
+  }),
+);
 export type EntryReferencesResponse = Schema.Schema.Type<typeof EntryReferencesResponseSchema>;
 export type EntryReferenceMap = EntryReferencesResponse['references'];
 

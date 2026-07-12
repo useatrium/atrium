@@ -1,10 +1,11 @@
 // /api/sessions client + proxied Centaur SSE stream.
-//
-// Every function delegates to the DEV MOCK (./devMock) when the dev server is
-// started with VITE_SESSIONS_MOCK=1; otherwise it talks to the real endpoints.
 
 import type { ArtifactPresentation, CentaurEventFrame } from '@atrium/centaur-client';
-import { decodeSessionListResponse, decodeSessionResponse } from '@atrium/surface-client';
+import {
+  decodeSessionListResponse,
+  decodeSessionResponse,
+  type SessionCapabilitiesResponse,
+} from '@atrium/surface-client';
 import type {
   SessionAnswerProposalResolveBody,
   SessionAnswerQuestionBody,
@@ -17,7 +18,6 @@ import type {
 } from '@atrium/surface-client';
 import { ApiError } from '../api';
 import { desktopApiOptions } from '../desktop';
-import { sessionsMock } from './devMock';
 import type { SessionListItem, SessionRepoSpec, SessionWire } from './types';
 
 export interface CreateSessionBody {
@@ -62,71 +62,8 @@ export interface AppListRow {
   updatedAt: string;
 }
 
-export interface SessionCapabilityItem {
-  name: string;
-  sources: string[];
-  namespace?: string;
-  description?: string;
-  status?: 'available' | 'pending' | 'observed';
-  count?: number;
-}
-
-export interface SessionCapabilityNamespace {
-  name: string;
-  sources: string[];
-  description?: string;
-  count: number;
-}
-
-export interface SessionCapabilityChange {
-  seq: number;
-  line: number;
-  timestamp?: string;
-  source: string;
-  summary: string;
-  added?: string[];
-  removed?: string[];
-  readded?: string[];
-  counts?: Record<string, number>;
-  redacted?: boolean;
-}
-
-export interface SessionCapabilitySnapshot {
-  parserVersion: number;
-  sessionId: string;
-  harness: 'claude' | 'codex';
-  sourceSha256: string;
-  completeness: 'complete' | 'partial' | 'observed';
-  generatedAt: string;
-  runtime: Record<string, unknown>;
-  counts: {
-    tools: number;
-    toolNamespaces: number;
-    mcpServers: number;
-    agents: number;
-    skills: number;
-    observedToolCalls: number;
-    changes: number;
-  };
-  tools: SessionCapabilityItem[];
-  toolNamespaces: SessionCapabilityNamespace[];
-  mcpServers: SessionCapabilityItem[];
-  agents: SessionCapabilityItem[];
-  skills: SessionCapabilityItem[];
-  observedToolCalls: SessionCapabilityItem[];
-  pendingMcpServers: string[];
-  changes: SessionCapabilityChange[];
-  warnings: string[];
-  redactions: string[];
-}
-
-export interface SessionCapabilitiesResponse {
-  sessionId: string;
-  snapshots: SessionCapabilitySnapshot[];
-}
-
 /** Every event name the Centaur durable stream emits (docs/archive/notes/build-history/phase0/results/event-schema.md). */
-export const FRAME_EVENT_NAMES = [
+const FRAME_EVENT_NAMES = [
   'execution_state',
   'execution_started',
   'amp_raw_event',
@@ -207,19 +144,12 @@ async function doFetch(path: string, init?: RequestInit): Promise<Response> {
  * (`event: <name>` / `data: <json incl event_id>`); tolerate both
  * `{event_id, data}` envelopes and flat `{event_id, ...payload}` bodies.
  */
-export function parseFrame(name: string, raw: string): CentaurEventFrame | null {
+function parseFrame(name: string, raw: string): CentaurEventFrame | null {
   try {
     const parsed = JSON.parse(raw) as Record<string, unknown>;
-    const data =
-      parsed.data && typeof parsed.data === 'object'
-        ? (parsed.data as Record<string, unknown>)
-        : parsed;
+    const data = parsed.data && typeof parsed.data === 'object' ? (parsed.data as Record<string, unknown>) : parsed;
     const eventId =
-      typeof parsed.event_id === 'number'
-        ? parsed.event_id
-        : typeof data.event_id === 'number'
-          ? data.event_id
-          : 0;
+      typeof parsed.event_id === 'number' ? parsed.event_id : typeof data.event_id === 'number' ? data.event_id : 0;
     const ts =
       typeof parsed.atrium_ts === 'string'
         ? parsed.atrium_ts
@@ -234,19 +164,21 @@ export function parseFrame(name: string, raw: string): CentaurEventFrame | null 
 
 export const sessionsApi = {
   create(body: CreateSessionBody): Promise<{ session: SessionWire }> {
-    if (sessionsMock) return sessionsMock.createSession(body);
-    return reqJson<{ session: SessionWire }>('/api/sessions', {
-      method: 'POST',
-      body: JSON.stringify(body),
-    }, decodeSessionResponse);
+    return reqJson<{ session: SessionWire }>(
+      '/api/sessions',
+      {
+        method: 'POST',
+        body: JSON.stringify(body),
+      },
+      decodeSessionResponse,
+    );
   },
 
   get(id: string): Promise<{ session: SessionWire }> {
-    if (sessionsMock) return sessionsMock.getSession(id);
     return reqJson<{ session: SessionWire }>(`/api/sessions/${id}`, undefined, decodeSessionResponse);
   },
 
-  list(opts: { status?: 'running' | 'recent' | 'all'; limit?: number } = {}): Promise<{
+  list(opts: { status?: 'running' | 'recent' | 'all' | 'archived'; limit?: number } = {}): Promise<{
     sessions: SessionListItem[];
   }> {
     const q = new URLSearchParams();
@@ -261,7 +193,6 @@ export const sessionsApi = {
   },
 
   sendMessage(id: string, text: string, effort?: string): Promise<void> {
-    if (sessionsMock) return sessionsMock.sendMessage(id, text);
     const body: SessionSteerBody = { text, ...(effort ? { effort } : {}) };
     return reqAccepted(`/api/sessions/${id}/messages`, {
       method: 'POST',
@@ -269,13 +200,7 @@ export const sessionsApi = {
     });
   },
 
-  answerQuestion(
-    id: string,
-    questionId: string,
-    answers: SessionQuestionAnswers,
-    opId?: string,
-  ): Promise<void> {
-    if (sessionsMock) return sessionsMock.answerQuestion(id, questionId, answers);
+  answerQuestion(id: string, questionId: string, answers: SessionQuestionAnswers, opId?: string): Promise<void> {
     const body: SessionAnswerQuestionBody = { questionId, answers, ...(opId ? { opId } : {}) };
     return reqAccepted(`/api/sessions/${id}/answer`, {
       method: 'POST',
@@ -284,7 +209,6 @@ export const sessionsApi = {
   },
 
   cancel(id: string, opId?: string): Promise<void> {
-    if (sessionsMock) return sessionsMock.cancel(id);
     const body = sessionOpIdBody(opId);
     return reqAccepted(`/api/sessions/${id}/cancel`, {
       method: 'POST',
@@ -293,13 +217,10 @@ export const sessionsApi = {
   },
 
   listPresentations(id: string): Promise<{ presentations: ArtifactPresentation[] }> {
-    return reqJson<{ presentations: ArtifactPresentation[] }>(
-      `/api/sessions/${id}/artifacts/presentations`,
-    );
+    return reqJson<{ presentations: ArtifactPresentation[] }>(`/api/sessions/${id}/artifacts/presentations`);
   },
 
   getCapabilities(id: string): Promise<SessionCapabilitiesResponse> {
-    if (sessionsMock) return sessionsMock.getCapabilities(id);
     return reqJson<SessionCapabilitiesResponse>(`/api/sessions/${id}/atrium/capabilities`);
   },
 
@@ -330,14 +251,12 @@ export const sessionsApi = {
   // ---- driver seat (Phase 3) ----
 
   requestSeat(id: string): Promise<void> {
-    if (sessionsMock) return sessionsMock.requestSeat(id);
     const body: SessionOpIdBody = {};
     return reqAccepted(`/api/sessions/${id}/seat/request`, { method: 'POST', body: JSON.stringify(body) });
   },
 
   /** Driver-only. */
   grantSeat(id: string, userId: string): Promise<void> {
-    if (sessionsMock) return sessionsMock.grantSeat(id, userId);
     const body: SessionSeatGrantBody = { userId };
     return reqAccepted(`/api/sessions/${id}/seat/grant`, {
       method: 'POST',
@@ -347,7 +266,6 @@ export const sessionsApi = {
 
   /** Rejects with ApiError(409, 'seat_held') while the driver is watching. */
   takeSeat(id: string): Promise<void> {
-    if (sessionsMock) return sessionsMock.takeSeat(id);
     const body: SessionOpIdBody = {};
     return reqAccepted(`/api/sessions/${id}/seat/take`, { method: 'POST', body: JSON.stringify(body) });
   },
@@ -356,7 +274,6 @@ export const sessionsApi = {
 
   /** A watcher proposes a steer the driver later sends or dismisses. */
   createSuggestion(id: string, text: string, opId?: string): Promise<void> {
-    if (sessionsMock) return sessionsMock.createSuggestion(id, text);
     const body: SessionSuggestionCreateBody = { text, ...(opId ? { opId } : {}) };
     return reqAccepted(`/api/sessions/${id}/suggestions`, {
       method: 'POST',
@@ -372,7 +289,6 @@ export const sessionsApi = {
     opts: { text?: string; note?: string } = {},
     opId?: string,
   ): Promise<void> {
-    if (sessionsMock) return sessionsMock.resolveSuggestion(id, suggestionId, action, opts);
     const body: SessionSuggestionResolveBody = { action, ...opts, ...(opId ? { opId } : {}) };
     return reqAccepted(`/api/sessions/${id}/suggestions/${suggestionId}/resolve`, {
       method: 'POST',
@@ -383,13 +299,7 @@ export const sessionsApi = {
   // ---- HITL answer proposals (Phase 2) ----
 
   /** A watcher proposes an answer to the pending question. */
-  proposeAnswer(
-    id: string,
-    questionId: string,
-    answers: SessionQuestionAnswers,
-    opId?: string,
-  ): Promise<void> {
-    if (sessionsMock) return sessionsMock.proposeAnswer(id, questionId, answers);
+  proposeAnswer(id: string, questionId: string, answers: SessionQuestionAnswers, opId?: string): Promise<void> {
     const body: SessionAnswerQuestionBody = { questionId, answers, ...(opId ? { opId } : {}) };
     return reqAccepted(`/api/sessions/${id}/question-proposals`, {
       method: 'POST',
@@ -405,7 +315,6 @@ export const sessionsApi = {
     opts: { note?: string } = {},
     opId?: string,
   ): Promise<void> {
-    if (sessionsMock) return sessionsMock.resolveAnswerProposal(id, proposalId, action, opts);
     const body: SessionAnswerProposalResolveBody = { action, ...opts, ...(opId ? { opId } : {}) };
     return reqAccepted(`/api/sessions/${id}/question-proposals/${proposalId}/resolve`, {
       method: 'POST',
@@ -414,15 +323,8 @@ export const sessionsApi = {
   },
 
   /** Cookie-authed SSE of Centaur frames, resumable via after_event_id. */
-  openStream(
-    sessionId: string,
-    afterEventId: number,
-    cb: SessionStreamCallbacks,
-  ): SessionStreamHandle {
-    if (sessionsMock) return sessionsMock.openStream(sessionId, afterEventId, cb);
-    const es = new EventSource(
-      withDesktopToken(`/api/sessions/${sessionId}/stream?after_event_id=${afterEventId}`),
-    );
+  openStream(sessionId: string, afterEventId: number, cb: SessionStreamCallbacks): SessionStreamHandle {
+    const es = new EventSource(withDesktopToken(`/api/sessions/${sessionId}/stream?after_event_id=${afterEventId}`));
     es.onopen = () => cb.onOpen?.();
     es.onerror = () => cb.onError?.();
     es.addEventListener('ping', (e) => {

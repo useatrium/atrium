@@ -62,9 +62,7 @@ describe('markupAuthoring helpers', () => {
       frontmatter: '---\ntitle: Draft\n---\n',
       body: '# Body',
     });
-    expect(composeMarkupContent('---\ntitle: Draft\n---\n', '# Body')).toBe(
-      '---\ntitle: Draft\n---\n\n# Body',
-    );
+    expect(composeMarkupContent('---\ntitle: Draft\n---\n', '# Body')).toBe('---\ntitle: Draft\n---\n\n# Body');
   });
 
   it('parses WebView bridge messages and builds the shell URL', () => {
@@ -111,10 +109,9 @@ describe('markupAuthoring helpers', () => {
       body: 'Body',
       mode: { kind: 'steer', sessionId: 's-1' },
     });
-    expect(fetchMock).toHaveBeenCalledWith(
-      'https://atrium.test/api/files/artifact/a-1/content',
-      { headers: { authorization: 'Bearer t' } },
-    );
+    expect(fetchMock).toHaveBeenCalledWith('https://atrium.test/api/files/artifact/a-1/content', {
+      headers: { authorization: 'Bearer t' },
+    });
   });
 
   it('submits reply mode by saving content then posting a thread message', async () => {

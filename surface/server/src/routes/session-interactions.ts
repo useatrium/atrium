@@ -9,31 +9,19 @@ import {
   SessionSuggestionResolveBodySchema,
   type SessionQuestionAnswers,
 } from '@atrium/surface-client/sessions';
-import type { Db, DbClient } from '../db.js';
+import type { AppMutationContext } from '../app-mutations.js';
+import type { Db } from '../db.js';
 import { DomainError, type UserRef, type WireEvent } from '../events.js';
 import { decodeRouteBody } from '../route-schema.js';
-import {
-  isSessionEffortLevel,
-  type SessionEffortLevel,
-  type SessionRuns,
-} from '../session-runs.js';
+import { isSessionEffortLevel, type SessionEffortLevel, type SessionRuns } from '../session-runs.js';
 import { parseAgentTurnAttachmentInputPayloads, resolveAgentTurnAttachments } from '../session-attachments.js';
 
-export interface SessionInteractionRouteDeps {
+export interface SessionInteractionRouteDeps extends AppMutationContext {
   pool: Db;
   sessionRuns: SessionRuns;
   maxMessageBytes: number;
   requireUser(req: FastifyRequest, reply: FastifyReply): UserRef | null;
   requireSessionAccess(req: FastifyRequest, reply: FastifyReply): Promise<UserRef | null>;
-  optionalOpId(body: unknown): string | undefined;
-  runMutation<T>(args: {
-    userId: string;
-    opId?: string;
-    opType: string;
-    body: unknown;
-    fn: (client: DbClient) => Promise<T>;
-    onApplied?: (response: T) => void | Promise<void>;
-  }): Promise<T>;
   publishEvent(event: WireEvent): void;
 }
 
@@ -119,11 +107,11 @@ export function registerSessionInteractionRoutes(app: FastifyInstance, deps: Ses
             inputs: attachmentInputs,
             logger: req.log,
           });
-          const event = await sessionRuns.postUserMessageInTx(client, id, user.id, text, effort, attachments);
-          return { ok: true as const, event };
+          const events = await sessionRuns.postUserMessageInTx(client, id, user.id, text, effort, attachments);
+          return { ok: true as const, events };
         },
         onApplied: (result) => {
-          if (result.event) publishEvent(result.event);
+          for (const event of result.events) publishEvent(event);
           sessionRuns.afterPostUserMessage(id);
         },
       });
@@ -151,7 +139,7 @@ export function registerSessionInteractionRoutes(app: FastifyInstance, deps: Ses
     const questionId = body.questionId;
     const answers = body.answers;
     if (opId) {
-      let event: WireEvent | null = null;
+      let events: WireEvent[] = [];
       try {
         await runMutation({
           userId: user.id,
@@ -159,11 +147,11 @@ export function registerSessionInteractionRoutes(app: FastifyInstance, deps: Ses
           opType: 'session.answer',
           body: { sessionId: id, questionId, answers },
           fn: async (client) => {
-            event = await sessionRuns.answerQuestionInTx(client, id, user, questionId, answers);
+            events = await sessionRuns.answerQuestionInTx(client, id, user, questionId, answers);
             return { ok: true as const };
           },
           onApplied: () => {
-            if (event) publishEvent(event);
+            for (const event of events) publishEvent(event);
           },
         });
       } catch (err) {
@@ -260,7 +248,7 @@ export function registerSessionInteractionRoutes(app: FastifyInstance, deps: Ses
     if (text !== undefined && Buffer.byteLength(text, 'utf8') > maxMessageBytes) {
       return reply.code(413).send({ error: 'message_too_large', message: 'message exceeds 8KB' });
     }
-    let result: { event: WireEvent; postedSteer: boolean } | null = null;
+    let result: { events: WireEvent[]; postedSteer: boolean } | null = null;
     await runMutation({
       userId: user.id,
       opId,
@@ -279,7 +267,7 @@ export function registerSessionInteractionRoutes(app: FastifyInstance, deps: Ses
       onApplied: () => {
         if (!result) return;
         if (result.postedSteer) sessionRuns.afterPostUserMessage(id);
-        publishEvent(result.event);
+        for (const event of result.events) publishEvent(event);
       },
     });
     return reply.code(202).send({ ok: true });

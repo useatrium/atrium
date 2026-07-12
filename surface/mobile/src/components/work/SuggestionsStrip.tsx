@@ -12,7 +12,11 @@ export type OptimisticSuggestionSend = {
   edited: boolean;
 };
 
-function watchOptimisticFailure(result: MaybePromise, optimisticId: string | undefined, onFailed?: (id: string) => void) {
+function watchOptimisticFailure(
+  result: MaybePromise,
+  optimisticId: string | undefined,
+  onFailed?: (id: string) => void,
+) {
   if (!optimisticId || !result || typeof result.then !== 'function') return;
   void result.catch(() => onFailed?.(optimisticId));
 }
@@ -172,12 +176,7 @@ function SuggestionRow({
 
       {mode === 'editing' ? (
         <View style={{ gap: space.sm }}>
-          <SuggestionInput
-            value={draft}
-            onChangeText={setDraft}
-            label="Edit suggestion"
-            multiline
-          />
+          <SuggestionInput value={draft} onChangeText={setDraft} label="Edit suggestion" multiline />
           <View style={{ flexDirection: 'row', gap: space.sm }}>
             <ActionButton
               label="Send edited"
@@ -190,12 +189,7 @@ function SuggestionRow({
         </View>
       ) : mode === 'dismissing' ? (
         <View style={{ gap: space.sm }}>
-          <SuggestionInput
-            value={note}
-            onChangeText={setNote}
-            label="Dismiss reason"
-            placeholder="why? (optional)"
-          />
+          <SuggestionInput value={note} onChangeText={setNote} label="Dismiss reason" placeholder="why? (optional)" />
           <View style={{ flexDirection: 'row', gap: space.sm }}>
             <ActionButton label="Dismiss" onPress={dismiss} variant="outline" />
             <ActionButton label="Cancel" onPress={() => setMode('idle')} />

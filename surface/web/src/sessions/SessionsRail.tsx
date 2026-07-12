@@ -3,6 +3,7 @@
 // pattern). Cards reuse SessionCard; clicking one opens it as a peek (→ Split).
 
 import { useMemo } from 'react';
+import { isArchivedSession } from '@atrium/surface-client';
 import { SessionCard } from './SessionCard';
 import { isTerminalSessionStatus, type Session } from './types';
 
@@ -15,6 +16,7 @@ function groupSessions(sessions: Session[]): Group[] {
   const active: Session[] = [];
   const recent: Session[] = [];
   for (const s of sessions) {
+    if (isArchivedSession(s)) continue;
     if (s.pendingQuestion || s.providerAuthRequired) needsYou.push(s);
     else if (isTerminalSessionStatus(s.status)) recent.push(s);
     else active.push(s);
@@ -50,7 +52,7 @@ export function SessionsRail({
   return (
     <aside className="flex w-[min(340px,30vw)] shrink-0 flex-col border-l border-edge bg-surface">
       <header className="flex h-12 shrink-0 items-center gap-2 border-b border-edge px-4">
-        <h2 className="text-sm font-semibold text-fg">Sessions</h2>
+        <h2 className="text-sm font-semibold text-fg">Agent work</h2>
         {total > 0 && <span className="text-2xs tabular-nums text-fg-muted">{total}</span>}
       </header>
 
@@ -58,15 +60,14 @@ export function SessionsRail({
         <div className="flex flex-1 flex-col items-center justify-center gap-1.5 px-6 text-center">
           <div className="text-sm font-medium text-fg-secondary">No sessions yet</div>
           <div className="text-xs leading-relaxed text-fg-muted">
-            Start one by typing <span className="font-medium text-fg-secondary">@agent</span> and a
-            task in the channel.
+            Start one by typing <span className="font-medium text-fg-secondary">@agent</span> and a task in the channel.
           </div>
         </div>
       ) : (
         <div className="min-h-0 flex-1 overflow-y-auto px-3 py-2">
           {groups.map((group) => (
             <section key={group.key} className="mb-3 last:mb-0">
-              <div className="px-1 pb-1 text-3xs font-semibold uppercase tracking-wider text-fg-muted">
+              <div className="px-1 pb-1 text-xs font-semibold text-fg-muted">
                 {group.label}
                 {group.key === 'needs' && (
                   <span className="ml-1.5 inline-block size-1.5 rounded-full bg-warning align-middle" />
@@ -74,12 +75,7 @@ export function SessionsRail({
               </div>
               <div className="space-y-1.5">
                 {group.sessions.map((session) => (
-                  <SessionCard
-                    key={session.id}
-                    session={session}
-                    spectators={0}
-                    onOpenPane={onOpenSession}
-                  />
+                  <SessionCard key={session.id} session={session} spectators={0} onOpenPane={onOpenSession} />
                 ))}
               </div>
             </section>

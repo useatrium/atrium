@@ -47,13 +47,13 @@ describe('EntryLinkRoute helpers', () => {
           targetType: 'record',
           location: {
             workspaceId: 'ws_1',
-        channelId: 'ch_1',
-        channelName: 'general',
-        threadRootEventId: null,
-        sessionId: 'sess_1',
-        sessionTitle: 'Run',
-      },
-    }),
+            channelId: 'ch_1',
+            channelName: 'general',
+            threadRootEventId: null,
+            sessionId: 'sess_1',
+            sessionTitle: 'Run',
+          },
+        }),
       ),
     ).toMatchObject<Partial<EntryLinkDestination>>({
       pathname: '/s/sess_1',
@@ -75,14 +75,15 @@ describe('EntryLinkRoute helpers', () => {
   });
 
   it('routes artifacts to the channel files surface with file params', () => {
-    expect(destinationForEntry(entry({ handle: 'art_00000000-0000-0000-0000-000000000001', targetType: 'artifact' })))
-      .toMatchObject({
-        pathname: '/files',
-        search: 'file=00000000-0000-0000-0000-000000000001',
-        initialChannelId: null,
-        initialSessionId: null,
-        initialFileArtifactId: '00000000-0000-0000-0000-000000000001',
-      });
+    expect(
+      destinationForEntry(entry({ handle: 'art_00000000-0000-0000-0000-000000000001', targetType: 'artifact' })),
+    ).toMatchObject({
+      pathname: '/files',
+      search: 'file=00000000-0000-0000-0000-000000000001',
+      initialChannelId: null,
+      initialSessionId: null,
+      initialFileArtifactId: '00000000-0000-0000-0000-000000000001',
+    });
   });
 
   it('preserves event thread roots for reply destinations', () => {

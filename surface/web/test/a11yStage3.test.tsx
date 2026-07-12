@@ -54,7 +54,9 @@ function DialogHarness() {
   });
   return (
     <>
-      <button type="button" onClick={() => setOpen(true)}>Open dialog</button>
+      <button type="button" onClick={() => setOpen(true)}>
+        Open dialog
+      </button>
       {open && (
         <div ref={dialogRef} role="dialog" aria-label="Test dialog">
           <button type="button" ref={closeRef} onClick={() => setOpen(false)}>
@@ -72,9 +74,7 @@ describe('dialog focus management', () => {
     const opener = screen.getByRole('button', { name: 'Open dialog' });
     opener.focus();
     fireEvent.click(opener);
-    await waitFor(() =>
-      expect(screen.getByRole('button', { name: 'Close dialog' })).toBe(document.activeElement),
-    );
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Close dialog' })).toBe(document.activeElement));
     fireEvent.click(screen.getByRole('button', { name: 'Close dialog' }));
     await waitFor(() => expect(opener).toBe(document.activeElement));
   });
@@ -85,8 +85,8 @@ describe('QuickSwitcher accessibility', () => {
     render(
       <QuickSwitcher
         channels={[
-          { id: 'ch-1', workspaceId: 'ws-1', name: 'general', createdAt: '' },
-          { id: 'ch-2', workspaceId: 'ws-1', name: 'ops', createdAt: '' },
+          { id: 'ch-1', workspaceId: 'ws-1', name: 'general', createdAt: '', archivedAt: null, pinned: false },
+          { id: 'ch-2', workspaceId: 'ws-1', name: 'ops', createdAt: '', archivedAt: null, pinned: false },
         ]}
         activeChannelId="ch-1"
         meId={me.id}
@@ -139,9 +139,7 @@ describe('Timeline unread divider', () => {
       </ThemeProvider>,
     );
     const divider = screen.getByLabelText('New messages');
-    expect(divider.compareDocumentPosition(screen.getByText('new'))).toBe(
-      Node.DOCUMENT_POSITION_FOLLOWING,
-    );
+    expect(divider.compareDocumentPosition(screen.getByText('new'))).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
 
     rerender(
       <ThemeProvider>
@@ -245,7 +243,9 @@ describe('private channel leave confirmation', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Members' }));
     expect(screen.getByRole('dialog', { name: 'Channel members' })).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Leave channel' }));
-    expect(fetchMock.mock.calls.some(([url, init]) => String(url).endsWith('/members/me') && init?.method === 'DELETE')).toBe(false);
+    expect(
+      fetchMock.mock.calls.some(([url, init]) => String(url).endsWith('/members/me') && init?.method === 'DELETE'),
+    ).toBe(false);
     fireEvent.click(screen.getByRole('button', { name: 'Confirm leave channel' }));
     await waitFor(() =>
       expect(

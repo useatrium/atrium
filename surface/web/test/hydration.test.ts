@@ -46,9 +46,7 @@ describe('cached timeline hydration', () => {
       events: latest.events,
       hasMore: latest.hasMore,
     });
-    expect(dispatch).not.toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'history-loaded' }),
-    );
+    expect(dispatch).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'history-loaded' }));
     expect(onRepaired).toHaveBeenCalledWith('ch-1', latest);
   });
 

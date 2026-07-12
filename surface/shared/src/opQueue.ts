@@ -12,7 +12,11 @@ export const VALID_OP_TYPES = [
   'reaction.set',
   'read.mark',
   'mute.set',
+  'channel.archive',
+  'channel.pin',
   'session.spawn',
+  'session.archive',
+  'session.pin',
   'session.answer',
   'session.steer',
   'session.cancel',
@@ -107,6 +111,18 @@ export interface MuteSetPayload {
   previousMuted: boolean;
 }
 
+export interface ChannelArchivePayload {
+  channelId: string;
+  archived: boolean;
+  previousArchivedAt: string | null;
+}
+
+export interface ChannelPinPayload {
+  channelId: string;
+  pinned: boolean;
+  previousPinned: boolean;
+}
+
 export interface SessionSpawnPayload {
   channelId: string;
   task: string;
@@ -127,6 +143,18 @@ export interface SessionSpawnPayload {
   /** Existing artifact refs; sent through once a picker can populate them. */
   existingAttachmentRefs?: AgentAttachmentRef[];
   createdAt?: string;
+}
+
+export interface SessionArchivePayload {
+  sessionId: string;
+  archived: boolean;
+  previousArchivedAt: string | null;
+}
+
+export interface SessionPinPayload {
+  sessionId: string;
+  pinned: boolean;
+  previousPinned: boolean;
 }
 
 export interface SessionAnswerPayload {
@@ -180,7 +208,11 @@ export type OpPayloadByType = {
   'reaction.set': ReactionSetPayload;
   'read.mark': ReadMarkPayload;
   'mute.set': MuteSetPayload;
+  'channel.archive': ChannelArchivePayload;
+  'channel.pin': ChannelPinPayload;
   'session.spawn': SessionSpawnPayload;
+  'session.archive': SessionArchivePayload;
+  'session.pin': SessionPinPayload;
   'session.answer': SessionAnswerPayload;
   'session.steer': SessionSteerPayload;
   'session.cancel': SessionCancelPayload;
@@ -199,7 +231,11 @@ type OpResultByType = {
   'reaction.set': { event: WireEvent } | { event: null; applied: false };
   'read.mark': { lastReadEventId: number };
   'mute.set': { muted: boolean };
+  'channel.archive': Awaited<ReturnType<Api['setChannelArchived']>>;
+  'channel.pin': Awaited<ReturnType<Api['setChannelPinned']>>;
   'session.spawn': Awaited<ReturnType<Api['createAgentSession']>>;
+  'session.archive': Awaited<ReturnType<Api['setSessionArchived']>>;
+  'session.pin': Awaited<ReturnType<Api['setSessionPinned']>>;
   'session.answer': { ok: true };
   'session.steer': { ok: true };
   'session.cancel': { ok: true };
@@ -265,8 +301,16 @@ export function queueKeyForOp<T extends OpType>(opType: T, payload: OpPayloadByT
       return `read:${(payload as ReadMarkPayload).channelId}`;
     case 'mute.set':
       return `mute:${(payload as MuteSetPayload).channelId}`;
+    case 'channel.archive':
+      return `channel_archive:${(payload as ChannelArchivePayload).channelId}`;
+    case 'channel.pin':
+      return `channel_pin:${(payload as ChannelPinPayload).channelId}`;
     case 'session.spawn':
       return `spawn:${(payload as SessionSpawnPayload).clientSpawnId}`;
+    case 'session.archive':
+      return `session_archive:${(payload as SessionArchivePayload).sessionId}`;
+    case 'session.pin':
+      return `session_pin:${(payload as SessionPinPayload).sessionId}`;
     case 'session.answer':
       return `answer:${(payload as SessionAnswerPayload).sessionId}`;
     case 'session.steer':
@@ -403,6 +447,33 @@ function coalescedPayload(existing: QueuedOp, next: QueuedOp): unknown {
         typeof prevPayload.previousMuted === 'boolean' ? prevPayload.previousMuted : nextPayload.previousMuted,
     };
   }
+  if (
+    (existing.opType === 'channel.archive' && next.opType === 'channel.archive') ||
+    (existing.opType === 'session.archive' && next.opType === 'session.archive')
+  ) {
+    const prevPayload = isRecord(existing.payload) ? existing.payload : {};
+    const nextPayload = isRecord(next.payload) ? next.payload : {};
+    const previousArchivedAt = prevPayload.previousArchivedAt;
+    return {
+      ...nextPayload,
+      previousArchivedAt:
+        typeof previousArchivedAt === 'string' || previousArchivedAt === null
+          ? previousArchivedAt
+          : nextPayload.previousArchivedAt,
+    };
+  }
+  if (
+    (existing.opType === 'channel.pin' && next.opType === 'channel.pin') ||
+    (existing.opType === 'session.pin' && next.opType === 'session.pin')
+  ) {
+    const prevPayload = isRecord(existing.payload) ? existing.payload : {};
+    const nextPayload = isRecord(next.payload) ? next.payload : {};
+    return {
+      ...nextPayload,
+      previousPinned:
+        typeof prevPayload.previousPinned === 'boolean' ? prevPayload.previousPinned : nextPayload.previousPinned,
+    };
+  }
   if (existing.opType === 'prefs.set' && next.opType === 'prefs.set') {
     const prevPayload = isRecord(existing.payload) ? existing.payload : {};
     const nextPayload = isRecord(next.payload) ? next.payload : {};
@@ -449,6 +520,10 @@ function coalescePendingOps(ops: QueuedOp[], op: QueuedOp): { op: QueuedOp | nul
     op.opType === 'msg.edit' ||
     op.opType === 'reaction.set' ||
     op.opType === 'mute.set' ||
+    op.opType === 'channel.archive' ||
+    op.opType === 'channel.pin' ||
+    op.opType === 'session.archive' ||
+    op.opType === 'session.pin' ||
     op.opType === 'session.answer' ||
     op.opType === 'session.cancel' ||
     op.opType === 'session.stop_turn' ||
@@ -876,6 +951,28 @@ export function createDefaultOpRegistry(): OpRegistry {
       onRejected: (dispatch, payload) =>
         dispatch({ type: 'mute-changed', channelId: payload.channelId, muted: payload.previousMuted }),
     },
+    'channel.archive': {
+      execute: (api, payload, op) => api.setChannelArchived(payload.channelId, payload.archived, { opId: op.opId }),
+      onConfirmed: (dispatch, result, payload) =>
+        dispatch({
+          type: 'channel-archive-changed',
+          channelId: payload.channelId,
+          archivedAt: result.archivedAt,
+        }),
+      onRejected: (dispatch, payload) =>
+        dispatch({
+          type: 'channel-archive-changed',
+          channelId: payload.channelId,
+          archivedAt: payload.previousArchivedAt,
+        }),
+    },
+    'channel.pin': {
+      execute: (api, payload, op) => api.setChannelPinned(payload.channelId, payload.pinned, { opId: op.opId }),
+      onConfirmed: (dispatch, result, payload) =>
+        dispatch({ type: 'channel-pin-changed', channelId: payload.channelId, pinned: result.pinned }),
+      onRejected: (dispatch, payload) =>
+        dispatch({ type: 'channel-pin-changed', channelId: payload.channelId, pinned: payload.previousPinned }),
+    },
     'session.spawn': {
       execute: async (api, payload, op, context) => {
         const attachments = await resolvedAttachmentIds(payload, context);
@@ -914,6 +1011,19 @@ export function createDefaultOpRegistry(): OpRegistry {
           channelId: payload.channelId,
           tempId: payload.clientSpawnId,
         }),
+    },
+    'session.archive': {
+      execute: (api, payload, op) => api.setSessionArchived(payload.sessionId, payload.archived, { opId: op.opId }),
+      // Archive state is durable and folds from the corresponding workspace event.
+      onConfirmed: () => {},
+      onRejected: () => {},
+    },
+    'session.pin': {
+      execute: (api, payload, op) => api.setSessionPinned(payload.sessionId, payload.pinned, { opId: op.opId }),
+      onConfirmed: (dispatch, result, payload) =>
+        dispatch({ type: 'session-pin-changed', sessionId: payload.sessionId, pinned: result.pinned }),
+      onRejected: (dispatch, payload) =>
+        dispatch({ type: 'session-pin-changed', sessionId: payload.sessionId, pinned: payload.previousPinned }),
     },
     'session.answer': {
       execute: (api, payload, op) =>

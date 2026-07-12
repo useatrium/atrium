@@ -2,9 +2,16 @@
 
 <div class="mb-8">
   <a href="<%= console_principals_path %>" class="back-link">← back to principals</a>
-  <h1 class="mt-2 page-title">
-    <%= @principal.name.presence || @principal.foreign_id.presence || "Principal" %>
-  </h1>
+  <div class="mt-2 flex flex-wrap items-center gap-3">
+    <h1 class="page-title">
+      <%= @principal.name.presence || @principal.foreign_id.presence || "Principal" %>
+    </h1>
+    <div class="ml-auto">
+      <%= button_to "Delete", console_delete_principal_path(@principal.oid), method: :delete,
+            class: "cursor-pointer rounded border border-red-500/40 px-3 py-1.5 text-sm text-red-300 transition-colors hover:border-red-500/60 hover:bg-red-500/10",
+            data: { turbo_confirm: "Delete this principal? Direct grants, role assignments, MCP tokens, and sync snapshots are removed. Proxies are unassigned. This cannot be undone." } %>
+    </div>
+  </div>
   <div class="mt-2 flex flex-wrap items-center gap-2 text-sm">
     <span class="text-centaur-400 glow"><%= @principal.oid %></span>
     <span class="text-zinc-600">·</span>
@@ -34,16 +41,18 @@
                   method: :patch,
                   data: { turbo: false },
                   class: "space-y-4" do %>
-      <label class="flex items-start gap-3">
-        <%= hidden_field_tag :sandbox_repo_cache_enabled, "0" %>
-        <%= check_box_tag :sandbox_repo_cache_enabled,
-                          "1",
-                          @principal.sandbox_repo_cache_enabled,
-                          class: checkbox_class %>
+      <label class="block">
         <span>
           <span class="block text-sm font-medium text-zinc-100">Repo cache</span>
           <span class="block text-xs text-zinc-500">Mount repo-cache backed workspace and tool sources.</span>
         </span>
+        <%= select_tag :sandbox_repo_cache,
+                       options_for_select([
+                         [ "None", "none" ],
+                         [ "Public", "public" ],
+                         [ "All", "all" ]
+                       ], @principal.sandbox_repo_cache),
+                       class: "mt-2 w-full rounded border border-ink-500 bg-ink-900 px-3 py-2 text-sm text-zinc-100" %>
       </label>
       <label class="flex items-start gap-3">
         <%= hidden_field_tag :sandbox_observability_enabled, "0" %>
@@ -54,6 +63,17 @@
         <span>
           <span class="block text-sm font-medium text-zinc-100">Observability</span>
           <span class="block text-xs text-zinc-500">Allow sandbox access to logs and metrics surfaces.</span>
+        </span>
+      </label>
+      <label class="flex items-start gap-3">
+        <%= hidden_field_tag :sandbox_api_server_enabled, "0" %>
+        <%= check_box_tag :sandbox_api_server_enabled,
+                          "1",
+                          @principal.sandbox_api_server_enabled,
+                          class: checkbox_class %>
+        <span>
+          <span class="block text-sm font-medium text-zinc-100">API server</span>
+          <span class="block text-xs text-zinc-500">Allow sandbox access to the api-rs control plane.</span>
         </span>
       </label>
       <div>

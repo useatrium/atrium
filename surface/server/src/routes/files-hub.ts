@@ -13,7 +13,7 @@ import { isWorkspaceMember } from '../membership.js';
 import { getObjectBytes, getObjectStream, headObject, presignGet, uploadObject } from '../s3.js';
 import { sanitizeFilename } from '../safe-filename.js';
 import { ensureThumbnailForBlobDeduped } from '../thumbnails.js';
-import { writeBackArtifactById, writeBackDeleteById } from '../artifact-writeback.js';
+import { writeBackArtifactById, writeBackDeleteById, type WriteBackArtifactByIdResult } from '../artifact-writeback.js';
 
 type FileCategory = 'image' | 'doc' | 'data' | 'app' | 'upload';
 const FILE_CATEGORY_VALUES: readonly FileCategory[] = ['image', 'doc', 'data', 'app', 'upload'];
@@ -41,6 +41,19 @@ export interface FilesHubRouteDeps {
 
 function isUuid(value: string): boolean {
   return /^[0-9a-f-]{36}$/i.test(value);
+}
+
+function sendWritebackResult(reply: FastifyReply, result: WriteBackArtifactByIdResult) {
+  if (result.ok) return reply.send({ seq: result.seq, status: result.status });
+  if (result.reason === 'gone') return reply.code(410).send({ error: 'gone' });
+  if (result.reason === 'binary_not_editable') {
+    return reply.code(415).send({ error: 'binary_not_editable', mediaKind: result.mediaKind });
+  }
+  return reply.code(409).send({
+    error: result.reason,
+    ...(result.baseSeq != null ? { baseSeq: result.baseSeq } : {}),
+    ...(result.latestSeq != null ? { latestSeq: result.latestSeq } : {}),
+  });
 }
 
 function stringArray(value: unknown): string[] | undefined {
@@ -95,7 +108,11 @@ function isoDate(value: Date | string): string {
   return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
 }
 
-function shouldProxyContent(file: { mime: string | null; mediaKind: string | null; sizeBytes: number | null }): boolean {
+function shouldProxyContent(file: {
+  mime: string | null;
+  mediaKind: string | null;
+  sizeBytes: number | null;
+}): boolean {
   if (file.mediaKind === 'video' || file.mediaKind === 'audio') return true;
   return (file.mime ?? '').toLowerCase() === 'application/pdf' && (file.sizeBytes ?? 0) >= 5 * 1024 * 1024;
 }
@@ -140,16 +157,39 @@ async function requireReadableArtifact(
   user: UserRef,
 ): Promise<string | null> {
   const { artifactId } = req.params as { artifactId: string };
-  if (!isUuid(artifactId)) {
-    reply.code(404).send({ error: 'file_not_found', message: 'file not found' });
-    return null;
-  }
-  const access = await ledger.artifactReadableByUser(artifactId, user.id);
-  if (!access) {
+  if (!isUuid(artifactId) || !(await ledger.artifactReadableByUser(artifactId, user.id))) {
     reply.code(404).send({ error: 'file_not_found', message: 'file not found' });
     return null;
   }
   return artifactId;
+}
+
+async function requireManageableArtifact(
+  ledger: ArtifactLedger,
+  req: FastifyRequest,
+  reply: FastifyReply,
+  user: UserRef,
+) {
+  const artifactId = await requireReadableArtifact(ledger, req, reply, user);
+  if (!artifactId) return null;
+  if (!(await ledger.userCanManageArtifact(artifactId, user.id))) {
+    reply.code(403).send({ error: 'forbidden' });
+    return null;
+  }
+  return artifactId;
+}
+
+function requireBaseSeq(req: FastifyRequest, reply: FastifyReply): number | null {
+  const baseSeq = parseBaseSeq(firstHeader(req.headers['x-artifact-base-seq']));
+  if (baseSeq === false) {
+    reply.code(400).send({ error: 'bad_request', message: 'X-Artifact-Base-Seq must be a positive integer' });
+    return null;
+  }
+  if (baseSeq == null) {
+    reply.code(409).send({ error: 'base_required' });
+    return null;
+  }
+  return baseSeq;
 }
 
 export async function registerFilesHubRoutes(app: FastifyInstance, deps: FilesHubRouteDeps): Promise<void> {
@@ -229,9 +269,7 @@ export async function registerFilesHubRoutes(app: FastifyInstance, deps: FilesHu
     const user = requireUser(req, reply);
     if (!user) return;
     if (isTopLevelDocumentNavigation(req)) {
-      return reply
-        .code(403)
-        .send({ error: 'preview_embed_required', message: 'artifact previews must be embedded' });
+      return reply.code(403).send({ error: 'preview_embed_required', message: 'artifact previews must be embedded' });
     }
     const artifactId = await requireReadableArtifact(ledger, req, reply, user);
     if (!artifactId) return;
@@ -385,39 +423,18 @@ export async function registerFilesHubRoutes(app: FastifyInstance, deps: FilesHu
   });
 
   app.register(async (editScope) => {
-    editScope.addContentTypeParser(
-      '*',
-      { parseAs: 'buffer', bodyLimit: config.maxUploadBytes },
-      (_req, body, done) => done(null, body),
+    editScope.addContentTypeParser('*', { parseAs: 'buffer', bodyLimit: config.maxUploadBytes }, (_req, body, done) =>
+      done(null, body),
     );
 
     editScope.put('/api/files/:artifactId/content', async (req, reply) => {
       const user = requireUser(req, reply);
       if (!user) return;
-      const { artifactId: rawArtifactId } = req.params as { artifactId: string };
-      if (!isUuid(rawArtifactId)) {
-        return reply.code(404).send({ error: 'not_found' });
-      }
-      const readable = await ledger.artifactReadableByUser(rawArtifactId, user.id);
-      if (!readable) {
-        return reply.code(404).send({ error: 'not_found' });
-      }
-      if (!(await ledger.userCanManageArtifact(rawArtifactId, user.id))) {
-        return reply.code(403).send({ error: 'forbidden' });
-      }
-      if (readable.tombstoned) {
-        return reply.code(410).send({ error: 'gone' });
-      }
+      const rawArtifactId = await requireManageableArtifact(ledger, req, reply, user);
+      if (!rawArtifactId) return;
 
-      const baseSeq = parseBaseSeq(firstHeader(req.headers['x-artifact-base-seq']));
-      if (baseSeq === false) {
-        return reply
-          .code(400)
-          .send({ error: 'bad_request', message: 'X-Artifact-Base-Seq must be a positive integer' });
-      }
-      if (baseSeq == null) {
-        return reply.code(409).send({ error: 'base_required' });
-      }
+      const baseSeq = requireBaseSeq(req, reply);
+      if (baseSeq == null) return;
 
       const current = await ledger.artifactContentById(rawArtifactId);
       if (!current) {
@@ -427,9 +444,7 @@ export async function registerFilesHubRoutes(app: FastifyInstance, deps: FilesHu
         return reply.code(410).send({ error: 'gone' });
       }
       if (current.isText !== true) {
-        return reply
-          .code(415)
-          .send({ error: 'binary_not_editable', mediaKind: current.mediaKind ?? 'binary' });
+        return reply.code(415).send({ error: 'binary_not_editable', mediaKind: current.mediaKind ?? 'binary' });
       }
 
       const body = Buffer.isBuffer(req.body)
@@ -454,48 +469,21 @@ export async function registerFilesHubRoutes(app: FastifyInstance, deps: FilesHu
         author: `human:${user.id}`,
         baseSeq,
       });
-      if (!result.ok) {
-        if (result.reason === 'gone') return reply.code(410).send({ error: 'gone' });
-        if (result.reason === 'binary_not_editable') {
-          return reply.code(415).send({ error: 'binary_not_editable', mediaKind: result.mediaKind });
-        }
-        return reply.code(409).send({
-          error: result.reason,
-          ...(result.baseSeq != null ? { baseSeq: result.baseSeq } : {}),
-          ...(result.latestSeq != null ? { latestSeq: result.latestSeq } : {}),
-        });
-      }
-      return reply.send({ seq: result.seq, status: result.status });
+      return sendWritebackResult(reply, result);
     });
 
     editScope.post('/api/files/:artifactId/resolve', async (req, reply) => {
       const user = requireUser(req, reply);
       if (!user) return;
-      const { artifactId: rawArtifactId } = req.params as { artifactId: string };
-      if (!isUuid(rawArtifactId)) {
-        return reply.code(404).send({ error: 'not_found' });
-      }
-      const readable = await ledger.artifactReadableByUser(rawArtifactId, user.id);
-      if (!readable) {
-        return reply.code(404).send({ error: 'not_found' });
-      }
-      if (!(await ledger.userCanManageArtifact(rawArtifactId, user.id))) {
-        return reply.code(403).send({ error: 'forbidden' });
-      }
+      const rawArtifactId = await requireManageableArtifact(ledger, req, reply, user);
+      if (!rawArtifactId) return;
 
       const conflict = await ledger.getConflictById(rawArtifactId);
       if (!conflict) {
         return reply.code(409).send({ error: 'no_conflict' });
       }
-      const baseSeq = parseBaseSeq(firstHeader(req.headers['x-artifact-base-seq']));
-      if (baseSeq === false) {
-        return reply
-          .code(400)
-          .send({ error: 'bad_request', message: 'X-Artifact-Base-Seq must be a positive integer' });
-      }
-      if (baseSeq == null) {
-        return reply.code(409).send({ error: 'base_required' });
-      }
+      const baseSeq = requireBaseSeq(req, reply);
+      if (baseSeq == null) return;
       if (baseSeq !== conflict.conflictSeq) {
         return reply.code(409).send({
           error: 'stale_base',
@@ -527,18 +515,7 @@ export async function registerFilesHubRoutes(app: FastifyInstance, deps: FilesHu
             author: `human:${user.id}`,
             baseSeq,
           });
-      if (!result.ok) {
-        if (result.reason === 'gone') return reply.code(410).send({ error: 'gone' });
-        if (result.reason === 'binary_not_editable') {
-          return reply.code(415).send({ error: 'binary_not_editable', mediaKind: result.mediaKind });
-        }
-        return reply.code(409).send({
-          error: result.reason,
-          ...(result.baseSeq != null ? { baseSeq: result.baseSeq } : {}),
-          ...(result.latestSeq != null ? { latestSeq: result.latestSeq } : {}),
-        });
-      }
-      return reply.send({ seq: result.seq, status: result.status });
+      return sendWritebackResult(reply, result);
     });
   });
 
@@ -596,7 +573,10 @@ export async function registerFilesHubRoutes(app: FastifyInstance, deps: FilesHu
     reply.header('X-Artifact-Seq', String(file.seq));
     reply.header('X-Artifact-Sha', file.blobSha);
     if (parsedRange) {
-      reply.header('Content-Range', object.contentRange ?? `bytes ${parsedRange.start}-${parsedRange.end}/${file.sizeBytes}`);
+      reply.header(
+        'Content-Range',
+        object.contentRange ?? `bytes ${parsedRange.start}-${parsedRange.end}/${file.sizeBytes}`,
+      );
       reply.header('Content-Length', String(object.contentLength ?? parsedRange.length));
       return reply.code(206).send(object.stream);
     }

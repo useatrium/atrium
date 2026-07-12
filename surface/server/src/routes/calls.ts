@@ -1,22 +1,27 @@
 import { randomUUID } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import {
-  ActiveCallsQuerySchema,
-  CallIdParamsSchema,
-  StartCallBodySchema,
-} from '@atrium/surface-client/calls';
+import { ActiveCallsQuerySchema, CallIdParamsSchema, StartCallBodySchema } from '@atrium/surface-client/calls';
+import type { AppMutationContext } from '../app-mutations.js';
 import type { Db, DbClient } from '../db.js';
 import { withTx } from '../db.js';
-import { loadActiveCallWiresForUser, loadCallWire, type CallRow } from '../calls.js';
+import {
+  activeCallById,
+  channelRecipientIds,
+  endCall,
+  loadActiveCallWiresForUser,
+  loadCallWire,
+  type CallRow,
+  type EndCallResult,
+} from '../calls.js';
 import { canAccessChannel, DomainError, type UserRef } from '../events.js';
 import type { WsHub } from '../hub.js';
 import { createLiveKitWebhookReceiver, type CallTokenService } from '../livekit.js';
-import { workspaceMemberExists, workspaceMemberIds } from '../membership.js';
+import { workspaceMemberExists } from '../membership.js';
 import { sendIncomingCallVoipPushes, type VoipPushSender } from '../voip.js';
 import { isUuid } from '../idempotency.js';
 import { decodeRouteBody, decodeRouteParams, decodeRouteQuery } from '../route-schema.js';
 
-export interface CallRouteDeps {
+export interface CallRouteDeps extends AppMutationContext {
   pool: Db;
   hub: WsHub;
   calls: CallTokenService | null;
@@ -24,45 +29,13 @@ export interface CallRouteDeps {
   livekitApiSecret?: string;
   voip: VoipPushSender;
   requireUser(req: FastifyRequest, reply: FastifyReply): UserRef | null;
-  optionalOpId(body: unknown): string | undefined;
-  runMutation<T>(args: {
-    userId: string;
-    opId?: string;
-    opType: string;
-    body: unknown;
-    fn: (client: DbClient) => Promise<T>;
-    onApplied?: (response: T) => void | Promise<void>;
-  }): Promise<T>;
 }
 
 function callsUnconfigured(reply: FastifyReply) {
-  return reply
-    .code(503)
-    .send({ error: 'calls_unconfigured', message: 'voice calls are not configured' });
+  return reply.code(503).send({ error: 'calls_unconfigured', message: 'voice calls are not configured' });
 }
 
-async function channelRecipientIds(client: DbClient, channelId: string): Promise<string[]> {
-  const channel = await client.query<{ workspace_id: string; kind: string }>(
-    'SELECT workspace_id, kind FROM channels WHERE id = $1',
-    [channelId],
-  );
-  const row = channel.rows[0];
-  if (!row) return [];
-  if (row.kind === 'public') {
-    return workspaceMemberIds(client, row.workspace_id);
-  }
-  const members = await client.query<{ user_id: string }>(
-    'SELECT user_id FROM channel_members WHERE channel_id = $1',
-    [channelId],
-  );
-  return members.rows.map((member) => member.user_id);
-}
-
-async function canAccessChannelInTx(
-  client: DbClient,
-  userId: string,
-  channelId: string,
-): Promise<boolean> {
+async function canAccessChannelInTx(client: DbClient, userId: string, channelId: string): Promise<boolean> {
   const res = await client.query<{ member: boolean }>(
     `SELECT CASE WHEN c.kind = 'public' THEN ${workspaceMemberExists('c.workspace_id', '$2')}
                  ELSE EXISTS (SELECT 1 FROM channel_members m
@@ -74,19 +47,32 @@ async function canAccessChannelInTx(
   return res.rows[0]?.member === true;
 }
 
-async function activeCallById(
-  client: DbClient,
-  callId: string,
-): Promise<(CallRow & { channel_kind: 'public' | 'private' | 'dm' | 'gdm' }) | null> {
-  const call = await client.query<CallRow & { channel_kind: 'public' | 'private' | 'dm' | 'gdm' }>(
-    `SELECT calls.*, c.kind AS channel_kind
-     FROM calls
-     JOIN channels c ON c.id = calls.channel_id
-     WHERE calls.id = $1 AND calls.status <> 'ended'
-     FOR UPDATE OF calls`,
-    [callId],
+async function requireAccessibleActiveCall(client: DbClient, callId: string, userId: string) {
+  const call = await activeCallById(client, callId);
+  if (!call || !(await canAccessChannelInTx(client, userId, call.channel_id))) {
+    throw new DomainError(404, 'call_not_found', 'call not found');
+  }
+  return call;
+}
+
+async function markParticipantJoined(client: DbClient, callId: string, userId: string): Promise<boolean> {
+  const existing = await client.query<{ left_at: Date | null }>(
+    'SELECT left_at FROM call_participants WHERE call_id = $1 AND user_id = $2',
+    [callId, userId],
   );
-  return call.rows[0] ?? null;
+  const joinedNow = existing.rows.length === 0 || existing.rows[0]!.left_at != null;
+  await client.query(
+    `INSERT INTO call_participants (call_id, user_id, joined_at, left_at)
+     VALUES ($1, $2, now(), NULL)
+     ON CONFLICT (call_id, user_id) DO UPDATE
+     SET joined_at = CASE
+           WHEN call_participants.left_at IS NULL THEN call_participants.joined_at
+           ELSE now()
+         END,
+         left_at = NULL`,
+    [callId, userId],
+  );
+  return joinedNow;
 }
 
 interface ParticipantLeftResult {
@@ -94,12 +80,6 @@ interface ParticipantLeftResult {
   recipients: string[];
   ended: boolean;
   left: boolean;
-}
-
-interface EndCallResult {
-  callId: string;
-  recipients: string[];
-  ended: boolean;
 }
 
 type LiveKitWebhookEvent = {
@@ -168,29 +148,6 @@ async function markParticipantLeft(
   return markParticipantLeftInCall(client, call, userId);
 }
 
-async function endCall(client: DbClient, callId: string): Promise<EndCallResult | null> {
-  const call = await activeCallById(client, callId);
-  if (!call) return null;
-  await client.query('UPDATE call_participants SET left_at = now() WHERE call_id = $1 AND left_at IS NULL', [
-    call.id,
-  ]);
-  const ended = await client.query(
-    `UPDATE calls
-     SET status = 'ended', ended_at = COALESCE(ended_at, now())
-     WHERE id = $1 AND status <> 'ended'
-     RETURNING 1`,
-    [call.id],
-  );
-  if ((ended.rowCount ?? 0) === 0) {
-    return { callId: call.id, recipients: [], ended: false };
-  }
-  return {
-    callId: call.id,
-    recipients: await channelRecipientIds(client, call.channel_id),
-    ended: true,
-  };
-}
-
 async function reconcileLiveKitWebhookEvent(
   client: DbClient,
   event: LiveKitWebhookEvent,
@@ -218,11 +175,7 @@ export function registerCallRoutes(app: FastifyInstance, deps: CallRouteDeps): v
   });
 
   if (livekitWebhookReceiver) {
-    app.addContentTypeParser(
-      'application/webhook+json',
-      { parseAs: 'string' },
-      (_req, body, done) => done(null, body),
-    );
+    app.addContentTypeParser('application/webhook+json', { parseAs: 'string' }, (_req, body, done) => done(null, body));
 
     app.post('/api/calls/webhook', async (req, reply) => {
       const rawBody = typeof req.body === 'string' ? req.body : '';
@@ -231,9 +184,7 @@ export function registerCallRoutes(app: FastifyInstance, deps: CallRouteDeps): v
         event = await livekitWebhookReceiver.receive(rawBody, req.headers.authorization);
       } catch (err) {
         app.log.warn({ err }, 'livekit webhook verification failed');
-        return reply
-          .code(401)
-          .send({ error: 'unauthorized', message: 'invalid LiveKit webhook signature' });
+        return reply.code(401).send({ error: 'unauthorized', message: 'invalid LiveKit webhook signature' });
       }
 
       const result = await withTx(pool, (client) => reconcileLiveKitWebhookEvent(client, event));
@@ -315,23 +266,7 @@ export function registerCallRoutes(app: FastifyInstance, deps: CallRouteDeps): v
           call = inserted.rows[0]!;
           created = true;
         }
-        const existingParticipant = await client.query<{ left_at: Date | null }>(
-          'SELECT left_at FROM call_participants WHERE call_id = $1 AND user_id = $2',
-          [call.id, user.id],
-        );
-        const joinedNow =
-          existingParticipant.rows.length === 0 || existingParticipant.rows[0]!.left_at != null;
-        await client.query(
-          `INSERT INTO call_participants (call_id, user_id, joined_at, left_at)
-           VALUES ($1, $2, now(), NULL)
-           ON CONFLICT (call_id, user_id) DO UPDATE
-           SET joined_at = CASE
-                 WHEN call_participants.left_at IS NULL THEN call_participants.joined_at
-                 ELSE now()
-               END,
-               left_at = NULL`,
-          [call.id, user.id],
-        );
+        const joinedNow = await markParticipantJoined(client, call.id, user.id);
         // Promote to 'active' only when joining an EXISTING call; a freshly
         // created call stays 'ringing' so the call.ringing frame's embedded
         // status is honest (it flips to 'active' when a callee accepts).
@@ -349,9 +284,7 @@ export function registerCallRoutes(app: FastifyInstance, deps: CallRouteDeps): v
         return { join: { call: wire, token, url: calls.url }, created, joinedNow };
       },
       onApplied: async (result) => {
-        const recipients = await withTx(pool, (client) =>
-          channelRecipientIds(client, result.join.call.channelId),
-        );
+        const recipients = await withTx(pool, (client) => channelRecipientIds(client, result.join.call.channelId));
         if (result.created) {
           const ringRecipients = recipients.filter((id) => id !== user.id);
           hub.publishCallToUsers(ringRecipients, { type: 'call.ringing', call: result.join.call });
@@ -384,21 +317,8 @@ export function registerCallRoutes(app: FastifyInstance, deps: CallRouteDeps): v
     if (!calls) return callsUnconfigured(reply);
 
     const response = await withTx(pool, async (client) => {
-      const call = await activeCallById(client, id);
-      if (!call || !(await canAccessChannelInTx(client, user.id, call.channel_id))) {
-        throw new DomainError(404, 'call_not_found', 'call not found');
-      }
-      await client.query(
-        `INSERT INTO call_participants (call_id, user_id, joined_at, left_at)
-         VALUES ($1, $2, now(), NULL)
-         ON CONFLICT (call_id, user_id) DO UPDATE
-         SET joined_at = CASE
-               WHEN call_participants.left_at IS NULL THEN call_participants.joined_at
-               ELSE now()
-             END,
-             left_at = NULL`,
-        [call.id, user.id],
-      );
+      const call = await requireAccessibleActiveCall(client, id, user.id);
+      await markParticipantJoined(client, call.id, user.id);
       const updated = await client.query<CallRow>(
         `UPDATE calls SET status = 'active'
          WHERE id = $1 AND status <> 'ended'
@@ -431,23 +351,17 @@ export function registerCallRoutes(app: FastifyInstance, deps: CallRouteDeps): v
     if (!user) return;
     const { id } = decodeRouteParams(CallIdParamsSchema, req.params);
     if (!isUuid(id)) return reply.code(404).send({ error: 'call_not_found', message: 'call not found' });
-    if (!calls) return callsUnconfigured(reply);
-
     const result = await withTx(pool, async (client) => {
-      const call = await activeCallById(client, id);
-      if (!call || !(await canAccessChannelInTx(client, user.id, call.channel_id))) {
-        throw new DomainError(404, 'call_not_found', 'call not found');
-      }
+      const call = await requireAccessibleActiveCall(client, id, user.id);
       const recipients = await channelRecipientIds(client, call.channel_id);
       // A DM call has exactly two people: either the callee declining or the
       // caller cancelling ends it (otherwise it would hang in 'ringing' forever
       // with no GC). Group/public declines just dismiss the ring locally.
       const shouldEnd = call.channel_kind === 'dm';
       if (shouldEnd) {
-        await client.query(
-          "UPDATE calls SET status = 'ended', ended_at = COALESCE(ended_at, now()) WHERE id = $1",
-          [call.id],
-        );
+        await client.query("UPDATE calls SET status = 'ended', ended_at = COALESCE(ended_at, now()) WHERE id = $1", [
+          call.id,
+        ]);
       }
       return { callId: call.id, recipients, ended: shouldEnd };
     });
@@ -467,13 +381,8 @@ export function registerCallRoutes(app: FastifyInstance, deps: CallRouteDeps): v
     if (!user) return;
     const { id } = decodeRouteParams(CallIdParamsSchema, req.params);
     if (!isUuid(id)) return reply.code(404).send({ error: 'call_not_found', message: 'call not found' });
-    if (!calls) return callsUnconfigured(reply);
-
     const result = await withTx(pool, async (client) => {
-      const call = await activeCallById(client, id);
-      if (!call || !(await canAccessChannelInTx(client, user.id, call.channel_id))) {
-        throw new DomainError(404, 'call_not_found', 'call not found');
-      }
+      const call = await requireAccessibleActiveCall(client, id, user.id);
       return markParticipantLeftInCall(client, call, user.id);
     });
     if (result.left) {

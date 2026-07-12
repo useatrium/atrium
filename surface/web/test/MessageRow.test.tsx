@@ -2,11 +2,13 @@
 
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { ChatMessage } from '@atrium/surface-client';
-import { isStructuredTextForMarkup, MessageRow } from '../src/components/MessageRow';
+import { isStructuredTextForMarkup, type ChatMessage } from '@atrium/surface-client';
+import { MessageRow } from '../src/components/MessageRow';
 import { ThemeProvider } from '../src/theme';
 
-function message(overrides: Partial<ChatMessage> & { handle?: string | null } = {}): ChatMessage & { handle?: string | null } {
+function message(
+  overrides: Partial<ChatMessage> & { handle?: string | null } = {},
+): ChatMessage & { handle?: string | null } {
   return {
     id: 101,
     clientMsgId: null,
@@ -46,11 +48,7 @@ describe('MessageRow markup action', () => {
     const onMarkupEntry = vi.fn();
     render(
       <ThemeProvider>
-        <MessageRow
-          message={message()}
-          grouped={false}
-          onMarkupEntry={onMarkupEntry}
-        />
+        <MessageRow message={message()} grouped={false} onMarkupEntry={onMarkupEntry} />
       </ThemeProvider>,
     );
 
@@ -72,22 +70,14 @@ describe('MessageRow markup action', () => {
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
     rerender(
       <ThemeProvider>
-        <MessageRow
-          message={message({ deleted: true })}
-          grouped={false}
-          onMarkupEntry={vi.fn()}
-        />
+        <MessageRow message={message({ deleted: true })} grouped={false} onMarkupEntry={vi.fn()} />
       </ThemeProvider>,
     );
     expect(screen.queryByRole('button', { name: 'Mark up & reply' })).toBeNull();
 
     rerender(
       <ThemeProvider>
-        <MessageRow
-          message={message({ status: 'pending', id: null })}
-          grouped={false}
-          onMarkupEntry={vi.fn()}
-        />
+        <MessageRow message={message({ status: 'pending', id: null })} grouped={false} onMarkupEntry={vi.fn()} />
       </ThemeProvider>,
     );
     expect(screen.queryByRole('button', { name: 'Mark up & reply' })).toBeNull();

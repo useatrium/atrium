@@ -220,10 +220,6 @@ describe('parseMarkupSteer', () => {
 
   it('returns null for non-steer messages', () => {
     expect(parseMarkupSteer('This random message mentions CriticMarkup but is not a composed steer.')).toBeNull();
-    expect(
-      parseMarkupSteer(
-        'I marked up `src/app.ts` with CriticMarkup.\n\n```markdown\n{++x++}\n```',
-      ),
-    ).toBeNull();
+    expect(parseMarkupSteer('I marked up `src/app.ts` with CriticMarkup.\n\n```markdown\n{++x++}\n```')).toBeNull();
   });
 });

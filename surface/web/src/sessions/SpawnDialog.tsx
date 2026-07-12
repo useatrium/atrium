@@ -91,9 +91,9 @@ export function SpawnDialog({
   const spawnDisabled = !canSpawn;
   const spawnTooltip = spawnDisabled
     ? privateRepoBlocked
-      ? 'Connect GitHub before starting a private repo session'
-      : 'Add a task before starting a session'
-    : 'Spawn session';
+      ? 'Connect GitHub before starting a private repo agent'
+      : 'Add a task before starting an agent'
+    : 'Start agent';
   const activeReferenceCount = referenceRepos.filter((item) => item.repo.trim().length > 0).length;
   const repoScoped = repo.trim().length > 0 || activeReferenceCount > 0;
   const activeGitHubIdentityMode = githubConnection?.connected
@@ -115,9 +115,9 @@ export function SpawnDialog({
     ? activeReferenceCount > 0
       ? `Working repo + ${activeReferenceCount} reference ${activeReferenceCount === 1 ? 'repo' : 'repos'}`
       : 'Working repo'
-      : activeReferenceCount > 0
-        ? `${activeReferenceCount} reference ${activeReferenceCount === 1 ? 'repo' : 'repos'}`
-        : 'No repo selected';
+    : activeReferenceCount > 0
+      ? `${activeReferenceCount} reference ${activeReferenceCount === 1 ? 'repo' : 'repos'}`
+      : 'No repo selected';
   const titleId = 'spawn-dialog-title';
   const taskErrorId = 'spawn-task-error';
   const privateRepoBlockedId = 'spawn-private-repo-error';
@@ -206,20 +206,20 @@ export function SpawnDialog({
   }
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-start justify-center bg-surface/60 p-4"
-    >
+    <div className="fixed inset-0 z-50 flex items-start justify-center bg-surface/60 p-4">
       <form
         ref={containerRef}
         onSubmit={submit}
         role="dialog"
         aria-modal="true"
-        aria-label="Start an agent session"
+        aria-label="Start an agent"
         className="mt-12 max-h-[calc(100dvh-6rem)] w-[min(520px,calc(100vw-2rem))] overflow-y-auto rounded-lg border border-edge-strong bg-surface-raised shadow-2xl"
       >
         <header className="flex items-center justify-between border-b border-edge px-4 py-3">
           <div>
-            <h2 id={titleId} className="text-sm font-semibold text-fg">New agent session</h2>
+            <h2 id={titleId} className="text-sm font-semibold text-fg">
+              New agent
+            </h2>
             <p className="text-2xs text-fg-muted">in {channelName}</p>
           </div>
           <button
@@ -249,7 +249,7 @@ export function SpawnDialog({
               className="w-full resize-y rounded-md border border-edge bg-surface px-2.5 py-2 text-sm text-fg placeholder-fg-muted outline-none focus:border-edge-strong"
             />
             <span id={taskErrorId} className="sr-only">
-              Add a task before starting a session.
+              Add a task before starting an agent.
             </span>
           </label>
 
@@ -474,7 +474,7 @@ export function SpawnDialog({
               role="alert"
               className="flex items-center justify-between gap-3 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-2xs text-fg-secondary"
             >
-              <span>Connect GitHub before starting a session with private repositories.</span>
+              <span>Connect GitHub before starting an agent with private repositories.</span>
               <button
                 type="button"
                 onClick={onConnectGitHub}

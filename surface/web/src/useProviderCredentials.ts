@@ -1,14 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
-import {
-  api,
-  type ProviderCredentialProvider,
-  type ProviderCredentialStatus,
-} from './api';
+import { api, type ProviderCredentialProvider, type ProviderCredentialStatus } from './api';
 
 export function useProviderCredentials() {
-  const [providerCredentials, setProviderCredentials] = useState<
-    Record<string, ProviderCredentialStatus | undefined>
-  >({});
+  const [providerCredentials, setProviderCredentials] = useState<Record<string, ProviderCredentialStatus | undefined>>(
+    {},
+  );
   const [providerDialog, setProviderDialog] = useState<ProviderCredentialProvider | null>(null);
 
   const loadProviderCredentials = useCallback(async () => {
@@ -74,9 +70,7 @@ export function useProviderCredentials() {
   };
 }
 
-function disconnectedProviderStatus(
-  provider: ProviderCredentialProvider,
-): ProviderCredentialStatus {
+function disconnectedProviderStatus(provider: ProviderCredentialProvider): ProviderCredentialStatus {
   return {
     provider,
     connected: false,

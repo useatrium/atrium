@@ -1,6 +1,6 @@
-import type { QuestionPrompt, QuestionRequested } from "./types.js";
+import type { QuestionPrompt, QuestionRequested } from './types.js';
 
-export type ClaudeQuestionPreviewFormat = "markdown" | "html";
+export type ClaudeQuestionPreviewFormat = 'markdown' | 'html';
 
 export interface ClaudeAskUserQuestionOption {
   label: string;
@@ -33,7 +33,7 @@ export interface ClaudeAskUserQuestionUpdatedInput {
 }
 
 export interface ClaudeAskUserQuestionPermissionResult {
-  behavior: "allow";
+  behavior: 'allow';
   updatedInput: ClaudeAskUserQuestionUpdatedInput;
 }
 
@@ -42,7 +42,7 @@ export function claudeAskUserQuestionToFrame(
   options: ClaudeQuestionBridgeOptions,
 ): QuestionRequested {
   return {
-    type: "question_requested",
+    type: 'question_requested',
     question_id: options.questionId,
     turn_id: options.turnId,
     questions: input.questions.map((question, index) =>
@@ -61,7 +61,7 @@ export function claudeAnswersToUpdatedInput(
       input.questions.map((question, index) => {
         const promptId = claudePromptId(index);
         const selected = answers[promptId]?.answers ?? [];
-        return [question.question, selected.join(", ")];
+        return [question.question, selected.join(', ')];
       }),
     ),
   };
@@ -72,7 +72,7 @@ export function claudeAnswersToPermissionResult(
   answers: ClaudeQuestionAnswerBody,
 ): ClaudeAskUserQuestionPermissionResult {
   return {
-    behavior: "allow",
+    behavior: 'allow',
     updatedInput: claudeAnswersToUpdatedInput(input, answers),
   };
 }

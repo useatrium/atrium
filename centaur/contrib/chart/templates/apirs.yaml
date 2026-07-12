@@ -1,5 +1,6 @@
 {{- if .Values.apiRs.enabled }}
 {{- $console := include "centaur.consoleValues" . | fromYaml -}}
+{{- $mcpPublicUrl := default .Values.slackbotv2.mcpPublicUrl .Values.apiRs.mcpPublicUrl -}}
 {{- $apiRsName := include "centaur.componentName" (dict "root" . "component" "api-rs") -}}
 {{- $repoCacheStorageType := include "centaur.repoCacheStorageType" . -}}
 {{- $repoCacheUsePvc := eq $repoCacheStorageType "persistentVolumeClaim" -}}
@@ -10,23 +11,33 @@
 {{- end -}}
 {{- $overlaySources := include "centaur.overlaySources" . | fromJsonArray -}}
 {{- $toolSources := list -}}
+{{- $publicToolSources := list -}}
 {{- $apiWorkflowDirList := list -}}
 {{- $sandboxWorkflowDirList := list -}}
 {{- $skillDirs := list -}}
+{{- $publicSkillDirs := list -}}
 {{- range $source := $overlaySources -}}
 {{- $repo := get $source "repo" | default "" -}}
+{{- $visibility := get $source "visibility" | default "private" -}}
 {{- if $repo -}}
 {{- with (get $source "toolsSubdir") -}}
-{{- $toolSource := dict "repo" $repo "subdir" . -}}
+{{- $toolSource := dict "repo" $repo "subdir" . "visibility" $visibility -}}
 {{- with (get $source "ref") }}{{- $_ := set $toolSource "ref" . -}}{{- end -}}
 {{- $toolSources = append $toolSources $toolSource -}}
+{{- if eq $visibility "public" -}}
+{{- $publicToolSources = append $publicToolSources $toolSource -}}
+{{- end -}}
 {{- end -}}
 {{- with (get $source "workflowsSubdir") -}}
 {{- $apiWorkflowDirList = append $apiWorkflowDirList (printf "%s/%s/%s" $.Values.repoCache.hostPath $repo .) -}}
-{{- $sandboxWorkflowDirList = append $sandboxWorkflowDirList (printf "/home/agent/repos/%s/%s" $repo .) -}}
+{{- $sandboxWorkflowDirList = append $sandboxWorkflowDirList (printf "/home/agent/github/%s/%s" $repo .) -}}
 {{- end -}}
 {{- with (get $source "skillsSubdir") -}}
-{{- $skillDirs = append $skillDirs (printf "/home/agent/repos/%s/%s" $repo .) -}}
+{{- $skillDir := printf "/home/agent/github/%s/%s" $repo . -}}
+{{- $skillDirs = append $skillDirs $skillDir -}}
+{{- if eq $visibility "public" -}}
+{{- $publicSkillDirs = append $publicSkillDirs $skillDir -}}
+{{- end -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}
@@ -38,6 +49,12 @@
 {{- $toolDirs = list -}}
 {{- range $source := $toolSources }}
 {{- $toolDirs = append $toolDirs (printf "%s/%s/%s" $.Values.repoCache.hostPath (get $source "repo") (get $source "subdir")) -}}
+{{- end -}}
+{{- end -}}
+{{- $publicToolDirs := list -}}
+{{- if and .Values.repoCache.enabled (gt (len $publicToolSources) 0) -}}
+{{- range $source := $publicToolSources }}
+{{- $publicToolDirs = append $publicToolDirs (printf "%s/%s/%s" $.Values.repoCache.hostPath (get $source "repo") (get $source "subdir")) -}}
 {{- end -}}
 {{- end -}}
 {{- if and .Values.repoCache.enabled (gt (len $apiWorkflowDirList) 0) -}}
@@ -52,6 +69,45 @@
 {{- $apiRsMetricsAnnotations = dict "prometheus.io/scrape" "true" "prometheus.io/path" .Values.apiRs.metrics.path "prometheus.io/port" (printf "%v" .Values.apiRs.port) -}}
 {{- $apiRsMetricsAnnotations = mergeOverwrite $apiRsMetricsAnnotations (.Values.apiRs.metrics.annotations | default dict) -}}
 {{- end -}}
+{{- $apiRsEtl := .Values.apiRs.etl | default dict -}}
+{{- $apiRsEtlEnv := list
+  (dict "name" "SLACK_ETL_ENABLED" "value" (dig "slack" "enabled" false $apiRsEtl))
+  (dict "name" "SLACK_SYNC_INTERVAL_SECONDS" "value" (dig "slack" "syncIntervalSeconds" 3600 $apiRsEtl))
+  (dict "name" "SLACK_SYNC_BACKFILL_LOOKBACK_DAYS" "value" (dig "slack" "syncBackfillLookbackDays" 30 $apiRsEtl))
+  (dict "name" "SLACK_SYNC_THREAD_LOOKBACK_DAYS" "value" (dig "slack" "syncThreadLookbackDays" 3 $apiRsEtl))
+  (dict "name" "SLACK_ETL_EXCLUDED_CHANNEL_PATTERNS" "value" (dig "slack" "excludedChannelPatterns" "" $apiRsEtl))
+  (dict "name" "SLACK_ETL_ATTACHMENTS_ENABLED" "value" (dig "slack" "attachments" "enabled" true $apiRsEtl))
+  (dict "name" "SLACK_ETL_ATTACHMENT_MAX_BYTES" "value" (dig "slack" "attachments" "maxBytes" 10485760 $apiRsEtl))
+  (dict "name" "SLACK_BACKFILL_ENABLED" "value" (dig "slack" "backfill" "enabled" true $apiRsEtl))
+  (dict "name" "SLACK_BACKFILL_INTERVAL_SECONDS" "value" (dig "slack" "backfill" "intervalSeconds" 600 $apiRsEtl))
+  (dict "name" "SLACK_BACKFILL_CHANNEL_BATCH_LIMIT" "value" (dig "slack" "backfill" "channelBatchLimit" 50 $apiRsEtl))
+  (dict "name" "SLACK_BACKFILL_CHANNEL_PAGES_PER_JOB" "value" (dig "slack" "backfill" "channelPagesPerJob" 5 $apiRsEtl))
+  (dict "name" "SLACK_RETENTION_ENABLED" "value" (dig "slack" "retention" "enabled" true $apiRsEtl))
+  (dict "name" "SLACK_RETENTION_INTERVAL_MINUTES" "value" (dig "slack" "retention" "intervalMinutes" 60 $apiRsEtl))
+  (dict "name" "SLACK_ETL_RETENTION_DAYS" "value" (dig "slack" "retention" "etlDays" 0 $apiRsEtl))
+  (dict "name" "SLACK_DM_RETENTION_DAYS" "value" (dig "slack" "retention" "dmDays" 0 $apiRsEtl))
+  (dict "name" "LINEAR_ETL_ENABLED" "value" (dig "linear" "enabled" false $apiRsEtl))
+  (dict "name" "LINEAR_SYNC_INTERVAL_SECONDS" "value" (dig "linear" "syncIntervalSeconds" 14400 $apiRsEtl))
+  (dict "name" "GOOGLE_DRIVE_ETL_ENABLED" "value" (dig "googleDrive" "enabled" false $apiRsEtl))
+  (dict "name" "GOOGLE_DRIVE_SYNC_INTERVAL_SECONDS" "value" (dig "googleDrive" "syncIntervalSeconds" 14400 $apiRsEtl))
+  (dict "name" "GOOGLE_CALENDAR_ETL_ENABLED" "value" (dig "googleCalendar" "enabled" false $apiRsEtl))
+  (dict "name" "GOOGLE_CALENDAR_SYNC_INTERVAL_SECONDS" "value" (dig "googleCalendar" "syncIntervalSeconds" 14400 $apiRsEtl))
+  (dict "name" "COMPANY_CONTEXT_DOCUMENTS_ENABLED" "value" (dig "companyContextDocuments" "enabled" true $apiRsEtl))
+  (dict "name" "COMPANY_CONTEXT_DOCUMENTS_INTERVAL_SECONDS" "value" (dig "companyContextDocuments" "intervalSeconds" 14400 $apiRsEtl))
+-}}
+{{- $apiRsEtlPassthroughNames := list -}}
+{{- range $env := $apiRsEtlEnv -}}
+{{- $apiRsEtlPassthroughNames = append $apiRsEtlPassthroughNames $env.name -}}
+{{- end -}}
+{{- with (get .Values.apiRs.extraEnv "SESSION_SANDBOX_PASSTHROUGH_ENV") -}}
+{{- range $name := splitList "," (toString .) -}}
+{{- $trimmedName := trim $name -}}
+{{- if $trimmedName -}}
+{{- $apiRsEtlPassthroughNames = append $apiRsEtlPassthroughNames $trimmedName -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- $apiRsEtlPassthroughNames = uniq $apiRsEtlPassthroughNames -}}
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -150,8 +206,21 @@ spec:
                 secretKeyRef:
                   name: {{ include "centaur.secretEnvName" . }}
                   key: {{ printf "%sDATABASE_URL" .Values.secretManager.envPrefix }}
+            - name: CENTAUR_JWT_SIGNING_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "centaur.secretEnvName" . }}
+                  key: {{ printf "%sCENTAUR_JWT_SIGNING_SECRET" .Values.secretManager.envPrefix }}
             - name: BIND_ADDR
               value: {{ printf "0.0.0.0:%v" .Values.apiRs.port | quote }}
+{{- if $mcpPublicUrl }}
+            - name: CENTAUR_MCP_PUBLIC_URL
+              value: {{ $mcpPublicUrl | quote }}
+{{- end }}
+{{- if $console.publicUrl }}
+            - name: CENTAUR_CONSOLE_PUBLIC_URL
+              value: {{ $console.publicUrl | quote }}
+{{- end }}
             - name: RUN_MIGRATIONS
               value: {{ .Values.apiRs.runMigrations | quote }}
             - name: IRON_CONTROL_SYNC_INFRA_SECRETS
@@ -160,6 +229,10 @@ spec:
               value: info
             - name: TOOL_DIRS
               value: {{ join ":" $toolDirs | quote }}
+{{- if gt (len $publicToolDirs) 0 }}
+            - name: KUBERNETES_PUBLIC_TOOL_DIRS
+              value: {{ join ":" $publicToolDirs | quote }}
+{{- end }}
             - name: WORKFLOW_DIRS
               value: {{ $workflowDirs | quote }}
 {{- if $sandboxWorkflowDirs }}
@@ -174,6 +247,17 @@ spec:
             - name: WORKFLOW_ALLOWED_NAMES
               value: {{ .Values.apiRs.workflowAllowedNames | quote }}
 {{- end }}
+{{- range $env := $apiRsEtlEnv }}
+{{- if not (hasKey $.Values.apiRs.extraEnv $env.name) }}
+            - name: {{ $env.name }}
+              value: {{ $env.value | toString | quote }}
+{{- end }}
+{{- end }}
+            # Forward the chart-rendered ETL workflow config into workflow-host
+            # sandboxes. Operators should set apiRs.etl.* values, not maintain
+            # SESSION_SANDBOX_PASSTHROUGH_ENV by hand.
+            - name: SESSION_SANDBOX_PASSTHROUGH_ENV
+              value: {{ join "," $apiRsEtlPassthroughNames | quote }}
 {{- if .Values.overlay.systemPrompt }}
             - name: CENTAUR_OVERLAY_DIR
               value: {{ .Values.overlay.mountPath | quote }}
@@ -200,8 +284,10 @@ spec:
             - name: SESSION_SANDBOX_WARMCACHE_TOOLCHAIN_ID
               value: {{ .Values.sandbox.warmcacheToolchainId | quote }}
 {{- end }}
-            - name: SESSION_SANDBOX_IDLE_STOP_TTL_SECS
-              value: {{ .Values.apiRs.sandboxIdleStopTtlSecs | quote }}
+            - name: SESSION_SANDBOX_RUNNING_LIMIT
+              value: {{ .Values.apiRs.sandboxRunningLimit | quote }}
+            - name: SESSION_SANDBOX_HOT_IDLE_GRACE_SECS
+              value: {{ .Values.apiRs.sandboxHotIdleGraceSecs | quote }}
             - name: SESSION_SANDBOX_MAX_LIFETIME_SECS
               value: {{ .Values.apiRs.sandboxMaxLifetimeSecs | quote }}
             - name: SESSION_SANDBOX_REAP_INTERVAL_SECS
@@ -210,6 +296,22 @@ spec:
               value: {{ .Values.apiRs.sandboxCleanupIntervalSecs | quote }}
             - name: SESSION_SANDBOX_IDLE_CLEANUP_BACKSTOP_SECS
               value: {{ .Values.apiRs.sandboxIdleCleanupBackstopSecs | quote }}
+            - name: SESSION_ACTIVITY_SUMMARY_ENABLED
+              value: {{ .Values.apiRs.activitySummary.enabled | quote }}
+{{- if .Values.apiRs.activitySummary.enabled }}
+            - name: SESSION_ACTIVITY_SUMMARY_MODEL
+              value: {{ .Values.apiRs.activitySummary.model | quote }}
+            - name: SESSION_ACTIVITY_SUMMARY_OPENAI_BASE_URL
+              value: {{ .Values.apiRs.activitySummary.openaiBaseUrl | quote }}
+            - name: SESSION_ACTIVITY_SUMMARY_MIN_INTERVAL_SECS
+              value: {{ .Values.apiRs.activitySummary.minIntervalSecs | quote }}
+            - name: SESSION_ACTIVITY_SUMMARY_TIMEOUT_SECS
+              value: {{ .Values.apiRs.activitySummary.timeoutSecs | quote }}
+            - name: SESSION_ACTIVITY_SUMMARY_MAX_FACTS
+              value: {{ .Values.apiRs.activitySummary.maxFacts | quote }}
+            - name: SESSION_ACTIVITY_SUMMARY_MAX_OUTPUT_TOKENS
+              value: {{ .Values.apiRs.activitySummary.maxOutputTokens | quote }}
+{{- end }}
             - name: SESSION_SANDBOX_K8S_NAMESPACE
               value: {{ .Release.Namespace | quote }}
             - name: SESSION_SANDBOX_IMAGE
@@ -249,6 +351,8 @@ spec:
               value: {{ printf "%s:%s" .Values.ironProxy.image.repository .Values.ironProxy.image.tag | quote }}
             - name: KUBERNETES_IRON_PROXY_IMAGE_PULL_POLICY
               value: {{ .Values.ironProxy.image.pullPolicy | quote }}
+            - name: KUBERNETES_IRON_PROXY_UPSTREAM_DENY_CIDRS
+              value: {{ join "," .Values.ironProxy.upstreamDenyCidrs | quote }}
             - name: KUBERNETES_FIREWALL_CA_SECRET_NAME
               value: {{ include "centaur.trustedCaSecretName" . | quote }}
             - name: KUBERNETES_FIREWALL_CA_KEY_SECRET_NAME
@@ -306,6 +410,9 @@ spec:
 {{- if and .Values.repoCache.enabled (gt (len $skillDirs) 0) }}
 {{- $sandboxEnvList = append $sandboxEnvList (dict "name" "CENTAUR_SKILL_DIRS" "value" (join ":" $skillDirs)) }}
 {{- end }}
+{{- if and .Values.repoCache.enabled (gt (len $publicSkillDirs) 0) }}
+{{- $sandboxEnvList = append $sandboxEnvList (dict "name" "CENTAUR_PUBLIC_SKILL_DIRS" "value" (join ":" $publicSkillDirs)) }}
+{{- end }}
 {{- range $k, $v := .Values.sandbox.extraEnv }}
 {{- $sandboxEnvList = append $sandboxEnvList (dict "name" $k "value" ($v | toString)) }}
 {{- end }}
@@ -355,6 +462,8 @@ spec:
 {{- end }}
             - name: KUBERNETES_TOOLS_SUBDIR
               value: {{ get $firstToolSource "subdir" | quote }}
+            - name: KUBERNETES_TOOLS_VISIBILITY
+              value: {{ get $firstToolSource "visibility" | default "private" | quote }}
 {{- if $extraToolSources }}
             - name: KUBERNETES_TOOLS_EXTRA_SOURCES
               value: {{ toJson $extraToolSources | quote }}
@@ -362,6 +471,8 @@ spec:
 {{- if $toolsUseRepoCache }}
             - name: KUBERNETES_TOOLS_REPO_CACHE_PATH
               value: {{ .Values.repoCache.hostPath | quote }}
+            - name: KUBERNETES_TOOLS_AUTO_RELOAD
+              value: {{ .Values.repoCache.autoReload | quote }}
 {{- if $repoCacheUsePvc }}
             - name: KUBERNETES_TOOLS_REPO_CACHE_PVC
               value: {{ $repoCachePvcName | quote }}
@@ -379,8 +490,10 @@ spec:
 {{- end }}
 {{- end }}
 {{- range $name, $value := .Values.apiRs.extraEnv }}
+{{- if ne $name "SESSION_SANDBOX_PASSTHROUGH_ENV" }}
             - name: {{ $name }}
               value: {{ $value | quote }}
+{{- end }}
 {{- end }}
           envFrom:
             - secretRef:

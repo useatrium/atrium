@@ -84,10 +84,8 @@ export function ThreadPanel({
     typeof window === 'undefined'
       ? THREAD_PANE_FALLBACK_WIDTH
       : Math.max(THREAD_PANE_MIN_WIDTH, Math.round((window.innerWidth * THREAD_PANE_MAX_VW) / 100));
-  const sessionFor = (m: ChatMessage) =>
-    m.sessionId != null ? sessions[m.sessionId] : undefined;
-  const spectatorsFor = (m: ChatMessage) =>
-    m.sessionId != null ? (spectators[m.sessionId] ?? 0) : 0;
+  const sessionFor = (m: ChatMessage) => (m.sessionId != null ? sessions[m.sessionId] : undefined);
+  const spectatorsFor = (m: ChatMessage) => (m.sessionId != null ? (spectators[m.sessionId] ?? 0) : 0);
   const scrollRef = useRef<HTMLDivElement>(null);
   const count = replies.length;
   useLayoutEffect(() => {

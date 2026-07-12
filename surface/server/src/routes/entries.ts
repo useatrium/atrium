@@ -1,8 +1,10 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { Schema } from 'effect';
 import { EntryReferencesQueryBodySchema } from '@atrium/surface-client/entry-contracts';
-import type { Db, DbClient } from '../db.js';
+import type { AppMutationContext } from '../app-mutations.js';
+import type { Db } from '../db.js';
 import {
+  DomainError,
   foldAnnotations,
   REACTION_EMOJI,
   searchMessages,
@@ -37,6 +39,18 @@ const SessionSearchQuerySchema = Schema.Struct({
   limit: Schema.optional(Schema.Unknown),
 });
 
+function parseSearchParams(query: { q?: unknown; limit?: unknown }): { query: string; limit: number | undefined } {
+  const text = String(query.q ?? '').trim();
+  if (text.length < 2) {
+    throw new DomainError(400, 'bad_query', 'query must be at least 2 chars');
+  }
+  const limit = query.limit ? Number(query.limit) : undefined;
+  if (limit !== undefined && !Number.isFinite(limit)) {
+    throw new DomainError(400, 'bad_query', 'numeric limit expected');
+  }
+  return { query: text, limit };
+}
+
 export type EntryAnnotationRateLimit =
   | false
   | {
@@ -46,22 +60,13 @@ export type EntryAnnotationRateLimit =
       keyGenerator(req: FastifyRequest): Promise<string>;
     };
 
-export interface EntryRouteDeps {
+export interface EntryRouteDeps extends AppMutationContext {
   pool: Db;
   hub: WsHub;
   entryAnnotationRateLimit: EntryAnnotationRateLimit;
   requireUser(req: FastifyRequest, reply: FastifyReply): UserRef | null;
-  optionalOpId(body: unknown): string | undefined;
   canViewFull(userId: string): Promise<boolean>;
   fullViewForbidden(reply: FastifyReply): FastifyReply;
-  runMutation<T>(args: {
-    userId: string;
-    opId?: string;
-    opType: string;
-    body: unknown;
-    fn: (client: DbClient) => Promise<T>;
-    onApplied?: (response: T) => void | Promise<void>;
-  }): Promise<T>;
 }
 
 export function registerEntryRoutes(app: FastifyInstance, deps: EntryRouteDeps): void {
@@ -76,83 +81,74 @@ export function registerEntryRoutes(app: FastifyInstance, deps: EntryRouteDeps):
     runMutation,
   } = deps;
 
-  app.get('/api/entries/:handle', async (req, reply) => {
-    const user = requireUser(req, reply);
-    if (!user) return;
+  async function requireEntry(req: FastifyRequest, reply: FastifyReply, user: UserRef) {
     const { handle } = decodeRouteParams(EntryHandleParamsSchema, req.params);
     if (typeof handle !== 'string' || !tryDecodeHandle(handle)) {
-      return reply.code(400).send({ error: 'bad_handle' });
+      reply.code(400).send({ error: 'bad_handle' });
+      return null;
     }
     const entry = await resolveEntry(pool, handle, user.id);
     if (!entry) {
-      return reply.code(404).send({ error: 'entry_not_found' });
+      reply.code(404).send({ error: 'entry_not_found' });
+      return null;
     }
-    return entry;
+    return { handle, entry };
+  }
+
+  app.get('/api/entries/:handle', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    const resolved = await requireEntry(req, reply, user);
+    return resolved?.entry;
   });
 
   app.get('/api/entries/:handle/annotations', async (req, reply) => {
     const user = requireUser(req, reply);
     if (!user) return;
-    const { handle } = decodeRouteParams(EntryHandleParamsSchema, req.params);
-    if (typeof handle !== 'string' || !tryDecodeHandle(handle)) {
-      return reply.code(400).send({ error: 'bad_handle' });
-    }
-    const entry = await resolveEntry(pool, handle, user.id);
-    if (!entry) {
-      return reply.code(404).send({ error: 'entry_not_found' });
-    }
+    const resolved = await requireEntry(req, reply, user);
+    if (!resolved) return;
+    const { handle } = resolved;
     return foldAnnotations(pool, handle);
   });
 
-  app.post(
-    '/api/entries/references/query',
-    { config: { rateLimit: entryAnnotationRateLimit } },
-    async (req, reply) => {
-      const user = requireUser(req, reply);
-      if (!user) return;
-      const body = decodeRouteBody(EntryReferencesQueryBodySchema, req.body);
-      if (!Array.isArray(body.handles)) {
-        return reply.code(400).send({ error: 'bad_request', message: 'handles must be an array' });
+  app.post('/api/entries/references/query', { config: { rateLimit: entryAnnotationRateLimit } }, async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    const body = decodeRouteBody(EntryReferencesQueryBodySchema, req.body);
+    if (!Array.isArray(body.handles)) {
+      return reply.code(400).send({ error: 'bad_request', message: 'handles must be an array' });
+    }
+    if (body.handles.length > 200) {
+      return reply.code(400).send({ error: 'too_many_handles', message: 'handles is limited to 200' });
+    }
+    const handles: string[] = [];
+    for (const handle of body.handles) {
+      if (typeof handle !== 'string' || !tryDecodeHandle(handle)) {
+        return reply.code(400).send({ error: 'bad_handle' });
       }
-      if (body.handles.length > 200) {
-        return reply.code(400).send({ error: 'too_many_handles', message: 'handles is limited to 200' });
-      }
-      const handles: string[] = [];
-      for (const handle of body.handles) {
-        if (typeof handle !== 'string' || !tryDecodeHandle(handle)) {
-          return reply.code(400).send({ error: 'bad_handle' });
-        }
-        handles.push(handle);
-      }
-      return queryEntryReferences(pool, handles, user.id);
-    },
-  );
+      handles.push(handle);
+    }
+    return queryEntryReferences(pool, handles, user.id);
+  });
 
   app.post('/api/entries/:handle/extract', async (req, reply) => {
     const user = requireUser(req, reply);
     if (!user) return;
-    const { handle } = decodeRouteParams(EntryHandleParamsSchema, req.params);
-    if (typeof handle !== 'string' || !tryDecodeHandle(handle)) {
-      return reply.code(400).send({ error: 'bad_handle' });
-    }
-    const entry = await resolveEntry(pool, handle, user.id);
-    if (!entry) {
-      return reply.code(404).send({ error: 'entry_not_found' });
-    }
+    const resolved = await requireEntry(req, reply, user);
+    if (!resolved) return;
+    const { handle, entry } = resolved;
     try {
       const result = await extractEntryToMarkdownArtifact(pool, { handle, entry, userId: user.id });
-      return reply
-        .code(result.created ? 201 : 200)
-        .send({
-          artifactId: result.artifactId,
-          path: result.path,
-          seq: result.seq,
-          workspaceId: result.workspaceId,
-          // The current source text of the entry, so the markup UI can detect when the
-          // (persistent, shared) markup artifact has diverged from the live message and
-          // offer a reset. Null for artifact entries, whose "text" is just a filename.
-          sourceText: entry.targetType === 'artifact' ? null : entry.text,
-        });
+      return reply.code(result.created ? 201 : 200).send({
+        artifactId: result.artifactId,
+        path: result.path,
+        seq: result.seq,
+        workspaceId: result.workspaceId,
+        // The current source text of the entry, so the markup UI can detect when the
+        // (persistent, shared) markup artifact has diverged from the live message and
+        // offer a reset. Null for artifact entries, whose "text" is just a filename.
+        sourceText: entry.targetType === 'artifact' ? null : entry.text,
+      });
     } catch (err) {
       if ((err as { statusCode?: number; code?: string })?.statusCode === 422) {
         return reply.code(422).send({ error: (err as { code?: string }).code ?? 'unprocessable_entry' });
@@ -167,10 +163,6 @@ export function registerEntryRoutes(app: FastifyInstance, deps: EntryRouteDeps):
     async (req, reply) => {
       const user = requireUser(req, reply);
       if (!user) return;
-      const { handle } = decodeRouteParams(EntryHandleParamsSchema, req.params);
-      if (typeof handle !== 'string' || !tryDecodeHandle(handle)) {
-        return reply.code(400).send({ error: 'bad_handle' });
-      }
       const body = decodeRouteBody(EntryReactionBodySchema, req.body);
       const opId = optionalOpId(body);
       const emoji = body.emoji;
@@ -184,10 +176,9 @@ export function registerEntryRoutes(app: FastifyInstance, deps: EntryRouteDeps):
       if (action !== 'add' && action !== 'remove') {
         return reply.code(400).send({ error: 'bad_request', message: "action must be 'add' or 'remove'" });
       }
-      const entry = await resolveEntry(pool, handle, user.id);
-      if (!entry) {
-        return reply.code(404).send({ error: 'entry_not_found' });
-      }
+      const resolved = await requireEntry(req, reply, user);
+      if (!resolved) return;
+      const { handle } = resolved;
       return runMutation({
         userId: user.id,
         opId,
@@ -213,14 +204,7 @@ export function registerEntryRoutes(app: FastifyInstance, deps: EntryRouteDeps):
     const user = requireUser(req, reply);
     if (!user) return;
     const q = decodeRouteQuery(SearchQuerySchema, req.query);
-    const query = String(q.q ?? '').trim();
-    if (query.length < 2) {
-      return reply.code(400).send({ error: 'bad_query', message: 'query must be at least 2 chars' });
-    }
-    const limit = q.limit ? Number(q.limit) : undefined;
-    if (limit !== undefined && !Number.isFinite(limit)) {
-      return reply.code(400).send({ error: 'bad_query', message: 'numeric limit expected' });
-    }
+    const { query, limit } = parseSearchParams(q);
     return { results: await searchMessages(pool, { query, userId: user.id, limit }) };
   });
 
@@ -228,14 +212,7 @@ export function registerEntryRoutes(app: FastifyInstance, deps: EntryRouteDeps):
     const user = requireUser(req, reply);
     if (!user) return;
     const q = decodeRouteQuery(SessionSearchQuerySchema, req.query);
-    const query = String(q.q ?? '').trim();
-    if (query.length < 2) {
-      return reply.code(400).send({ error: 'bad_query', message: 'query must be at least 2 chars' });
-    }
-    const limit = q.limit ? Number(q.limit) : undefined;
-    if (limit !== undefined && !Number.isFinite(limit)) {
-      return reply.code(400).send({ error: 'bad_query', message: 'numeric limit expected' });
-    }
+    const { query, limit } = parseSearchParams(q);
     const full = q.full === '1';
     if (full && !(await canViewFull(user.id))) {
       return fullViewForbidden(reply);

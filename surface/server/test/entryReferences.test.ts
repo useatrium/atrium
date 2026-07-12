@@ -203,7 +203,9 @@ describe('POST /api/entries/references/query', () => {
     });
     expect(refs.latest[0].ts).toEqual(expect.any(String));
     expect(refs.latest[1].excerpt.length).toBeLessThanOrEqual(140);
-    expect(refs.latest.map((ref: { eventId: number }) => ref.eventId)).not.toContain(alice.json().references[handle].latest[0].eventId);
+    expect(refs.latest.map((ref: { eventId: number }) => ref.eventId)).not.toContain(
+      alice.json().references[handle].latest[0].eventId,
+    );
   });
 
   it('excludes references from deleted messages (no counts, no excerpt leak)', async () => {

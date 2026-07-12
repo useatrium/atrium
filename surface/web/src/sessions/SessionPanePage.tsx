@@ -27,22 +27,16 @@ type LoadState = 'loading' | 'ready' | 'not-found';
 // Same WS routing as Chat: desktop shell → absolute server origin with a fresh
 // bearer token per attempt; e2e may override; browsers keep same-origin /ws.
 const browserWsUrl = import.meta.env.VITE_ATRIUM_WS_URL?.trim();
-const wsOptions = isDesktop
-  ? { url: () => desktopWsUrl() ?? '' }
-  : browserWsUrl
-    ? { url: browserWsUrl }
-    : undefined;
+const wsOptions = isDesktop ? { url: () => desktopWsUrl() ?? '' } : browserWsUrl ? { url: browserWsUrl } : undefined;
 
 const TITLE_STATUS_LABELS: Partial<Record<SessionStatus, string>> = { spawning: 'starting' };
 
-export function sessionPaneDocumentTitle(
-  session: Session,
-  opts: { now?: number; unseen?: boolean } = {},
-): string {
+export function sessionPaneDocumentTitle(session: Session, opts: { now?: number; unseen?: boolean } = {}): string {
   const now = opts.now ?? Date.now();
-  const status = !isTerminalSessionStatus(session.status) && isStalledSessionStatus(session, now)
-    ? 'stalled'
-    : (TITLE_STATUS_LABELS[session.status] ?? session.status);
+  const status =
+    !isTerminalSessionStatus(session.status) && isStalledSessionStatus(session, now)
+      ? 'stalled'
+      : (TITLE_STATUS_LABELS[session.status] ?? session.status);
   return `${opts.unseen ? '● ' : ''}${session.title} · ${status}`;
 }
 
@@ -294,17 +288,11 @@ export function SessionPanePage({ sessionId, me }: { sessionId: string; me: User
   );
 }
 
-function SessionPanePagePlaceholder({
-  notFound,
-  sessionId,
-}: {
-  notFound: boolean;
-  sessionId: string;
-}) {
+function SessionPanePagePlaceholder({ notFound, sessionId }: { notFound: boolean; sessionId: string }) {
   return (
     <aside className="flex min-w-0 flex-1 flex-col border-l border-edge bg-surface">
       <header className="flex h-12 shrink-0 items-center justify-between border-b border-edge px-4">
-        <h2 className="text-sm font-semibold text-fg">Session</h2>
+        <h2 className="text-sm font-semibold text-fg">Agent</h2>
         <a
           href={`/s/${sessionId}`}
           className="rounded-md px-2 py-1 text-2xs text-fg-tertiary hover:bg-surface-overlay hover:text-fg"
@@ -314,7 +302,7 @@ function SessionPanePagePlaceholder({
       </header>
       {notFound ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-1.5 px-6 text-center">
-          <div className="text-sm font-medium text-fg-secondary">Session not found</div>
+          <div className="text-sm font-medium text-fg-secondary">Agent not found</div>
           <div className="text-xs text-fg-muted">It may have been removed, or the link is wrong.</div>
           <a
             href={`/s/${sessionId}`}
@@ -324,9 +312,7 @@ function SessionPanePagePlaceholder({
           </a>
         </div>
       ) : (
-        <div className="flex flex-1 items-center justify-center text-sm text-fg-muted">
-          Loading session…
-        </div>
+        <div className="flex flex-1 items-center justify-center text-sm text-fg-muted">Loading session…</div>
       )}
     </aside>
   );

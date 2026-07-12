@@ -1,6 +1,6 @@
-import { tailEvents, type TailEventsOptions } from "./stream.js";
-import { errorCodeFromBody, jsonObjectFrom, parseJsonValue } from "./schema.js";
-import type { CentaurEventFrame, JsonObject, JsonValue } from "./types.js";
+import { tailEvents, type TailEventsOptions } from './stream.js';
+import { errorCodeFromBody, jsonObjectFrom, parseJsonValue } from './schema.js';
+import type { CentaurEventFrame, JsonObject, JsonValue } from './types.js';
 
 export type FetchLike = typeof fetch;
 
@@ -95,9 +95,9 @@ export class CentaurApiError extends Error {
     body?: JsonValue;
   }) {
     super(
-      `Centaur ${args.method} ${args.path} failed: ${args.status} ${args.statusText}${args.text ? `: ${args.text}` : ""}`,
+      `Centaur ${args.method} ${args.path} failed: ${args.status} ${args.statusText}${args.text ? `: ${args.text}` : ''}`,
     );
-    this.name = "CentaurApiError";
+    this.name = 'CentaurApiError';
     this.status = args.status;
     this.statusText = args.statusText;
     this.code = args.code;
@@ -114,9 +114,9 @@ export class CentaurClient {
   constructor(options: CentaurClientOptions);
   constructor(baseUrl: string, apiKey: string);
   constructor(optionsOrBaseUrl: CentaurClientOptions | string, apiKey?: string) {
-    if (typeof optionsOrBaseUrl === "string") {
+    if (typeof optionsOrBaseUrl === 'string') {
       if (!apiKey) {
-        throw new Error("apiKey is required when constructing CentaurClient with baseUrl");
+        throw new Error('apiKey is required when constructing CentaurClient with baseUrl');
       }
       this.baseUrl = optionsOrBaseUrl;
       this.apiKey = apiKey;
@@ -135,22 +135,20 @@ export class CentaurClient {
     const body: JsonObject = {
       harness_type: toApiRsHarness(harness),
       metadata: {
-        source: "atrium",
+        source: 'atrium',
         harness,
         ...(opts.metadata ?? {}),
         ...(opts.spawnId ? { spawn_id: opts.spawnId } : {}),
       },
-      ...(opts.repos && opts.repos.length
-        ? { repos: opts.repos.map((r) => ({ ...r })) }
-        : {}),
+      ...(opts.repos && opts.repos.length ? { repos: opts.repos.map((r) => ({ ...r })) } : {}),
     };
     return this.request<Record<string, JsonValue | undefined>>(
-      "POST",
+      'POST',
       `/api/session/${encodeURIComponent(threadKey)}`,
       body,
     ).then((session) => ({
       ...session,
-      thread_key: typeof session.thread_key === "string" ? session.thread_key : threadKey,
+      thread_key: typeof session.thread_key === 'string' ? session.thread_key : threadKey,
       assignment_generation: 1,
     }));
   }
@@ -166,24 +164,20 @@ export class CentaurClient {
       messages: [
         {
           ...(opts.messageId ? { client_message_id: opts.messageId } : {}),
-          role: "user",
+          role: 'user',
           parts,
           metadata: meta,
         },
       ],
     };
     void generation;
-    return this.request(
-      "POST",
-      `/api/session/${encodeURIComponent(threadKey)}/messages`,
-      body,
-    );
+    return this.request('POST', `/api/session/${encodeURIComponent(threadKey)}/messages`, body);
   }
 
   execute(threadKey: string, generation: number, harness: string, opts: ExecuteOptions = {}): Promise<ExecuteResponse> {
     const body: JsonObject = {
       metadata: {
-        source: "atrium",
+        source: 'atrium',
         harness,
         ...(opts.metadata ?? {}),
       },
@@ -194,11 +188,7 @@ export class CentaurClient {
     if (opts.idleTimeoutMs !== undefined) body.idle_timeout_ms = opts.idleTimeoutMs;
     if (opts.maxDurationMs !== undefined) body.max_duration_ms = opts.maxDurationMs;
     void generation;
-    return this.request(
-      "POST",
-      `/api/session/${encodeURIComponent(threadKey)}/execute`,
-      body,
-    );
+    return this.request('POST', `/api/session/${encodeURIComponent(threadKey)}/execute`, body);
   }
 
   release(threadKey: string, releaseId: string, cancelInflight = false): Promise<ReleaseResponse> {
@@ -207,16 +197,12 @@ export class CentaurClient {
       void releaseId;
       return Promise.resolve({ ok: true, cancel_inflight: false });
     }
-    return this.request<ReleaseResponse>(
-      "POST",
-      `/api/session/${encodeURIComponent(threadKey)}/cancel`,
-      { release_id: releaseId, cancel_inflight: true },
-    ).then((response) => {
+    return this.request<ReleaseResponse>('POST', `/api/session/${encodeURIComponent(threadKey)}/cancel`, {
+      release_id: releaseId,
+      cancel_inflight: true,
+    }).then((response) => {
       if (response.ok === false) {
-        const error =
-          typeof response.stop_error === "string"
-            ? response.stop_error
-            : "unknown cancel failure";
+        const error = typeof response.stop_error === 'string' ? response.stop_error : 'unknown cancel failure';
         throw new Error(`Centaur session cancel failed: ${error}`);
       }
       return { ...response, cancel_inflight: true };
@@ -225,18 +211,19 @@ export class CentaurClient {
 
   interruptTurn(threadKey: string): Promise<InterruptTurnResponse> {
     const path = `/api/session/${encodeURIComponent(threadKey)}/interrupt`;
-    return this.request<InterruptTurnResponse>("POST", path, {}).then((response) => {
+    return this.request<InterruptTurnResponse>('POST', path, {}).then((response) => {
       if (response.ok === false) {
-        const error = typeof response.error === "string" && response.error.length > 0
-          ? response.error
-          : "unknown interrupt failure";
+        const error =
+          typeof response.error === 'string' && response.error.length > 0
+            ? response.error
+            : 'unknown interrupt failure';
         throw new CentaurApiError({
-          method: "POST",
+          method: 'POST',
           path,
           status: 502,
-          statusText: "Bad Gateway",
+          statusText: 'Bad Gateway',
           text: `interrupt failed: ${error}`,
-          code: "centaur_interrupt_failed",
+          code: 'centaur_interrupt_failed',
           body: response,
         });
       }
@@ -246,7 +233,7 @@ export class CentaurClient {
 
   getExecution(executionId: string): Promise<ExecutionResponse> {
     void executionId;
-    return Promise.reject(new Error("api-rs does not expose execution lookup yet"));
+    return Promise.reject(new Error('api-rs does not expose execution lookup yet'));
   }
 
   answerQuestion(
@@ -255,15 +242,19 @@ export class CentaurClient {
     questionId: string,
     answers: Record<string, { answers: string[] }>,
   ): Promise<Record<string, JsonValue | undefined>> {
-    return this.request("POST", `/api/session/${encodeURIComponent(threadKey)}/executions/${encodeURIComponent(executionId)}/answer`, {
-      question_id: questionId,
-      answers: answers as JsonObject,
-    });
+    return this.request(
+      'POST',
+      `/api/session/${encodeURIComponent(threadKey)}/executions/${encodeURIComponent(executionId)}/answer`,
+      {
+        question_id: questionId,
+        answers: answers as JsonObject,
+      },
+    );
   }
 
   tailEvents(
     threadKey: string,
-    options: Omit<TailEventsOptions, "baseUrl" | "apiKey" | "fetchImpl">,
+    options: Omit<TailEventsOptions, 'baseUrl' | 'apiKey' | 'fetchImpl'>,
   ): AsyncGenerator<CentaurEventFrame> {
     return tailEvents(threadKey, {
       ...options,
@@ -274,13 +265,17 @@ export class CentaurClient {
     });
   }
 
-  private async request<T extends JsonObject = JsonObject>(method: string, path: string, body?: JsonObject): Promise<T> {
+  private async request<T extends JsonObject = JsonObject>(
+    method: string,
+    path: string,
+    body?: JsonObject,
+  ): Promise<T> {
     const extraHeaders = cleanHeaders(this.headers());
     const init: RequestInit = {
       method,
       headers: {
-        "content-type": "application/json",
-        "x-api-key": this.apiKey,
+        'content-type': 'application/json',
+        'x-api-key': this.apiKey,
         ...extraHeaders,
       },
     };
@@ -288,7 +283,7 @@ export class CentaurClient {
     const response = await this.fetchImpl(new URL(path, withTrailingSlash(this.baseUrl)), init);
 
     if (!response.ok) {
-      const text = await response.text().catch(() => "");
+      const text = await response.text().catch(() => '');
       const parsed = parseJson(text);
       const code = parseErrorCode(parsed);
       throw new CentaurApiError({
@@ -306,7 +301,7 @@ export class CentaurClient {
       return {} as T;
     }
 
-    const parsed = await response.json().catch(() => undefined) as unknown;
+    const parsed = (await response.json().catch(() => undefined)) as unknown;
     const decoded = jsonObjectFrom(parsed);
     if (!decoded) {
       throw new CentaurApiError({
@@ -314,8 +309,8 @@ export class CentaurClient {
         path,
         status: response.status,
         statusText: response.statusText,
-        text: "invalid JSON object response",
-        code: "invalid_json_object_response",
+        text: 'invalid JSON object response',
+        code: 'invalid_json_object_response',
       });
     }
     return decoded as T;
@@ -325,19 +320,19 @@ export class CentaurClient {
 function cleanHeaders(headers: Record<string, string | undefined>): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [key, value] of Object.entries(headers)) {
-    if (value !== undefined && value !== "") out[key] = value;
+    if (value !== undefined && value !== '') out[key] = value;
   }
   return out;
 }
 
 function toApiRsHarness(harness: string): string {
   const normalized = harness.trim().toLowerCase();
-  if (normalized === "claude-code" || normalized === "claude_code") return "claudecode";
-  return normalized || "codex";
+  if (normalized === 'claude-code' || normalized === 'claude_code') return 'claudecode';
+  return normalized || 'codex';
 }
 
 function withTrailingSlash(url: string): string {
-  return url.endsWith("/") ? url : `${url}/`;
+  return url.endsWith('/') ? url : `${url}/`;
 }
 
 function parseJson(text: string): JsonValue | undefined {

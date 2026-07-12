@@ -3,34 +3,24 @@ import { pathToFileURL } from 'node:url';
 import {
   app,
   BrowserWindow,
-  type BrowserWindowConstructorOptions,
   Menu,
   Notification,
   Tray,
   ipcMain,
   nativeImage,
   net,
+  nativeTheme,
   protocol,
   session,
   shell,
 } from 'electron';
-import {
-  APP_ORIGIN,
-  APP_SCHEME,
-  RENDERER_DEV_URL,
-  SERVER_URL,
-  TRAY_ICON,
-  WEB_DIST,
-} from './config.js';
+import { APP_ORIGIN, APP_SCHEME, RENDERER_DEV_URL, SERVER_URL, TRAY_ICON, WEB_DIST } from './config.js';
 import { buildAppMenu } from './appMenu.js';
 import { clearSession, loadSession, saveSession, type DesktopSession } from './session.js';
 import { DEEP_LINK_SCHEME, deepLinkToRoute } from './deepLink.js';
 import { setupAutoUpdate } from './updater.js';
-import {
-  resolveSessionPopoutOpen,
-  resolveWindowOpen,
-  sessionIdFromPanePath,
-} from './windowOpenPolicy.js';
+import { resolveSessionPopoutOpen, resolveWindowOpen, sessionIdFromPanePath } from './windowOpenPolicy.js';
+import { launchBackgroundColor, mainWindowOptions, popoutWindowOptions } from './windowConfig.js';
 
 // Must run before app `ready`: marks `app://` as a standard, secure origin so
 // the bundled UI gets a secure context (required for getUserMedia / WebRTC).
@@ -110,27 +100,15 @@ function findDeepLinkArg(argv: string[]): string | null {
   return argv.find((arg) => deepLinkToRoute(arg) !== null) ?? null;
 }
 
-function mainWindowOptions(preload: string): BrowserWindowConstructorOptions {
-  return {
-    width: 1280,
-    height: 832,
-    minWidth: 880,
-    minHeight: 600,
-    backgroundColor: '#09090b',
-    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
-    webPreferences: {
-      preload,
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: false,
-    },
-  };
-}
-
 function createWindow(): BrowserWindow {
   const preload = preloadPath();
   const target = rendererTarget();
-  const main = new BrowserWindow(mainWindowOptions(preload));
+  const main = new BrowserWindow(
+    mainWindowOptions(preload, {
+      platform: process.platform,
+      shouldUseDarkColors: nativeTheme.shouldUseDarkColors,
+    }),
+  );
   mainWindow = main;
   mainWindows.add(main);
 
@@ -173,24 +151,6 @@ function createWindow(): BrowserWindow {
 
   void main.loadURL(target);
   return main;
-}
-
-function popoutWindowOptions(preload: string): BrowserWindowConstructorOptions {
-  return {
-    width: 1100,
-    height: 800,
-    minWidth: 720,
-    minHeight: 520,
-    backgroundColor: '#09090b',
-    autoHideMenuBar: true,
-    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
-    webPreferences: {
-      preload,
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: false,
-    },
-  };
 }
 
 function sessionPopoutUrl(sessionId: string): string {
@@ -257,7 +217,12 @@ function registerPopoutWindow(
 
 function createSessionPopout(sessionId: string): BrowserWindow {
   const preload = preloadPath();
-  const popoutWindow = new BrowserWindow(popoutWindowOptions(preload));
+  const popoutWindow = new BrowserWindow(
+    popoutWindowOptions(preload, {
+      platform: process.platform,
+      shouldUseDarkColors: nativeTheme.shouldUseDarkColors,
+    }),
+  );
   registerPopoutWindow(sessionId, popoutWindow, preload, devOrigin());
   void popoutWindow.loadURL(sessionPopoutUrl(sessionId));
   return popoutWindow;
@@ -341,11 +306,7 @@ function flushPendingDeepLinks(): void {
 /** Popout windows are real BrowserWindows and can open links of their own, so
  * the policy attaches recursively — otherwise a child falls back to Electron's
  * default `allow` and external links open inside the shell. */
-function attachWindowOpenPolicy(
-  contents: Electron.WebContents,
-  preload: string,
-  devOrigin: string | null,
-): void {
+function attachWindowOpenPolicy(contents: Electron.WebContents, preload: string, devOrigin: string | null): void {
   contents.on('did-create-window', (childWindow, details) => {
     const sessionId = sessionIdFromWindowOpenUrl(details.url);
     if (sessionId) {
@@ -383,7 +344,10 @@ function attachWindowOpenPolicy(
         if (popoutDecision.action === 'deny') return { action: 'deny' };
         return {
           action: 'allow',
-          overrideBrowserWindowOptions: popoutWindowOptions(preload),
+          overrideBrowserWindowOptions: popoutWindowOptions(preload, {
+            platform: process.platform,
+            shouldUseDarkColors: nativeTheme.shouldUseDarkColors,
+          }),
         };
       }
       case 'external':
@@ -436,13 +400,7 @@ function createTray(): void {
     ]),
   );
   tray.on('click', () => toggleWindow());
-  console.log(
-    '[atrium] tray created (iconEmpty:',
-    icon.isEmpty(),
-    ', notifications:',
-    Notification.isSupported(),
-    ')',
-  );
+  console.log('[atrium] tray created (iconEmpty:', icon.isEmpty(), ', notifications:', Notification.isSupported(), ')');
 }
 
 function createDockMenu(): void {
@@ -513,6 +471,12 @@ if (hasSingleInstanceLock) {
 
     console.log('[atrium] WEB_DIST =', WEB_DIST, '| SERVER_URL =', SERVER_URL);
     registerAppProtocol();
+    nativeTheme.on('updated', () => {
+      const background = launchBackgroundColor(nativeTheme.shouldUseDarkColors);
+      for (const window of BrowserWindow.getAllWindows()) {
+        if (!window.isDestroyed()) window.setBackgroundColor(background);
+      }
+    });
     wireIpc();
     Menu.setApplicationMenu(
       buildAppMenu({

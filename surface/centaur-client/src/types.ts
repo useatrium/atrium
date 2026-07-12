@@ -5,22 +5,26 @@ export interface JsonObject {
 }
 
 export type ExecutionStatus =
-  | "queued"
-  | "running"
-  | "completed"
-  | "failed"
-  | "failed_permanent"
-  | "cancelled"
+  | 'queued'
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'failed_permanent'
+  | 'cancelled'
   | (string & {});
 
 export interface ExecutionState {
-  type: "execution.state";
+  type: 'execution.state';
   status: ExecutionStatus;
   thread_key: string;
   execution_id: string;
   result_text?: string;
   agent_thread_id?: string;
   terminal_reason?: string;
+  /** Centaur cancellation reason. `turn_interrupted` means the user stopped the
+   * current turn; other cancellation reasons still represent cancelled
+   * execution/session state. */
+  reason?: string;
   /** Why the turn ended, when the api-rs terminal event carries it. `stopped_by_user`
    * = the user interrupted the turn (see the interrupt/stop-turn path); rendered as
    * "stopped by you" rather than a generic completed/failed label. */
@@ -29,28 +33,36 @@ export interface ExecutionState {
 }
 
 export interface AnthropicTextBlock {
-  type: "text";
+  type: 'text';
   text: string;
   [key: string]: unknown;
 }
 
 export interface AnthropicToolUseBlock {
-  type: "tool_use";
+  type: 'tool_use';
   id: string;
   name: string;
   input: JsonObject;
   [key: string]: unknown;
 }
 
+export interface AnthropicThinkingBlock {
+  type: 'thinking';
+  thinking?: string;
+  text?: string;
+  [key: string]: unknown;
+}
+
 export type AnthropicMessageBlock =
   | AnthropicTextBlock
   | AnthropicToolUseBlock
+  | AnthropicThinkingBlock
   | ({ type: string } & JsonObject);
 
 export interface AnthropicMessage {
   id?: string;
-  role?: "assistant" | string;
-  type?: "message" | string;
+  role?: 'assistant' | string;
+  type?: 'message' | string;
   model?: string;
   usage?: JsonObject;
   content: AnthropicMessageBlock[];
@@ -61,14 +73,14 @@ export interface AnthropicMessage {
 }
 
 export interface AmpSystemEvent {
-  type: "system";
+  type: 'system';
   subtype: string;
   session_id?: string;
   [key: string]: unknown;
 }
 
 export interface AmpAssistantEvent {
-  type: "assistant";
+  type: 'assistant';
   message: AnthropicMessage;
   uuid?: string;
   request_id?: string;
@@ -85,19 +97,19 @@ export interface AmpToolResultContent {
 }
 
 export interface AmpToolEvent {
-  type: "tool";
+  type: 'tool';
   content: AmpToolResultContent[];
   [key: string]: unknown;
 }
 
 export interface AmpResultEvent {
-  type: "result";
+  type: 'result';
   text: string;
   [key: string]: unknown;
 }
 
 export interface AmpTurnDoneEvent {
-  type: "turn.done";
+  type: 'turn.done';
   result: string;
   turn_id: number;
   agent_thread_id?: string;
@@ -105,7 +117,7 @@ export interface AmpTurnDoneEvent {
 }
 
 export interface CodexTextContent {
-  type: "text";
+  type: 'text';
   text: string;
   text_elements?: unknown[];
   [key: string]: unknown;
@@ -113,7 +125,7 @@ export interface CodexTextContent {
 
 export interface CodexItem {
   id?: string;
-  type: "userMessage" | "agentMessage" | "commandExecution" | "fileChange" | "reasoning" | "plan" | (string & {});
+  type: 'userMessage' | 'agentMessage' | 'commandExecution' | 'fileChange' | 'reasoning' | 'plan' | (string & {});
   content?: CodexTextContent[];
   text?: string;
   command?: string;
@@ -128,19 +140,19 @@ export interface CodexItem {
 }
 
 export interface CodexItemStartedEvent {
-  type: "item.started";
+  type: 'item.started';
   item: CodexItem;
   [key: string]: unknown;
 }
 
 export interface CodexItemCompletedEvent {
-  type: "item.completed";
+  type: 'item.completed';
   item: CodexItem;
   [key: string]: unknown;
 }
 
 export interface CodexAgentMessageDeltaEvent {
-  type: "item.agentMessage.delta";
+  type: 'item.agentMessage.delta';
   delta: string;
   item_id?: string;
   itemId?: string;
@@ -150,7 +162,7 @@ export interface CodexAgentMessageDeltaEvent {
 }
 
 export interface CodexCommandExecutionOutputDeltaEvent {
-  type: "item.commandExecution.outputDelta";
+  type: 'item.commandExecution.outputDelta';
   delta?: string;
   output?: string;
   item_id?: string;
@@ -161,7 +173,7 @@ export interface CodexCommandExecutionOutputDeltaEvent {
 }
 
 export interface CodexReasoningTextDeltaEvent {
-  type: "item.reasoning.textDelta";
+  type: 'item.reasoning.textDelta';
   delta?: string;
   item_id?: string;
   itemId?: string;
@@ -173,7 +185,7 @@ export interface CodexReasoningTextDeltaEvent {
 }
 
 export interface CodexReasoningSummaryTextDeltaEvent {
-  type: "item.reasoning.summaryTextDelta";
+  type: 'item.reasoning.summaryTextDelta';
   delta?: string;
   item_id?: string;
   itemId?: string;
@@ -185,18 +197,18 @@ export interface CodexReasoningSummaryTextDeltaEvent {
 }
 
 export interface CodexThreadTokenUsageEvent {
-  type: "thread.tokenUsage";
+  type: 'thread.tokenUsage';
   tokenUsage?: JsonObject;
   [key: string]: unknown;
 }
 
 export interface CodexTurnStartedEvent {
-  type: "turn.started";
+  type: 'turn.started';
   [key: string]: unknown;
 }
 
 export interface CodexTurnCompletedEvent {
-  type: "turn.completed";
+  type: 'turn.completed';
   [key: string]: unknown;
 }
 
@@ -237,13 +249,13 @@ interface ObservationBase {
 }
 
 export interface AssistantTextObserved extends ObservationBase {
-  type: "obs.assistant_text";
+  type: 'obs.assistant_text';
   text_chars: number;
   text_block_count: number;
 }
 
 export interface AssistantToolUseObserved extends ObservationBase {
-  type: "obs.assistant_tool_use";
+  type: 'obs.assistant_tool_use';
   tool_name: string;
   tool_use_id: string;
   input_keys: string[];
@@ -251,14 +263,14 @@ export interface AssistantToolUseObserved extends ObservationBase {
 }
 
 export interface ToolResultObserved extends ObservationBase {
-  type: "obs.tool_result";
+  type: 'obs.tool_result';
   tool_use_id: string;
   is_error: boolean;
   content_size_bytes: number;
 }
 
 export interface UsageObserved extends ObservationBase {
-  type: "obs.usage";
+  type: 'obs.usage';
   model: string;
   cost_usd: number;
   input_tokens?: number;
@@ -270,7 +282,7 @@ export interface UsageObserved extends ObservationBase {
 }
 
 export interface ExecutionSummaryObserved extends ObservationBase {
-  type: "obs.execution_summary";
+  type: 'obs.execution_summary';
   models: string[];
   status: ExecutionStatus;
   cost_usd?: number;
@@ -279,7 +291,7 @@ export interface ExecutionSummaryObserved extends ObservationBase {
 }
 
 export interface ExecutionStartedObserved extends ObservationBase {
-  type: "obs.execution_started";
+  type: 'obs.execution_started';
   user_id: string;
   runtime_id?: string;
   queue_delay_s?: number;
@@ -288,13 +300,13 @@ export interface ExecutionStartedObserved extends ObservationBase {
 }
 
 export interface SystemObserved extends ObservationBase {
-  type: "obs.system";
+  type: 'obs.system';
   subtype: string;
   session_id?: string;
 }
 
 export interface ResultObserved extends ObservationBase {
-  type: "obs.result";
+  type: 'obs.result';
   text_chars: number;
 }
 
@@ -302,7 +314,7 @@ export interface QuestionOption {
   label: string;
   description: string;
   preview?: string;
-  previewFormat?: "markdown" | "html";
+  previewFormat?: 'markdown' | 'html';
 }
 
 export interface QuestionPrompt {
@@ -316,29 +328,29 @@ export interface QuestionPrompt {
 }
 
 export interface QuestionRequested {
-  type: "question_requested";
+  type: 'question_requested';
   question_id: string;
   turn_id: string;
   questions: QuestionPrompt[];
 }
 
 export interface QuestionResolved {
-  type: "question_resolved";
+  type: 'question_resolved';
   question_id: string;
-  reason: "answered" | "cancelled" | "empty";
+  reason: 'answered' | 'cancelled' | 'empty';
 }
 
 /** Legacy transcript metadata for a file surfaced as a work-product artifact.
  * Current artifact bytes are committed directly to Atrium CAS; `ref` remains
  * for old events and display/backward compatibility. */
 export interface ArtifactCaptured {
-  type: "artifact.captured";
+  type: 'artifact.captured';
   artifact_id: string;
   /** Execution that captured this artifact. Optional for backward compat with
    * events emitted before Centaur added it. */
   execution_id?: string;
   path: string;
-  kind: "created" | "modified" | "deleted";
+  kind: 'created' | 'modified' | 'deleted';
   mime: string;
   size_bytes: number;
   sha256: string;
@@ -359,21 +371,29 @@ export type ProjectionEvent =
  * write time on replay, receive time on live tail). Absent on frames from
  * servers that predate it. */
 export type CentaurEventFrame = { ts?: string } & (
-  | { event: "execution_state"; event_id: number; data: ExecutionState }
-  | { event: "execution_started"; event_id: number; data: ExecutionStartedObserved }
-  | { event: "amp_raw_event"; event_id: number; data: AmpRawEvent }
-  | { event: "system_event_observed"; event_id: number; data: SystemObserved }
-  | { event: "assistant_text_observed"; event_id: number; data: AssistantTextObserved }
-  | { event: "assistant_tool_use_observed"; event_id: number; data: AssistantToolUseObserved }
-  | { event: "tool_result_observed"; event_id: number; data: ToolResultObserved }
-  | { event: "usage_observed"; event_id: number; data: UsageObserved }
-  | { event: "result_observed"; event_id: number; data: ResultObserved }
-  | { event: "execution_summary"; event_id: number; data: ExecutionSummaryObserved }
-  | { event: "question_requested"; event_id: number; data: QuestionRequested }
-  | { event: "question_resolved"; event_id: number; data: QuestionResolved }
-  | { event: "artifact.captured"; event_id: number; data: ArtifactCaptured }
+  | { event: 'execution_state'; event_id: number; data: ExecutionState }
+  | { event: 'execution_started'; event_id: number; data: ExecutionStartedObserved }
+  | { event: 'amp_raw_event'; event_id: number; data: AmpRawEvent }
+  | { event: 'system_event_observed'; event_id: number; data: SystemObserved }
+  | { event: 'assistant_text_observed'; event_id: number; data: AssistantTextObserved }
+  | { event: 'assistant_tool_use_observed'; event_id: number; data: AssistantToolUseObserved }
+  | { event: 'tool_result_observed'; event_id: number; data: ToolResultObserved }
+  | { event: 'usage_observed'; event_id: number; data: UsageObserved }
+  | { event: 'result_observed'; event_id: number; data: ResultObserved }
+  | { event: 'execution_summary'; event_id: number; data: ExecutionSummaryObserved }
+  | { event: 'question_requested'; event_id: number; data: QuestionRequested }
+  | { event: 'question_resolved'; event_id: number; data: QuestionResolved }
+  | { event: 'artifact.captured'; event_id: number; data: ArtifactCaptured }
 );
 
 export function isTerminalExecutionStatus(status: ExecutionStatus): boolean {
-  return status === "completed" || status === "failed" || status === "failed_permanent" || status === "cancelled";
+  return status === 'completed' || status === 'failed' || status === 'failed_permanent' || status === 'cancelled';
+}
+
+export function isUserStoppedExecutionState(state: ExecutionState): boolean {
+  if (!isTerminalExecutionStatus(state.status)) return false;
+  return (
+    state.completion_reason === 'stopped_by_user' ||
+    (state.status === 'cancelled' && state.reason === 'turn_interrupted')
+  );
 }

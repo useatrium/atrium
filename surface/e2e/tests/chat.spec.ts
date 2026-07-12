@@ -19,8 +19,7 @@ import {
   warmOfflineShell,
 } from './helpers.js';
 
-const e2eDatabaseUrl =
-  process.env.E2E_DATABASE_URL ?? 'postgres://atrium:atrium@localhost:5433/atrium_e2e';
+const e2eDatabaseUrl = process.env.E2E_DATABASE_URL ?? 'postgres://atrium:atrium@localhost:5433/atrium_e2e';
 
 const questionPrompts = [
   {
@@ -43,13 +42,10 @@ async function injectQuestionRequested(args: {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const user = await client.query<{ id: string }>('SELECT id FROM users WHERE handle = $1', [
-      args.handle,
+    const user = await client.query<{ id: string }>('SELECT id FROM users WHERE handle = $1', [args.handle]);
+    const channel = await client.query<{ workspace_id: string }>('SELECT workspace_id FROM channels WHERE id = $1', [
+      args.channelId,
     ]);
-    const channel = await client.query<{ workspace_id: string }>(
-      'SELECT workspace_id FROM channels WHERE id = $1',
-      [args.channelId],
-    );
     if (!user.rows[0] || !channel.rows[0]) throw new Error('missing e2e user or channel');
 
     const userId = user.rows[0].id;
@@ -131,13 +127,10 @@ async function injectTranscriptSession(args: {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const user = await client.query<{ id: string }>('SELECT id FROM users WHERE handle = $1', [
-      args.handle,
+    const user = await client.query<{ id: string }>('SELECT id FROM users WHERE handle = $1', [args.handle]);
+    const channel = await client.query<{ workspace_id: string }>('SELECT workspace_id FROM channels WHERE id = $1', [
+      args.channelId,
     ]);
-    const channel = await client.query<{ workspace_id: string }>(
-      'SELECT workspace_id FROM channels WHERE id = $1',
-      [args.channelId],
-    );
     if (!user.rows[0] || !channel.rows[0]) throw new Error('missing e2e user or channel');
 
     const userId = user.rows[0].id;
@@ -169,10 +162,7 @@ async function injectTranscriptSession(args: {
       ],
     );
     const rootId = Number(root.rows[0]!.id);
-    await client.query('UPDATE sessions SET thread_root_event_id = $1 WHERE id = $2', [
-      rootId,
-      sessionId,
-    ]);
+    await client.query('UPDATE sessions SET thread_root_event_id = $1 WHERE id = $2', [rootId, sessionId]);
     await client.query('COMMIT');
     return { rootId, sessionId };
   } catch (err) {
@@ -184,11 +174,7 @@ async function injectTranscriptSession(args: {
   }
 }
 
-function transcriptSseFrame(
-  event: string,
-  eventId: number,
-  data: Record<string, unknown>,
-): string {
+function transcriptSseFrame(event: string, eventId: number, data: Record<string, unknown>): string {
   return `event: ${event}\ndata: ${JSON.stringify({ ...data, event_id: eventId })}\n\n`;
 }
 
@@ -218,35 +204,27 @@ function commandDialog(page: Page): Locator {
 }
 
 function commandSearchInput(dialog: Locator): Locator {
-  return dialog
-    .getByRole('combobox')
-    .or(dialog.getByRole('searchbox'))
-    .or(dialog.getByRole('textbox'))
-    .first();
+  return dialog.getByRole('combobox').or(dialog.getByRole('searchbox')).or(dialog.getByRole('textbox')).first();
 }
 
-async function openCommandCenter(
-  page: Page,
-  options: { allowButtonFallback?: boolean } = {},
-): Promise<Locator> {
+async function openCommandCenter(page: Page, options: { allowButtonFallback?: boolean } = {}): Promise<Locator> {
   await page.keyboard.press(commandShortcut());
   const dialog = commandDialog(page);
   if (options.allowButtonFallback) {
     try {
       await expect(dialog).toBeVisible({ timeout: 1500 });
     } catch {
-      await page.getByRole('button', { name: /command|search/i }).first().click();
+      await page
+        .getByRole('button', { name: /command|search/i })
+        .first()
+        .click();
     }
   }
   await expect(dialog).toBeVisible();
   return dialog;
 }
 
-async function runCommandQuery(
-  page: Page,
-  query: string,
-  options: { allowButtonFallback?: boolean } = {},
-) {
+async function runCommandQuery(page: Page, query: string, options: { allowButtonFallback?: boolean } = {}) {
   const dialog = await openCommandCenter(page, options);
   await commandSearchInput(dialog).fill(query);
   return dialog;
@@ -348,9 +326,7 @@ test('edit and delete own message', async ({ page }) => {
   await expect(page.getByText(edited, { exact: true })).toHaveCount(0);
 });
 
-test('unread badge: alice posts in a second channel; bob opens it and badge clears', async ({
-  browser,
-}) => {
+test('unread badge: alice posts in a second channel; bob opens it and badge clears', async ({ browser }) => {
   const second = await createTestChannel('badge');
 
   const alice = await browser.newContext();
@@ -371,9 +347,7 @@ test('unread badge: alice posts in a second channel; bob opens it and badge clea
   await bob.close();
 });
 
-test('cross-device read sync: reading in one context clears badge in the other', async ({
-  browser,
-}) => {
+test('cross-device read sync: reading in one context clears badge in the other', async ({ browser }) => {
   const second = await createTestChannel('sync');
 
   const alice = await browser.newContext();
@@ -431,7 +405,7 @@ test('command center: empty query shows suggested commands', async ({ page }) =>
   await login(page, unique('commander'), 'Commander');
 
   const dialog = await openCommandCenter(page);
-  for (const label of ['New agent in #general', 'Open Files', 'Open Agents', 'Open Inbox', 'Open settings']) {
+  for (const label of ['New agent in #general', 'Open Files', 'Open Agents', 'Open Attention', 'Open settings']) {
     await expect(dialog.getByText(label, { exact: true })).toBeVisible();
   }
 });
@@ -443,19 +417,17 @@ test('command center: opens Files from query', async ({ page }) => {
   await expect(dialog.getByText('Open Files', { exact: true })).toBeVisible();
   await page.keyboard.press('Enter');
   await expect(commandDialog(page)).toBeHidden();
-  await expect(
-    page.getByRole('heading', { name: /^Files(?: for| \/|$)/ }).first(),
-  ).toBeVisible();
+  await expect(page.getByRole('heading', { name: /^Files(?: for| \/|$)/ }).first()).toBeVisible();
 });
 
-test('command center: opens Activity from query', async ({ page }) => {
+test('command center: opens Attention from query', async ({ page }) => {
   await login(page, unique('act-cmd'), 'Activity Commander');
 
   const dialog = await runCommandQuery(page, 'activity');
-  await expect(dialog.getByText('Open Inbox', { exact: true })).toBeVisible();
+  await expect(dialog.getByText('Open Attention', { exact: true })).toBeVisible();
   await page.keyboard.press('Enter');
   await expect(commandDialog(page)).toBeHidden();
-  await expect(page.getByRole('heading', { name: /^Inbox$/ }).first()).toBeVisible();
+  await expect(page.getByRole('heading', { name: /^Attention$/ }).first()).toBeVisible();
 });
 
 test('command center: opens New agent dialog from query', async ({ page }) => {
@@ -465,7 +437,7 @@ test('command center: opens New agent dialog from query', async ({ page }) => {
   await expect(dialog.getByText('New agent in #general', { exact: true })).toBeVisible();
   await page.keyboard.press('Enter');
   await expect(commandDialog(page)).toBeHidden();
-  await expect(page.getByRole('dialog', { name: 'Start an agent session' })).toBeVisible();
+  await expect(page.getByRole('dialog', { name: 'Start an agent' })).toBeVisible();
 });
 
 test('command center: mobile opens Files from query', async ({ page }) => {
@@ -476,9 +448,7 @@ test('command center: mobile opens Files from query', async ({ page }) => {
   await expect(dialog.getByText('Open Files', { exact: true })).toBeVisible();
   await page.keyboard.press('Enter');
   await expect(commandDialog(page)).toBeHidden();
-  await expect(
-    page.getByRole('heading', { name: /^Files(?: for| \/|$)/ }).first(),
-  ).toBeVisible();
+  await expect(page.getByRole('heading', { name: /^Files(?: for| \/|$)/ }).first()).toBeVisible();
 });
 
 test('offline send survives reload and confirms once', async ({ page, context }) => {
@@ -551,10 +521,7 @@ test('same-context tabs send without duplicate messages or queue error toasts', 
   const secondText = unique('tab-two');
   await mainComposer(firstPage, room).fill(firstText);
   await mainComposer(secondPage, room).fill(secondText);
-  await Promise.all([
-    mainComposer(firstPage, room).press('Enter'),
-    mainComposer(secondPage, room).press('Enter'),
-  ]);
+  await Promise.all([mainComposer(firstPage, room).press('Enter'), mainComposer(secondPage, room).press('Enter')]);
 
   for (const page of [firstPage, secondPage]) {
     await expect(confirmedRowsWithText(page, firstText)).toHaveCount(1, { timeout: 15_000 });
@@ -590,7 +557,7 @@ test('offline edit and reaction land and survive reload', async ({ page, context
   const editedRow = messageRow(page, edited);
   await editedRow.hover();
   await editedRow.getByLabel('Add reaction').click({ force: true });
-  await page.keyboard.press('Enter');
+  await page.getByRole('textbox', { name: 'Search reactions' }).press('Enter');
   await expect(editedRow.getByRole('button', { name: '👍 1, including you' })).toBeVisible();
 
   await context.setOffline(false);
@@ -659,8 +626,7 @@ test('disconnect burst heals through sync without reload', async ({ browser }) =
   expect(firstRow).not.toBeNull();
   expect(secondRow).not.toBeNull();
   const firstBeforeSecond = await firstRow!.evaluate(
-    (node, other) =>
-      Boolean(node.compareDocumentPosition(other as Node) & Node.DOCUMENT_POSITION_FOLLOWING),
+    (node, other) => Boolean(node.compareDocumentPosition(other as Node) & Node.DOCUMENT_POSITION_FOLLOWING),
     secondRow,
   );
   expect(firstBeforeSecond).toBe(true);
@@ -669,10 +635,7 @@ test('disconnect burst heals through sync without reload', async ({ browser }) =
   await bob.close();
 });
 
-test('session question requested while disconnected heals without reload', async ({
-  page,
-  context,
-}) => {
+test('session question requested while disconnected heals without reload', async ({ page, context }) => {
   const room = await createTestChannel('question');
   const handle = unique('question-offline');
   await login(page, handle, 'Question Offline');
@@ -702,14 +665,10 @@ test('session question requested while disconnected heals without reload', async
   // transcript-fidelity rendering — no emoji prefix).
   await expect(page.getByText(injected.questionText)).toBeVisible();
   expect(injected.rootId).toBeGreaterThan(0);
-  expect(injected.sessionId).toMatch(
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
-  );
+  expect(injected.sessionId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
 });
 
-test('session transcript stream resumes after disconnect without duplicating replayed frames', async ({
-  page,
-}) => {
+test('session transcript stream resumes after disconnect without duplicating replayed frames', async ({ page }) => {
   const room = await createTestChannel('stream');
   const handle = unique('stream-resume');
   await login(page, handle, 'Stream Resume');
@@ -734,10 +693,7 @@ test('session transcript stream resumes after disconnect without duplicating rep
     await route.fulfill({
       status: 200,
       headers: { 'content-type': 'text/event-stream; charset=utf-8' },
-      body:
-        assistantTextFrame(2, 'alpha') +
-        assistantTextFrame(3, 'beta') +
-        executionStateFrame(4, 'completed'),
+      body: assistantTextFrame(2, 'alpha') + assistantTextFrame(3, 'beta') + executionStateFrame(4, 'completed'),
     });
   });
 

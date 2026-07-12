@@ -107,10 +107,7 @@ export function EntryReferencesChip({
                 <div className="flex min-w-0 items-center gap-2 text-2xs">
                   <span className="truncate font-medium text-fg-secondary">{actor}</span>
                   {relativeTimestamp && (
-                    <span
-                      className="shrink-0 text-fg-faint"
-                      title={exactTimestamp || undefined}
-                    >
+                    <span className="shrink-0 text-fg-faint" title={exactTimestamp || undefined}>
                       {relativeTimestamp}
                     </span>
                   )}

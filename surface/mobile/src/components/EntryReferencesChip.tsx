@@ -13,7 +13,7 @@ function referenceLabel(ref: EntryReference): string {
   return excerpt ? `${actor}: ${excerpt}` : actor;
 }
 
-export function openEntryReference(ref: EntryReference) {
+function openEntryReference(ref: EntryReference) {
   if (ref.threadRootEventId != null) {
     router.push({
       pathname: '/thread/[rootId]',
@@ -31,26 +31,16 @@ export function openEntryReferenceSummary(summary: EntryReferenceSummary | null)
     openEntryReference(latest[0]!);
     return;
   }
-  Alert.alert(
-    'Discussed in',
-    undefined,
-    [
-      ...latest.slice(0, 6).map((ref) => ({
-        text: referenceLabel(ref),
-        onPress: () => openEntryReference(ref),
-      })),
-      { text: 'Cancel', style: 'cancel' as const },
-    ],
-  );
+  Alert.alert('Discussed in', undefined, [
+    ...latest.slice(0, 6).map((ref) => ({
+      text: referenceLabel(ref),
+      onPress: () => openEntryReference(ref),
+    })),
+    { text: 'Cancel', style: 'cancel' as const },
+  ]);
 }
 
-export function EntryReferencesChip({
-  count,
-  onPress,
-}: {
-  count: number;
-  onPress: () => void;
-}) {
+export function EntryReferencesChip({ count, onPress }: { count: number; onPress: () => void }) {
   const { colors } = useTheme();
   return (
     <Pressable
@@ -67,9 +57,7 @@ export function EntryReferencesChip({
         paddingVertical: 3,
       })}
     >
-      <Text style={{ color: colors.textSecondary, fontSize: font.xs, fontWeight: '900' }}>
-        ↗ {count}
-      </Text>
+      <Text style={{ color: colors.textSecondary, fontSize: font.xs, fontWeight: '900' }}>↗ {count}</Text>
     </Pressable>
   );
 }

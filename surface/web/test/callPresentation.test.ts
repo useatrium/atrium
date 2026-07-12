@@ -27,6 +27,8 @@ function channel(overrides: Partial<Channel> = {}): Channel {
     kind: 'public',
     members: [me, ada],
     muted: false,
+    archivedAt: null,
+    pinned: false,
     ...overrides,
   };
 }
@@ -46,9 +48,7 @@ describe('callPresentation', () => {
   });
 
   it('labels private channels with raw channel names and DMs with participant labels', () => {
-    expect(labelForCallChannel(call(), [channel({ kind: 'private', name: 'ops' })], me.id)).toBe(
-      '#ops',
-    );
+    expect(labelForCallChannel(call(), [channel({ kind: 'private', name: 'ops' })], me.id)).toBe('#ops');
     expect(labelForCallChannel(call(), [channel({ kind: 'dm' })], me.id)).toBe('Ada Lovelace');
   });
 

@@ -153,7 +153,7 @@ need_surface=0; need_apirs=0; need_ironproxy=0; need_agent=0
 changed '^surface/'                                                   && need_surface=1
 changed '^centaur/services/(api-rs|workflow-python)/|^centaur/Cargo'  && need_apirs=1
 changed '^centaur/services/iron-proxy/'                               && need_ironproxy=1
-changed '^centaur/services/sandbox/|^centaur/(tools|workflows|\.agents)/' && need_agent=1
+changed '^centaur/services/sandbox/|^centaur/(tools|workflows|\.agents|harness|crates)/' && need_agent=1
 # node-sync builds from the api-rs context, so it tracks api-rs
 need_nodesync=$need_apirs
 
@@ -205,6 +205,7 @@ _rb_surface(){ local prev="$1"; [ -z "$prev" ] && return
 declare -A IMG=([api-rs]=centaur-api-rs [iron-proxy]=centaur-iron-proxy [sandbox]=centaur-agent [node-sync]=centaur-node-sync [console]=centaur-console)
 deploy_centaur(){
   command -v just >/dev/null || die "just not found"
+  _secret_preflight
   local to_build=()
   [ "$need_apirs" = 1 ]     && to_build+=(api-rs)
   [ "$need_ironproxy" = 1 ] && to_build+=(iron-proxy)
@@ -245,11 +246,53 @@ deploy_centaur(){
   echo "$SHA" > "$STATE/last-good-centaur-sha"
   log "centaur: OK (last-good=$SHA)"
 }
-_helm(){ local tag="$1"; ( cd "$REPO_DIR/centaur" && helm upgrade centaur contrib/chart -n "$NS" \
-    -f contrib/chart/values.dev.yaml -f ../infra/values.local.yaml -f ../deploy/values.box.yaml \
+# Template/upgrade the chart from an explicit source tree (default: the live
+# checkout). Rollback passes the last-good tree so the chart matches the image
+# tags. infra/values.local.yaml is box-local (untracked), so it always comes
+# from the live checkout.
+_helm(){ local tag="$1" root="${2:-$REPO_DIR}"; ( cd "$root/centaur" && helm upgrade centaur contrib/chart -n "$NS" \
+    -f contrib/chart/values.dev.yaml -f "$REPO_DIR/infra/values.local.yaml" -f "$root/deploy/values.box.yaml" \
     --set-string apiRs.image.tag="$tag" --set-string ironProxy.image.tag="$tag" \
     --set-string sandbox.image.tag="$tag" --set-string nodeSync.image.tag="$tag" \
     --set-string console.image.tag="$tag" ); }
+# Fail fast (before the multi-minute image builds) when the chart references a
+# secret key that isn't provisioned in the cluster. A missing key otherwise
+# surfaces only at rollout time as CreateContainerConfigError — and since the
+# failure is provisioning, not code, the rollback can't fix it either
+# (2026-07-11: a new chart-required CENTAUR_JWT_SIGNING_SECRET wedged the
+# rollout for 20h). Checks every rendered secretKeyRef name/key pair and every
+# envFrom secretRef secret.
+_secret_preflight(){
+  local rendered refs missing=0 name key
+  rendered="$(cd "$REPO_DIR/centaur" && helm template centaur contrib/chart -n "$NS" \
+    -f contrib/chart/values.dev.yaml -f "$REPO_DIR/infra/values.local.yaml" -f "$REPO_DIR/deploy/values.box.yaml" \
+    --set-string apiRs.image.tag=preflight --set-string ironProxy.image.tag=preflight \
+    --set-string sandbox.image.tag=preflight --set-string nodeSync.image.tag=preflight \
+    --set-string console.image.tag=preflight 2>&1)" || die "helm template failed in secret preflight: $(tail -n 3 <<<"$rendered")"
+  refs="$(awk '
+    function flush() { if (n != "" && k != "") print n "\t" k; inkeyref = 0; n = ""; k = "" }
+    /secretKeyRef:/ { flush(); inkeyref = 1; next }
+    inkeyref && $1 == "name:" { n = $2; gsub(/"/, "", n); next }
+    inkeyref && $1 == "key:"  { k = $2; gsub(/"/, "", k); next }
+    inkeyref { flush() }
+    /- secretRef:/ { insecref = 1; next }
+    insecref { if ($1 == "name:") { s = $2; gsub(/"/, "", s); print s "\t-" }; insecref = 0 }
+    END { flush() }
+  ' <<<"$rendered" | sort -u)"
+  [ -n "$refs" ] || die "secret preflight parsed no secret refs — parser or chart layout changed, refusing to proceed blind"
+  while IFS=$'\t' read -r name key; do
+    [ -z "$name" ] && continue
+    if [ "$key" = "-" ]; then
+      kubectl -n "$NS" get secret "$name" >/dev/null 2>&1 \
+        || { log "centaur: PREFLIGHT missing secret: $name"; missing=1; }
+    else
+      kubectl -n "$NS" get secret "$name" -o "jsonpath={.data['$key']}" 2>/dev/null | grep -q . \
+        || { log "centaur: PREFLIGHT missing secret key: $name/$key"; missing=1; }
+    fi
+  done <<<"$refs"
+  [ "$missing" = 1 ] && die "secret preflight: provision the keys above (see centaur/contrib/scripts/bootstrap-k8s-secrets.sh), then redeploy"
+  log "centaur: secret preflight OK ($(wc -l <<<"$refs" | tr -d ' ') refs)"
+}
 # Wait for the console + console-worker rollouts (skipped only when the deployment
 # genuinely doesn't exist, i.e. console.enabled=false — any other kubectl failure is
 # a real error, not a skip, so a transient API blip can't silently bypass the gate).
@@ -264,7 +307,35 @@ _console_rollout(){ local timeout="$1" d err
   done; }
 _rb_centaur(){ local last; last=$(cat "$STATE/last-good-centaur-sha" 2>/dev/null || true)
   [ -z "$last" ] && { log "centaur: no last-good SHA (first deploy) — nothing to roll back to"; return; }
-  log "centaur: ROLLING BACK to $last"; _helm "$last" || true
+  log "centaur: ROLLING BACK to $last"
+  # Roll back with the last-good CHART, not just last-good image tags:
+  # re-templating the current checkout's chart here re-applies the very chart
+  # change that may have caused the failure, pinning it over old images — a
+  # chart/image skew that can never converge (2026-07-11: a chart-only env
+  # rename crashed the last-good binary during rollback). Materialize the
+  # chart + tracked values at $last; infra/values.local.yaml stays live-checkout
+  # (box-local, untracked).
+  local rbroot=""
+  if git -C "$REPO_DIR" cat-file -e "${last}^{commit}" 2>/dev/null; then
+    rbroot="$(mktemp -d)"
+    if git -C "$REPO_DIR" archive "$last" centaur/contrib deploy/values.box.yaml | tar -x -C "$rbroot"; then
+      # Packaged chart dependencies (charts/*.tgz) are gitignored fetch
+      # artifacts, so the archive lacks them; borrow the live checkout's.
+      cp "$REPO_DIR"/centaur/contrib/chart/charts/*.tgz "$rbroot/centaur/contrib/chart/charts/" 2>/dev/null || true
+    else
+      log "centaur: could not materialize chart @ $last — rolling back with current chart"
+      rm -rf "$rbroot"; rbroot=""
+    fi
+  else
+    log "centaur: commit $last not in checkout — rolling back with current chart"
+  fi
+  if [ -n "$rbroot" ]; then
+    _helm "$last" "$rbroot" \
+      || { log "centaur: rollback with last-good chart failed — retrying with current chart"; _helm "$last" || true; }
+  else
+    _helm "$last" || true
+  fi
+  [ -n "$rbroot" ] && rm -rf "$rbroot"
   kubectl rollout status deploy/centaur-centaur-api-rs -n "$NS" --timeout=120s || true
   _console_rollout 120s || true; }
 

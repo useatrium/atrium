@@ -1,6 +1,17 @@
 import { Ionicons } from '@expo/vector-icons';
+import { compactMarkdownSource } from '@atrium/surface-client';
 import * as Clipboard from 'expo-clipboard';
-import { Component, createContext, memo, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import {
+  Component,
+  createContext,
+  memo,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
 import { Linking, Platform, Pressable, ScrollView, Text, View, type TextStyle, type ViewStyle } from 'react-native';
 import MarkdownDisplay, {
   MarkdownIt,
@@ -45,8 +56,7 @@ export interface EntryReferenceMarkdownContextValue {
 }
 
 const emptyEntryReferenceContext: EntryReferenceMarkdownContextValue = {};
-const EntryReferenceMarkdownContext =
-  createContext<EntryReferenceMarkdownContextValue>(emptyEntryReferenceContext);
+const EntryReferenceMarkdownContext = createContext<EntryReferenceMarkdownContextValue>(emptyEntryReferenceContext);
 
 export function EntryReferenceMarkdownProvider({
   value,
@@ -350,24 +360,6 @@ function CopyableCodeBlock({
       </SyntaxHighlighter>
     </View>
   );
-}
-
-function compactMarkdownSource(text: string): string {
-  return text
-    .replace(/```[\s\S]*?```/g, (match) => {
-      const body = match
-        .replace(/^```[^\n]*\n?/, '')
-        .replace(/```$/, '')
-        .trim();
-      return body ? `\`${body.split(/\n/)[0]}\`` : '';
-    })
-    .replace(/^\s{0,3}#{1,6}\s+/gm, '')
-    .replace(/^\s{0,3}>\s?/gm, '')
-    .replace(/^\s*[-*+]\s+\[[ xX]\]\s+/gm, '')
-    .replace(/^\s*[-*+]\s+/gm, '')
-    .replace(/^\s*\d+\.\s+/gm, '')
-    .replace(/\s+/g, ' ')
-    .trim();
 }
 
 function markdownStyles(colors: Colors, variant: 'session' | 'message' | 'compact' = 'session') {

@@ -9,6 +9,8 @@ import { WorkStrips } from '../src/components/work/WorkStrips';
 import { MobileWorkSheet, type WorkSurfaceTab } from '../src/components/work/MobileWorkSheet';
 import { Text } from 'react-native';
 
+vi.mock('@expo/vector-icons', () => ({ Ionicons: () => null }));
+
 afterEach(cleanup);
 
 function artifact(over: Partial<Artifact>): Artifact {
@@ -76,7 +78,9 @@ describe('WorkStrips (mobile)', () => {
   });
 
   it('renders nothing when every surface is empty', () => {
-    const { container } = renderUI(<WorkStrips items={[{ key: 'changes', label: 'Changes', count: 0 }]} onOpen={() => {}} />);
+    const { container } = renderUI(
+      <WorkStrips items={[{ key: 'changes', label: 'Changes', count: 0 }]} onOpen={() => {}} />,
+    );
     expect(container).toBeEmptyDOMElement();
   });
 });
@@ -101,5 +105,12 @@ describe('MobileWorkSheet (mobile)', () => {
     renderUI(<MobileWorkSheet visible tabs={tabs} activeKey="artifacts" onTab={() => {}} onClose={onClose} />);
     fireEvent.click(screen.getByLabelText('Close work surfaces'));
     expect(onClose).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText('✕')).toBeNull();
+  });
+
+  it('gives tabs and the close control platform-sized targets', () => {
+    renderUI(<MobileWorkSheet visible tabs={tabs} activeKey="artifacts" onTab={() => {}} onClose={() => {}} />);
+    expect(screen.getByRole('tab', { name: /Artifacts/ })).toHaveStyle({ minHeight: '48px' });
+    expect(screen.getByLabelText('Close work surfaces')).toHaveStyle({ width: '48px', height: '48px' });
   });
 });

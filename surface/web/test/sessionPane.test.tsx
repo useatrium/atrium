@@ -62,6 +62,8 @@ function bSession(overrides: Partial<Session> = {}): Session {
     spawnedBy: me.id,
     spawnerName: me.displayName,
     driverId: null,
+    archivedAt: null,
+    pinned: false,
     pendingSeatRequests: [],
     suggestions: [],
     answerProposals: [],
@@ -77,6 +79,7 @@ function bSession(overrides: Partial<Session> = {}): Session {
 }
 
 beforeEach(() => {
+  window.localStorage.clear();
   FakeEventSource.reset();
   installFakeEventSource();
   vi.spyOn(sessionsApi, 'listPresentations').mockResolvedValue({ presentations: [] });
@@ -89,7 +92,9 @@ afterEach(() => {
 });
 
 async function renderPaneWithB() {
-  render(<SessionPane session={bSession()} me={me} watchers={[]} onClose={() => {}} onAnswerQuestion={async () => {}} />);
+  render(
+    <SessionPane session={bSession()} me={me} watchers={[]} onClose={() => {}} onAnswerQuestion={async () => {}} />,
+  );
   const es = FakeEventSource.last();
   expect(es.url).toBe('/api/sessions/s-b/stream?after_event_id=0');
   await act(async () => {
@@ -103,16 +108,10 @@ async function renderPaneWithB() {
 describe('session pane folds the B_tooltest stream', () => {
   it('opens the lean pane route from the in-app header', () => {
     render(
-      <SessionPane
-        session={bSession()}
-        me={me}
-        watchers={[]}
-        onClose={() => {}}
-        onAnswerQuestion={async () => {}}
-      />,
+      <SessionPane session={bSession()} me={me} watchers={[]} onClose={() => {}} onAnswerQuestion={async () => {}} />,
     );
 
-    const link = screen.getByRole('link', { name: 'Open session in a new tab' });
+    const link = screen.getByRole('link', { name: 'Open agent in a new tab' });
     expect(link.getAttribute('href')).toBe('/s/s-b/pane');
     expect(link.getAttribute('target')).toBe('_blank');
     expect(link.getAttribute('rel')).toBe('noopener noreferrer');
@@ -164,7 +163,13 @@ describe('session pane folds the B_tooltest stream', () => {
           agents: [],
           skills: [{ name: 'stress-test', sources: ['codex.developer_skills'] }],
           observedToolCalls: [
-            { name: 'exec_command', namespace: 'builtin', sources: ['codex.function_call'], status: 'observed', count: 1 },
+            {
+              name: 'exec_command',
+              namespace: 'builtin',
+              sources: ['codex.function_call'],
+              status: 'observed',
+              count: 1,
+            },
           ],
           pendingMcpServers: [],
           changes: [
@@ -197,7 +202,9 @@ describe('session pane folds the B_tooltest stream', () => {
     expect(await screen.findByRole('dialog', { name: 'Session capabilities' })).toBeTruthy();
     expect(sessionsApi.getCapabilities).toHaveBeenCalledWith('s-b');
     expect(screen.getByRole('button', { name: 'Refresh capabilities' })).toBeTruthy();
-    expect(screen.getByText('Codex partial snapshot: 1 tool, 0 MCP servers, 0 agents, 1 skill, 1 observed call.')).toBeTruthy();
+    expect(
+      screen.getByText('Codex partial snapshot: 1 tool, 0 MCP servers, 0 agents, 1 skill, 1 observed call.'),
+    ).toBeTruthy();
     expect(screen.getByText('functions.exec_command')).toBeTruthy();
     expect(screen.getByText('stress-test')).toBeTruthy();
     fireEvent.change(screen.getByPlaceholderText('Filter tools, MCP servers, agents, skills...'), {
@@ -334,6 +341,7 @@ describe('session pane folds the B_tooltest stream', () => {
   });
 
   it('renders one Bash tool card with the roundtrip result, completed status', async () => {
+    window.localStorage.setItem('atrium:transcript-view', 'full');
     await renderPaneWithB();
 
     // exactly one tool card, named Bash
@@ -361,6 +369,24 @@ describe('session pane folds the B_tooltest stream', () => {
     expect(screen.queryByTestId('turn-card')).toBeNull();
   });
 
+  it('defaults to focus view, groups hidden work, and reveals it from the chip', async () => {
+    await renderPaneWithB();
+
+    expect(screen.queryByTestId('tool-card')).toBeNull();
+    const chips = screen.getAllByTestId('hidden-work-chip');
+    expect(chips).toHaveLength(1);
+    expect(chips[0]!.textContent).toContain('1 work step');
+
+    fireEvent.click(chips[0]!);
+    expect(screen.getByTestId('tool-card')).toBeTruthy();
+    expect(screen.queryByTestId('hidden-work-chip')).toBeNull();
+    expect(window.localStorage.getItem('atrium:transcript-view')).toBe('full');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Hide agent work' }));
+    expect(screen.queryByTestId('tool-card')).toBeNull();
+    expect(window.localStorage.getItem('atrium:transcript-view')).toBe('focus');
+  });
+
   it('reconnects from the last folded event id on stream error', async () => {
     const es = await renderPaneWithB();
     expect(FakeEventSource.instances).toHaveLength(1);
@@ -374,7 +400,9 @@ describe('session pane folds the B_tooltest stream', () => {
   });
 
   it('resumes with after_event_id=<last seen> when erroring mid-stream', async () => {
-    render(<SessionPane session={bSession()} me={me} watchers={[]} onClose={() => {}} onAnswerQuestion={async () => {}} />);
+    render(
+      <SessionPane session={bSession()} me={me} watchers={[]} onClose={() => {}} onAnswerQuestion={async () => {}} />,
+    );
     const es = FakeEventSource.last();
     const firstHalf = B.slice(0, 8); // still running — no terminal state yet
     await act(async () => {
@@ -389,9 +417,7 @@ describe('session pane folds the B_tooltest stream', () => {
       await vi.advanceTimersByTimeAsync(1000);
     });
     expect(FakeEventSource.instances).toHaveLength(2);
-    expect(FakeEventSource.last().url).toBe(
-      `/api/sessions/s-b/stream?after_event_id=${lastSeen}`,
-    );
+    expect(FakeEventSource.last().url).toBe(`/api/sessions/s-b/stream?after_event_id=${lastSeen}`);
     expect(es.closed).toBe(true);
   });
 
@@ -417,7 +443,9 @@ describe('session pane folds the B_tooltest stream', () => {
       },
     } as CentaurEventFrame;
 
-    render(<SessionPane session={bSession()} me={me} watchers={[]} onClose={() => {}} onAnswerQuestion={async () => {}} />);
+    render(
+      <SessionPane session={bSession()} me={me} watchers={[]} onClose={() => {}} onAnswerQuestion={async () => {}} />,
+    );
     const es = FakeEventSource.last();
     await act(async () => {
       es.open();
@@ -460,15 +488,18 @@ describe('session pane folds the B_tooltest stream', () => {
     });
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () =>
-        new Response('---\ntitle: "Markup Ready"\n---\n\n# Body from artifact\n', {
-          status: 200,
-          headers: { 'content-type': 'text/markdown' },
-        }),
+      vi.fn(
+        async () =>
+          new Response('---\ntitle: "Markup Ready"\n---\n\n# Body from artifact\n', {
+            status: 200,
+            headers: { 'content-type': 'text/markdown' },
+          }),
       ),
     );
 
-    render(<SessionPane session={bSession()} me={me} watchers={[]} onClose={() => {}} onAnswerQuestion={async () => {}} />);
+    render(
+      <SessionPane session={bSession()} me={me} watchers={[]} onClose={() => {}} onAnswerQuestion={async () => {}} />,
+    );
     const es = FakeEventSource.last();
     await act(async () => {
       es.open();
@@ -480,21 +511,15 @@ describe('session pane folds the B_tooltest stream', () => {
 
     await waitFor(() => expect(api.extractEntry).toHaveBeenCalledWith('rec_item_markup123'));
     expect(await screen.findByRole('dialog', { name: 'Markup Ready' })).toBeTruthy();
-    expect((await screen.findByLabelText('Mock markup editor') as HTMLTextAreaElement).value).toBe(
+    expect(((await screen.findByLabelText('Mock markup editor')) as HTMLTextAreaElement).value).toBe(
       '# Body from artifact\n',
     );
   });
-
 });
 
 // ---- driver seat (Phase 3) --------------------------------------------------
 
-function seatWire(
-  id: number,
-  type: string,
-  payload: Record<string, unknown>,
-  author: UserRef,
-): WireEvent {
+function seatWire(id: number, type: string, payload: Record<string, unknown>, author: UserRef): WireEvent {
   return {
     id,
     workspaceId: 'ws-1',
@@ -531,13 +556,19 @@ function spawnedState(): AppState {
 function paneFor(s: AppState, asUser: UserRef = me, watchers: UserRef[] = []) {
   const session = s.sessions['s-b'];
   if (!session) throw new Error('session entity missing');
-  return <SessionPane session={session} me={asUser} watchers={watchers} onClose={() => {}} onAnswerQuestion={async () => {}} />;
+  return (
+    <SessionPane
+      session={session}
+      me={asUser}
+      watchers={watchers}
+      onClose={() => {}}
+      onAnswerQuestion={async () => {}}
+    />
+  );
 }
 
 function stub202() {
-  const fetchMock = vi.fn(
-    async (..._args: Parameters<typeof fetch>) => new Response('{}', { status: 202 }),
-  );
+  const fetchMock = vi.fn(async (..._args: Parameters<typeof fetch>) => new Response('{}', { status: 202 }));
   vi.stubGlobal('fetch', fetchMock);
   return fetchMock;
 }
@@ -555,12 +586,7 @@ describe('driver seat', () => {
     // Bob takes the seat — entity folds the WS event, no refetch.
     s = appReducer(s, {
       type: 'server-event',
-      event: seatWire(
-        102,
-        'session.seat_changed',
-        { sessionId: 's-b', from: me.id, to: bob.id, reason: 'taken' },
-        bob,
-      ),
+      event: seatWire(102, 'session.seat_changed', { sessionId: 's-b', from: me.id, to: bob.id, reason: 'taken' }, bob),
     });
     rerender(paneFor(s));
 
@@ -578,9 +604,7 @@ describe('driver seat', () => {
       type: 'server-event',
       event: seatWire(102, 'session.seat_requested', { sessionId: 's-b', by: bob.id }, bob),
     });
-    expect(s.sessions['s-b']!.pendingSeatRequests).toEqual([
-      { userId: bob.id, displayName: 'Bob' },
-    ]);
+    expect(s.sessions['s-b']!.pendingSeatRequests).toEqual([{ userId: bob.id, displayName: 'Bob' }]);
 
     // A non-driver spectator never sees the banner.
     const spectator = { id: 'u-carol', handle: 'carol', displayName: 'Carol' };
@@ -612,20 +636,28 @@ describe('driver seat', () => {
       driverId: alice.id,
       driverName: alice.displayName,
     });
-    render(<SessionPane session={session} me={me} watchers={[alice, me]} onClose={() => {}} onAnswerQuestion={async () => {}} />);
+    render(
+      <SessionPane
+        session={session}
+        me={me}
+        watchers={[alice, me]}
+        onClose={() => {}}
+        onAnswerQuestion={async () => {}}
+      />,
+    );
 
     // Pure spectator: no cancel, no take (driver present), and the composer is
     // a suggest box rather than a steer composer.
     expect(screen.queryByText('Cancel')).toBeNull();
-    expect((screen.getByPlaceholderText(/Suggest a message — Alice decides/) as HTMLTextAreaElement).disabled).toBe(false);
+    expect((screen.getByPlaceholderText(/Suggest a message — Alice decides/) as HTMLTextAreaElement).disabled).toBe(
+      false,
+    );
     expect(screen.queryByText('Take seat')).toBeNull();
 
     fireEvent.click(screen.getByText('Request seat'));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     expect(fetchMock.mock.calls[0]![0]).toBe('/api/sessions/s-b/seat/request');
-    expect(screen.getByTestId('seat-footer').textContent).toContain(
-      'requested — waiting for Alice',
-    );
+    expect(screen.getByTestId('seat-footer').textContent).toContain('requested — waiting for Alice');
   });
 
   it('request-seat failures call the shared API error hook and revert the optimistic footer', async () => {
@@ -671,7 +703,9 @@ describe('driver seat', () => {
       driverId: alice.id,
       driverName: alice.displayName,
     });
-    render(<SessionPane session={session} me={me} watchers={[me]} onClose={() => {}} onAnswerQuestion={async () => {}} />);
+    render(
+      <SessionPane session={session} me={me} watchers={[me]} onClose={() => {}} onAnswerQuestion={async () => {}} />,
+    );
 
     expect(screen.queryByText('Request seat')).toBeNull();
     // Two-step: Take seat asks for confirmation before posting.
@@ -697,7 +731,9 @@ describe('driver seat', () => {
       driverId: alice.id,
       driverName: alice.displayName,
     });
-    render(<SessionPane session={session} me={me} watchers={[]} onClose={() => {}} onAnswerQuestion={async () => {}} />);
+    render(
+      <SessionPane session={session} me={me} watchers={[]} onClose={() => {}} onAnswerQuestion={async () => {}} />,
+    );
     fireEvent.click(screen.getByText('Take seat'));
     fireEvent.click(screen.getByText('Confirm'));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
@@ -712,7 +748,9 @@ describe('driver seat', () => {
       driverId: alice.id,
       driverName: alice.displayName,
     });
-    render(<SessionPane session={session} me={me} watchers={[]} onClose={() => {}} onAnswerQuestion={async () => {}} />);
+    render(
+      <SessionPane session={session} me={me} watchers={[]} onClose={() => {}} onAnswerQuestion={async () => {}} />,
+    );
     fireEvent.click(screen.getByText('Take seat'));
     fireEvent.click(screen.getByText('Keep watching'));
     expect(screen.getByText('Take seat')).toBeTruthy();
@@ -819,11 +857,54 @@ describe('driver seat', () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel turn' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Stop turn' }));
 
     await waitFor(() => expect(onApiError).toHaveBeenCalledTimes(1));
     expect(onStopTurn).toHaveBeenCalledWith('s-b');
-    expect(screen.getByRole('button', { name: 'Cancel turn failed — retry' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Stop failed — retry' })).toBeTruthy();
+  });
+
+  it('Escape stops the active turn for the spawner or driver', async () => {
+    const onStopTurn = vi.fn().mockResolvedValue(undefined);
+    const onClose = vi.fn();
+    render(
+      <SessionPane
+        session={bSession({ driverId: me.id })}
+        me={me}
+        watchers={[me]}
+        onClose={onClose}
+        onAnswerQuestion={async () => {}}
+        onStopTurn={onStopTurn}
+      />,
+    );
+
+    fireEvent.keyDown(window, { key: 'Escape' });
+
+    await waitFor(() => expect(onStopTurn).toHaveBeenCalledWith('s-b'));
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('Escape-to-stop yields to local editing and dialog Escape behavior', async () => {
+    vi.spyOn(sessionsApi, 'getCapabilities').mockResolvedValue({ sessionId: 's-b', snapshots: [] });
+    const onStopTurn = vi.fn().mockResolvedValue(undefined);
+    render(
+      <SessionPane
+        session={bSession({ driverId: me.id })}
+        me={me}
+        watchers={[me]}
+        onClose={() => {}}
+        onAnswerQuestion={async () => {}}
+        onStopTurn={onStopTurn}
+      />,
+    );
+
+    fireEvent.keyDown(screen.getByPlaceholderText(/Steer the agent/), { key: 'Escape' });
+    fireEvent.keyDown(window, { key: 'Escape', metaKey: true });
+    fireEvent.click(screen.getByRole('button', { name: 'Inspect session capabilities' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Session capabilities' });
+    fireEvent.keyDown(dialog, { key: 'Escape' });
+
+    expect(onStopTurn).not.toHaveBeenCalled();
   });
 
   it('cancel-session failures call the shared API error hook', async () => {
@@ -968,13 +1049,7 @@ describe('answer proposals', () => {
       },
     });
     render(
-      <SessionPane
-        session={session}
-        me={me}
-        watchers={[]}
-        onClose={() => {}}
-        onAnswerQuestion={onAnswerQuestion}
-      />,
+      <SessionPane session={session} me={me} watchers={[]} onClose={() => {}} onAnswerQuestion={onAnswerQuestion} />,
     );
 
     expect(screen.getByText('Show the short overview.')).toBeTruthy();
@@ -1010,13 +1085,7 @@ describe('answer proposals', () => {
       ],
     });
     render(
-      <SessionPane
-        session={session}
-        me={me}
-        watchers={[]}
-        onClose={() => {}}
-        onAnswerQuestion={async () => {}}
-      />,
+      <SessionPane session={session} me={me} watchers={[]} onClose={() => {}} onAnswerQuestion={async () => {}} />,
     );
     const strip = screen.getByTestId('answer-proposals');
     expect(within(strip).getByText('Bob')).toBeTruthy();
@@ -1044,13 +1113,7 @@ describe('answer proposals', () => {
       ],
     });
     render(
-      <SessionPane
-        session={session}
-        me={me}
-        watchers={[]}
-        onClose={() => {}}
-        onAnswerQuestion={async () => {}}
-      />,
+      <SessionPane session={session} me={me} watchers={[]} onClose={() => {}} onAnswerQuestion={async () => {}} />,
     );
     const strip = screen.getByTestId('answer-proposals');
     fireEvent.click(within(strip).getByRole('button', { name: 'Dismiss' }));
@@ -1077,7 +1140,7 @@ describe('focus + detach controls', () => {
     );
 
     // Detach is a new-tab link to the lean standalone pane.
-    const detach = screen.getByRole('link', { name: /open session in a new tab/i });
+    const detach = screen.getByRole('link', { name: /open agent in a new tab/i });
     expect(detach.getAttribute('href')).toBe('/s/s-b/pane');
     expect(detach.getAttribute('target')).toBe('_blank');
 
@@ -1114,7 +1177,7 @@ describe('focus + detach controls', () => {
       />,
     );
     expect(screen.queryByRole('button', { name: /expand to focus/i })).toBeNull();
-    expect(screen.queryByRole('link', { name: /open session in a new tab/i })).toBeNull();
+    expect(screen.queryByRole('link', { name: /open agent in a new tab/i })).toBeNull();
   });
 });
 
@@ -1203,9 +1266,7 @@ describe('suggestion queue', () => {
   it('driver strip: Send posts resolve {action:send}', async () => {
     const fetchMock = stub202();
     render(paneFor(withSuggestion(spawnedState(), 'sug-1', 'run the tests', bob), me));
-    fireEvent.click(
-      within(screen.getByTestId('suggestion-strip')).getByRole('button', { name: 'Send' }),
-    );
+    fireEvent.click(within(screen.getByTestId('suggestion-strip')).getByRole('button', { name: 'Send' }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     const [url, init] = fetchMock.mock.calls[0]!;
     expect(url).toBe('/api/sessions/s-b/suggestions/sug-1/resolve');
@@ -1322,7 +1383,7 @@ describe('work drawer (Phase 4 consolidation)', () => {
     await renderPaneWithB();
     // The echo Bash op is classified as a side-effect → the strip appears.
     const strip = screen.getByTestId('sideeffects-strip');
-    expect(within(strip).getByText('Side-effects')).toBeTruthy();
+    expect(within(strip).getByText('Actions')).toBeTruthy();
     // Drawer closed until the strip is clicked.
     expect(screen.queryByTestId('work-drawer')).toBeNull();
 
@@ -1330,7 +1391,11 @@ describe('work drawer (Phase 4 consolidation)', () => {
     const drawer = screen.getByTestId('work-drawer');
     // Opened on the What it ran tab — the classified command shows in the body.
     expect(within(drawer).getByText(/echo atrium-roundtrip-ok/)).toBeTruthy();
-    expect(within(drawer).getByRole('tab', { name: /What it ran/ }).getAttribute('aria-selected')).toBe('true');
+    expect(
+      within(drawer)
+        .getByRole('tab', { name: /What it ran/ })
+        .getAttribute('aria-selected'),
+    ).toBe('true');
 
     // Clicking the same strip again toggles the drawer closed.
     fireEvent.click(strip);
@@ -1369,7 +1434,11 @@ describe('work drawer (Phase 4 consolidation)', () => {
 
 describe('inline file changes (Phase 4)', () => {
   const editFrames = [
-    { event: 'execution_state', event_id: 1, data: { type: 'execution.state', status: 'running', execution_id: 'exe_x' } },
+    {
+      event: 'execution_state',
+      event_id: 1,
+      data: { type: 'execution.state', status: 'running', execution_id: 'exe_x' },
+    },
     {
       event: 'amp_raw_event',
       event_id: 2,
@@ -1393,11 +1462,18 @@ describe('inline file changes (Phase 4)', () => {
         },
       },
     },
-    { event: 'execution_state', event_id: 3, data: { type: 'execution.state', status: 'completed', result_text: 'ok', execution_id: 'exe_x' } },
+    {
+      event: 'execution_state',
+      event_id: 3,
+      data: { type: 'execution.state', status: 'completed', result_text: 'ok', execution_id: 'exe_x' },
+    },
   ] as unknown as CentaurEventFrame[];
 
   it('renders a file edit as an inline diff card, not a raw tool card', async () => {
-    render(<SessionPane session={bSession()} me={me} watchers={[]} onClose={() => {}} onAnswerQuestion={async () => {}} />);
+    window.localStorage.setItem('atrium:transcript-view', 'full');
+    render(
+      <SessionPane session={bSession()} me={me} watchers={[]} onClose={() => {}} onAnswerQuestion={async () => {}} />,
+    );
     const es = FakeEventSource.last();
     await act(async () => {
       es.open();
@@ -1421,8 +1497,16 @@ describe('inline file changes (Phase 4)', () => {
   });
 
   const codexEditFrames = [
-    { event: 'execution_state', event_id: 1, data: { type: 'execution.state', status: 'running', execution_id: 'exe_c' } },
-    { event: 'amp_raw_event', event_id: 2, data: { type: 'item.completed', item: { id: 'cm1', type: 'agentMessage', text: 'editing the config' } } },
+    {
+      event: 'execution_state',
+      event_id: 1,
+      data: { type: 'execution.state', status: 'running', execution_id: 'exe_c' },
+    },
+    {
+      event: 'amp_raw_event',
+      event_id: 2,
+      data: { type: 'item.completed', item: { id: 'cm1', type: 'agentMessage', text: 'editing the config' } },
+    },
     {
       event: 'amp_raw_event',
       event_id: 3,
@@ -1431,15 +1515,24 @@ describe('inline file changes (Phase 4)', () => {
         item: {
           id: 'cfc1',
           type: 'fileChange',
-          changes: [{ path: '/home/agent/workspace/src/config.ts', kind: 'update', diff: '@@\n-const x = 1;\n+const x = 2;' }],
+          changes: [
+            { path: '/home/agent/workspace/src/config.ts', kind: 'update', diff: '@@\n-const x = 1;\n+const x = 2;' },
+          ],
         },
       },
     },
-    { event: 'execution_state', event_id: 4, data: { type: 'execution.state', status: 'completed', result_text: 'ok', execution_id: 'exe_c' } },
+    {
+      event: 'execution_state',
+      event_id: 4,
+      data: { type: 'execution.state', status: 'completed', result_text: 'ok', execution_id: 'exe_c' },
+    },
   ] as unknown as CentaurEventFrame[];
 
   it('renders a codex fileChange inline in the transcript (previously drawer-only)', async () => {
-    render(<SessionPane session={bSession()} me={me} watchers={[]} onClose={() => {}} onAnswerQuestion={async () => {}} />);
+    window.localStorage.setItem('atrium:transcript-view', 'full');
+    render(
+      <SessionPane session={bSession()} me={me} watchers={[]} onClose={() => {}} onAnswerQuestion={async () => {}} />,
+    );
     const es = FakeEventSource.last();
     await act(async () => {
       es.open();
@@ -1461,11 +1554,86 @@ describe('inline file changes (Phase 4)', () => {
     fireEvent.click(within(card).getByRole('button'));
     expect(within(card).getByText('+const x = 2;')).toBeTruthy();
   });
+
+  it('groups a codex file change anchored inside hidden work into one correctly counted chip', async () => {
+    const frames = [
+      {
+        event: 'execution_state',
+        event_id: 1,
+        data: { type: 'execution.state', status: 'running', execution_id: 'exe_focus' },
+      },
+      {
+        event: 'amp_raw_event',
+        event_id: 2,
+        data: { type: 'item.completed', item: { id: 'before', type: 'agentMessage', text: 'before work' } },
+      },
+      {
+        event: 'amp_raw_event',
+        event_id: 3,
+        data: { type: 'item.completed', item: { id: 'think', type: 'reasoning', text: 'thinking' } },
+      },
+      {
+        event: 'amp_raw_event',
+        event_id: 4,
+        data: {
+          type: 'item.completed',
+          item: { id: 'cmd-1', type: 'commandExecution', command: 'pwd', output: '/tmp\n', exit_code: 0 },
+        },
+      },
+      {
+        event: 'amp_raw_event',
+        event_id: 5,
+        data: {
+          type: 'item.completed',
+          item: {
+            id: 'focus-change',
+            type: 'fileChange',
+            changes: [{ path: '/home/agent/workspace/src/focus.ts', kind: 'update', diff: '@@\n-old\n+new' }],
+          },
+        },
+      },
+      {
+        event: 'amp_raw_event',
+        event_id: 6,
+        data: {
+          type: 'item.completed',
+          item: { id: 'cmd-2', type: 'commandExecution', command: 'date', output: 'today\n', exit_code: 0 },
+        },
+      },
+      {
+        event: 'amp_raw_event',
+        event_id: 7,
+        data: { type: 'item.completed', item: { id: 'after', type: 'agentMessage', text: 'after work' } },
+      },
+    ] as unknown as CentaurEventFrame[];
+
+    render(
+      <SessionPane session={bSession()} me={me} watchers={[]} onClose={() => {}} onAnswerQuestion={async () => {}} />,
+    );
+    const es = FakeEventSource.last();
+    await act(async () => {
+      es.open();
+      es.emitAll(frames);
+      await new Promise((r) => setTimeout(r, 60));
+    });
+
+    const chips = screen.getAllByTestId('hidden-work-chip');
+    expect(chips).toHaveLength(1);
+    expect(chips[0]!.textContent).toContain('4 work steps');
+
+    fireEvent.click(chips[0]!);
+    expect(screen.getAllByTestId('tool-card')).toHaveLength(2);
+    expect(screen.getByTestId('inline-file-change')).toBeTruthy();
+  });
 });
 
 describe('artifacts surface (Phase 4)', () => {
   const artifactFrames = [
-    { event: 'execution_state', event_id: 1, data: { type: 'execution.state', status: 'running', execution_id: 'exe_a' } },
+    {
+      event: 'execution_state',
+      event_id: 1,
+      data: { type: 'execution.state', status: 'running', execution_id: 'exe_a' },
+    },
     {
       event: 'artifact.captured',
       event_id: 2,
@@ -1480,11 +1648,17 @@ describe('artifacts surface (Phase 4)', () => {
         ref: 'blob-1',
       },
     },
-    { event: 'execution_state', event_id: 3, data: { type: 'execution.state', status: 'completed', result_text: 'ok', execution_id: 'exe_a' } },
+    {
+      event: 'execution_state',
+      event_id: 3,
+      data: { type: 'execution.state', status: 'completed', result_text: 'ok', execution_id: 'exe_a' },
+    },
   ] as unknown as CentaurEventFrame[];
 
   it('the artifacts strip opens the work drawer on the What changed tab gallery', async () => {
-    render(<SessionPane session={bSession()} me={me} watchers={[]} onClose={() => {}} onAnswerQuestion={async () => {}} />);
+    render(
+      <SessionPane session={bSession()} me={me} watchers={[]} onClose={() => {}} onAnswerQuestion={async () => {}} />,
+    );
     const es = FakeEventSource.last();
     await act(async () => {
       es.open();
@@ -1499,11 +1673,14 @@ describe('artifacts surface (Phase 4)', () => {
 
     fireEvent.click(strip);
     const drawer = screen.getByTestId('work-drawer');
-    expect(within(drawer).getByRole('tab', { name: /What changed/ }).getAttribute('aria-selected')).toBe('true');
+    expect(
+      within(drawer)
+        .getByRole('tab', { name: /What changed/ })
+        .getAttribute('aria-selected'),
+    ).toBe('true');
     expect(within(drawer).getByText('Created artifacts')).toBeTruthy();
     // The gallery tile serves bytes via the ledger by-path route (latest for the path).
     const img = within(drawer).getByRole('img') as HTMLImageElement;
     expect(img.getAttribute('src')).toBe('/api/sessions/s-b/artifacts/by-path?path=%2Ftmp%2Fchart.png');
   });
-
 });

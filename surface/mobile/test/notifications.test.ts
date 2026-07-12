@@ -80,9 +80,7 @@ describe('mobile push notification preference', () => {
   it('does not request or register push when the device preference is off', async () => {
     await setDevicePushEnabled(false);
 
-    const api = { registerPush: mocks.registerPush } as unknown as Parameters<
-      typeof registerForPush
-    >[0];
+    const api = { registerPush: mocks.registerPush } as unknown as Parameters<typeof registerForPush>[0];
     await expect(registerForPush(api)).resolves.toBeNull();
 
     expect(mocks.requestPermissionsAsync).not.toHaveBeenCalled();

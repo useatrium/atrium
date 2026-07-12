@@ -3,10 +3,21 @@ import { expect, test, type APIRequestContext, type Page } from '@playwright/tes
 import { Pool } from 'pg';
 import { channelId, createTestChannel, login, unique } from './helpers.js';
 
-const e2eDatabaseUrl =
-  process.env.E2E_DATABASE_URL ?? 'postgres://atrium:atrium@localhost:5433/atrium_e2e';
+const e2eDatabaseUrl = process.env.E2E_DATABASE_URL ?? 'postgres://atrium:atrium@localhost:5433/atrium_e2e';
 const centaurStubUrl = `http://127.0.0.1:${Number(process.env.E2E_CENTAUR_PORT ?? 18100)}`;
 const entryText = '# Plan\n\nThe rollout has three phases.\n\nDone.';
+
+type TestMarkupEditorView = {
+  state: {
+    doc: {
+      descendants(callback: (node: { isText: boolean; text?: string | null }, pos: number) => boolean | void): void;
+    };
+    selection: { constructor: { create(doc: unknown, from: number, to: number): unknown } };
+    tr: { setSelection(selection: unknown): { scrollIntoView(): unknown } };
+  };
+  dispatch(transaction: unknown): void;
+  focus(): void;
+};
 
 async function injectSession(args: {
   handle: string;
@@ -18,13 +29,10 @@ async function injectSession(args: {
   const threadKey = `thread-${unique('markup')}`;
   try {
     await client.query('BEGIN');
-    const user = await client.query<{ id: string }>('SELECT id FROM users WHERE handle = $1', [
-      args.handle,
+    const user = await client.query<{ id: string }>('SELECT id FROM users WHERE handle = $1', [args.handle]);
+    const channel = await client.query<{ workspace_id: string }>('SELECT workspace_id FROM channels WHERE id = $1', [
+      args.channelId,
     ]);
-    const channel = await client.query<{ workspace_id: string }>(
-      'SELECT workspace_id FROM channels WHERE id = $1',
-      [args.channelId],
-    );
     if (!user.rows[0] || !channel.rows[0]) throw new Error('missing e2e user or channel');
     const userId = user.rows[0].id;
     const workspaceId = channel.rows[0].workspace_id;
@@ -64,23 +72,14 @@ async function injectSession(args: {
   }
 }
 
-async function seedAgentTextRecord(args: {
-  sessionId: string;
-  entryUid: string;
-  itemId: string;
-}): Promise<void> {
+async function seedAgentTextRecord(args: { sessionId: string; entryUid: string; itemId: string }): Promise<void> {
   const pool = new Pool({ connectionString: e2eDatabaseUrl });
   try {
     await pool.query(
       `INSERT INTO session_records
          (session_id, event_id, seq, entry_uid, kind, actor, driver, view_tier, text, meta, ts)
        VALUES ($1, 2, 1, $2, 'message', 'agent', 'codex', 'lean', $3, $4::jsonb, now())`,
-      [
-        args.sessionId,
-        args.entryUid,
-        entryText,
-        JSON.stringify({ itemId: args.itemId, messageId: args.itemId }),
-      ],
+      [args.sessionId, args.entryUid, entryText, JSON.stringify({ itemId: args.itemId, messageId: args.itemId })],
     );
   } finally {
     await pool.end();
@@ -152,15 +151,19 @@ async function openMarkupSession(
   return { sessionId, handle: entryHandle, threadKey };
 }
 
-async function openMarkupPane(page: Page, handle: string): Promise<{
+async function openMarkupPane(
+  page: Page,
+  handle: string,
+): Promise<{
   artifactId: string;
   path: string;
   seq: number;
   workspaceId: string;
 }> {
-  const extractResponse = page.waitForResponse((response) =>
-    response.request().method() === 'POST' &&
-    response.url().includes(`/api/entries/${encodeURIComponent(handle)}/extract`),
+  const extractResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === 'POST' &&
+      response.url().includes(`/api/entries/${encodeURIComponent(handle)}/extract`),
   );
   await page.getByText('The rollout has three phases.').hover();
   await page.getByRole('button', { name: 'Mark up & reply' }).click();
@@ -178,32 +181,51 @@ async function openMarkupPane(page: Page, handle: string): Promise<{
 }
 
 async function suggestReplacement(page: Page, from: string, to: string): Promise<void> {
-  const editor = page.getByTestId('markup-editor');
-  const box = await editor.evaluate((root, word) => {
-    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-      const text = node.textContent ?? '';
-      const index = text.indexOf(word);
-      if (index < 0) continue;
-      const range = document.createRange();
-      range.setStart(node, index);
-      range.setEnd(node, index + word.length);
-      const rect = range.getBoundingClientRect();
-      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+  const suggest = page.getByRole('button', { name: 'Suggest edit' });
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    await selectWordInMarkupEditor(page, from);
+    try {
+      await expect(suggest).toBeVisible({ timeout: 5_000 });
+      break;
+    } catch (err) {
+      if (attempt === 2) throw err;
     }
-    return null;
-  }, from);
-  if (!box) throw new Error(`word not found in markup editor: ${from}`);
-
-  await page.mouse.dblclick(box.x, box.y);
-  await page.getByRole('button', { name: 'Suggest edit' }).click();
+  }
+  await suggest.click();
   await page.getByTestId('markup-replacement-input').fill(to);
   await page.getByRole('button', { name: 'Apply suggestion' }).click();
 }
 
-async function centaurRequests(request: APIRequestContext): Promise<
-  Array<{ method: string; path: string; body: unknown }>
-> {
+async function selectWordInMarkupEditor(page: Page, word: string): Promise<void> {
+  const editor = page.getByTestId('markup-editor');
+  await expect(editor).toBeVisible();
+  await editor.scrollIntoViewIfNeeded();
+  const selected = await editor.evaluate((root, target) => {
+    const view = (root as HTMLElement & { __atriumMarkupEditorView?: TestMarkupEditorView }).__atriumMarkupEditorView;
+    if (!view) return false;
+    let from = -1;
+    let to = -1;
+    view.state.doc.descendants((node, pos) => {
+      if (from >= 0) return false;
+      if (!node.isText) return;
+      const index = (node.text ?? '').indexOf(target);
+      if (index < 0) return;
+      from = pos + index;
+      to = from + target.length;
+      return false;
+    });
+    if (from < 0 || to < 0) return false;
+    const selection = view.state.selection.constructor.create(view.state.doc, from, to);
+    view.focus();
+    view.dispatch(view.state.tr.setSelection(selection).scrollIntoView());
+    return true;
+  }, word);
+  if (!selected) throw new Error(`word not found in markup editor: ${word}`);
+}
+
+async function centaurRequests(
+  request: APIRequestContext,
+): Promise<Array<{ method: string; path: string; body: unknown }>> {
   const response = await request.get(`${centaurStubUrl}/__requests`);
   expect(response.ok()).toBeTruthy();
   return (await response.json()) as Array<{ method: string; path: string; body: unknown }>;
@@ -214,10 +236,7 @@ function threadMessagePosts(
   threadKey: string,
 ): Array<{ method: string; path: string; body: unknown }> {
   return requests.filter(
-    (entry) =>
-      entry.method === 'POST' &&
-      entry.path.includes(threadKey) &&
-      /\/messages$/.test(entry.path),
+    (entry) => entry.method === 'POST' && entry.path.includes(threadKey) && /\/messages$/.test(entry.path),
   );
 }
 
@@ -228,10 +247,7 @@ function messageText(body: unknown): string {
   return typeof text === 'string' ? text : '';
 }
 
-test('marking up an agent transcript row sends CriticMarkup feedback to Centaur', async ({
-  page,
-  request,
-}) => {
+test('marking up an agent transcript row sends CriticMarkup feedback to Centaur', async ({ page, request }) => {
   const { handle, threadKey } = await openMarkupSession(page, 'markup-loop');
   const extracted = await openMarkupPane(page, handle);
 
@@ -251,8 +267,7 @@ test('marking up an agent transcript row sends CriticMarkup feedback to Centaur'
   expect(steer).toContain('This is my response to what you wrote');
   expect(
     requests.some(
-      (entry) =>
-        entry.method === 'POST' && entry.path.includes(threadKey) && /\/execute$/.test(entry.path),
+      (entry) => entry.method === 'POST' && entry.path.includes(threadKey) && /\/execute$/.test(entry.path),
     ),
   ).toBeTruthy();
 
@@ -268,10 +283,7 @@ test('marking up an agent transcript row sends CriticMarkup feedback to Centaur'
   await page.getByRole('button', { name: 'Cancel' }).click();
 });
 
-test('stale markup base keeps the pane open and does not steer Centaur', async ({
-  page,
-  request,
-}) => {
+test('stale markup base keeps the pane open and does not steer Centaur', async ({ page, request }) => {
   const { sessionId, handle, threadKey } = await openMarkupSession(page, 'markup-stale');
   const extracted = await openMarkupPane(page, handle);
   await suggestReplacement(page, 'three', 'two');

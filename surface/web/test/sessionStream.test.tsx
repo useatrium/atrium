@@ -47,7 +47,10 @@ async function flushStreamTimers(ms = 20): Promise<void> {
   await vi.advanceTimersByTimeAsync(ms);
 }
 
-function stateFrame(eventId: number, status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'): CentaurEventFrame {
+function stateFrame(
+  eventId: number,
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled',
+): CentaurEventFrame {
   return {
     event: 'execution_state',
     event_id: eventId,

@@ -179,10 +179,7 @@ function asDraftEntry(row: unknown): DraftSnapshotEntry {
 }
 
 async function clearStores(database: IDBPDatabase<AtriumCacheDb>): Promise<void> {
-  const tx = database.transaction(
-    ['meta', 'channelTimelines', 'clientOps', 'composerDrafts'],
-    'readwrite',
-  );
+  const tx = database.transaction(['meta', 'channelTimelines', 'clientOps', 'composerDrafts'], 'readwrite');
   await Promise.all([
     tx.objectStore('meta').clear(),
     tx.objectStore('channelTimelines').clear(),
@@ -297,10 +294,7 @@ const idbStorage: CacheStorage = {
     let seq = existing?.seq;
     if (seq == null) {
       const current = await meta.get('opSeq');
-      seq =
-        typeof current?.value === 'number' && Number.isFinite(current.value)
-          ? Math.floor(current.value) + 1
-          : 1;
+      seq = typeof current?.value === 'number' && Number.isFinite(current.value) ? Math.floor(current.value) + 1 : 1;
       await meta.put({ key: 'opSeq', value: seq });
     }
     await ops.put({ ...clone(op), seq });
@@ -395,8 +389,7 @@ function createMemoryStorage(): CacheStorage {
     },
     getDraft: async (key) => drafts.get(key)?.text ?? null,
     getDraftEntry: async (key) => drafts.get(key) ?? null,
-    listDrafts: async () =>
-      Object.fromEntries([...drafts].map(([key, draft]) => [key, structuredClone(draft)])),
+    listDrafts: async () => Object.fromEntries([...drafts].map(([key, draft]) => [key, structuredClone(draft)])),
     setDraft: async (key, text, updatedAt) => {
       if (text.length === 0) drafts.delete(key);
       else drafts.set(key, { text, updatedAt: updatedAt ?? new Date().toISOString() });

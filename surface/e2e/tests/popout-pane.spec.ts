@@ -8,8 +8,7 @@ import { expect, test, type APIRequestContext } from '@playwright/test';
 import { Pool } from 'pg';
 import { channelId, createTestChannel, login, unique } from './helpers.js';
 
-const e2eDatabaseUrl =
-  process.env.E2E_DATABASE_URL ?? 'postgres://atrium:atrium@localhost:5433/atrium_e2e';
+const e2eDatabaseUrl = process.env.E2E_DATABASE_URL ?? 'postgres://atrium:atrium@localhost:5433/atrium_e2e';
 const centaurStubUrl = `http://127.0.0.1:${Number(process.env.E2E_CENTAUR_PORT ?? 18100)}`;
 
 /** Seed a running codex session driven by the logged-in user (composer enabled). */
@@ -23,13 +22,10 @@ async function injectSession(args: {
   const threadKey = `thread-${unique('popout')}`;
   try {
     await client.query('BEGIN');
-    const user = await client.query<{ id: string }>('SELECT id FROM users WHERE handle = $1', [
-      args.handle,
+    const user = await client.query<{ id: string }>('SELECT id FROM users WHERE handle = $1', [args.handle]);
+    const channel = await client.query<{ workspace_id: string }>('SELECT workspace_id FROM channels WHERE id = $1', [
+      args.channelId,
     ]);
-    const channel = await client.query<{ workspace_id: string }>(
-      'SELECT workspace_id FROM channels WHERE id = $1',
-      [args.channelId],
-    );
     if (!user.rows[0] || !channel.rows[0]) throw new Error('missing e2e user or channel');
     const userId = user.rows[0].id;
     const workspaceId = channel.rows[0].workspace_id;
@@ -73,9 +69,9 @@ function sseFrame(event: string, eventId: number, data: Record<string, unknown>)
   return `event: ${event}\ndata: ${JSON.stringify({ ...data, event_id: eventId })}\n\n`;
 }
 
-async function centaurRequests(request: APIRequestContext): Promise<
-  Array<{ method: string; path: string; body: unknown }>
-> {
+async function centaurRequests(
+  request: APIRequestContext,
+): Promise<Array<{ method: string; path: string; body: unknown }>> {
   const response = await request.get(`${centaurStubUrl}/__requests`);
   expect(response.ok()).toBeTruthy();
   return (await response.json()) as Array<{ method: string; path: string; body: unknown }>;
@@ -160,8 +156,7 @@ test('popout renders the lean pane, folds the stream, tracks unseen output, and 
   const steerText = unique('popout-steer-check');
   const accepted = page.waitForResponse(
     (response) =>
-      response.request().method() === 'POST' &&
-      response.url().includes(`/api/sessions/${sessionId}/messages`),
+      response.request().method() === 'POST' && response.url().includes(`/api/sessions/${sessionId}/messages`),
   );
   await page.getByPlaceholder(/Steer the agent/).fill(steerText);
   await page.keyboard.press('Enter');
@@ -182,4 +177,58 @@ test('popout renders the lean pane, folds the stream, tracks unseen output, and 
       { timeout: 10_000 },
     )
     .toBe(true);
+});
+
+test('popout stop turn forwards an interrupt without cancelling the session', async ({ page, request }) => {
+  const room = await createTestChannel('popout-stop');
+  const handle = unique('popout-stop');
+  await login(page, handle, 'Popout Stop Tester');
+  const roomId = await channelId(page.context().request, room);
+  const { sessionId, threadKey } = await injectSession({
+    handle,
+    channelId: roomId,
+    title: unique('popout-stop-session'),
+  });
+
+  await request.delete(`${centaurStubUrl}/__requests`);
+  const stamp = new Date().toISOString();
+  await page.route('**/api/sessions/*/stream*', async (route) => {
+    await route.fulfill({
+      status: 200,
+      headers: { 'content-type': 'text/event-stream; charset=utf-8' },
+      body: sseFrame('execution_state', 1, {
+        type: 'execution.state',
+        status: 'running',
+        thread_key: threadKey,
+        execution_id: 'exe_e2e_popout_stop',
+        atrium_ts: stamp,
+      }),
+    });
+  });
+
+  await page.goto(`/s/${sessionId}/pane`);
+  await expect(page.getByTestId('session-pane-page')).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByPlaceholder(/Steer the agent/)).toBeVisible({ timeout: 15_000 });
+
+  const stopAccepted = page.waitForResponse(
+    (response) =>
+      response.request().method() === 'POST' && response.url().includes(`/api/sessions/${sessionId}/stop-turn`),
+  );
+  await page.getByRole('button', { name: 'Stop turn' }).first().click();
+  expect((await stopAccepted).status()).toBe(202);
+
+  await expect
+    .poll(
+      async () => {
+        const requests = await centaurRequests(request);
+        return requests.some(
+          (entry) =>
+            entry.method === 'POST' && entry.path === `/api/session/${encodeURIComponent(threadKey)}/interrupt`,
+        );
+      },
+      { timeout: 10_000 },
+    )
+    .toBe(true);
+
+  await expect(page.getByPlaceholder(/Steer the agent/)).toBeVisible();
 });

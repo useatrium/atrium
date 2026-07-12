@@ -32,6 +32,33 @@ the Atrium repo (not a separate `gbasin/centaur`) is the source of truth.
 > `atrium/integration` branch rebuilt from topic branches. That's all retired — this is a
 > subtree in the Atrium repo now. Nothing was lost in the change.
 
+## Licensing
+
+- The subtree keeps upstream's terms: **Apache-2.0 OR MIT** (`LICENSE` here). The rest
+  of the Atrium repo is AGPL-3.0-or-later; the boundary is this directory.
+- **Fork edits and additions under `centaur/` stay under those upstream terms by
+  default.** This keeps upstream pulls merge-clean and means any fix we make could flow
+  back upstream without a license question. Note the cargo metadata nuance: upstream's
+  api-rs workspace stamps `license = "MIT"` (`services/api-rs/Cargo.toml`
+  `[workspace.package]`), so crates using `license.workspace = true` report MIT — the
+  narrower of the two options in `LICENSE`. That's upstream's declaration; don't "fix"
+  it here (it would re-conflict on every pull).
+- A deliberate exception (e.g. moving a fork-owned crate to another license) must carry
+  an explicit `license` in its own `Cargo.toml` plus a `LICENSE` file in its directory,
+  and be recorded in the repo-root `NOTICE` — never by editing this subtree's top-level
+  `LICENSE`. Note the trade-off before doing this: code that other centaur crates or
+  binaries link against can't be more restrictive than the binary it ends up in.
+- **Current exception:** `services/api-rs/crates/centaur-node-sync` is
+  **AGPL-3.0-or-later**. It's an Atrium-original crate (upstream has no node-sync
+  subsystem), ships only standalone binaries (the node daemon + overlay/warmcache
+  helpers), and nothing else in the workspace links it — the rest of Centaur talks to
+  it via pod exec, mount conventions, and HTTP. Keep it that way: **don't add
+  `centaur-node-sync` as a library dependency of any Apache/MIT crate.** CI enforces
+  this — the "License boundary" job in the root `centaur-ci.yml` fails any PR that
+  makes another crate depend on it.
+- External contributions everywhere in the repo (including here) are covered by the
+  CLA — see the repo-root `CONTRIBUTING.md`.
+
 ## What's here (the Atrium surface)
 The substantive Atrium-only work this fork carries on top of upstream:
 
@@ -49,11 +76,12 @@ The substantive Atrium-only work this fork carries on top of upstream:
   covered by harness-server tests (fake SDK).
   **Open:** the watched live-cluster e2e (real-SDK question round-trip).
 - **Subscription auth** — per-execution Codex/Claude OAuth env injection.
-- **Baked org prompt overlay** — `services/sandbox/ATRIUM_OVERLAY_PROMPT.md` is baked
-  into the sandbox image at `/opt/centaur-overlay/services/sandbox/SYSTEM_PROMPT.md`
-  with `CENTAUR_OVERLAY_DIR` defaulting there, so every sandbox appends the Atrium
-  addendum (context mount, provenance blocks, `/e/` citations) after the base prompt.
-  Pod-level `CENTAUR_OVERLAY_DIR` still overrides for external-overlay deployments.
+- **Baked Atrium base prompt** — `services/sandbox/ATRIUM_BASE_PROMPT.md` is baked
+  into the sandbox image at `/opt/centaur-overlay/services/sandbox/BASE_PROMPT.md`
+  with `CENTAUR_OVERLAY_DIR` defaulting there, so Atrium sandboxes use the native
+  identity, context, and artifact contract instead of the upstream base prompt.
+  API-written `AGENTS_BASE.md` personas still take priority; external overlay deployments
+  can override `CENTAUR_OVERLAY_DIR` and append their existing `SYSTEM_PROMPT.md`.
 - **Warm-lease dep/build cache** — sandboxes reuse dependency + compile caches across
   sessions (upstream Centaur has none): a node-local depcache (pnpm store / cargo registry /
   uv) + sccache, plus a content-addressed cross-node tier in Atrium CAS keyed by lockfile
@@ -109,6 +137,27 @@ sequentially (`0001`, `0002`, …); staying at `1000+` means an upstream migrati
 collides with ours when we pull (this bit us three times). `1000+` migrations only depend on
 early upstream tables, so applying them last is fine. Renumbering a migration a live DB
 already applied means reconciling that DB's `_sqlx_migrations` first.
+
+**Numbers don't collide, but objects can.** Upstream `0033` and fork `1002` both
+recreate the `session_warm_sandboxes_status_supported` check constraint with
+different status sets, and on an existing DB the newly-pulled upstream migration
+runs *after* our already-applied fork one — it re-tightened the constraint under
+rows using the fork's `'drained'` status and aborted at deploy (2026-07-11).
+Fork `1004` pins the union. When pulling upstream, check new migrations against
+constraints/objects the `1000+` range also touches, and remember data-dependent
+migrations that pass on fresh DBs can still fail on live ones.
+
+**A new migration file may silently not ship in box-built images.**
+`sqlx::migrate!()` embeds the migrations directory at proc-macro expansion, but
+cargo does not fingerprint that directory as a crate input — with the api-rs
+Docker build's persistent `/build/target` cache mount, adding a migration
+without touching any `.rs` file reused the stale rlib and the binary shipped
+without the new migration (this dropped `1004` on 2026-07-12; the constraint
+had to be applied manually). `centaur-session-sqlx/build.rs` now emits
+`cargo:rerun-if-changed=migrations` (sqlx's documented fix) so the crate
+re-fingerprints on migration changes. Belt-and-braces: after a deploy that adds
+a migration, verify it landed — `select version from _sqlx_migrations order by
+version desc limit 3` on `ai_v2`.
 
 ## Deploy
 From the Atrium repo root:

@@ -111,12 +111,7 @@ export function ArtifactsSurface({
       }}
     >
       {ordered.map((artifact) => (
-        <ArtifactTile
-          key={artifact.id}
-          artifact={artifact}
-          artifactUri={artifactUri}
-          imageHeaders={imageHeaders}
-        />
+        <ArtifactTile key={artifact.id} artifact={artifact} artifactUri={artifactUri} imageHeaders={imageHeaders} />
       ))}
     </ScrollView>
   );

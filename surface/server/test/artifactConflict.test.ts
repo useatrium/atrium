@@ -2,11 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type pg from 'pg';
 import { ArtifactLedger } from '../src/artifact-ledger.js';
-import {
-  writeBackArtifact,
-  writeBackDelete,
-  type ArtifactWritebackStorage,
-} from '../src/artifact-writeback.js';
+import { writeBackArtifact, writeBackDelete, type ArtifactWritebackStorage } from '../src/artifact-writeback.js';
 import { loadConflictDetail } from '../src/artifact-conflict.js';
 import { createTestPool, seedFixture, truncateAll, type Fixture } from './helpers.js';
 

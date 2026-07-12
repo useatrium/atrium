@@ -28,6 +28,17 @@ ironProxy:
     # a single listener (routing by database name); NetworkPolicies allow this
     # one port so callers can reach it.
     pgPort: 5432
+  # CIDRs iron-proxy must never dial upstream, even when the host allowlist
+  # matches. Keep the local/IMDS defaults and include the default k3s pod/service
+  # CIDRs so sandboxes cannot proxy back into in-cluster services like
+  # onepassword-connect.
+  upstreamDenyCidrs:
+    - "169.254.169.254/32"
+    - "fd00:ec2::254/128"
+    - "127.0.0.0/8"
+    - "::1/128"
+    - "10.42.0.0/16"
+    - "10.43.0.0/16"
   secretSource: onepassword
   secretTtl: 10m
 
@@ -48,6 +59,9 @@ toolServer:
   # this to the tool set the api-rs image was built with so the creds api-rs
   # grants match the tools the sandbox installs.
   ref: ""
+  # Repo visibility for sandbox repo-cache access. Defaults to private; set to
+  # public only for repos safe to expose to principals with sandbox_repo_cache=public.
+  visibility: private
   # Subdirectory in the repo holding the tools tree (mounted at /app/tools).
   subdir: tools
   # Additional repo/subdir sources copied after the base tools source. Duplicate
@@ -56,6 +70,7 @@ toolServer:
   extraSources: []
   # - repo: tempoxyz/centaur-tempo
   #   ref: ""
+  #   visibility: private
   #   subdir: tools
   # Image the tools-bootstrap init container runs in; empty fields fall back to
   # sandbox.image, which carries git and install-tool-shims.
@@ -85,6 +100,12 @@ toolServer:
 console:
   enabled: false
   replicaCount: 1
+  # Public URL users reach in a browser (e.g. https://console.example.com), used
+  # as CENTAUR_CONSOLE_PUBLIC_URL. Set this when console is exposed behind
+  # Tailscale/Ingress so MCP OAuth issuer metadata and JWT validation agree.
+  # When set, the slackbotv2 deployment also links the first assistant message
+  # in a Slack thread to the Console session view; leave empty to omit the link.
+  publicUrl: ""
   image:
     repository: centaur-console
     tag: latest
@@ -105,6 +126,17 @@ console:
   # Secret (keys <secretManager.envPrefix>IRON_CONTROL_GOOGLE_CLIENT_ID /
   # _SECRET), which must exist or the console pods CreateContainerConfigError.
   googleOauth:
+    enabled: false
+  # Slack as an OIDC identity provider for console sign-in. Off by default —
+  # not every deployment uses Slack to log in. When enabled, the
+  # CENTAUR_CONSOLE_SLACK_CLIENT_ID and CENTAUR_CONSOLE_SLACK_CLIENT_SECRET
+  # env vars are sourced from the shared infra Secret (keys
+  # <secretManager.envPrefix>CENTAUR_CONSOLE_SLACK_CLIENT_ID / _SECRET), which
+  # must exist or the console pods CreateContainerConfigError. This is the
+  # Sign-in-with-Slack OIDC app (scopes openid/email/profile, redirect URL
+  # <publicUrl>/auth/slack/callback) — not the DB-managed Slack OAuth app the
+  # bot and DM sync use.
+  slackOauth:
     enabled: false
   # OAuth app slug whose user-level Slack credentials are used by the DM sync
   # worker. Keep this aligned with the Console OAuth app users authorize.
@@ -176,14 +208,19 @@ overlay:
 # only need `repo`; set `ref` to a branch, tag, or commit when you do not want
 # the repo's default branch. Directories missing from a repo are skipped at
 # runtime. Set a subdir to "" to explicitly disable that surface for a source.
+# Repo visibility defaults to private; set visibility: public only for repos
+# safe to expose to principals with sandbox_repo_cache=public.
 overlays:
   sources: []
   # - repo: paradigmxyz/centaur
   #   ref: ""
+  #   visibility: public
   # - repo: your-org/centaur-overlay
   #   ref: main
+  #   visibility: private
   # - repo: your-org/workflows-only
   #   ref: main
+  #   visibility: private
   #   toolsSubdir: ""
   #   skillsSubdir: ""
 
@@ -226,6 +263,9 @@ sandbox:
   # their session's harness via container args; the sandbox image CMD only
   # matters for containers started outside api-rs.
   harnessEngine: codex
+  # Copied into every sandbox pod. CLAUDE_MODEL / CODEX_MODEL set here (the
+  # harness default-model overrides) are also mirrored into slackbotv2 and the
+  # Console so their model displays match what sandboxes actually run.
   extraEnv: {}
   stateVolume:
     enabled: false
@@ -239,6 +279,7 @@ sandbox:
 
 repoCache:
   enabled: true
+  autoReload: true
   hostPath: /var/lib/centaur/repos
   storage:
     # hostPath preserves the existing DaemonSet/node-local behavior. Set to
@@ -254,9 +295,14 @@ repoCache:
         - ReadWriteMany
       storageClassName: ""
       size: 20Gi
-  # Additional repos to cache. toolServer.repo is cached automatically when the
-  # tool server is enabled.
+  # Additional repos to cache. Entries can be strings (visibility defaults to
+  # private) or objects with repo/ref/visibility. toolServer.repo is cached
+  # automatically when the tool server is enabled.
   repositories: []
+  # - paradigmxyz/public-docs
+  # - repo: your-org/public-docs
+  #   ref: main
+  #   visibility: public
   repositoryRefs: {}
   syncIntervalSeconds: 30
   image:
@@ -305,12 +351,20 @@ apiRs:
     tag: latest
     pullPolicy: Always
   port: 8080
+  # Public/local MCP endpoint advertised through OAuth protected-resource
+  # metadata. Empty falls back to slackbotv2.mcpPublicUrl.
+  mcpPublicUrl: ""
   runMigrations: true
   sandboxBackend: agent-k8s
   sandboxWorkload: codex-app-server
   sandboxReadyTimeoutSecs: 90
   sandboxWarmPoolSize: 3
   sandboxWarmPoolReplenishIntervalSecs: 5
+  # Capacity manager: when nonzero, api-rs keeps observed running-like
+  # sandboxes at or below this limit by discarding ready warm sandboxes first,
+  # then pausing least-recently-active idle session sandboxes. 0 disables.
+  sandboxRunningLimit: 0
+  sandboxHotIdleGraceSecs: 300
   # When true, api-rs upserts the shared iron-control infra role and its
   # backing secrets at startup and on tool-secret reconciliation intervals.
   # Set false when multiple Centaur instances share one console/1Password
@@ -321,16 +375,59 @@ apiRs:
   # in workflowAllowedNames as a comma/whitespace-separated string.
   workflowEnableMode: all
   workflowAllowedNames: ""
-  # Reaper: stop sandboxes idle-paused longer than the idle TTL or older than
-  # the max lifetime. 0 disables that sweep. Interval must be >= 1.
-  sandboxIdleStopTtlSecs: 10800 # 3 hours
+  # Scheduled ETL workflow configuration. The chart renders these into api-rs
+  # env so workflow discovery sees the right schedules, then derives the
+  # workflow-host passthrough list from the same non-secret config.
+  etl:
+    slack:
+      enabled: false
+      syncIntervalSeconds: 3600
+      syncBackfillLookbackDays: 30
+      syncThreadLookbackDays: 3
+      excludedChannelPatterns: ""
+      attachments:
+        enabled: true
+        maxBytes: 10485760
+      backfill:
+        enabled: true
+        intervalSeconds: 600
+        channelBatchLimit: 50
+        channelPagesPerJob: 5
+      retention:
+        enabled: true
+        intervalMinutes: 60
+        etlDays: 0
+        dmDays: 0
+    linear:
+      enabled: false
+      syncIntervalSeconds: 14400
+    googleDrive:
+      enabled: false
+      syncIntervalSeconds: 14400
+    googleCalendar:
+      enabled: false
+      syncIntervalSeconds: 14400
+    companyContextDocuments:
+      enabled: true
+      intervalSeconds: 14400
+  # Reaper: stop sandboxes older than the max lifetime, regardless of whether
+  # they are running or suspended. 0 disables the sweep. Interval must be >= 1.
   sandboxMaxLifetimeSecs: 259200 # 3 days
   sandboxReapIntervalSecs: 300
   # Cleanup worker: stop unreferenced session/warm-pool sandboxes after two
   # consecutive sweeps and restore idle-pauses lost across api-rs restarts.
-  # 0 disables the corresponding arm.
+  # The idle backstop is only used when older execution rows have no persisted
+  # idle_timeout_ms. 0 disables the corresponding arm.
   sandboxCleanupIntervalSecs: 300
   sandboxIdleCleanupBackstopSecs: 21600 # 6 hours
+  activitySummary:
+    enabled: false
+    model: gpt-5.4-nano
+    openaiBaseUrl: https://api.openai.com/v1
+    minIntervalSecs: 20
+    timeoutSecs: 5
+    maxFacts: 12
+    maxOutputTokens: 128
   ironProxy:
     mode: enabled
     # Per-user subscription auth (token-never-in-box via per-principal grants).
@@ -374,6 +471,9 @@ slackbotv2:
     pullPolicy: Always
   userName: centaur
   assistantStatus: ""
+  # Public/local MCP endpoint shown in MCP SSO setup messages. The default
+  # assumes users connect through `kubectl port-forward ... 3000:8080`.
+  mcpPublicUrl: "http://localhost:3000"
   externalOrgAllowlist: ""
   triggerBotAllowlist: ""
   metrics:
@@ -398,6 +498,48 @@ linearbot:
     tag: latest
     pullPolicy: Always
   userName: centaur
+  extraEnv: {}
+  resources: {}
+
+# Chat SDK GitHub bot — GitHub teammate (PAT) ingress. Receives issue/PR comment
+# webhooks on /api/webhooks/github (the @chat-adapter/github adapter), answers in
+# the comment thread, and runs a review when the bot account is requested as a
+# reviewer. Forwards sessions to the api-rs control plane (:8080). Disabled by
+# default: requires the GITHUBBOT_TOKEN (PAT) and GITHUBBOT_WEBHOOK_SECRET secrets
+# (see contrib/scripts/bootstrap-k8s-secrets.sh). userName must be the bot
+# account's GitHub login so @-mention and review-request matching work.
+githubbot:
+  enabled: false
+  replicaCount: 1
+  image:
+    repository: centaur-githubbot
+    tag: latest
+    pullPolicy: Always
+  userName: ""
+  # v2 PR self-management (only acts on PRs assigned to the bot account).
+  # Auto-merge respects branch protection and is paused per-PR by the hold label
+  # / draft status.
+  autoMerge: true
+  mergeMethod: squash
+  # Fallback @handle (no leading @) the bot tags when it gives up; empty = none.
+  escalationHandle: ""
+  # Optional review / issue-work methodology overrides. When set, the chart writes
+  # each into a ConfigMap, mounts it as a file, and points the bot at it via
+  # GITHUBBOT_REVIEW_PROMPT_FILE / GITHUBBOT_ISSUE_PROMPT_FILE. Empty = the bot's
+  # bundled default is used. Supply the whole methodology; it's used verbatim.
+  reviewPrompt: ""
+  issuePrompt: ""
+  # Extra guidance prepended to owned-PR management turns (CI-fix / conflict /
+  # address-review) — the riskiest autonomous surface. Same delivery as the
+  # review/issue prompts (ConfigMap + mounted file). Empty = built-in preamble only.
+  managementPrompt: ""
+  # GitHub author_association values allowed to drive the comment-mention path.
+  # Empty = the bot's safe default (OWNER, MEMBER, COLLABORATOR). Use "*" to allow
+  # everyone (e.g. a fully-private repo). Comma-separated.
+  allowedAuthorAssociations: ""
+  # How long (seconds) to let in-flight turns finish on shutdown before the pod is
+  # killed, so a deploy doesn't drop running CI fixes / reviews / issue work.
+  terminationGracePeriodSeconds: 120
   extraEnv: {}
   resources: {}
 
@@ -507,6 +649,31 @@ networkPolicy:
     # kubernetes.io/metadata.name of the collector's namespace, e.g. "laminar".
     namespace: ""
     port: 8000
+  # Egress to observability backends such as VictoriaLogs or VictoriaMetrics.
+  # This policy selects only pods labeled centaur.ai/observability-enabled=true.
+  # Sandboxes receive that label only when their principal has the observability
+  # sandbox capability.
+  observabilityEgress:
+    enabled: false
+    destinations: []
+    # Example:
+    # destinations:
+    #   - namespace: observability
+    #     podSelector:
+    #       matchLabels:
+    #         app.kubernetes.io/instance: vls
+    #         app.kubernetes.io/name: victoria-logs-single
+    #     ports:
+    #       - port: 9428
+    #         protocol: TCP
+    #   - namespace: observability
+    #     podSelector:
+    #       matchLabels:
+    #         app.kubernetes.io/instance: vms
+    #         app.kubernetes.io/name: victoria-metrics-single
+    #     ports:
+    #       - port: 8428
+    #         protocol: TCP
 
 podSecurityContext:
   fsGroupChangePolicy: OnRootMismatch

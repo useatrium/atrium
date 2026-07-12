@@ -2,11 +2,7 @@ import { useEffect, useId, useState } from 'react';
 import type { AgentProfileProposal } from '../api';
 import { randomId } from '@atrium/surface-client';
 import { sessionsApi } from './api';
-import type {
-  QuestionPrompt,
-  SessionAnswerProposal,
-  SessionProviderAuthRequired,
-} from './types';
+import type { QuestionPrompt, SessionAnswerProposal, SessionProviderAuthRequired } from './types';
 
 export function ProfileChangesBanner({
   proposals,
@@ -40,7 +36,8 @@ export function ProfileChangesBanner({
           profile changes
         </span>
         <span className="min-w-0 flex-1 text-fg-body">
-          {profileProviderLabel(proposal.provider)} proposed {settingsCount} settings, {mcpCount} MCP servers, {bundleCount} bundles
+          {profileProviderLabel(proposal.provider)} proposed {settingsCount} settings, {mcpCount} MCP servers,{' '}
+          {bundleCount} bundles
           {excludedCount > 0 ? `; ${excludedCount} excluded` : ''}
           {proposal.riskSummary.blockedSecrets > 0
             ? `; ${proposal.riskSummary.blockedSecrets} secret-shaped values blocked`
@@ -78,9 +75,7 @@ export function ProfileChangesBanner({
           onClick={() => onAction(proposal, 'save-new')}
         />
         {proposals.length > 1 && (
-          <span className="px-1.5 py-1 text-2xs text-fg-muted">
-            {proposals.length - 1} more pending
-          </span>
+          <span className="px-1.5 py-1 text-2xs text-fg-muted">{proposals.length - 1} more pending</span>
         )}
       </div>
     </section>
@@ -234,9 +229,7 @@ export function QuestionBanner({
       const existing = Array.isArray(prev[id]) ? prev[id] : [];
       return {
         ...prev,
-        [id]: existing.includes(value)
-          ? existing.filter((selected) => selected !== value)
-          : [...existing, value],
+        [id]: existing.includes(value) ? existing.filter((selected) => selected !== value) : [...existing, value],
       };
     });
   };
@@ -280,11 +273,7 @@ export function QuestionBanner({
         >
           needs input
         </span>
-        {!isDriver && (
-          <span className="text-fg-tertiary">
-            waiting for {driverName} to answer
-          </span>
-        )}
+        {!isDriver && <span className="text-fg-tertiary">waiting for {driverName} to answer</span>}
       </div>
       <div className="space-y-2">
         {pending.questions.map((q, questionIndex) => {
@@ -299,10 +288,7 @@ export function QuestionBanner({
                 </span>
                 {q.isSecret && <span className="text-3xs text-fg-muted">secret</span>}
               </legend>
-              <div
-                id={promptId}
-                className="whitespace-pre-wrap break-words text-sm leading-relaxed text-fg"
-              >
+              <div id={promptId} className="whitespace-pre-wrap break-words text-sm leading-relaxed text-fg">
                 {q.question}
               </div>
               {q.options?.length ? (
@@ -336,10 +322,7 @@ export function QuestionBanner({
                           className="sr-only"
                         />
                         <span className="block font-semibold">{option.label}</span>
-                        <span
-                          id={optionDescId}
-                          className="block whitespace-normal break-words text-fg-muted"
-                        >
+                        <span id={optionDescId} className="block whitespace-normal break-words text-fg-muted">
                           {option.description}
                         </span>
                         {option.preview && (
@@ -385,10 +368,7 @@ export function QuestionBanner({
       )}
 
       {isDriver && proposals.length > 0 && (
-        <div
-          data-testid="answer-proposals"
-          className="mt-2 space-y-2 border-t border-warning-border/30 pt-2"
-        >
+        <div data-testid="answer-proposals" className="mt-2 space-y-2 border-t border-warning-border/30 pt-2">
           <div className="text-3xs font-semibold uppercase tracking-wider text-fg-muted">
             Proposed answers · {proposals.length}
           </div>
@@ -489,9 +469,7 @@ function AnswerProposalRow({
     setError(null);
     sessionsApi
       .resolveAnswerProposal(sessionId, proposal.id, action, {}, randomId())
-      .catch(() =>
-        setError(action === 'submit' ? "Couldn't submit — try again." : "Couldn't dismiss — try again."),
-      )
+      .catch(() => setError(action === 'submit' ? "Couldn't submit — try again." : "Couldn't dismiss — try again."))
       .finally(() => setBusy(false));
   };
   return (

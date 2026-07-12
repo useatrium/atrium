@@ -1,6 +1,4 @@
-import type { AttachmentMeta, HubFile } from '@atrium/surface-client';
-
-const DEFAULT_TIMESTAMP = '1970-01-01T00:00:00.000Z';
+import type { AttachmentMeta, ChatMessage, HubFile } from '@atrium/surface-client';
 
 function mediaKindFor(contentType: string): HubFile['mediaKind'] {
   const mime = contentType.toLowerCase();
@@ -12,7 +10,10 @@ function mediaKindFor(contentType: string): HubFile['mediaKind'] {
   return 'opaque';
 }
 
-export function attachmentToHubFile(attachment: AttachmentMeta): HubFile {
+export function attachmentToHubFile(
+  attachment: AttachmentMeta,
+  message: Pick<ChatMessage, 'author' | 'channelId' | 'createdAt' | 'id'>,
+): HubFile {
   const mediaKind = mediaKindFor(attachment.contentType);
   return {
     artifactId: attachment.id,
@@ -26,11 +27,12 @@ export function attachmentToHubFile(attachment: AttachmentMeta): HubFile {
     ...(attachment.width != null ? { width: attachment.width } : {}),
     ...(attachment.height != null ? { height: attachment.height } : {}),
     origin: 'upload',
-    channelId: null,
+    uploader: { id: message.author.id, name: message.author.displayName },
+    channelId: message.channelId,
     sessionId: null,
-    sourceMessageId: null,
-    createdAt: DEFAULT_TIMESTAMP,
-    updatedAt: DEFAULT_TIMESTAMP,
+    sourceMessageId: message.id == null ? null : String(message.id),
+    createdAt: message.createdAt,
+    updatedAt: message.createdAt,
     versionSeq: 0,
     labels: [],
     starred: false,

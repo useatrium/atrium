@@ -9,7 +9,7 @@ function tabbables(container: HTMLElement): HTMLElement[] {
   );
 }
 
-export function focusFirstIn(container: HTMLElement): void {
+function focusFirstIn(container: HTMLElement): void {
   const first = tabbables(container)[0] ?? container;
   first.focus();
 }

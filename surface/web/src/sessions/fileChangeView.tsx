@@ -39,11 +39,7 @@ export function DiffView({ diff }: { diff: string }) {
         <div
           key={i}
           className={
-            line.startsWith('+')
-              ? 'text-success-text'
-              : line.startsWith('-')
-                ? 'text-danger-text'
-                : 'text-fg-muted'
+            line.startsWith('+') ? 'text-success-text' : line.startsWith('-') ? 'text-danger-text' : 'text-fg-muted'
           }
         >
           {line || ' '}
@@ -54,7 +50,7 @@ export function DiffView({ diff }: { diff: string }) {
 }
 
 /** Path + kind badge + add/del counts. Shared header row for both surfaces. */
-export function FileChangeHeader({
+function FileChangeHeader({
   change,
   open,
   status = 'done',
@@ -66,9 +62,7 @@ export function FileChangeHeader({
   const { adds, dels } = diffStats(change.diff);
   return (
     <>
-      <span className="text-fg-muted">
-        {open ? <ChevronDownIcon size={12} /> : <ChevronRightIcon size={12} />}
-      </span>
+      <span className="text-fg-muted">{open ? <ChevronDownIcon size={12} /> : <ChevronRightIcon size={12} />}</span>
       <span
         className={`shrink-0 rounded px-1.5 py-px text-3xs font-semibold uppercase tracking-wide ${KIND_BADGE[change.kind]}`}
       >

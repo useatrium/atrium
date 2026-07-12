@@ -32,7 +32,7 @@ function displayTitle(presentation: ArtifactPresentation): string {
   return presentation.title?.trim() || presentation.appSlug || presentation.path.split('/').at(-2) || 'App preview';
 }
 
-export function AppPresentationCard({
+function AppPresentationCard({
   sessionId,
   presentation,
   surface = 'transcript',
@@ -64,9 +64,7 @@ export function AppPresentationCard({
         title={`${title} preview`}
         src={src}
         sandbox="allow-scripts allow-forms allow-popups allow-modals"
-        className={`block w-full border-0 bg-white ${
-          timeline ? 'h-[28rem] max-h-[70vh]' : 'h-72 max-h-[48vh]'
-        }`}
+        className={`block w-full border-0 bg-white ${timeline ? 'h-[28rem] max-h-[70vh]' : 'h-72 max-h-[48vh]'}`}
       />
     </div>
   );

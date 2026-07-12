@@ -73,9 +73,7 @@ function Tab({
     >
       <span>{label}</span>
       {count != null && (
-        <span className={`tabular-nums font-normal ${danger ? 'text-danger-text' : 'text-fg-muted'}`}>
-          · {count}
-        </span>
+        <span className={`tabular-nums font-normal ${danger ? 'text-danger-text' : 'text-fg-muted'}`}>· {count}</span>
       )}
     </TabsTrigger>
   );
@@ -103,7 +101,11 @@ function SessionFilesPeekCard({ file, href, onOpen }: { file: HubFile; href: str
       className="flex min-w-0 items-center gap-2 rounded-md border border-edge bg-surface-raised/45 px-2 py-2 text-left transition-colors hover:border-edge-strong hover:bg-surface-raised"
     >
       <span className="grid size-10 shrink-0 place-items-center overflow-hidden rounded-md border border-edge bg-surface text-3xs font-semibold text-fg-muted">
-        {imageThumbnail ? <img src={imageThumbnail} alt="" className="size-full object-cover" loading="lazy" /> : fileTypeLabel(file)}
+        {imageThumbnail ? (
+          <img src={imageThumbnail} alt="" className="size-full object-cover" loading="lazy" />
+        ) : (
+          fileTypeLabel(file)
+        )}
       </span>
       <span className="min-w-0 flex-1">
         <span className="block truncate text-2xs font-semibold text-fg-body" title={file.path}>
@@ -154,14 +156,18 @@ function SessionFilesPeek({ workspaceId, sessionId }: { workspaceId: string; ses
 
   const openGallery = () => navigate(href);
   const count = `${files.length}${nextCursor ? '+' : ''}`;
-  const countLabel = loading ? 'Loading files...' : `${count} ${files.length === 1 && !nextCursor ? 'file' : 'files'} in this session`;
+  const countLabel = loading
+    ? 'Loading files...'
+    : `${count} ${files.length === 1 && !nextCursor ? 'file' : 'files'} in this session`;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-surface">
       <div className="flex shrink-0 items-center gap-3 border-b border-edge px-3 py-3">
         <div className="min-w-0 flex-1">
           <h3 className="truncate text-sm font-semibold text-fg">{countLabel}</h3>
-          <p className="mt-0.5 truncate text-2xs text-fg-muted">Files you upload and files agents create appear in Gallery.</p>
+          <p className="mt-0.5 truncate text-2xs text-fg-muted">
+            Files you upload and files agents create appear in Gallery.
+          </p>
         </div>
         <a
           href={href}
@@ -181,7 +187,7 @@ function SessionFilesPeek({ workspaceId, sessionId }: { workspaceId: string; ses
           </div>
         )}
         {!error && !loading && files.length === 0 && (
-          <EmptyState title="No session files" hint="Files touched by this session will appear here." />
+          <EmptyState title="No agent files" hint="Files touched by this session will appear here." />
         )}
         {!error && files.length > 0 && (
           <div className="grid gap-2">
@@ -265,7 +271,7 @@ export function WorkDrawer({
   const normalizedTab = normalizeWorkTab(tab);
   const active: ActiveWorkTab = available.some((t) => t.key === normalizedTab)
     ? normalizedTab
-    : available[0]?.key ?? normalizedTab;
+    : (available[0]?.key ?? normalizedTab);
   const showDetach = canDetach && !isDesktop;
   const pinLabel = pinned ? 'Unpin (back to overlay)' : 'Pin beside the transcript';
   const pinAriaLabel = pinned ? 'Unpin work drawer' : 'Pin work drawer';
@@ -298,13 +304,7 @@ export function WorkDrawer({
         <div className="min-w-0 flex-1 max-md:overflow-x-auto max-md:[scrollbar-width:none] max-md:[&::-webkit-scrollbar]:hidden [@media(pointer:coarse)]:overflow-x-auto">
           <TabsList aria-label="Work surfaces" className="w-max min-w-full flex-nowrap gap-0 px-1">
             {available.map((t) => (
-              <Tab
-                key={t.key}
-                value={t.key}
-                label={t.label}
-                count={t.count}
-                danger={t.danger}
-              />
+              <Tab key={t.key} value={t.key} label={t.label} count={t.count} danger={t.danger} />
             ))}
           </TabsList>
         </div>

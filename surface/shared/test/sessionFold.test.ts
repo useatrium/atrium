@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applySessionEvent, sessionFromWire } from '../src/sessions';
+import { applySessionEvent, isArchivedSession, sessionFromWire } from '../src/sessions';
 import type { Session } from '../src/sessions';
 import type { WireEvent } from '../src/timeline';
 
@@ -39,6 +39,8 @@ function optimistic(over: Partial<Session>): Record<string, Session> {
       resultText: null,
       createdAt: new Date(1000).toISOString(),
       completedAt: null,
+      archivedAt: null,
+      pinned: false,
       lastEventId: 0,
       permalink: '/s/sess-1',
       ...over,
@@ -95,6 +97,8 @@ describe('applySessionEvent repo/branch fold', () => {
       resultText: null,
       createdAt: new Date(1000).toISOString(),
       completedAt: null,
+      archivedAt: null,
+      pinned: false,
       lastEventId: 0,
       permalink: '/s/sess-1',
     });
@@ -152,5 +156,38 @@ describe('applySessionEvent status fold', () => {
     });
     expect(done['sess-1']!.status).toBe('completed');
     expect(done['sess-1']!.completedAt).toBe(new Date(9000).toISOString());
+  });
+});
+
+describe('applySessionEvent archive fold', () => {
+  it('sets and clears archive state from durable lifecycle events', () => {
+    const archivedAt = '2026-07-11T12:00:00.000Z';
+    const archived = applySessionEvent(optimistic({}), {
+      id: 20,
+      workspaceId: 'ws-1',
+      channelId: 'ch-1',
+      threadRootEventId: null,
+      type: 'session.archived',
+      actorId: alice.id,
+      payload: { sessionId: 'sess-1', archivedAt },
+      createdAt: archivedAt,
+      author: alice,
+    });
+    expect(archived['sess-1']!.archivedAt).toBe(archivedAt);
+    expect(isArchivedSession(archived['sess-1']!)).toBe(true);
+
+    const revived = applySessionEvent(archived, {
+      id: 21,
+      workspaceId: 'ws-1',
+      channelId: 'ch-1',
+      threadRootEventId: null,
+      type: 'session.unarchived',
+      actorId: alice.id,
+      payload: { sessionId: 'sess-1', archivedAt: null },
+      createdAt: '2026-07-11T12:05:00.000Z',
+      author: alice,
+    });
+    expect(revived['sess-1']!.archivedAt).toBeNull();
+    expect(isArchivedSession(revived['sess-1']!)).toBe(false);
   });
 });

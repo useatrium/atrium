@@ -57,7 +57,8 @@ export function TextEditorPane(props: {
         ]);
         if (!res.ok) throw new Error(res.statusText || `Could not load file (${res.status})`);
         const text = await res.text();
-        const baseSeq = versionResult.versions.find((version) => version.isLatest)?.seq ?? versionResult.versions[0]?.seq;
+        const baseSeq =
+          versionResult.versions.find((version) => version.isLatest)?.seq ?? versionResult.versions[0]?.seq;
         if (baseSeq == null) throw new Error('Could not find a base version for this file.');
         if (!cancelled && mountedRef.current) {
           setDraft(text);
@@ -107,34 +108,13 @@ export function TextEditorPane(props: {
     [closeAfterInlineError],
   );
 
-  const save = useCallback(async () => {
-    if (loadState.status !== 'ready' || saving) return;
-    setSaving(true);
-    setError(null);
-    try {
-      const result = await api.saveTextFile(file.artifactId, draft, loadState.baseSeq, file.mime ?? 'text/plain');
-      if (!mountedRef.current) return;
-      if (result.status === 'normal') {
-        onSaved?.(result);
-        onClose();
-        return;
-      }
-      const nextConflict = await api.loadFileConflict(file.artifactId);
-      if (mountedRef.current) setConflict(nextConflict);
-    } catch (err: unknown) {
-      if (mountedRef.current) handleApiFailure(err);
-    } finally {
-      if (mountedRef.current) setSaving(false);
-    }
-  }, [api, draft, file.artifactId, file.mime, handleApiFailure, loadState, onClose, onSaved, saving]);
-
-  const resolveConflict = useCallback(
-    async (choice: HubFileResolveChoice) => {
-      if (!conflict || saving) return;
+  const runSave = useCallback(
+    async (operation: () => Promise<HubFileSaveResult>) => {
+      if (saving) return;
       setSaving(true);
       setError(null);
       try {
-        const result = await api.resolveFileConflict(file.artifactId, conflict, choice, file.mime ?? 'text/plain');
+        const result = await operation();
         if (!mountedRef.current) return;
         if (result.status === 'normal') {
           onSaved?.(result);
@@ -149,21 +129,41 @@ export function TextEditorPane(props: {
         if (mountedRef.current) setSaving(false);
       }
     },
-    [api, conflict, file.artifactId, file.mime, handleApiFailure, onClose, onSaved, saving],
+    [api, file.artifactId, handleApiFailure, onClose, onSaved, saving],
+  );
+
+  const save = useCallback(async () => {
+    if (loadState.status !== 'ready') return;
+    await runSave(() => api.saveTextFile(file.artifactId, draft, loadState.baseSeq, file.mime ?? 'text/plain'));
+  }, [api, draft, file.artifactId, file.mime, loadState, runSave]);
+
+  const resolveConflict = useCallback(
+    async (choice: HubFileResolveChoice) => {
+      if (!conflict) return;
+      await runSave(() => api.resolveFileConflict(file.artifactId, conflict, choice, file.mime ?? 'text/plain'));
+    },
+    [api, conflict, file.artifactId, file.mime, runSave],
   );
 
   if (conflict) {
     return (
       <View style={{ flex: 1, backgroundColor: colors.bg }}>
         {error ? <InlineError message={error} /> : null}
-        <ConflictSurface conflict={conflict} onResolve={resolveConflict} onCancel={() => setConflict(null)} busy={saving} />
+        <ConflictSurface
+          conflict={conflict}
+          onResolve={resolveConflict}
+          onCancel={() => setConflict(null)}
+          busy={saving}
+        />
       </View>
     );
   }
 
   if (loadState.status === 'loading') {
     return (
-      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: space.sm, backgroundColor: colors.bg }}>
+      <View
+        style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: space.sm, backgroundColor: colors.bg }}
+      >
         <ActivityIndicator color={colors.textMuted} />
         <Text style={{ color: colors.textMuted, fontSize: font.sm }}>Loading editor...</Text>
       </View>
@@ -172,7 +172,16 @@ export function TextEditorPane(props: {
 
   if (loadState.status === 'error') {
     return (
-      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: space.xl, gap: space.md, backgroundColor: colors.bg }}>
+      <View
+        style={{
+          flex: 1,
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: space.xl,
+          gap: space.md,
+          backgroundColor: colors.bg,
+        }}
+      >
         <Text style={{ color: colors.danger, fontSize: font.sm, textAlign: 'center' }}>{loadState.message}</Text>
         <Pressable
           accessibilityRole="button"
@@ -283,7 +292,9 @@ export function TextEditorPane(props: {
         }}
       >
         <Ionicons name={icon} size={16} color={emphasized ? colors.onAccent : colors.textSecondary} />
-        <Text style={{ color: emphasized ? colors.onAccent : colors.textSecondary, fontSize: font.sm, fontWeight: '800' }}>
+        <Text
+          style={{ color: emphasized ? colors.onAccent : colors.textSecondary, fontSize: font.sm, fontWeight: '800' }}
+        >
           {label}
         </Text>
       </Pressable>

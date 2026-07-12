@@ -26,8 +26,7 @@ interface DesktopBridge {
 }
 
 const bridge: DesktopBridge | null =
-  typeof window !== 'undefined' &&
-  (window as unknown as { atrium?: DesktopBridge }).atrium?.isDesktop === true
+  typeof window !== 'undefined' && (window as unknown as { atrium?: DesktopBridge }).atrium?.isDesktop === true
     ? (window as unknown as { atrium: DesktopBridge }).atrium
     : null;
 
@@ -37,9 +36,7 @@ let token: string | null = bridge?.session?.token ?? null;
 
 /** API client options: absolute origin + bearer token on desktop; undefined in
  * the browser (so createApi falls back to same-origin + cookie). */
-export function desktopApiOptions():
-  | { baseUrl: string; getToken: () => string | null }
-  | undefined {
+export function desktopApiOptions(): { baseUrl: string; getToken: () => string | null } | undefined {
   if (!bridge) return undefined;
   return { baseUrl: bridge.serverUrl, getToken: () => token };
 }
@@ -52,10 +49,7 @@ export function desktopWsUrl(): string | null {
 }
 
 /** After a successful login: keep the token and persist the session (keychain). */
-export async function captureDesktopLogin(result: {
-  user: DesktopUser;
-  token?: string;
-}): Promise<void> {
+export async function captureDesktopLogin(result: { user: DesktopUser; token?: string }): Promise<void> {
   if (!bridge || !result.token) return;
   token = result.token;
   await bridge.setSession({ serverUrl: bridge.serverUrl, token: result.token, user: result.user });

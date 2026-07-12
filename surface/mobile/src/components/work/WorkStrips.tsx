@@ -11,13 +11,7 @@ export interface WorkStripItem {
   danger?: boolean;
 }
 
-export function WorkStrips({
-  items,
-  onOpen,
-}: {
-  items: WorkStripItem[];
-  onOpen: (key: string) => void;
-}) {
+export function WorkStrips({ items, onOpen }: { items: WorkStripItem[]; onOpen: (key: string) => void }) {
   const { colors } = useTheme();
   const shown = items.filter((i) => i.count > 0);
   if (shown.length === 0) return null;
@@ -51,9 +45,7 @@ export function WorkStrips({
             paddingVertical: 5,
           }}
         >
-          <Text style={{ color: colors.textSecondary, fontSize: font.xs, fontWeight: '700' }}>
-            {item.label}
-          </Text>
+          <Text style={{ color: colors.textSecondary, fontSize: font.xs, fontWeight: '700' }}>{item.label}</Text>
           <Text style={{ color: item.danger ? colors.danger : colors.textMuted, fontSize: font.xs, fontWeight: '700' }}>
             {item.count}
           </Text>

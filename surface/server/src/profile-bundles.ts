@@ -1,23 +1,11 @@
 import { createHash } from 'node:crypto';
-import type {
-  AgentProfileManifest,
-  AgentProfileProvider,
-} from '@atrium/surface-client/agentProfiles';
+import type { AgentProfileManifest, AgentProfileProvider } from '@atrium/surface-client/agentProfiles';
 import type { Db } from './db.js';
-import { ArtifactLedger } from './artifact-ledger.js';
-import {
-  isDeniedAgentProfilePath,
-  normalizeAgentProfilePath,
-} from './agent-profiles.js';
+import { loadCasBlob, persistCasBlob, type CasStorage } from './cas-storage.js';
+import { isDeniedAgentProfilePath, normalizeAgentProfilePath } from './agent-profiles.js';
 import { DomainError } from './events.js';
 
 export const MAX_PROFILE_BUNDLE_BLOB_BYTES = 256 * 1024;
-
-interface BlobStorage {
-  uploadObject: (key: string, body: Buffer, contentType: string) => Promise<void>;
-  getObjectBytes: (key: string) => Promise<Buffer>;
-  headObject?: (key: string) => Promise<{ contentLength: number } | null>;
-}
 
 export interface ProfileBundleRef {
   path: string;
@@ -28,7 +16,7 @@ export interface ProfileBundleRef {
 
 export async function storeProfileBundleBlob(
   pool: Db,
-  storage: Pick<BlobStorage, 'uploadObject' | 'headObject'>,
+  storage: Pick<CasStorage, 'uploadObject' | 'headObject'>,
   args: { sha256: string; path: string; bytes: Buffer },
 ): Promise<{ sha256: string; size_bytes: number }> {
   const sha256 = normalizeBundleSha(args.sha256);
@@ -46,41 +34,18 @@ export async function storeProfileBundleBlob(
   }
 
   const key = profileBundleCasKey(sha256);
-  const ledger = new ArtifactLedger(pool);
-  const durable = await ledger.blobIsDurable(sha256);
-  if (!durable) {
-    const exists = storage.headObject ? await storage.headObject(key) : null;
-    if (!exists) await storage.uploadObject(key, args.bytes, 'application/octet-stream');
-    await pool.query(
-      `INSERT INTO cas_blobs (sha256, s3_key, size_bytes, mime)
-       VALUES ($1, $2, $3, 'application/octet-stream')
-       ON CONFLICT (sha256) DO UPDATE SET
-         s3_key = COALESCE(cas_blobs.s3_key, EXCLUDED.s3_key),
-         size_bytes = GREATEST(cas_blobs.size_bytes, EXCLUDED.size_bytes)`,
-      [sha256, key, args.bytes.length],
-    );
-  }
+  await persistCasBlob(pool, storage, { sha256, key, bytes: args.bytes });
 
   return { sha256, size_bytes: args.bytes.length };
 }
 
 export async function loadProfileBundleBlob(
   pool: Db,
-  storage: Pick<BlobStorage, 'getObjectBytes'>,
+  storage: Pick<CasStorage, 'getObjectBytes'>,
   sha256: string,
 ): Promise<Buffer | null> {
   const normalized = normalizeBundleSha(sha256);
-  const row = await pool.query<{ s3_key: string | null }>(
-    'SELECT s3_key FROM cas_blobs WHERE sha256 = $1',
-    [normalized],
-  );
-  const key = row.rows[0]?.s3_key;
-  if (!key) return null;
-  try {
-    return await storage.getObjectBytes(key);
-  } catch {
-    return null;
-  }
+  return loadCasBlob(pool, storage, normalized);
 }
 
 export async function listSessionProfileBundles(

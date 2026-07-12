@@ -17,7 +17,11 @@ interface AttachmentLightboxState {
 }
 
 export default function ThreadScreen() {
-  const { rootId: rootIdParam, channelId, prefill } = useLocalSearchParams<{
+  const {
+    rootId: rootIdParam,
+    channelId,
+    prefill,
+  } = useLocalSearchParams<{
     rootId: string;
     channelId: string;
     prefill?: string;
@@ -44,8 +48,7 @@ export default function ThreadScreen() {
   const [attachmentLightbox, setAttachmentLightbox] = useState<AttachmentLightboxState | null>(null);
   const [editing, setEditing] = useState<ChatMessage | null>(null);
   const [initialDraft, setInitialDraft] = useState('');
-  const draftKey =
-    channelId && Number.isFinite(rootId) ? `channel:${channelId}:thread:${rootId}` : '';
+  const draftKey = channelId && Number.isFinite(rootId) ? `channel:${channelId}:thread:${rootId}` : '';
 
   useEffect(() => {
     if (!draftKey) return;
@@ -78,7 +81,7 @@ export default function ThreadScreen() {
     const attachments = message.attachments ?? [];
     if (index < 0 || index >= attachments.length) return;
     setAttachmentLightbox({
-      files: attachments.map(attachmentToHubFile),
+      files: attachments.map((attachment) => attachmentToHubFile(attachment, message)),
       initialIndex: index,
     });
   }, []);
@@ -111,9 +114,7 @@ export default function ThreadScreen() {
               onPress={() => chat.retryThread(channelId, rootId)}
               style={{ minHeight: 44, justifyContent: 'center' }}
             >
-              <Text style={{ color: colors.danger, fontSize: font.sm }}>
-                Replies failed — tap to retry
-              </Text>
+              <Text style={{ color: colors.danger, fontSize: font.sm }}>Replies failed — tap to retry</Text>
             </Pressable>
           </View>
         ) : (

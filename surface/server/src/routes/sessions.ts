@@ -5,8 +5,10 @@ import {
   SaveAgentProfileProposalToCurrentBodySchema,
 } from '@atrium/surface-client/agentProfiles';
 import { config } from '../config.js';
-import type { Db, DbClient } from '../db.js';
+import type { AppMutationContext } from '../app-mutations.js';
+import type { Db } from '../db.js';
 import { canAccessChannel, type UserRef } from '../events.js';
+import type { WsHub } from '../hub.js';
 import type { AgentProfiles } from '../agent-profiles.js';
 import type { AppRegistry, AppScope } from '../app-registry.js';
 import { classifyScope } from '../artifact-scope.js';
@@ -47,6 +49,16 @@ const SessionListQuerySchema = Schema.Struct({
   limit: Schema.optional(Schema.Unknown),
 });
 
+const SessionArchiveBodySchema = Schema.Struct({
+  archived: Schema.optional(Schema.Unknown),
+  opId: Schema.optional(Schema.Unknown),
+});
+
+const SessionPinBodySchema = Schema.Struct({
+  pinned: Schema.optional(Schema.Unknown),
+  opId: Schema.optional(Schema.Unknown),
+});
+
 const SessionParamsSchema = Schema.Struct({
   id: Schema.String,
 });
@@ -70,8 +82,9 @@ const AppLaunchBodySchema = Schema.Struct({
   version: Schema.optional(Schema.Unknown),
 });
 
-export interface SessionRouteDeps {
+export interface SessionRouteDeps extends AppMutationContext {
   pool: Db;
+  hub: WsHub;
   sessionRuns: SessionRuns;
   connections: Connections;
   ironControl: IronControlAdminClient;
@@ -79,19 +92,41 @@ export interface SessionRouteDeps {
   appRegistry: AppRegistry;
   requireUser(req: FastifyRequest, reply: FastifyReply): UserRef | null;
   requireSessionAccess(req: FastifyRequest, reply: FastifyReply): Promise<UserRef | null>;
-  optionalOpId(body: unknown): string | undefined;
-  runMutation<T>(args: {
-    userId: string;
-    opId?: string;
-    opType: string;
-    body: unknown;
-    fn: (client: DbClient) => Promise<T>;
-    onApplied?: (response: T) => void | Promise<void>;
-  }): Promise<T>;
+}
+
+async function validateDirectGitHubRepos(
+  req: FastifyRequest,
+  reply: FastifyReply,
+  validate: () => Promise<{ inaccessible: string[] }>,
+  failureLog: string,
+) {
+  try {
+    const { inaccessible } = await validate();
+    if (inaccessible.length > 0) {
+      return reply.code(409).send({
+        error: 'github_repo_inaccessible',
+        message: `Connected GitHub credentials cannot access: ${inaccessible.join(', ')}`,
+        repos: inaccessible,
+      });
+    }
+  } catch (err) {
+    if (err instanceof IronControlRequestError && err.status === 409) {
+      return reply.code(409).send({
+        error: 'github_repo_access_unverified',
+        message: 'Reconnect GitHub before starting a session with private repositories.',
+      });
+    }
+    req.log.warn({ err }, failureLog);
+    return reply.code(502).send({
+      error: 'github_repo_validation_failed',
+      message: 'Could not validate GitHub repository access.',
+    });
+  }
 }
 
 export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDeps): void {
   const {
+    hub,
     sessionRuns,
     connections,
     ironControl,
@@ -235,56 +270,26 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
             message: 'Reconnect GitHub before starting a session with private repositories.',
           });
         }
-        try {
-          const validation = await ironControl.validateGitHubBrokerRepos(brokerCredentialId, privateRepos);
-          if (validation.inaccessible.length > 0) {
-            return reply.code(409).send({
-              error: 'github_repo_inaccessible',
-              message: `Connected GitHub credentials cannot access: ${validation.inaccessible.join(', ')}`,
-              repos: validation.inaccessible,
-            });
-          }
-        } catch (err) {
-          if (err instanceof IronControlRequestError && err.status === 409) {
-            return reply.code(409).send({
-              error: 'github_repo_access_unverified',
-              message: 'Reconnect GitHub before starting a session with private repositories.',
-            });
-          }
-          req.log.warn({ err }, 'github broker repo access validation failed');
-          return reply.code(502).send({
-            error: 'github_repo_validation_failed',
-            message: 'Could not validate GitHub repository access.',
-          });
-        }
+        const validationError = await validateDirectGitHubRepos(
+          req,
+          reply,
+          () => ironControl.validateGitHubBrokerRepos(brokerCredentialId, privateRepos),
+          'github broker repo access validation failed',
+        );
+        if (validationError) return validationError;
       }
       if (privateRepoRequested && githubConnection?.token_kind === 'pat') {
         const staticSecretId =
           metadataString(githubConnection.metadata, 'staticSecretId') ??
           metadataString(githubConnection.metadata, 'staticSecretForeignId') ??
           githubPatSecretForeignId(githubConnection.workspace_id, githubConnection.user_id);
-        try {
-          const validation = await ironControl.validateGitHubStaticSecretRepos(staticSecretId, privateRepos);
-          if (validation.inaccessible.length > 0) {
-            return reply.code(409).send({
-              error: 'github_repo_inaccessible',
-              message: `Connected GitHub credentials cannot access: ${validation.inaccessible.join(', ')}`,
-              repos: validation.inaccessible,
-            });
-          }
-        } catch (err) {
-          if (err instanceof IronControlRequestError && err.status === 409) {
-            return reply.code(409).send({
-              error: 'github_repo_access_unverified',
-              message: 'Reconnect GitHub before starting a session with private repositories.',
-            });
-          }
-          req.log.warn({ err }, 'github PAT repo access validation failed');
-          return reply.code(502).send({
-            error: 'github_repo_validation_failed',
-            message: 'Could not validate GitHub repository access.',
-          });
-        }
+        const validationError = await validateDirectGitHubRepos(
+          req,
+          reply,
+          () => ironControl.validateGitHubStaticSecretRepos(staticSecretId, privateRepos),
+          'github PAT repo access validation failed',
+        );
+        if (validationError) return validationError;
       }
       if (
         privateRepoRequested &&
@@ -379,7 +384,7 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
     if (!user) return;
     const q = decodeRouteQuery(SessionListQuerySchema, req.query);
     const status =
-      q.status === 'running' || q.status === 'recent' || q.status === 'all'
+      q.status === 'running' || q.status === 'recent' || q.status === 'all' || q.status === 'archived'
         ? q.status
         : q.status == null
           ? 'all'
@@ -400,6 +405,61 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
     if (!user) return;
     const { id } = decodeRouteParams(SessionParamsSchema, req.params);
     return { session: await sessionRuns.getSessionForUser(id, user.id) };
+  });
+
+  app.post('/api/sessions/:id/archive', async (req, reply) => {
+    const user = await requireSessionAccess(req, reply);
+    if (!user) return;
+    const { id } = decodeRouteParams(SessionParamsSchema, req.params);
+    const body = decodeRouteBody(SessionArchiveBodySchema, req.body);
+    const opId = optionalOpId(body);
+    if (typeof body.archived !== 'boolean') {
+      return reply.code(400).send({ error: 'bad_request', message: 'archived must be boolean' });
+    }
+    const change = await runMutation({
+      userId: user.id,
+      opId,
+      opType: 'session.archive',
+      body: { sessionId: id, archived: body.archived },
+      fn: (client) => sessionRuns.setArchiveStateInTx(client, id, user.id, body.archived as boolean),
+      onApplied: (result) => {
+        if (result.event) hub.publishEvent(result.event);
+      },
+    });
+    return { archived: body.archived, archivedAt: change.archivedAt };
+  });
+
+  app.post('/api/sessions/:id/pin', async (req, reply) => {
+    const user = await requireSessionAccess(req, reply);
+    if (!user) return;
+    const { id } = decodeRouteParams(SessionParamsSchema, req.params);
+    const body = decodeRouteBody(SessionPinBodySchema, req.body);
+    const opId = optionalOpId(body);
+    if (typeof body.pinned !== 'boolean') {
+      return reply.code(400).send({ error: 'bad_request', message: 'pinned must be boolean' });
+    }
+    return runMutation({
+      userId: user.id,
+      opId,
+      opType: 'session.pin',
+      body: { sessionId: id, pinned: body.pinned },
+      fn: async (client) => {
+        if (body.pinned) {
+          await client.query(
+            `INSERT INTO session_pins (user_id, session_id)
+             VALUES ($1, $2)
+             ON CONFLICT (user_id, session_id) DO NOTHING`,
+            [user.id, id],
+          );
+        } else {
+          await client.query('DELETE FROM session_pins WHERE user_id = $1 AND session_id = $2', [user.id, id]);
+        }
+        return { pinned: body.pinned as boolean };
+      },
+      onApplied: (response) => {
+        hub.sendToUsers([user.id], { type: 'session-pinned', sessionId: id, pinned: response.pinned });
+      },
+    });
   });
 
   app.get('/api/sessions/:id/profile-change-proposals', async (req, reply) => {

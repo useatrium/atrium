@@ -35,24 +35,14 @@ function LoadingState({ label }: { label: string }) {
   );
 }
 
-function ErrorState({
-  file,
-  downloadUrl,
-  message,
-}: {
-  file: HubFile;
-  downloadUrl: string;
-  message: string;
-}) {
+function ErrorState({ file, downloadUrl, message }: { file: HubFile; downloadUrl: string; message: string }) {
   const { colors } = useTheme();
   return (
     <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: space.xl, gap: space.md }}>
       <Text style={{ color: colors.text, fontSize: font.lg, fontWeight: '800', textAlign: 'center' }} numberOfLines={2}>
         {file.name}
       </Text>
-      <Text style={{ color: colors.danger, fontSize: font.sm, lineHeight: 20, textAlign: 'center' }}>
-        {message}
-      </Text>
+      <Text style={{ color: colors.danger, fontSize: font.sm, lineHeight: 20, textAlign: 'center' }}>{message}</Text>
       <Text style={{ color: colors.textMuted, fontSize: font.sm, lineHeight: 20, textAlign: 'center' }}>
         Download or open externally to view the full file.
       </Text>
@@ -74,18 +64,11 @@ function ErrorState({
   );
 }
 
-export function AppPreviewPane(props: {
-  file: HubFile;
-  api: Api;
-  fileHeaders?: Record<string, string>;
-}): JSX.Element {
+export function AppPreviewPane(props: { file: HubFile; api: Api; fileHeaders?: Record<string, string> }): JSX.Element {
   const { api, file, fileHeaders } = props;
   const { colors } = useTheme();
   const renderer = useMemo(() => rendererFor(file), [file]);
-  const previewUrl = useMemo(
-    () => api.filePreviewUrl(file.artifactId, renderer),
-    [api, file.artifactId, renderer],
-  );
+  const previewUrl = useMemo(() => api.filePreviewUrl(file.artifactId, renderer), [api, file.artifactId, renderer]);
   const downloadUrl = useMemo(() => api.fileContentUrl(file.artifactId), [api, file.artifactId]);
   const [preview, setPreview] = useState<PreviewState>({ status: 'loading', html: null, message: null });
   const [webLoading, setWebLoading] = useState(false);

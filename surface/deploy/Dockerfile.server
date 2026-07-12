@@ -8,6 +8,9 @@ RUN corepack enable
 
 FROM base AS deps
 COPY surface/package.json surface/pnpm-lock.yaml surface/pnpm-workspace.yaml ./surface/
+# patchedDependencies is workspace-global config: pnpm hashes every patch file
+# at install even for a server-only filter, so the patches must be in the layer.
+COPY surface/patches ./surface/patches
 COPY surface/server/package.json ./surface/server/package.json
 COPY surface/shared/package.json ./surface/shared/package.json
 COPY surface/centaur-client/package.json ./surface/centaur-client/package.json
@@ -26,6 +29,9 @@ COPY surface/centaur-client ./surface/centaur-client
 # output. Some bundled deps (e.g. @opentelemetry/core) do CommonJS
 # `require("util")` of Node builtins; without this shim esbuild's ESM bundle
 # throws "Dynamic require of \"util\" is not supported" at startup.
+# esbuild resolves from surface/server devDependencies — it looks unused to
+# dep sweeps (dev uses tsx, CI never builds this image) but this bundle step
+# is its only consumer; removing it breaks deploy only (2026-07-12).
 RUN cd surface/server && pnpm exec esbuild src/index.ts \
   --bundle \
   --platform=node \
@@ -40,7 +46,11 @@ RUN cd surface/server && pnpm exec esbuild src/index.ts \
   --external:@aws-sdk/* \
   --external:sharp \
   --external:pdf-to-img
-RUN cd surface && pnpm --filter @atrium/server deploy --prod --legacy /out
+# allow-unused-patches: patchedDependencies entries for mobile-only packages
+# (react-native-syntax-highlighter) are legitimately unused in the server's
+# pruned graph; only here — dev installs stay strict so a stale patch that
+# silently stops applying is still caught.
+RUN cd surface && pnpm --filter @atrium/server deploy --prod --legacy --config.allow-unused-patches=true /out
 
 FROM node:24-alpine AS runtime
 WORKDIR /app/surface/server

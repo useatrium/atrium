@@ -125,7 +125,7 @@ export function SettingsSurface({
   );
 }
 
-export function SettingsControls({
+function SettingsControls({
   notify,
   setNotify,
   githubConnection,
@@ -155,9 +155,7 @@ export function SettingsControls({
   const sectionRefs = useRef<Partial<Record<SettingsSectionSlug, HTMLElement>>>({});
   const segmentButton = (active: boolean) =>
     `h-8 flex-1 rounded px-2 text-xs font-medium max-md:h-11 max-md:px-3 max-md:text-sm ${
-      active
-        ? 'bg-accent text-on-accent'
-        : 'text-fg-tertiary hover:bg-surface-overlay hover:text-fg-body'
+      active ? 'bg-accent text-on-accent' : 'text-fg-tertiary hover:bg-surface-overlay hover:text-fg-body'
     }`;
   const toggleButton = (active: boolean) =>
     `flex h-8 w-16 items-center rounded-full border px-1 max-md:h-11 max-md:w-20 ${
@@ -169,8 +167,7 @@ export function SettingsControls({
     setPrefs({ notifications: { ...prefs.notifications, messages } });
   const setNotificationSessions = (sessions: boolean) =>
     setPrefs({ notifications: { ...prefs.notifications, sessions } });
-  const setNotificationCalls = (calls: boolean) =>
-    setPrefs({ notifications: { ...prefs.notifications, calls } });
+  const setNotificationCalls = (calls: boolean) => setPrefs({ notifications: { ...prefs.notifications, calls } });
   const notificationsDisabled = notify === 'denied' || notify === 'unsupported';
   const setSectionRef = (section: SettingsSectionSlug) => (element: HTMLElement | null) => {
     if (element) sectionRefs.current[section] = element;
@@ -248,7 +245,9 @@ export function SettingsControls({
                           aria-pressed={prefs.accent === accent}
                           onClick={() => setPrefs({ accent })}
                           className={`flex size-8 items-center justify-center rounded-md border border-edge max-md:size-11 ${
-                            prefs.accent === accent ? 'ring-2 ring-accent-text ring-offset-1 ring-offset-surface-raised' : ''
+                            prefs.accent === accent
+                              ? 'ring-2 ring-accent-text ring-offset-1 ring-offset-surface-raised'
+                              : ''
                           }`}
                         >
                           <span className={`size-4 rounded-full max-md:size-5 ${SWATCH_CLASSES[accent]}`} />
@@ -337,9 +336,7 @@ export function SettingsControls({
                   <select
                     aria-label="Message notifications"
                     value={prefs.notifications.messages}
-                    onChange={(event) =>
-                      setNotificationMessages(event.target.value as NotificationMessagePref)
-                    }
+                    onChange={(event) => setNotificationMessages(event.target.value as NotificationMessagePref)}
                     className="h-8 w-full rounded-md border border-edge bg-surface px-2 text-xs text-fg-secondary max-md:h-11 max-md:px-3 max-md:text-sm"
                   >
                     {MESSAGE_NOTIFICATION_OPTIONS.map((option) => (
@@ -350,10 +347,10 @@ export function SettingsControls({
                   </select>
                 </SettingRow>
 
-                <SettingRow label="Agent sessions">
+                <SettingRow label="Agents">
                   <button
                     type="button"
-                    aria-label="Agent sessions notifications"
+                    aria-label="Agent notifications"
                     aria-pressed={prefs.notifications.sessions}
                     onClick={() => setNotificationSessions(!prefs.notifications.sessions)}
                     className={toggleButton(prefs.notifications.sessions)}
@@ -383,7 +380,9 @@ export function SettingsControls({
                 className="scroll-mt-16 space-y-3 md:scroll-mt-4"
               >
                 <SettingRow label="GitHub">
-                  <Tooltip content={connectionsAvailable ? 'Manage GitHub connection' : 'GitHub connections unavailable'}>
+                  <Tooltip
+                    content={connectionsAvailable ? 'Manage GitHub connection' : 'GitHub connections unavailable'}
+                  >
                     <button
                       type="button"
                       onClick={onConnectGitHub}
@@ -391,7 +390,11 @@ export function SettingsControls({
                     >
                       <span
                         className={`size-2 rounded-full ${
-                          githubConnection?.connected ? 'bg-success' : connectionsAvailable ? 'bg-warning' : 'bg-fg-muted/60'
+                          githubConnection?.connected
+                            ? 'bg-success'
+                            : connectionsAvailable
+                              ? 'bg-warning'
+                              : 'bg-fg-muted/60'
                         }`}
                       />
                       <span className="min-w-0 truncate">
@@ -421,11 +424,7 @@ export function SettingsControls({
                     onClick={onConnectClaude}
                     className="flex h-8 items-center gap-2 rounded-md border border-edge px-2 text-xs text-fg-tertiary hover:bg-surface-overlay hover:text-fg-body max-md:min-h-11 max-md:w-full max-md:px-3 max-md:text-sm"
                   >
-                    <span
-                      className={`size-2 rounded-full ${
-                        claudeStatus?.connected ? 'bg-success' : 'bg-warning'
-                      }`}
-                    />
+                    <span className={`size-2 rounded-full ${claudeStatus?.connected ? 'bg-success' : 'bg-warning'}`} />
                     <span>{claudeStatus?.connected ? 'Connected' : 'Connect'}</span>
                   </button>
                 </SettingRow>
@@ -436,11 +435,7 @@ export function SettingsControls({
                     onClick={onConnectCodex}
                     className="flex h-8 items-center gap-2 rounded-md border border-edge px-2 text-xs text-fg-tertiary hover:bg-surface-overlay hover:text-fg-body max-md:min-h-11 max-md:w-full max-md:px-3 max-md:text-sm"
                   >
-                    <span
-                      className={`size-2 rounded-full ${
-                        codexStatus?.connected ? 'bg-success' : 'bg-warning'
-                      }`}
-                    />
+                    <span className={`size-2 rounded-full ${codexStatus?.connected ? 'bg-success' : 'bg-warning'}`} />
                     <span>{codexStatus?.connected ? 'Connected' : 'Connect'}</span>
                   </button>
                 </SettingRow>
@@ -448,11 +443,7 @@ export function SettingsControls({
 
               <SettingsSectionDivider />
 
-              <section
-                ref={setSectionRef('about')}
-                aria-label="About"
-                className="scroll-mt-16 md:scroll-mt-4"
-              >
+              <section ref={setSectionRef('about')} aria-label="About" className="scroll-mt-16 md:scroll-mt-4">
                 <div className="text-2xs leading-5 text-fg-muted">
                   Atrium is AGPL-3.0-or-later.{' '}
                   <a

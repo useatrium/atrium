@@ -15,9 +15,7 @@
 //   - The same handle is the resolve-route id, the copy-link target, the agent
 //     reference, and the MCP resource id — one concept, four uses.
 
-export type EntryHandle =
-  | { type: 'event'; eventId: number }
-  | { type: 'record'; entryUid: string };
+export type EntryHandle = { type: 'event'; eventId: number } | { type: 'record'; entryUid: string };
 
 export type EntryHandleType = EntryHandle['type'];
 

@@ -86,6 +86,14 @@ describe('optimistic send reconciliation', () => {
     expect(t.lastEventId).toBe(10);
   });
 
+  it('keeps a just-stored message single-row when queue hydration replays it', () => {
+    let t = addPending(emptyTimeline, pending('cm-1', 'hello'));
+    t = addPending(t, pending('cm-1', 'hello'));
+
+    expect(t.main).toHaveLength(1);
+    expect(t.main[0]!.clientMsgId).toBe('cm-1');
+  });
+
   it('is idempotent: POST response + WS event for the same id apply once', () => {
     let t = addPending(emptyTimeline, pending('cm-1', 'hello'));
     const ev = wire(10, 'hello', { clientMsgId: 'cm-1' });
@@ -168,6 +176,16 @@ describe('threads and reply counts', () => {
     expect(t.main[0]!.replyCount).toBe(2);
   });
 
+  it('does not duplicate or double-count a rehydrated pending thread reply', () => {
+    let t = applyEvent(emptyTimeline, wire(1, 'root'));
+    t = mergeThread(t, 1, []);
+    t = addPending(t, pending('cm-r', 'my reply', 1));
+    t = addPending(t, pending('cm-r', 'my reply', 1));
+
+    expect(t.threads[1]).toHaveLength(1);
+    expect(t.main[0]!.replyCount).toBe(1);
+  });
+
   it('broadcast replies land in main and loaded thread while bumping the root once', () => {
     let t = applyEvent(emptyTimeline, wire(1, 'root', { replyCount: 0, lastReplyId: 0 }));
     t = mergeThread(t, 1, []);
@@ -231,9 +249,7 @@ describe('threads and reply counts', () => {
       [1, null, 'confirmed'],
       [2, 'cm-b-ok', 'confirmed'],
     ]);
-    expect(t.threads[1]!.map((m) => [m.id, m.clientMsgId, m.status])).toEqual([
-      [2, 'cm-b-ok', 'confirmed'],
-    ]);
+    expect(t.threads[1]!.map((m) => [m.id, m.clientMsgId, m.status])).toEqual([[2, 'cm-b-ok', 'confirmed']]);
     expect(t.main[0]!.replyCount).toBe(1);
     expect(t.main[0]!.lastReplyId).toBe(2);
   });
@@ -254,9 +270,7 @@ describe('threads and reply counts', () => {
 
     expect(t.main.map((m) => [m.id, m.clientMsgId, m.status])).toEqual([[1, null, 'confirmed']]);
     expect(t.main.some((m) => m.clientMsgId === 'cm-strand')).toBe(false);
-    expect(t.threads[1]!.map((m) => [m.id, m.clientMsgId, m.status])).toEqual([
-      [2, 'cm-strand', 'confirmed'],
-    ]);
+    expect(t.threads[1]!.map((m) => [m.id, m.clientMsgId, m.status])).toEqual([[2, 'cm-strand', 'confirmed']]);
     expect(t.main[0]!.replyCount).toBe(1);
     expect(t.main[0]!.lastReplyId).toBe(2);
   });
@@ -405,10 +419,7 @@ describe('history pagination merge', () => {
   it('folds a raw cached message.deleted on hydrate', () => {
     const t = mergeHistory(
       emptyTimeline,
-      [
-        wire(3, 'doomed'),
-        { ...wire(4, ''), type: 'message.deleted', payload: { target: 'evt_3' } },
-      ],
+      [wire(3, 'doomed'), { ...wire(4, ''), type: 'message.deleted', payload: { target: 'evt_3' } }],
       { hasMoreBefore: false },
     );
     expect(t.main[0]!.deleted).toBe(true);
@@ -597,14 +608,10 @@ describe('optimistic edit/delete/reaction overlays', () => {
       userId: alice.id,
       action: 'add',
     });
-    expect(state.timelines[CH]!.main[0]!.reactions).toEqual([
-      { emoji: '👍', userIds: [bob.id, alice.id] },
-    ]);
+    expect(state.timelines[CH]!.main[0]!.reactions).toEqual([{ emoji: '👍', userIds: [bob.id, alice.id] }]);
 
     state = appReducer(state, { type: 'overlay-rejected', channelId: CH, opId: 'op-react' });
-    expect(state.timelines[CH]!.main[0]!.reactions).toEqual([
-      { emoji: '👍', userIds: [bob.id] },
-    ]);
+    expect(state.timelines[CH]!.main[0]!.reactions).toEqual([{ emoji: '👍', userIds: [bob.id] }]);
   });
 });
 
@@ -839,6 +846,92 @@ describe('channel removal', () => {
     expect(state.activeChannelId).toBeNull();
   });
 });
+
+describe('archive and pin reducer actions', () => {
+  it('folds global channel archive events and per-user pin changes', () => {
+    let state = appReducer(initialAppState, {
+      type: 'channels-loaded',
+      channels: [
+        {
+          id: CH,
+          workspaceId: 'ws-1',
+          name: 'general',
+          createdAt: new Date(0).toISOString(),
+          kind: 'public',
+        },
+      ],
+    });
+    const archivedAt = '2026-07-11T12:00:00.000Z';
+    state = appReducer(state, {
+      type: 'server-event',
+      event: {
+        id: 41,
+        workspaceId: 'ws-1',
+        channelId: CH,
+        threadRootEventId: null,
+        type: 'channel.archived',
+        actorId: alice.id,
+        payload: { channelId: CH, archivedAt },
+        createdAt: archivedAt,
+        author: alice,
+      },
+    });
+    expect(state.channels[0]!.archivedAt).toBe(archivedAt);
+
+    state = appReducer(state, { type: 'channel-pin-changed', channelId: CH, pinned: true });
+    expect(state.channels[0]!.pinned).toBe(true);
+
+    state = appReducer(state, {
+      type: 'server-event',
+      event: {
+        id: 42,
+        workspaceId: 'ws-1',
+        channelId: CH,
+        threadRootEventId: null,
+        type: 'channel.unarchived',
+        actorId: bob.id,
+        payload: { channelId: CH, archivedAt: null },
+        createdAt: '2026-07-11T12:01:00.000Z',
+        author: bob,
+      },
+    });
+    expect(state.channels[0]!.archivedAt).toBeNull();
+  });
+
+  it('updates an already-folded session pin without changing global archive state', () => {
+    const session: Session = {
+      id: 'sess-pin',
+      workspaceId: 'ws-1',
+      channelId: CH,
+      threadRootEventId: null,
+      title: 'task',
+      status: 'completed',
+      harness: 'codex',
+      spawnedBy: alice.id,
+      driverId: alice.id,
+      pendingSeatRequests: [],
+      suggestions: [],
+      answerProposals: [],
+      pendingQuestion: null,
+      seatEvents: [],
+      costUsd: 0,
+      resultText: null,
+      createdAt: new Date(0).toISOString(),
+      completedAt: new Date(1).toISOString(),
+      archivedAt: new Date(2).toISOString(),
+      pinned: false,
+      lastEventId: 1,
+      permalink: '/s/sess-pin',
+    };
+    const state = appReducer(appReducer(initialAppState, { type: 'session-upsert', session }), {
+      type: 'session-pin-changed',
+      sessionId: session.id,
+      pinned: true,
+    });
+    expect(state.sessions[session.id]).toMatchObject({ pinned: true, archivedAt: session.archivedAt });
+  });
+});
+
 describe('session spawn reconciliation', () => {
   it('session.spawned with client_spawn_id reconciles the optimistic row when the POST response was lost', () => {
     const tempId = 'pending:lost-post';
@@ -874,7 +967,6 @@ describe('session spawn reconciliation', () => {
     expect(t.main[0]!.sessionId).toBe('sess-real');
     expect(t.main[0]!.status).toBe('confirmed');
   });
-
 });
 
 describe('live cold-counter advancement (unread divider depends on it)', () => {
@@ -939,15 +1031,6 @@ describe('live cold-counter advancement (unread divider depends on it)', () => {
     expect(state.channels.find((c) => c.id === CH)!.latestEventId).toBe(9);
   });
 
-  it('mock events never advance the counter', () => {
-    let state = appReducer(loadedWith(), { type: 'select-channel', channelId: 'ch-active' });
-    state = appReducer(state, {
-      type: 'server-event',
-      event: { ...wire(9, 'mocked'), mock: true },
-    });
-    expect(state.channels.find((c) => c.id === CH)!.latestEventId).toBe(5);
-  });
-
   it('read-cursor advances channels[].lastReadEventId monotonically', () => {
     let state = loadedWith({ lastReadEventId: 3 });
     state = appReducer(state, { type: 'read-cursor', channelId: CH, lastReadEventId: 8 });
@@ -999,6 +1082,8 @@ describe('live cold-counter advancement (unread divider depends on it)', () => {
     workspaceId: 'ws-1',
     name: 'general',
     createdAt: new Date(0).toISOString(),
+    archivedAt: null,
+    pinned: false,
     kind: 'public' as const,
     latestEventId: 8,
     lastReadEventId,
@@ -1076,6 +1161,8 @@ describe('unified sync application', () => {
             workspaceId: 'ws-1',
             name: 'general',
             createdAt: new Date(0).toISOString(),
+            archivedAt: null,
+            pinned: false,
             kind: 'public',
             latestEventId: 9,
             lastReadEventId: 9,
@@ -1085,6 +1172,8 @@ describe('unified sync application', () => {
             workspaceId: 'ws-1',
             name: 'muted',
             createdAt: new Date(0).toISOString(),
+            archivedAt: null,
+            pinned: false,
             kind: 'public',
             muted: true,
           },
@@ -1092,14 +1181,19 @@ describe('unified sync application', () => {
       },
     };
 
-    dispatchSyncResponse((action) => {
-      state = appReducer(state, action);
-    }, response, { onPrefs: (next) => { prefs = next; } });
+    dispatchSyncResponse(
+      (action) => {
+        state = appReducer(state, action);
+      },
+      response,
+      {
+        onPrefs: (next) => {
+          prefs = next;
+        },
+      },
+    );
 
-    expect(state.timelines[CH]!.main.map((m) => m.text)).toEqual([
-      'already loaded',
-      'synced row',
-    ]);
+    expect(state.timelines[CH]!.main.map((m) => m.text)).toEqual(['already loaded', 'synced row']);
     expect(state.channels.map((channel) => channel.id)).toEqual([CH, 'ch-muted']);
     expect(state.channels.find((channel) => channel.id === CH)!.lastReadEventId).toBe(9);
     expect(state.channels.find((channel) => channel.id === 'ch-muted')!.muted).toBe(true);
@@ -1128,6 +1222,8 @@ describe('unified sync application', () => {
       resultText: null,
       createdAt: new Date(0).toISOString(),
       completedAt: null,
+      archivedAt: null,
+      pinned: false,
       lastEventId: 1,
       permalink: '/s/sess-1',
     };

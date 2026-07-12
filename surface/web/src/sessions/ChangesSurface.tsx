@@ -23,7 +23,10 @@ export function ChangeFileRow({ path, changes }: { path: string; changes: FileCh
   const [open, setOpen] = useState(false);
   // Newest edit wins the displayed kind; the diff shows every edit to the file.
   const kind = changes[changes.length - 1]!.kind;
-  const diff = changes.map((c) => c.diff).filter(Boolean).join('\n');
+  const diff = changes
+    .map((c) => c.diff)
+    .filter(Boolean)
+    .join('\n');
   const { adds, dels } = diffStats(diff);
 
   return (
@@ -77,11 +80,9 @@ export function ChangesSurface({
   const body = (
     <div className="min-h-0 flex-1 overflow-y-auto">
       {groups.length === 0 ? (
-        <EmptyState title="No files changed" hint="This run didn't edit any files in the repo." />
+        <EmptyState title="No files changed" hint="This agent didn't edit any files in the repo." />
       ) : (
-        groups.map(([path, fileChanges]) => (
-          <ChangeFileRow key={path} path={path} changes={fileChanges} />
-        ))
+        groups.map(([path, fileChanges]) => <ChangeFileRow key={path} path={path} changes={fileChanges} />)
       )}
     </div>
   );

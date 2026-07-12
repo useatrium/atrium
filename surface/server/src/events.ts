@@ -170,6 +170,10 @@ export interface Channel {
   workspaceId: string;
   name: string;
   createdAt: string;
+  /** Global archive state; null means visible/active. */
+  archivedAt: string | null;
+  /** Per-user state resolved for the requesting user. */
+  pinned: boolean;
   kind: 'public' | 'private' | 'dm' | 'gdm';
   lastReadEventId?: number;
   latestEventId?: number;
@@ -194,16 +198,15 @@ export async function createChannel(
         name: string;
         created_at: Date;
         kind: 'public' | 'private';
-      }>(
-        'INSERT INTO channels (workspace_id, name, kind, created_by) VALUES ($1, $2, $3, $4) RETURNING *',
-        [args.workspaceId, args.name, args.private ? 'private' : 'public', args.actorId ?? null],
-      );
+      }>('INSERT INTO channels (workspace_id, name, kind, created_by) VALUES ($1, $2, $3, $4) RETURNING *', [
+        args.workspaceId,
+        args.name,
+        args.private ? 'private' : 'public',
+        args.actorId ?? null,
+      ]);
       const row = ch.rows[0]!;
       if (row.kind === 'private' && args.actorId) {
-        await client.query('INSERT INTO channel_members (channel_id, user_id) VALUES ($1, $2)', [
-          row.id,
-          args.actorId,
-        ]);
+        await client.query('INSERT INTO channel_members (channel_id, user_id) VALUES ($1, $2)', [row.id, args.actorId]);
       }
       const ev = await insertEvent(client, {
         workspaceId: args.workspaceId,
@@ -218,6 +221,8 @@ export async function createChannel(
           workspaceId: row.workspace_id,
           name: row.name,
           createdAt: new Date(row.created_at).toISOString(),
+          archivedAt: null,
+          pinned: false,
           kind: row.kind,
           ...(row.kind === 'private' ? { memberCount: args.actorId ? 1 : 0 } : {}),
         },
@@ -279,12 +284,12 @@ export async function postMessage(
     attachments?: AttachmentMeta[];
     voice?: VoicePostMeta;
   },
-): Promise<WireEvent> {
+): Promise<PostedMessage> {
   // Idempotency: the mobile offline outbox retries sends whose response was
   // lost, reusing the clientMsgId — return the already-committed event
   // instead of duplicating (the events_client_msg_dedupe unique index covers
   // the concurrent-retry race).
-  const findExisting = async (db: Db | DbClient): Promise<WireEvent | null> => {
+  const findExisting = async (db: Db | DbClient): Promise<PostedMessage | null> => {
     if (!args.clientMsgId) return null;
     const res = await db.query<EventDbRow>(
       `SELECT * FROM events
@@ -305,10 +310,7 @@ export async function postMessage(
           channel_id: string | null;
           thread_root_event_id: number | null;
           type: string;
-        }>(
-          'SELECT channel_id, thread_root_event_id, type FROM events WHERE id = $1',
-          [args.threadRootEventId],
-        );
+        }>('SELECT channel_id, thread_root_event_id, type FROM events WHERE id = $1', [args.threadRootEventId]);
         const r = root.rows[0];
         if (!r || (r.type !== 'message.posted' && r.type !== 'session.spawned')) {
           throw new DomainError(404, 'thread_root_not_found', 'thread root message not found');
@@ -320,6 +322,25 @@ export async function postMessage(
           throw new DomainError(400, 'nested_thread', 'cannot reply to a reply; threads are one level deep');
         }
       }
+      // This is the shared message executor used by every posting surface.
+      // Revive inside the same transaction so the durable lifecycle event is
+      // ordered before the message that caused it.
+      const revivedChannel = await client.query<{ workspace_id: string }>(
+        `UPDATE channels
+         SET archived_at = NULL
+         WHERE id = $1 AND archived_at IS NOT NULL
+         RETURNING workspace_id`,
+        [args.channelId],
+      );
+      const channelUnarchivedEvent = revivedChannel.rows[0]
+        ? await appendEvent(client, {
+            workspaceId: revivedChannel.rows[0].workspace_id,
+            channelId: args.channelId,
+            type: 'channel.unarchived',
+            actorId: args.actorId,
+            payload: { channelId: args.channelId, archivedAt: null },
+          })
+        : null;
       const payload: Record<string, unknown> = { text: args.text };
       const entryRefs = extractEntryRefs(args.text);
       if (entryRefs.length > 0) payload.entry_refs = entryRefs;
@@ -360,7 +381,8 @@ export async function postMessage(
           [voice.fileId, ev.id, args.workspaceId, args.channelId],
         );
       }
-      return toWireEvent(await attachAuthor(client, ev));
+      const message = toWireEvent(await attachAuthor(client, ev));
+      return channelUnarchivedEvent ? { ...message, channelUnarchivedEvent } : message;
     });
   } catch (err) {
     // Lost the insert race to a concurrent retry — the winner's row is the answer.
@@ -370,6 +392,12 @@ export async function postMessage(
     }
     throw err;
   }
+}
+
+/** Internal post result. HTTP routes fan out `channelUnarchivedEvent` before
+ * returning the normal message event to clients. */
+export interface PostedMessage extends WireEvent {
+  channelUnarchivedEvent?: WireEvent;
 }
 
 /**
@@ -384,27 +412,38 @@ export async function editMessage(
   return withTx(pool, (client) => editMessageTx(client, args));
 }
 
+interface OwnedMessageTarget {
+  workspace_id: string;
+  channel_id: string | null;
+  thread_root_event_id: number | null;
+  actor_id: string | null;
+}
+
+async function ownedMessageTarget(
+  client: DbClient,
+  targetEventId: number,
+  actorId: string,
+  action: 'edit' | 'delete',
+): Promise<OwnedMessageTarget> {
+  const target = await client.query<OwnedMessageTarget & { type: string }>(
+    'SELECT workspace_id, channel_id, thread_root_event_id, type, actor_id FROM events WHERE id = $1',
+    [targetEventId],
+  );
+  const row = target.rows[0];
+  if (!row || row.type !== 'message.posted') {
+    throw new DomainError(404, 'message_not_found', 'message not found');
+  }
+  if (row.actor_id !== actorId) {
+    throw new DomainError(403, 'forbidden', `only the author may ${action} a message`);
+  }
+  return row;
+}
+
 export async function editMessageTx(
   client: DbClient,
   args: { targetEventId: number; actorId: string; text: string },
 ): Promise<WireEvent> {
-  const target = await client.query<{
-    workspace_id: string;
-    channel_id: string | null;
-    thread_root_event_id: number | null;
-    type: string;
-    actor_id: string | null;
-  }>(
-    'SELECT workspace_id, channel_id, thread_root_event_id, type, actor_id FROM events WHERE id = $1',
-    [args.targetEventId],
-  );
-  const t = target.rows[0];
-  if (!t || t.type !== 'message.posted') {
-    throw new DomainError(404, 'message_not_found', 'message not found');
-  }
-  if (t.actor_id !== args.actorId) {
-    throw new DomainError(403, 'forbidden', 'only the author may edit a message');
-  }
+  const t = await ownedMessageTarget(client, args.targetEventId, args.actorId, 'edit');
   const payload: Record<string, unknown> = { target: encodeEventHandle(args.targetEventId), text: args.text };
   const entryRefs = extractEntryRefs(args.text);
   if (entryRefs.length > 0) payload.entry_refs = entryRefs;
@@ -424,10 +463,7 @@ export async function editMessageTx(
  * fold it by stripping the text and flagging deleted=true; clients hide the
  * row (or render a tombstone when the message anchors a thread).
  */
-export async function deleteMessage(
-  pool: Db,
-  args: { targetEventId: number; actorId: string },
-): Promise<WireEvent> {
+export async function deleteMessage(pool: Db, args: { targetEventId: number; actorId: string }): Promise<WireEvent> {
   return withTx(pool, (client) => deleteMessageTx(client, args));
 }
 
@@ -435,23 +471,7 @@ export async function deleteMessageTx(
   client: DbClient,
   args: { targetEventId: number; actorId: string },
 ): Promise<WireEvent> {
-  const target = await client.query<{
-    workspace_id: string;
-    channel_id: string | null;
-    thread_root_event_id: number | null;
-    type: string;
-    actor_id: string | null;
-  }>(
-    'SELECT workspace_id, channel_id, thread_root_event_id, type, actor_id FROM events WHERE id = $1',
-    [args.targetEventId],
-  );
-  const t = target.rows[0];
-  if (!t || t.type !== 'message.posted') {
-    throw new DomainError(404, 'message_not_found', 'message not found');
-  }
-  if (t.actor_id !== args.actorId) {
-    throw new DomainError(403, 'forbidden', 'only the author may delete a message');
-  }
+  const t = await ownedMessageTarget(client, args.targetEventId, args.actorId, 'delete');
   const ev = await insertEvent(client, {
     workspaceId: t.workspace_id,
     channelId: t.channel_id,
@@ -466,14 +486,70 @@ export async function deleteMessageTx(
 /** Emojis a message can be reacted with — keep in sync with the web client's
  * REACTION_EMOJI (components/MessageRow.tsx). */
 export const REACTION_EMOJI = [
-  '👍', '👎', '✅', '❌', '👀', '🎉', '❤️', '😂',
-  '😄', '😅', '😊', '😍', '🤔', '🤯', '😱', '😢',
-  '😭', '😡', '🙏', '👏', '🙌', '💪', '🤝', '👋',
-  '🫡', '🤷', '🤦', '💀', '🔥', '✨', '⭐', '💯',
-  '🚀', '🐛', '🔧', '🛠️', '⚙️', '💡', '📌', '📎',
-  '📝', '✏️', '🔍', '⏳', '⏰', '📅', '☕', '🍕',
-  '🎯', '🏁', '🚧', '⚠️', '🚨', '❓', '❗', '➕',
-  '💬', '🧵', '🤖', '🧠', '💸', '📈', '📉', '🎂',
+  '👍',
+  '👎',
+  '✅',
+  '❌',
+  '👀',
+  '🎉',
+  '❤️',
+  '😂',
+  '😄',
+  '😅',
+  '😊',
+  '😍',
+  '🤔',
+  '🤯',
+  '😱',
+  '😢',
+  '😭',
+  '😡',
+  '🙏',
+  '👏',
+  '🙌',
+  '💪',
+  '🤝',
+  '👋',
+  '🫡',
+  '🤷',
+  '🤦',
+  '💀',
+  '🔥',
+  '✨',
+  '⭐',
+  '💯',
+  '🚀',
+  '🐛',
+  '🔧',
+  '🛠️',
+  '⚙️',
+  '💡',
+  '📌',
+  '📎',
+  '📝',
+  '✏️',
+  '🔍',
+  '⏳',
+  '⏰',
+  '📅',
+  '☕',
+  '🍕',
+  '🎯',
+  '🏁',
+  '🚧',
+  '⚠️',
+  '🚨',
+  '❓',
+  '❗',
+  '➕',
+  '💬',
+  '🧵',
+  '🤖',
+  '🧠',
+  '💸',
+  '📈',
+  '📉',
+  '🎂',
 ] as const;
 
 export type ReactionAction = 'add' | 'remove';
@@ -498,10 +574,7 @@ interface EntryAnnotationScope {
   threadRootEventId: number | null;
 }
 
-async function resolveAnnotationScopeTx(
-  client: DbClient,
-  handle: string,
-): Promise<EntryAnnotationScope> {
+async function resolveAnnotationScopeTx(client: DbClient, handle: string): Promise<EntryAnnotationScope> {
   const decoded = tryDecodeHandle(handle);
   if (!decoded) {
     throw new DomainError(400, 'bad_handle', 'invalid entry handle');
@@ -512,10 +585,7 @@ async function resolveAnnotationScopeTx(
         workspace_id: string;
         channel_id: string | null;
         thread_root_event_id: number | null;
-      }>(
-        'SELECT workspace_id, channel_id, thread_root_event_id FROM events WHERE id = $1',
-        [decoded.eventId],
-      );
+      }>('SELECT workspace_id, channel_id, thread_root_event_id FROM events WHERE id = $1', [decoded.eventId]);
       const row = res.rows[0];
       if (!row?.channel_id) {
         throw new DomainError(404, 'entry_not_found', 'entry not found');
@@ -691,10 +761,7 @@ export async function appendVoiceTranscribedEventTx(
     channel_id: string | null;
     thread_root_event_id: number | null;
     type: string;
-  }>(
-    'SELECT workspace_id, channel_id, thread_root_event_id, type FROM events WHERE id = $1',
-    [args.targetEventId],
-  );
+  }>('SELECT workspace_id, channel_id, thread_root_event_id, type FROM events WHERE id = $1', [args.targetEventId]);
   const t = target.rows[0];
   if (!t || t.type !== 'message.posted') {
     throw new DomainError(404, 'message_not_found', 'message not found');
@@ -808,7 +875,9 @@ const MESSAGE_SELECT = `
 // catch-up heals changes made while a client was disconnected (live clients
 // fold the same events from WS fanout).
 const TIMELINE_EVENT_TYPES =
-  "('message.posted', 'message.edited', 'message.deleted', 'reaction.added', 'reaction.removed', 'voice.transcribed', 'session.spawned', 'session.status_changed', 'session.effort_changed', 'session.completed', 'session.seat_requested', 'session.seat_changed', 'session.question_requested', 'session.question_answered', 'session.question_resolved', 'session.provider_auth_required', 'session.github_auth_required', 'session.provider_auth_resolved')";
+  "('message.posted', 'message.edited', 'message.deleted', 'reaction.added', 'reaction.removed', 'voice.transcribed', 'session.spawned', 'session.status_changed', 'session.effort_changed', 'session.completed', 'session.archived', 'session.unarchived', 'session.seat_requested', 'session.seat_changed', 'session.question_requested', 'session.question_answered', 'session.question_resolved', 'session.provider_auth_required', 'session.github_auth_required', 'session.provider_auth_resolved')";
+const TIMELINE_ROOT_EVENT_TYPES =
+  "('message.posted', 'session.spawned', 'session.question_requested', 'session.question_answered', 'session.question_resolved')";
 
 function foldEdit(
   row: EventDbRow & { edited_text?: string | null; is_deleted?: boolean; reactions?: unknown },
@@ -827,9 +896,8 @@ function foldEdit(
     row.payload = { ...row.payload, reactions: row.reactions };
   }
   if (row.payload.voice && typeof row.payload.voice === 'object' && !Array.isArray(row.payload.voice)) {
-    const status = row.transcript_status === 'done' || row.transcript_status === 'failed'
-      ? row.transcript_status
-      : 'pending';
+    const status =
+      row.transcript_status === 'done' || row.transcript_status === 'failed' ? row.transcript_status : 'pending';
     const transcript: Record<string, unknown> = { status };
     if (row.transcript_text != null) transcript.text = row.transcript_text;
     if (row.transcript_lang != null) transcript.lang = row.transcript_lang;
@@ -883,7 +951,7 @@ export async function listChannelMessages(
   const res = await pool.query<EventDbRow>(
     `${MESSAGE_SELECT}
      WHERE e.channel_id = $1
-       AND e.type IN ('message.posted', 'session.spawned')
+       AND e.type IN ${TIMELINE_ROOT_EVENT_TYPES}
        AND (e.thread_root_event_id IS NULL OR (e.payload->>'broadcast')::boolean IS TRUE)
        ${args.beforeId !== undefined ? 'AND e.id < $3' : ''}
      ORDER BY e.id DESC
@@ -898,10 +966,7 @@ export async function listChannelMessages(
 }
 
 /** All replies in a thread, oldest-first. */
-export async function listThreadMessages(
-  pool: Db,
-  args: { rootEventId: number },
-): Promise<{ events: WireEvent[] }> {
+export async function listThreadMessages(pool: Db, args: { rootEventId: number }): Promise<{ events: WireEvent[] }> {
   const res = await pool.query<EventDbRow>(
     `${MESSAGE_SELECT}
      WHERE e.thread_root_event_id = $1 AND e.type IN ${TIMELINE_EVENT_TYPES}
@@ -916,7 +981,7 @@ export async function listThreadMessages(
 // workspace.created is intentionally excluded: there is no live fanout today
 // and no client reducer consumes it.
 const SYNC_EVENT_TYPES =
-  "('message.posted', 'message.edited', 'message.deleted', 'reaction.added', 'reaction.removed', 'voice.transcribed', 'session.spawned', 'session.status_changed', 'session.effort_changed', 'session.completed', 'session.seat_requested', 'session.seat_changed', 'session.question_requested', 'session.question_answered', 'session.question_resolved', 'session.provider_auth_required', 'session.github_auth_required', 'session.provider_auth_resolved', 'channel.created', 'channel.member_joined', 'channel.member_left')";
+  "('message.posted', 'message.edited', 'message.deleted', 'reaction.added', 'reaction.removed', 'voice.transcribed', 'session.spawned', 'session.status_changed', 'session.effort_changed', 'session.completed', 'session.archived', 'session.unarchived', 'session.seat_requested', 'session.seat_changed', 'session.question_requested', 'session.question_answered', 'session.question_resolved', 'session.provider_auth_required', 'session.github_auth_required', 'session.provider_auth_resolved', 'channel.created', 'channel.archived', 'channel.unarchived', 'channel.member_joined', 'channel.member_left')";
 
 function syncVisibleCte(userUuidParam: string, userTextParam: string): string {
   const workspaceMember = workspaceMemberExists('e.workspace_id', userUuidParam);
@@ -1055,11 +1120,7 @@ export async function listWorkspaces(pool: Db): Promise<Workspace[]> {
   }));
 }
 
-export async function listChannels(
-  pool: Db,
-  userId: string,
-  workspaceId?: string,
-): Promise<Channel[]> {
+export async function listChannels(pool: Db, userId: string, workspaceId?: string): Promise<Channel[]> {
   const res = workspaceId
     ? await pool.query(
         `SELECT c.* FROM channels c
@@ -1081,6 +1142,8 @@ export async function listChannels(
     workspaceId: r.workspace_id,
     name: r.name,
     createdAt: new Date(r.created_at).toISOString(),
+    archivedAt: r.archived_at ? new Date(r.archived_at).toISOString() : null,
+    pinned: false,
     kind: 'public' as const,
   }));
 }
@@ -1092,10 +1155,12 @@ export async function listChannelsFor(pool: Db | DbClient, userId: string): Prom
     workspace_id: string;
     name: string;
     created_at: Date;
+    archived_at: Date | null;
     kind: 'public' | 'private' | 'dm' | 'gdm';
     last_read_event_id: string;
     latest_event_id: string;
     muted: boolean;
+    pinned: boolean;
     member_count: string;
     mentioned_since_read: boolean;
   }>(
@@ -1103,6 +1168,7 @@ export async function listChannelsFor(pool: Db | DbClient, userId: string): Prom
             COALESCE(rc.last_read_event_id, 0) AS last_read_event_id,
             COALESCE(latest.latest_event_id, 0) AS latest_event_id,
             (cm.user_id IS NOT NULL) AS muted,
+            (cp.user_id IS NOT NULL) AS pinned,
             COALESCE(member_counts.member_count, 0) AS member_count,
             -- === mentions-activity additions ===
             COALESCE(mentions_since_read.mentioned_since_read, false) AS mentioned_since_read
@@ -1111,6 +1177,8 @@ export async function listChannelsFor(pool: Db | DbClient, userId: string): Prom
        ON rc.channel_id = c.id AND rc.user_id = $1
      LEFT JOIN channel_mutes cm
        ON cm.channel_id = c.id AND cm.user_id = $1
+     LEFT JOIN channel_pins cp
+       ON cp.channel_id = c.id AND cp.user_id = $1
      LEFT JOIN LATERAL (
        SELECT COUNT(*) AS member_count
        FROM channel_members m
@@ -1163,6 +1231,8 @@ export async function listChannelsFor(pool: Db | DbClient, userId: string): Prom
     workspaceId: r.workspace_id,
     name: r.name,
     createdAt: new Date(r.created_at).toISOString(),
+    archivedAt: r.archived_at ? new Date(r.archived_at).toISOString() : null,
+    pinned: r.pinned,
     kind: r.kind,
     lastReadEventId: Number(r.last_read_event_id),
     latestEventId: Number(r.latest_event_id),
@@ -1288,6 +1358,7 @@ export async function addChannelMemberTx(
     workspace_id: string;
     name: string;
     created_at: Date;
+    archived_at: Date | null;
     kind: Channel['kind'];
     member: boolean;
   }>(
@@ -1314,10 +1385,9 @@ export async function addChannelMemberTx(
   );
   const member = { id: u.id, handle: u.handle, displayName: u.display_name };
   const members = row.kind === 'gdm' ? await membersForChannel(client, args.channelId) : undefined;
-  const count = await client.query<{ count: string }>(
-    'SELECT COUNT(*) FROM channel_members WHERE channel_id = $1',
-    [args.channelId],
-  );
+  const count = await client.query<{ count: string }>('SELECT COUNT(*) FROM channel_members WHERE channel_id = $1', [
+    args.channelId,
+  ]);
   const ev = await insertEvent(client, {
     workspaceId: row.workspace_id,
     channelId: row.id,
@@ -1331,6 +1401,8 @@ export async function addChannelMemberTx(
       workspaceId: row.workspace_id,
       name: row.name,
       createdAt: new Date(row.created_at).toISOString(),
+      archivedAt: row.archived_at ? new Date(row.archived_at).toISOString() : null,
+      pinned: false,
       kind: row.kind,
       ...(row.kind === 'gdm' ? { members } : { memberCount: Number(count.rows[0]!.count) }),
     },
@@ -1406,10 +1478,7 @@ export async function getOrCreateDm(
       );
       const channelId = ch.rows[0]!.id;
       for (const userId of new Set(pair)) {
-        await client.query(
-          'INSERT INTO channel_members (channel_id, user_id) VALUES ($1, $2)',
-          [channelId, userId],
-        );
+        await client.query('INSERT INTO channel_members (channel_id, user_id) VALUES ($1, $2)', [channelId, userId]);
       }
     });
   } catch (err) {
@@ -1428,9 +1497,7 @@ export async function getOrCreateGdm(
   if (memberIds.length < 3 || memberIds.length > 9) {
     throw new DomainError(400, 'bad_request', 'group DMs require 3-9 total members');
   }
-  const users = await pool.query<{ id: string }>('SELECT id FROM users WHERE id = ANY($1::uuid[])', [
-    memberIds,
-  ]);
+  const users = await pool.query<{ id: string }>('SELECT id FROM users WHERE id = ANY($1::uuid[])', [memberIds]);
   if (users.rows.length !== memberIds.length) {
     throw new DomainError(404, 'user_not_found', 'user not found');
   }
@@ -1458,10 +1525,7 @@ export async function getOrCreateGdm(
       );
       const channelId = ch.rows[0]!.id;
       for (const userId of memberIds) {
-        await client.query('INSERT INTO channel_members (channel_id, user_id) VALUES ($1, $2)', [
-          channelId,
-          userId,
-        ]);
+        await client.query('INSERT INTO channel_members (channel_id, user_id) VALUES ($1, $2)', [channelId, userId]);
       }
     });
   } catch (err) {

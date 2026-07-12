@@ -13,6 +13,7 @@ import {
   collectSideEffects,
   initialSessionState,
   isTerminalExecutionStatus,
+  isUserStoppedExecutionState,
   reduceSession,
   type Artifact,
   type CentaurEventFrame,
@@ -32,7 +33,7 @@ import { InvalidArtifactPathError } from './artifact-path.js';
 import { presignGet as s3PresignGet } from './s3.js';
 import { appendEvent, canAccessChannel, DomainError, type UserRef, type WireEvent } from './events.js';
 import type { WsHub } from './hub.js';
-import { sendQuestionPush, sendSessionCompletedPush } from './push.js';
+import { sendAuthRequiredPush, sendQuestionPush, sendSessionCompletedPush, sendSessionFailedPush } from './push.js';
 import {
   CLAUDE_CODE_PROVIDER,
   ProviderCredentials,
@@ -52,6 +53,7 @@ import { AgentProfiles } from './agent-profiles.js';
 import { agentTurnInputLine, agentTurnMessageParts, type AgentTurnAttachmentRef } from './session-attachments.js';
 import { appendReferencedEntriesAppendix } from './referenced-entries.js';
 import { buildSteerContextBlock, type SteerContextSuggestionAttribution } from './steer-context.js';
+import { encodeEventHandle } from './entries.js';
 
 export type SessionStatus = 'spawning' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
 
@@ -85,6 +87,9 @@ export interface SessionJson {
   resultText: string | null;
   createdAt: string;
   completedAt: string | null;
+  archivedAt: string | null;
+  /** Per-user state; false when serialization has no requesting user. */
+  pinned: boolean;
   lastEventId: number;
   permalink: string;
 }
@@ -215,6 +220,8 @@ export interface SessionListItem {
   costUsd: number;
   createdAt: string;
   completedAt: string | null;
+  archivedAt: string | null;
+  pinned: boolean;
 }
 
 /** The S3 surface the artifact serve path needs. Injectable in tests
@@ -243,6 +250,11 @@ export interface SessionCreateResult {
   created: boolean;
   event: WireEvent | null;
   row: SessionRow | null;
+}
+
+export interface SessionArchiveChange {
+  archivedAt: string | null;
+  event: WireEvent | null;
 }
 
 interface SessionRow {
@@ -280,6 +292,7 @@ interface SessionRow {
   cost_usd: string | number;
   created_at: Date;
   completed_at: Date | null;
+  archived_at: Date | null;
 }
 
 interface SessionRepoSpec {
@@ -334,17 +347,21 @@ interface SessionLifecycleEventRow {
   created_at: string;
 }
 
-type SessionListStatus = 'running' | 'recent' | 'all';
+export type SessionListStatus = 'running' | 'recent' | 'all' | 'archived';
 
 interface SessionListRow extends SessionRow {
   channel_name: string;
   spawner_name: string;
+  pinned: boolean;
 }
 
 interface SteerContextRow {
   display_name: string;
   handle: string;
   channel_name: string;
+  channel_id: string;
+  session_title: string;
+  agent_profile_name: string | null;
   sent_at: Date;
 }
 
@@ -568,7 +585,41 @@ export class SessionRuns {
     if (!row || !(await canAccessChannel(this.pool, userId, row.channel_id))) {
       throw new DomainError(404, 'session_not_found', 'session not found');
     }
-    return this.toJsonWithSeatInfo(row);
+    return this.toJsonWithSeatInfo(row, userId);
+  }
+
+  /** Change global archive state inside the caller's transaction. Access is
+   * checked by the route before this mutation, matching other session writes. */
+  async setArchiveStateInTx(
+    client: DbClient,
+    id: string,
+    actorId: string,
+    archived: boolean,
+  ): Promise<SessionArchiveChange> {
+    const before = await client.query<SessionRow>('SELECT * FROM sessions WHERE id = $1 FOR UPDATE', [id]);
+    const row = before.rows[0];
+    if (!row) throw new DomainError(404, 'session_not_found', 'session not found');
+    if ((row.archived_at !== null) === archived) {
+      return { archivedAt: row.archived_at ? row.archived_at.toISOString() : null, event: null };
+    }
+    const updated = await client.query<SessionRow>(
+      `UPDATE sessions
+       SET archived_at = CASE WHEN $1 THEN now() ELSE NULL END
+       WHERE id = $2
+       RETURNING *`,
+      [archived, id],
+    );
+    const next = updated.rows[0]!;
+    const archivedAt = next.archived_at ? next.archived_at.toISOString() : null;
+    const event = await appendEvent(client, {
+      workspaceId: next.workspace_id,
+      channelId: next.channel_id,
+      threadRootEventId: next.thread_root_event_id,
+      type: archived ? 'session.archived' : 'session.unarchived',
+      actorId,
+      payload: { sessionId: next.id, archivedAt },
+    });
+    return { archivedAt, event };
   }
 
   /**
@@ -724,31 +775,43 @@ export class SessionRuns {
     limit: number;
   }): Promise<SessionListItem[]> {
     const statusWhere =
-      args.status === 'running'
-        ? "AND s.status IN ('spawning', 'queued', 'running')"
-        : args.status === 'recent'
-          ? "AND s.status NOT IN ('spawning', 'queued', 'running')"
-          : '';
+      args.status === 'archived'
+        ? 'AND s.archived_at IS NOT NULL'
+        : `AND s.archived_at IS NULL ${
+            args.status === 'running'
+              ? "AND s.status IN ('spawning', 'queued', 'running')"
+              : args.status === 'recent'
+                ? "AND s.status NOT IN ('spawning', 'queued', 'running')"
+                : ''
+          }`;
+    const orderBy =
+      args.status === 'archived'
+        ? '(sp.user_id IS NOT NULL) DESC, s.archived_at DESC, s.created_at DESC'
+        : `CASE s.status
+             WHEN 'spawning' THEN 0
+             WHEN 'queued' THEN 1
+             WHEN 'running' THEN 2
+             ELSE 3
+           END,
+           (sp.user_id IS NOT NULL) DESC,
+           s.created_at DESC`;
     const res = await this.pool.query<SessionListRow>(
       `SELECT s.*,
               c.name AS channel_name,
-              u.display_name AS spawner_name
+              u.display_name AS spawner_name,
+              (sp.user_id IS NOT NULL) AS pinned
        FROM sessions s
        JOIN channels c ON c.id = s.channel_id
        JOIN users u ON u.id = s.spawned_by
        LEFT JOIN channel_members m
          ON m.channel_id = c.id AND m.user_id = $1
+       LEFT JOIN session_pins sp
+         ON sp.session_id = s.id AND sp.user_id = $1
        -- Must mirror canAccessChannel: only 'public' is world-visible; every
        -- other kind (dm, gdm, private — and future ones) requires membership.
        WHERE (c.kind = 'public' OR m.user_id IS NOT NULL)
          ${statusWhere}
-       ORDER BY CASE s.status
-                  WHEN 'spawning' THEN 0
-                  WHEN 'queued' THEN 1
-                  WHEN 'running' THEN 2
-                  ELSE 3
-                END,
-                s.created_at DESC
+       ORDER BY ${orderBy}
        LIMIT $2`,
       [args.userId, args.limit],
     );
@@ -866,9 +929,14 @@ export class SessionRuns {
     attachments: readonly AgentTurnAttachmentRef[] = [],
   ): Promise<void> {
     this.cancelScheduledRelease(id);
-    const row = await this.requireDriver(id, userId);
     try {
-      await this.postUserMessageOnce(row, userId, text, true, this.pool, undefined, attachments);
+      const events = await withTx(this.pool, async (client) => {
+        const row = await this.requireDriverInTx(client, id, userId);
+        const revived = await this.unarchiveSessionInTx(client, row, userId);
+        await this.postUserMessageOnce(revived.row, userId, text, true, client, undefined, attachments);
+        return revived.event ? [revived.event] : [];
+      });
+      for (const event of events) this.hub.publishEvent(event);
     } catch (err) {
       if (err instanceof DomainError && err.code === 'provider_auth_required') {
         await this.markProviderAuthRequired(id, 'missing_token', undefined).catch(() => {});
@@ -881,8 +949,7 @@ export class SessionRuns {
   /** Steer with an optional per-turn reasoning-effort override. Codex takes
    * it natively (`turn/start.effort`); claude gets a child respawn with a new
    * `--effort` (`--resume` keeps the transcript); amp has no channel. Returns
-   * the effort-changed wire event when the override sticks, for the route to
-   * publish post-commit. */
+   * any lifecycle/effort events for the route to publish post-commit. */
   async postUserMessageInTx(
     client: DbClient,
     id: string,
@@ -890,27 +957,30 @@ export class SessionRuns {
     text: string,
     effort?: SessionEffortLevel,
     attachments: readonly AgentTurnAttachmentRef[] = [],
-  ): Promise<WireEvent | null> {
+  ): Promise<WireEvent[]> {
     this.cancelScheduledRelease(id);
     const row = await this.requireDriverInTx(client, id, userId);
-    if (effort && !(HARNESS_EFFORT_LEVELS[row.harness] ?? []).includes(effort)) {
+    const revived = await this.unarchiveSessionInTx(client, row, userId);
+    const activeRow = revived.row;
+    if (effort && !(HARNESS_EFFORT_LEVELS[activeRow.harness] ?? []).includes(effort)) {
       throw new DomainError(
         400,
         'effort_not_supported',
-        `the ${row.harness} harness does not support effort "${effort}"`,
+        `the ${activeRow.harness} harness does not support effort "${effort}"`,
       );
     }
-    await this.postUserMessageOnce(row, userId, text, true, client, effort, attachments);
-    if (!effort || effort === row.model_effort) return null;
+    await this.postUserMessageOnce(activeRow, userId, text, true, client, effort, attachments);
+    if (!effort || effort === activeRow.model_effort) return revived.event ? [revived.event] : [];
     await client.query('UPDATE sessions SET model_effort = $1 WHERE id = $2', [effort, id]);
-    return appendEvent(client, {
-      workspaceId: row.workspace_id,
-      channelId: row.channel_id,
-      threadRootEventId: row.thread_root_event_id,
+    const effortEvent = await appendEvent(client, {
+      workspaceId: activeRow.workspace_id,
+      channelId: activeRow.channel_id,
+      threadRootEventId: activeRow.thread_root_event_id,
       type: 'session.effort_changed',
       actorId: userId,
       payload: { sessionId: id, effort, by: userId },
     });
+    return revived.event ? [revived.event, effortEvent] : [effortEvent];
   }
 
   afterPostUserMessage(id: string): void {
@@ -926,6 +996,8 @@ export class SessionRuns {
     if (!row.current_execution_id) {
       throw new DomainError(409, 'execution_not_running', 'session has no running execution');
     }
+
+    await this.unarchiveSessionForActivity(id, user.id);
 
     try {
       await this.postQuestionAnswer(row, user.id, questionId, answers);
@@ -973,7 +1045,7 @@ export class SessionRuns {
     user: UserRef,
     questionId: string,
     answers: QuestionAnswerBody,
-  ): Promise<WireEvent | null> {
+  ): Promise<WireEvent[]> {
     const before = await client.query<SessionRow>('SELECT * FROM sessions WHERE id = $1 FOR UPDATE', [id]);
     const row = before.rows[0];
     if (!row) {
@@ -990,8 +1062,11 @@ export class SessionRuns {
       throw new DomainError(409, 'execution_not_running', 'session has no running execution');
     }
 
+    const revived = await this.unarchiveSessionInTx(client, row, user.id);
+    const activeRow = revived.row;
+
     try {
-      await this.postQuestionAnswer(row, user.id, questionId, answers);
+      await this.postQuestionAnswer(activeRow, user.id, questionId, answers);
     } catch (err) {
       if (isCentaurCode(err, 'QUESTION_NOT_PENDING')) {
         throw new DomainError(409, 'question_not_pending', 'question is not pending');
@@ -1005,7 +1080,7 @@ export class SessionRuns {
     );
     this.cancelScheduledQuestionRenotify(id);
     const next = updated.rows[0]!;
-    return appendEvent(client, {
+    const answerEvent = await appendEvent(client, {
       workspaceId: next.workspace_id,
       channelId: next.channel_id,
       threadRootEventId: next.thread_root_event_id,
@@ -1018,6 +1093,7 @@ export class SessionRuns {
         answers: summarizeAnswers(pending, answers),
       },
     });
+    return revived.event ? [revived.event, answerEvent] : [answerEvent];
   }
 
   private async postUserMessageOnce(
@@ -1030,8 +1106,7 @@ export class SessionRuns {
     attachments: readonly AgentTurnAttachmentRef[] = [],
     contextBlock?: string,
   ): Promise<void> {
-    const turnContextBlock =
-      contextBlock ?? (await this.buildUserTurnContextBlock(client, row, userId, 'driver'));
+    const turnContextBlock = contextBlock ?? (await this.buildUserTurnContextBlock(client, row, userId, 'driver'));
     text = await appendReferencedEntriesAppendix(client, { sessionId: row.id, userId, text });
     // Stickiness is enforced HERE, at the single authoritative send point:
     // harness effort is per-turn (an omitted field reverts codex to its config
@@ -1100,10 +1175,9 @@ export class SessionRuns {
       });
     } catch (err) {
       if (isCentaurCode(err, 'execution_already_active')) {
-        await client.query(
-          'UPDATE sessions SET centaur_execute_id = NULL, centaur_message_id = NULL WHERE id = $1',
-          [row.id],
-        );
+        await client.query('UPDATE sessions SET centaur_execute_id = NULL, centaur_message_id = NULL WHERE id = $1', [
+          row.id,
+        ]);
         return;
       }
       throw err;
@@ -1126,24 +1200,35 @@ export class SessionRuns {
     userId: string,
     seat: string,
     suggestion?: Pick<SteerContextSuggestionAttribution, 'suggestedBy'>,
+    // users has no actor-kind discriminator yet; callers may override the human default.
+    kind: 'human' | 'agent' = 'human',
   ): Promise<string> {
     const res = await client.query<SteerContextRow>(
       `SELECT u.display_name,
               u.handle,
               c.name AS channel_name,
+              c.id AS channel_id,
+              s.title AS session_title,
+              ap.name AS agent_profile_name,
               now() AS sent_at
          FROM users u
          JOIN channels c ON c.id = $2
+         JOIN sessions s ON s.id = $3
+         LEFT JOIN agent_profile_versions apv ON apv.id = s.agent_profile_version_id
+         LEFT JOIN agent_profiles ap ON ap.id = apv.profile_id
         WHERE u.id = $1`,
-      [userId, row.channel_id],
+      [userId, row.channel_id, row.id],
     );
     const context = res.rows[0];
     if (!context) {
       throw new DomainError(404, 'user_not_found', 'user not found');
     }
     return buildSteerContextBlock({
-      from: { name: context.display_name, handle: context.handle, kind: 'human', seat },
+      from: { name: context.display_name, handle: context.handle, kind, seat },
+      you: { name: context.agent_profile_name, sessionTitle: context.session_title },
       channel: context.channel_name,
+      channelId: context.channel_id,
+      thread: row.thread_root_event_id == null ? null : `/e/${encodeEventHandle(row.thread_root_event_id)}`,
       sent: context.sent_at,
       ...(suggestion
         ? {
@@ -1392,7 +1477,7 @@ export class SessionRuns {
     suggestionId: string,
     action: 'send' | 'dismiss',
     opts: { text?: string; note?: string } = {},
-  ): Promise<{ event: WireEvent; postedSteer: boolean }> {
+  ): Promise<{ events: WireEvent[]; postedSteer: boolean }> {
     const row = await this.requireDriverInTx(client, id, driverUserId);
     const res = await client.query<{
       status: SuggestionStatus;
@@ -1425,12 +1510,14 @@ export class SessionRuns {
       // Mirror the steer path: cancel the idle-release so the freshly-steered
       // session isn't torn down underneath the turn it's about to run.
       this.cancelScheduledRelease(id);
+      const revived = await this.unarchiveSessionInTx(client, row, driverUserId);
+      const activeRow = revived.row;
       const sendText = (opts.text ?? '').trim() || sug.text;
       const edited = sendText !== sug.text;
-      const contextBlock = await this.buildUserTurnContextBlock(client, row, driverUserId, 'driver', {
+      const contextBlock = await this.buildUserTurnContextBlock(client, activeRow, driverUserId, 'driver', {
         suggestedBy: { name: sug.author_name, handle: sug.author_handle, kind: 'human' },
       });
-      await this.postUserMessageOnce(row, driverUserId, sendText, true, client, undefined, [], contextBlock);
+      await this.postUserMessageOnce(activeRow, driverUserId, sendText, true, client, undefined, [], contextBlock);
       await client.query(
         `UPDATE session_suggestions
          SET status = 'sent', resolved_by = $1, sent_text = $2, resolved_at = now()
@@ -1438,9 +1525,9 @@ export class SessionRuns {
         [driverUserId, edited ? sendText : null, suggestionId],
       );
       const event = await appendEvent(client, {
-        workspaceId: row.workspace_id,
-        channelId: row.channel_id,
-        threadRootEventId: row.thread_root_event_id,
+        workspaceId: activeRow.workspace_id,
+        channelId: activeRow.channel_id,
+        threadRootEventId: activeRow.thread_root_event_id,
         type: 'session.suggestion_resolved',
         actorId: driverUserId,
         payload: {
@@ -1451,7 +1538,7 @@ export class SessionRuns {
           ...(edited ? { sentText: sendText } : {}),
         },
       });
-      return { event, postedSteer: true };
+      return { events: revived.event ? [revived.event, event] : [event], postedSteer: true };
     }
 
     const note = (opts.note ?? '').trim();
@@ -1475,7 +1562,7 @@ export class SessionRuns {
         ...(note ? { note } : {}),
       },
     });
-    return { event, postedSteer: false };
+    return { events: [event], postedSteer: false };
   }
 
   // ---- HITL answer proposals (Phase 2) -------------------------------------
@@ -1549,7 +1636,7 @@ export class SessionRuns {
     if (action === 'submit') {
       // Answer the question as the driver (validates still-pending + running +
       // posts to Centaur), then record the disposition.
-      const answerEvent = await this.answerQuestionInTx(client, id, driver, proposal.question_id, proposal.answers);
+      const answerEvents = await this.answerQuestionInTx(client, id, driver, proposal.question_id, proposal.answers);
       await client.query(
         `UPDATE session_answer_proposals
          SET status = 'submitted', resolved_by = $1, resolved_at = now()
@@ -1570,8 +1657,7 @@ export class SessionRuns {
           resolvedBy: driver.id,
         },
       });
-      const events = answerEvent ? [answerEvent, resolvedEvent] : [resolvedEvent];
-      return { events, postedAnswer: true };
+      return { events: [...answerEvents, resolvedEvent], postedAnswer: true };
     }
 
     const note = (opts.note ?? '').trim();
@@ -1645,6 +1731,11 @@ export class SessionRuns {
     try {
       let row = await this.getStartableSessionRow(id);
       if (!row) return;
+      if (row.archived_at) {
+        await this.unarchiveSessionForActivity(id, row.spawned_by);
+        row = await this.getStartableSessionRow(id);
+        if (!row) return;
+      }
       let generation = row.assignment_generation;
       if (generation == null) {
         const spawned = await this.spawnAssignment(row);
@@ -1866,7 +1957,7 @@ export class SessionRuns {
       return;
     }
     if (frame.event !== 'execution_state') return;
-    const status = normalizeStatus(frame.data.status);
+    const status = isUserStoppedExecutionState(frame.data) ? 'completed' : normalizeStatus(frame.data.status);
     if (isTerminalExecutionStatus(frame.data.status)) {
       const resultText = typeof frame.data.result_text === 'string' ? frame.data.result_text : null;
       const terminalAuthFailureEventId = providerAuthFailureTextForFrame(frame)
@@ -2080,6 +2171,15 @@ export class SessionRuns {
       return [authEvent, resolvedEvent];
     });
     for (const event of events) this.hub.publishEvent(event);
+    const authEvent = events.find((event) => event.type === 'session.provider_auth_required');
+    if (authEvent) {
+      void sendAuthRequiredPush(
+        this.pool,
+        this.hub,
+        authEvent,
+        this.questionPushFetchImpl ? { fetchImpl: this.questionPushFetchImpl } : undefined,
+      ).catch((err) => console.warn('provider auth required push fanout failed', { id, err }));
+    }
     if (events.some((event) => event.type === 'session.question_resolved')) {
       this.cancelScheduledQuestionRenotify(id);
     }
@@ -2140,6 +2240,12 @@ export class SessionRuns {
     });
     if (!event) return false;
     this.hub.publishEvent(event);
+    void sendAuthRequiredPush(
+      this.pool,
+      this.hub,
+      event,
+      this.questionPushFetchImpl ? { fetchImpl: this.questionPushFetchImpl } : undefined,
+    ).catch((err) => console.warn('github auth required push fanout failed', { id, err }));
     return true;
   }
 
@@ -2179,6 +2285,17 @@ export class SessionRuns {
       return [statusEvent, resolvedEvent];
     });
     for (const event of events) this.hub.publishEvent(event);
+    if (status === 'failed') {
+      const failedEvent = events.find((event) => event.type === 'session.status_changed');
+      if (failedEvent) {
+        void sendSessionFailedPush(
+          this.pool,
+          this.hub,
+          failedEvent,
+          this.questionPushFetchImpl ? { fetchImpl: this.questionPushFetchImpl } : undefined,
+        ).catch((err) => console.warn('session failed push fanout failed', { id, err }));
+      }
+    }
     if (events.some((event) => event.type === 'session.question_resolved')) {
       this.cancelScheduledQuestionRenotify(id);
     }
@@ -2265,9 +2382,7 @@ export class SessionRuns {
         this.hub,
         completedEvent,
         this.questionPushFetchImpl ? { fetchImpl: this.questionPushFetchImpl } : undefined,
-      ).catch((err) =>
-        console.warn('session completed push fanout failed', { id, err }),
-      );
+      ).catch((err) => console.warn('session completed push fanout failed', { id, err }));
     }
     if (events.length > 0) this.scheduleRelease(id);
   }
@@ -2532,6 +2647,40 @@ export class SessionRuns {
     return row;
   }
 
+  /** Clears global archive state and creates the durable lifecycle event while
+   * the caller still holds the session row lock. */
+  private async unarchiveSessionInTx(
+    client: DbClient,
+    row: SessionRow,
+    actorId: string,
+  ): Promise<{ row: SessionRow; event: WireEvent | null }> {
+    if (!row.archived_at) return { row, event: null };
+    const updated = await client.query<SessionRow>('UPDATE sessions SET archived_at = NULL WHERE id = $1 RETURNING *', [
+      row.id,
+    ]);
+    const next = updated.rows[0]!;
+    const event = await appendEvent(client, {
+      workspaceId: next.workspace_id,
+      channelId: next.channel_id,
+      threadRootEventId: next.thread_root_event_id,
+      type: 'session.unarchived',
+      actorId,
+      payload: { sessionId: next.id, archivedAt: null },
+    });
+    return { row: next, event };
+  }
+
+  /** Used by activity paths that are not already inside a route transaction. */
+  private async unarchiveSessionForActivity(id: string, actorId: string): Promise<void> {
+    const event = await withTx(this.pool, async (client) => {
+      const before = await client.query<SessionRow>('SELECT * FROM sessions WHERE id = $1 FOR UPDATE', [id]);
+      const row = before.rows[0];
+      if (!row) return null;
+      return (await this.unarchiveSessionInTx(client, row, actorId)).event;
+    });
+    if (event) this.hub.publishEvent(event);
+  }
+
   private async requireSpawnerOrDriver(id: string, userId: string): Promise<SessionRow> {
     const row = await this.getSessionRow(id);
     if (!row) {
@@ -2566,8 +2715,8 @@ export class SessionRuns {
     }
   }
 
-  private async toJsonWithSeatInfo(row: SessionRow): Promise<SessionJson> {
-    const [driver, requests, viewers, suggestions, proposals] = await Promise.all([
+  private async toJsonWithSeatInfo(row: SessionRow, userId?: string): Promise<SessionJson> {
+    const [driver, requests, viewers, suggestions, proposals, pin] = await Promise.all([
       row.driver_id
         ? this.pool.query<SessionUserRow>('SELECT id AS user_id, display_name FROM users WHERE id = $1', [
             row.driver_id,
@@ -2613,6 +2762,14 @@ export class SessionRuns {
          ORDER BY p.created_at ASC`,
         [row.id],
       ),
+      userId
+        ? this.pool.query<{ pinned: boolean }>(
+            `SELECT EXISTS (
+               SELECT 1 FROM session_pins WHERE user_id = $1 AND session_id = $2
+             ) AS pinned`,
+            [userId, row.id],
+          )
+        : Promise.resolve({ rows: [{ pinned: false }] }),
     ]);
     return toJson(row, {
       driver: driver.rows[0] ? toSessionUserJson(driver.rows[0]) : null,
@@ -2621,6 +2778,7 @@ export class SessionRuns {
       viewerCount: Number(viewers.rows[0]?.viewer_count ?? 0),
       suggestions: suggestions.rows.map(toSessionSuggestionJson),
       answerProposals: proposals.rows.map(toSessionAnswerProposalJson),
+      pinned: pin.rows[0]?.pinned ?? false,
     });
   }
 
@@ -2865,6 +3023,7 @@ function toJson(
     viewerCount?: number;
     suggestions?: SessionSuggestionJson[];
     answerProposals?: SessionAnswerProposalJson[];
+    pinned?: boolean;
   } = {},
 ): SessionJson {
   return {
@@ -2895,6 +3054,8 @@ function toJson(
     resultText: row.result_text,
     createdAt: new Date(row.created_at).toISOString(),
     completedAt: row.completed_at ? new Date(row.completed_at).toISOString() : null,
+    archivedAt: row.archived_at ? new Date(row.archived_at).toISOString() : null,
+    pinned: seatInfo.pinned ?? false,
     lastEventId: row.last_event_id,
     permalink: `/s/${row.id}`,
   };
@@ -2913,6 +3074,8 @@ function toListItem(row: SessionListRow): SessionListItem {
     costUsd: Number(row.cost_usd),
     createdAt: new Date(row.created_at).toISOString(),
     completedAt: row.completed_at ? new Date(row.completed_at).toISOString() : null,
+    archivedAt: row.archived_at ? new Date(row.archived_at).toISOString() : null,
+    pinned: row.pinned,
   };
 }
 

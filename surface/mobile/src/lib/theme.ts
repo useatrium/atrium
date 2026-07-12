@@ -10,12 +10,7 @@ import {
   type ReactNode,
 } from 'react';
 import { AccessibilityInfo, useColorScheme } from 'react-native';
-import {
-  DEFAULT_PREFS,
-  normalizePrefs,
-  type Accent,
-  type UserPrefs,
-} from '@atrium/surface-client';
+import { DEFAULT_PREFS, normalizePrefs, type Accent, type UserPrefs } from '@atrium/surface-client';
 import { persistPrefs } from './prefsStorage';
 
 export type ColorScheme = 'light' | 'dark';
@@ -148,13 +143,9 @@ interface ThemeContextValue {
   prefs: UserPrefs;
   font: FontScale;
   reduceMotion: boolean;
-  setPrefs: (
-    prefs: Partial<UserPrefs> | UserPrefs | ((prev: UserPrefs) => UserPrefs),
-  ) => void;
+  setPrefs: (prefs: Partial<UserPrefs> | UserPrefs | ((prev: UserPrefs) => UserPrefs)) => void;
   adoptPrefs: (prefs: UserPrefs) => void;
-  registerPrefsPatcher: (
-    patcher: ((patch: Partial<UserPrefs>) => Promise<void>) | null,
-  ) => void;
+  registerPrefsPatcher: (patcher: ((patch: Partial<UserPrefs>) => Promise<void>) | null) => void;
 }
 
 const ThemeContext = createContext<ThemeContextValue | null>(null);
@@ -183,12 +174,9 @@ export function ThemeProvider({
     };
   }, []);
 
-  const registerPrefsPatcher = useCallback(
-    (patcher: ((patch: Partial<UserPrefs>) => Promise<void>) | null) => {
-      patcherRef.current = patcher;
-    },
-    [],
-  );
+  const registerPrefsPatcher = useCallback((patcher: ((patch: Partial<UserPrefs>) => Promise<void>) | null) => {
+    patcherRef.current = patcher;
+  }, []);
 
   const adoptPrefs = useCallback((nextPrefs: UserPrefs) => {
     const normalized = normalizePrefs(nextPrefs);
@@ -198,38 +186,30 @@ export function ThemeProvider({
     });
   }, []);
 
-  const setPrefs = useCallback(
-    (update: Partial<UserPrefs> | UserPrefs | ((prev: UserPrefs) => UserPrefs)) => {
-      setPrefsState((prev) => {
-        const next = normalizePrefs(
-          typeof update === 'function' ? update(prev) : { ...prev, ...update },
-        );
-        const patch: Partial<UserPrefs> = {};
-        for (const key of Object.keys(next) as (keyof UserPrefs)[]) {
-          if (next[key] !== prev[key]) patch[key] = next[key] as never;
-        }
-        if (Object.keys(patch).length === 0) return prev;
-        void persistPrefs(next).catch((err: unknown) => {
-          console.warn('failed to persist prefs', err);
-        });
-        void patcherRef.current?.(patch).catch(() => {
-          // Pref changes are local-first. Network/server-version failures keep
-          // the local value; boot/login reconciliation below decides whether
-          // it is safe to re-push instead of clobbering a newer remote.
-        });
-        return next;
+  const setPrefs = useCallback((update: Partial<UserPrefs> | UserPrefs | ((prev: UserPrefs) => UserPrefs)) => {
+    setPrefsState((prev) => {
+      const next = normalizePrefs(typeof update === 'function' ? update(prev) : { ...prev, ...update });
+      const patch: Partial<UserPrefs> = {};
+      for (const key of Object.keys(next) as (keyof UserPrefs)[]) {
+        if (next[key] !== prev[key]) patch[key] = next[key] as never;
+      }
+      if (Object.keys(patch).length === 0) return prev;
+      void persistPrefs(next).catch((err: unknown) => {
+        console.warn('failed to persist prefs', err);
       });
-    },
-    [],
-  );
+      void patcherRef.current?.(patch).catch(() => {
+        // Pref changes are local-first. Network/server-version failures keep
+        // the local value; boot/login reconciliation below decides whether
+        // it is safe to re-push instead of clobbering a newer remote.
+      });
+      return next;
+    });
+  }, []);
 
-  const scheme: ColorScheme =
-    prefs.theme === 'system' ? (systemScheme === 'light' ? 'light' : 'dark') : prefs.theme;
+  const scheme: ColorScheme = prefs.theme === 'system' ? (systemScheme === 'light' ? 'light' : 'dark') : prefs.theme;
   const scaledFont = useMemo(
     () =>
-      Object.fromEntries(
-        Object.entries(baseFont).map(([key, value]) => [key, value * prefs.fontScale]),
-      ) as FontScale,
+      Object.fromEntries(Object.entries(baseFont).map(([key, value]) => [key, value * prefs.fontScale])) as FontScale,
     [prefs.fontScale],
   );
   Object.assign(font, scaledFont);

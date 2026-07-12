@@ -2,15 +2,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { expect, test, type APIRequestContext } from '@playwright/test';
-import {
-  apiAs,
-  apiURL,
-  channelId,
-  createChannel,
-  login,
-  unique,
-  uniqueChannel,
-} from './helpers.js';
+import { apiAs, apiURL, channelId, createChannel, login, unique, uniqueChannel } from './helpers.js';
 
 // A real 64x64 PNG fixture (decodable by browsers AND sharp → produces a real thumbnail).
 const PNG_1x1 = readFileSync(fileURLToPath(new URL('./fixtures/sample.png', import.meta.url)));
@@ -92,11 +84,7 @@ type HubFile = {
   tombstoned: boolean;
 };
 
-async function channelFiles(
-  ctx: APIRequestContext,
-  chanId: string,
-  query = '',
-): Promise<HubFile[]> {
+async function channelFiles(ctx: APIRequestContext, chanId: string, query = ''): Promise<HubFile[]> {
   const res = await ctx.get(`/api/channels/${chanId}/files${query}`);
   expect(res.ok(), `GET /api/channels/:id/files (${res.status()})`).toBeTruthy();
   const body = (await res.json()) as { files: HubFile[] };
@@ -203,7 +191,7 @@ test.describe('Files Hub', () => {
     }
   });
 
-  test('ACL: a non-member cannot list another user\'s private-channel files', async () => {
+  test("ACL: a non-member cannot list another user's private-channel files", async () => {
     const alice = await apiAs(unique('alice'), 'Alice');
     const bob = await apiAs(unique('bob'), 'Bob');
     try {
@@ -418,7 +406,7 @@ test.describe('Files Hub', () => {
     }
   });
 
-  test('text edit ACL: a non-member cannot edit another user\'s private-channel file', async () => {
+  test("text edit ACL: a non-member cannot edit another user's private-channel file", async () => {
     const alice = await apiAs(unique('aeditor'), 'AEditor');
     const bob = await apiAs(unique('beditor'), 'BEditor');
     try {

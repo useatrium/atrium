@@ -101,9 +101,7 @@ describe('MarkupSteerCard', () => {
   it('renders entry links in a plain steer as inline chips', async () => {
     resolveEntryMock.mockResolvedValue(entry());
 
-    render(
-      <MarkupSteerCard text="Please inspect /e/art_00000000-0000-0000-0000-000000000001 before continuing." />,
-    );
+    render(<MarkupSteerCard text="Please inspect /e/art_00000000-0000-0000-0000-000000000001 before continuing." />);
 
     expect(screen.getByText('entry')).toBeTruthy();
     expect(await screen.findByText('memo.md')).toBeTruthy();

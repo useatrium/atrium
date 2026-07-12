@@ -1,15 +1,7 @@
 import { initials, userColorTokens } from '@atrium/surface-client';
 import { useTheme } from '../theme';
 
-export function Avatar({
-  name,
-  seed,
-  size = 32,
-}: {
-  name: string;
-  seed: string;
-  size?: number;
-}) {
+export function Avatar({ name, seed, size = 32 }: { name: string; seed: string; size?: number }) {
   const { resolvedScheme } = useTheme();
   const colors = userColorTokens(seed, resolvedScheme);
   return (

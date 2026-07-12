@@ -102,7 +102,7 @@ describe('session card transitions across session.* events', () => {
     rerender(cardFor(s));
     expect(screen.getByText('completed')).toBeTruthy();
     expect(screen.getByText(/All green: 12 tests passed/)).toBeTruthy();
-    expect(screen.getByText('Open full transcript').getAttribute('href')).toBe('/s/sess-1');
+    expect(screen.getByText('Open session').getAttribute('href')).toBe('/s/sess-1');
   });
 
   it('renders a failed terminal state from session.completed', () => {
@@ -273,9 +273,7 @@ describe('session card transitions across session.* events', () => {
     expect(screen.queryByText('html-app')).toBeNull();
     expect(screen.queryByText('v2')).toBeNull();
     const frame = screen.getByTitle('Support Triage Console preview') as HTMLIFrameElement;
-    expect(frame.getAttribute('src')).toContain(
-      'path=shared%2Fapps%2Fsupport-triage-console%2Fpreview.html',
-    );
+    expect(frame.getAttribute('src')).toContain('path=shared%2Fapps%2Fsupport-triage-console%2Fpreview.html');
     expect(frame.getAttribute('src')).toContain('preview=1');
     expect(frame.className).toContain('h-[28rem]');
   });

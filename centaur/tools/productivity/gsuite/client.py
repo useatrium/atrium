@@ -12,10 +12,11 @@ from urllib.parse import quote, urljoin, urlparse, urlsplit
 
 import httplib2
 import socks
-from centaur_sdk import current_thread_key, save_attachment, secret
 from google.auth.credentials import AnonymousCredentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
+
+from centaur_sdk import current_thread_key, save_attachment, secret
 
 try:
     from api.integrations.gsuite.http import build_http as _shared_build_http
@@ -145,25 +146,28 @@ def gmail_read(message_id: str) -> dict:
         message_id: The message ID
 
     Returns:
-        Dict with id, subject, from, to, date, body (plain text)
+        Dict with id, subject, from, to, date, body, html, and raw RFC822 content
     """
     service = get_gmail_service()
 
     msg = service.users().messages().get(userId="me", id=message_id, format="full").execute()
+    raw_msg = service.users().messages().get(userId="me", id=message_id, format="raw").execute()
 
     headers = {h["name"]: h["value"] for h in msg.get("payload", {}).get("headers", [])}
 
-    def get_body(payload):
-        if payload.get("body", {}).get("data"):
-            return base64.urlsafe_b64decode(payload["body"]["data"]).decode("utf-8")
-        if payload.get("parts"):
-            for part in payload["parts"]:
-                if part.get("mimeType") == "text/plain":
-                    if part.get("body", {}).get("data"):
-                        return base64.urlsafe_b64decode(part["body"]["data"]).decode("utf-8")
-                body = get_body(part)
-                if body:
-                    return body
+    def decode_body(data):
+        padded = data + "=" * (-len(data) % 4)
+        return base64.urlsafe_b64decode(padded.encode()).decode("utf-8", errors="replace")
+
+    def get_body(payload, mime_type):
+        if not isinstance(payload, dict):
+            return ""
+        if payload.get("mimeType") == mime_type and payload.get("body", {}).get("data"):
+            return decode_body(payload["body"]["data"])
+        for part in payload.get("parts") or []:
+            body = get_body(part, mime_type)
+            if body:
+                return body
         return ""
 
     return {
@@ -174,7 +178,9 @@ def gmail_read(message_id: str) -> dict:
         "to": headers.get("To", ""),
         "cc": headers.get("Cc", ""),
         "date": headers.get("Date", ""),
-        "body": get_body(msg.get("payload", {})),
+        "body": get_body(msg.get("payload", {}), "text/plain"),
+        "html": get_body(msg.get("payload", {}), "text/html"),
+        "raw": raw_msg.get("raw", ""),
         "label_ids": msg.get("labelIds", []),
     }
 
@@ -283,9 +289,9 @@ def gmail_reply(
         Dict with id, thread_id
     """
     import mimetypes
-    from email.mime.multipart import MIMEMultipart
-    from email.mime.base import MIMEBase
     from email import encoders
+    from email.mime.base import MIMEBase
+    from email.mime.multipart import MIMEMultipart
 
     service = get_gmail_service()
 
@@ -741,6 +747,11 @@ def _download_attachment_bytes(
     attachment_url: str | None = None,
 ) -> bytes:
     """Fetch bytes from Centaur's thread-scoped attachment API."""
+    if secret("CENTAUR_SANDBOX_API_SERVER_ENABLED", "true").strip().lower() == "false":
+        raise RuntimeError(
+            "Drive uploads from Centaur attachments require the API server sandbox capability, "
+            "but it is disabled for this principal."
+        )
     path = attachment_url
     if attachment_id:
         path = f"/agent/attachments/{attachment_id}/download"
@@ -769,6 +780,7 @@ def _download_attachment_bytes(
 
 def drive_upload(
     content_base64: str | None = None,
+    content_path: str | None = None,
     name: str | None = None,
     folder_id: str | None = None,
     mime_type: str | None = None,
@@ -779,14 +791,13 @@ def drive_upload(
 ) -> dict:
     """Upload a file to Google Drive.
 
-    Accepts one of: content_base64, attachment_id, or attachment_url.
-    There is deliberately no local-path option: this tool runs in-process on
-    the API server, so a caller-supplied path would read the API host's
-    filesystem. Sandboxes pass bytes via content_base64 or a Centaur attachment
-    handle instead.
+    Accepts one of: content_base64, content_path, attachment_id, or attachment_url.
+    content_path is for workflow files already on the API host filesystem. Sandbox
+    callers should pass a Centaur attachment handle instead.
 
     Args:
         content_base64: Base64-encoded file bytes
+        content_path: Path to a file on the API host filesystem
         name: File name in Drive
         folder_id: Parent folder ID
         mime_type: MIME type (auto-detected if not provided)
@@ -804,6 +815,12 @@ def drive_upload(
     if content_base64:
         upload_bytes = base64.b64decode(content_base64)
         file_name = name or filename or "upload.bin"
+    elif content_path:
+        path = Path(content_path)
+        if not path.is_file():
+            raise ValueError(f"content_path does not exist or is not a file: {content_path}")
+        upload_bytes = path.read_bytes()
+        file_name = name or filename or path.name
     elif attachment_id or attachment_url:
         upload_bytes = _download_attachment_bytes(
             attachment_id=attachment_id,
@@ -811,7 +828,9 @@ def drive_upload(
         )
         file_name = name or filename or f"{attachment_id or 'attachment'}.bin"
     else:
-        raise ValueError("One of content_base64, attachment_id, or attachment_url is required")
+        raise ValueError(
+            "One of content_base64, content_path, attachment_id, or attachment_url is required"
+        )
 
     content_type = mime_type or mimetypes.guess_type(file_name)[0] or "application/octet-stream"
 
@@ -2729,6 +2748,7 @@ class GSuiteClient:
     def drive_upload(
         self,
         content_base64: str | None = None,
+        content_path: str | None = None,
         name: str | None = None,
         folder_id: str | None = None,
         mime_type: str | None = None,
@@ -2741,6 +2761,7 @@ class GSuiteClient:
 
         Args:
             content_base64: Base64-encoded file bytes
+            content_path: Path to a file on the API host filesystem
             name: File name in Drive
             folder_id: Parent folder ID
             mime_type: MIME type (auto-detected if not provided)
@@ -2754,6 +2775,7 @@ class GSuiteClient:
         """
         return drive_upload(
             content_base64=content_base64,
+            content_path=content_path,
             name=name,
             folder_id=folder_id,
             mime_type=mime_type,

@@ -15,11 +15,11 @@ Tauri's macOS WebView (WKWebView) disables when embedded.
 ATRIUM_SERVER_URL=http://localhost:13001 pnpm --filter @atrium/desktop dev
 ```
 
-- `ATRIUM_SERVER_URL` — the API/WS origin the app talks to (token auth).
-- `ATRIUM_RENDERER_URL` — load the renderer from a vite dev server (e.g.
+- `ATRIUM_SERVER_URL`: the API/WS origin the app talks to (token auth).
+- `ATRIUM_RENDERER_URL`: load the renderer from a vite dev server (e.g.
   `http://localhost:5173`) for HMR instead of the bundled build.
 
-The server must allow the desktop origin via CORS — it's in the allowlist by
+The server must allow the desktop origin via CORS. It is in the allowlist by
 default (`ATRIUM_CORS_ORIGINS`, defaults to `app://atrium`).
 
 ## Build a signed + notarized macOS .dmg
@@ -45,7 +45,7 @@ The app uses `electron-updater` against **GitHub Releases** (configured under
 `publish:` in `electron-builder.yml`). A packaged app checks ~10s after launch
 and every 6h, downloads new versions in the background, installs on quit, and
 shows a notification (click to restart-and-install now). No-op in development.
-macOS updates require a signed build — Squirrel.Mac verifies the signature.
+macOS updates require a signed build because Squirrel.Mac verifies the signature.
 
 ### Pick a feed
 
@@ -57,7 +57,7 @@ public so the app does not need an embedded token.
 ### Publish a release
 
 ```bash
-# token comes from the gh CLI login (repo scope) — no secret to paste
+# token comes from the gh CLI login (repo scope); no secret to paste
 GH_TOKEN=$(gh auth token) \
 APPLE_API_KEY=~/path/AuthKey_XXXX.p8 APPLE_API_KEY_ID=XXXX APPLE_API_ISSUER=<uuid> \
   pnpm --filter @atrium/desktop exec electron-builder --mac --publish always
@@ -74,7 +74,7 @@ gh release edit v0.1.0 -R gbasin/<releases-repo> --draft=false
 
 ### Verify end-to-end (needs two versions)
 
-One release can't test updating — the updater only fires when an *installed*
+One release cannot test updating: the updater only fires when an *installed*
 build sees a *newer* release:
 
 1. Publish **v0.1.0**, un-draft it, install that `.dmg`, and launch the app.

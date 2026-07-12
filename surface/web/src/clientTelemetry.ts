@@ -23,7 +23,7 @@ export function installClientTelemetry(): void {
   });
 }
 
-export async function reportClientError(args: {
+async function reportClientError(args: {
   kind: ClientErrorKind;
   errorName?: string;
   message?: string;

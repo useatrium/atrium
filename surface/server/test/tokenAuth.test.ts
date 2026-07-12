@@ -77,8 +77,7 @@ describe('bearer-token auth', () => {
     // carries padding bits, so flipping it wouldn't change the decoded bytes.
     const dot = token.lastIndexOf('.');
     const i = dot + 10;
-    const flipped =
-      token.slice(0, i) + (token[i] === 'A' ? 'B' : 'A') + token.slice(i + 1);
+    const flipped = token.slice(0, i) + (token[i] === 'A' ? 'B' : 'A') + token.slice(i + 1);
     const me = await app.inject({
       method: 'GET',
       url: '/auth/me',
@@ -95,10 +94,7 @@ describe('bearer-token auth', () => {
     });
     const token = login.json().token as string;
     const sessionId = token.slice(0, token.lastIndexOf('.'));
-    await pool.query(
-      `UPDATE auth_sessions SET expires_at = now() - interval '1 minute' WHERE id = $1`,
-      [sessionId],
-    );
+    await pool.query(`UPDATE auth_sessions SET expires_at = now() - interval '1 minute' WHERE id = $1`, [sessionId]);
     const me = await app.inject({
       method: 'GET',
       url: '/auth/me',
@@ -115,10 +111,7 @@ describe('bearer-token auth', () => {
     });
     const token = login.json().token as string;
     const sessionId = token.slice(0, token.lastIndexOf('.'));
-    await pool.query(
-      `UPDATE auth_sessions SET expires_at = now() + interval '5 days' WHERE id = $1`,
-      [sessionId],
-    );
+    await pool.query(`UPDATE auth_sessions SET expires_at = now() + interval '5 days' WHERE id = $1`, [sessionId]);
     const me = await app.inject({
       method: 'GET',
       url: '/auth/me',

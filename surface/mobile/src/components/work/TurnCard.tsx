@@ -34,9 +34,7 @@ export function TurnCard({ status, resultText, costUsd }: TurnCardProps) {
       }}
     >
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm }}>
-        <Text style={{ color: colors.textMuted, fontSize: font.xs, fontWeight: '800' }}>
-          RESULT
-        </Text>
+        <Text style={{ color: colors.textMuted, fontSize: font.xs, fontWeight: '800' }}>RESULT</Text>
         {cost ? (
           <Text
             style={{
@@ -50,11 +48,7 @@ export function TurnCard({ status, resultText, costUsd }: TurnCardProps) {
           </Text>
         ) : null}
       </View>
-      {result ? (
-        <Text style={{ color: colors.text, fontSize: font.sm, lineHeight: 20 }}>
-          {result}
-        </Text>
-      ) : null}
+      {result ? <Text style={{ color: colors.text, fontSize: font.sm, lineHeight: 20 }}>{result}</Text> : null}
     </View>
   );
 }
