@@ -237,6 +237,10 @@ deploy_centaur(){
     sudo docker image inspect "$img:latest" >/dev/null 2>&1 || die "$img:latest missing"
     sudo docker tag "$img:latest" "$REG/$img:$SHA"
     sudo docker push "$REG/$img:$SHA" >/dev/null 2>&1 || die "push $img"
+    # Keep the registry :latest alias current too — deploys pin SHA tags, but a
+    # stale :latest reads as a failed image push during debugging.
+    sudo docker tag "$img:latest" "$REG/$img:latest"
+    sudo docker push "$REG/$img:latest" >/dev/null 2>&1 || die "push $img:latest"
   done
   log "centaur: helm upgrade @ $SHA"
   _helm "$SHA" || { _rb_centaur; die "helm upgrade"; }
