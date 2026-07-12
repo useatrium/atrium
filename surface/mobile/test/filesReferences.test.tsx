@@ -58,6 +58,7 @@ vi.mock('expo-image', () => ({
 
 vi.mock('react-native-safe-area-context', () => ({
   SafeAreaView: ({ children }: { children: unknown }) => children,
+  useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
 
 vi.mock('../src/lib/chat', () => ({
