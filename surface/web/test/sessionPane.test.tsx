@@ -1383,7 +1383,7 @@ describe('work drawer (Phase 4 consolidation)', () => {
     await renderPaneWithB();
     // The echo Bash op is classified as a side-effect → the strip appears.
     const strip = screen.getByTestId('sideeffects-strip');
-    expect(within(strip).getByText('Side-effects')).toBeTruthy();
+    expect(within(strip).getByText('Actions')).toBeTruthy();
     // Drawer closed until the strip is clicked.
     expect(screen.queryByTestId('work-drawer')).toBeNull();
 

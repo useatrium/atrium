@@ -1,4 +1,4 @@
-import { mkdir, stat, writeFile } from 'node:fs/promises';
+import { mkdir, stat } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { _electron as electron, expect, test } from '@playwright/test';
@@ -9,7 +9,9 @@ declare global {
   interface Window {
     atrium?: {
       openSessionPopout: (sessionId: string) => Promise<void>;
+      onNavigate: (callback: (path: string) => void) => () => void;
     };
+    __atriumMenuNavigation?: string;
   }
 }
 
@@ -22,6 +24,8 @@ interface BrowserWindowSnapshot {
 const e2eDir = dirname(fileURLToPath(import.meta.url));
 const desktopRoot = resolve(e2eDir, '..');
 const builtMainEntry = resolve(desktopRoot, 'out/main/index.js');
+const builtRendererEntry = resolve(desktopRoot, '../web/dist/index.html');
+const builtRendererRoot = resolve(desktopRoot, '../web/dist');
 
 async function assertBuiltMainEntry(): Promise<void> {
   try {
@@ -36,27 +40,16 @@ async function assertBuiltMainEntry(): Promise<void> {
   );
 }
 
-async function writeRendererStub(webDist: string): Promise<void> {
-  await mkdir(webDist, { recursive: true });
-  await writeFile(
-    resolve(webDist, 'index.html'),
-    `<!doctype html>
-<html>
-  <head>
-    <meta charset="utf-8">
-    <title>Atrium Desktop Smoke Stub</title>
-  </head>
-  <body>
-    <main id="root">desktop smoke stub</main>
-    <script>
-      window.__atriumDesktopSmoke = {
-        hasBridge: Boolean(window.atrium),
-        href: window.location.href,
-      };
-    </script>
-  </body>
-</html>
-`,
+async function assertBuiltRenderer(): Promise<void> {
+  try {
+    const entry = await stat(builtRendererEntry);
+    if (entry.isFile()) return;
+  } catch {
+    // Fall through to the actionable error below.
+  }
+
+  throw new Error(
+    `Built web renderer not found at ${builtRendererEntry}. Run "pnpm --filter @atrium/web build" before "pnpm --filter @atrium/desktop e2e".`,
   );
 }
 
@@ -102,10 +95,9 @@ async function waitForSessionPopoutCount(app: ElectronApp, sessionId: string, co
 test('desktop shell menu, session popout dedup, and New Window', async () => {
   const testInfo = test.info();
   await assertBuiltMainEntry();
+  await assertBuiltRenderer();
 
-  const webDist = testInfo.outputPath('web-dist');
   const userDataDir = testInfo.outputPath('user-data');
-  await writeRendererStub(webDist);
   await mkdir(userDataDir, { recursive: true });
 
   const envWithoutRendererUrl = { ...process.env };
@@ -114,10 +106,10 @@ test('desktop shell menu, session popout dedup, and New Window', async () => {
   let app: ElectronApp | null = null;
   try {
     app = await electron.launch({
-      args: [`--user-data-dir=${userDataDir}`, builtMainEntry],
+      args: [`--user-data-dir=${userDataDir}`, '--force-light-mode', builtMainEntry],
       env: {
         ...envWithoutRendererUrl,
-        ATRIUM_WEB_DIST: webDist,
+        ATRIUM_WEB_DIST: builtRendererRoot,
         ATRIUM_SERVER_URL: 'http://127.0.0.1:9',
         ELECTRON_DISABLE_SECURITY_WARNINGS: '1',
       },
@@ -129,7 +121,33 @@ test('desktop shell menu, session popout dedup, and New Window', async () => {
         message: 'preload bridge is available in the renderer',
       })
       .toBe(true);
+    await expect
+      .poll(async () => mainWindow.locator('#root').evaluate((root) => root.childElementCount), {
+        message: 'real React renderer is mounted',
+      })
+      .toBeGreaterThan(0);
     await waitForWindowCount(app, 1);
+
+    const shell = await app.evaluate(({ BrowserWindow, nativeTheme }) => {
+      const window = BrowserWindow.getAllWindows()[0];
+      if (!window) throw new Error('main window not found');
+      return {
+        backgroundColor: window.getBackgroundColor().toLowerCase(),
+        minimumSize: window.getMinimumSize(),
+        shouldUseDarkColors: nativeTheme.shouldUseDarkColors,
+      };
+    });
+    expect(shell.shouldUseDarkColors).toBe(false);
+    expect(shell.backgroundColor).toBe('#fafafa');
+    expect(shell.minimumSize).toEqual([420, 480]);
+
+    await app.evaluate(({ BrowserWindow }) => {
+      const window = BrowserWindow.getAllWindows()[0];
+      if (!window) throw new Error('main window not found');
+      window.setSize(420, 480);
+    });
+    await expect.poll(async () => mainWindow.evaluate(() => window.innerWidth)).toBeLessThanOrEqual(420);
+    await expect.poll(async () => mainWindow.evaluate(() => window.innerWidth)).toBeGreaterThanOrEqual(390);
 
     const menu = await app.evaluate(
       ({ Menu }) =>
@@ -142,14 +160,55 @@ test('desktop shell menu, session popout dedup, and New Window', async () => {
     expect(menuLabels).toEqual(expect.arrayContaining(['File', 'Edit', 'View', 'Window', 'Help']));
     expect(menu.find((item) => item.label === 'File')?.submenuLabels).toContain('New Window');
 
+    await mainWindow.evaluate(() => {
+      window.atrium?.onNavigate((path) => {
+        window.__atriumMenuNavigation = path;
+      });
+    });
+    await app.evaluate(({ Menu }) => {
+      const filesItem = Menu.getApplicationMenu()
+        ?.items.find((item) => item.label === 'Go')
+        ?.submenu?.items.find((item) => item.label === 'Files');
+      if (!filesItem) throw new Error('Go > Files menu item not found');
+      filesItem.click();
+    });
+    await expect.poll(() => mainWindow.evaluate(() => window.__atriumMenuNavigation)).toBe('/files');
+
+    const initialZoom = await mainWindow.evaluate(() => window.devicePixelRatio);
+    await app.evaluate(({ Menu }) => {
+      const zoomIn = Menu.getApplicationMenu()
+        ?.items.find((item) => item.label === 'View')
+        ?.submenu?.items.find((item) => item.label === 'Zoom In');
+      if (!zoomIn) throw new Error('View > Zoom In menu item not found');
+      zoomIn.click();
+    });
+    await expect.poll(() => mainWindow.evaluate(() => window.devicePixelRatio)).toBeGreaterThan(initialZoom);
+    await app.evaluate(({ Menu }) => {
+      const actualSize = Menu.getApplicationMenu()
+        ?.items.find((item) => item.label === 'View')
+        ?.submenu?.items.find((item) => item.label === 'Actual Size');
+      if (!actualSize) throw new Error('View > Actual Size menu item not found');
+      actualSize.click();
+    });
+    await expect.poll(() => mainWindow.evaluate(() => window.devicePixelRatio)).toBe(initialZoom);
+
     const sessionId = 'sess_dedupe';
     await mainWindow.evaluate((id) => window.atrium?.openSessionPopout(id), sessionId);
     await waitForSessionPopoutCount(app, sessionId, 1);
     const afterFirstPopout = await browserWindows(app);
+    const popout = afterFirstPopout.find((window) => sessionPopoutCount([window], sessionId) === 1);
+    expect(popout).toBeDefined();
 
     await mainWindow.evaluate((id) => window.atrium?.openSessionPopout(id), sessionId);
     await waitForSessionPopoutCount(app, sessionId, 1);
     await waitForWindowCount(app, afterFirstPopout.length);
+    await expect
+      .poll(() =>
+        app?.evaluate(({ BrowserWindow }) => BrowserWindow.getFocusedWindow()?.id ?? null),
+      )
+      .toBe(popout?.id);
+
+    await mainWindow.screenshot({ path: testInfo.outputPath('compact-real-renderer.png') });
 
     await app.evaluate(({ Menu }) => {
       const newWindowItem = Menu.getApplicationMenu()
