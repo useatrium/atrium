@@ -22,7 +22,7 @@ This matrix is the evidence ledger for the design audit and fix pass. A row is c
 | Platform | Required sizes | Native concerns | Evidence status |
 |---|---|---|---|
 | Web | 1440×1000, 1024×768, 768×1024, 390×844 | keyboard, focus order, hover-independent actions, responsive panes, browser zoom | Automated partial — `surface/e2e/tests/design-audit.spec.ts` passed all 7 tests across all four sizes, document overflow, required shell controls, representative keyboard focus, themes, contrast, text scale, reduced motion, empty states, dense data, and terminal Results; browser zoom and full focus order remain pending |
-| Electron macOS | compact and expanded windows; main and popout | menus, shortcuts, deep links, multi-window state, title behavior, zoom | Pending |
+| Electron macOS | compact and expanded windows; main and popout | menus, shortcuts, deep links, multi-window state, title behavior, zoom | Partial runtime evidence — the real packaged renderer smoke passes at the 420×480 compact floor, captures the retryable offline/auth state, verifies native menus and zoom commands are exposed, and exercises popout deduplication plus New Window; expanded visual review, actual zoom rendering, focus restoration, and high contrast remain pending |
 | iOS | compact iPhone and large iPhone; one iPad width | safe areas, edge-swipe Back, Dynamic Type, VoiceOver, sheets, 44 pt targets | Maestro journeys authored for first run, navigation, settings, demo work, comments, and stack Back; execution and assistive checks remain unverified because no simulator is available |
 | Android | compact phone and expanded/tablet width | system/predictive Back, edge-to-edge insets, IME, Material navigation adaptation, TalkBack, 48 dp targets | Maestro journeys authored for first run, adaptive navigation, settings, demo work, comments, and system Back; execution, predictive Back, and assistive checks remain unverified because `adb` is unavailable |
 
@@ -74,6 +74,19 @@ Validation in this worktree on 2026-07-11: `pnpm --filter @atrium/e2e typecheck`
 `surface/mobile/.maestro/` contains shared selector-based flows plus separate iOS and Android journeys for authenticated launch, all five top-level destinations, empty search, light/dark/high-contrast/XL-text/reduced-motion settings, the deterministic demo-agent loop, steering, result inspection, message comments, and platform Back behavior. The previous coordinate-based flow was removed. All nine YAML files parse and their selectors were checked against source.
 
 The flows are authored evidence, not completed runtime evidence. Maestro is not installed, `adb` is unavailable, and no iOS simulator is booted in this environment. Questions, approvals, authentication failures, artifacts, cancellation/recovery, offline/reconnect, VoiceOver, and TalkBack remain explicitly unverified; see `surface/mobile/.maestro/README.md` for the exact device matrix and reset/run procedure.
+
+### Desktop evidence lane
+
+The Electron production builds completed and `surface/desktop/e2e/desktop-smoke.spec.ts` passed against the real renderer on macOS. The run verified a theme-appropriate launch background, the 420×480 compact floor, mounted React UI, native menu structure, Files navigation, session-popout deduplication, and New Window. Its reviewed compact screenshot showed the retryable sign-in/network failure state with clear hierarchy and an operable primary action. Electron's role-based zoom commands are asserted in the menu, but automated shortcut activation did not change the zoom factor in this headless harness, so actual zoomed rendering remains a manual evidence gap rather than an overstated pass.
+
+### Final verification summary (2026-07-11)
+
+- Workspace migration filename check and all seven package typechecks passed.
+- Workspace unit run passed 5 package lanes; the concurrent web/mobile lanes each produced one 5-second timeout, and both affected files passed immediately in isolated single-worker reruns (9/9 web and 6/6 mobile).
+- Full web Playwright ran all 80 tests serially: 76 passed in the complete run. The four failures were two stale labels introduced by the deliberate Inbox → Attention and pane → details language changes, plus two timing failures. After updating the stale expectations, all four exact tests passed in isolated reruns. The design-audit lane itself passed 7/7 in both the complete and focused runs.
+- Electron production web/desktop builds passed; the real-renderer Electron smoke passed 1/1 after correcting the smoke harness to satisfy Playwright's fixture contract.
+- Mobile accessibility lint passed, and focused mobile navigation/work-surface tests passed 9/9.
+- The release hurdle is **not yet cleared**: iOS and Android runtime journeys, VoiceOver/TalkBack, and the remaining full keyboard/reflow/assistive matrix have not been executed.
 
 ### Strong existing evidence
 

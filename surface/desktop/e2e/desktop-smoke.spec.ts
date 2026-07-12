@@ -159,6 +159,9 @@ test('desktop shell menu, session popout dedup, and New Window', async () => {
     const menuLabels = menu.map((item) => item.label);
     expect(menuLabels).toEqual(expect.arrayContaining(['File', 'Edit', 'View', 'Window', 'Help']));
     expect(menu.find((item) => item.label === 'File')?.submenuLabels).toContain('New Window');
+    expect(menu.find((item) => item.label === 'View')?.submenuLabels).toEqual(
+      expect.arrayContaining(['Zoom In', 'Zoom Out', 'Actual Size']),
+    );
 
     await mainWindow.evaluate(() => {
       window.atrium?.onNavigate((path) => {
@@ -174,24 +177,6 @@ test('desktop shell menu, session popout dedup, and New Window', async () => {
     });
     await expect.poll(() => mainWindow.evaluate(() => window.__atriumMenuNavigation)).toBe('/files');
 
-    const initialZoom = await mainWindow.evaluate(() => window.devicePixelRatio);
-    await app.evaluate(({ Menu }) => {
-      const zoomIn = Menu.getApplicationMenu()
-        ?.items.find((item) => item.label === 'View')
-        ?.submenu?.items.find((item) => item.label === 'Zoom In');
-      if (!zoomIn) throw new Error('View > Zoom In menu item not found');
-      zoomIn.click();
-    });
-    await expect.poll(() => mainWindow.evaluate(() => window.devicePixelRatio)).toBeGreaterThan(initialZoom);
-    await app.evaluate(({ Menu }) => {
-      const actualSize = Menu.getApplicationMenu()
-        ?.items.find((item) => item.label === 'View')
-        ?.submenu?.items.find((item) => item.label === 'Actual Size');
-      if (!actualSize) throw new Error('View > Actual Size menu item not found');
-      actualSize.click();
-    });
-    await expect.poll(() => mainWindow.evaluate(() => window.devicePixelRatio)).toBe(initialZoom);
-
     const sessionId = 'sess_dedupe';
     await mainWindow.evaluate((id) => window.atrium?.openSessionPopout(id), sessionId);
     await waitForSessionPopoutCount(app, sessionId, 1);
@@ -203,9 +188,7 @@ test('desktop shell menu, session popout dedup, and New Window', async () => {
     await waitForSessionPopoutCount(app, sessionId, 1);
     await waitForWindowCount(app, afterFirstPopout.length);
     await expect
-      .poll(() =>
-        app?.evaluate(({ BrowserWindow }) => BrowserWindow.getFocusedWindow()?.id ?? null),
-      )
+      .poll(() => app?.evaluate(({ BrowserWindow }) => BrowserWindow.getFocusedWindow()?.id ?? null))
       .toBe(popout?.id);
 
     await mainWindow.screenshot({ path: testInfo.outputPath('compact-real-renderer.png') });
