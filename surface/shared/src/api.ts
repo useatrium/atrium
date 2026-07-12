@@ -232,13 +232,15 @@ export interface RegisterPushBody {
 
 export type ActivityItem = {
   eventId: string;
-  kind: 'mention' | 'dm' | 'agent_question' | 'session_completed';
+  kind: 'mention' | 'dm' | 'thread_reply' | 'agent_question' | 'session_completed' | 'session_failed' | 'agent_auth';
   channelId: string;
   channelName: string;
   actorId: string | null;
   actorName: string | null;
   snippet: string;
   createdAt: string;
+  sessionTitle?: string | null;
+  sessionStatus?: string | null;
 };
 
 export function createApi(opts: ApiOptions = {}) {

@@ -101,7 +101,12 @@ export default function ActivityScreen() {
   }, [activityItems, sessions, state.sessions]);
 
   const openActivity = async (item: ActivityItem) => {
-    if (item.kind !== 'agent_question' && item.kind !== 'session_completed') {
+    if (
+      item.kind !== 'agent_question' &&
+      item.kind !== 'session_completed' &&
+      item.kind !== 'session_failed' &&
+      item.kind !== 'agent_auth'
+    ) {
       router.push(`/channel/${item.channelId}`);
       return;
     }
@@ -123,16 +128,43 @@ export default function ActivityScreen() {
   const renderActivityItem = (item: ActivityItem) => {
     const time = formatRelativeTimestamp(item.createdAt) || item.createdAt;
     const exactTime = formatExactTimestamp(item.createdAt) || item.createdAt;
+    const sessionTitle = item.sessionTitle ?? 'Agent';
     const title =
       item.kind === 'mention'
         ? `${item.actorName ?? 'Someone'} mentioned you`
         : item.kind === 'dm'
           ? `${item.actorName ?? 'Someone'} sent a DM`
-          : item.kind === 'agent_question'
-            ? 'Agent needs your input'
-            : 'Agent session completed';
+          : item.kind === 'thread_reply'
+            ? `${item.actorName ?? 'Someone'} replied in a thread`
+            : item.kind === 'agent_question'
+              ? item.sessionTitle
+                ? `${item.sessionTitle} · needs your answer`
+                : 'Agent needs your input'
+              : item.kind === 'session_completed'
+                ? item.sessionTitle
+                  ? `${item.sessionTitle} · completed`
+                  : 'Agent session completed'
+                : item.kind === 'session_failed'
+                  ? `${sessionTitle} failed`
+                  : item.kind === 'agent_auth'
+                    ? `${sessionTitle} is blocked — reconnect provider`
+                    : 'Activity';
     const marker =
-      item.kind === 'mention' ? '@' : item.kind === 'dm' ? 'DM' : item.kind === 'agent_question' ? '?' : 'OK';
+      item.kind === 'mention'
+        ? '@'
+        : item.kind === 'dm'
+          ? 'DM'
+          : item.kind === 'thread_reply'
+            ? '↩'
+            : item.kind === 'agent_question'
+              ? '?'
+              : item.kind === 'session_completed'
+                ? 'OK'
+                : item.kind === 'session_failed'
+                  ? '!'
+                  : item.kind === 'agent_auth'
+                    ? '⚿'
+                    : '•';
     return (
       <Pressable
         accessibilityRole="button"

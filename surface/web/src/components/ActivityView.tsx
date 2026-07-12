@@ -6,15 +6,26 @@ import { CompactMarkdownText } from './MessageText';
 const KIND_LABEL: Record<ActivityItem['kind'], string> = {
   mention: '@',
   dm: 'DM',
+  thread_reply: '↩',
   agent_question: '?',
   session_completed: 'OK',
+  session_failed: '!',
+  agent_auth: '⚿',
 };
 
 function titleFor(item: ActivityItem): string {
   if (item.kind === 'mention') return `${item.actorName ?? 'Someone'} mentioned you`;
   if (item.kind === 'dm') return `${item.actorName ?? 'Someone'} sent a DM`;
-  if (item.kind === 'agent_question') return 'Agent needs your input';
-  return 'Agent completed';
+  if (item.kind === 'thread_reply') return `${item.actorName ?? 'Someone'} replied in a thread`;
+  if (item.kind === 'agent_question') {
+    return item.sessionTitle ? `${item.sessionTitle} · needs your answer` : 'Agent needs your input';
+  }
+  if (item.kind === 'session_completed') {
+    return item.sessionTitle ? `${item.sessionTitle} · completed` : 'Agent completed';
+  }
+  if (item.kind === 'session_failed') return `${item.sessionTitle ?? 'Agent'} failed`;
+  if (item.kind === 'agent_auth') return `${item.sessionTitle ?? 'Agent'} is blocked — reconnect provider`;
+  return 'Activity';
 }
 
 function activityAriaLabel(item: ActivityItem, exactTimestamp: string): string {
@@ -63,7 +74,14 @@ export function ActivityView({
 
   const activate = async (item: ActivityItem) => {
     onSelectChannel(item.channelId);
-    if (item.kind !== 'agent_question' && item.kind !== 'session_completed') return;
+    if (
+      item.kind !== 'agent_question' &&
+      item.kind !== 'session_completed' &&
+      item.kind !== 'session_failed' &&
+      item.kind !== 'agent_auth'
+    ) {
+      return;
+    }
     const eventId = Number(item.eventId);
     if (!Number.isSafeInteger(eventId) || eventId <= 0) return;
     try {
@@ -116,7 +134,7 @@ export function ActivityView({
                     className="flex w-full items-start gap-3 px-4 py-3 text-left hover:bg-surface-overlay/70"
                   >
                     <span className="mt-0.5 grid h-6 min-w-8 place-items-center rounded bg-surface-raised text-2xs font-bold text-fg-muted">
-                      {KIND_LABEL[item.kind]}
+                      {KIND_LABEL[item.kind] ?? '•'}
                     </span>
                     <span className="min-w-0 flex-1">
                       <span className="flex min-w-0 items-center gap-2">

@@ -234,6 +234,12 @@ function firstQuestionText(payload: Record<string, unknown>): string {
   return 'Open Atrium to respond.';
 }
 
+async function sessionTitleFor(pool: Db, sessionId: string): Promise<string | null> {
+  if (!sessionId) return null;
+  const session = await pool.query<{ title: string }>('SELECT title FROM sessions WHERE id::text = $1', [sessionId]);
+  return session.rows[0]?.title?.trim() || null;
+}
+
 export async function pruneTokens(pool: Db, tokens: string[]): Promise<void> {
   if (tokens.length > 0) {
     await pool.query('DELETE FROM push_tokens WHERE token = ANY($1::text[])', [tokens]);
@@ -495,6 +501,7 @@ export async function sendQuestionPush(
   const sessionId = typeof event.payload.sessionId === 'string' ? event.payload.sessionId : '';
   const questionId = typeof event.payload.questionId === 'string' ? event.payload.questionId : '';
   const permalink = typeof event.payload.permalink === 'string' ? event.payload.permalink : `/s/${sessionId}`;
+  const sessionTitle = await sessionTitleFor(pool, sessionId);
   const body = firstQuestionText(event.payload).slice(0, 140);
   const badge = await unreadChannelCountFor(pool, event.actorId);
   const data = {
@@ -505,7 +512,7 @@ export async function sendQuestionPush(
     questionId,
   };
   await sendSingleUserPushes(pool, tokens.rows, fetchOrOpts, {
-    title: 'Centaur needs your input',
+    title: sessionTitle ? `${sessionTitle} needs your input` : 'An agent needs your input',
     body,
     tag: `session:${sessionId || event.id}`,
     badge,
@@ -528,10 +535,7 @@ export async function sendSessionCompletedPush(
   if (prefs.get(event.actorId)?.sessions === false) return;
 
   const sessionId = typeof event.payload.sessionId === 'string' ? event.payload.sessionId : '';
-  const session = sessionId
-    ? await pool.query<{ title: string }>('SELECT title FROM sessions WHERE id::text = $1', [sessionId])
-    : { rows: [] as Array<{ title: string }> };
-  const sessionTitle = session.rows[0]?.title?.trim() || 'session';
+  const sessionTitle = (await sessionTitleFor(pool, sessionId)) ?? 'session';
   const tokens = await pool.query<PushTokenRow>(
     `SELECT token, user_id, kind, subscription
      FROM push_tokens
@@ -540,18 +544,97 @@ export async function sendSessionCompletedPush(
   );
   if (tokens.rows.length === 0) return;
 
+  const failed = event.payload.status === 'failed';
   const body = config.pushRedactContent
-    ? 'Session finished'
+    ? failed
+      ? 'Session failed'
+      : 'Session finished'
     : typeof event.payload.resultExcerpt === 'string' && event.payload.resultExcerpt.trim()
       ? event.payload.resultExcerpt.slice(0, 140)
       : 'Open Atrium to review.';
   const permalink = typeof event.payload.permalink === 'string' ? event.payload.permalink : `/s/${sessionId}`;
-  const title = `Session finished: ${sessionTitle}`;
+  const title = `${failed ? 'Session failed' : 'Session finished'}: ${sessionTitle}`;
   const badge = await unreadChannelCountFor(pool, event.actorId);
   const data = { channelId: event.channelId, eventId: event.id, permalink, sessionId };
   await sendSingleUserPushes(pool, tokens.rows, fetchOrOpts, {
     title,
     body,
+    tag: `session:${sessionId || event.id}`,
+    badge,
+    data,
+  });
+}
+
+export async function sendSessionFailedPush(
+  pool: Db,
+  hub: WsHub,
+  event: WireEvent,
+  fetchOrOpts: typeof fetch | SendMessagePushOptions = fetch,
+): Promise<void> {
+  if (!event.channelId || !event.actorId || event.payload.status !== 'failed') return;
+  if (hub.isUserPresent(event.channelId, event.actorId)) return;
+  const recipients = new Map<string, PushReason>([[event.actorId, 'thread']]);
+  await dropMutedRecipients(pool, event.channelId, recipients);
+  if (recipients.size === 0) return;
+  const prefs = await notificationPrefsFor(pool, [event.actorId]);
+  if (prefs.get(event.actorId)?.sessions === false) return;
+
+  const sessionId = typeof event.payload.sessionId === 'string' ? event.payload.sessionId : '';
+  const sessionTitle = (await sessionTitleFor(pool, sessionId)) ?? 'session';
+  const tokens = await pool.query<PushTokenRow>(
+    `SELECT token, user_id, kind, subscription
+     FROM push_tokens
+     WHERE user_id = $1 AND kind IN ('expo', 'webpush')`,
+    [event.actorId],
+  );
+  if (tokens.rows.length === 0) return;
+
+  const permalink = typeof event.payload.permalink === 'string' ? event.payload.permalink : `/s/${sessionId}`;
+  const badge = await unreadChannelCountFor(pool, event.actorId);
+  const data = { channelId: event.channelId, eventId: event.id, permalink, sessionId };
+  await sendSingleUserPushes(pool, tokens.rows, fetchOrOpts, {
+    title: `Session failed: ${sessionTitle}`,
+    body: 'The run crashed before finishing.',
+    tag: `session:${sessionId || event.id}`,
+    badge,
+    data,
+  });
+}
+
+export async function sendAuthRequiredPush(
+  pool: Db,
+  hub: WsHub,
+  event: WireEvent,
+  fetchOrOpts: typeof fetch | SendMessagePushOptions = fetch,
+): Promise<void> {
+  if (!event.channelId || !event.actorId) return;
+  if (hub.isUserPresent(event.channelId, event.actorId)) return;
+  const recipients = new Map<string, PushReason>([[event.actorId, 'thread']]);
+  await dropMutedRecipients(pool, event.channelId, recipients);
+  if (recipients.size === 0) return;
+  const prefs = await notificationPrefsFor(pool, [event.actorId]);
+  if (prefs.get(event.actorId)?.sessions === false) return;
+
+  const sessionId = typeof event.payload.sessionId === 'string' ? event.payload.sessionId : '';
+  const sessionTitle = (await sessionTitleFor(pool, sessionId)) ?? 'session';
+  const tokens = await pool.query<PushTokenRow>(
+    `SELECT token, user_id, kind, subscription
+     FROM push_tokens
+     WHERE user_id = $1 AND kind IN ('expo', 'webpush')`,
+    [event.actorId],
+  );
+  if (tokens.rows.length === 0) return;
+
+  const provider =
+    typeof event.payload.provider === 'string' && event.payload.provider.trim()
+      ? event.payload.provider
+      : 'the provider';
+  const permalink = typeof event.payload.permalink === 'string' ? event.payload.permalink : `/s/${sessionId}`;
+  const badge = await unreadChannelCountFor(pool, event.actorId);
+  const data = { channelId: event.channelId, eventId: event.id, permalink, sessionId };
+  await sendSingleUserPushes(pool, tokens.rows, fetchOrOpts, {
+    title: `${sessionTitle} is blocked`,
+    body: `Reconnect ${provider} to resume.`,
     tag: `session:${sessionId || event.id}`,
     badge,
     data,
