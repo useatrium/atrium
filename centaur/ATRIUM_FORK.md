@@ -49,11 +49,12 @@ The substantive Atrium-only work this fork carries on top of upstream:
   covered by harness-server tests (fake SDK).
   **Open:** the watched live-cluster e2e (real-SDK question round-trip).
 - **Subscription auth** — per-execution Codex/Claude OAuth env injection.
-- **Baked org prompt overlay** — `services/sandbox/ATRIUM_OVERLAY_PROMPT.md` is baked
-  into the sandbox image at `/opt/centaur-overlay/services/sandbox/SYSTEM_PROMPT.md`
-  with `CENTAUR_OVERLAY_DIR` defaulting there, so every sandbox appends the Atrium
-  addendum (context mount, provenance blocks, `/e/` citations) after the base prompt.
-  Pod-level `CENTAUR_OVERLAY_DIR` still overrides for external-overlay deployments.
+- **Baked Atrium base prompt** — `services/sandbox/ATRIUM_BASE_PROMPT.md` is baked
+  into the sandbox image at `/opt/centaur-overlay/services/sandbox/BASE_PROMPT.md`
+  with `CENTAUR_OVERLAY_DIR` defaulting there, so Atrium sandboxes use the native
+  identity, context, and artifact contract instead of the upstream base prompt.
+  API-written `AGENTS_BASE.md` personas still take priority; external overlay deployments
+  can override `CENTAUR_OVERLAY_DIR` and append their existing `SYSTEM_PROMPT.md`.
 - **Warm-lease dep/build cache** — sandboxes reuse dependency + compile caches across
   sessions (upstream Centaur has none): a node-local depcache (pnpm store / cargo registry /
   uv) + sccache, plus a content-addressed cross-node tier in Atrium CAS keyed by lockfile
@@ -109,6 +110,25 @@ sequentially (`0001`, `0002`, …); staying at `1000+` means an upstream migrati
 collides with ours when we pull (this bit us three times). `1000+` migrations only depend on
 early upstream tables, so applying them last is fine. Renumbering a migration a live DB
 already applied means reconciling that DB's `_sqlx_migrations` first.
+
+**Numbers don't collide, but objects can.** Upstream `0033` and fork `1002` both
+recreate the `session_warm_sandboxes_status_supported` check constraint with
+different status sets, and on an existing DB the newly-pulled upstream migration
+runs *after* our already-applied fork one — it re-tightened the constraint under
+rows using the fork's `'drained'` status and aborted at deploy (2026-07-11).
+Fork `1004` pins the union. When pulling upstream, check new migrations against
+constraints/objects the `1000+` range also touches, and remember data-dependent
+migrations that pass on fresh DBs can still fail on live ones.
+
+**A new migration file may silently not ship in box-built images.**
+`sqlx::migrate!()` embeds the migrations directory at proc-macro expansion, but
+sccache's cache key only sees rustc's declared inputs — not the macro's file
+reads. If a commit adds a migration without touching crate source, the box's
+Docker build can serve a stale compile of `centaur-session-sqlx` and the binary
+ships without the new migration (this dropped `1004` on 2026-07-12; the
+constraint had to be applied manually). After a deploy that adds a migration,
+verify it landed: `select version from _sqlx_migrations order by version desc
+limit 3` on `ai_v2`. Touching any `.rs` file in the crate forces a true rebuild.
 
 ## Deploy
 From the Atrium repo root:
