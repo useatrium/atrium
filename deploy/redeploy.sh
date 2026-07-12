@@ -153,7 +153,7 @@ need_surface=0; need_apirs=0; need_ironproxy=0; need_agent=0
 changed '^surface/'                                                   && need_surface=1
 changed '^centaur/services/(api-rs|workflow-python)/|^centaur/Cargo'  && need_apirs=1
 changed '^centaur/services/iron-proxy/'                               && need_ironproxy=1
-changed '^centaur/services/sandbox/|^centaur/(tools|workflows|\.agents)/' && need_agent=1
+changed '^centaur/services/sandbox/|^centaur/(tools|workflows|\.agents|harness|crates)/' && need_agent=1
 # node-sync builds from the api-rs context, so it tracks api-rs
 need_nodesync=$need_apirs
 
