@@ -126,6 +126,12 @@ spec:
               value: {{ .Values.repoCache.syncIntervalSeconds | quote }}
             - name: GIT_TERMINAL_PROMPT
               value: "0"
+            # The fork's agent image sets GIT_CONFIG_GLOBAL=/opt/centaur/gitconfig
+            # (agent-owned). This container runs as root with all caps dropped (no
+            # DAC_OVERRIDE), so git cannot lock that file — give the sync loop its
+            # own writable config, as the pre-#360 inline script did.
+            - name: GIT_CONFIG_GLOBAL
+              value: /tmp/gitconfig
           readinessProbe:
             exec:
               command:
