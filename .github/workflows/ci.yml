@@ -169,11 +169,14 @@ jobs:
 
       # The workspace root's test script recurses into packages, so exclude it
       # explicitly. Server tests are parallel-safe because each Vitest worker
-      # gets its own Postgres database.
+      # gets its own Postgres database. --reporter-hide-prefix: pnpm's
+      # "pkg test:" prefix stops GitHub from parsing ::warning/::error workflow
+      # commands, which silently ate vitest's failure annotations and the flaky
+      # reporter's warnings (annotations only parse at line start).
       - name: Test surface workspace
         working-directory: surface
         timeout-minutes: 6
-        run: pnpm --filter '!atrium-surface' -r test
+        run: pnpm --filter '!atrium-surface' -r --reporter-hide-prefix test
 
   surface-e2e:
     name: Surface Playwright e2e
