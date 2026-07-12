@@ -26,7 +26,7 @@ the wire protocol between them can now land as **one PR** across both.
 - **Platform work** → `surface/`. Quickstart:
   ```bash
   cd surface
-  docker compose up -d --wait      # Postgres + file storage
+  docker compose up -d --wait      # Postgres + MinIO + LiveKit
   pnpm install && pnpm dev         # server :3001, web :5173
   ```
   Run `pnpm` from `surface/`, not the repo root (the workspace is rooted there).

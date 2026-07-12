@@ -5,8 +5,10 @@ understanding Atrium.
 
 Useful public docs:
 
+- [Architecture deep dive](architecture.md)
 - [Surface workspace](../surface/README.md)
 - [Self-hosting the surface stack](../surface/deploy/README.md)
+- [Self-hosting on a single OVH-style box](self-host-ovh.md)
 - [Observability strategy](observability-strategy.md)
 - [GitHub connections operations](github-connections-ops.md)
 - [Local observability stack](../infra/observability/README.md)
