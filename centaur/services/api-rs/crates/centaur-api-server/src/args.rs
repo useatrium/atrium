@@ -1852,9 +1852,20 @@ impl IronProxyArgs {
     /// whose `StubBackend` already returns the key name iron-proxy matches on,
     /// and the cloudwatch tool embeds its own throwaway SigV4 credentials.
     fn sandbox_placeholder_env(&self) -> Result<BTreeMap<String, String>, ServerError> {
-        Ok(centaur_iron_proxy::placeholder_env(&[
-            self.infra_fragment()?
-        ]))
+        let mut env = centaur_iron_proxy::placeholder_env(&[self.infra_fragment()?]);
+        // gh/git in the sandbox only get wired up when GITHUB_TOKEN is present
+        // in the environment (entrypoint.sh runs `gh auth login` and sets the
+        // git extraheader off it), but GitHub credentials are per-principal
+        // iron-control grants rather than infra secrets — and a warm pod's env
+        // is baked before the principal that claims it is known. Bake the
+        // placeholder unconditionally so a claim-time GitHub grant (a per-user
+        // identity or a shared fallback role) is reachable from the sandbox.
+        // Principals without any GitHub grant see the proxy forward the
+        // literal placeholder, which GitHub rejects — the same failure as
+        // having no token at all.
+        env.entry("GITHUB_TOKEN".to_owned())
+            .or_insert_with(|| "GITHUB_TOKEN".to_owned());
+        Ok(env)
     }
 
     fn env_from_secret_names(&self) -> Vec<String> {
@@ -2833,6 +2844,25 @@ mod tests {
                 .find(|env| env.name == "SLACK_BACKFILL_ENABLED")
                 .map(|env| env.value.as_str()),
             Some("true")
+        );
+    }
+
+    #[test]
+    fn sandbox_placeholder_env_bakes_github_token_placeholder() {
+        let args = Args::try_parse_from([
+            "centaur-api-server",
+            "--database-url",
+            "postgres://postgres:postgres@localhost/centaur",
+        ])
+        .unwrap();
+
+        let env = args.sandbox.iron_proxy.sandbox_placeholder_env().unwrap();
+        // GitHub grants live on per-principal roles in iron-control, not the
+        // infra fragment, so the placeholder must be baked unconditionally for
+        // warm pods claimed by principals with GitHub grants.
+        assert_eq!(
+            env.get("GITHUB_TOKEN").map(String::as_str),
+            Some("GITHUB_TOKEN")
         );
     }
 
