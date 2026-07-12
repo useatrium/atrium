@@ -162,6 +162,7 @@ export function useCall({
   const [notice, setNotice] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
   const [answering, setAnsweringState] = useState(false);
+  const mountedRef = useRef(false);
   // Ref mirror so listener-captured callbacks see the live value (not a stale
   // closure) — matches the activeCallRef/incomingCallRef pattern in this hook.
   const answeringRef = useRef(false);
@@ -186,6 +187,13 @@ export function useCall({
   const nativeIncomingReportedRef = useRef<Set<string>>(new Set());
   const dismissedCallIdsRef = useRef<Set<string>>(new Set());
   const dismissedCallChannelsRef = useRef<Map<string, string>>(new Map());
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   activeCallRef.current = activeCall;
   incomingCallRef.current = incomingCall;
@@ -476,6 +484,7 @@ export function useCall({
     async (opts: { channelId?: string } = {}) => {
       try {
         const snapshot = await api.activeCalls(opts);
+        if (!mountedRef.current) return;
         for (const callId of dismissedCallIdsRef.current) {
           const dismissedChannelId = dismissedCallChannelsRef.current.get(callId);
           const coveredBySnapshot = !opts.channelId || dismissedChannelId === opts.channelId;
@@ -494,7 +503,7 @@ export function useCall({
         );
         applyIncomingSnapshot(liveCalls, opts.channelId);
       } catch {
-        setNotice("Couldn't refresh active calls.");
+        if (mountedRef.current) setNotice("Couldn't refresh active calls.");
       }
     },
     [api, applyIncomingSnapshot],

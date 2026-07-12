@@ -223,7 +223,7 @@ export function SessionPanePage({ sessionId, me }: { sessionId: string; me: User
   }, []);
 
   return (
-    <div data-testid="session-pane-page" className="flex h-dvh min-w-0 bg-surface">
+    <div id="main-content" data-testid="session-pane-page" className="flex h-dvh min-w-0 bg-surface">
       {session ? (
         <SessionPane
           key={sessionId}

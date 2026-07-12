@@ -2,23 +2,25 @@ appId: chat.atrium.app
 name: Android thread reply
 tags: [android, power-user]
 ---
-- runFlow: ../common/authenticated-launch.yml
+- runFlow: authenticated-launch.yml
 - tapOn: "general"
 - extendedWaitUntil:
     visible: ".*Message #general.*"
     timeout: 10000
 - tapOn: ".*Message #general.*"
-- inputText: "Maestro Android thread probe"
+- eraseText
+- inputText: "Android Maestro verified thread probe"
 - tapOn: "Send message"
 - extendedWaitUntil:
-    visible: ".*Maestro Android thread probe.*"
+    visible: "^Android Maestro verified thread probe$"
     timeout: 15000
 - tapOn: ".*#general.*"
-- longPressOn: ".*Maestro Android thread probe.*"
+- longPressOn: "^Android Maestro verified thread probe$"
 - tapOn: "Reply in thread"
 - assertVisible: "Thread"
 - tapOn: ".*Reply in thread.*"
-- inputText: "validated by Android Maestro"
+- eraseText
+- inputText: "Android Maestro reply verified"
 - tapOn: "Send message"
-- assertVisible: ".*validated by Android Maestro.*"
+- assertVisible: "^Android Maestro reply verified$"
 - takeScreenshot: "android-thread-01-replied"

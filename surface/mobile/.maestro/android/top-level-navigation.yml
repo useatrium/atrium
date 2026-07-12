@@ -5,8 +5,8 @@ appId: chat.atrium.app
     visible: "Search files"
     timeout: 10000
 - takeScreenshot: "${SCREENSHOT_PREFIX}-02-files"
-- tapOn:
-    text: ".*Agents.*"
+# Match the exact native tab label so the Files empty-state copy cannot win.
+- tapOn: "^Agents$"
 - extendedWaitUntil:
     visible: "Run a demo agent|Recent|Archived"
     timeout: 10000
@@ -14,7 +14,7 @@ appId: chat.atrium.app
 - tapOn:
     text: ".*Attention.*"
 - extendedWaitUntil:
-    visible: "Attention"
+    visible: "You're all caught up|Attention"
     timeout: 10000
 - assertNotVisible: ".*running.*"
 - takeScreenshot: "${SCREENSHOT_PREFIX}-04-attention"

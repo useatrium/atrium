@@ -162,3 +162,40 @@ Once all gates pass, commit on the integration branch, push it, and open a pull 
 - Prefer the smallest coherent fix that solves the demonstrated problem.
 - Do not use visual novelty to conceal unclear product structure.
 - Do not declare completion because the planned files were touched. Declare it only when the experience clears the quality hurdle and the evidence supports that judgment.
+
+## 2026-07-12 native follow-up evidence
+
+This follow-up closes regressions found after the first design pass was reviewed. It does not declare the full design plan complete; physical-device, screen-reader, and complete cross-theme screenshot coverage remain open gates.
+
+### Findings fixed
+
+- Android compact layouts now use the UIKit-style bottom tab implementation instead of the Material sidebar variant that crashed at runtime.
+- Android keyboard-avoiding views use `height`, keeping channel, thread, session, markup, login, settings, and spawn controls reachable above the keyboard.
+- Clean Android development builds no longer crash when Firebase is intentionally unconfigured; the patched call integration skips VoIP push registration and logs a warning while preserving the documented non-push development mode.
+- Chat and call providers no longer commit async refresh state before mount or after unmount, removing the React warning overlay seen during repeated development-client launches.
+- Archived sessions no longer contribute to live/attention navigation counts.
+- Focus, pane, and work routes now provide the global skip link's `main-content` destination.
+- Compact macOS Electron headers reserve inset space for native traffic-light controls.
+- Maestro launch and thread flows use deterministic Android development-client entry, unique fixture text, keyboard cleanup, and platform-appropriate navigation assertions.
+
+### Runtime evidence
+
+- Android debug APK: full four-ABI `assembleDebug` passed (902 tasks), followed by a passing arm64 incremental build after the native dependency patch.
+- Android Maestro on an API 36 emulator: `01-first-run-and-navigation.yaml`, `02-primary-collaboration-loop.yaml`, and `03-thread-reply.yaml` all passed.
+- The reviewed first-run screenshot matrix covers Chat, Files, Agents, Attention, Search, light settings, dark/high-contrast/XL-text/reduced-motion settings, and Android system Back. The final thread screenshot shows the parent and reply with the composer visible above the keyboard and no development overlay.
+- iOS flow definitions were kept aligned where shared draft state could make thread input nondeterministic, but this follow-up did not rerun iOS Maestro on a simulator or physical device.
+
+### Automated regression evidence
+
+- `pnpm check`: lint, migration naming, all workspace typechecks, and the workspace unit suites pass when started from a clean generated-native state. One existing web timestamp test timed out once under full parallel load; an immediate full web rerun passed all 92 files and 522 tests.
+- Web Playwright: 81 of 82 tests passed on the first run; the touch long-press action-sheet test missed its gesture once, then passed alone on immediate rerun. No changed code participates in that gesture path.
+- Electron Playwright: 1 of 1 passed.
+- Mobile accessibility lint, mobile typecheck, and all 45 mobile test files (153 tests) passed.
+- `git diff --check` passed for source and configuration files; the vendored pnpm patch retains unified-diff blank context markers that Git reports as patch-file whitespace.
+
+### Remaining gates before the north-star goal is complete
+
+- Run Maestro and visual review on current iOS hardware/simulator evidence, plus representative physical iOS and Android devices.
+- Exercise VoiceOver and TalkBack, large system text, reduced motion, and high contrast through the primary collaboration loop rather than settings-state screenshots alone.
+- Manually confirm compact macOS traffic-light spacing in packaged main and popout windows; Electron automation verifies behavior but not native chrome geometry.
+- Complete the broader populated-workspace, failure/offline, permission, destructive, localization-pressure, theme, and device-size evidence matrix described above.
