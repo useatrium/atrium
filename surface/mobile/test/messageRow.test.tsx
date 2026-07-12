@@ -56,7 +56,7 @@ function message(overrides: Partial<ChatMessage> = {}): ChatMessage {
 function renderRow(overrides: Partial<ChatMessage> = {}, props: Partial<ComponentProps<typeof MessageRow>> = {}) {
   const rowMessage = message(overrides);
   const onOpenThread = vi.fn();
-  renderWithTheme(
+  const rendered = renderWithTheme(
     <MessageRow
       message={rowMessage}
       grouped={false}
@@ -74,7 +74,7 @@ function renderRow(overrides: Partial<ChatMessage> = {}, props: Partial<Componen
       {...props}
     />,
   );
-  return { rowMessage, onOpenThread };
+  return { rowMessage, onOpenThread, ...rendered };
 }
 
 afterEach(cleanup);
@@ -93,5 +93,12 @@ describe('MessageRow', () => {
     renderRow({ threadRootEventId: 42, broadcast: true }, { inThread: true });
 
     expect(screen.queryByText('↳ replied to a thread')).not.toBeInTheDocument();
+  });
+
+  it('adds the mention accent treatment when the message mentions me by stable id', () => {
+    const meId = '123e4567-e89b-12d3-a456-426614174000';
+    const { container } = renderRow({ text: `hello <@${meId}>` }, { meId });
+
+    expect(container.querySelector('[style*="border-left-width: 3px"]')).not.toBeNull();
   });
 });

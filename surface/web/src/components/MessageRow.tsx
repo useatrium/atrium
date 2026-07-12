@@ -20,6 +20,8 @@ import {
   sessionQuestionEventLabel,
   type ChatMessage,
   type UserRef,
+  decodeWireToDisplay,
+  mentionsUser,
 } from '@atrium/surface-client';
 import { encodeEventHandle } from '@atrium/surface-client/handle';
 import { SessionCard } from '../sessions/SessionCard';
@@ -40,6 +42,9 @@ import { useLongPress } from './useLongPress';
 import { VoiceMessage } from '../VoiceMessage';
 import { entryShareUrl, fileShareUrl } from '../lib/publicUrl';
 import { sessionsApi } from '../sessions/api';
+import { useUserDirectory } from '../userDirectory';
+import { MentionSuggestions } from './MentionSuggestions';
+import { type MentionContext, useMentionTypeahead } from './useMentionTypeahead';
 
 export { REACTION_EMOJI } from '@atrium/surface-client/reactions';
 
@@ -97,6 +102,7 @@ export const MessageRow = memo(function MessageRow({
   spectators = 0,
   meId,
   meHandle,
+  mentionContext,
   highlighted,
   editRequested,
   onEditRequestHandled,
@@ -120,6 +126,7 @@ export const MessageRow = memo(function MessageRow({
   meId?: string;
   /** Current user handle — highlights @me mentions. */
   meHandle?: string;
+  mentionContext?: MentionContext;
   /** Briefly tinted after a search jump lands on this row. */
   highlighted?: boolean;
   /** External edit trigger (up-arrow in the composer targets this row). */
@@ -139,6 +146,8 @@ export const MessageRow = memo(function MessageRow({
   onDelegateToAgent?: (message: ChatMessage) => void;
 }) {
   const m = message;
+  const selfMentioned =
+    (meId != null || meHandle != null) && mentionsUser(m.text, { id: meId ?? null, handle: meHandle ?? null });
   const dim = m.status === 'pending';
   const failed = m.status === 'failed';
   const deleted = m.deleted === true;
@@ -276,14 +285,23 @@ export const MessageRow = memo(function MessageRow({
   const [saving, setSaving] = useState(false);
   const [editFailed, setEditFailed] = useState(false);
   const editTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const directory = useUserDirectory(m.text);
+  const editMentions = useMentionTypeahead({
+    value: draft,
+    setValue: setDraft,
+    textareaRef: editTextareaRef,
+    context: mentionContext,
+  });
 
   const startEdit = () => {
-    setDraft(m.text);
+    const decoded = decodeWireToDisplay(m.text, (id) => directory.resolve(id)?.handle ?? null);
+    setDraft(decoded.text);
+    editMentions.initialize(decoded.ranges, decoded.text.length);
     setEditFailed(false);
     setEditing(true);
   };
   const saveEdit = () => {
-    const text = draft.trim();
+    const text = editMentions.serialize(draft).trim();
     if (!text || saving) return;
     if (text === m.text) {
       setEditing(false);
@@ -297,11 +315,13 @@ export const MessageRow = memo(function MessageRow({
       .finally(() => setSaving(false));
   };
   const onEditKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (editMentions.onKeyDown(e)) return;
     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
       saveEdit();
     } else if (e.key === 'Escape') {
       e.stopPropagation(); // cancel the edit without also closing side panels
+      editMentions.clear();
       setEditing(false);
     }
   };
@@ -554,7 +574,11 @@ export const MessageRow = memo(function MessageRow({
       onMouseLeave={() => {
         if (mouseOpenedPickerRef.current) setPickerOpen(false);
       }}
-      className={`group relative flex gap-3 px-4 hover:bg-surface-raised/60 ${
+      className={`group relative flex gap-3 px-4 ${
+        selfMentioned
+          ? 'border-l-2 border-warning-border bg-warning-tint/20 hover:bg-warning-tint/35'
+          : 'hover:bg-surface-raised/60'
+      } ${
         grouped ? 'py-0.5' : 'mt-2 py-0.5'
       } ${dim ? 'opacity-50' : ''} ${highlighted ? 'entry-flash bg-accent-hover/10' : ''}`}
     >
@@ -635,15 +659,34 @@ export const MessageRow = memo(function MessageRow({
             onOpenPane={(id) => onOpenSession?.(id)}
           />
         ) : editing ? (
-          <div className="py-0.5">
+          <div className="relative py-0.5">
+            {editMentions.open && (
+              <MentionSuggestions
+                activeIndex={editMentions.activeIndex}
+                candidates={editMentions.candidates}
+                listboxId={editMentions.listboxId}
+                optionId={editMentions.optionId}
+                onActiveIndexChange={editMentions.setActiveIndex}
+                onInsert={editMentions.insert}
+              />
+            )}
             <textarea
               ref={editTextareaRef}
               value={draft}
               rows={Math.min(8, draft.split('\n').length)}
               disabled={saving}
-              onChange={(e) => setDraft(e.target.value)}
+              onChange={(e) =>
+                editMentions.onValueChange(e.target.value, e.target.selectionStart ?? e.target.value.length)
+              }
               onKeyDown={onEditKeyDown}
+              onSelect={(e) => editMentions.trackSelection(e.currentTarget)}
+              onKeyUp={(e) => editMentions.trackSelection(e.currentTarget)}
               aria-label="Edit message text"
+              aria-expanded={editMentions.open}
+              aria-controls={editMentions.open ? editMentions.listboxId : undefined}
+              aria-activedescendant={editMentions.open ? editMentions.optionId(editMentions.activeIndex) : undefined}
+              role="combobox"
+              aria-autocomplete="list"
               className="w-full resize-none rounded-md border border-edge-strong bg-surface-raised px-2 py-1.5 text-sm leading-relaxed text-fg outline-none focus:border-accent-hover"
             />
             <div className="mt-0.5 text-3xs text-fg-muted">
@@ -657,7 +700,7 @@ export const MessageRow = memo(function MessageRow({
           <VoiceMessage voice={m.voice} />
         ) : (
           <div className="whitespace-pre-wrap break-words text-sm leading-relaxed text-fg-body">
-            <MessageText text={m.text} meHandle={meHandle} />
+            <MessageText text={m.text} meId={meId} meHandle={meHandle} />
             {m.pendingEdit ? (
               <span className="ml-1 text-2xs text-warning-text">(saving edit)</span>
             ) : m.edited ? (
@@ -925,7 +968,7 @@ export const MessageRow = memo(function MessageRow({
         reactions={canReact ? { onSelect: react } : undefined}
       />
       <SelectTextSheet open={selectTextOpen} onClose={closeSelectText} restoreFocusRef={rowRef}>
-        <MessageText text={m.text} meHandle={meHandle} />
+        <MessageText text={m.text} meId={meId} meHandle={meHandle} />
       </SelectTextSheet>
     </div>
   );

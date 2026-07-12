@@ -2,12 +2,25 @@ import { useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { font, useTheme } from '../lib/theme';
 import { MarkdownText } from './Markdown';
+import type { UserRef } from '@atrium/surface-client';
 
 const COLLAPSE_LINE_THRESHOLD = 16;
 const COLLAPSE_CHAR_THRESHOLD = 1800;
 
 /** Message text with full Markdown rendering and compact chat typography. */
-export function MessageText({ text, meHandle, muted }: { text: string; meHandle: string | null; muted?: boolean }) {
+export function MessageText({
+  text,
+  meHandle,
+  meId,
+  resolveUser,
+  muted,
+}: {
+  text: string;
+  meHandle: string | null;
+  meId?: string;
+  resolveUser?: (id: string) => UserRef | undefined;
+  muted?: boolean;
+}) {
   const { colors } = useTheme();
   const shouldCollapse =
     text.length > COLLAPSE_CHAR_THRESHOLD || text.split(/\r\n|\r|\n/).length > COLLAPSE_LINE_THRESHOLD;
@@ -22,7 +35,7 @@ export function MessageText({ text, meHandle, muted }: { text: string; meHandle:
             : { alignSelf: 'stretch' }
         }
       >
-        <MarkdownText text={text} variant="message" meHandle={meHandle} />
+        <MarkdownText text={text} variant="message" meHandle={meHandle} meId={meId} resolveUser={resolveUser} />
       </View>
       {shouldCollapse ? (
         <Pressable

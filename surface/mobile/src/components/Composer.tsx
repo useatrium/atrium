@@ -9,6 +9,7 @@ import {
   Keyboard,
   Platform,
   Pressable,
+  ScrollView,
   Switch,
   Text,
   TextInput,
@@ -32,8 +33,11 @@ import {
   looksLikeSummonSigil,
   matchMentionPrefix,
   parseSummonSigil,
+  suggestMentions,
   type AttachmentMeta,
   type AttachmentRef,
+  type MentionCandidate,
+  type MentionRange,
   type UserRef,
 } from '@atrium/surface-client';
 import { extractEntryLinkHandles } from '../lib/entryLinks';
@@ -46,6 +50,12 @@ import { EntryInlineChip } from './EntryQuoteCards';
 import { lightImpactHaptic } from '../lib/haptics';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { downsamplePeaks, formatVoiceDuration, normalizeMetering, type VoiceSendMeta } from '../lib/voice';
+import {
+  decodeEditingText,
+  insertMentionCandidate,
+  trimMentionSubmission,
+  updateMentionRangesForEdit,
+} from '../lib/mentionComposer';
 
 interface PendingAttachment {
   key: string;
@@ -62,11 +72,12 @@ export interface ComposerProps {
     attachmentRefs?: AttachmentRef[],
     voice?: VoiceSendMeta,
     broadcast?: boolean,
+    mentionRanges?: MentionRange[],
   ) => void;
   onTyping: () => void;
   /** Non-null puts the composer into edit mode for that message text. */
   editingText?: string | null;
-  onSubmitEdit?: (text: string) => void;
+  onSubmitEdit?: (text: string, mentionRanges: MentionRange[]) => void;
   onCancelEdit?: () => void;
   draftKey?: string;
   initialDraft?: string;
@@ -74,6 +85,9 @@ export interface ComposerProps {
   onDraftPersisted?: (key: string, text: string) => void | Promise<void>;
   onDraftTouched?: (key: string) => void;
   mentionUsers?: UserRef[] | null;
+  mentionMembers?: UserRef[] | null;
+  includeSpecialMentions?: boolean;
+  resolveUser?: (id: string) => UserRef | undefined;
   onMentionTrigger?: () => void;
   allowAttachments?: boolean;
   showBroadcastToggle?: boolean;
@@ -134,6 +148,9 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     onDraftPersisted,
     onDraftTouched,
     mentionUsers,
+    mentionMembers,
+    includeSpecialMentions = false,
+    resolveUser,
     onMentionTrigger,
     allowAttachments,
     showBroadcastToggle,
@@ -153,6 +170,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const [text, setText] = useState('');
+  const [mentionRanges, setMentionRanges] = useState<MentionRange[]>([]);
+  const [selection, setSelection] = useState({ start: 0, end: 0 });
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
   const [keyboardVisible, setKeyboardVisible] = useState(false);
   const [alsoSendToChannel, setAlsoSendToChannel] = useState(false);
@@ -181,6 +200,11 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const audioRecorder = useAudioRecorder(VOICE_RECORDING_OPTIONS);
   const recorderState = useAudioRecorderState(audioRecorder, 125);
   const inputRef = useRef<TextInput>(null);
+  const textRef = useRef(text);
+  textRef.current = text;
+  const lastEditingTextRef = useRef<string | null>(null);
+  const editDirtyRef = useRef(false);
+  const capturedMentionRangesRef = useRef<MentionRange[]>([]);
   const meterSamplesRef = useRef<number[]>([]);
   const editing = editingText != null;
   useAccessibilityAnnouncement(recordingError);
@@ -208,20 +232,36 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   // Reset on conversation switch; apply the async-loaded draft only into an
   // untouched input — never clobber text the user already started typing.
   useEffect(() => {
-    if (!editing) setText('');
+    if (!editing) {
+      setText('');
+      setMentionRanges([]);
+      setSelection({ start: 0, end: 0 });
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draftKey]);
   useEffect(() => {
     if (editing || !initialDraft) return;
-    setText((prev) => (prev === '' ? initialDraft : prev));
+    if (textRef.current !== '') return;
+    setText(initialDraft);
+    setSelection({ start: initialDraft.length, end: initialDraft.length });
   }, [editing, initialDraft]);
 
   useEffect(() => {
     if (editingText != null) {
-      setText(editingText);
+      const enteringEdit = lastEditingTextRef.current !== editingText;
+      if (!enteringEdit && editDirtyRef.current) return;
+      lastEditingTextRef.current = editingText;
+      editDirtyRef.current = false;
+      const decoded = decodeEditingText(editingText, resolveUser);
+      setText(decoded.text);
+      setMentionRanges(decoded.ranges);
+      setSelection({ start: decoded.text.length, end: decoded.text.length });
       inputRef.current?.focus();
+    } else {
+      lastEditingTextRef.current = null;
+      editDirtyRef.current = false;
     }
-  }, [editingText]);
+  }, [editingText, resolveUser]);
 
   useImperativeHandle(
     ref,
@@ -229,7 +269,10 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       captureForConfigure() {
         const captured = text;
         if (!editing) {
+          capturedMentionRangesRef.current = mentionRanges;
           setText('');
+          setMentionRanges([]);
+          setSelection({ start: 0, end: 0 });
           if (draftKey) {
             onDraftTouched?.(draftKey);
             draftWriter.saveNow(draftKey, '');
@@ -240,11 +283,17 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       restore(value: string) {
         if (editing) return;
         setText(value);
+        setMentionRanges(capturedMentionRangesRef.current);
+        capturedMentionRangesRef.current = [];
+        setSelection({ start: value.length, end: value.length });
         if (draftKey) {
           onDraftTouched?.(draftKey);
           draftWriter.saveNow(draftKey, value);
         }
-        setTimeout(() => inputRef.current?.focus(), 0);
+        setTimeout(() => {
+          inputRef.current?.focus();
+          inputRef.current?.setNativeProps({ selection: { start: value.length, end: value.length } });
+        }, 0);
       },
       activateAgentMode(anchor) {
         if (editing) return;
@@ -256,7 +305,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
         setAgentAnchor(null);
       },
     }),
-    [draftKey, draftWriter, editing, onDraftTouched, text],
+    [draftKey, draftWriter, editing, mentionRanges, onDraftTouched, text],
   );
 
   const startUpload = async (file: PickedAttachment) => {
@@ -381,19 +430,22 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const canSend = !uploading && (text.trim().length > 0 || readyMeta.length > 0);
   const showConfigureAgentChip = !editing && onConfigureAgent != null && looksLikeSummonSigil(text);
   const showAgentMentionHint = !editing && !agentMentionHintDismissed && /^@agent(?:\s|$)/i.test(text);
-  const mentionMatch = !editing ? matchMentionPrefix(text) : null;
+  const mentionMatch = !editing ? matchMentionPrefix(text.slice(0, selection.start)) : null;
   const mentionPrefix = mentionMatch?.prefix.toLowerCase() ?? '';
-  const matchedUsers = useMemo(() => {
-    if (!mentionMatch || !mentionUsers) return [];
-    return mentionUsers
-      .filter((u) => {
-        const handle = u.handle.toLowerCase();
-        const displayName = u.displayName.toLowerCase();
-        return handle.startsWith(mentionPrefix) || displayName.includes(mentionPrefix);
-      })
-      .slice(0, 5);
-  }, [mentionMatch, mentionPrefix, mentionUsers]);
-  const showMentionSuggestions = mentionMatch != null && matchedUsers.length > 0;
+  const mentionCandidates = useMemo(
+    () =>
+      mentionMatch
+        ? suggestMentions({
+            prefix: mentionPrefix,
+            members: mentionMembers,
+            users: mentionUsers,
+            includeSpecials: includeSpecialMentions,
+            limit: 8,
+          })
+        : [],
+    [includeSpecialMentions, mentionMatch, mentionMembers, mentionPrefix, mentionUsers],
+  );
+  const showMentionSuggestions = mentionMatch != null && mentionCandidates.length > 0;
   const entryLinkHandles = useMemo(
     () => (previewEntryLinks && serverUrl ? extractEntryLinkHandles(text, serverUrl) : []),
     [previewEntryLinks, serverUrl, text],
@@ -409,23 +461,32 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     if (peak != null) meterSamplesRef.current.push(peak);
   }, [recorderState.isRecording, recorderState.metering]);
 
-  const insertMention = (value: string) => {
+  const insertMention = (candidate: MentionCandidate) => {
     if (!mentionMatch) return;
-    const next = `${text.slice(0, mentionMatch.start)}@${value} `;
-    setText(next);
+    const value = candidate.kind === 'user' ? candidate.user.handle : candidate.name;
+    const inserted = insertMentionCandidate(text, mentionRanges, mentionMatch.start, selection.start, value, candidate);
+    setText(inserted.text);
+    setMentionRanges(inserted.ranges);
+    setSelection({ start: inserted.caret, end: inserted.caret });
     if (draftKey) {
       onDraftTouched?.(draftKey);
-      draftWriter.saveNow(draftKey, next);
+      draftWriter.saveNow(draftKey, inserted.text);
     }
-    setTimeout(() => inputRef.current?.focus(), 0);
+    setTimeout(() => {
+      inputRef.current?.focus();
+      inputRef.current?.setNativeProps({ selection: { start: inserted.caret, end: inserted.caret } });
+    }, 0);
   };
 
   const submit = () => {
     const trimmed = text.trim();
     if (editing) {
       if (!trimmed) return;
-      onSubmitEdit?.(trimmed);
+      const submission = trimMentionSubmission(text, mentionRanges);
+      onSubmitEdit?.(submission.text, submission.ranges);
       setText('');
+      setMentionRanges([]);
+      setSelection({ start: 0, end: 0 });
       return;
     }
     if (!canSend) return;
@@ -443,13 +504,23 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       return;
     }
     const broadcast = showBroadcastToggle && alsoSendToChannel;
-    onSend(trimmed, readyMeta, readyRefs.length > 0 ? readyRefs : undefined, undefined, broadcast ? true : undefined);
+    const submission = trimMentionSubmission(text, mentionRanges);
+    onSend(
+      submission.text,
+      readyMeta,
+      readyRefs.length > 0 ? readyRefs : undefined,
+      undefined,
+      broadcast ? true : undefined,
+      submission.ranges,
+    );
     if (draftKey) {
       onDraftTouched?.(draftKey);
       draftWriter.saveNow(draftKey, '');
     }
     setAlsoSendToChannel(false);
     setText('');
+    setMentionRanges([]);
+    setSelection({ start: 0, end: 0 });
     setAttachments([]);
   };
 
@@ -558,6 +629,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             accessibilityLabel="Cancel edit"
             onPress={() => {
               setText('');
+              setMentionRanges([]);
+              setSelection({ start: 0, end: 0 });
               onCancelEdit?.();
             }}
           >
@@ -675,8 +748,10 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       )}
 
       {showMentionSuggestions && (
-        <View
+        <ScrollView
+          keyboardShouldPersistTaps="handled"
           style={{
+            maxHeight: 320,
             borderWidth: 1,
             borderColor: colors.border,
             borderRadius: radius.md,
@@ -684,29 +759,55 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             overflow: 'hidden',
           }}
         >
-          {matchedUsers.map((u) => (
-            <Pressable
-              key={u.id}
-              accessibilityRole="button"
-              accessibilityLabel={`Mention ${u.displayName}, @${u.handle}`}
-              onPress={() => insertMention(u.handle)}
-              style={({ pressed }) => ({
-                flexDirection: 'row',
-                alignItems: 'center',
-                gap: space.sm,
-                paddingHorizontal: space.md,
-                paddingVertical: space.sm,
-                backgroundColor: pressed ? colors.bgPressed : colors.bgElevated,
-              })}
-            >
-              <Avatar name={u.displayName} seed={u.id} size={28} />
-              <View style={{ flex: 1 }}>
-                <Text style={{ color: colors.text, fontSize: font.sm, fontWeight: '700' }}>{u.displayName}</Text>
-                <Text style={{ color: colors.textMuted, fontSize: font.xs }}>@{u.handle}</Text>
-              </View>
-            </Pressable>
-          ))}
-        </View>
+          {mentionCandidates.map((candidate, index) =>
+            candidate.kind === 'user' ? (
+              <Pressable
+                key={candidate.user.id}
+                accessibilityRole="button"
+                accessibilityLabel={`Mention ${candidate.user.displayName}, @${candidate.user.handle}`}
+                onPress={() => insertMention(candidate)}
+                style={({ pressed }) => ({
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: space.sm,
+                  paddingHorizontal: space.md,
+                  paddingVertical: space.sm,
+                  backgroundColor: pressed ? colors.bgPressed : colors.bgElevated,
+                })}
+              >
+                <Avatar name={candidate.user.displayName} seed={candidate.user.id} size={28} />
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: colors.text, fontSize: font.sm, fontWeight: '700' }}>
+                    {candidate.user.displayName}
+                  </Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm }}>
+                    <Text style={{ color: colors.textMuted, fontSize: font.xs }}>@{candidate.user.handle}</Text>
+                    {!candidate.inChannel ? (
+                      <Text style={{ color: colors.textFaint, fontSize: font.xs }}>Not in channel</Text>
+                    ) : null}
+                  </View>
+                </View>
+              </Pressable>
+            ) : (
+              <Pressable
+                key={candidate.name}
+                accessibilityRole="button"
+                accessibilityLabel={`Mention ${candidate.name}`}
+                onPress={() => insertMention(candidate)}
+                style={({ pressed }) => ({
+                  paddingHorizontal: space.md,
+                  paddingVertical: space.sm,
+                  backgroundColor: pressed ? colors.bgPressed : colors.bgElevated,
+                  borderTopWidth: index === 0 || mentionCandidates[index - 1]?.kind === 'special' ? 0 : 1,
+                  borderTopColor: colors.border,
+                })}
+              >
+                <Text style={{ color: colors.text, fontSize: font.sm, fontWeight: '700' }}>@{candidate.name}</Text>
+                <Text style={{ color: colors.textMuted, fontSize: font.xs }}>{candidate.description}</Text>
+              </Pressable>
+            ),
+          )}
+        </ScrollView>
       )}
 
       {attachments.length > 0 && (
@@ -993,6 +1094,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             const enteredAgentMode = !editing && !agentMode && (summon != null || v === '!!' || v.startsWith('!! '));
             const next = enteredAgentMode ? (summon?.task ?? v.slice(2).replace(/^\s/, '')) : v;
             if (enteredAgentMode) setAgentMode(true);
+            if (editing) editDirtyRef.current = true;
+            setMentionRanges((current) => updateMentionRangesForEdit(text, next, current));
             setText(next);
             if (!editing && draftKey) {
               onDraftTouched?.(draftKey);
@@ -1000,6 +1103,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             }
             if (next.trim()) onTyping();
           }}
+          selection={selection}
+          onSelectionChange={(event) => setSelection(event.nativeEvent.selection)}
           placeholder={agentMode && !editing ? 'Describe the task…' : placeholder}
           placeholderTextColor={colors.textFaint}
           multiline

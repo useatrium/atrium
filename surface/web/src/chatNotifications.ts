@@ -1,5 +1,5 @@
 import { DEFAULT_PREFS, type NotificationPrefs, type UserRef, type WireEvent } from '@atrium/surface-client';
-import { mentionsHandle } from '@atrium/surface-client';
+import { mentionsUser } from '@atrium/surface-client';
 import type { Channel } from './api';
 import type { Session } from './sessions/types';
 
@@ -39,7 +39,7 @@ export function notificationForWireEvent(
     const channel = channels.find((c) => c.id === event.channelId);
     if (channel?.muted) return null;
     const isDm = channel?.kind === 'dm' || channel?.kind === 'gdm';
-    const mentioned = mentionsHandle(text, me.handle);
+    const mentioned = mentionsUser(text, { id: me.id, handle: me.handle });
     if (prefs.messages === 'dm_mention' && !isDm && !mentioned) return null;
     const author = event.author?.displayName ?? 'Someone';
     return {

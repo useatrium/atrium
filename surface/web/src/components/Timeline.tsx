@@ -4,6 +4,7 @@ import type { Session } from '../sessions/types';
 import { buildTimelineItems } from '@atrium/surface-client';
 import { ChevronDownIcon } from './icons';
 import { MessageRow } from './MessageRow';
+import type { MentionContext } from './useMentionTypeahead';
 
 const UNREAD_DIVIDER_SELECTOR = '[data-unread-divider]';
 const AT_BOTTOM_EPSILON_PX = 4;
@@ -18,6 +19,7 @@ export function Timeline({
   spectators,
   meId,
   meHandle,
+  mentionContext,
   editRequestId,
   highlightId,
   onEditRequestHandled,
@@ -48,6 +50,7 @@ export function Timeline({
   spectators: Record<string, number>;
   meId?: string;
   meHandle?: string;
+  mentionContext?: MentionContext;
   /** Message id the composer's up-arrow asked to edit. */
   editRequestId?: number | null;
   /** Message to scroll to and briefly highlight (search jump). */
@@ -388,6 +391,7 @@ export function Timeline({
                   spectators={item.message!.sessionId != null ? (spectators[item.message!.sessionId] ?? 0) : 0}
                   meId={meId}
                   meHandle={meHandle}
+                  mentionContext={mentionContext}
                   highlighted={highlightId != null && item.message!.id === highlightId}
                   editRequested={editRequestId != null && item.message!.id === editRequestId}
                   onEditRequestHandled={onEditRequestHandled}

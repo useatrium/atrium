@@ -4,12 +4,15 @@ import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { clearEntryResolveCacheForTests, type ResolvedEntryQuote } from '../lib/entryLinks';
 import { CompactMarkdownText, MessageText } from './MessageText';
+import { clearUserDirectoryForTests } from '../userDirectory';
 
 const resolveEntryMock = vi.hoisted(() => vi.fn());
+const usersMock = vi.hoisted(() => vi.fn());
 
 vi.mock('../api', () => ({
   api: {
     resolveEntry: resolveEntryMock,
+    users: usersMock,
   },
 }));
 
@@ -36,7 +39,17 @@ function entry(overrides: Partial<ResolvedEntryQuote> = {}): ResolvedEntryQuote 
 
 beforeEach(() => {
   clearEntryResolveCacheForTests();
+  clearUserDirectoryForTests();
   resolveEntryMock.mockReset();
+  usersMock.mockReset().mockResolvedValue({
+    users: [
+      {
+        id: '11111111-1111-4111-8111-111111111111',
+        handle: 'ada',
+        displayName: 'Ada Lovelace',
+      },
+    ],
+  });
 });
 
 afterEach(() => {
@@ -119,5 +132,29 @@ describe('MessageText entry links', () => {
     await waitFor(() => expect(resolveEntryMock).toHaveBeenCalledTimes(1));
     expect(screen.queryByText('/e/evt_404')).toBeNull();
     expect(screen.queryByRole('link')).toBeNull();
+  });
+});
+
+describe('MessageText stable mention tokens', () => {
+  it('resolves user ids, renders specials, and keeps code literal', async () => {
+    const id = '11111111-1111-4111-8111-111111111111';
+    render(<MessageText text={`hello <@${id}> <!channel> \`<@${id}>\``} meId={id} />);
+
+    const resolved = await screen.findByText('@Ada Lovelace');
+    expect(resolved.className).toContain('warning');
+    expect(screen.getByText('@channel').className).toContain('warning');
+    expect(screen.getByText(`<@${id}>`).closest('code')).toBeTruthy();
+  });
+
+  it('renders unresolved ids as muted unknown chips', async () => {
+    render(<MessageText text="hello <@99999999-9999-4999-8999-999999999999>" />);
+    const chip = await screen.findByText('@unknown');
+    expect(chip.className).toContain('muted');
+  });
+
+  it('renders a message that STARTS with a special token (remark parses it as an html block)', () => {
+    render(<MessageText text={'<!channel> standup time'} />);
+    expect(screen.getByText('standup time', { exact: false })).toBeTruthy();
+    expect(screen.getByText('@channel')).toBeTruthy();
   });
 });

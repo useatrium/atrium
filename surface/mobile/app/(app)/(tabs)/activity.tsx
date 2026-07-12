@@ -4,6 +4,7 @@ import { router } from 'expo-router';
 import {
   type ActivityCounts,
   type ActivityItem,
+  decodeWireToDisplay,
   plainMarkdownSnippet,
   formatExactTimestamp,
   formatRelativeTimestamp,
@@ -106,7 +107,7 @@ export function partitionRows(
 }
 
 export default function ActivityScreen() {
-  const { api, state } = useChat();
+  const { api, state, resolveUser } = useChat();
   const { colors } = useTheme();
   const [sessions, setSessions] = useState<SessionListItem[]>([]);
   const [activityItems, setActivityItems] = useState<ActivityItem[]>([]);
@@ -262,7 +263,9 @@ export default function ActivityScreen() {
     const marker = activityItemMarker(item);
     // Single-line plain-text snippet: text truncation (not a pixel clip), so
     // descenders survive and the row scales with Dynamic Type.
-    const snippet = plainMarkdownSnippet(item.snippet);
+    const snippet = plainMarkdownSnippet(
+      decodeWireToDisplay(item.snippet, (id) => resolveUser(id)?.handle ?? null).text,
+    );
     const unread = isUnread(item, lastReadEventId) && !item.muted;
     const danger = attention && item.kind === 'session_failed';
     const chipBackground = attention ? (danger ? colors.dangerSurface : colors.warningSurface) : colors.bgElevated;
