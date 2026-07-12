@@ -111,6 +111,25 @@ collides with ours when we pull (this bit us three times). `1000+` migrations on
 early upstream tables, so applying them last is fine. Renumbering a migration a live DB
 already applied means reconciling that DB's `_sqlx_migrations` first.
 
+**Numbers don't collide, but objects can.** Upstream `0033` and fork `1002` both
+recreate the `session_warm_sandboxes_status_supported` check constraint with
+different status sets, and on an existing DB the newly-pulled upstream migration
+runs *after* our already-applied fork one — it re-tightened the constraint under
+rows using the fork's `'drained'` status and aborted at deploy (2026-07-11).
+Fork `1004` pins the union. When pulling upstream, check new migrations against
+constraints/objects the `1000+` range also touches, and remember data-dependent
+migrations that pass on fresh DBs can still fail on live ones.
+
+**A new migration file may silently not ship in box-built images.**
+`sqlx::migrate!()` embeds the migrations directory at proc-macro expansion, but
+sccache's cache key only sees rustc's declared inputs — not the macro's file
+reads. If a commit adds a migration without touching crate source, the box's
+Docker build can serve a stale compile of `centaur-session-sqlx` and the binary
+ships without the new migration (this dropped `1004` on 2026-07-12; the
+constraint had to be applied manually). After a deploy that adds a migration,
+verify it landed: `select version from _sqlx_migrations order by version desc
+limit 3` on `ai_v2`. Touching any `.rs` file in the crate forces a true rebuild.
+
 ## Deploy
 From the Atrium repo root:
 ```
