@@ -4,6 +4,7 @@ import { EntryReferencesQueryBodySchema } from '@atrium/surface-client/entry-con
 import type { AppMutationContext } from '../app-mutations.js';
 import type { Db } from '../db.js';
 import {
+  DomainError,
   foldAnnotations,
   REACTION_EMOJI,
   searchMessages,
@@ -37,6 +38,18 @@ const SessionSearchQuerySchema = Schema.Struct({
   full: Schema.optional(Schema.Unknown),
   limit: Schema.optional(Schema.Unknown),
 });
+
+function parseSearchParams(query: { q?: unknown; limit?: unknown }): { query: string; limit: number | undefined } {
+  const text = String(query.q ?? '').trim();
+  if (text.length < 2) {
+    throw new DomainError(400, 'bad_query', 'query must be at least 2 chars');
+  }
+  const limit = query.limit ? Number(query.limit) : undefined;
+  if (limit !== undefined && !Number.isFinite(limit)) {
+    throw new DomainError(400, 'bad_query', 'numeric limit expected');
+  }
+  return { query: text, limit };
+}
 
 export type EntryAnnotationRateLimit =
   | false
@@ -197,14 +210,7 @@ export function registerEntryRoutes(app: FastifyInstance, deps: EntryRouteDeps):
     const user = requireUser(req, reply);
     if (!user) return;
     const q = decodeRouteQuery(SearchQuerySchema, req.query);
-    const query = String(q.q ?? '').trim();
-    if (query.length < 2) {
-      return reply.code(400).send({ error: 'bad_query', message: 'query must be at least 2 chars' });
-    }
-    const limit = q.limit ? Number(q.limit) : undefined;
-    if (limit !== undefined && !Number.isFinite(limit)) {
-      return reply.code(400).send({ error: 'bad_query', message: 'numeric limit expected' });
-    }
+    const { query, limit } = parseSearchParams(q);
     return { results: await searchMessages(pool, { query, userId: user.id, limit }) };
   });
 
@@ -212,14 +218,7 @@ export function registerEntryRoutes(app: FastifyInstance, deps: EntryRouteDeps):
     const user = requireUser(req, reply);
     if (!user) return;
     const q = decodeRouteQuery(SessionSearchQuerySchema, req.query);
-    const query = String(q.q ?? '').trim();
-    if (query.length < 2) {
-      return reply.code(400).send({ error: 'bad_query', message: 'query must be at least 2 chars' });
-    }
-    const limit = q.limit ? Number(q.limit) : undefined;
-    if (limit !== undefined && !Number.isFinite(limit)) {
-      return reply.code(400).send({ error: 'bad_query', message: 'numeric limit expected' });
-    }
+    const { query, limit } = parseSearchParams(q);
     const full = q.full === '1';
     if (full && !(await canViewFull(user.id))) {
       return fullViewForbidden(reply);
