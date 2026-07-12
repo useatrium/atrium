@@ -1,7 +1,7 @@
 // Message composer: multiline input, image/file attachments (uploaded on
 // pick, presigned PUT), optimistic send, and an inline edit mode.
 
-import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import {
   ActionSheetIOS,
   ActivityIndicator,
@@ -44,6 +44,7 @@ import { createDraftChangeDebouncer } from '../lib/outbox';
 import { Avatar } from './Avatar';
 import { EntryInlineChip } from './EntryQuoteCards';
 import { lightImpactHaptic } from '../lib/haptics';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { downsamplePeaks, formatVoiceDuration, normalizeMetering, type VoiceSendMeta } from '../lib/voice';
 
 interface PendingAttachment {
@@ -158,6 +159,23 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const [recordingBusy, setRecordingBusy] = useState(false);
   const [recordingError, setRecordingError] = useState<string | null>(null);
   const [agentMode, setAgentMode] = useState(false);
+  // One-time coach mark on first agent-mode entry (device-local).
+  const [agentCoachSeen, setAgentCoachSeen] = useState(true);
+  useEffect(() => {
+    let cancelled = false;
+    AsyncStorage.getItem('atrium.agentCoachSeen')
+      .then((v) => {
+        if (!cancelled) setAgentCoachSeen(v === '1');
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const dismissAgentCoach = useCallback(() => {
+    setAgentCoachSeen(true);
+    AsyncStorage.setItem('atrium.agentCoachSeen', '1').catch(() => {});
+  }, []);
   const [agentAnchor, setAgentAnchor] = useState<{ eventId: number; label: string } | null>(null);
   const [agentMentionHintDismissed, setAgentMentionHintDismissed] = useState(false);
   const audioRecorder = useAudioRecorder(VOICE_RECORDING_OPTIONS);
@@ -548,6 +566,30 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
         </View>
       )}
 
+      {agentMode && !editing && !agentCoachSeen ? (
+        <View
+          style={{
+            alignItems: 'flex-start',
+            flexDirection: 'row',
+            gap: space.sm,
+            paddingHorizontal: space.xs,
+            paddingTop: space.xs,
+          }}
+        >
+          <Text style={{ color: colors.textSecondary, flex: 1, fontSize: font.xs, lineHeight: 16 }}>
+            Summon an agent with !!, the ⚡ button, or “Delegate to agent…” on a message. It reads this conversation
+            before starting.
+          </Text>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Dismiss agent mode tip"
+            onPress={dismissAgentCoach}
+            hitSlop={8}
+          >
+            <Text style={{ color: colors.textMuted, fontSize: font.sm }}>✕</Text>
+          </Pressable>
+        </View>
+      ) : null}
       {agentMode && !editing ? (
         <View
           testID="agent-mode-strip"
@@ -958,7 +1000,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             }
             if (next.trim()) onTyping();
           }}
-          placeholder={placeholder}
+          placeholder={agentMode && !editing ? 'Describe the task…' : placeholder}
           placeholderTextColor={colors.textFaint}
           multiline
           style={{

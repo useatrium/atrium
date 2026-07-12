@@ -4,9 +4,10 @@
 
 Atrium is an open-source, self-hostable place to run, watch, and work alongside
 coding agents, as easily as a team chats in Slack. You talk in channels and
-threads, you put agents on tasks with `@agent`, and everything an agent does (its
-live transcript, the files it changes, the results it produces) shows up in one
-shared place the whole team can see.
+threads, you summon agents onto tasks with `!!` (or the composer's ⚡ agent mode),
+and everything an agent does (its live transcript, the files it changes, the
+results it produces, its replies in the conversation) shows up in one shared
+place the whole team can see.
 
 It has two halves:
 

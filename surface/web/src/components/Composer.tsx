@@ -136,6 +136,22 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const [agentAnchor, setAgentAnchor] = useState<AgentComposerMode['initialAnchor']>();
   const [agentEffort, setAgentEffort] = useState<string>('');
   const [agentOptionsOpen, setAgentOptionsOpen] = useState(false);
+  // One-time coach mark on first agent-mode entry; device-local like the theme pref.
+  const [agentCoachSeen, setAgentCoachSeen] = useState(() => {
+    try {
+      return localStorage.getItem('atrium.agentCoachSeen') === '1';
+    } catch {
+      return true;
+    }
+  });
+  const dismissAgentCoach = () => {
+    setAgentCoachSeen(true);
+    try {
+      localStorage.setItem('atrium.agentCoachSeen', '1');
+    } catch {
+      // storage unavailable — session-only dismissal
+    }
+  };
   const [agentTargetOpen, setAgentTargetOpen] = useState(false);
   const [files, setFiles] = useState<PendingFile[]>([]);
   const [attachmentNotice, setAttachmentNotice] = useState<string | null>(null);
@@ -490,6 +506,9 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                 >
                   New session in this thread
                 </button>
+                <div className="px-2 pb-1 pt-1.5 text-3xs leading-4 text-fg-muted">
+                  The agent reads this conversation before starting (⚓ anchor).
+                </div>
               </div>
             )}
           </div>
@@ -535,6 +554,22 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             onClick={() => setAgentMode(false)}
             aria-label="Exit agent mode"
             className="shrink-0 rounded px-1 hover:bg-accent/15"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+      {agentMode && agentModeContext && !agentCoachSeen && (
+        <div className="mb-2 flex items-start gap-2 rounded-md border border-edge-strong bg-surface-overlay px-2 py-1.5 text-xs text-fg-secondary">
+          <span className="min-w-0 flex-1">
+            Summon an agent with <span className="font-semibold">!!</span>, the ⚡ button, or right-click a message →
+            “Delegate to agent…”. It reads this conversation before starting. Esc exits.
+          </span>
+          <button
+            type="button"
+            onClick={dismissAgentCoach}
+            aria-label="Dismiss agent mode tip"
+            className="shrink-0 rounded px-1 text-fg-muted hover:bg-surface-raised hover:text-fg"
           >
             ✕
           </button>
@@ -661,7 +696,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                 rows={1}
                 value={text}
                 disabled={disabled}
-                placeholder={disabled ? (disabledHint ?? placeholder) : placeholder}
+                placeholder={disabled ? (disabledHint ?? placeholder) : agentMode ? 'Describe the task…' : placeholder}
                 aria-label="Message input"
                 onChange={(e) => {
                   const next = e.target.value;
@@ -810,6 +845,9 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                 <option value="max">Max</option>
               </select>
             </label>
+            <div className="mb-2 text-xs leading-5 text-fg-muted">
+              The agent reads this conversation before starting (⚓ anchor).
+            </div>
             <div className="flex items-center justify-between text-sm text-fg-secondary">
               <span>
                 <span aria-hidden>⚓ </span>

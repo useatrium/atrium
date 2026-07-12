@@ -72,6 +72,9 @@ export function AgentModeConfig({
           ))}
         </View>
       </View>
+      <Text style={{ color: colors.textMuted, fontSize: font.xs, lineHeight: 16 }}>
+        The agent reads this conversation before starting (⚓ anchor).
+      </Text>
       {anchorLabel ? (
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm }}>
           <Text numberOfLines={1} style={{ color: colors.textSecondary, flex: 1, fontSize: font.sm }}>
