@@ -156,14 +156,20 @@ export default function ThreadScreen() {
           onDraftPersisted={chat.enqueueDraft}
           onDraftTouched={chat.markDraftTouched}
           mentionUsers={chat.mentionUsers}
-          mentionMembers={chat.mentionMembers[channelId] ?? null}
+          mentionMembers={
+            state.channels.find((candidate) => candidate.id === channelId)?.kind === 'public'
+              ? chat.mentionUsers
+              : (chat.mentionMembers[channelId] ?? null)
+          }
           includeSpecialMentions={state.channels.some(
             (candidate) => candidate.id === channelId && candidate.kind !== 'dm' && candidate.kind !== 'gdm',
           )}
           resolveUser={chat.resolveUser}
           onMentionTrigger={() => {
             chat.loadMentionUsers();
-            chat.loadMentionMembers(channelId);
+            // Public channels have no explicit membership — the members endpoint 404s there.
+            const kind = state.channels.find((candidate) => candidate.id === channelId)?.kind;
+            if (kind != null && kind !== 'public') chat.loadMentionMembers(channelId);
           }}
           editingText={editing?.text ?? null}
           onSubmitEdit={(text, mentionRanges) => {

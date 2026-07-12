@@ -23,7 +23,7 @@ function Harness({ initial = '' }: { initial?: string }) {
     value,
     setValue,
     textareaRef: ref,
-    context: { channelId: 'channel-1', includeSpecials: true },
+    context: { channelId: 'channel-1', includeSpecials: true, publicChannel: false },
   });
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (mention.onKeyDown(event)) return;

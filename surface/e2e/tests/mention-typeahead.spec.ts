@@ -45,7 +45,9 @@ test('channel composer inserts and renders a stable user mention', async ({ page
     await expect(page.getByRole('heading', { name: `# ${channelName}` })).toBeVisible();
 
     const composer = page.getByPlaceholder(`Message #${channelName}`);
-    await composer.fill('@');
+    // Type a unique prefix — the shared e2e workspace accumulates users across
+    // specs, and a bare "@" caps the list at 8 alphabetical rows.
+    await composer.fill(`@${handleB.slice(0, -1)}`);
     const listbox = page.getByRole('listbox', { name: 'Mention suggestions' });
     await expect(listbox).toBeVisible();
     const target = listbox.getByRole('option').filter({ hasText: `@${handleB}` });

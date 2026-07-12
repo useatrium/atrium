@@ -16,20 +16,22 @@ const MENTION_ID_URL_PREFIX = 'atrium-mention-id:';
 const SPECIAL_MENTION_URL_PREFIX = 'atrium-special-mention:';
 const ENTRY_URL_PREFIX = 'atrium-entry:';
 const UUID_SOURCE = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
-const MENTION_RE = new RegExp(`<@(${UUID_SOURCE})>|<!(channel|here)>|@([a-z0-9][a-z0-9_-]{1,31})`, 'gi');
+const MENTION_RE = new RegExp(`<@(${UUID_SOURCE})>|<!(channel|here)>|(^|[\\s(["'{<])@([a-z0-9][a-z0-9_-]{1,31})`, 'gi');
 const COLLAPSE_LINE_THRESHOLD = 16;
 const COLLAPSE_CHAR_THRESHOLD = 1800;
 
 function remarkMentions() {
   return (tree: unknown) => {
-    visitChildren(tree, (node) => {
+    visitChildren(tree, (node, parent) => {
       if (!node || typeof node.value !== 'string') return null;
       if (node.type === 'html') {
         // A line starting with <!channel>/<!here> parses as an HTML block whose
         // value spans the whole line (react-markdown drops raw HTML nodes), so
-        // re-tokenize the block instead of matching the bare token only.
+        // re-tokenize the block instead of matching the bare token only. Block
+        // positions need a paragraph wrapper so the pieces stay on one line.
         if (!/<!(channel|here)>/i.test(node.value)) return null;
-        return splitMentionText(node.value);
+        const pieces = splitMentionText(node.value);
+        return parent.type === 'root' ? [{ type: 'paragraph', children: pieces }] : pieces;
       }
       if (node.type !== 'text') return null;
       const pieces = splitMentionText(node.value);
@@ -67,12 +69,12 @@ type MutableNode = {
   children?: MutableNode[];
 };
 
-function visitChildren(node: unknown, replace: (node: MutableNode) => MutableNode[] | null): void {
+function visitChildren(node: unknown, replace: (node: MutableNode, parent: MutableNode) => MutableNode[] | null): void {
   const parent = node as MutableNode;
   if (!Array.isArray(parent.children)) return;
   const next: MutableNode[] = [];
   for (const child of parent.children) {
-    const replacement = replace(child);
+    const replacement = replace(child, parent);
     if (replacement) next.push(...replacement);
     else {
       visitChildren(child, replace);
@@ -89,8 +91,10 @@ function splitMentionText(text: string): MutableNode[] {
   for (let match = MENTION_RE.exec(text); match; match = MENTION_RE.exec(text)) {
     const userId = match[1];
     const special = match[2];
-    const handle = match[3];
-    if (match.index > last) out.push({ type: 'text', value: text.slice(last, match.index) });
+    const boundary = match[3] ?? '';
+    const handle = match[4];
+    const mentionStart = match.index + boundary.length;
+    if (mentionStart > last) out.push({ type: 'text', value: text.slice(last, mentionStart) });
     out.push({
       type: 'link',
       url: userId

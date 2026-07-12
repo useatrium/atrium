@@ -79,7 +79,7 @@ function maintainRanges(ranges: MentionRange[], previous: string, next: string):
   });
 }
 
-export type MentionContext = { channelId: string; includeSpecials: boolean };
+export type MentionContext = { channelId: string; includeSpecials: boolean; publicChannel: boolean };
 
 export function useMentionTypeahead({
   value,
@@ -104,8 +104,11 @@ export function useMentionTypeahead({
 
   useEffect(() => {
     if (!context || !match || (members !== null && users !== null)) return;
-    void Promise.all([loadMembers(context.channelId), loadUsers()]).then(([nextMembers, nextUsers]) => {
-      setMembers(nextMembers);
+    // Public channels have no explicit membership (workspace = membership), so
+    // the members endpoint is a 404 there — the whole directory counts as in-channel.
+    const membersPromise = context.publicChannel ? Promise.resolve(null) : loadMembers(context.channelId);
+    void Promise.all([membersPromise, loadUsers()]).then(([nextMembers, nextUsers]) => {
+      setMembers(context.publicChannel ? nextUsers : nextMembers);
       setUsers(nextUsers);
     });
   }, [context, match, members, users]);

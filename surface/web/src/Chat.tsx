@@ -2221,6 +2221,7 @@ export function Chat({
                     ? {
                         channelId: active.id,
                         includeSpecials: active.kind !== 'dm' && active.kind !== 'gdm',
+                        publicChannel: active.kind === 'public',
                       }
                     : undefined
                 }
@@ -2281,6 +2282,7 @@ export function Chat({
                 mentionContext={{
                   channelId: active.id,
                   includeSpecials: active.kind !== 'dm' && active.kind !== 'gdm',
+                  publicChannel: active.kind === 'public',
                 }}
               />
             </>
@@ -2375,6 +2377,7 @@ export function Chat({
               mentionContext={{
                 channelId: active.id,
                 includeSpecials: active.kind !== 'dm' && active.kind !== 'gdm',
+                publicChannel: active.kind === 'public',
               }}
               onClose={() => goToRoute({ surface: 'chat', channelId: active.id, sessionId: null, focusSession: false })}
               onSend={(text, attachments, attachmentRefs, voice, broadcast) =>

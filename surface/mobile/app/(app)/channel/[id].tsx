@@ -459,12 +459,13 @@ export default function ChannelScreen() {
           onDraftPersisted={chat.enqueueDraft}
           onDraftTouched={chat.markDraftTouched}
           mentionUsers={chat.mentionUsers}
-          mentionMembers={chat.mentionMembers[id] ?? null}
+          mentionMembers={channel?.kind === 'public' ? chat.mentionUsers : (chat.mentionMembers[id] ?? null)}
           includeSpecialMentions={channel != null && channel.kind !== 'dm' && channel.kind !== 'gdm'}
           resolveUser={chat.resolveUser}
           onMentionTrigger={() => {
             chat.loadMentionUsers();
-            chat.loadMentionMembers(id);
+            // Public channels have no explicit membership — the members endpoint 404s there.
+            if (channel != null && channel.kind !== 'public') chat.loadMentionMembers(id);
           }}
           editingText={editing?.text ?? null}
           onSubmitEdit={(text, mentionRanges) => {
