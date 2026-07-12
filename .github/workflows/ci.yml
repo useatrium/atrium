@@ -234,10 +234,11 @@ jobs:
 
       # No browser-install step: the Playwright container already has Chromium.
       # Per-step timeout so a webServer/teardown hang is killed fast and
-      # attributed, instead of silently eating the whole job budget.
+      # attributed, instead of silently eating the whole job budget. Slow
+      # runners put green suites at ~9-11m, so 10m clipped passing runs.
       - name: Run Playwright e2e
         working-directory: surface
-        timeout-minutes: 10
+        timeout-minutes: 16
         shell: bash
         env:
           # playwright.config.ts reads E2E_DATABASE_URL for the webServer (it
