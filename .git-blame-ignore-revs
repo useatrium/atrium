@@ -1,0 +1,5 @@
+# Commits to ignore in git blame (GitHub's blame UI reads this file automatically;
+# locally: git config blame.ignoreRevsFile .git-blame-ignore-revs)
+
+# style: apply biome format repo-wide (pure formatting) (#374)
+e08d89ee2fd3ae2cc515591aec0896f7972ba93a
