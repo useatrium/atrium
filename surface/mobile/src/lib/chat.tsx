@@ -60,6 +60,7 @@ import { useTheme } from './theme';
 import { useCall } from './useCall';
 import type { VoiceSendMeta } from './voice';
 import { encodeMessageForSend } from './mentionComposer';
+import { enqueueSessionSuggestion } from './sessionSuggestion';
 
 const PAGE_SIZE = 50;
 const SYNC_LIMIT = 500;
@@ -137,7 +138,7 @@ interface ChatContextValue {
     answers: Record<string, { answers: string[] }>,
   ) => Promise<void>;
   steerSession: (sessionId: string, text: string, effort?: string, opts?: { postToThread?: boolean }) => Promise<void>;
-  /** Suggestions are server-supported, but await a shared queued op type. */
+  /** Queue a suggestion for a session's driver. */
   suggestToSession: (sessionId: string, text: string) => Promise<void>;
   failedSessionSteers: Record<string, string>;
   clearFailedSessionSteer: (sessionId: string) => void;
@@ -337,6 +338,8 @@ export function ChatProvider({ session, children }: { session: Session; children
         return "Couldn't submit the answer.";
       case 'session.steer':
         return "Couldn't send the agent message.";
+      case 'session.suggest':
+        return "Couldn't send the suggestion.";
       case 'session.cancel':
         return "Couldn't cancel the agent.";
       case 'session.stop_turn':
@@ -496,12 +499,9 @@ export function ChatProvider({ session, children }: { session: Session; children
 
   const suggestToSession = useCallback(
     async (sessionId: string, text: string): Promise<void> => {
-      // There is no `session.suggest` member in VALID_OP_TYPES yet. Keep this
-      // call here rather than inventing a mobile-only queue that would diverge
-      // from the shared durable-op contract.
-      await api.createSuggestion(sessionId, text, { opId: randomId(), postToThread: true });
+      await enqueueSessionSuggestion(enqueueOp, sessionId, text);
     },
-    [api],
+    [enqueueOp],
   );
 
   const clearFailedSessionCancel = useCallback((sessionId: string) => {

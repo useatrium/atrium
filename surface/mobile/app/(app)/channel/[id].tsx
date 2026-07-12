@@ -441,6 +441,8 @@ export default function ChannelScreen() {
           onOpenAttachment={openAttachment}
           onOpenChannel={(channelId) => router.push(`/channel/${channelId}`)}
           onOpenSession={(sessionId) => router.push(`/session/${sessionId}`)}
+          onAnswerSessionQuestion={chat.answerSessionQuestion}
+          onSuggestSessionAnswer={chat.suggestToSession}
           unreadDividerAfterId={activeUnreadDividerSnapshot?.value ?? null}
           dividerReady={activeUnreadDividerSnapshot?.ready === true}
           onReachBottom={markReadAtBottom}

@@ -4,6 +4,7 @@ import {
   Pressable,
   ScrollView,
   Text,
+  TextInput,
   View,
   type AccessibilityActionEvent,
   type GestureResponderEvent,
@@ -21,6 +22,7 @@ import {
   questionAnswerSummaryText,
   questionPayloadAnswers,
   questionPayloadPrompts,
+  sessionDriverId,
   sessionQuestionEventLabel,
   type Api,
   type ChatMessage,
@@ -172,6 +174,12 @@ export interface MessageRowProps {
   onOpenAttachment: (message: ChatMessage, index: number) => void;
   onOpenChannel?: (channelId: string) => void;
   onOpenSession?: (sessionId: string) => void;
+  onAnswerSessionQuestion?: (
+    sessionId: string,
+    questionId: string,
+    answers: Record<string, { answers: string[] }>,
+  ) => Promise<void>;
+  onSuggestSessionAnswer?: (sessionId: string, text: string) => Promise<void>;
 }
 
 function ReactionChips({
@@ -537,7 +545,25 @@ function AgentReplyRow({ message, session }: { message: ChatMessage; session?: S
   );
 }
 
-function SessionEventLine({ message, onOpen }: { message: ChatMessage; onOpen?: (sessionId: string) => void }) {
+function SessionEventLine({
+  message,
+  session,
+  meId,
+  onOpen,
+  onAnswerSessionQuestion,
+  onSuggestSessionAnswer,
+}: {
+  message: ChatMessage;
+  session?: Session;
+  meId: string;
+  onOpen?: (sessionId: string) => void;
+  onAnswerSessionQuestion?: (
+    sessionId: string,
+    questionId: string,
+    answers: Record<string, { answers: string[] }>,
+  ) => Promise<void>;
+  onSuggestSessionAnswer?: (sessionId: string, text: string) => Promise<void>;
+}) {
   const { colors } = useTheme();
   const payload = message.sessionEventPayload ?? {};
   const questions = questionPayloadPrompts(payload);
@@ -563,6 +589,18 @@ function SessionEventLine({ message, onOpen }: { message: ChatMessage; onOpen?: 
       </View>
       {message.sessionEventType === 'question_requested' ? (
         <MarkdownText text={questionText} variant="compact" />
+      ) : null}
+      {message.sessionEventType === 'question_requested' &&
+      session?.pendingQuestion != null &&
+      payload.questionId === session.pendingQuestion.questionId &&
+      onAnswerSessionQuestion != null &&
+      onSuggestSessionAnswer != null ? (
+        <InlineQuestionAnswer
+          session={session}
+          meId={meId}
+          onAnswerSessionQuestion={onAnswerSessionQuestion}
+          onSuggestSessionAnswer={onSuggestSessionAnswer}
+        />
       ) : null}
       {answers.map((answer) => (
         <View
@@ -590,6 +628,164 @@ function SessionEventLine({ message, onOpen }: { message: ChatMessage; onOpen?: 
         >
           <Text style={{ color: colors.accent, fontSize: font.xs, fontWeight: '700' }}>Open pane</Text>
         </Pressable>
+      ) : null}
+    </View>
+  );
+}
+
+function InlineQuestionAnswer({
+  session,
+  meId,
+  onAnswerSessionQuestion,
+  onSuggestSessionAnswer,
+}: {
+  session: Session;
+  meId: string;
+  onAnswerSessionQuestion: (
+    sessionId: string,
+    questionId: string,
+    answers: Record<string, { answers: string[] }>,
+  ) => Promise<void>;
+  onSuggestSessionAnswer: (sessionId: string, text: string) => Promise<void>;
+}) {
+  const { colors } = useTheme();
+  const [draft, setDraft] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [sent, setSent] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const pending = session.pendingQuestion;
+  const question = pending?.questions[0];
+  const isDriver = sessionDriverId(session) === meId;
+
+  const submit = useCallback(
+    (value: string) => {
+      const answer = value.trim();
+      if (!pending || !question || !answer || busy || sent) return;
+      setBusy(true);
+      setError(null);
+      const request = isDriver
+        ? onAnswerSessionQuestion(session.id, pending.questionId, { [question.id]: { answers: [answer] } })
+        : onSuggestSessionAnswer(session.id, answer);
+      void request
+        .then(() => {
+          setSent(true);
+          setDraft('');
+        })
+        .catch(() => setError(isDriver ? "Answer didn't send. Try again." : "Suggestion didn't send. Try again."))
+        .finally(() => setBusy(false));
+    },
+    [busy, isDriver, onAnswerSessionQuestion, onSuggestSessionAnswer, pending, question, sent, session.id],
+  );
+
+  const submitDraft = useCallback(() => submit(draft), [draft, submit]);
+  const setOptionAnswer = useCallback(
+    (option: string) => (event: GestureResponderEvent) => {
+      event.stopPropagation();
+      submit(option);
+    },
+    [submit],
+  );
+  const stopPressPropagation = useCallback((event: GestureResponderEvent) => event.stopPropagation(), []);
+  const submitDraftPress = useCallback(
+    (event: GestureResponderEvent) => {
+      event.stopPropagation();
+      submitDraft();
+    },
+    [submitDraft],
+  );
+
+  if (!pending || !question) return null;
+
+  return (
+    <View
+      testID="inline-question-answer"
+      style={{ borderTopWidth: 1, borderTopColor: colors.warningBorder, paddingTop: space.sm, gap: space.sm }}
+    >
+      {question.options?.length ? (
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space.xs }}>
+          {question.options.map((option) => (
+            <Pressable
+              key={option.label}
+              accessibilityRole="button"
+              accessibilityLabel={option.label}
+              accessibilityHint={option.description}
+              accessibilityState={{ disabled: busy || sent }}
+              disabled={busy || sent}
+              onPress={setOptionAnswer(option.label)}
+              style={({ pressed }) => ({
+                minHeight: 44,
+                justifyContent: 'center',
+                borderWidth: 1,
+                borderColor: colors.warningBorder,
+                borderRadius: radius.sm,
+                backgroundColor: pressed ? colors.warningSurface : colors.bgElevated,
+                paddingHorizontal: space.sm,
+                opacity: busy || sent ? 0.55 : 1,
+              })}
+            >
+              <Text style={{ color: colors.warning, fontSize: font.xs, fontWeight: '800' }}>{option.label}</Text>
+            </Pressable>
+          ))}
+        </View>
+      ) : null}
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm }}>
+        <TextInput
+          accessibilityLabel={isDriver ? 'Type an answer' : 'Suggest an answer'}
+          value={draft}
+          onChangeText={setDraft}
+          onPressIn={stopPressPropagation}
+          editable={!busy && !sent}
+          placeholder={isDriver ? 'Type an answer…' : 'Suggest an answer…'}
+          placeholderTextColor={colors.textFaint}
+          returnKeyType="send"
+          onSubmitEditing={submitDraft}
+          style={{
+            flex: 1,
+            minHeight: 44,
+            borderWidth: 1,
+            borderColor: colors.warningBorder,
+            borderRadius: radius.sm,
+            backgroundColor: colors.bgInput,
+            color: colors.text,
+            fontSize: font.sm,
+            paddingHorizontal: space.sm,
+            paddingVertical: space.xs,
+          }}
+        />
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={isDriver ? 'Answer question' : 'Suggest an answer'}
+          accessibilityState={{ disabled: !draft.trim() || busy || sent }}
+          disabled={!draft.trim() || busy || sent}
+          onPress={submitDraftPress}
+          style={({ pressed }) => ({
+            minWidth: 72,
+            minHeight: 44,
+            alignItems: 'center',
+            justifyContent: 'center',
+            borderRadius: radius.sm,
+            backgroundColor: pressed ? colors.warningSurface : colors.warning,
+            paddingHorizontal: space.sm,
+            opacity: !draft.trim() || busy || sent ? 0.55 : 1,
+          })}
+        >
+          <Text style={{ color: colors.bg, fontSize: font.xs, fontWeight: '900' }}>
+            {busy ? 'Sending…' : isDriver ? 'Answer' : 'Suggest'}
+          </Text>
+        </Pressable>
+      </View>
+      {!isDriver && !sent ? (
+        <Text style={{ color: colors.textMuted, fontSize: font.xs }}>The current driver decides what to send.</Text>
+      ) : null}
+      {sent ? (
+        <Text style={{ color: colors.textMuted, fontSize: font.xs }}>
+          {isDriver ? 'Answer sent.' : 'Suggestion sent.'}
+        </Text>
+      ) : null}
+      {error ? (
+        <Text accessibilityRole="alert" style={{ color: colors.danger, fontSize: font.xs }}>
+          {error}
+        </Text>
       ) : null}
     </View>
   );
@@ -669,6 +865,8 @@ export const MessageRow = memo(function MessageRow({
   onOpenAttachment,
   onOpenChannel,
   onOpenSession,
+  onAnswerSessionQuestion,
+  onSuggestSessionAnswer,
 }: MessageRowProps) {
   const { colors, reduceMotion } = useTheme();
   const swipeTranslateX = useSharedValue(0);
@@ -678,6 +876,12 @@ export const MessageRow = memo(function MessageRow({
   const tombstone = m.deleted === true;
   const isAgentReply = m.sessionEventType === 'replied';
   const sessionBlock = (m.sessionId != null || m.sessionEventType != null) && !isAgentReply;
+  const hasInlineQuestionControls =
+    m.sessionEventType === 'question_requested' &&
+    session?.pendingQuestion != null &&
+    m.sessionEventPayload?.questionId === session.pendingQuestion.questionId &&
+    onAnswerSessionQuestion != null &&
+    onSuggestSessionAnswer != null;
   const attachmentDescription = m.attachments?.length
     ? m.attachments.map((a) => `attachment ${a.filename}`).join(', ')
     : '';
@@ -795,7 +999,14 @@ export const MessageRow = memo(function MessageRow({
   ) : isAgentReply ? (
     <AgentReplyRow message={m} session={session} />
   ) : m.sessionEventType != null ? (
-    <SessionEventLine message={m} onOpen={onOpenSession} />
+    <SessionEventLine
+      message={m}
+      session={session}
+      meId={meId}
+      onOpen={onOpenSession}
+      onAnswerSessionQuestion={onAnswerSessionQuestion}
+      onSuggestSessionAnswer={onSuggestSessionAnswer}
+    />
   ) : m.sessionId != null ? (
     <SessionCard message={m} session={session} onOpen={onOpenSession} />
   ) : (
@@ -884,8 +1095,28 @@ export const MessageRow = memo(function MessageRow({
     opacity: pending ? 0.55 : 1,
   };
 
-  // Session / tombstone rows have no inline controls, so keep them as a single
-  // accessible row element (the card / tombstone is the whole content).
+  // Pending question controls must not live inside a row-level Pressable: native
+  // touch bubbling can fire the row action and unmount the button being pressed.
+  if (hasInlineQuestionControls) {
+    return (
+      <View
+        style={{
+          ...containerStyle,
+          backgroundColor: highlighted ? colors.accentBg : 'transparent',
+        }}
+      >
+        {avatar}
+        <View style={{ flex: 1, minWidth: 0 }}>
+          {header}
+          {body}
+          {editedNote}
+        </View>
+      </View>
+    );
+  }
+
+  // Other session / tombstone rows have no inline controls, so keep them as a
+  // single accessible row element (the card / tombstone is the whole content).
   if (tombstone || m.sessionId != null || m.sessionEventType != null) {
     return (
       <Pressable

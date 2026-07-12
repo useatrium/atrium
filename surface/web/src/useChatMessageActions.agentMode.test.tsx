@@ -51,4 +51,20 @@ describe('agent-mode queued operations', () => {
       }),
     );
   });
+
+  it('queues a suggestion with thread provenance', () => {
+    const enqueueOp = vi.fn().mockResolvedValue(undefined);
+    const { result } = renderHook(() =>
+      useChatMessageActions({ activeChannel: channel, dispatch: vi.fn(), enqueueOp, me, onSpawnDialogClose: vi.fn() }),
+    );
+
+    result.current.sendAgent('ch-1', { target: 'suggest', sessionId: 's-1' }, 'Consider a smaller change');
+
+    expect(enqueueOp).toHaveBeenCalledWith(
+      expect.objectContaining({
+        opType: 'session.suggest',
+        payload: { sessionId: 's-1', text: 'Consider a smaller change', postToThread: true },
+      }),
+    );
+  });
 });

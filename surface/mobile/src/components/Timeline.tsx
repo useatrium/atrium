@@ -51,6 +51,12 @@ export interface TimelineProps {
   onOpenAttachment: (message: ChatMessage, index: number) => void;
   onOpenChannel?: (channelId: string) => void;
   onOpenSession?: (sessionId: string) => void;
+  onAnswerSessionQuestion?: (
+    sessionId: string,
+    questionId: string,
+    answers: Record<string, { answers: string[] }>,
+  ) => Promise<void>;
+  onSuggestSessionAnswer?: (sessionId: string, text: string) => Promise<void>;
   unreadDividerAfterId?: number | null;
   dividerReady?: boolean;
   onReachBottom?: () => void;
@@ -170,6 +176,8 @@ export function Timeline({
   onOpenAttachment,
   onOpenChannel,
   onOpenSession,
+  onAnswerSessionQuestion,
+  onSuggestSessionAnswer,
   unreadDividerAfterId,
   dividerReady,
   onReachBottom,
@@ -346,6 +354,8 @@ export function Timeline({
           onOpenAttachment={onOpenAttachment}
           onOpenChannel={onOpenChannel}
           onOpenSession={onOpenSession}
+          onAnswerSessionQuestion={onAnswerSessionQuestion}
+          onSuggestSessionAnswer={onSuggestSessionAnswer}
         />
       );
       if (!showUnreadDivider) return row;
@@ -377,6 +387,8 @@ export function Timeline({
       onOpenAttachment,
       onOpenChannel,
       onOpenSession,
+      onAnswerSessionQuestion,
+      onSuggestSessionAnswer,
     ],
   );
 

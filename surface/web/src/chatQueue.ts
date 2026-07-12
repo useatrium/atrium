@@ -57,6 +57,8 @@ export function queuedFailureMessage(opType: OpType, err?: unknown): string {
       return "Couldn't submit the answer.";
     case 'session.steer':
       return "Couldn't send the agent message.";
+    case 'session.suggest':
+      return "Couldn't send the suggestion.";
     case 'session.cancel':
       return "Couldn't cancel the agent.";
     case 'session.stop_turn':

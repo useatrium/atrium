@@ -15,6 +15,7 @@ describe('chatQueue', () => {
     expect(queuedFailureMessage('session.spawn')).toBe("Couldn't start the agent.");
     expect(queuedFailureMessage('session.answer')).toBe("Couldn't submit the answer.");
     expect(queuedFailureMessage('session.steer')).toBe("Couldn't send the agent message.");
+    expect(queuedFailureMessage('session.suggest')).toBe("Couldn't send the suggestion.");
     expect(queuedFailureMessage('session.cancel')).toBe("Couldn't cancel the agent.");
     expect(queuedFailureMessage('prefs.set')).toBe("Couldn't sync settings.");
     expect(queuedFailureMessage('draft.set')).toBe("Couldn't sync the draft.");

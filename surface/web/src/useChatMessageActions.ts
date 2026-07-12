@@ -13,7 +13,6 @@ import type {
   UserRef,
 } from '@atrium/surface-client';
 import { randomId } from '@atrium/surface-client';
-import { sessionsApi } from './sessions/api';
 import { PENDING_SESSION_PREFIX } from './sessions/types';
 import type { SpawnConfig } from './sessions/SpawnDialog';
 import { pendingMessageFromSendPayload, pendingSpawnFromPayload, type VoiceMsgSendPayload } from './chatQueuedOverlays';
@@ -234,11 +233,11 @@ export function useChatMessageActions({
         return;
       }
       if (request.target === 'suggest' && request.sessionId) {
-        // Direct API call: the op queue has no suggestion op yet (offline-safety
-        // follow-up); the driver sees it in-thread via postToThread.
-        sessionsApi.createSuggestion(request.sessionId, text, randomId(), true).catch(() => {
-          showErrorToast("Couldn't send the suggestion.");
-        });
+        void enqueueOp({
+          opId: randomId(),
+          opType: 'session.suggest',
+          payload: { sessionId: request.sessionId, text, postToThread: true },
+        }).catch(() => showErrorToast("Couldn't queue the agent message."));
         return;
       }
       showErrorToast('This agent action is unavailable here.');
