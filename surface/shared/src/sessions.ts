@@ -9,6 +9,13 @@ export type SessionStatus = 'spawning' | 'queued' | 'running' | 'completed' | 'f
 
 export const SessionStatusSchema = Schema.Literal('spawning', 'queued', 'running', 'completed', 'failed', 'cancelled');
 
+/**
+ * Presentation category for the global Attention surface. Running work is
+ * deliberately excluded: activity is not the same thing as a person needing
+ * to intervene.
+ */
+export type SessionAttentionKind = 'question' | 'authentication' | 'seat-request' | 'failed';
+
 /** Seat-related user reference as serialized by the server. */
 export interface SessionSeatUser {
   userId: string;
@@ -375,6 +382,21 @@ export interface Session {
   pinned: boolean;
   lastEventId: number;
   permalink: string;
+}
+
+/**
+ * Return the highest-priority reason a live session needs a person's
+ * attention. This stays in the shared client package so web and native do not
+ * drift back into counting every non-terminal session as urgent.
+ */
+export function sessionAttentionKind(
+  session: Pick<Session, 'status' | 'pendingQuestion' | 'providerAuthRequired' | 'pendingSeatRequests'>,
+): SessionAttentionKind | null {
+  if (session.pendingQuestion) return 'question';
+  if (session.providerAuthRequired) return 'authentication';
+  if (session.pendingSeatRequests.length > 0) return 'seat-request';
+  if (session.status === 'failed') return 'failed';
+  return null;
 }
 
 export interface SessionRepoSpec {

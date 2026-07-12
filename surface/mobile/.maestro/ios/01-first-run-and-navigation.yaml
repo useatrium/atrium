@@ -1,0 +1,13 @@
+appId: chat.atrium.app
+name: iOS first run and top-level navigation
+tags:
+  - ios
+  - first-run
+env:
+  SCREENSHOT_PREFIX: ios-first-run
+---
+- runFlow: ../common/authenticated-launch.yml
+- takeScreenshot: "${SCREENSHOT_PREFIX}-01-chat-orientation"
+- runFlow: ../common/top-level-navigation.yml
+- runFlow: ../common/settings-controls.yml
+- takeScreenshot: "${SCREENSHOT_PREFIX}-08-settings-complete"

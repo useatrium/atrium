@@ -5,10 +5,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ThemeProvider } from '../theme';
 import { Sidebar } from './Sidebar';
 
-vi.mock('../sessions/api', () => ({
-  sessionsApi: { list: vi.fn(async () => ({ sessions: [] })) },
-}));
-
 function renderSidebar() {
   render(
     <ThemeProvider>
@@ -24,8 +20,6 @@ function renderSidebar() {
         onSetMute={vi.fn()}
         onCreateChannel={vi.fn()}
         onStartDm={vi.fn()}
-        onOpenSession={vi.fn()}
-        sessionEventSeq={0}
         onLogout={vi.fn()}
       />
     </ThemeProvider>,

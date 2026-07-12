@@ -326,7 +326,7 @@ function OutputLabel({ children, unseen, danger = false }: { children: ReactNode
         />
       )}
       <span
-        className={`font-semibold uppercase tracking-wider ${
+        className={`font-semibold ${
           unseen ? (danger ? 'text-danger-text-strong' : 'text-accent-text-strong') : 'text-fg-muted'
         }`}
       >
@@ -1591,11 +1591,11 @@ export function SessionPane({
             </button>
           </Tooltip>
         )}
-        <Tooltip content="Close agent pane">
+        <Tooltip content="Close session details">
           <button
             type="button"
             onClick={closePane}
-            aria-label="Close agent pane"
+            aria-label="Close session details"
             className="rounded-md px-2 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg max-md:inline-flex max-md:size-11 max-md:items-center max-md:justify-center max-md:p-0 [@media(pointer:coarse)]:inline-flex [@media(pointer:coarse)]:size-11 [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center [@media(pointer:coarse)]:p-0"
           >
             <XIcon />
@@ -1689,13 +1689,44 @@ export function SessionPane({
         />
       )}
 
-      {isEnded && resultText && (
-        <div data-testid="session-result" className="shrink-0 border-b border-edge bg-surface-raised px-4 py-2">
-          <div className="text-3xs font-semibold uppercase tracking-wider text-fg-muted">Result</div>
-          <div className="mt-0.5 max-h-36 overflow-y-auto whitespace-pre-wrap break-words text-xs leading-relaxed text-fg-body">
-            {resultText}
+      {displayTerminal && (
+        <section
+          data-testid="session-result"
+          aria-labelledby="session-results-heading"
+          className="shrink-0 border-b border-edge bg-surface-raised px-4 py-3"
+        >
+          <div className="flex items-baseline gap-2">
+            <h3 id="session-results-heading" className="text-xs font-semibold text-fg">
+              Results
+            </h3>
+            <span className={`text-xs ${isEnded ? 'text-danger-text' : 'text-fg-muted'}`}>
+              {displayStatus === 'failed'
+                ? 'Failed — review the transcript before retrying.'
+                : displayStatus === 'cancelled'
+                  ? 'Cancelled — review completed work before continuing.'
+                  : 'Completed — review the work before continuing.'}
+            </span>
           </div>
-        </div>
+          {resultText && (
+            <div className="mt-1 max-h-24 overflow-y-auto whitespace-pre-wrap break-words text-xs leading-relaxed text-fg-body">
+              {resultText}
+            </div>
+          )}
+          {(changedFileCount > 0 || artifactsN > 0) && (
+            <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-fg-muted">
+              {changedFileCount > 0 && (
+                <span>
+                  {changedFileCount} changed {changedFileCount === 1 ? 'file' : 'files'}
+                </span>
+              )}
+              {artifactsN > 0 && (
+                <span>
+                  {artifactsN} {artifactsN === 1 ? 'artifact' : 'artifacts'} produced
+                </span>
+              )}
+            </div>
+          )}
+        </section>
       )}
 
       <button
@@ -1705,7 +1736,7 @@ export function SessionPane({
         aria-expanded={outputHubOpen}
         className={outputStripClass({})}
       >
-        <OutputLabel unseen={false}>Files & apps</OutputLabel>
+        <OutputLabel unseen={false}>Files</OutputLabel>
         <span className="ml-auto text-fg-tertiary">{outputHubOpen ? 'Hide' : 'Open'}</span>
       </button>
       {conflictsN > 0 && (
@@ -1744,7 +1775,7 @@ export function SessionPane({
           aria-expanded={workTab === 'sideEffects'}
           className={outputStripClass({ unseen: unseenOutputs.sideEffects })}
         >
-          <OutputLabel unseen={unseenOutputs.sideEffects}>Side-effects</OutputLabel>
+          <OutputLabel unseen={unseenOutputs.sideEffects}>Actions</OutputLabel>
           <span className={`tabular-nums ${sideEffectsDanger ? 'text-danger-text' : ''}`}>· {sideEffectsN}</span>
           <span className="ml-auto text-fg-tertiary">{workTab === 'sideEffects' ? 'Hide' : 'View'}</span>
         </button>

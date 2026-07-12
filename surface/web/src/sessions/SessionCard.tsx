@@ -56,7 +56,7 @@ export function StatusChip({
   const animatedDot = !stalled && (status === 'queued' || status === 'running');
   return (
     <span
-      className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-2 py-0.5 text-3xs font-semibold uppercase tracking-wide ${
+      className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-semibold ${
         stalled ? 'bg-surface-overlay/80 text-fg-tertiary' : CHIP_STYLES[status]
       }`}
     >
@@ -189,7 +189,7 @@ export function SessionCard({
             }}
             className="mt-0.5 inline-block text-2xs font-medium text-accent-text hover:underline"
           >
-            Open full transcript
+            Open session
           </a>
         </div>
       )}
