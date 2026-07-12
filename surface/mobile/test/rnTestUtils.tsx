@@ -2,7 +2,7 @@
 // Import renderWithTheme to mount a component inside the app's ThemeProvider.
 import { vi } from 'vitest';
 import { AccessibilityInfo } from 'react-native';
-import { render } from '@testing-library/react';
+import { act, fireEvent, render } from '@testing-library/react';
 import type { ReactElement } from 'react';
 import { ThemeProvider } from '../src/lib/theme';
 
@@ -21,4 +21,12 @@ if (typeof a11y.addEventListener === 'function' && !a11y.__themeTestPatched) {
 
 export function renderWithTheme(ui: ReactElement) {
   return render(<ThemeProvider>{ui}</ThemeProvider>);
+}
+
+// RNW wires Pressable listeners in a passive effect after an async commit.
+export async function pressWhenReady(query: Promise<HTMLElement>) {
+  const target = await query;
+  await act(async () => {});
+  fireEvent.click(target);
+  return target;
 }

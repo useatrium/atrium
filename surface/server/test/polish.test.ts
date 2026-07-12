@@ -309,6 +309,7 @@ describe('POST /api/messages/:id/reactions', () => {
         });
       const first = remove(randomUUID());
       const second = remove(randomUUID());
+      // Give both requests time to queue behind the intentionally held row lock.
       await new Promise((resolve) => setTimeout(resolve, 50));
       await blocker.query('COMMIT');
       locked = false;

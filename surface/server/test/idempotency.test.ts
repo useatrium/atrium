@@ -35,6 +35,8 @@ describe('withIdempotency', () => {
         },
         async (client) => {
           effects += 1;
+          // Hold the first operation open briefly so the concurrent duplicate
+          // reaches the in-flight idempotency path.
           await new Promise((resolve) => setTimeout(resolve, 75));
           const event = await appendEvent(client, {
             workspaceId: fx.workspaceId,

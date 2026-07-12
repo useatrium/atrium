@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type pg from 'pg';
 import WebSocket from 'ws';
 import { buildApp } from '../src/app.js';
@@ -232,8 +232,7 @@ describe('workspace routes', () => {
     expect(created.statusCode).toBe(201);
     expect(created.json().channel.workspaceId).toBe(workspace.id);
 
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    expect(creatorFrames.some((m) => m.event?.type === 'channel.created')).toBe(true);
+    await vi.waitFor(() => expect(creatorFrames.some((m) => m.event?.type === 'channel.created')).toBe(true));
     expect(outsiderFrames.some((m) => m.event?.type === 'channel.created')).toBe(false);
 
     creatorWs.close();
