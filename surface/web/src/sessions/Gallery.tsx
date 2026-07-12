@@ -14,20 +14,14 @@ import type { LightboxCallbacks, PreviewFile } from '../components/media';
 import { effectiveMediaKind, isAppFile } from '../components/media/utils';
 import { showErrorToast } from '../components/Toasts';
 import { navigate, URL_PARAMS, useLocation } from '../router';
-import type { ArtifactConflict } from './ConflictSurface';
 import { EmptyState } from './EmptyState';
 import {
-  artifactContentUrl as contentUrl,
   artifactEntryUrl as absoluteArtifactEntryUrl,
   cleanId,
-  fetchArtifactVersionContent,
+  createFileLightboxCallbacks,
   lightboxPanelFromSearch,
-  listArtifactVersions,
-  mergeFile,
   pathWithSearch,
-  resolvedConflictText as resolvedTextForChoice,
   responseError,
-  updateFile,
 } from './fileHubCore';
 import { hubFileToPreview } from './FilesHub';
 
@@ -76,10 +70,7 @@ function boolFromParam(params: URLSearchParams, key: string): boolean {
   return params.get(key) === 'true';
 }
 
-export function galleryStateFromSearch(
-  search: string,
-  context: GalleryScopeContext = {},
-): GalleryQueryState {
+export function galleryStateFromSearch(search: string, context: GalleryScopeContext = {}): GalleryQueryState {
   const params = new URLSearchParams(search);
   const category = params.get('category');
   const queryChannelId = cleanId(params.get('channelId'));
@@ -200,7 +191,11 @@ function shouldFetchTextForTilePreview(file: PreviewFile): boolean {
 }
 
 function hasSafeTextTilePreviewSize(file: PreviewFile): boolean {
-  return typeof file.sizeBytes === 'number' && Number.isFinite(file.sizeBytes) && file.sizeBytes <= TEXT_TILE_PREVIEW_SIZE_LIMIT_BYTES;
+  return (
+    typeof file.sizeBytes === 'number' &&
+    Number.isFinite(file.sizeBytes) &&
+    file.sizeBytes <= TEXT_TILE_PREVIEW_SIZE_LIMIT_BYTES
+  );
 }
 
 function shouldUseTypeChipPreview(file: PreviewFile): boolean {
@@ -218,7 +213,11 @@ function TypeChipPreview({ label }: { label: string }) {
 }
 
 function GalleryCardPreview({ file, preview }: { file: HubFile; preview: PreviewFile }) {
-  return shouldUseTypeChipPreview(preview) ? <TypeChipPreview label={fileTypeLabel(file)} /> : <MediaPreview file={preview} variant="tile" />;
+  return shouldUseTypeChipPreview(preview) ? (
+    <TypeChipPreview label={fileTypeLabel(file)} />
+  ) : (
+    <MediaPreview file={preview} variant="tile" />
+  );
 }
 
 function GalleryCard({ file, onOpen }: { file: HubFile; onOpen: () => void }) {
@@ -273,7 +272,12 @@ function CategoryChips({
     }`;
   return (
     <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-      <button type="button" aria-pressed={value === 'all'} onClick={() => onChange('all')} className={chipClass(value === 'all')}>
+      <button
+        type="button"
+        aria-pressed={value === 'all'}
+        onClick={() => onChange('all')}
+        className={chipClass(value === 'all')}
+      >
         All
       </button>
       {FILE_CATEGORIES.map((category) => (
@@ -426,7 +430,10 @@ export function Gallery({
 }): JSX.Element {
   const location = useLocation();
   const endpoint = `/api/workspaces/${encodeURIComponent(workspaceId)}/files`;
-  const urlFileArtifactId = useMemo(() => cleanId(new URLSearchParams(location.search).get(URL_PARAMS.file)), [location.search]);
+  const urlFileArtifactId = useMemo(
+    () => cleanId(new URLSearchParams(location.search).get(URL_PARAMS.file)),
+    [location.search],
+  );
   const urlPanel = useMemo(() => lightboxPanelFromSearch(location.search), [location.search]);
   const parsedWithoutContext = useMemo(() => galleryStateFromSearch(location.search), [location.search]);
   const [rememberedScopeIds, setRememberedScopeIds] = useState(() => ({
@@ -456,7 +463,8 @@ export function Gallery({
   const handledLegacyInitialOpenRef = useRef<string | null>(null);
 
   const previews = useMemo(() => files.map(hubFileToPreview), [files]);
-  const activeScope = queryState.scope === 'session' ? 'session' : queryState.scope === 'channel' ? 'channel' : 'everything';
+  const activeScope =
+    queryState.scope === 'session' ? 'session' : queryState.scope === 'channel' ? 'channel' : 'everything';
   const scopeEmpty = activeScope !== 'everything' && !loading && !error && files.length === 0;
 
   useEffect(() => {
@@ -504,10 +512,7 @@ export function Gallery({
   );
 
   const updateLightboxSearch = useCallback(
-    (
-      patch: { file?: string | null; panel?: 'info' | 'history' | null },
-      options: { replace?: boolean } = {},
-    ) => {
+    (patch: { file?: string | null; panel?: 'info' | 'history' | null }, options: { replace?: boolean } = {}) => {
       const params = new URLSearchParams(location.search);
       if ('file' in patch) {
         if (patch.file) params.set(URL_PARAMS.file, patch.file);
@@ -646,11 +651,21 @@ export function Gallery({
     onInitialOpenArtifactHandled?.(legacyArtifactId);
   }, [initialOpenArtifactId, onInitialOpenArtifactHandled, updateLightboxSearch, urlFileArtifactId]);
 
+  const sharedCallbacks = useMemo(
+    () =>
+      createFileLightboxCallbacks({
+        files,
+        setFiles,
+        includeDeleted: queryState.includeDeleted,
+        reload: loadFiles,
+        showError: showErrorToast,
+      }),
+    [files, loadFiles, queryState.includeDeleted],
+  );
+
   const callbacks: LightboxCallbacks = useMemo(
     () => ({
-      onDownload: (file) => {
-        window.open(contentUrl(file.id), '_blank', 'noopener,noreferrer');
-      },
+      ...sharedCallbacks,
       onCopyLink: async (file) => {
         try {
           await navigator.clipboard.writeText(absoluteArtifactEntryUrl(file.id));
@@ -672,197 +687,8 @@ export function Gallery({
           showErrorToast('Could not copy file link.');
         }
       },
-      onRename: async (file, name) => {
-        const previous = files.find((item) => item.artifactId === file.id);
-        if (!previous) return;
-        setFiles((current) => updateFile(current, file.id, { name }));
-        try {
-          const response = await fetch(`/api/files/${file.id}`, {
-            method: 'PATCH',
-            credentials: 'same-origin',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ name }),
-          });
-          if (!response.ok) {
-            throw new Error(
-              await responseError(
-                response,
-                response.status === 409 ? 'A file with that name already exists' : 'Could not rename file',
-              ),
-            );
-          }
-          const body = (await response.json()) as { artifactId: string; path: string; name: string };
-          setFiles((current) => updateFile(current, body.artifactId, { name: body.name, path: body.path }));
-        } catch (err) {
-          setFiles((current) => mergeFile(current, previous));
-          showErrorToast(err instanceof Error ? err.message : 'Could not rename file');
-          throw err;
-        }
-      },
-      onDelete: async (file) => {
-        const previous = files.find((item) => item.artifactId === file.id);
-        if (!previous) return;
-        if (queryState.includeDeleted) setFiles((current) => updateFile(current, file.id, { tombstoned: true }));
-        else setFiles((current) => current.filter((item) => item.artifactId !== file.id));
-        try {
-          const response = await fetch(`/api/files/${file.id}`, { method: 'DELETE', credentials: 'same-origin' });
-          if (!response.ok) {
-            const fallback = response.status === 403 ? 'You do not have permission to delete this file' : 'Could not delete file';
-            throw new Error(await responseError(response, fallback));
-          }
-        } catch (err) {
-          setFiles((current) => {
-            const exists = current.some((item) => item.artifactId === previous.artifactId);
-            return exists ? mergeFile(current, previous) : [...current, previous];
-          });
-          showErrorToast(err instanceof Error ? err.message : 'Could not delete file');
-          throw err;
-        }
-      },
-      onListVersions: async (file, signal) => {
-        try {
-          return await listArtifactVersions(file.id, signal);
-        } catch (err) {
-          if (!(err instanceof DOMException && err.name === 'AbortError')) {
-            showErrorToast(err instanceof Error ? err.message : 'Could not load version history');
-          }
-          throw err;
-        }
-      },
-      onFetchVersionContent: async (file, seq, signal) => {
-        try {
-          return await fetchArtifactVersionContent(file.id, seq, signal);
-        } catch (err) {
-          if (!(err instanceof DOMException && err.name === 'AbortError')) {
-            showErrorToast(err instanceof Error ? err.message : 'Could not load version content');
-          }
-          throw err;
-        }
-      },
-      onRevertVersion: async (file, seq) => {
-        try {
-          const response = await fetch(`/api/files/${file.id}/revert`, {
-            method: 'POST',
-            credentials: 'same-origin',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ seq }),
-          });
-          if (!response.ok) {
-            throw new Error(
-              await responseError(
-                response,
-                response.status === 409 ? 'That version cannot be restored' : 'Could not restore version',
-              ),
-            );
-          }
-          const body = (await response.json()) as { artifactId: string; seq: number; tombstoned: false };
-          setFiles((current) => updateFile(current, body.artifactId, { versionSeq: body.seq, tombstoned: false }));
-          await loadFiles();
-        } catch (err) {
-          showErrorToast(err instanceof Error ? err.message : 'Could not restore version');
-          throw err;
-        }
-      },
-      onRestoreFile: async (file) => {
-        try {
-          const response = await fetch(`/api/files/${file.id}/restore`, {
-            method: 'POST',
-            credentials: 'same-origin',
-          });
-          if (!response.ok) throw new Error(await responseError(response, 'Could not restore file'));
-          const body = (await response.json()) as { artifactId: string; tombstoned: false };
-          setFiles((current) => updateFile(current, body.artifactId, { tombstoned: body.tombstoned }));
-          await loadFiles();
-        } catch (err) {
-          showErrorToast(err instanceof Error ? err.message : 'Could not restore file');
-          throw err;
-        }
-      },
-      onSaveText: async (file, text, baseSeq) => {
-        const response = await fetch(`/api/files/${file.id}/content`, {
-          method: 'PUT',
-          credentials: 'same-origin',
-          headers: {
-            'X-Artifact-Base-Seq': String(baseSeq),
-            'Content-Type': file.mime || 'text/plain',
-          },
-          body: text,
-        });
-
-        if (response.status === 409) {
-          const message = 'File changed on the server, reload and retry';
-          showErrorToast(message);
-          await loadFiles();
-          throw new Error(message);
-        }
-        if (response.status === 415) {
-          const message = 'This file cannot be edited as text.';
-          showErrorToast(message);
-          throw new Error(message);
-        }
-        if (response.status === 403) {
-          const message = "You don't have permission to edit this file.";
-          showErrorToast(message);
-          throw new Error(message);
-        }
-        if (!response.ok) {
-          const message = await responseError(response, 'Could not save file');
-          showErrorToast(message);
-          throw new Error(message);
-        }
-
-        const body = (await response.json()) as { seq: number; status: 'normal' | 'conflict' };
-        setFiles((current) => updateFile(current, file.id, { versionSeq: body.seq, tombstoned: false }));
-        await loadFiles();
-        return body;
-      },
-      onLoadConflict: async (file) => {
-        const response = await fetch(`/api/files/${file.id}/conflict`, {
-          credentials: 'same-origin',
-        });
-        if (!response.ok) {
-          const fallback = response.status === 404 ? 'No conflict found for this file' : 'Could not load file conflict';
-          const message = await responseError(response, fallback);
-          showErrorToast(message);
-          throw new Error(message);
-        }
-        return (await response.json()) as ArtifactConflict;
-      },
-      onResolveConflict: async (file, conflict, choice) => {
-        const headers: Record<string, string> = {
-          'X-Artifact-Base-Seq': String(conflict.conflictSeq),
-          'Content-Type': file.mime || 'text/plain',
-        };
-        if (
-          (choice.kind === 'left' && conflict.left.sha === null) ||
-          (choice.kind === 'right' && conflict.right.sha === null)
-        ) {
-          headers['X-Artifact-Delete'] = 'true';
-        }
-        const response = await fetch(`/api/files/${file.id}/resolve`, {
-          method: 'POST',
-          credentials: 'same-origin',
-          headers,
-          body: resolvedTextForChoice(conflict, choice),
-        });
-        if (response.status === 403) {
-          const message = "You don't have permission to edit this file.";
-          showErrorToast(message);
-          throw new Error(message);
-        }
-        if (!response.ok) {
-          const message = await responseError(response, 'Could not resolve file conflict');
-          showErrorToast(message);
-          throw new Error(message);
-        }
-        const body = (await response.json()) as { seq: number; status: string };
-        setFiles((current) => updateFile(current, file.id, { versionSeq: body.seq, tombstoned: false }));
-        await loadFiles();
-        return body;
-      },
-      canManage: () => true,
     }),
-    [channelId, closeLightbox, files, loadFiles, onSeedChannelComposer, queryState.includeDeleted, showNotice],
+    [channelId, closeLightbox, onSeedChannelComposer, sharedCallbacks, showNotice],
   );
 
   const empty = loadedOnce && !loading && !error && files.length === 0;

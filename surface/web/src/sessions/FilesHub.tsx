@@ -20,19 +20,15 @@ import {
   type EntryReferenceSummary,
 } from '../components/EntryReferencesChip';
 import { navigate, URL_PARAMS, useLocation } from '../router';
-import type { ArtifactConflict } from './ConflictSurface';
 import { EmptyState } from './EmptyState';
 import {
   artifactContentUrl as contentUrl,
   artifactEntryHandle,
   artifactEntryUrl as absoluteArtifactEntryUrl,
   cleanId,
-  fetchArtifactVersionContent,
+  createFileLightboxCallbacks,
   lightboxPanelFromSearch,
-  listArtifactVersions,
-  mergeFile,
   pathWithSearch,
-  resolvedConflictText as resolvedTextForChoice,
   responseError,
   updateFile,
 } from './fileHubCore';
@@ -905,8 +901,6 @@ export function FilesHub({
     return () => controller.abort();
   }, [debouncedSearch, endpoint, effectiveFilters, filesEventSeq]);
 
-  const replaceFile = useCallback((next: HubFile) => setFiles((current) => mergeFile(current, next)), []);
-
   const toggleStar = useCallback(async (file: HubFile) => {
     const previous = file.starred;
     setFiles((current) => updateFile(current, file.artifactId, { starred: !previous }));
@@ -975,11 +969,21 @@ export function FilesHub({
     }
   }, []);
 
+  const sharedCallbacks = useMemo(
+    () =>
+      createFileLightboxCallbacks({
+        files,
+        setFiles,
+        includeDeleted: filters.includeDeleted,
+        reload: loadFiles,
+        showError: showErrorToast,
+      }),
+    [files, filters.includeDeleted, loadFiles],
+  );
+
   const callbacks: LightboxCallbacks = useMemo(
     () => ({
-      onDownload: (file) => {
-        window.open(contentUrl(file.id), '_blank', 'noopener,noreferrer');
-      },
+      ...sharedCallbacks,
       onCopyLink: async (file) => {
         try {
           // Entry links unfurl as quote cards in chat, record references, and navigate via /e/;
@@ -987,53 +991,6 @@ export function FilesHub({
           await navigator.clipboard.writeText(absoluteArtifactEntryUrl(file.id));
         } catch {
           showErrorToast('Could not copy file link.');
-        }
-      },
-      onRename: async (file, name) => {
-        const previous = files.find((item) => item.artifactId === file.id);
-        if (!previous) return;
-        setFiles((current) => updateFile(current, file.id, { name }));
-        try {
-          const response = await fetch(`/api/files/${file.id}`, {
-            method: 'PATCH',
-            credentials: 'same-origin',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ name }),
-          });
-          if (!response.ok)
-            throw new Error(
-              await responseError(
-                response,
-                response.status === 409 ? 'A file with that name already exists' : 'Could not rename file',
-              ),
-            );
-          const body = (await response.json()) as { artifactId: string; path: string; name: string };
-          setFiles((current) => updateFile(current, body.artifactId, { name: body.name, path: body.path }));
-        } catch (err) {
-          replaceFile(previous);
-          showErrorToast(err instanceof Error ? err.message : 'Could not rename file');
-          throw err;
-        }
-      },
-      onDelete: async (file) => {
-        const previous = files.find((item) => item.artifactId === file.id);
-        if (!previous) return;
-        if (filters.includeDeleted) setFiles((current) => updateFile(current, file.id, { tombstoned: true }));
-        else setFiles((current) => current.filter((item) => item.artifactId !== file.id));
-        try {
-          const response = await fetch(`/api/files/${file.id}`, { method: 'DELETE', credentials: 'same-origin' });
-          if (!response.ok) {
-            const fallback =
-              response.status === 403 ? 'You do not have permission to delete this file' : 'Could not delete file';
-            throw new Error(await responseError(response, fallback));
-          }
-        } catch (err) {
-          setFiles((current) => {
-            const exists = current.some((item) => item.artifactId === previous.artifactId);
-            return exists ? mergeFile(current, previous) : [...current, previous];
-          });
-          showErrorToast(err instanceof Error ? err.message : 'Could not delete file');
-          throw err;
         }
       },
       onDiscuss: async (_file, draft) => {
@@ -1049,146 +1006,6 @@ export function FilesHub({
         } catch {
           showErrorToast('Could not copy file link.');
         }
-      },
-      onListVersions: async (file, signal) => {
-        try {
-          return await listArtifactVersions(file.id, signal);
-        } catch (err) {
-          if (!(err instanceof DOMException && err.name === 'AbortError')) {
-            showErrorToast(err instanceof Error ? err.message : 'Could not load version history');
-          }
-          throw err;
-        }
-      },
-      onFetchVersionContent: async (file, seq, signal) => {
-        try {
-          return await fetchArtifactVersionContent(file.id, seq, signal);
-        } catch (err) {
-          if (!(err instanceof DOMException && err.name === 'AbortError')) {
-            showErrorToast(err instanceof Error ? err.message : 'Could not load version content');
-          }
-          throw err;
-        }
-      },
-      onRevertVersion: async (file, seq) => {
-        try {
-          const response = await fetch(`/api/files/${file.id}/revert`, {
-            method: 'POST',
-            credentials: 'same-origin',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ seq }),
-          });
-          if (!response.ok)
-            throw new Error(
-              await responseError(
-                response,
-                response.status === 409 ? 'That version cannot be restored' : 'Could not restore version',
-              ),
-            );
-          const body = (await response.json()) as { artifactId: string; seq: number; tombstoned: false };
-          setFiles((current) => updateFile(current, body.artifactId, { versionSeq: body.seq, tombstoned: false }));
-          await loadFiles();
-        } catch (err) {
-          showErrorToast(err instanceof Error ? err.message : 'Could not restore version');
-          throw err;
-        }
-      },
-      onRestoreFile: async (file) => {
-        try {
-          const response = await fetch(`/api/files/${file.id}/restore`, {
-            method: 'POST',
-            credentials: 'same-origin',
-          });
-          if (!response.ok) throw new Error(await responseError(response, 'Could not restore file'));
-          const body = (await response.json()) as { artifactId: string; tombstoned: false };
-          setFiles((current) => updateFile(current, body.artifactId, { tombstoned: body.tombstoned }));
-          await loadFiles();
-        } catch (err) {
-          showErrorToast(err instanceof Error ? err.message : 'Could not restore file');
-          throw err;
-        }
-      },
-      onSaveText: async (file, text, baseSeq) => {
-        const response = await fetch(`/api/files/${file.id}/content`, {
-          method: 'PUT',
-          credentials: 'same-origin',
-          headers: {
-            'X-Artifact-Base-Seq': String(baseSeq),
-            'Content-Type': file.mime || 'text/plain',
-          },
-          body: text,
-        });
-
-        if (response.status === 409) {
-          const message = 'File changed on the server — reload and retry';
-          showErrorToast(message);
-          await loadFiles();
-          throw new Error(message);
-        }
-        if (response.status === 415) {
-          const message = 'This file cannot be edited as text.';
-          showErrorToast(message);
-          throw new Error(message);
-        }
-        if (response.status === 403) {
-          const message = "You don't have permission to edit this file.";
-          showErrorToast(message);
-          throw new Error(message);
-        }
-        if (!response.ok) {
-          const message = await responseError(response, 'Could not save file');
-          showErrorToast(message);
-          throw new Error(message);
-        }
-
-        const body = (await response.json()) as { seq: number; status: 'normal' | 'conflict' };
-        setFiles((current) => updateFile(current, file.id, { versionSeq: body.seq, tombstoned: false }));
-        await loadFiles();
-        return body;
-      },
-      onLoadConflict: async (file) => {
-        const response = await fetch(`/api/files/${file.id}/conflict`, {
-          credentials: 'same-origin',
-        });
-        if (!response.ok) {
-          const fallback = response.status === 404 ? 'No conflict found for this file' : 'Could not load file conflict';
-          const message = await responseError(response, fallback);
-          showErrorToast(message);
-          throw new Error(message);
-        }
-        return (await response.json()) as ArtifactConflict;
-      },
-      onResolveConflict: async (file, conflict, choice) => {
-        const headers: Record<string, string> = {
-          'X-Artifact-Base-Seq': String(conflict.conflictSeq),
-          'Content-Type': file.mime || 'text/plain',
-        };
-        if (
-          (choice.kind === 'left' && conflict.left.sha === null) ||
-          (choice.kind === 'right' && conflict.right.sha === null)
-        ) {
-          headers['X-Artifact-Delete'] = 'true';
-        }
-        const response = await fetch(`/api/files/${file.id}/resolve`, {
-          method: 'POST',
-          credentials: 'same-origin',
-          headers,
-          body: resolvedTextForChoice(conflict, choice),
-        });
-        if (response.status === 403) {
-          const message = "You don't have permission to edit this file.";
-          showErrorToast(message);
-          throw new Error(message);
-        }
-        if (!response.ok) {
-          const message = await responseError(response, 'Could not resolve file conflict');
-          showErrorToast(message);
-          throw new Error(message);
-        }
-        const body = (await response.json()) as { seq: number; status: string };
-        setFiles((current) => updateFile(current, file.id, { versionSeq: body.seq, tombstoned: false }));
-        await loadFiles();
-        return body;
       },
       onMarkup: async (file) => {
         if (!sessionId) return;
@@ -1221,20 +1038,8 @@ export function FilesHub({
           throw err;
         }
       },
-      canManage: () => true,
     }),
-    [
-      channelId,
-      files,
-      filters.includeDeleted,
-      loadFiles,
-      onSeedChannelComposer,
-      replaceFile,
-      sessionId,
-      showMarkupNotice,
-      updateUrlParams,
-      workspaceId,
-    ],
+    [channelId, onSeedChannelComposer, sessionId, sharedCallbacks, showMarkupNotice, updateUrlParams, workspaceId],
   );
 
   const scopedFiles = useMemo(() => {
