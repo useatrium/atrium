@@ -2,6 +2,7 @@
 
 import '@testing-library/jest-dom/vitest';
 import { act, cleanup, fireEvent, screen } from '@testing-library/react';
+import { Text } from 'react-native';
 import type { ChatMessage } from '@atrium/surface-client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MessageActions, MessageActionSheet } from '../src/components/MessageActions';
@@ -20,6 +21,10 @@ vi.mock('expo-haptics', () => ({
 
 vi.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 }),
+}));
+
+vi.mock('@expo/vector-icons', () => ({
+  Ionicons: ({ name }: { name: string }) => <Text>{name}</Text>,
 }));
 
 type ActionTarget = ChatMessage & {

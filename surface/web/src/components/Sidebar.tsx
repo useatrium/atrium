@@ -1,4 +1,13 @@
-import { useEffect, useMemo, useCallback, useRef, useState, type FormEvent, type MouseEvent } from 'react';
+import {
+  useEffect,
+  useMemo,
+  useCallback,
+  useRef,
+  useState,
+  type CSSProperties,
+  type FormEvent,
+  type MouseEvent,
+} from 'react';
 import { api, type Channel } from '../api';
 import { MessageActionMenu, type MessageActionMenuState } from './MessageActionMenu';
 import { isTerminalSessionStatus, type QueueSyncState, type SessionListItem } from '@atrium/surface-client';
@@ -8,7 +17,24 @@ import { sessionsApi } from '../sessions/api';
 import { StatusChip } from '../sessions/SessionCard';
 import { Avatar } from './Avatar';
 import { Tooltip } from './a11y';
-import { BellIcon, BellOffIcon, FileIcon, GearIcon, LockIcon } from './icons';
+import {
+  ArchiveIcon,
+  ArchiveRestoreIcon,
+  BellIcon,
+  BellOffIcon,
+  FileIcon,
+  GearIcon,
+  LockIcon,
+  PinIcon,
+  PinOffIcon,
+} from './icons';
+import {
+  SIDEBAR_FALLBACK_WIDTH,
+  SIDEBAR_MAX_VW,
+  SIDEBAR_MIN_WIDTH,
+  sidebarSizing,
+  useSidebarWidth,
+} from '../sessions/useSessionPaneWidth';
 const SIDEBAR_GROUP_TITLE_CLASS = 'px-2 pb-1 text-2xs font-semibold uppercase tracking-wider text-fg-muted';
 const SIDEBAR_PANEL_CLASS = 'rounded-md border border-edge bg-surface-raised py-1';
 const SIDEBAR_SUBHEAD_CLASS = 'flex items-center justify-between px-3 pb-1 pt-1 text-2xs font-semibold text-fg-muted';
@@ -84,6 +110,12 @@ export function Sidebar({
   createChannelRequestSeq?: number;
   startDmRequestSeq?: number;
 }) {
+  const { width: sidebarWidth, resizing, startResize, resetWidth } = useSidebarWidth();
+  const sizing = sidebarSizing(sidebarWidth);
+  const sidebarMaxWidth =
+    typeof window === 'undefined'
+      ? SIDEBAR_FALLBACK_WIDTH
+      : Math.max(SIDEBAR_MIN_WIDTH, Math.round((window.innerWidth * SIDEBAR_MAX_VW) / 100));
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState('');
   const [privateChannel, setPrivateChannel] = useState(false);
@@ -191,6 +223,7 @@ export function Sidebar({
     const isDm = c.kind === 'dm' || c.kind === 'gdm';
     const label = isDm ? channelLabel(c, me.id) : c.name;
     const partner = isDm ? dmPartner(c, me.id) : null;
+    const isArchived = c.archivedAt != null;
     return (
       <li
         key={c.id}
@@ -208,6 +241,30 @@ export function Sidebar({
           <span className="truncate">{label}</span>
           {unreadBadge(c.id, active)}
         </button>
+        {onSetPinned && !isArchived && (
+          <Tooltip content={c.pinned ? `Unpin ${label}` : `Pin ${label}`}>
+            <button
+              type="button"
+              onClick={() => onSetPinned(c.id, !c.pinned)}
+              aria-label={c.pinned ? `Unpin ${label}` : `Pin ${label}`}
+              className="hidden shrink-0 px-1 py-1 text-xs text-fg-faint opacity-0 hover:text-fg-body group-hover:opacity-100 focus-visible:opacity-100 @[12rem]:block max-md:opacity-100 [@media(hover:none)]:opacity-100"
+            >
+              {c.pinned ? <PinOffIcon /> : <PinIcon />}
+            </button>
+          </Tooltip>
+        )}
+        {onSetArchived && (
+          <Tooltip content={isArchived ? `Unarchive ${label}` : `Archive ${label}`}>
+            <button
+              type="button"
+              onClick={() => onSetArchived(c.id, !isArchived)}
+              aria-label={isArchived ? `Unarchive ${label}` : `Archive ${label}`}
+              className="hidden shrink-0 px-1 py-1 text-xs text-fg-faint opacity-0 hover:text-fg-body group-hover:opacity-100 focus-visible:opacity-100 @[15.5rem]:block max-md:opacity-100 [@media(hover:none)]:opacity-100"
+            >
+              {isArchived ? <ArchiveRestoreIcon /> : <ArchiveIcon />}
+            </button>
+          </Tooltip>
+        )}
         <Tooltip content={c.muted ? `Unmute ${label}` : `Mute ${label}`}>
           <button
             type="button"
@@ -282,10 +339,28 @@ export function Sidebar({
         }`}
       />
       <nav
-        className={`fixed inset-y-0 left-0 z-40 flex w-72 max-w-[85vw] shrink-0 flex-col border-r border-edge bg-surface-raised shadow-2xl motion-safe:transition-transform motion-reduce:transition-none md:static md:z-auto md:w-56 md:max-w-none md:translate-x-0 md:bg-surface-raised md:shadow-none md:transition-none ${
+        className={`fixed inset-y-0 left-0 z-40 flex w-72 max-w-[85vw] shrink-0 flex-col border-r border-edge bg-surface-raised shadow-2xl motion-safe:transition-transform motion-reduce:transition-none md:relative md:z-auto md:w-(--sidebar-w) md:max-w-none md:translate-x-0 md:bg-surface-raised md:shadow-none md:transition-none ${
           isOpen ? 'translate-x-0' : '-translate-x-full'
-        }`}
+        } ${sizing.className}`}
+        style={{ '--sidebar-w': '224px', ...sizing.style } as CSSProperties}
       >
+        {/* biome-ignore lint/a11y/useSemanticElements: resizable pane separator uses a div for pointer capture and custom sizing. */}
+        <div
+          role="separator"
+          tabIndex={0}
+          aria-orientation="vertical"
+          aria-label="Resize sidebar"
+          aria-valuemin={SIDEBAR_MIN_WIDTH}
+          aria-valuemax={sidebarMaxWidth}
+          aria-valuenow={sidebarWidth ?? SIDEBAR_FALLBACK_WIDTH}
+          title="Drag to resize · double-click to reset"
+          data-testid="sidebar-resize-handle"
+          onPointerDown={startResize}
+          onDoubleClick={resetWidth}
+          className={`absolute inset-y-0 -right-0.5 z-20 w-1.5 cursor-col-resize touch-none transition-colors hover:bg-accent/50 max-md:hidden ${
+            resizing ? 'bg-accent/50' : ''
+          }`}
+        />
         <header className="flex h-12 shrink-0 items-center gap-2 border-b border-edge px-4">
           <span className="truncate text-sm font-bold tracking-tight text-fg">{workspaceName}</span>
           <span
@@ -298,7 +373,7 @@ export function Sidebar({
           </span>
         </header>
 
-        <div className="flex-1 overflow-y-auto px-2 py-3">
+        <div className="@container flex-1 overflow-y-auto px-2 py-3">
           <section>
             <h2 className={SIDEBAR_GROUP_TITLE_CLASS}>Workspace</h2>
             <div className={SIDEBAR_PANEL_CLASS}>
