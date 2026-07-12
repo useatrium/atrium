@@ -172,8 +172,8 @@ test('empty destinations, keyboard focus, and deterministic contrast have eviden
   const attention = page.getByRole('button', { name: /Attention$/ });
   await expectVisibleFocus(attention);
   await attention.press('Enter');
-  await expect(page.getByText("You're all caught up.")).toBeVisible();
-  await expectComputedContrast(page.getByText("You're all caught up."), 4.5);
+  await expect(page.getByText("You're all caught up")).toBeVisible();
+  await expectComputedContrast(page.getByText("You're all caught up"), 4.5);
   await attachScreenshot(page, testInfo, 'empty-attention');
 
   await page.getByRole('button', { name: 'Agents', exact: true }).click();
