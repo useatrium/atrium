@@ -159,35 +159,40 @@ Because the sandbox lets nothing connect into it, a small program on the host
 machine (the **node daemon**) does the copying in both directions:
 
 ```
-            Humans  (web · desktop · mobile)
-                                │  REST + live updates
-       ┌────────────────────────▼───────────────────────┐
-       │                 Atrium Server                  │
-       │       durable product · keeps what lasts       │
-       │  · message log (chat, sessions, turns)         │
-       │  · versioned file store (S3 + index)           │
-       └────────────▲───────────────────────┬───────────┘
-                    │ results + files       │ start session
-       ┌────────────┴───────────────────────▼───────────┐
-       │        node daemon  ·  host-side bridge        │
-       │    capture files out  ·  hydrate / sync in     │
-       └────────────▲───────────────────────┬───────────┘
-                    │ read changes          │ write session files
-       ┌────────────┴───────────────────────▼───────────┐
-       │     Centaur sandbox  (nothing connects in)     │
-       │  ┌──────────────────────────────────────────┐  │
-       │  │ harness  (Claude Code · Codex · amp · …) │  │
-       │  │ ~        = captured workspace            │  │
-       │  │ ~/repos  = Git-managed working repos     │  │
-       │  │ /atrium  = read-only team context        │  │
-       │  └─────────────────────┬────────────────────┘  │
-       └────────────────────────┼───────────────────────┘
-                                │  host proxy adds credentials
-                                ▼
-       ┌────────────────────────────────────────────────┐
-       │                 Model provider                 │
-       │         (keys never enter the sandbox)         │
-       └────────────────────────────────────────────────┘
+               Humans  (web · desktop · mobile)
+                                   │  REST + live updates
+       ┌───────────────────────────▼──────────────────────────┐
+       │                    Atrium Server                     │
+       │          durable product · keeps what lasts          │
+       │  · message log (chat, sessions, turns)               │
+       │  · versioned file store (S3 + index)                 │
+       └─────────────▲──────────────────────────┬─────────────┘
+                     │ results + files          │ start session
+       ┌─────────────┴──────────────────────────▼─────────────┐
+       │           node daemon  ·  host-side bridge           │
+       │    capture out  ·  hydrate / sync in  (~seconds)     │
+       └─────────────▲──────────────────────────┬─────────────┘
+                     │ read changes             │ write session files
+       ┌─────────────┴──────────────────────────▼─────────────┐
+       │        Centaur sandbox  (nothing connects in)        │
+       │ ┌──────────────────────────────────────────────────┐ │
+       │ │     harness  (Claude Code · Codex · amp · …)     │ │
+       │ │ HOME ~  flat-home workspace                      │ │
+       │ │ RW  shared/…  scratch/<session>/                 │ │
+       │ │     daemon capture ↔ hydrate (~sec)              │ │
+       │ │ RW  ~/repos/<owner>/<repo>  (Git)                │ │
+       │ │ RO  ~/context  chat · sessions · channels        │ │
+       │ │     node append-live (~sec) · RO in each pod     │ │
+       │ │ —  /tmp · caches · node_modules                  │ │
+       │ │     local only · not captured                    │ │
+       │ └─────────────────────────┬────────────────────────┘ │
+       └───────────────────────────┼──────────────────────────┘
+                                   │  host proxy adds credentials
+                                   ▼
+       ┌──────────────────────────────────────────────────────┐
+       │                    Model provider                    │
+       │            (keys never enter the sandbox)            │
+       └──────────────────────────────────────────────────────┘
 ```
 
 ### What Atrium keeps
@@ -214,25 +219,23 @@ Atrium stores each kind of thing the way that suits it:
 
 ### The agent's workspace
 
-Inside the sandbox the agent's home directory is the captured workspace. Git
-repositories are mounted under `~/repos/<owner>/<repo>` and are handled by Git,
-while non-repo deliverables created in the home directory are captured into
-Atrium's artifact ledger and scoped by path:
+Inside the sandbox (flat-home layout), the agent's **home directory is the
+workspace** (`~` → `/home/agent`). Paths are typed by mode and by who moves the
+bytes — they are not one big shared disk across pods:
 
-- `scratch/<session-id>/...` is private durable scratch for that session.
-- `shared/global/...` is workspace-wide shared work.
-- `shared/apps/...` contains static app artifacts and publishable app bundles.
-- `shared/channels/<channel-id>/...` is channel-scoped shared work.
+| Path | Mode | What it is | How it stays current |
+|---|---|---|---|
+| `scratch/<session-id>/…` | **RW** | session-private durable scratch | captured into the artifact ledger |
+| `shared/global/…`, `shared/apps/…` | **RW** | workspace-wide shared work and publishable app bundles | node daemon **captures** edits and **hydrates** new ledger versions into other sessions within about a second or two |
+| `shared/channels/<id>/…` | **RW** on the active channel; other readable channels are mostly **RO** (write to deliver into that channel) | channel-scoped shared work | same capture ↔ hydrate path through the ledger |
+| `~/repos/<owner>/<repo>` | **RW** working tree | code checkouts | **Git** owns history; not full-tree artifact capture (WIP may be patch-snapshotted) |
+| `~/context` | **RO** | team chat, sibling session transcripts/summaries, channel roster | materialized on the **host** and mounted read-only; mostly append-only, refreshed within seconds and shared into each sandbox on the node |
+| `/tmp`, caches, `node_modules`, `.venv`, … | local | noisy / ephemeral | **not** captured, not shared across pods |
 
-The active channel root is writable for the session. Other public channels that a
-user can read may be listed and previewed, but they are read-only from that
-session. Noisy folders (`node_modules`, `.venv`, caches, checked-out Git repos)
-stay out of the artifact ledger; source code is synchronized through Git, not
-artifact capture.
-
-The agent also gets `/atrium`, a read-only view of team context: chat history, other
-agents' transcripts, a list of available files, and a search tool. It's prepared
-once per machine and shared by every sandbox on it.
+So: shared artifacts and team context stay current **via the host-side daemon**
+(continuous, on the order of seconds) — not by agents opening ports or mounting
+a single NFS-style volume. There is still a short stale-read window between
+refreshes.
 
 ### Copying and merging, from outside the sandbox
 
@@ -244,7 +247,7 @@ Since nothing can connect into a sandbox, the host-side node daemon moves the da
 - **In:** it hydrates the session-visible artifact roots from the ledger. If the
   agent also changed a shared file, the two versions are recorded and flagged for
   resolution instead of silently overwriting each other. Team context stays current
-  by being added to the read-only `/atrium` view.
+  by append/materialization into the read-only `~/context` mount.
 
 ### Conflicts don't block
 
