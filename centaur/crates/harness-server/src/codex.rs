@@ -1037,7 +1037,7 @@ mod tests {
         assert_eq!(value[0]["type"], "text");
         assert_eq!(
             value[0]["text"],
-            "<context>\n[atrium context]\nfrom: Alice Basin (human - driver)\n</context>"
+            "<context>\n[atrium context]\nfrom: Alice Basin (human - driver)\n</context>\n\n"
         );
         assert_eq!(value[1]["type"], "text");
         assert_eq!(value[1]["text"], "hello");

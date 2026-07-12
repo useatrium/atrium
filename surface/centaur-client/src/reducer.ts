@@ -888,7 +888,7 @@ function reduceCodexItemCompleted(
 
   if (event.item.type === "userMessage") {
     const raw = typeof event.item.text === "string" ? event.item.text : codexContentText(event.item);
-    const text = stripInjectedContext(raw);
+    const text = stripInjectedContext(raw, Array.isArray(event.item.content));
     if (text) {
       upsertUserMessage(
         state,
@@ -1242,8 +1242,8 @@ const ATRIUM_CONTEXT_MARKER = "[atrium context]";
 const CONTEXT_OPEN = "<context>";
 const CONTEXT_CLOSE = "</context>";
 
-function stripInjectedContext(raw: string): string {
-  const steerStripped = stripSteerContextPrefix(raw);
+function stripInjectedContext(raw: string, canMergeContextPart = false): string {
+  const steerStripped = canMergeContextPart ? stripSteerContextPrefix(raw) : null;
   let end = raw.length;
   const text = steerStripped ?? raw;
   end = text.length;
@@ -1273,14 +1273,35 @@ function stripSteerContextPrefix(raw: string): string | null {
 }
 
 function isSteerContextBlock(text: string): boolean {
+  return parseSteerContextBlock(text) !== null;
+}
+
+interface ParsedSteerContextBlock {
+  you: string | null;
+  channel: string | null;
+  channelId: string | null;
+  thread: string | null;
+}
+
+function parseSteerContextBlock(text: string): ParsedSteerContextBlock | null {
   const normalized = text.replace(/\r\n/g, "\n").trim();
-  if (!normalized.startsWith(ATRIUM_CONTEXT_MARKER)) return false;
+  if (!normalized.startsWith(ATRIUM_CONTEXT_MARKER)) return null;
   const lines = normalized.split("\n").map((line) => line.trimEnd());
-  return (
-    lines[0] === ATRIUM_CONTEXT_MARKER &&
-    lines.some((line) => line.startsWith("from: ")) &&
-    lines.some((line) => line.startsWith("sent: "))
-  );
+  if (
+    lines[0] !== ATRIUM_CONTEXT_MARKER ||
+    !lines.some((line) => line.startsWith("from: ")) ||
+    !lines.some((line) => line.startsWith("sent: "))
+  ) return null;
+  const value = (prefix: string): string | null =>
+    lines.find((line) => line.startsWith(prefix))?.slice(prefix.length).trim() || null;
+  const channelValue = value("channel: ")?.replace(/^#/, "") ?? null;
+  const channelMatch = channelValue ? /^(.*?) \(id: ([^)]+)\)$/.exec(channelValue) : null;
+  return {
+    you: value("you: "),
+    channel: channelMatch ? channelMatch[1]!.trim() || null : channelValue,
+    channelId: channelMatch ? channelMatch[2]!.trim() || null : null,
+    thread: value("thread: "),
+  };
 }
 
 function firstBlankLineIndex(text: string): { index: number; end: number } | null {

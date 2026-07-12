@@ -791,7 +791,7 @@ function projectCodexCompletedItem(
   driver: SessionRecordDriver | null,
 ): void {
   if (item.type === 'userMessage') {
-    const projected = projectUserMessageEcho(state, codexItemText(item));
+    const projected = projectUserMessageEcho(state, codexItemText(item), Array.isArray(item.content));
     if (!projected) return;
     const { text, author } = projected;
     if (!text) return;
@@ -1307,8 +1307,9 @@ function codexToolName(item: CodexItem): string {
 function projectUserMessageEcho(
   state: MutableProjectionState,
   raw: string,
+  canMergeContextPart: boolean,
 ): { text: string; author?: JsonObject } | null {
-  const prefixed = stripSteerContextPrefix(raw);
+  const prefixed = canMergeContextPart ? stripSteerContextPrefix(raw) : null;
   if (prefixed && prefixed.text.length === 0) {
     state.pendingUserMessageAuthor = authorMetaFromContext(prefixed.context);
     return null;

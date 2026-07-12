@@ -489,7 +489,9 @@ mod linux_daemon {
     use centaur_node_sync::feeds::{ArtifactFeed, AtriumFeed};
     use centaur_node_sync::fs_linux;
     use centaur_node_sync::http_client::HttpAtriumClient;
-    use centaur_node_sync::materializer::{materialize_changed_sessions, materialize_channel_docs};
+    use centaur_node_sync::materializer::{
+        materialize_changed_sessions, materialize_channel_docs, write_mount_readme,
+    };
     use centaur_node_sync::overlay::RawEntry;
     use centaur_node_sync::overlay_mount::{
         OverlayMountPlan, READY_MARKER_FILE, mount_overlay, plan_overlay_mount,
@@ -1037,6 +1039,17 @@ mod linux_daemon {
                         };
                         let session = session_config_from_discovered(&discovered, &mounted);
                         mounted_overlays.insert(discovered.session.clone(), mounted);
+                        let first_seen = !states.contains_key(&session.session);
+                        if first_seen {
+                            let atrium_root =
+                                super::scoped_atrium_root(&global.atrium_root, &session.session);
+                            if let Err(error) = write_mount_readme(&atrium_root) {
+                                eprintln!(
+                                    "session {}: seed Atrium context README: {error}",
+                                    session.session
+                                );
+                            }
+                        }
                         if watcher.is_enabled()
                             && (wip_remounted || !watched_sessions.contains(&session.session))
                         {
@@ -1046,7 +1059,6 @@ mod linux_daemon {
                                 just_attached_sessions.insert(session.session.clone());
                             }
                         }
-                        let first_seen = !states.contains_key(&session.session);
                         if first_seen {
                             eprintln!(
                                 "session {}: scan upper={}",
@@ -1347,6 +1359,16 @@ mod linux_daemon {
         refresh_all_channels: bool,
     ) {
         let atrium_root = super::scoped_atrium_root(&global.atrium_root, &session.session);
+        if refresh_all_channels || !dirty_channel_ids.is_empty() {
+            let only = if refresh_all_channels {
+                None
+            } else {
+                Some(dirty_channel_ids)
+            };
+            if let Err(e) = materialize_channel_docs(client, &atrium_root, only) {
+                eprintln!("atrium channel materializer: {e}");
+            }
+        }
         match materialize_changed_sessions(
             client,
             &atrium_root,
@@ -1361,16 +1383,6 @@ mod linux_daemon {
                 state.atrium_cursor = next;
             }
             Err(e) => eprintln!("atrium materializer: {e}"),
-        }
-        if refresh_all_channels || !dirty_channel_ids.is_empty() {
-            let only = if refresh_all_channels {
-                None
-            } else {
-                Some(dirty_channel_ids)
-            };
-            if let Err(e) = materialize_channel_docs(client, &atrium_root, only) {
-                eprintln!("atrium channel materializer: {e}");
-            }
         }
     }
 
@@ -2585,6 +2597,11 @@ mod linux_daemon {
         client: &HttpAtriumClient,
     ) {
         let atrium_root = super::scoped_atrium_root(&global.atrium_root, &session.session);
+        if let Err(e) =
+            centaur_node_sync::materializer::materialize_channel_docs(client, &atrium_root, None)
+        {
+            eprintln!("atrium channel materializer: {e}");
+        }
         match centaur_node_sync::materialize_once(client, &atrium_root, &state.atrium_cursor) {
             Ok(next) => {
                 if next != state.atrium_cursor {
@@ -2593,11 +2610,6 @@ mod linux_daemon {
                 state.atrium_cursor = next;
             }
             Err(e) => eprintln!("atrium materializer: {e}"),
-        }
-        if let Err(e) =
-            centaur_node_sync::materializer::materialize_channel_docs(client, &atrium_root, None)
-        {
-            eprintln!("atrium channel materializer: {e}");
         }
     }
 
