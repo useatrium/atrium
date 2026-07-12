@@ -94,6 +94,36 @@ export interface SessionRouteDeps extends AppMutationContext {
   requireSessionAccess(req: FastifyRequest, reply: FastifyReply): Promise<UserRef | null>;
 }
 
+async function validateDirectGitHubRepos(
+  req: FastifyRequest,
+  reply: FastifyReply,
+  validate: () => Promise<{ inaccessible: string[] }>,
+  failureLog: string,
+) {
+  try {
+    const { inaccessible } = await validate();
+    if (inaccessible.length > 0) {
+      return reply.code(409).send({
+        error: 'github_repo_inaccessible',
+        message: `Connected GitHub credentials cannot access: ${inaccessible.join(', ')}`,
+        repos: inaccessible,
+      });
+    }
+  } catch (err) {
+    if (err instanceof IronControlRequestError && err.status === 409) {
+      return reply.code(409).send({
+        error: 'github_repo_access_unverified',
+        message: 'Reconnect GitHub before starting a session with private repositories.',
+      });
+    }
+    req.log.warn({ err }, failureLog);
+    return reply.code(502).send({
+      error: 'github_repo_validation_failed',
+      message: 'Could not validate GitHub repository access.',
+    });
+  }
+}
+
 export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDeps): void {
   const {
     hub,
@@ -240,56 +270,26 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
             message: 'Reconnect GitHub before starting a session with private repositories.',
           });
         }
-        try {
-          const validation = await ironControl.validateGitHubBrokerRepos(brokerCredentialId, privateRepos);
-          if (validation.inaccessible.length > 0) {
-            return reply.code(409).send({
-              error: 'github_repo_inaccessible',
-              message: `Connected GitHub credentials cannot access: ${validation.inaccessible.join(', ')}`,
-              repos: validation.inaccessible,
-            });
-          }
-        } catch (err) {
-          if (err instanceof IronControlRequestError && err.status === 409) {
-            return reply.code(409).send({
-              error: 'github_repo_access_unverified',
-              message: 'Reconnect GitHub before starting a session with private repositories.',
-            });
-          }
-          req.log.warn({ err }, 'github broker repo access validation failed');
-          return reply.code(502).send({
-            error: 'github_repo_validation_failed',
-            message: 'Could not validate GitHub repository access.',
-          });
-        }
+        const validationError = await validateDirectGitHubRepos(
+          req,
+          reply,
+          () => ironControl.validateGitHubBrokerRepos(brokerCredentialId, privateRepos),
+          'github broker repo access validation failed',
+        );
+        if (validationError) return validationError;
       }
       if (privateRepoRequested && githubConnection?.token_kind === 'pat') {
         const staticSecretId =
           metadataString(githubConnection.metadata, 'staticSecretId') ??
           metadataString(githubConnection.metadata, 'staticSecretForeignId') ??
           githubPatSecretForeignId(githubConnection.workspace_id, githubConnection.user_id);
-        try {
-          const validation = await ironControl.validateGitHubStaticSecretRepos(staticSecretId, privateRepos);
-          if (validation.inaccessible.length > 0) {
-            return reply.code(409).send({
-              error: 'github_repo_inaccessible',
-              message: `Connected GitHub credentials cannot access: ${validation.inaccessible.join(', ')}`,
-              repos: validation.inaccessible,
-            });
-          }
-        } catch (err) {
-          if (err instanceof IronControlRequestError && err.status === 409) {
-            return reply.code(409).send({
-              error: 'github_repo_access_unverified',
-              message: 'Reconnect GitHub before starting a session with private repositories.',
-            });
-          }
-          req.log.warn({ err }, 'github PAT repo access validation failed');
-          return reply.code(502).send({
-            error: 'github_repo_validation_failed',
-            message: 'Could not validate GitHub repository access.',
-          });
-        }
+        const validationError = await validateDirectGitHubRepos(
+          req,
+          reply,
+          () => ironControl.validateGitHubStaticSecretRepos(staticSecretId, privateRepos),
+          'github PAT repo access validation failed',
+        );
+        if (validationError) return validationError;
       }
       if (
         privateRepoRequested &&
