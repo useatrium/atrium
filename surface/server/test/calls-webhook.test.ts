@@ -7,6 +7,7 @@ import type { CallTokenService } from '../src/livekit.js';
 import { registerCallRoutes } from '../src/routes/calls.js';
 import { WsHub, type HubSocket } from '../src/hub.js';
 import { noopVoipSender } from '../src/voip.js';
+import { getOrCreateDm } from '../src/events.js';
 import { createTestPool, seedFixture, seedMember, truncateAll, type Fixture } from './helpers.js';
 
 const livekitApiKey = 'testkey';
@@ -108,12 +109,16 @@ async function postWebhook(
   });
 }
 
-async function seedCall(userIds: string[], status: 'ringing' | 'active' = 'active'): Promise<string> {
+async function seedCall(
+  userIds: string[],
+  status: 'ringing' | 'active' = 'active',
+  channelId: string = fx.channelId,
+): Promise<string> {
   const callId = randomUUID();
   await pool.query(
     `INSERT INTO calls (id, workspace_id, channel_id, initiator_id, room, status)
      VALUES ($1, $2, $3, $4, $5, $6)`,
-    [callId, fx.workspaceId, fx.channelId, userIds[0]!, `call:${callId}`, status],
+    [callId, fx.workspaceId, channelId, userIds[0]!, `call:${callId}`, status],
   );
   for (const userId of userIds) {
     await pool.query(
@@ -162,11 +167,16 @@ describe('LiveKit call webhook', () => {
   it('accepts a signed room_finished webhook, ends a ringing call, and is idempotent', async () => {
     const current = await startApp();
     const benId = await seedMember(pool, fx.workspaceId, 'ben', 'Ben');
+    const { channel } = await getOrCreateDm(pool, {
+      workspaceId: fx.workspaceId,
+      userIdA: fx.userId,
+      userIdB: benId,
+    });
     const aliceSocket = fakeSocket();
     const benSocket = fakeSocket();
     hub.addClient(aliceSocket, { id: fx.userId, handle: 'alice', displayName: 'Alice' });
     hub.addClient(benSocket, { id: benId, handle: 'ben', displayName: 'Ben' });
-    const callId = await seedCall([fx.userId], 'ringing');
+    const callId = await seedCall([fx.userId], 'ringing', channel.id);
     const body = JSON.stringify({ event: 'room_finished', room: webhookRoom(callId) });
 
     const res = await postWebhook(current, body);
@@ -180,11 +190,29 @@ describe('LiveKit call webhook', () => {
     expect((await loadCallState(callId)).endedAt).toBeTruthy();
     expect(frames(aliceSocket, 'call.ended', callId)).toHaveLength(1);
     expect(frames(benSocket, 'call.ended', callId)).toHaveLength(1);
+    const events = await pool.query<{
+      actor_id: string;
+      payload: { callId: string; initiatorId: string; startedAt: string; answered: boolean };
+    }>(
+      `SELECT actor_id, payload
+       FROM events
+       WHERE type = 'call.ended' AND payload->>'callId' = $1`,
+      [callId],
+    );
+    expect(events.rows).toHaveLength(1);
+    expect(events.rows[0]).toMatchObject({
+      actor_id: fx.userId,
+      payload: { callId, initiatorId: fx.userId, answered: false },
+    });
+    expect(events.rows[0]!.payload.startedAt).toEqual(expect.any(String));
 
     const retry = await postWebhook(current, body);
     expect(retry.statusCode).toBe(200);
     expect(frames(aliceSocket, 'call.ended', callId)).toHaveLength(1);
     expect(frames(benSocket, 'call.ended', callId)).toHaveLength(1);
+    expect(
+      await pool.query("SELECT id FROM events WHERE type = 'call.ended' AND payload->>'callId' = $1", [callId]),
+    ).toMatchObject({ rowCount: 1 });
   });
 
   it('accepts signed participant_left webhooks and ends the call when none remain', async () => {
