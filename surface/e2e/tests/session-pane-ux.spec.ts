@@ -7,26 +7,18 @@ import { expect, test, type Page } from '@playwright/test';
 import { Pool } from 'pg';
 import { channelId, createTestChannel, login, unique } from './helpers.js';
 
-const e2eDatabaseUrl =
-  process.env.E2E_DATABASE_URL ?? 'postgres://atrium:atrium@localhost:5433/atrium_e2e';
+const e2eDatabaseUrl = process.env.E2E_DATABASE_URL ?? 'postgres://atrium:atrium@localhost:5433/atrium_e2e';
 
 /** Seed a running session bound to the channel (mirrors chat.spec's helper). */
-async function injectSession(args: {
-  handle: string;
-  channelId: string;
-  title: string;
-}): Promise<string> {
+async function injectSession(args: { handle: string; channelId: string; title: string }): Promise<string> {
   const pool = new Pool({ connectionString: e2eDatabaseUrl });
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const user = await client.query<{ id: string }>('SELECT id FROM users WHERE handle = $1', [
-      args.handle,
+    const user = await client.query<{ id: string }>('SELECT id FROM users WHERE handle = $1', [args.handle]);
+    const channel = await client.query<{ workspace_id: string }>('SELECT workspace_id FROM channels WHERE id = $1', [
+      args.channelId,
     ]);
-    const channel = await client.query<{ workspace_id: string }>(
-      'SELECT workspace_id FROM channels WHERE id = $1',
-      [args.channelId],
-    );
     if (!user.rows[0] || !channel.rows[0]) throw new Error('missing e2e user or channel');
     const userId = user.rows[0].id;
     const workspaceId = channel.rows[0].workspace_id;
@@ -70,7 +62,7 @@ function sseFrame(event: string, eventId: number, data: Record<string, unknown>)
   return `event: ${event}\ndata: ${JSON.stringify({ ...data, event_id: eventId })}\n\n`;
 }
 
-async function openSeededSession(page: Page, prefix: string): Promise<void> {
+async function openSeededSession(page: Page, prefix: string, includeWork = false): Promise<void> {
   const room = await createTestChannel(prefix);
   const handle = unique(prefix);
   await login(page, handle, 'Ux Tester');
@@ -90,7 +82,25 @@ async function openSeededSession(page: Page, prefix: string): Promise<void> {
           execution_id: 'exe_e2e_ux',
           atrium_ts: stamp,
         }) +
-        sseFrame('amp_raw_event', 2, {
+        (includeWork
+          ? sseFrame('amp_raw_event', 2, {
+              type: 'assistant',
+              uuid: 'assistant-focus-1',
+              message: {
+                id: 'message-focus-1',
+                content: [
+                  {
+                    id: 'tool-focus-1',
+                    type: 'tool_use',
+                    name: 'Bash',
+                    input: { command: 'echo focus-mode' },
+                  },
+                ],
+              },
+              atrium_ts: stamp,
+            })
+          : '') +
+        sseFrame('amp_raw_event', includeWork ? 3 : 2, {
           type: 'item.completed',
           item: {
             id: 'steer-1',
@@ -105,6 +115,25 @@ async function openSeededSession(page: Page, prefix: string): Promise<void> {
   await expect(page.getByTestId('user-steer')).toBeVisible({ timeout: 15_000 });
 }
 
+test('focus mode hides agent work and the persisted toggle restores it', async ({ page }) => {
+  await openSeededSession(page, 'transcript-focus', true);
+
+  await expect(page.getByTestId('tool-card')).toHaveCount(0);
+  const chip = page.getByTestId('hidden-work-chip');
+  await expect(chip).toHaveText(/1 work step/);
+
+  await chip.click();
+  await expect(page.getByTestId('tool-card')).toBeVisible();
+
+  const hideWork = page.getByRole('button', { name: 'Hide agent work' });
+  await hideWork.click();
+  await page.getByRole('button', { name: 'Show agent work' }).click();
+  await page.reload();
+
+  await expect(page.getByTestId('tool-card')).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole('button', { name: 'Hide agent work' })).toHaveAttribute('aria-pressed', 'true');
+});
+
 test('transcript turns show a wall-clock timestamp on hover', async ({ page }) => {
   await openSeededSession(page, 'turntime');
 
@@ -116,9 +145,7 @@ test('transcript turns show a wall-clock timestamp on hover', async ({ page }) =
   await expect(time).toHaveText(/\d{1,2}:\d{2}/);
 });
 
-test('session pane resizes by dragging its left edge and the width persists across reload', async ({
-  page,
-}) => {
+test('session pane resizes by dragging its left edge and the width persists across reload', async ({ page }) => {
   await openSeededSession(page, 'resize');
 
   const handle = page.getByTestId('pane-resize-handle');
@@ -141,7 +168,10 @@ test('session pane resizes by dragging its left edge and the width persists acro
   // Persisted: a fresh load opens at the dragged width.
   await page.reload();
   await expect(page.getByTestId('user-steer')).toBeVisible({ timeout: 15_000 });
-  const reloaded = (await page.locator('aside').filter({ has: page.getByTestId('pane-resize-handle') }).boundingBox())!;
+  const reloaded = (await page
+    .locator('aside')
+    .filter({ has: page.getByTestId('pane-resize-handle') })
+    .boundingBox())!;
   expect(Math.round(reloaded.width)).toBe(Math.round(after.width));
 });
 

@@ -46,9 +46,17 @@ export interface AnthropicToolUseBlock {
   [key: string]: unknown;
 }
 
+export interface AnthropicThinkingBlock {
+  type: "thinking";
+  thinking?: string;
+  text?: string;
+  [key: string]: unknown;
+}
+
 export type AnthropicMessageBlock =
   | AnthropicTextBlock
   | AnthropicToolUseBlock
+  | AnthropicThinkingBlock
   | ({ type: string } & JsonObject);
 
 export interface AnthropicMessage {
