@@ -232,10 +232,15 @@ export function SessionCard({
 
       {/* Every token names itself ("by Maya Chen · codex agent"), so the row
           reads as a sentence instead of a string of unlabelled ids. One line,
-          always: the free-text tokens shrink and ellipsize rather than wrap the
-          card to a second row on a phone. */}
+          always — and when the line runs out it gives up space in order of
+          importance, not in whatever order flexbox finds convenient:
+            1. the repo drops out entirely below `sm` (a repo ellipsized to
+               "meri…" is pure noise, and it's still on the card and in the pane)
+            2. then the harness boilerplate ellipsizes
+            3. the author and the start time never shrink at all.
+          The author is the headline here; it is the last thing that may go. */}
       <div className="mt-1 flex items-center gap-x-2 overflow-hidden whitespace-nowrap text-2xs text-fg-muted">
-        <span className="min-w-0 truncate">by {session.spawnerName ?? session.spawnedBy}</span>
+        <span className="shrink-0">by {session.spawnerName ?? session.spawnedBy}</span>
         {session.driverId !== null && session.driverId !== session.spawnedBy && (
           <>
             <span className="shrink-0 text-fg-faint">·</span>
@@ -243,11 +248,12 @@ export function SessionCard({
           </>
         )}
         <span className="shrink-0 text-fg-faint">·</span>
-        <span className="shrink-0">{session.harness} agent</span>
+        {/* Long, low-information boilerplate — it yields before any name does. */}
+        <span className="min-w-0 shrink-[3] truncate">{session.harness} agent</span>
         {session.repo && (
           <>
-            <span className="shrink-0 text-fg-faint">·</span>
-            <span className="min-w-0 truncate" title={repoBranchTitle(session.repo, session.branch)}>
+            <span className="hidden shrink-0 text-fg-faint sm:inline">·</span>
+            <span className="hidden min-w-0 truncate sm:inline" title={repoBranchTitle(session.repo, session.branch)}>
               {repoBranchLabel(session.repo, session.branch)}
             </span>
           </>
