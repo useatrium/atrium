@@ -32,7 +32,7 @@ async function armQuestion(page: Page, prefix: string) {
   // its history fetch rather than a WS fanout.
   await page.goto('/');
   await openChannel(page, room);
-  await expect(page.getByText(injected.questionText).first()).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText(injected.questionText).first()).toBeVisible();
   return { ...injected, displayName };
 }
 
@@ -118,7 +118,7 @@ test('the answer posts when the window elapses and leaves a trace a cold load st
   // trace.
   await page.goto(`/s/${sessionId}/pane`);
   const paneTrace = page.getByTestId('question-answered-trace').first();
-  await expect(paneTrace).toBeVisible({ timeout: 15_000 });
+  await expect(paneTrace).toBeVisible();
   await expect(paneTrace).toContainText(displayName);
   await expect(paneTrace).toContainText('Fast');
 });

@@ -145,8 +145,8 @@ test('session transcript block copy actions show success and write expected clip
   await page.goto(`/s/${sessionId}`);
   const transcriptText = page.getByText(entryText, { exact: true });
   const transcriptRow = page.locator(`[data-entry-handle="${entryHandle}"]`);
-  await expect(transcriptRow).toBeVisible({ timeout: 15_000 });
-  await expect(transcriptText).toBeVisible({ timeout: 15_000 });
+  await expect(transcriptRow).toBeVisible();
+  await expect(transcriptText).toBeVisible();
   await transcriptRow.hover({ position: { x: 12, y: 12 } });
 
   await transcriptRow.getByRole('button', { name: 'Copy block text' }).click();

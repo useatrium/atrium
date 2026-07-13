@@ -137,8 +137,8 @@ test('popout renders the lean pane, folds the stream, tracks unseen output, and 
   await page.goto(`/s/${sessionId}/pane`);
 
   // Lean standalone page: pane content, no channel shell around it.
-  await expect(page.getByTestId('session-pane-page')).toBeVisible({ timeout: 15_000 });
-  await expect(page.getByTestId('user-steer')).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId('session-pane-page')).toBeVisible();
+  await expect(page.getByTestId('user-steer')).toBeVisible();
   await expect(page.getByText('Channels', { exact: true })).toHaveCount(0);
   // Full-app escape and watcher count live behind the overflow / details now.
   await page.getByRole('button', { name: 'Agent actions' }).click();
@@ -148,7 +148,7 @@ test('popout renders the lean pane, folds the stream, tracks unseen output, and 
   // Presence over the real WS: this popout counts as a watcher (details popover).
   await page.getByRole('button', { name: 'Agent actions' }).click();
   await page.getByRole('button', { name: 'Session details & scope' }).click();
-  await expect(page.getByTestId('session-details')).toContainText('Watching', { timeout: 15_000 });
+  await expect(page.getByTestId('session-details')).toContainText('Watching');
   await page.keyboard.press('Escape');
 
   // The replayed artifact frame is unseen output: strip accent + title ●.
@@ -168,19 +168,16 @@ test('popout renders the lean pane, folds the stream, tracks unseen output, and 
   expect((await accepted).status()).toBe(202);
 
   await expect
-    .poll(
-      async () => {
-        const requests = await centaurRequests(request);
-        return requests.some(
-          (entry) =>
-            entry.method === 'POST' &&
-            entry.path.includes(threadKey) &&
-            /\/messages$/.test(entry.path) &&
-            messageText(entry.body).includes(steerText),
-        );
-      },
-      { timeout: 10_000 },
-    )
+    .poll(async () => {
+      const requests = await centaurRequests(request);
+      return requests.some(
+        (entry) =>
+          entry.method === 'POST' &&
+          entry.path.includes(threadKey) &&
+          /\/messages$/.test(entry.path) &&
+          messageText(entry.body).includes(steerText),
+      );
+    })
     .toBe(true);
 });
 
@@ -212,8 +209,8 @@ test('popout stop turn forwards an interrupt without cancelling the session', as
   });
 
   await page.goto(`/s/${sessionId}/pane`);
-  await expect(page.getByTestId('session-pane-page')).toBeVisible({ timeout: 15_000 });
-  await expect(page.getByPlaceholder(/Steer the agent/)).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId('session-pane-page')).toBeVisible();
+  await expect(page.getByPlaceholder(/Steer the agent/)).toBeVisible();
 
   const stopAccepted = page.waitForResponse(
     (response) =>
@@ -223,16 +220,12 @@ test('popout stop turn forwards an interrupt without cancelling the session', as
   expect((await stopAccepted).status()).toBe(202);
 
   await expect
-    .poll(
-      async () => {
-        const requests = await centaurRequests(request);
-        return requests.some(
-          (entry) =>
-            entry.method === 'POST' && entry.path === `/api/session/${encodeURIComponent(threadKey)}/interrupt`,
-        );
-      },
-      { timeout: 10_000 },
-    )
+    .poll(async () => {
+      const requests = await centaurRequests(request);
+      return requests.some(
+        (entry) => entry.method === 'POST' && entry.path === `/api/session/${encodeURIComponent(threadKey)}/interrupt`,
+      );
+    })
     .toBe(true);
 
   await expect(page.getByPlaceholder(/Steer the agent/)).toBeVisible();

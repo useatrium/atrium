@@ -120,10 +120,8 @@ async function gotoInjectedTranscript(page: Page): Promise<{
   });
 
   await page.goto(`/s/${injected.sessionId}`);
-  await expect(page.locator(`[data-entry-handle="${injected.entryHandle}"]`)).toBeVisible({
-    timeout: 15_000,
-  });
-  await expect(page.getByText(injected.entryText, { exact: true })).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator(`[data-entry-handle="${injected.entryHandle}"]`)).toBeVisible();
+  await expect(page.getByText(injected.entryText, { exact: true })).toBeVisible();
   return injected;
 }
 

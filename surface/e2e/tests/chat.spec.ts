@@ -374,8 +374,8 @@ test('offline send survives reload and confirms once', async ({ page, context })
   await expect(confirmedRowsWithText(page, text)).toHaveCount(0);
 
   await context.setOffline(false);
-  await expect(page.getByRole('status', { name: 'connection: open' })).toBeVisible({ timeout: 15_000 });
-  await expect(confirmedRowsWithText(page, text)).toHaveCount(1, { timeout: 15_000 });
+  await expect(page.getByRole('status', { name: 'connection: open' })).toBeVisible();
+  await expect(confirmedRowsWithText(page, text)).toHaveCount(1);
   await expect(timelineText(page, text)).toHaveCount(1);
 });
 
@@ -400,7 +400,7 @@ test('lost POST response retries with same client id and confirms once', async (
   const text = unique('lost-response');
   await sendMessage(page, text, room);
 
-  await expect(confirmedRowsWithText(page, text)).toHaveCount(1, { timeout: 15_000 });
+  await expect(confirmedRowsWithText(page, text)).toHaveCount(1);
   await expect(timelineText(page, text)).toHaveCount(1);
   expect(dropped).toBe(true);
   expect(droppedStatus).toBeGreaterThanOrEqual(200);
@@ -428,8 +428,8 @@ test('same-context tabs send without duplicate messages or queue error toasts', 
   await Promise.all([mainComposer(firstPage, room).press('Enter'), mainComposer(secondPage, room).press('Enter')]);
 
   for (const page of [firstPage, secondPage]) {
-    await expect(confirmedRowsWithText(page, firstText)).toHaveCount(1, { timeout: 15_000 });
-    await expect(confirmedRowsWithText(page, secondText)).toHaveCount(1, { timeout: 15_000 });
+    await expect(confirmedRowsWithText(page, firstText)).toHaveCount(1);
+    await expect(confirmedRowsWithText(page, secondText)).toHaveCount(1);
     await expect(timelineText(page, firstText)).toHaveCount(1);
     await expect(timelineText(page, secondText)).toHaveCount(1);
     await expect(page.getByText(/Couldn't/)).toHaveCount(0);
@@ -446,7 +446,7 @@ test('offline edit and reaction land and survive reload', async ({ page, context
   const edited = unique('offline-edit-final');
   await sendMessage(page, original, room);
   await expect(messageRow(page, original)).toBeVisible();
-  await expect(confirmedRowsWithText(page, original)).toHaveCount(1, { timeout: 15_000 });
+  await expect(confirmedRowsWithText(page, original)).toHaveCount(1);
 
   await context.setOffline(true);
   const originalRow = messageRow(page, original);
@@ -465,15 +465,13 @@ test('offline edit and reaction land and survive reload', async ({ page, context
   await expect(editedRow.getByRole('button', { name: '👍 1, including you' })).toBeVisible();
 
   await context.setOffline(false);
-  await expect(page.getByRole('status', { name: 'connection: open' })).toBeVisible({ timeout: 15_000 });
-  await expect(page.getByText('(saving edit)')).toHaveCount(0, { timeout: 15_000 });
+  await expect(page.getByRole('status', { name: 'connection: open' })).toBeVisible();
+  await expect(page.getByText('(saving edit)')).toHaveCount(0);
   // '(saving edit)' clearing only proves the edit op landed; the reaction op
   // has no per-item marker and its button renders optimistically, so wait for
   // the queued-changes banner to drain before reloading — otherwise the
   // reload races the in-flight reaction op and it never survives.
-  await expect(page.getByRole('status').filter({ hasText: /queued/ })).toHaveCount(0, {
-    timeout: 15_000,
-  });
+  await expect(page.getByRole('status').filter({ hasText: /queued/ })).toHaveCount(0);
   await expect(confirmedRowsWithText(page, edited)).toHaveCount(1);
   await expect(editedRow.getByRole('button', { name: '👍 1, including you' })).toBeVisible();
 
@@ -481,14 +479,10 @@ test('offline edit and reaction land and survive reload', async ({ page, context
   await openChannel(page, room);
   // Post-reload hydration re-fetches the channel history (a network round-trip
   // on the cursor/structural-repair path), which is slow when parallel load
-  // saturates the shared server — so match the 15s budget the rest of this
-  // test's reconnect-crossing waits use. The default 8s races that refetch and
-  // is the sole cause of this test's local-parallel flake (CI already tolerates
-  // it via a 20s expect timeout + retries).
-  await expect(confirmedRowsWithText(page, edited)).toHaveCount(1, { timeout: 15_000 });
-  await expect(messageRow(page, edited).getByRole('button', { name: '👍 1, including you' })).toBeVisible({
-    timeout: 15_000,
-  });
+  // saturates the shared server. These two assertions inherit the suite's 20s
+  // expect budget; don't hand-tune them below it.
+  await expect(confirmedRowsWithText(page, edited)).toHaveCount(1);
+  await expect(messageRow(page, edited).getByRole('button', { name: '👍 1, including you' })).toBeVisible();
   await expect(timelineText(page, original)).toHaveCount(0);
 });
 
@@ -514,14 +508,12 @@ test('disconnect burst heals through sync without reload', async ({ browser }) =
   });
   expect(edit.ok()).toBeTruthy();
   await sendMessage(bobPage, second, room);
-  await expect(confirmedRowsWithText(bobPage, second)).toHaveCount(1, { timeout: 15_000 });
+  await expect(confirmedRowsWithText(bobPage, second)).toHaveCount(1);
   await expect(messageRow(bobPage, editedFirst)).toBeVisible();
 
   await alice.setOffline(false);
-  await expect(alicePage.getByRole('status', { name: 'connection: open' })).toBeVisible({
-    timeout: 15_000,
-  });
-  await expect(confirmedRowsWithText(alicePage, editedFirst)).toHaveCount(1, { timeout: 15_000 });
+  await expect(alicePage.getByRole('status', { name: 'connection: open' })).toBeVisible();
+  await expect(confirmedRowsWithText(alicePage, editedFirst)).toHaveCount(1);
   await expect(confirmedRowsWithText(alicePage, second)).toHaveCount(1);
   await expect(timelineText(alicePage, first)).toHaveCount(0);
 
@@ -550,19 +542,15 @@ test('session question requested while disconnected heals without reload', async
   // Chromium's Playwright offline emulation blocks traffic but does not fire
   // the page-level event the app receives from a real browser.
   await page.evaluate(() => window.dispatchEvent(new Event('offline')));
-  await expect(page.getByText(/Reconnecting/)).toBeVisible({
-    timeout: 15_000,
-  });
+  await expect(page.getByText(/Reconnecting/)).toBeVisible();
   const title = unique('offline-question-session');
   const injected = await injectQuestionRequested({ handle, channelId: roomId, title });
 
   await context.setOffline(false);
   await page.evaluate(() => window.dispatchEvent(new Event('online')));
-  await expect(page.getByRole('status', { name: 'connection: open' })).toBeVisible({
-    timeout: 15_000,
-  });
+  await expect(page.getByRole('status', { name: 'connection: open' })).toBeVisible();
   const sessionRow = messageRow(page, title);
-  await expect(sessionRow).toBeVisible({ timeout: 15_000 });
+  await expect(sessionRow).toBeVisible();
   await expect(sessionRow.getByText('Needs you')).toBeVisible();
   await sessionRow.getByRole('button', { name: '1 reply →' }).click();
   // The question now renders at more than one altitude by design — the feed
@@ -605,7 +593,7 @@ test('session transcript stream resumes after disconnect without duplicating rep
   await page.goto(`/s/${injected.sessionId}`);
 
   await expect(page.getByText('alpha')).toBeVisible();
-  await expect(page.getByText('alphabeta')).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText('alphabeta')).toBeVisible();
   await expect(page.getByText('alphaalphabeta')).toHaveCount(0);
   expect(seenAfterIds[0]).toBe('0');
   await expect.poll(() => seenAfterIds.at(-1)).toBe('2');

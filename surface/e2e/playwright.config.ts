@@ -1,12 +1,48 @@
+import { createHash } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 import { defineConfig, devices } from '@playwright/test';
 
 // Playwright/pnpm force color in spawned Node processes; inheriting NO_COLOR at
 // the same time makes Node 24 warn before every worker and webServer process.
 delete process.env.NO_COLOR;
 
-const serverPort = Number(process.env.E2E_SERVER_PORT ?? 3101);
-const webPort = Number(process.env.E2E_WEB_PORT ?? 5273);
-const centaurPort = Number(process.env.E2E_CENTAUR_PORT ?? 18100);
+// Ports and the database name are derived from THIS checkout's path, so two
+// e2e runs in two worktrees cannot collide.
+//
+// They used to be fixed (3101/5273/18100) against one shared `atrium_e2e`
+// database. On a box where several agent worktrees run e2e concurrently that
+// is mutual destruction: whoever starts second either aborts on
+// assertPortFree, or — if the ports happen to be free that instant — TRUNCATEs
+// the shared database out from under the run already in flight. The victim
+// then fails in scattered, unrelated places (unread badges, threads, read-sync)
+// because its rows vanished mid-test, which reads exactly like flakiness and
+// is not. It also bred a habit of `kill -9`ing whatever holds 3101, which just
+// destroys the other worktree's run.
+//
+// A hash collision between two checkouts is still possible (100 slots); it
+// surfaces as a loud assertPortFree error, not as silent corruption. Set
+// E2E_PORT_OFFSET to break the tie. CI passes explicit env and is unaffected.
+const checkoutId = createHash('sha1')
+  .update(fileURLToPath(import.meta.url))
+  .digest('hex')
+  .slice(0, 8);
+const portOffset = Number(process.env.E2E_PORT_OFFSET ?? Number.parseInt(checkoutId, 16) % 100);
+
+const serverPort = Number(process.env.E2E_SERVER_PORT ?? 3101 + portOffset);
+const webPort = Number(process.env.E2E_WEB_PORT ?? 5273 + portOffset);
+const centaurPort = Number(process.env.E2E_CENTAUR_PORT ?? 18100 + portOffset);
+
+// Publish the resolved ports back into the environment. Test files compute
+// their own apiURL/centaurStubUrl at import time from these vars (helpers.ts,
+// mention-typeahead, markup-*, popout-pane) and fall back to the old fixed
+// ports if they are unset — which, with derived ports, would silently aim a
+// worker's API calls at a DIFFERENT worktree's server while its browser talked
+// to ours. Playwright re-evaluates this config in each worker before loading
+// test files, so assigning here reaches them.
+process.env.E2E_SERVER_PORT = String(serverPort);
+process.env.E2E_WEB_PORT = String(webPort);
+process.env.E2E_CENTAUR_PORT = String(centaurPort);
+
 const webServerTimeout = Number(process.env.E2E_WEBSERVER_TIMEOUT ?? 60_000);
 // CI serves the web app as a static development-mode build (`vite build
 // --mode development` + `vite preview`) instead of the dev server. The dev
@@ -19,7 +55,15 @@ const webServerTimeout = Number(process.env.E2E_WEBSERVER_TIMEOUT ?? 60_000);
 // Local runs keep the dev server for fast iteration; override either way with
 // E2E_WEB_SERVE=built|dev.
 const builtWeb = (process.env.E2E_WEB_SERVE ?? (process.env.CI ? 'built' : 'dev')) === 'built';
-const databaseUrl = process.env.E2E_DATABASE_URL ?? 'postgres://atrium:atrium@localhost:5433/atrium_e2e';
+// Per-checkout database, for the same reason as the ports above: db-reset.mjs
+// TRUNCATEs every table it owns, so a shared database means a concurrent run in
+// another worktree wipes this one's data mid-test. Reused across runs of the
+// same checkout (truncated, not dropped), so it stays cheap.
+const databaseUrl = process.env.E2E_DATABASE_URL ?? `postgres://atrium:atrium@localhost:5433/atrium_e2e_${checkoutId}`;
+// Same reason as the ports: helpers.ts reads E2E_DATABASE_URL at import time to
+// query Postgres directly (read cursors, etc.). Unset, it would fall back to the
+// old shared `atrium_e2e` and read a different database than the server writes.
+process.env.E2E_DATABASE_URL = databaseUrl;
 const baseURL = `http://127.0.0.1:${webPort}`;
 const apiTarget = `http://127.0.0.1:${serverPort}`;
 
@@ -31,14 +75,27 @@ export default defineConfig({
   // WS proxy resets described below, so hold at two until repeated green runs.
   fullyParallel: true,
   workers: 2,
-  // The test timeout is a HANG detector, not a performance SLO — sized ~2x
-  // the healthy p99 on a slow CI runner (the longest legit specs run 40-55s
-  // there). At 60s, healthy-but-slow runs tipped over and each false fire
-  // cost ~100s (60s burned + a ~40s retry), compounding toward the step
-  // budget. Responsiveness is still policed by the expect timeout below: a
-  // stuck assertion fails in 20s regardless. Local runs stay snappy.
-  timeout: process.env.CI ? 120_000 : 30_000,
-  expect: { timeout: process.env.CI ? 20_000 : 8_000 },
+  // Both timeouts below are HANG detectors, not performance SLOs.
+  //
+  // The test timeout is sized ~2x the healthy p99 on a slow CI runner (the
+  // longest legit specs run 40-55s there). At 60s, healthy-but-slow runs
+  // tipped over and each false fire cost ~100s (60s burned + a ~40s retry),
+  // compounding toward the step budget.
+  //
+  // The expect timeout is deliberately NOT forked by CI. It used to be 8s
+  // locally vs 20s on CI, which made local runs *stricter* than CI on a
+  // machine that is *more* loaded (parallel agent worktrees, other vitest
+  // runs, and a Vite dev server transforming on demand under that same CPU
+  // pressure). Load-sensitive assertions therefore failed locally that CI
+  // would never flag, and each one got patched with an ad-hoc per-assertion
+  // bump — 34 of them accumulated, and because they are absolute they also
+  // silently *tightened* CI below its own 20s base. A tight budget buys
+  // nothing: a real logic bug fails at 8s and at 20s alike, and a genuine
+  // hang is still caught by the test timeout. So there is one budget, and
+  // assertions inherit it instead of hand-tuning. Override with
+  // E2E_EXPECT_TIMEOUT if you want a tighter local loop.
+  timeout: process.env.CI ? 120_000 : 60_000,
+  expect: { timeout: Number(process.env.E2E_EXPECT_TIMEOUT ?? 20_000) },
   retries: process.env.CI ? 2 : 0,
   reporter: process.env.CI ? [['list'], ['html', { open: 'never' }]] : 'list',
   use: {
