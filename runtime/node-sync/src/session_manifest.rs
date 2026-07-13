@@ -86,8 +86,10 @@ pub struct SessionDiscovery {
     pub warnings: Vec<String>,
 }
 
+pub const SESSIONS_DIR_NAME: &str = ".sessions";
+
 pub fn sessions_dir(overlays_root: &Path) -> PathBuf {
-    overlays_root.join(".sessions")
+    overlays_root.join(SESSIONS_DIR_NAME)
 }
 
 pub fn manifest_path(overlays_root: &Path, session: &str) -> PathBuf {

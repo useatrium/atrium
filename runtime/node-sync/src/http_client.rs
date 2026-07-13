@@ -583,6 +583,33 @@ mod tests {
         );
     }
 
+    /// The wire-contract fixture (contract/fixtures/hydration-scope.json,
+    /// mirrored by the server's internalContract.test.ts) must keep parsing.
+    #[test]
+    fn hydration_scope_contract_fixture_parses() {
+        let fixture: serde_json::Value =
+            serde_json::from_str(include_str!("../contract/fixtures/hydration-scope.json"))
+                .unwrap();
+        let entries = parse_hydration_scope(fixture, "sess-1").unwrap();
+        assert_eq!(
+            entries,
+            vec![
+                CasHydrateEntry {
+                    path: "report.md".to_string(),
+                    seq: 4,
+                    sha: "aa11aa11aa11aa11aa11aa11aa11aa11aa11aa11aa11aa11aa11aa11aa11aa11"
+                        .to_string(),
+                },
+                CasHydrateEntry {
+                    path: "shared/channels/channel-1/report.md".to_string(),
+                    seq: 4,
+                    sha: "aa11aa11aa11aa11aa11aa11aa11aa11aa11aa11aa11aa11aa11aa11aa11aa11"
+                        .to_string(),
+                },
+            ]
+        );
+    }
+
     #[test]
     fn hydration_scope_parse_skips_deleted_and_missing_sha() {
         let entries = parse_hydration_scope(serde_json::json!({

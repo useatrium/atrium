@@ -45,6 +45,9 @@ const API_SERVER_ENABLED_LABEL: &str = "centaur.ai/api-server-enabled";
 const MANAGED_BY_VALUE: &str = "api-rs";
 const NODE_SYNC_COMPONENT_LABEL: &str = "app.kubernetes.io/component";
 const NODE_SYNC_COMPONENT_VALUE: &str = "node-sync";
+// Container name inside the node-sync DaemonSet pod (exec target for
+// post-claim home preparation). Part of the node-sync seam contract.
+const NODE_SYNC_CONTAINER_NAME: &str = "node-sync";
 // iron-control principal OID the sandbox's proxy binds to, stamped at create
 // so resume (which has only the sandbox id) can rebind without the spec or any
 // in-memory state. Survives pause and api-rs restarts.
@@ -383,7 +386,7 @@ impl AgentSandboxBackend {
         let script = claimed_overlay_home_script(id, overlay, &self.config, request);
         let started = Instant::now();
         let params = AttachParams::default()
-            .container("node-sync")
+            .container(NODE_SYNC_CONTAINER_NAME)
             .stdin(false)
             .stdout(true)
             .stderr(true);

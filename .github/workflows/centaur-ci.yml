@@ -88,6 +88,7 @@ jobs:
             '^\.github/workflows/centaur-ci\.yml$'
           set_output rust_api \
             '^centaur/services/api-rs/' \
+            '^runtime/node-sync/contract/' \
             '^\.github/workflows/centaur-ci\.yml$'
           set_output node_sync \
             '^runtime/node-sync/' \

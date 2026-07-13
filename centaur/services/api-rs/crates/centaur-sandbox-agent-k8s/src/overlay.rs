@@ -648,3 +648,295 @@ mod tests {
         }
     }
 }
+
+// Asserts this crate's side of the node-sync seam against the contract data at
+// runtime/node-sync/contract/contract.toml (see runtime/node-sync/CONTRACT.md).
+// Test-time file read only — the AGPL daemon crate is never linked.
+#[cfg(test)]
+mod contract_tests {
+    use super::*;
+    use centaur_sandbox_core::EnvVar;
+
+    fn contract() -> toml::Value {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../../../runtime/node-sync/contract/contract.toml"
+        );
+        let raw = std::fs::read_to_string(path)
+            .unwrap_or_else(|e| panic!("read node-sync contract at {path}: {e}"));
+        toml::from_str(&raw).expect("contract.toml must be valid TOML")
+    }
+
+    fn get<'a>(value: &'a toml::Value, path: &str) -> &'a toml::Value {
+        let mut current = value;
+        for key in path.split('.') {
+            current = current
+                .get(key)
+                .unwrap_or_else(|| panic!("contract.toml is missing key {path}"));
+        }
+        current
+    }
+
+    fn get_str<'a>(value: &'a toml::Value, path: &str) -> &'a str {
+        get(value, path)
+            .as_str()
+            .unwrap_or_else(|| panic!("contract.toml {path} must be a string"))
+    }
+
+    fn assert_args_declared(container: &Value, contract: &toml::Value, flags_path: &str) {
+        let declared: Vec<&str> = get(contract, flags_path)
+            .as_array()
+            .expect("flags must be an array")
+            .iter()
+            .map(|v| v.as_str().expect("flags are strings"))
+            .collect();
+        for arg in container["args"].as_array().expect("args array") {
+            let arg = arg.as_str().expect("args are strings");
+            if arg.starts_with("--") {
+                assert!(
+                    declared.contains(&arg),
+                    "emitted flag {arg} is not declared in contract {flags_path}"
+                );
+            }
+        }
+    }
+
+    fn full_metadata() -> OverlayMetadata {
+        OverlayMetadata {
+            agent_uid: 1001,
+            atrium_session: Some("slack:C1:1.2".to_owned()),
+            harness: Some("codex".to_owned()),
+            harness_thread_id: Some("thread-1".to_owned()),
+            harness_home: Some("/home/agent/.codex".to_owned()),
+            repo: Some("acme/widget".to_owned()),
+            repos_json: Some("[]".to_owned()),
+            resolved_repos_json: Some("[]".to_owned()),
+            warm_sandbox: true,
+        }
+    }
+
+    #[test]
+    fn host_paths_and_marker_match_the_contract() {
+        let c = contract();
+        assert_eq!(
+            get_str(&c, "host_paths.overlays_root"),
+            DEFAULT_OVERLAYS_ROOT
+        );
+        assert_eq!(get_str(&c, "host_paths.merged_root"), DEFAULT_MERGED_ROOT);
+        assert_eq!(get_str(&c, "host_paths.atrium_root"), DEFAULT_ATRIUM_ROOT);
+        assert_eq!(
+            get_str(&c, "host_paths.workspace_mount"),
+            DEFAULT_WORKSPACE_MOUNT_PATH
+        );
+        assert_eq!(
+            get_str(&c, "host_paths.home_mount"),
+            DEFAULT_HOME_MOUNT_PATH
+        );
+        assert_eq!(
+            get_str(&c, "host_paths.context_mount"),
+            DEFAULT_CONTEXT_MOUNT_PATH
+        );
+        assert_eq!(
+            get_str(&c, "host_paths.atrium_mount"),
+            DEFAULT_ATRIUM_MOUNT_PATH
+        );
+        assert_eq!(get_str(&c, "markers.workspace_ready"), READY_MARKER_FILE);
+    }
+
+    #[test]
+    fn volume_label_and_container_names_match_the_contract() {
+        let c = contract();
+        assert_eq!(
+            get_str(&c, "k8s.volumes.session_upper"),
+            SESSION_UPPER_VOLUME
+        );
+        assert_eq!(get_str(&c, "k8s.volumes.workspace"), WORKSPACE_VOLUME);
+        assert_eq!(
+            get_str(&c, "k8s.volumes.atrium_context"),
+            ATRIUM_CONTEXT_VOLUME
+        );
+        assert_eq!(
+            get_str(&c, "k8s.volumes.warmcache_cas"),
+            crate::WARMCACHE_CAS_VOLUME
+        );
+        assert_eq!(
+            get_str(&c, "k8s.component_label"),
+            crate::NODE_SYNC_COMPONENT_LABEL
+        );
+        assert_eq!(
+            get_str(&c, "k8s.component_value"),
+            crate::NODE_SYNC_COMPONENT_VALUE
+        );
+        assert_eq!(
+            get_str(&c, "k8s.daemon_container"),
+            crate::NODE_SYNC_CONTAINER_NAME
+        );
+        assert_eq!(
+            get_str(&c, "k8s.claimed_home_helper_container"),
+            crate::CLAIMED_HOME_HELPER_CONTAINER
+        );
+    }
+
+    #[test]
+    fn manifest_writer_container_matches_the_contract() {
+        let c = contract();
+        let mut overlay = OverlayConfig::new("centaur-node-sync:test");
+        overlay.flat_home = true;
+        let container = overlay_manifest_init_container_json(&overlay, "sess-1", &full_metadata());
+
+        assert_eq!(
+            container["name"],
+            get_str(&c, "k8s.init_containers.manifest_writer")
+        );
+        assert_eq!(
+            container["command"][0],
+            get_str(&c, "image.binaries.provision_overlay")
+        );
+        assert_args_declared(&container, &c, "cli.provision_overlay.flags");
+    }
+
+    #[test]
+    fn readiness_and_warm_home_container_names_match_the_contract() {
+        let c = contract();
+        let mut overlay = OverlayConfig::new("centaur-node-sync:test");
+        overlay.flat_home = true;
+        let metadata = full_metadata();
+
+        let readiness = overlay_readiness_init_container_json(&overlay, "sess-1", &metadata);
+        assert_eq!(
+            readiness["name"],
+            get_str(&c, "k8s.init_containers.readiness_wait")
+        );
+
+        let placeholder = warm_flat_home_init_container_json(&overlay, "sess-1", &metadata);
+        assert_eq!(
+            placeholder["name"],
+            get_str(&c, "k8s.init_containers.warm_home_placeholder")
+        );
+    }
+
+    #[test]
+    fn private_repo_hydrate_container_matches_the_contract() {
+        let c = contract();
+        let overlay = OverlayConfig::new("centaur-node-sync:test");
+        let container = private_repo_hydrate_init_container_json(
+            &overlay,
+            PrivateRepoHydrateInitContainer {
+                repos_json: "[]",
+                repo_cache_root: "/cache",
+                repo_cache_volume: "repo-cache",
+                https_proxy: "http://iron-proxy:8080",
+                git_ca_info: "/etc/centaur/ca/proxy-ca.crt",
+                ca_volume_mount: serde_json::json!({"name": "ca", "mountPath": "/etc/centaur/ca"}),
+            },
+        );
+        assert_eq!(
+            container["name"],
+            get_str(&c, "k8s.init_containers.private_repo_hydrate")
+        );
+        assert_eq!(
+            container["command"][0],
+            get_str(&c, "image.binaries.provision_overlay")
+        );
+        assert_args_declared(&container, &c, "cli.provision_overlay.flags");
+    }
+
+    #[test]
+    fn warmcache_container_matches_the_contract() {
+        let c = contract();
+        let overlay = OverlayConfig::new("centaur-node-sync:test");
+        let container = warmcache_hydrate_init_container_json(
+            &overlay,
+            WarmcacheHydrateInitContainer {
+                session: "sess-1",
+                repos_json: "[]",
+                repo_cache_root: "/cache",
+                depcache_root: "/var/cache/centaur/depcache",
+                cas_dir: "/var/lib/centaur/cas",
+                repo_cache_volume: "repo-cache",
+                depcache_volume: "depcache",
+                cas_volume: "warmcache-cas",
+                atrium_url: Some("http://atrium:8080"),
+                atrium_key: Some("key"),
+                toolchain_id: Some("tc-1"),
+            },
+        );
+        assert_eq!(
+            container["name"],
+            get_str(&c, "k8s.init_containers.warmcache_hydrate")
+        );
+        assert_eq!(
+            container["command"][0],
+            get_str(&c, "image.binaries.warmcache_hydrate")
+        );
+        assert_args_declared(&container, &c, "cli.warmcache_hydrate.flags");
+        let env_names: Vec<&str> = container["env"]
+            .as_array()
+            .expect("warmcache env array")
+            .iter()
+            .map(|e| e["name"].as_str().expect("env name"))
+            .collect();
+        assert!(env_names.contains(&get_str(&c, "env.warmcache_hydrate.url")));
+        assert!(env_names.contains(&get_str(&c, "env.warmcache_hydrate.key")));
+    }
+
+    /// The sandbox-spec env keys the contract declares must actually populate
+    /// the provisioner metadata — pins the names behaviorally without hoisting
+    /// every literal.
+    #[test]
+    fn sandbox_spec_env_keys_populate_metadata() {
+        let c = contract();
+        let declared: Vec<&str> = get(&c, "env.sandbox_spec.keys")
+            .as_array()
+            .expect("keys array")
+            .iter()
+            .map(|v| v.as_str().expect("keys are strings"))
+            .collect();
+        for key in [
+            "CENTAUR_THREAD_KEY",
+            "CENTAUR_HARNESS_TYPE",
+            "CENTAUR_HARNESS_HOME",
+            "CODEX_HOME",
+            "CLAUDE_CONFIG_DIR",
+            "CENTAUR_RESUME_THREAD_ID",
+            "CODEX_CONTINUE_THREAD_ID",
+            "AGENT_REPO",
+            "AGENT_REPOS_JSON",
+            CENTAUR_WARM_RESOLVED_REPOS_JSON_ENV,
+            "CENTAUR_WARM_SANDBOX",
+        ] {
+            assert!(
+                declared.contains(&key),
+                "sandbox-spec key {key} is not declared in contract.toml"
+            );
+        }
+        assert_eq!(
+            get_str(&c, "env.sandbox_spec.harness_label"),
+            "centaur.ai/harness"
+        );
+
+        let mut spec = centaur_sandbox_core::SandboxSpec::new("centaur-agent:test");
+        for (name, value) in [
+            ("CENTAUR_THREAD_KEY", "slack:C1:1.2"),
+            ("CENTAUR_HARNESS_TYPE", "codex"),
+            ("CODEX_HOME", "/home/agent/.codex"),
+            ("CENTAUR_RESUME_THREAD_ID", "thread-1"),
+            ("AGENT_REPO", "acme/widget"),
+            ("AGENT_REPOS_JSON", "[]"),
+            ("CENTAUR_WARM_SANDBOX", "1"),
+        ] {
+            spec.env.push(EnvVar {
+                name: name.to_owned(),
+                value: value.to_owned(),
+            });
+        }
+        let metadata = OverlayMetadata::from_sandbox_spec(&spec, 1001);
+        assert_eq!(metadata.atrium_session.as_deref(), Some("slack:C1:1.2"));
+        assert_eq!(metadata.harness.as_deref(), Some("codex"));
+        assert_eq!(metadata.harness_home.as_deref(), Some("/home/agent/.codex"));
+        assert_eq!(metadata.harness_thread_id.as_deref(), Some("thread-1"));
+        assert_eq!(metadata.repo.as_deref(), Some("acme/widget"));
+        assert_eq!(metadata.repos_json.as_deref(), Some("[]"));
+        assert!(metadata.warm_sandbox);
+    }
+}

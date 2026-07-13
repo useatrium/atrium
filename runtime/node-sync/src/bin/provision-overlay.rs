@@ -713,4 +713,35 @@ mod tests {
             ]
         );
     }
+
+    /// The exact argv shapes centaur-sandbox-agent-k8s emits (pinned in
+    /// contract/fixtures/provision-overlay-argv.json) must keep parsing.
+    #[test]
+    fn parses_the_contract_argv_fixtures() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../contract/fixtures/provision-overlay-argv.json"
+        ))
+        .expect("argv fixture must be valid JSON");
+        let argv = |key: &str| -> Vec<OsString> {
+            fixture[key]
+                .as_array()
+                .unwrap_or_else(|| panic!("fixture key {key} must be an array"))
+                .iter()
+                .map(|v| OsString::from(v.as_str().expect("argv items are strings")))
+                .collect()
+        };
+
+        let cfg = parse_args(argv("manifest_writer")).expect("manifest-writer argv must parse");
+        assert!(cfg.manifest_only);
+        assert!(cfg.flat_home);
+        assert_eq!(cfg.session, "sess-1");
+        assert_eq!(cfg.agent_uid, Some(1001));
+        assert_eq!(cfg.atrium_session, "slack:C1:1.2");
+        assert_eq!(cfg.harness_thread_id, "thread-1");
+
+        let cfg =
+            parse_args(argv("private_repo_hydrate")).expect("private-repo-hydrate argv must parse");
+        assert!(cfg.hydrate_private_repos);
+        assert_eq!(cfg.repo_cache_root, PathBuf::from("/cache"));
+    }
 }

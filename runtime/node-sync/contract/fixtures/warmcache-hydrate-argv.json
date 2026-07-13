@@ -1,0 +1,12 @@
+{
+  "init_container": [
+    "--session", "sess-1",
+    "--repos-json", "[]",
+    "--repo-cache-root", "/cache",
+    "--depcache-root", "/var/cache/centaur/depcache",
+    "--cas-dir", "/var/lib/centaur/cas",
+    "--atrium-url", "http://atrium-server.atrium.svc:8080",
+    "--atrium-key", "test-key",
+    "--toolchain-id", "tc-1"
+  ]
+}

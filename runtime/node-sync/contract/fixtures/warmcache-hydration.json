@@ -1,0 +1,9 @@
+{
+  "entries": [
+    {
+      "path": "v3/files/00/aabbcc",
+      "sha256": "cc33dd44cc33dd44cc33dd44cc33dd44cc33dd44cc33dd44cc33dd44cc33dd44",
+      "size_bytes": 1024
+    }
+  ]
+}

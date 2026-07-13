@@ -3277,4 +3277,45 @@ mod tests {
             HarnessType::ClaudeCode
         );
     }
+
+    // Asserts this crate's node-sync seam constants against the contract data
+    // at runtime/node-sync/contract/contract.toml (see runtime/node-sync/
+    // CONTRACT.md). Test-time file read only — the AGPL daemon crate is never
+    // linked.
+    #[test]
+    fn node_sync_seam_constants_match_the_contract() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../../../runtime/node-sync/contract/contract.toml"
+        );
+        let raw = std::fs::read_to_string(path)
+            .unwrap_or_else(|e| panic!("read node-sync contract at {path}: {e}"));
+        let contract: toml::Value = toml::from_str(&raw).expect("contract.toml must parse");
+        let get = |path: &str| -> &str {
+            let mut current = &contract;
+            for key in path.split('.') {
+                current = current
+                    .get(key)
+                    .unwrap_or_else(|| panic!("contract.toml is missing key {path}"));
+            }
+            current
+                .as_str()
+                .unwrap_or_else(|| panic!("contract.toml {path} must be a string"))
+        };
+
+        assert_eq!(
+            get("host_paths.repo_cache_mount"),
+            SANDBOX_REPO_CACHE_MOUNT_PATH
+        );
+        assert_eq!(
+            get("host_paths.depcache_mount"),
+            SANDBOX_DEP_CACHE_MOUNT_PATH
+        );
+        assert_eq!(get("host_paths.cas"), SANDBOX_CAS_MOUNT_PATH);
+        assert_eq!(get("host_paths.cas"), DEFAULT_SANDBOX_CAS_HOST_PATH);
+        assert_eq!(
+            format!("{}:latest", get("image.name")),
+            DEFAULT_SANDBOX_OVERLAY_NODE_SYNC_IMAGE
+        );
+    }
 }

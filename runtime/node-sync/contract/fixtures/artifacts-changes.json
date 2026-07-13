@@ -1,0 +1,12 @@
+{
+  "activePrefix": "shared/channels/channel-1",
+  "rows": [
+    {
+      "path": "shared/channels/channel-1/report.md",
+      "seq": 4,
+      "sha": "aa11aa11aa11aa11aa11aa11aa11aa11aa11aa11aa11aa11aa11aa11aa11aa11",
+      "status": "normal"
+    }
+  ],
+  "next_cursor": "731.42"
+}

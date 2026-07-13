@@ -24,6 +24,9 @@ uuid.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "time"] }
+# Test-only: reads the node-sync seam contract (runtime/node-sync/contract/) to
+# assert this crate's emitted pod specs against it. Never a runtime dependency.
+toml.workspace = true
 
 [lints]
 workspace = true

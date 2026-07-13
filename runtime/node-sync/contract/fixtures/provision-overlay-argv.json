@@ -1,0 +1,25 @@
+{
+  "manifest_writer": [
+    "--manifest-only",
+    "--session", "sess-1",
+    "--overlays-root", "/var/lib/centaur/overlays",
+    "--merged-root", "/run/centaur/merged",
+    "--agent-uid", "1001",
+    "--merged-path", "/run/centaur/merged/sess-1/home",
+    "--context-source", "/var/lib/centaur/atrium/sess-1",
+    "--atrium-session", "slack:C1:1.2",
+    "--flat-home",
+    "--harness", "codex",
+    "--harness-thread-id", "thread-1",
+    "--harness-home", "/home/agent/.codex",
+    "--repo", "/cache/github.com/acme/widget",
+    "--repos-json", "[]"
+  ],
+  "private_repo_hydrate": [
+    "--hydrate-private-repos",
+    "--repos-json", "[]",
+    "--repo-cache-root", "/cache",
+    "--https-proxy", "http://iron-proxy:8080",
+    "--git-ca-info", "/etc/centaur/ca/proxy-ca.crt"
+  ]
+}

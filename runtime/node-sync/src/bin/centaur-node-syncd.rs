@@ -596,8 +596,15 @@ mod linux_daemon {
             .interval_secs
             .unwrap_or_else(|| env("NODE_SYNC_INTERVAL_SECS").parse::<u64>().unwrap_or(2));
         let global = GlobalConfig {
-            base_url: env("ATRIUM_BASE_URL"),
-            api_key: env("ATRIUM_CAPTURE_API_KEY"),
+            // Canonical names first, historical spellings accepted (seam.rs).
+            base_url: centaur_node_sync::seam::env_first(&[
+                centaur_node_sync::seam::ENV_ATRIUM_BASE_URL,
+                centaur_node_sync::seam::ENV_ATRIUM_URL,
+            ]),
+            api_key: centaur_node_sync::seam::env_first(&[
+                centaur_node_sync::seam::ENV_ATRIUM_CAPTURE_API_KEY,
+                centaur_node_sync::seam::ENV_ARTIFACT_CAPTURE_API_KEY,
+            ]),
             atrium_root: non_empty_path(&env("NODE_SYNC_ATRIUM_ROOT"), "/atrium"),
             hydrate_artifacts: env_truthy(&env("NODE_SYNC_HYDRATE_ARTIFACTS")),
             cas_dir: non_empty_pathbuf(
