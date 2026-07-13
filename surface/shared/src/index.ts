@@ -14,6 +14,7 @@ export * from './activity';
 export * from './calls';
 export * from './sync';
 export * from './opQueue';
+export { isNetworkFailure } from './api';
 export * from './queueStatus';
 export * from './cache';
 export * from './drafts';

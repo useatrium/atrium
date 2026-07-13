@@ -641,7 +641,12 @@ export default function FilesTab() {
           <Text style={{ color: colors.textMuted, fontSize: font.sm, fontWeight: '800' }}>{visibleItemCount}</Text>
         }
       />
-      <ConnectionBanner status={chat.state.wsStatus} />
+      <ConnectionBanner
+        status={chat.state.wsStatus}
+        serverUrl={chat.serverUrl}
+        lastSyncedAt={chat.state.lastSyncedAt}
+        onSignInAgain={chat.signInAgain}
+      />
       <View style={{ paddingHorizontal: space.lg, paddingTop: space.md, gap: space.sm }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm }}>
           <View

@@ -86,6 +86,21 @@ export class ApiError extends Error {
   }
 }
 
+export const NETWORK_UNREACHABLE_CODE = 'network_unreachable';
+
+export function isNetworkFailure(err: unknown): boolean {
+  if (err instanceof ApiError) return err.status === 0 && err.code === NETWORK_UNREACHABLE_CODE;
+  if (err instanceof TypeError) return true;
+  const message = err instanceof Error ? err.message : String(err);
+  return /Network request failed|Failed to fetch|fetch failed|NetworkError|Load failed/i.test(message);
+}
+
+export function connectionAwareError(err: unknown, fallback: string, networkMessage = fallback): string {
+  if (isNetworkFailure(err)) return networkMessage;
+  if (err instanceof ApiError) return err.message || fallback;
+  return err instanceof Error ? err.message : fallback;
+}
+
 // The encoded side may differ from T: decode-with-default schemas (archive/pin
 // fields) accept older wire payloads that omit those fields. Schema is invariant
 // in its encoded parameter, so `any` (not `unknown`) is required here.
@@ -314,15 +329,23 @@ export function createApi(opts: ApiOptions = {}) {
 
   async function req<T>(path: string, init?: RequestInit, decode?: ApiResponseDecoder<T>): Promise<T> {
     const token = opts.getToken ? await opts.getToken() : null;
-    const res = await fetch(base + path, {
-      credentials: 'same-origin',
-      ...init,
-      headers: {
-        ...(init?.body ? { 'content-type': 'application/json' } : {}),
-        ...(token ? { authorization: `Bearer ${token}` } : {}),
-        ...(init?.headers as Record<string, string> | undefined),
-      },
-    });
+    let res: Response;
+    try {
+      res = await fetch(base + path, {
+        credentials: 'same-origin',
+        ...init,
+        headers: {
+          ...(init?.body ? { 'content-type': 'application/json' } : {}),
+          ...(token ? { authorization: `Bearer ${token}` } : {}),
+          ...(init?.headers as Record<string, string> | undefined),
+        },
+      });
+    } catch (err) {
+      if (isNetworkFailure(err)) {
+        throw new ApiError(0, NETWORK_UNREACHABLE_CODE, 'Could not reach the server');
+      }
+      throw err;
+    }
     if (!res.ok) {
       let code = 'http_error';
       let message = res.statusText;

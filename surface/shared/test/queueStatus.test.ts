@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { countActiveQueuedChanges, deriveSyncStuck, reconnectingLabel } from '../src/index';
+import {
+  UNREACHABLE_AFTER_MS,
+  countActiveQueuedChanges,
+  deriveSyncStuck,
+  deriveWsFailureStatus,
+  recordWsFailure,
+  reconnectingLabel,
+} from '../src/index';
 
 describe('reconnecting label', () => {
   it('renders nothing while connected, regardless of queue depth', () => {
@@ -9,6 +16,45 @@ describe('reconnecting label', () => {
   it('shows reconnecting when the socket is not open', () => {
     expect(reconnectingLabel('connecting')).toBe('Reconnecting…');
     expect(reconnectingLabel('closed')).toBe('Reconnecting…');
+  });
+
+  it('escalates sustained failures using elapsed time', () => {
+    const firstFailedAt = 1_000;
+    const before = deriveWsFailureStatus(firstFailedAt, 'transport', firstFailedAt + UNREACHABLE_AFTER_MS - 1);
+    const after = deriveWsFailureStatus(firstFailedAt, 'transport', firstFailedAt + UNREACHABLE_AFTER_MS);
+
+    expect(before.status).toBe('closed');
+    expect(after.status).toBe('unreachable');
+    expect(reconnectingLabel(after, 'atrium.test')).toBe('Can’t reach atrium.test');
+  });
+
+  it('keeps a brief blip non-terminal and clears its banner on open', () => {
+    const status = deriveWsFailureStatus(1_000, 'closed', 1_000 + UNREACHABLE_AFTER_MS - 1);
+
+    expect(status.status).toBe('closed');
+    expect(reconnectingLabel(status)).toBe('Reconnecting…');
+    expect(reconnectingLabel('open')).toBeNull();
+  });
+
+  it('makes auth-class failures terminal immediately', () => {
+    const status = deriveWsFailureStatus(1_000, 'auth', 1_000);
+
+    expect(status.status).toBe('auth-failed');
+    expect(reconnectingLabel(status)).toBe('Sign-in expired');
+  });
+
+  it('keeps elapsed failure evidence when a foreground wake resets attempts', () => {
+    let retryAttempt = 4;
+    const first = recordWsFailure(null, 'transport', 1_000);
+
+    // bindWake intentionally resets backoff; the evidence clock is separate.
+    retryAttempt = 0;
+    const afterWake = recordWsFailure(first, 'transport', 2_000);
+    const status = deriveWsFailureStatus(afterWake.firstFailedAt, afterWake.lastCause, 1_000 + UNREACHABLE_AFTER_MS);
+
+    expect(retryAttempt).toBe(0);
+    expect(afterWake.firstFailedAt).toBe(1_000);
+    expect(status.status).toBe('unreachable');
   });
 });
 

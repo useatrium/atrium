@@ -5,6 +5,7 @@ import {
   DurableOpQueue,
   FILES_CHANGED_EVENT_TYPE,
   appReducer,
+  connectionHost,
   filesChangedWorkspaceId,
   dispatchSyncSnapshot,
   dispatchSyncResponse,
@@ -15,6 +16,8 @@ import {
   type OpType,
   type QueueSyncState,
   useQueueSyncState,
+  wsStatusKind,
+  type WsStatus,
 } from '@atrium/surface-client';
 import { showNotification } from './notify';
 import {
@@ -113,10 +116,11 @@ function queuedReconnectTitle(queuedCount: number): string | undefined {
 }
 
 export function queueStatusBanner(
-  wsStatus: 'connecting' | 'open' | 'closed',
+  wsStatus: WsStatus,
   queueSync: QueueSyncState,
+  host = 'server',
 ): QueueStatusBanner | null {
-  const text = reconnectingLabel(wsStatus);
+  const text = reconnectingLabel(wsStatus, host);
   if (!text) return null;
   return {
     text,
@@ -995,7 +999,10 @@ export function Chat({
         setActivityRefreshKey((n) => n + 1);
         scheduleActivityCountsRefresh();
       },
-      onStatus: (status) => dispatch({ type: 'ws-status', status }),
+      onStatus: (status) => {
+        dispatch({ type: 'ws-status', status });
+        if (wsStatusKind(status) === 'auth-failed') invalidateAuth();
+      },
     },
     state.activeChannelId,
     // Desktop shell: connect to the absolute server origin with a bearer token
@@ -1938,7 +1945,18 @@ export function Chat({
     startVoiceCallForActiveChannel,
   ]);
 
-  const queueStatus = queueStatusBanner(state.wsStatus, queueSync);
+  const connectionKind = wsStatusKind(state.wsStatus);
+  const connectionServerHost = connectionHost(
+    isDesktop
+      ? (desktopWsUrl() ?? location.href)
+      : browserWsUrl
+        ? new URL(browserWsUrl, location.href).toString()
+        : location.href,
+    location.host || 'server',
+  );
+  const queueStatus = queueStatusBanner(state.wsStatus, queueSync, connectionServerHost);
+  const sidebarWsStatus =
+    connectionKind === 'open' ? 'open' : connectionKind === 'connecting' ? 'connecting' : 'closed';
   const currentRoute = useMemo(() => parseInAppRoute(locationState.pathname), [locationState.pathname]);
   const membersRouteOpen =
     currentRoute?.surface === 'chat' &&
@@ -1976,7 +1994,7 @@ export function Chat({
         activeChannelId={mainSurface === 'chat' ? state.activeChannelId : null}
         unread={state.unread}
         me={me}
-        wsStatus={state.wsStatus}
+        wsStatus={sidebarWsStatus}
         queueSync={queueSync}
         onSelect={(channelId) => {
           goToChannel(channelId);

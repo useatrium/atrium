@@ -145,9 +145,11 @@ export interface CommitVersionParams {
   kind: VersionKind;
   /** Set when the artifact is first created; ignored afterwards. */
   mergeClass?: MergeClass;
-  /** OCC: the version the writer edited against. Omitted ⇒ implicit current
-   * latest (safe only for a single ordered writer, i.e. the capture stream). */
-  baseSeq?: number;
+  /** OCC: the version the writer edited against. Omitted is allowed only when
+   * creating the first version; an existing artifact returns `base_required`
+   * so the write-back layer can record an unknown-base conflict. Pass null only
+   * for an explicitly legacy, single-writer implicit append. */
+  baseSeq?: number | null;
   /** Conflict lane passes 'conflict' + a payload; defaults to a normal version. */
   status?: VersionStatus;
   conflict?: unknown;
@@ -166,6 +168,7 @@ export interface CommitUploadParams {
 
 export type CommitVersionResult =
   | { ok: true; artifactId: string; seq: number; idempotent: boolean }
+  | { ok: false; reason: 'base_required'; artifactId: string; latestSeq: number }
   | { ok: false; reason: 'stale_base'; artifactId: string; latestSeq: number; baseSeq: number };
 
 export interface CommitUploadResult {
@@ -1428,9 +1431,11 @@ export class ArtifactLedger {
    * OCC stale-base detection, and content-dedup.
    *
    * - `latest == null` → seq 1.
-   * - `baseSeq` mismatch vs latest → `{ ok:false, reason:'stale_base' }` (no
-   *   write); the bridge never passes a base so never trips this, the write-back
-   *   lane catches it and runs the 3-way merge.
+   * - omitted `baseSeq` on an existing artifact → `base_required`, which the
+   *   write-back layer converts to a successful unknown-base conflict; only a
+   *   deliberate null retains the legacy single-writer implicit append.
+   * - numeric `baseSeq` mismatch vs latest → `stale_base` (no write); the
+   *   write-back lane catches it and runs 3-way merge / conflict recording.
    * - identical bytes as latest (normal, non-delete) → idempotent no-op.
    */
   async commitVersion(params: CommitVersionParams): Promise<CommitVersionResult> {
@@ -1466,6 +1471,9 @@ export class ArtifactLedger {
         return { ok: true, artifactId, seq: 1, idempotent: false };
       }
 
+      if (params.baseSeq === undefined) {
+        return { ok: false, reason: 'base_required', artifactId, latestSeq: latest.seq };
+      }
       const effectiveBase = params.baseSeq ?? latest.seq;
       if (effectiveBase !== latest.seq) {
         return { ok: false, reason: 'stale_base', artifactId, latestSeq: latest.seq, baseSeq: effectiveBase };

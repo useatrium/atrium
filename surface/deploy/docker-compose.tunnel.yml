@@ -8,5 +8,7 @@ services:
   # Keep the API reachable from the Docker/k3s side of the host without opening
   # it publicly. Cloudflare Tunnel and Caddy still use the Docker service name.
   server:
+    environment:
+      ATRIUM_SERVER_PUBLICATION_HOST: 10.42.0.1
     ports: !override
       - "10.42.0.1:3001:3001"

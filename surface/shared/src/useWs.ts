@@ -5,7 +5,60 @@ import { normalizePrefs, type UserPrefs } from './prefs';
 import type { SessionActivity } from './sessions';
 import { UserRefSchema, WireEventSchema, type UserRef, type WireEvent } from './timeline';
 
-export type WsStatus = 'connecting' | 'open' | 'closed';
+export const UNREACHABLE_AFTER_MS = 25_000;
+
+export type WsFailureCause = 'auth' | 'closed' | 'idle-timeout' | 'offline' | 'transport';
+export type WsStatusKind = 'auth-failed' | 'closed' | 'connecting' | 'open' | 'unreachable';
+
+/**
+ * Open and the first connection attempt stay as literals for compatibility
+ * with consumers that only need a connected/not-connected answer. Once a
+ * failure exists, the status carries the evidence needed to escalate by
+ * elapsed time without coupling that clock to the retry counter.
+ */
+export interface WsFailureStatus {
+  status: Exclude<WsStatusKind, 'open'>;
+  firstFailedAt: number;
+  lastCause: WsFailureCause;
+}
+
+export type WsFailureEvidence = Pick<WsFailureStatus, 'firstFailedAt' | 'lastCause'>;
+
+export function recordWsFailure(
+  current: WsFailureEvidence | null,
+  lastCause: WsFailureCause,
+  now: number,
+): WsFailureEvidence {
+  return { firstFailedAt: current?.firstFailedAt ?? now, lastCause };
+}
+
+export type WsStatus = 'closed' | 'connecting' | 'open' | WsFailureStatus;
+
+export function wsStatusKind(status: WsStatus): WsStatusKind {
+  return typeof status === 'string' ? status : status.status;
+}
+
+export function isWsOpen(status: WsStatus): boolean {
+  return wsStatusKind(status) === 'open';
+}
+
+export function isWsTerminal(status: WsStatus): boolean {
+  const kind = wsStatusKind(status);
+  return kind === 'auth-failed' || kind === 'unreachable';
+}
+
+export function deriveWsFailureStatus(
+  firstFailedAt: number,
+  lastCause: WsFailureCause,
+  now: number,
+  phase: 'closed' | 'connecting' = 'closed',
+): WsFailureStatus {
+  return {
+    status: lastCause === 'auth' ? 'auth-failed' : now - firstFailedAt >= UNREACHABLE_AFTER_MS ? 'unreachable' : phase,
+    firstFailedAt,
+    lastCause,
+  };
+}
 
 export interface WsCallbacks {
   onEvent: (ev: WireEvent) => void;
@@ -58,6 +111,10 @@ const PING_INTERVAL_MS = 25_000;
 const IDLE_TIMEOUT_MS = 60_000;
 const PROBE_TIMEOUT_MS = 5_000;
 const MAX_BACKOFF_MS = 10_000;
+
+export function isAuthWsCloseCode(code: number): boolean {
+  return code === 4401;
+}
 
 export interface WsSequenceTracker {
   expectedSeq: number;
@@ -330,6 +387,10 @@ export function useWs(
     let pingTimer: ReturnType<typeof setInterval> | null = null;
     let idleTimer: ReturnType<typeof setTimeout> | null = null;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let unreachableTimer: ReturnType<typeof setTimeout> | null = null;
+    let firstFailedAt: number | null = null;
+    let lastCause: WsFailureCause | null = null;
+    let closeCause: WsFailureCause | null = null;
     const seqTracker = createWsSequenceTracker();
 
     const clearTimers = () => {
@@ -339,26 +400,77 @@ export function useWs(
       idleTimer = null;
     };
 
+    const clearFailure = () => {
+      if (unreachableTimer) clearTimeout(unreachableTimer);
+      unreachableTimer = null;
+      firstFailedAt = null;
+      lastCause = null;
+      closeCause = null;
+    };
+
+    const publishFailure = (cause: WsFailureCause, phase: 'closed' | 'connecting' = 'closed') => {
+      const now = Date.now();
+      const evidence = recordWsFailure(
+        firstFailedAt === null || lastCause === null ? null : { firstFailedAt, lastCause },
+        cause,
+        now,
+      );
+      firstFailedAt = evidence.firstFailedAt;
+      lastCause = evidence.lastCause;
+      const status = deriveWsFailureStatus(firstFailedAt, cause, now, phase);
+      cbRef.current.onStatus(status);
+      if (status.status === 'auth-failed' || status.status === 'unreachable' || unreachableTimer) return status;
+      unreachableTimer = setTimeout(
+        () => {
+          unreachableTimer = null;
+          if (disposed || firstFailedAt === null || lastCause === null) return;
+          cbRef.current.onStatus(deriveWsFailureStatus(firstFailedAt, lastCause, Date.now()));
+        },
+        Math.max(0, UNREACHABLE_AFTER_MS - (now - firstFailedAt)),
+      );
+      return status;
+    };
+
     const resetIdle = (current: WebSocket) => {
       if (idleTimer) clearTimeout(idleTimer);
       idleTimer = setTimeout(() => {
-        if (socketRef.current === current) current.close();
+        if (socketRef.current === current) {
+          closeCause = 'idle-timeout';
+          current.close();
+        }
       }, IDLE_TIMEOUT_MS);
     };
 
-    const connect = () => {
+    function scheduleReconnect() {
+      const backoff = Math.min(500 * 2 ** attempt, MAX_BACKOFF_MS);
+      const jitter = backoff * (0.5 + Math.random() * 0.5);
+      attempt += 1;
+      reconnectTimer = setTimeout(connect, jitter);
+    }
+
+    function connect() {
       if (disposed) return;
       clearTimers();
-      cbRef.current.onStatus('connecting');
-      const url = urlRef.current;
-      const target = typeof url === 'function' ? url() : (url ?? defaultUrl());
-      const current = new WebSocket(target);
+      reconnectTimer = null;
+      if (firstFailedAt === null || lastCause === null) cbRef.current.onStatus('connecting');
+      else publishFailure(lastCause, 'connecting');
+      let current: WebSocket;
+      try {
+        const url = urlRef.current;
+        const target = typeof url === 'function' ? url() : (url ?? defaultUrl());
+        current = new WebSocket(target);
+      } catch {
+        publishFailure('transport');
+        scheduleReconnect();
+        return;
+      }
       ws = current;
       socketRef.current = current;
 
       current.onopen = () => {
         if (disposed || socketRef.current !== current) return;
         attempt = 0;
+        clearFailure();
         resetWsSequenceTracker(seqTracker);
         cbRef.current.onStatus('open');
         current.send(JSON.stringify({ type: 'subscribe', channelIds: channelsRef.current }));
@@ -403,21 +515,23 @@ export function useWs(
         else if (msg.type === 'prefs' && msg.prefs) cbRef.current.onPrefs?.(normalizePrefs(msg.prefs));
       };
 
-      current.onclose = () => {
+      current.onclose = (event) => {
         if (socketRef.current !== current) return;
         clearTimers();
         socketRef.current = null;
         ws = null;
         if (disposed) return;
-        cbRef.current.onStatus('closed');
-        const backoff = Math.min(500 * 2 ** attempt, MAX_BACKOFF_MS);
-        const jitter = backoff * (0.5 + Math.random() * 0.5);
-        attempt += 1;
-        reconnectTimer = setTimeout(connect, jitter);
+        const cause = isAuthWsCloseCode(event.code) ? 'auth' : (closeCause ?? 'closed');
+        closeCause = null;
+        const status = publishFailure(cause);
+        if (status.status !== 'auth-failed') scheduleReconnect();
       };
 
-      current.onerror = () => current.close();
-    };
+      current.onerror = () => {
+        closeCause = 'transport';
+        current.close();
+      };
+    }
 
     // Foreground wake: skip any pending backoff, or probe a possibly-dead
     // socket with a tight deadline (any inbound frame re-arms the normal
@@ -436,12 +550,16 @@ export function useWs(
         try {
           current.send(JSON.stringify({ type: 'ping' }));
         } catch {
+          closeCause = 'transport';
           current.close();
           return;
         }
         if (idleTimer) clearTimeout(idleTimer);
         idleTimer = setTimeout(() => {
-          if (socketRef.current === current) current.close();
+          if (socketRef.current === current) {
+            closeCause = 'idle-timeout';
+            current.close();
+          }
         }, PROBE_TIMEOUT_MS);
       }
     };
@@ -453,8 +571,10 @@ export function useWs(
     const onOfflineSignal = () => {
       if (disposed) return;
       clearTimers();
-      cbRef.current.onStatus('closed');
-      socketRef.current?.close();
+      closeCause = 'offline';
+      const current = socketRef.current;
+      if (current) current.close();
+      else publishFailure('offline');
     };
     const onOnlineSignal = () => {
       if (disposed) return;
@@ -480,6 +600,7 @@ export function useWs(
     return () => {
       disposed = true;
       clearTimers();
+      clearFailure();
       if (reconnectTimer) clearTimeout(reconnectTimer);
       unWake?.();
       globalEvents.removeEventListener?.('offline', onOfflineSignal);

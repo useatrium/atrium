@@ -45,7 +45,10 @@ export interface WriteBackArtifactParams {
   bytes: Buffer;
   mime: string;
   author: string;
-  baseSeq?: number;
+  /** Numeric values name the edited base. Explicit null is the legacy,
+   * single-writer implicit-append assertion. Omission means the base is
+   * unknown and must conflict if the artifact already exists. */
+  baseSeq?: number | null;
 }
 
 export interface WriteBackArtifactByIdParams {
@@ -93,9 +96,6 @@ type DeferredThumbnail = {
 export async function writeBackArtifact(params: WriteBackArtifactParams): Promise<WriteBackArtifactResult> {
   const ledger = new ArtifactLedger(params.pool);
   const existing = await findArtifact(params.pool, params.sessionId, params.path);
-  if (existing && params.baseSeq == null) {
-    return { ok: false, reason: 'base_required' };
-  }
   if (!existing && params.baseSeq != null) {
     return { ok: false, reason: 'base_not_found', baseSeq: params.baseSeq };
   }
@@ -121,6 +121,7 @@ export async function writeBackArtifact(params: WriteBackArtifactParams): Promis
     mime: params.mime,
     author: params.author,
     kind: existing ? 'modified' : 'created',
+    mergeClass: classification.isText ? 'mergeable-doc' : 'immutable-data',
     baseSeq: params.baseSeq,
   });
 
@@ -135,19 +136,11 @@ export async function writeBackArtifact(params: WriteBackArtifactParams): Promis
     return { ok: true, seq: committed.seq, status: 'normal', idempotent: committed.idempotent };
   }
 
-  // Delete-vs-edit (hand-compute #5): the write is stale because another actor
-  // DELETED the file (latest is a tombstone). Per the product decision this is
-  // recorded as a conflict and never auto-picked — regardless of merge_class —
-  // resurrecting the edit's bytes as a `status=conflict` version that carries
-  // both sides. Resolution (stay-deleted vs keep-edit) is a later explicit write.
-  const latestRow0 = await latestVersionRow(params.pool, committed.artifactId);
-  if (latestRow0 && (latestRow0.kind === 'deleted' || latestRow0.blob_sha == null)) {
-    const result = await recordDeleteVsEditConflict({
+  if (committed.reason === 'base_required') {
+    const result = await recordUnknownBaseConflict({
       ...params,
       ledger,
       incomingSha: sha,
-      deletedSeq: latestRow0.seq,
-      deletedAuthor: latestRow0.author,
     });
     if (result.ok) {
       enqueueThumbnailGeneration({
@@ -161,14 +154,31 @@ export async function writeBackArtifact(params: WriteBackArtifactParams): Promis
     return result;
   }
 
-  const artifact = await findArtifactById(params.pool, committed.artifactId);
-  if (!artifact || artifact.merge_class !== 'mergeable-doc') {
-    return {
-      ok: false,
-      reason: 'stale_base',
+  // Delete-vs-edit (hand-compute #5): the write is stale because another actor
+  // DELETED the file (latest is a tombstone). Per the product decision this is
+  // recorded as a conflict and never auto-picked — regardless of merge_class —
+  // resurrecting the edit's bytes as a `status=conflict` version that carries
+  // both sides. Resolution (stay-deleted vs keep-edit) is a later explicit write.
+  const latestRow0 = await latestVersionRow(params.pool, committed.artifactId);
+  if (latestRow0 && (latestRow0.kind === 'deleted' || latestRow0.blob_sha == null)) {
+    const result = await recordDeleteVsEditConflict({
+      ...params,
+      ledger,
+      incomingSha: sha,
       baseSeq: committed.baseSeq,
-      latestSeq: committed.latestSeq,
-    };
+      deletedSeq: latestRow0.seq,
+      deletedAuthor: latestRow0.author,
+    });
+    if (result.ok) {
+      enqueueThumbnailGeneration({
+        pool: params.pool,
+        sourceSha: sha,
+        bytes: params.bytes,
+        mime: classification.detectedMime,
+        mediaKind: classification.mediaKind,
+      });
+    }
+    return result;
   }
 
   return mergeStaleWrite({
@@ -348,11 +358,6 @@ async function findArtifact(pool: Db, sessionId: string, path: string): Promise<
   return res.rows[0] ?? null;
 }
 
-async function findArtifactById(pool: Db, artifactId: string): Promise<ArtifactRow | null> {
-  const res = await pool.query<ArtifactRow>(`SELECT id, merge_class FROM artifacts WHERE id = $1`, [artifactId]);
-  return res.rows[0] ?? null;
-}
-
 async function findArtifactForWritebackById(pool: Db, artifactId: string): Promise<ArtifactByIdWritebackRow | null> {
   const res = await pool.query<ArtifactByIdWritebackRow>(
     `SELECT id, workspace_id, channel_id, path, merge_class, tombstoned_at
@@ -435,8 +440,40 @@ async function mergeStaleWrite(
       );
       if (artifact.rows[0]?.merge_class !== 'mergeable-doc') {
         const latest = await args.ledger.latestVersion(client, artifactId);
+        if (latest?.blobSha === args.incomingSha && latest.kind !== 'deleted') {
+          return {
+            result: { ok: true, seq: latest.seq, status: 'normal', idempotent: true },
+          };
+        }
+        const latestRow = latest ? await versionBlob(client, artifactId, latest.seq) : null;
+        const baseRow = await versionBlob(client, artifactId, args.baseSeq);
+        if (!latest || !latestRow) {
+          return { result: { ok: false, reason: 'base_not_found', baseSeq: args.baseSeq } };
+        }
+        if (!baseRow) {
+          return {
+            result: { ok: false, reason: 'base_not_found', baseSeq: args.baseSeq, latestSeq: latest.seq },
+          };
+        }
+        const seq = latest.seq + 1;
+        await args.ledger.insertVersion(client, {
+          artifactId,
+          seq,
+          blobSha: args.incomingSha,
+          baseSeq: latest.seq,
+          author: args.author,
+          kind: 'modified',
+          status: 'conflict',
+          conflict: {
+            kind: 'unmergeable',
+            base_seq: args.baseSeq,
+            left: { seq: latest.seq, author: latestRow.author, sha: latest.blobSha },
+            right: { author: args.author, sha: args.incomingSha },
+          },
+        });
+        await args.ledger.advancePointer(client, artifactId, 'latest', seq);
         return {
-          result: { ok: false, reason: 'stale_base', baseSeq: args.baseSeq, latestSeq: latest?.seq },
+          result: { ok: true, seq, status: 'conflict', idempotent: false },
         };
       }
 
@@ -583,6 +620,61 @@ async function latestVersionRow(pool: Db, artifactId: string): Promise<LatestRow
   return res.rows[0] ?? null;
 }
 
+/** An omitted base means the writer cannot establish which version it forked.
+ * Preserve both the locked latest side and the incoming side in the same
+ * conflict model used by known stale, unmergeable writes. `base_seq: null` is
+ * intentional: manufacturing a base here would recreate the lost-update bug. */
+async function recordUnknownBaseConflict(
+  args: WriteBackArtifactParams & {
+    ledger: ArtifactLedger;
+    incomingSha: string;
+  },
+): Promise<WriteBackArtifactResult> {
+  return withTx(args.pool, async (client) => {
+    const artifactId = await args.ledger.resolveOrCreateArtifactLocked(client, {
+      sessionId: args.sessionId,
+      channelId: args.channelId,
+      path: args.path,
+    });
+    const latest = await args.ledger.latestVersion(client, artifactId);
+    if (!latest) {
+      return { ok: false, reason: 'base_not_found' };
+    }
+    const latestRow = await versionBlob(client, artifactId, latest.seq);
+    if (!latestRow) {
+      return { ok: false, reason: 'base_not_found', latestSeq: latest.seq };
+    }
+
+    const seq = latest.seq + 1;
+    const conflict =
+      latest.kind === 'deleted' || latest.blobSha == null
+        ? {
+            kind: 'delete_vs_edit',
+            base_seq: null,
+            deleted: { seq: latest.seq, author: latestRow.author },
+            edited: { author: args.author, sha: args.incomingSha },
+          }
+        : {
+            kind: 'unmergeable',
+            base_seq: null,
+            left: { seq: latest.seq, author: latestRow.author, sha: latest.blobSha },
+            right: { author: args.author, sha: args.incomingSha },
+          };
+    await args.ledger.insertVersion(client, {
+      artifactId,
+      seq,
+      blobSha: args.incomingSha,
+      baseSeq: latest.seq,
+      author: args.author,
+      kind: 'modified',
+      status: 'conflict',
+      conflict,
+    });
+    await args.ledger.advancePointer(client, artifactId, 'latest', seq);
+    return { ok: true, seq, status: 'conflict', idempotent: false };
+  });
+}
+
 /** Record a delete-vs-edit conflict: the incoming edit lands as a
  * `status=conflict` version (bytes preserved = resurrect-as-conflict) noting the
  * competing delete. Never auto-picks a side (Gary's decision). */
@@ -590,6 +682,7 @@ async function recordDeleteVsEditConflict(
   args: WriteBackArtifactParams & {
     ledger: ArtifactLedger;
     incomingSha: string;
+    baseSeq: number;
     deletedSeq: number;
     deletedAuthor: string;
   },
@@ -673,6 +766,9 @@ export async function writeBackDelete(params: {
   author: string;
   baseSeq?: number;
 }): Promise<WriteBackArtifactResult> {
+  if (params.baseSeq == null) {
+    return { ok: false, reason: 'base_required' };
+  }
   const ledger = new ArtifactLedger(params.pool);
   return withTx(params.pool, async (client) => {
     const artifactId = await ledger.resolveOrCreateArtifactLocked(client, {
@@ -683,7 +779,7 @@ export async function writeBackDelete(params: {
     const latest = await ledger.latestVersion(client, artifactId);
     if (!latest) return { ok: false, reason: 'base_not_found', baseSeq: params.baseSeq };
 
-    const effectiveBase = params.baseSeq ?? latest.seq;
+    const effectiveBase = params.baseSeq;
     if (effectiveBase === latest.seq) {
       if (latest.kind === 'deleted') {
         return { ok: true, seq: latest.seq, status: 'normal', idempotent: true };

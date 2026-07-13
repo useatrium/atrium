@@ -66,6 +66,7 @@ function commit(sid: string, path: string, sha: string | null, kind: 'created' |
     mime: 'text/markdown',
     author: `agent:${sid}`,
     kind,
+    baseSeq: null,
   });
 }
 

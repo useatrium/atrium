@@ -68,30 +68,19 @@ n=50). The initial build plan budget is p50 < 150ms send→render; render adds o
 on top of delivery, so there is roughly 140ms of headroom locally. Not yet
 measured over a real network.
 
-## Known gaps / honest notes
+## Current constraints / verified notes — 2026-07-13
 
-- **Presence semantics**: presence = WS clients subscribed to a channel (as
-  specced), but the web client subscribes to *all* channels to power unread
-  indicators — so every online user shows "present" in every channel. A
-  follow-up could add an `activeChannelId` signal to make presence mean "viewing
-  this channel".
-- **message.edited** is modeled (migration, read-fold, reducer + tests) but
-  there is no edit endpoint/UI yet — the locked Phase 1 API surface doesn't
-  include one.
-- Unread indicators are in-memory only (reset on reload) and there's no mention
-  /notification system.
-- Thread reads are capped at 1000 replies, no pagination inside threads.
-- Sessions never expire server-side (cookie maxAge 30d only); logout deletes
-  the session row.
-- Single-process fanout: WS hub is in-memory, so one server instance only (fine
-  for the prototype; Phase 2+ would need a bus if we shard).
-- No rate limiting; channel-create is workspace-global (no membership model —
-  everyone sees every channel by design for now).
-- `pnpm dev` (tsx watch) restarts the server on file edits; clients reconnect
-  and catch up automatically (verified via the offline test path).
-- Not yet done from the cross-cutting list: Playwright e2e checked into the
-  repo (browser verification above was run ad hoc), recorded demo, /code-review
-  of the diff.
+- Thread reads are capped at 1000 replies, with no pagination inside threads
+  (`listThreadMessages` still uses a fixed `LIMIT 1000`).
+- Single-process fanout: `main.ts` creates one in-memory `WsHub`; there is no
+  cross-process bus, so Surface must run as one server instance.
+- Channel creation has workspace membership, public/private channel membership,
+  and tenancy boundaries, but no role/permission gate: any authenticated member
+  of the active workspace can create a channel.
+- `pnpm dev` still uses `tsx watch`; clients reconnect and invoke their durable
+  catch-up path on every WebSocket open.
+- There is no recorded video demo checked into the repo. Current demo support
+  is a seeded workspace/script plus Playwright-driven still screenshot capture.
 
 ## Mobile app (Expo) — added 2026-06-10
 

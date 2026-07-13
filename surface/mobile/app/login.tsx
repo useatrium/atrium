@@ -10,7 +10,7 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { ApiError, createApi, type AuthMethods } from '@atrium/surface-client';
+import { connectionAwareError, createApi, isNetworkFailure, type AuthMethods } from '@atrium/surface-client';
 import { normalizeServerUrl, useSession } from '../src/lib/session';
 import { font, radius, space, useTheme } from '../src/lib/theme';
 
@@ -38,18 +38,6 @@ const AUTO_LOGIN = __DEV__ ? process.env.EXPO_PUBLIC_AUTO_LOGIN : undefined;
 const SERVER_ADDRESS_EXAMPLE = 'http://192.168.1.20:3001';
 const SERVER_CONNECTION_ERROR =
   "Could not reach your Atrium server. Check the server address above and use your computer's LAN IP on a real device.";
-
-function isNetworkFailure(err: unknown): boolean {
-  if (err instanceof TypeError) return true;
-  const message = err instanceof Error ? err.message : String(err);
-  return /Network request failed|Failed to fetch|fetch failed|NetworkError|Load failed/i.test(message);
-}
-
-function connectionAwareError(err: unknown, fallback: string): string {
-  if (err instanceof ApiError) return err.message || fallback;
-  if (isNetworkFailure(err)) return SERVER_CONNECTION_ERROR;
-  return err instanceof Error ? err.message : fallback;
-}
 
 export default function Login() {
   const { login, loginWithEmailCode } = useSession();
@@ -133,7 +121,7 @@ export default function Login() {
       setEmailStep('code');
     } catch (err) {
       if (isNetworkFailure(err)) revealServerField();
-      setError(connectionAwareError(err, 'Could not request a code.'));
+      setError(connectionAwareError(err, 'Could not request a code.', SERVER_CONNECTION_ERROR));
     } finally {
       setBusy(false);
     }
@@ -147,7 +135,7 @@ export default function Login() {
       await loginWithEmailCode(serverUrl, email.trim(), code.trim());
     } catch (err) {
       if (isNetworkFailure(err)) revealServerField();
-      setError(connectionAwareError(err, 'Could not sign in.'));
+      setError(connectionAwareError(err, 'Could not sign in.', SERVER_CONNECTION_ERROR));
     } finally {
       setBusy(false);
     }
@@ -166,7 +154,7 @@ export default function Login() {
       await login(serverUrl, handle.trim().toLowerCase(), displayName.trim());
     } catch (err) {
       if (isNetworkFailure(err)) revealServerField();
-      setError(connectionAwareError(err, 'Could not reach the server.'));
+      setError(connectionAwareError(err, 'Could not reach the server.', SERVER_CONNECTION_ERROR));
     } finally {
       setBusy(false);
     }

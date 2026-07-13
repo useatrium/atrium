@@ -116,6 +116,7 @@ describe('event cache', () => {
         general: { events, hasMore: true },
       },
       syncCursor: 0,
+      lastSyncedAt: null,
     });
   });
 

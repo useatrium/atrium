@@ -209,7 +209,40 @@ describe('internal capture round-trip (PG + object storage)', () => {
     expect(raw.body).toBe('second');
   });
 
-  it('rejects divergent stale writes through active-channel aliases without creating a second chain', async () => {
+  it('returns success and records a conflict when an existing path is captured without a base header', async () => {
+    const sid = await session();
+    const url = `/api/internal/sessions/${sid}/artifacts/capture?path=unknown-base.md`;
+    const headers = { 'x-api-key': KEY, 'content-type': 'text/markdown' };
+    const first = await app.inject({ method: 'POST', url, headers, payload: 'first writer' });
+    expect(first.statusCode).toBe(200);
+    expect(first.json()).toMatchObject({ seq: 1, status: 'normal' });
+
+    const blind = await app.inject({ method: 'POST', url, headers, payload: 'unknown-base writer' });
+    expect(blind.statusCode).toBe(200);
+    expect(blind.json()).toMatchObject({ seq: 2, status: 'conflict' });
+
+    const prior = await app.inject({
+      method: 'GET',
+      url: `/api/internal/sessions/${sid}/artifacts/raw?path=unknown-base.md&seq=1`,
+      headers: { 'x-api-key': KEY },
+    });
+    expect(prior.statusCode).toBe(200);
+    expect(prior.body).toBe('first writer');
+
+    const conflict = await pool.query<{ status: string; conflict: Record<string, unknown> }>(
+      `SELECT status, conflict
+         FROM artifact_versions v
+         JOIN artifacts a ON a.id = v.artifact_id
+        WHERE a.workspace_id = $1 AND a.path = $2 AND v.seq = 2`,
+      [fx.workspaceId, `shared/channels/${fx.channelId}/unknown-base.md`],
+    );
+    expect(conflict.rows[0]).toMatchObject({
+      status: 'conflict',
+      conflict: { kind: 'unmergeable', base_seq: null, left: { seq: 1 } },
+    });
+  });
+
+  it('records divergent stale writes through active-channel aliases on the shared chain', async () => {
     const sid = await session();
     const explicit = `shared/channels/${fx.channelId}/report.md`;
     const initial = await app.inject({
@@ -244,8 +277,8 @@ describe('internal capture round-trip (PG + object storage)', () => {
       },
       payload: 'from bare alias',
     });
-    expect(staleBareWrite.statusCode).toBe(409);
-    expect(staleBareWrite.json()).toMatchObject({ error: 'stale_base', baseSeq: 1, latestSeq: 2 });
+    expect(staleBareWrite.statusCode).toBe(200);
+    expect(staleBareWrite.json()).toMatchObject({ seq: 3, status: 'conflict' });
 
     const rows = await pool.query<{ path: string; versions: number }>(
       `SELECT a.path, count(v.*)::int AS versions
@@ -256,11 +289,11 @@ describe('internal capture round-trip (PG + object storage)', () => {
         ORDER BY a.path`,
       [fx.workspaceId],
     );
-    expect(rows.rows).toEqual([{ path: explicit, versions: 2 }]);
+    expect(rows.rows).toEqual([{ path: explicit, versions: 3 }]);
 
     const raw = await app.inject({
       method: 'GET',
-      url: `/api/internal/sessions/${sid}/artifacts/raw?path=report.md`,
+      url: `/api/internal/sessions/${sid}/artifacts/raw?path=report.md&seq=2`,
       headers: { 'x-api-key': KEY },
     });
     expect(raw.statusCode).toBe(200);

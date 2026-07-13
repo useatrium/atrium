@@ -124,7 +124,7 @@ function isHistoryKind(kind: ActivityItem['kind']): boolean {
 }
 
 export default function ActivityScreen() {
-  const { api, state, resolveUser } = useChat();
+  const { api, state, resolveUser, serverUrl, signInAgain } = useChat();
   const { colors } = useTheme();
   const [sessions, setSessions] = useState<SessionListItem[]>([]);
   const [activityItems, setActivityItems] = useState<ActivityItem[]>([]);
@@ -617,7 +617,12 @@ export default function ActivityScreen() {
           </Pressable>
         }
       />
-      <ConnectionBanner status={state.wsStatus} />
+      <ConnectionBanner
+        status={state.wsStatus}
+        serverUrl={serverUrl}
+        lastSyncedAt={state.lastSyncedAt}
+        onSignInAgain={signInAgain}
+      />
       {loading ? (
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
           <ActivityIndicator color={colors.textMuted} />

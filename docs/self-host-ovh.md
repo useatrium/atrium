@@ -114,10 +114,13 @@ rsync -az --exclude '.git/' --exclude 'node_modules/' --exclude 'target/' \
 
 # on the box: write a production .env
 cd ~/atrium/surface/deploy
-# generate secrets: openssl rand -hex 32 (DB/MinIO), openssl rand -base64 32 (SESSION_SECRET)
+# generate secrets: openssl rand -hex 32 (DB/MinIO and ARTIFACT_CAPTURE_API_KEY),
+# openssl rand -base64 32 (SESSION_SECRET). Generate ARTIFACT_CAPTURE_API_KEY
+# now; Phase 5 copies this same value into Centaur.
 # key settings: BIND_HOST=127.0.0.1, DB/MinIO/server on loopback, AUTH_OPEN=1
 #   (Cloudflare Access is the gate), S3_ENDPOINT=http://minio:9000 (flip to the public
-#   files host once the tunnel is up), CENTAUR_* filled in Phase 6.
+#   files host once the tunnel is up), ARTIFACT_CAPTURE_API_KEY=<generated hex>,
+#   CENTAUR_* filled in Phase 6.
 # The server creates the S3_BUCKET at boot (retrying until the store is up) and
 # /healthz stays 503 until that first succeeds — a health-gated deploy fails
 # loudly if storage is misconfigured instead of 500ing every capture silently
@@ -144,10 +147,13 @@ sudo docker compose -f docker-compose.prod.yml -f docker-compose.tunnel.yml --pr
 curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1/healthz   # 200
 ```
 
-> ⚠️ **Gotcha — a stale `.env` wins.** The server only writes `.env` if absent, so an
-> `.env` carried over from another machine (e.g. a Tailscale dev box with
-> `BIND_HOST=0.0.0.0`) silently takes over — wrong ports and **MinIO exposed on
-> `0.0.0.0`**. Overwrite it with a fresh production `.env`.
+> **Boot error — `unsafe service publication bind`.** Production Compose passes
+> the effective host publications into the server, which prints the server,
+> object-storage, and database bind addresses before boot. If a stale `.env` sets
+> `BIND_HOST=0.0.0.0` (or an IPv6 wildcard), the server refuses to start because
+> that publishes MinIO and Surface on every interface; Docker bypasses ufw. Set
+> `BIND_HOST=127.0.0.1` in `.env`, then recreate `server`. A wildcard
+> `DB_BIND_HOST` fails similarly; keep it at `127.0.0.1`.
 
 > ⚠️ **Gotcha — Postgres password.** Postgres only sets its password on first init.
 > If you change `DB_PASSWORD` after the volume exists, the server can't auth. On a
@@ -426,9 +432,11 @@ done
 export OP_SERVICE_ACCOUNT_TOKEN=dummy OP_VAULT=dummy SLACK_BOT_TOKEN=dummy SLACK_SIGNING_SECRET=dummy
 export SLACKBOT_API_KEY=$(openssl rand -hex 32) LOCAL_DEV_API_KEY=$(openssl rand -hex 32)
 just bootstrap-secrets
-# api-rs also requires this key (not seeded by bootstrap):
+# api-rs also requires the same key Surface already has (not seeded by bootstrap):
+CAPTURE_KEY=$(sed -n 's/^ARTIFACT_CAPTURE_API_KEY=//p' ~/atrium/surface/deploy/.env | tail -n 1)
+test -n "$CAPTURE_KEY" || { echo 'ARTIFACT_CAPTURE_API_KEY is empty in Surface .env' >&2; exit 1; }
 kubectl -n centaur patch secret centaur-infra-env --type merge \
-  -p "{\"stringData\":{\"ARTIFACT_CAPTURE_API_KEY\":\"$(openssl rand -hex 32)\"}}"
+  -p "{\"stringData\":{\"ARTIFACT_CAPTURE_API_KEY\":\"$CAPTURE_KEY\"}}"
 
 # deploy with Atrium overrides + round-1 simplifications
 helm upgrade --install centaur contrib/chart -n centaur --create-namespace \
@@ -487,7 +495,10 @@ docker save centaur-node-sync:latest | sudo k3s ctr images import -
 # the DaemonSet (k3s) must reach the surface server (Docker). Publish the surface
 # on the cni0 host IP (10.42.0.1) — k3s pods reach the host there and it's internal
 # (not public). Append to the compose tunnel override → server.ports, then recreate:
-#   services: { server: { ports: [ "10.42.0.1:3001:3001" ] } }
+#   services:
+#     server:
+#       environment: { ATRIUM_SERVER_PUBLICATION_HOST: 10.42.0.1 }
+#       ports: !override [ "10.42.0.1:3001:3001" ]
 cd ~/atrium/surface/deploy
 sudo docker compose -f docker-compose.prod.yml -f docker-compose.tunnel.yml up -d server
 
@@ -501,22 +512,29 @@ helm upgrade centaur contrib/chart -n centaur \
 kubectl get pods -n centaur | grep node-sync   # 1/1 Running
 ```
 
-> ⚠️ **Gotcha — the surface needs `ARTIFACT_CAPTURE_API_KEY`, matching Centaur's.**
-> The surface `.env` has **no such line by default**, so the server runs with an
-> *empty* key and node-sync gets **401**. Set the same value on both sides:
+> **Boot error — `artifact capture is not authenticated`.** In production, Surface
+> now refuses to boot with an empty or missing `ARTIFACT_CAPTURE_API_KEY` and says:
+> “artifact capture is not authenticated — set `ARTIFACT_CAPTURE_API_KEY` on both
+> the Surface and Centaur.” Phase 3 generates the Surface value and Phase 5 copies
+> it into Centaur. If an older `.env` hits this error, copy Centaur's value into it:
 > ```sh
 > KEY=$(kubectl -n centaur get secret centaur-infra-env -o jsonpath='{.data.ARTIFACT_CAPTURE_API_KEY}' | base64 -d)
 > cd ~/atrium/surface/deploy
-> grep -q '^ARTIFACT_CAPTURE_API_KEY=' .env || echo "ARTIFACT_CAPTURE_API_KEY=$KEY" >> .env
+> if grep -q '^ARTIFACT_CAPTURE_API_KEY=' .env; then
+>   sed -i "s/^ARTIFACT_CAPTURE_API_KEY=.*/ARTIFACT_CAPTURE_API_KEY=$KEY/" .env
+> else
+>   echo "ARTIFACT_CAPTURE_API_KEY=$KEY" >> .env
+> fi
 > sudo docker compose -f docker-compose.prod.yml -f docker-compose.tunnel.yml up -d server
 > ```
 > Confirm in `kubectl logs -n centaur <node-sync-pod>`: requests should be 200 (a
 > `404` for a thread key you created directly in Centaur is fine — only real
 > Atrium-spawned sessions exist in the surface DB), **never 401**.
 
-> Note: `infra/values.local.yaml` hardcodes `nodeSync.atriumBaseUrl` to the old
-> **kind** IP `172.18.0.3` — the `--set` above overrides it for the k3s+compose
-> topology. NetworkPolicy stays off so node-sync can reach `10.42.0.1`.
+> Note: `infra/values.local.yaml` deliberately has no `nodeSync.atriumBaseUrl` or
+> `nodeSync.atriumEgress` default because those addresses are topology-specific.
+> The `--set` above is therefore required for this k3s+compose topology.
+> NetworkPolicy stays off so node-sync can reach `10.42.0.1`.
 
 ## Phase 7 — Agents actually run (per-user BYO Codex)
 

@@ -69,6 +69,8 @@ export default function ChannelList() {
     channelsLoaded,
     channelsError,
     refreshChannels,
+    serverUrl,
+    signInAgain,
   } = useChat();
   const { colors } = useTheme();
   const [archivedOpen, setArchivedOpen] = useState(false);
@@ -160,7 +162,7 @@ export default function ChannelList() {
       : []),
     { key: 'channels-header', kind: 'header' as const, title: 'Channels' },
     ...channels.map((channel) => ({ key: channel.id, kind: 'channel' as const, channel })),
-    ...(channelsError && state.channels.length === 0 ? [{ key: 'channels-error', kind: 'error' as const }] : []),
+    ...(channelsError ? [{ key: 'channels-error', kind: 'error' as const }] : []),
     ...(state.channels.length === 0 && !channelsLoaded && !channelsError
       ? [{ key: 'channels-loading', kind: 'loading' as const }]
       : []),
@@ -227,7 +229,12 @@ export default function ChannelList() {
           </>
         }
       />
-      <ConnectionBanner status={state.wsStatus} />
+      <ConnectionBanner
+        status={state.wsStatus}
+        serverUrl={serverUrl}
+        lastSyncedAt={state.lastSyncedAt}
+        onSignInAgain={signInAgain}
+      />
       <FlatList
         style={{ flex: 1 }}
         data={sections}

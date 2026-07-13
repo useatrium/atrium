@@ -29,6 +29,7 @@ import {
   type Session,
 } from './sessions';
 import { mentionsUser } from './mentions';
+import type { WsStatus } from './useWs';
 
 /** 'mention' outranks plain unread — it renders as a red @ badge. */
 export type UnreadLevel = false | true | 'mention';
@@ -65,7 +66,9 @@ export interface AppState {
   meId: string | null;
   /** Max workspace event id applied through history, sync, WS, or POST echoes. */
   syncCursor: number;
-  wsStatus: 'connecting' | 'open' | 'closed';
+  /** Newest time locally saved message data was known to match the server. */
+  lastSyncedAt: string | null;
+  wsStatus: WsStatus;
 }
 
 export const initialAppState: AppState = {
@@ -83,6 +86,7 @@ export const initialAppState: AppState = {
   meHandle: null,
   meId: null,
   syncCursor: 0,
+  lastSyncedAt: null,
   wsStatus: 'connecting',
 };
 
@@ -121,6 +125,7 @@ export type AppAction =
   | { type: 'close-thread' }
   | { type: 'server-event'; event: WireEvent }
   | { type: 'sync-cursor'; cursor: number }
+  | { type: 'last-synced-at'; at: string }
   | { type: 'send-pending'; channelId: string; message: ChatMessage }
   | { type: 'send-failed'; channelId: string; clientMsgId: string }
   | { type: 'retry-remove'; channelId: string; clientMsgId: string }
@@ -451,6 +456,9 @@ export function appReducer(state: AppState, action: AppAction): AppState {
 
     case 'sync-cursor':
       return withSyncCursor(state, action.cursor);
+
+    case 'last-synced-at':
+      return { ...state, lastSyncedAt: action.at };
 
     case 'send-pending':
       return withTimeline(state, action.channelId, addPending(timeline(state, action.channelId), action.message));

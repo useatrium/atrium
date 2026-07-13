@@ -202,7 +202,7 @@ describe('internal streaming artifact capture', () => {
     expect(mockedS3.storage.objects.get(casBlobKey(sha))?.body.byteLength).toBe(body.byteLength);
   });
 
-  it('returns stale_base when base_seq is behind latest', async () => {
+  it('returns base_not_found when base_seq does not exist', async () => {
     const sid = await session();
     const first = await app.inject({
       method: 'POST',
@@ -223,7 +223,64 @@ describe('internal streaming artifact capture', () => {
       payload: Buffer.from('second'),
     });
     expect(stale.statusCode).toBe(409);
-    expect(stale.json()).toEqual({ error: 'stale_base', latestSeq: 1, baseSeq: 99 });
+    expect(stale.json()).toEqual({ error: 'base_not_found', latestSeq: 1, baseSeq: 99 });
+  });
+
+  it('records a conflict when two streamed writers fork the same base', async () => {
+    const sid = await session();
+    const write = (body: string, baseSeq?: number) =>
+      app.inject({
+        method: 'POST',
+        url: `/api/internal/sessions/${sid}/artifacts/capture-stream?path=large/shared.md`,
+        headers: {
+          'x-api-key': KEY,
+          'content-type': 'application/octet-stream',
+          ...(baseSeq == null ? {} : { 'x-artifact-base-seq': String(baseSeq) }),
+        },
+        payload: Buffer.from(body),
+      });
+
+    expect((await write('base\n')).json()).toEqual({ seq: 1, status: 'normal' });
+    expect((await write('writer A\n', 1)).json()).toEqual({ seq: 2, status: 'normal' });
+    expect((await write('writer B\n', 1)).json()).toEqual({ seq: 3, status: 'conflict' });
+
+    const preserved = await app.inject({
+      method: 'GET',
+      url: `/api/internal/sessions/${sid}/artifacts/raw?path=large/shared.md&seq=2`,
+      headers: { 'x-api-key': KEY },
+    });
+    expect(preserved.body).toBe('writer A\n');
+  });
+
+  it('records a base-less append as a conflict and preserves the prior version', async () => {
+    const sid = await session();
+    const url = `/api/internal/sessions/${sid}/artifacts/capture-stream?path=large/base-required.bin`;
+    const headers = { 'x-api-key': KEY, 'content-type': 'application/octet-stream' };
+    expect((await app.inject({ method: 'POST', url, headers, payload: Buffer.from('first') })).statusCode).toBe(200);
+
+    const blind = await app.inject({ method: 'POST', url, headers, payload: Buffer.from('second') });
+    expect(blind.statusCode).toBe(200);
+    expect(blind.json()).toEqual({ seq: 2, status: 'conflict' });
+
+    const prior = await app.inject({
+      method: 'GET',
+      url: `/api/internal/sessions/${sid}/artifacts/raw?path=large/base-required.bin&seq=1`,
+      headers: { 'x-api-key': KEY },
+    });
+    expect(prior.statusCode).toBe(200);
+    expect(prior.body).toBe('first');
+
+    const conflict = await pool.query<{ status: string; conflict: Record<string, unknown> }>(
+      `SELECT v.status, v.conflict
+         FROM artifact_versions v
+         JOIN artifacts a ON a.id = v.artifact_id
+        WHERE a.workspace_id = $1 AND a.path = $2 AND v.seq = 2`,
+      [fx.workspaceId, activePath('large/base-required.bin')],
+    );
+    expect(conflict.rows[0]).toMatchObject({
+      status: 'conflict',
+      conflict: { kind: 'unmergeable', base_seq: null, left: { seq: 1 } },
+    });
   });
 
   it('requires x-api-key', async () => {
