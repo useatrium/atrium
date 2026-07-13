@@ -36,17 +36,6 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [ready, setReady] = useState(false);
 
-  useEffect(() => {
-    SecureStore.getItemAsync(STORE_KEY)
-      .then((raw) => {
-        if (!raw) return;
-        const parsed = JSON.parse(raw) as Session;
-        if (parsed.serverUrl && parsed.token && parsed.user?.id) setSession(parsed);
-      })
-      .catch(() => {})
-      .finally(() => setReady(true));
-  }, []);
-
   const login = useCallback(async (serverUrl: string, handle: string, displayName: string) => {
     const base = normalizeServerUrl(serverUrl);
     const api = createApi({ baseUrl: base });
@@ -58,6 +47,29 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     await SecureStore.setItemAsync(STORE_KEY, JSON.stringify(next));
     setSession(next);
   }, []);
+
+  useEffect(() => {
+    SecureStore.getItemAsync(STORE_KEY)
+      .then(async (raw) => {
+        if (raw) {
+          const parsed = JSON.parse(raw) as Session;
+          if (parsed.serverUrl && parsed.token && parsed.user?.id) {
+            setSession(parsed);
+            return;
+          }
+        }
+        // Dev-only simulator QA hook: EXPO_PUBLIC_QA_AUTOLOGIN="<url>|<handle>"
+        // logs straight into a QA server on boot. Driving the login form from
+        // outside (idb/simctl HID events) races React Native text inputs.
+        const auto = __DEV__ ? process.env.EXPO_PUBLIC_QA_AUTOLOGIN : undefined;
+        if (auto) {
+          const [server, handle] = auto.split('|');
+          if (server && handle) await login(server, handle, handle).catch(() => {});
+        }
+      })
+      .catch(() => {})
+      .finally(() => setReady(true));
+  }, [login]);
 
   const loginWithEmailCode = useCallback(async (serverUrl: string, email: string, code: string) => {
     const base = normalizeServerUrl(serverUrl);
