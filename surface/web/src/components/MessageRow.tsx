@@ -82,7 +82,7 @@ function ReactionUsersPopover({ id, emoji, users }: { id: string; emoji: string;
       id={id}
       role="tooltip"
       aria-label={`${users.length} ${users.length === 1 ? 'person' : 'people'} reacted with ${emoji}`}
-      className="absolute bottom-full left-0 z-20 mb-1 w-56 rounded-md border border-edge-strong bg-surface-overlay p-1 shadow-lg"
+      className="absolute bottom-full left-0 z-tooltip mb-1 w-56 rounded-md border border-edge-strong bg-surface-overlay p-1 shadow-lg"
     >
       <ul className="max-h-48 overflow-y-auto">
         {users.map((user) => (
@@ -854,7 +854,7 @@ export const MessageRow = memo(function MessageRow({
           onClose={() => setPickerOpen(false)}
           onSelect={react}
           invokerRef={reactionButtonRef}
-          className="absolute bottom-full right-0 z-10 mb-1 w-72"
+          className="absolute bottom-full right-0 z-dropdown mb-1 w-72"
         />
         {(canThread || canEdit || canDelete || canReact || canAnnotate || canMarkupReply) && !editing && (
           <div className="pointer-events-none absolute -top-3 right-0 flex gap-1 opacity-0 focus-within:pointer-events-auto focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100">

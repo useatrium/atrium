@@ -192,7 +192,7 @@ export function ConflictSurface({
       data-testid="conflict-surface"
       role="dialog"
       aria-label="Resolve conflict"
-      className="absolute inset-0 z-10 flex flex-col bg-surface/95 backdrop-blur-sm"
+      className="absolute inset-0 z-raised flex flex-col bg-surface/95 backdrop-blur-sm"
     >
       <header className="flex h-10 shrink-0 items-center justify-between border-b border-edge px-3">
         <h3 className="flex min-w-0 items-center gap-2 text-xs font-semibold text-fg">

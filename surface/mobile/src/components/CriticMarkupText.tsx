@@ -65,7 +65,7 @@ export function NoteRow({ label = 'Note', text, warning }: { label?: string; tex
         backgroundColor: warning ? colors.warningSurface : colors.bgInput,
         paddingHorizontal: space.sm,
         paddingVertical: space.xs,
-        gap: 2,
+        gap: space.xxs,
       }}
     >
       <Text style={{ color: warning ? colors.warning : colors.textMuted, fontSize: font.xs, fontWeight: '800' }}>

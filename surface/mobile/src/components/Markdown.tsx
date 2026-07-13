@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { compactMarkdownSource, type UserRef } from '@atrium/surface-client';
+import { compactMarkdownSource, createHljsStyle, syntaxTheme, type UserRef } from '@atrium/surface-client';
 import * as Clipboard from 'expo-clipboard';
 import {
   Component,
@@ -254,32 +254,6 @@ function openExternalLink(url: string): boolean {
   return false;
 }
 
-function syntaxTheme(colors: Colors) {
-  return {
-    hljs: {
-      backgroundColor: colors.bgElevated,
-      color: colors.textSecondary,
-    },
-    'hljs-comment': { color: colors.textMuted },
-    'hljs-quote': { color: colors.textMuted },
-    'hljs-keyword': { color: '#ff7b72' },
-    'hljs-selector-tag': { color: '#ff7b72' },
-    'hljs-literal': { color: '#79c0ff' },
-    'hljs-number': { color: '#79c0ff' },
-    'hljs-string': { color: '#a5d6ff' },
-    'hljs-title': { color: '#d2a8ff' },
-    'hljs-section': { color: '#d2a8ff' },
-    'hljs-built_in': { color: '#7ee787' },
-    'hljs-name': { color: '#7ee787' },
-    'hljs-symbol': { color: '#7ee787' },
-    'hljs-attribute': { color: '#f2cc60' },
-    'hljs-bullet': { color: '#f2cc60' },
-    'hljs-meta': { color: '#f2cc60' },
-    'hljs-addition': { color: '#aff5b4', backgroundColor: 'rgba(3, 58, 22, 0.45)' },
-    'hljs-deletion': { color: '#ffdcd7', backgroundColor: 'rgba(103, 6, 12, 0.45)' },
-  };
-}
-
 function CopyableCodeBlock({
   nodeKey,
   content,
@@ -291,6 +265,7 @@ function CopyableCodeBlock({
   language: string;
   colors: Colors;
 }) {
+  const { scheme } = useTheme();
   const [copied, setCopied] = useState(false);
   const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const code = trimTrailingNewline(content);
@@ -353,7 +328,7 @@ function CopyableCodeBlock({
             alignItems: 'center',
             borderRadius: radius.sm,
             flexDirection: 'row',
-            gap: 4,
+            gap: space.xs,
             minHeight: 30,
             paddingHorizontal: space.sm,
             justifyContent: 'center',
@@ -368,7 +343,10 @@ function CopyableCodeBlock({
       <SyntaxHighlighter
         highlighter="hljs"
         language={language}
-        style={syntaxTheme(colors)}
+        style={createHljsStyle(syntaxTheme[scheme], {
+          backgroundColor: colors.bgElevated,
+          color: colors.textSecondary,
+        })}
         fontFamily={monoFont}
         fontSize={font.xs}
         PreTag={ScrollView}
@@ -459,7 +437,7 @@ function markdownStyles(colors: Colors, variant: 'session' | 'message' | 'compac
       color: colors.codeAccent,
       fontFamily: monoFont,
       fontSize: font.sm,
-      paddingHorizontal: 4,
+      paddingHorizontal: space.xs,
       paddingVertical: 1,
     },
     code_block: codeContainer,
@@ -594,7 +572,7 @@ function makeRules(
           style={{
             flexDirection: 'row',
             gap: space.sm,
-            marginVertical: 2,
+            marginVertical: space.xxs,
           }}
         >
           <Text

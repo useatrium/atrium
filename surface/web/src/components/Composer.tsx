@@ -505,7 +505,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             {agentTargetOpen && canTargetSession && (
               <div
                 role="menu"
-                className="absolute bottom-full left-0 z-30 mb-1 w-64 rounded-md border border-edge-strong bg-surface-overlay p-1 shadow-lg"
+                className="absolute bottom-full left-0 z-dropdown mb-1 w-64 rounded-md border border-edge-strong bg-surface-overlay p-1 shadow-lg"
               >
                 <button
                   type="button"
@@ -859,7 +859,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
         )}
       </div>
       {agentOptionsOpen && agentModeContext && (
-        <div className="fixed inset-0 z-50 flex items-end min-[431px]:hidden">
+        <div className="fixed inset-0 z-overlay flex items-end min-[431px]:hidden">
           <button
             type="button"
             aria-label="Close agent mode options"

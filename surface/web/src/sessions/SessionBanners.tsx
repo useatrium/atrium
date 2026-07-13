@@ -442,7 +442,7 @@ function QuestionOptionPreview({
   }
 
   return (
-    <pre className="mt-1.5 max-h-32 overflow-auto rounded border border-edge bg-surface px-2 py-1.5 text-[11px] leading-snug text-fg-secondary">
+    <pre className="mt-1.5 max-h-32 overflow-auto rounded border border-edge bg-surface px-2 py-1.5 text-2xs leading-snug text-fg-secondary">
       {preview}
     </pre>
   );

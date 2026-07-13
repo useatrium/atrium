@@ -363,7 +363,7 @@ export function Lightbox({
   return (
     <div
       ref={dialogRef}
-      className="fixed inset-0 z-[70] flex flex-col bg-surface text-fg shadow-2xl"
+      className="fixed inset-0 z-overlay flex flex-col bg-surface text-fg shadow-2xl"
       role="dialog"
       aria-modal="true"
       aria-labelledby="lightbox-title"

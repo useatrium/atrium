@@ -84,7 +84,7 @@ export function EntryReferencesChip({
           ref={popoverRef}
           role="dialog"
           aria-label="Entry discussions"
-          className="absolute right-0 z-20 mt-1 w-72 rounded-md border border-edge-strong bg-surface-overlay p-1 shadow-lg"
+          className="absolute right-0 z-dropdown mt-1 w-72 rounded-md border border-edge-strong bg-surface-overlay p-1 shadow-lg"
         >
           {refs.map((ref) => {
             const relativeTimestamp = formatRelativeTimestamp(ref.ts);

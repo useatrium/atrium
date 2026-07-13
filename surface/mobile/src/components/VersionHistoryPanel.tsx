@@ -43,7 +43,7 @@ function VersionBadge({ version }: { version: HubFileVersion }) {
         borderRadius: radius.sm,
         backgroundColor: conflict ? colors.dangerSurface : version.isLatest ? colors.accentBg : colors.bgPressed,
         paddingHorizontal: space.sm,
-        paddingVertical: 2,
+        paddingVertical: space.xxs,
       }}
     >
       <Text
@@ -199,7 +199,7 @@ function DiffViewer({
                 key={`${index}-${line.kind}`}
                 style={{
                   flexDirection: 'row',
-                  backgroundColor: added ? 'rgba(52, 211, 153, 0.14)' : removed ? colors.dangerSurface : colors.bg,
+                  backgroundColor: added ? colors.successSurface : removed ? colors.dangerSurface : colors.bg,
                   borderBottomWidth: 1,
                   borderBottomColor: colors.borderSoft,
                 }}
@@ -292,7 +292,7 @@ function VersionRow({
               numberOfLines={1}
             />
           </View>
-          <Text style={{ color: colors.textFaint, fontSize: font.xs, marginTop: 2 }} numberOfLines={1}>
+          <Text style={{ color: colors.textFaint, fontSize: font.xs, marginTop: space.xxs }} numberOfLines={1}>
             {bytesLabel(version.sizeBytes)} / {version.mime ?? 'unknown mime'}
           </Text>
         </View>
@@ -486,7 +486,7 @@ export function VersionHistoryPanel(props: {
               >
                 Version history
               </Text>
-              <Text style={{ color: colors.textMuted, fontSize: font.xs, marginTop: 2 }} numberOfLines={1}>
+              <Text style={{ color: colors.textMuted, fontSize: font.xs, marginTop: space.xxs }} numberOfLines={1}>
                 {file.name}
               </Text>
             </View>

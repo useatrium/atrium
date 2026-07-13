@@ -12,7 +12,7 @@ import {
 } from '@atrium/surface-client';
 import { Ionicons } from '@expo/vector-icons';
 import { useChat } from '../../../src/lib/chat';
-import { font, useTheme } from '../../../src/lib/theme';
+import { font, space, useTheme } from '../../../src/lib/theme';
 import { attachmentToHubFile } from '../../../src/components/attachmentPreview';
 import { ConnectionBanner, TypingLine } from '../../../src/components/bits';
 import { Composer, type ComposerHandle } from '../../../src/components/Composer';
@@ -349,7 +349,7 @@ export default function ChannelScreen() {
             </View>
           ),
           headerRight: () => (
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.xs }}>
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel="New agent"

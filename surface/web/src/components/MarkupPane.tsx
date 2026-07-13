@@ -168,7 +168,7 @@ export function MarkupPane({
   };
 
   return (
-    <div className="fixed inset-0 z-[80] flex bg-black/55 p-4 text-fg max-md:p-2" role="presentation">
+    <div className="fixed inset-0 z-overlay flex bg-black/55 p-4 text-fg max-md:p-2" role="presentation">
       <section
         ref={dialogRef}
         role="dialog"
@@ -244,7 +244,7 @@ export function MarkupPane({
             className="h-9 shrink-0 rounded-md border border-edge-strong bg-surface-raised px-3 text-sm text-fg outline-none placeholder:text-fg-faint focus:border-accent-hover max-md:h-11"
           />
           {showHistory && (
-            <div className="absolute inset-3 z-10 min-h-0 overflow-hidden rounded-md border border-edge-strong bg-surface shadow-2xl">
+            <div className="absolute inset-3 z-raised min-h-0 overflow-hidden rounded-md border border-edge-strong bg-surface shadow-2xl">
               <MarkupVersionHistory
                 artifactId={source.artifactId}
                 path={source.path}

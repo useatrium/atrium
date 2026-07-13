@@ -128,7 +128,7 @@ export function ApplyMarkupMenu({ artifactId, path, channelId, sessions = {}, on
       {notice && (
         <div
           role="status"
-          className="absolute right-0 top-9 z-[80] w-56 rounded-md border border-success/30 bg-surface-overlay px-3 py-2 text-xs text-success-text shadow-lg"
+          className="absolute right-0 top-9 z-dropdown w-56 rounded-md border border-success/30 bg-surface-overlay px-3 py-2 text-xs text-success-text shadow-lg"
         >
           {notice}
         </div>

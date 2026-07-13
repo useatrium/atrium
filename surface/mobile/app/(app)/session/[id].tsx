@@ -149,8 +149,8 @@ function DiscussedChip({ count, onPress }: { count: number; onPress: () => void 
         borderWidth: 1,
         borderColor: colors.border,
         backgroundColor: pressed ? colors.bgPressed : colors.bgElevated,
-        borderRadius: 999,
-        paddingHorizontal: 8,
+        borderRadius: radius.pill,
+        paddingHorizontal: space.sm,
         paddingVertical: 3,
       })}
     >
@@ -218,10 +218,10 @@ function StatusChip({ status, stalled }: { status: SessionStatus; stalled: boole
         flexDirection: 'row',
         alignItems: 'center',
         gap: 6,
-        borderRadius: 999,
+        borderRadius: radius.pill,
         borderWidth: 1,
         borderColor: color,
-        paddingHorizontal: 8,
+        paddingHorizontal: space.sm,
         paddingVertical: 3,
       }}
     >
@@ -484,7 +484,7 @@ function MobileQuestionTranscriptCard({
                         backgroundColor: colors.bgElevated,
                         borderRadius: radius.sm,
                         padding: space.sm,
-                        gap: 2,
+                        gap: space.xxs,
                       }}
                     >
                       <Text style={{ color: colors.text, fontSize: font.sm, fontWeight: '800' }}>{option.label}</Text>
@@ -1650,7 +1650,7 @@ export default function SessionScreen() {
         options={{
           headerTitle: () => (
             <View style={{ maxWidth: 260, gap: 3 }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm }}>
                 <StatusChip status={displayStatus} stalled={stalled} />
               </View>
               <Text style={{ color: colors.text, fontSize: font.sm, fontWeight: '800' }} numberOfLines={1}>
@@ -1784,7 +1784,7 @@ export default function SessionScreen() {
               marginHorizontal: space.md,
               marginTop: space.sm,
               paddingHorizontal: space.sm,
-              paddingVertical: 4,
+              paddingVertical: space.xs,
               borderRadius: radius.sm,
               borderWidth: 1,
               borderColor: colors.border,

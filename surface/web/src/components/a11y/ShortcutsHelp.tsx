@@ -18,7 +18,7 @@ export function ShortcutsHelp({ open, onClose }: { open: boolean; onClose: () =>
   const groups = groupedShortcuts();
 
   return createPortal(
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-max flex items-center justify-center p-4">
       {/* Backdrop: mouse-dismiss only. Keyboard close is handled by useDialog (Escape) and the Close button. */}
       <div className="absolute inset-0 bg-black/50" aria-hidden="true" onClick={onClose} />
       <div

@@ -91,7 +91,7 @@ export function CodeRenderer({ file, variant }: { file: PreviewFile; variant: Me
 
   return (
     <div className="h-full overflow-auto bg-surface">
-      <div className="sticky top-0 z-10 flex items-center gap-2 border-b border-edge bg-surface/95 px-4 py-2 backdrop-blur-sm">
+      <div className="sticky top-0 z-sticky flex items-center gap-2 border-b border-edge bg-surface/95 px-4 py-2 backdrop-blur-sm">
         <span className="truncate font-mono text-xs font-semibold text-fg">{file.name}</span>
         <span className="rounded border border-edge px-1.5 py-0.5 text-3xs uppercase tracking-wide text-fg-muted">
           {language}

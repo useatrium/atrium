@@ -1,6 +1,6 @@
 import { Alert, Pressable, Text } from 'react-native';
 import { router } from 'expo-router';
-import { font, useTheme } from '../lib/theme';
+import { font, radius, space, useTheme } from '../lib/theme';
 import type { EntryReference, EntryReferenceSummary } from '../lib/entryReferences';
 
 export function artifactEntryHandle(artifactId: string): string {
@@ -52,8 +52,8 @@ export function EntryReferencesChip({ count, onPress }: { count: number; onPress
         borderWidth: 1,
         borderColor: colors.border,
         backgroundColor: pressed ? colors.bgPressed : colors.bgElevated,
-        borderRadius: 999,
-        paddingHorizontal: 8,
+        borderRadius: radius.pill,
+        paddingHorizontal: space.sm,
         paddingVertical: 3,
       })}
     >

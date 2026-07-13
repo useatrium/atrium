@@ -453,7 +453,10 @@ function ConnectProviderSheet({
                 >
                   {config.title}
                 </Text>
-                <Text maxFontSizeMultiplier={2} style={{ color: colors.textMuted, fontSize: font.xs, marginTop: 2 }}>
+                <Text
+                  maxFontSizeMultiplier={2}
+                  style={{ color: colors.textMuted, fontSize: font.xs, marginTop: space.xxs }}
+                >
                   {connected ? 'Connected' : 'Not connected'}
                 </Text>
               </View>
@@ -528,7 +531,7 @@ function ConnectProviderSheet({
                     fontSize: config.multiline ? font.sm : font.md,
                     minHeight: config.multiline ? 148 : 48,
                     paddingHorizontal: space.md,
-                    paddingVertical: 12,
+                    paddingVertical: space.md,
                     textAlignVertical: config.multiline ? 'top' : 'center',
                   }}
                   value={value}
@@ -1150,7 +1153,7 @@ export default function SettingsScreen() {
 
         <SectionLabel>Notifications</SectionLabel>
         <Row label="Push notifications">
-          <View style={{ alignItems: 'flex-end', gap: 4 }}>
+          <View style={{ alignItems: 'flex-end', gap: space.xs }}>
             <Switch
               accessibilityRole="switch"
               accessibilityLabel="Push notifications"

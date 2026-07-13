@@ -230,7 +230,7 @@ export function ArtifactPreviewModal({
 }) {
   const title = presentation?.title ?? basename(artifact.path);
   return (
-    <div className="fixed inset-3 z-50 flex flex-col overflow-hidden rounded-lg border border-edge-strong bg-surface shadow-2xl">
+    <div className="fixed inset-3 z-overlay flex flex-col overflow-hidden rounded-lg border border-edge-strong bg-surface shadow-2xl">
       <header className="flex h-11 shrink-0 items-center gap-2 border-b border-edge px-3">
         <div className="min-w-0 flex-1">
           <div className="truncate text-xs font-semibold text-fg">{title}</div>
@@ -357,7 +357,7 @@ export function ArtifactsSurface({
       data-testid="artifacts-surface"
       role="dialog"
       aria-label="Artifacts"
-      className="absolute inset-0 z-10 flex flex-col bg-surface/95 backdrop-blur-sm"
+      className="absolute inset-0 z-raised flex flex-col bg-surface/95 backdrop-blur-sm"
     >
       <header className="flex h-10 shrink-0 items-center justify-between border-b border-edge px-3">
         <h3 className="text-xs font-semibold text-fg">

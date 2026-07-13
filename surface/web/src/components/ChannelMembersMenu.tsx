@@ -187,8 +187,8 @@ export function ChannelMembersMenu({
           aria-label="Channel members"
           className={
             mobilePopover
-              ? 'fixed z-20 overflow-y-auto rounded-md border border-edge-strong bg-surface-raised p-2 shadow-xl'
-              : 'absolute left-0 top-8 z-20 w-64 rounded-md border border-edge-strong bg-surface-raised p-2 shadow-xl'
+              ? 'fixed z-dropdown overflow-y-auto rounded-md border border-edge-strong bg-surface-raised p-2 shadow-xl'
+              : 'absolute left-0 top-8 z-dropdown w-64 rounded-md border border-edge-strong bg-surface-raised p-2 shadow-xl'
           }
           style={mobilePopover ? popoverPosition : undefined}
         >

@@ -10,7 +10,7 @@ export function HiddenWorkChip({ count, onShowFull }: { count: number; onShowFul
       accessibilityRole="button"
       accessibilityLabel={`${count} hidden work ${steps}. Show full transcript`}
       onPress={onShowFull}
-      style={{ alignSelf: 'flex-start', paddingHorizontal: space.sm, paddingVertical: 4 }}
+      style={{ alignSelf: 'flex-start', paddingHorizontal: space.sm, paddingVertical: space.xs }}
     >
       <Text style={{ color: colors.textMuted, fontSize: font.xs }}>
         ⚙ {count} work {steps}

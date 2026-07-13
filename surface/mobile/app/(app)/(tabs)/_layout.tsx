@@ -5,7 +5,7 @@ import { isTerminalSessionStatus, sessionAttentionKind, type Session } from '@at
 import { useChat } from '../../../src/lib/chat';
 import { useActivityCounts } from '../../../src/lib/useActivityCounts';
 import { navigationTargetSize, TabIcon } from '../../../src/components/PlatformTabBar';
-import { useTheme } from '../../../src/lib/theme';
+import { space, useTheme } from '../../../src/lib/theme';
 
 export function getSessionNavigationCounts(sessions: Record<string, Session | undefined>) {
   const values = Object.values(sessions).filter(
@@ -47,7 +47,7 @@ export default function TabsLayout() {
           borderRightWidth: expandedAndroid ? 1 : 0,
           elevation: 0,
           shadowOpacity: 0,
-          ...(expandedAndroid ? { width: 200, paddingHorizontal: 8, paddingVertical: 12 } : null),
+          ...(expandedAndroid ? { width: 200, paddingHorizontal: space.sm, paddingVertical: space.md } : null),
         },
         tabBarItemStyle: {
           minHeight: navigationTargetSize,

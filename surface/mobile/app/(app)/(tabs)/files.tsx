@@ -226,7 +226,7 @@ function FileTile({
               position: 'absolute',
               left: space.sm,
               top: space.sm,
-              borderRadius: 999,
+              borderRadius: radius.pill,
               backgroundColor: colors.dangerSurface,
               borderWidth: 1,
               borderColor: colors.dangerBorder,
@@ -271,12 +271,12 @@ function FileTile({
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: 22 }}>
           <View
             style={{
-              borderRadius: 999,
+              borderRadius: radius.pill,
               borderWidth: 1,
               borderColor: colors.border,
               backgroundColor: colors.bg,
               paddingHorizontal: 6,
-              paddingVertical: 2,
+              paddingVertical: space.xxs,
             }}
           >
             <Text style={{ color: colors.textSecondary, fontSize: font.xs, fontWeight: '900' }}>{typeLabel}</Text>

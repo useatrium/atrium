@@ -8,7 +8,7 @@ import { Ionicons } from '@expo/vector-icons';
 import type { ComponentProps } from 'react';
 import { channelAvatarName, channelLabel, dmPartner, type Channel } from '@atrium/surface-client';
 import { useChat } from '../../../src/lib/chat';
-import { font, space, useTheme } from '../../../src/lib/theme';
+import { font, radius, space, useTheme } from '../../../src/lib/theme';
 import { Avatar } from '../../../src/components/Avatar';
 import { ConnectionBanner, UnreadBadge } from '../../../src/components/bits';
 import { MobileHeader } from '../../../src/components/MobileHeader';
@@ -309,7 +309,7 @@ export default function ChannelList() {
                   style={({ pressed }) => ({
                     minHeight: navigationTargetSize,
                     justifyContent: 'center',
-                    borderRadius: 6,
+                    borderRadius: radius.sm,
                     paddingHorizontal: space.lg,
                     backgroundColor: pressed ? colors.bgPressed : colors.accent,
                   })}
@@ -323,7 +323,7 @@ export default function ChannelList() {
                   style={({ pressed }) => ({
                     minHeight: navigationTargetSize,
                     justifyContent: 'center',
-                    borderRadius: 6,
+                    borderRadius: radius.sm,
                     paddingHorizontal: space.lg,
                     backgroundColor: pressed ? colors.bgPressed : colors.bgElevated,
                   })}

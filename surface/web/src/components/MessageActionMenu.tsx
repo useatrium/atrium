@@ -113,8 +113,8 @@ export function MessageActionMenu({
       style={mode === 'popover' ? popoverStyle(state.anchor) : undefined}
       className={
         mode === 'sheet'
-          ? 'fixed inset-x-0 bottom-0 z-50 mx-auto max-h-[85dvh] max-w-xl overflow-y-auto rounded-t-xl border border-edge-strong bg-surface-overlay p-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))] shadow-2xl'
-          : 'fixed z-50 w-60 overflow-y-auto rounded-md border border-edge-strong bg-surface-overlay p-1.5 shadow-lg'
+          ? 'fixed inset-x-0 bottom-0 z-overlay mx-auto max-h-[85dvh] max-w-xl overflow-y-auto rounded-t-xl border border-edge-strong bg-surface-overlay p-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))] shadow-2xl'
+          : 'fixed z-dropdown w-60 overflow-y-auto rounded-md border border-edge-strong bg-surface-overlay p-1.5 shadow-lg'
       }
     >
       {reactions && (
@@ -206,7 +206,7 @@ export function MessageActionMenu({
   if (mode === 'popover') return menu;
 
   return (
-    <div className="fixed inset-0 z-40" onPointerDownCapture={markFreshSheetPointerDown}>
+    <div className="fixed inset-0 z-overlay" onPointerDownCapture={markFreshSheetPointerDown}>
       <button
         type="button"
         aria-label={`Close ${label.toLowerCase()}`}

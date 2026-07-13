@@ -31,13 +31,13 @@ export function AppRenderer({ file, variant }: { file: PreviewFile; variant: Med
   return (
     <div className="relative h-full min-h-0 overflow-hidden bg-surface">
       {state === 'loading' && (
-        <div className="absolute inset-0 z-10 flex items-center justify-center bg-surface text-sm text-fg-muted">
+        <div className="absolute inset-0 z-raised flex items-center justify-center bg-surface text-sm text-fg-muted">
           <span className="mr-2 h-3 w-3 animate-spin rounded-full border-2 border-edge-strong border-t-transparent" />
           Loading web app...
         </div>
       )}
       {state === 'error' && (
-        <div className="absolute inset-0 z-10 flex items-center justify-center bg-surface p-6 text-center">
+        <div className="absolute inset-0 z-raised flex items-center justify-center bg-surface p-6 text-center">
           <div className="w-[min(360px,100%)] rounded-lg border border-danger-border/60 bg-danger-tint/20 p-4 text-sm text-danger-text">
             Failed to load web app preview.
           </div>

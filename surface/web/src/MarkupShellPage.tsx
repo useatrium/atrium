@@ -121,7 +121,7 @@ export function MarkupShellPage() {
             className="markup-shell-editor"
           />
           {showHistory && init.artifactId && (
-            <div className="absolute inset-0 z-10 flex min-h-0 justify-end overflow-hidden bg-surface/95">
+            <div className="absolute inset-0 z-raised flex min-h-0 justify-end overflow-hidden bg-surface/95">
               <MarkupVersionHistory
                 artifactId={init.artifactId}
                 path={init.path ?? init.artifactId}

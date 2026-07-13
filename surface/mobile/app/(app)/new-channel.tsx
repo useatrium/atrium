@@ -42,7 +42,7 @@ export default function NewChannel() {
           paddingHorizontal: space.md,
         }}
       >
-        <Text style={{ color: colors.textMuted, fontSize: font.md, marginRight: 4 }}>#</Text>
+        <Text style={{ color: colors.textMuted, fontSize: font.md, marginRight: space.xs }}>#</Text>
         <TextInput
           accessibilityLabel="Channel name"
           value={name}
@@ -53,7 +53,7 @@ export default function NewChannel() {
           autoCapitalize="none"
           autoCorrect={false}
           onSubmitEditing={() => void create()}
-          style={{ flex: 1, color: colors.text, fontSize: font.md, paddingVertical: 12 }}
+          style={{ flex: 1, color: colors.text, fontSize: font.md, paddingVertical: space.md }}
         />
       </View>
       <Text style={{ color: colors.textFaint, fontSize: font.xs }}>

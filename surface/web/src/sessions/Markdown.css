@@ -1,3 +1,33 @@
+.atrium-session-markdown {
+  /* === syntax-theme additions === */
+  --syntax-comment: #8f8f98;
+  --syntax-keyword: #ff7b72;
+  --syntax-literal: #79c0ff;
+  --syntax-string: #a5d6ff;
+  --syntax-title: #d2a8ff;
+  --syntax-built-in: #7ee787;
+  --syntax-attribute: #f2cc60;
+  --syntax-addition: #aff5b4;
+  --syntax-addition-background: rgba(3, 58, 22, 0.45);
+  --syntax-deletion: #ffdcd7;
+  --syntax-deletion-background: rgba(103, 6, 12, 0.45);
+}
+
+:root[data-theme="light"] .atrium-session-markdown {
+  /* === syntax-theme additions === */
+  --syntax-comment: #656d76;
+  --syntax-keyword: #cf222e;
+  --syntax-literal: #0550ae;
+  --syntax-string: #0a3069;
+  --syntax-title: #8250df;
+  --syntax-built-in: #116329;
+  --syntax-attribute: #953800;
+  --syntax-addition: #116329;
+  --syntax-addition-background: #dafbe1;
+  --syntax-deletion: #82071e;
+  --syntax-deletion-background: #ffebe9;
+}
+
 .atrium-session-markdown .hljs {
   color: var(--fg-body);
   background: transparent;
@@ -5,13 +35,13 @@
 
 .atrium-session-markdown .hljs-comment,
 .atrium-session-markdown .hljs-quote {
-  color: var(--fg-muted);
+  color: var(--syntax-comment);
 }
 
 .atrium-session-markdown .hljs-keyword,
 .atrium-session-markdown .hljs-selector-tag,
 .atrium-session-markdown .hljs-subst {
-  color: #ff7b72;
+  color: var(--syntax-keyword);
 }
 
 .atrium-session-markdown .hljs-literal,
@@ -19,24 +49,24 @@
 .atrium-session-markdown .hljs-tag .hljs-attr,
 .atrium-session-markdown .hljs-template-variable,
 .atrium-session-markdown .hljs-variable {
-  color: #79c0ff;
+  color: var(--syntax-literal);
 }
 
 .atrium-session-markdown .hljs-doctag,
 .atrium-session-markdown .hljs-string {
-  color: #a5d6ff;
+  color: var(--syntax-string);
 }
 
 .atrium-session-markdown .hljs-section,
 .atrium-session-markdown .hljs-selector-id,
 .atrium-session-markdown .hljs-title {
-  color: #d2a8ff;
+  color: var(--syntax-title);
 }
 
 .atrium-session-markdown .hljs-built_in,
 .atrium-session-markdown .hljs-name,
 .atrium-session-markdown .hljs-symbol {
-  color: #7ee787;
+  color: var(--syntax-built-in);
 }
 
 .atrium-session-markdown .hljs-attribute,
@@ -44,15 +74,15 @@
 .atrium-session-markdown .hljs-meta,
 .atrium-session-markdown .hljs-selector-attr,
 .atrium-session-markdown .hljs-selector-class {
-  color: #f2cc60;
+  color: var(--syntax-attribute);
 }
 
 .atrium-session-markdown .hljs-addition {
-  color: #aff5b4;
-  background-color: rgba(3, 58, 22, 0.45);
+  color: var(--syntax-addition);
+  background-color: var(--syntax-addition-background);
 }
 
 .atrium-session-markdown .hljs-deletion {
-  color: #ffdcd7;
-  background-color: rgba(103, 6, 12, 0.45);
+  color: var(--syntax-deletion);
+  background-color: var(--syntax-deletion-background);
 }

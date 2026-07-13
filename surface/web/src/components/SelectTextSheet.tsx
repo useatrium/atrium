@@ -35,7 +35,7 @@ export function SelectTextSheet({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-40">
+    <div className="fixed inset-0 z-overlay">
       <button
         type="button"
         aria-label="Close select text"
@@ -46,7 +46,7 @@ export function SelectTextSheet({
         ref={containerRef}
         role="dialog"
         aria-label="Select text"
-        className="fixed inset-x-0 bottom-0 z-50 mx-auto flex max-h-[85dvh] max-w-xl flex-col rounded-t-xl border border-edge-strong bg-surface-overlay shadow-2xl"
+        className="fixed inset-x-0 bottom-0 z-overlay mx-auto flex max-h-[85dvh] max-w-xl flex-col rounded-t-xl border border-edge-strong bg-surface-overlay shadow-2xl"
       >
         <div className="flex items-center justify-between border-b border-edge px-4 py-2">
           <span className="text-sm font-semibold text-fg">Select text</span>

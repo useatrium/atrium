@@ -29,7 +29,7 @@ export function MarkupSteerCard({ steer }: { steer: ParsedMarkupSteer }) {
             borderRadius: radius.sm,
             overflow: 'hidden',
             paddingHorizontal: space.sm,
-            paddingVertical: 2,
+            paddingVertical: space.xxs,
             fontSize: font.xs,
             fontWeight: '800',
           }}

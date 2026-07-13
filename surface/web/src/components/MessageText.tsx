@@ -230,7 +230,7 @@ function nodeText(node: ReactNode): string {
 function CopyIcon({ copied }: { copied: boolean }) {
   if (copied) {
     return (
-      <span aria-hidden="true" className="text-[10px] font-bold leading-none">
+      <span aria-hidden="true" className="text-3xs font-bold leading-none">
         OK
       </span>
     );

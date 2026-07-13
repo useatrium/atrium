@@ -1,7 +1,7 @@
 import { useEffect, useState, type JSX } from 'react';
 import { ActivityIndicator, Linking, Pressable, ScrollView, Text, View } from 'react-native';
 import type { HubFile } from '@atrium/surface-client';
-import { font, space, useTheme } from '../lib/theme';
+import { font, radius, space, useTheme } from '../lib/theme';
 
 interface SlideText {
   number: number;
@@ -202,7 +202,7 @@ export function PptxPane(props: {
           <View
             style={{
               alignSelf: 'flex-start',
-              borderRadius: 999,
+              borderRadius: radius.pill,
               backgroundColor: colors.accentBg,
               paddingHorizontal: space.sm,
               paddingVertical: space.xs,

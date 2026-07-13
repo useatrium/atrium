@@ -45,7 +45,7 @@ function FileRow({ path, changes }: { path: string; changes: FileChange[] }) {
             borderColor: accent,
             borderRadius: radius.sm,
             paddingHorizontal: 6,
-            paddingVertical: 2,
+            paddingVertical: space.xxs,
             backgroundColor: colors.bgElevated,
           }}
         >

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { VoiceMeta } from '@atrium/surface-client';
+import { webPalette, type VoiceMeta } from '@atrium/surface-client';
 import { api } from './api';
 import { PauseIcon, PlayIcon } from './components/icons';
 
@@ -27,8 +27,8 @@ export function VoiceMessage({ voice }: { voice: VoiceMeta }) {
     ctx.clearRect(0, 0, width, height);
 
     const styles = getComputedStyle(document.documentElement);
-    const muted = styles.getPropertyValue('--fg-muted').trim() || '#8f8f98';
-    const accent = styles.getPropertyValue('--accent').trim() || '#4f46e5';
+    const muted = styles.getPropertyValue('--fg-muted').trim() || webPalette.dark['fg-muted'];
+    const accent = styles.getPropertyValue('--accent').trim() || webPalette.dark.accent;
     const peaks = voice.waveform && voice.waveform.length > 0 ? voice.waveform : fallbackPeaks();
     const gap = 2;
     const barWidth = Math.max(2, Math.floor((width - gap * (peaks.length - 1)) / peaks.length));

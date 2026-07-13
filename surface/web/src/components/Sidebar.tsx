@@ -349,12 +349,12 @@ export function Sidebar({
         type="button"
         aria-label="Close navigation"
         onClick={onClose}
-        className={`fixed inset-0 z-30 bg-black/50 motion-safe:transition-opacity md:hidden ${
+        className={`fixed inset-0 z-overlay bg-black/50 motion-safe:transition-opacity md:hidden ${
           isOpen ? 'opacity-100' : 'pointer-events-none opacity-0'
         }`}
       />
       <nav
-        className={`fixed inset-y-0 left-0 z-40 flex w-72 max-w-[85vw] shrink-0 flex-col border-r border-edge bg-surface-raised shadow-2xl motion-safe:transition-transform motion-reduce:transition-none md:relative md:z-auto md:w-(--sidebar-w) md:max-w-none md:translate-x-0 md:bg-surface-raised md:shadow-none md:transition-none ${
+        className={`fixed inset-y-0 left-0 z-overlay flex w-72 max-w-[85vw] shrink-0 flex-col border-r border-edge bg-surface-raised shadow-2xl motion-safe:transition-transform motion-reduce:transition-none md:relative md:z-auto md:w-(--sidebar-w) md:max-w-none md:translate-x-0 md:bg-surface-raised md:shadow-none md:transition-none ${
           isOpen ? 'translate-x-0' : '-translate-x-full'
         } ${sizing.className}`}
         style={{ '--sidebar-w': '224px', ...sizing.style } as CSSProperties}
@@ -372,7 +372,7 @@ export function Sidebar({
           data-testid="sidebar-resize-handle"
           onPointerDown={startResize}
           onDoubleClick={resetWidth}
-          className={`absolute inset-y-0 -right-0.5 z-20 w-1.5 cursor-col-resize touch-none transition-colors hover:bg-accent/50 max-md:hidden ${
+          className={`absolute inset-y-0 -right-0.5 z-raised w-1.5 cursor-col-resize touch-none transition-colors hover:bg-accent/50 max-md:hidden ${
             resizing ? 'bg-accent/50' : ''
           }`}
         />
@@ -417,7 +417,7 @@ export function Sidebar({
               >
                 <span
                   aria-hidden="true"
-                  className="grid w-[15px] shrink-0 place-items-center text-xs font-bold text-fg-muted"
+                  className="grid w-4 shrink-0 place-items-center text-xs font-bold text-fg-muted"
                 >
                   A
                 </span>
@@ -436,7 +436,7 @@ export function Sidebar({
               >
                 <span
                   aria-hidden="true"
-                  className="grid w-[15px] shrink-0 place-items-center text-xs font-bold text-fg-muted"
+                  className="grid w-4 shrink-0 place-items-center text-xs font-bold text-fg-muted"
                 >
                   @
                 </span>

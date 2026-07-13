@@ -31,7 +31,7 @@ export function PreviewTable({ rows, compact }: { rows: string[][]; compact: boo
   return (
     <div className="h-full overflow-auto">
       <table className="min-w-full border-collapse text-left text-xs">
-        <thead className="sticky top-0 z-10 bg-surface-raised">
+        <thead className="sticky top-0 z-sticky bg-surface-raised">
           <tr>
             {headers.map((header, idx) => (
               <th key={`${header}-${idx}`} className="border-b border-r border-edge px-2 py-1.5 font-semibold text-fg">

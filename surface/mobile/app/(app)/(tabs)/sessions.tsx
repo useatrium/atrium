@@ -37,10 +37,10 @@ function StatusChip({ glance }: { glance: SessionGlance }) {
         flexDirection: 'row',
         alignItems: 'center',
         gap: 6,
-        borderRadius: 999,
+        borderRadius: radius.pill,
         borderWidth: 1,
         borderColor: color,
-        paddingHorizontal: 8,
+        paddingHorizontal: space.sm,
         paddingVertical: 3,
       }}
     >
@@ -213,7 +213,7 @@ export default function SessionsScreen() {
         onLongPress={() => openRowActions(item)}
         style={({ pressed }) => ({
           paddingHorizontal: space.lg,
-          paddingVertical: 12,
+          paddingVertical: space.md,
           borderBottomWidth: 1,
           borderBottomColor: colors.borderSoft,
           backgroundColor: pressed ? colors.borderSoft : 'transparent',
@@ -239,7 +239,7 @@ export default function SessionsScreen() {
             marginTop: 6,
             flexDirection: 'row',
             alignItems: 'center',
-            gap: 8,
+            gap: space.sm,
           }}
         >
           <Text style={{ flex: 1, color: colors.textMuted, fontSize: font.sm }} numberOfLines={1}>
@@ -267,7 +267,7 @@ export default function SessionsScreen() {
           alignItems: 'center',
           gap: 6,
           paddingHorizontal: space.lg,
-          paddingVertical: 12,
+          paddingVertical: space.md,
           minHeight: 44,
           borderTopWidth: 1,
           borderTopColor: colors.borderSoft,

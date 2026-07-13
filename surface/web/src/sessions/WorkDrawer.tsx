@@ -297,7 +297,7 @@ export function WorkDrawer({
       className={
         pinned
           ? 'flex min-h-0 flex-1 flex-col bg-surface'
-          : 'absolute inset-0 z-10 flex flex-col bg-surface/95 backdrop-blur-sm'
+          : 'absolute inset-0 z-raised flex flex-col bg-surface/95 backdrop-blur-sm'
       }
     >
       <header className="flex h-10 min-w-0 shrink-0 items-center border-b border-edge pr-2 max-md:h-11 [@media(pointer:coarse)]:h-11">

@@ -83,7 +83,7 @@ export function SessionCapabilitiesPopover({
       aria-label="Session capabilities"
       aria-describedby={error ? errorId : undefined}
       aria-busy={loading ? 'true' : undefined}
-      className="absolute right-0 top-8 z-30 flex max-h-[min(74vh,44rem)] w-[44rem] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-md border border-edge-strong bg-surface-raised shadow-xl"
+      className="absolute right-0 top-8 z-dropdown flex max-h-[min(74vh,44rem)] w-[44rem] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-md border border-edge-strong bg-surface-raised shadow-xl"
     >
       <header className="flex h-10 shrink-0 items-center gap-2 border-b border-edge px-3">
         <div className="min-w-0 flex-1">

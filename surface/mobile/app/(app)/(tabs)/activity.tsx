@@ -29,7 +29,7 @@ import {
 } from '@atrium/surface-client';
 import { useChat } from '../../../src/lib/chat';
 import { glanceColor, listItemGlance } from '../../../src/lib/sessionGlance';
-import { font, space, useTheme } from '../../../src/lib/theme';
+import { font, radius, space, useTheme } from '../../../src/lib/theme';
 import { ConnectionBanner } from '../../../src/components/bits';
 import { MobileHeader } from '../../../src/components/MobileHeader';
 import { navigationTargetSize } from '../../../src/components/PlatformTabBar';
@@ -435,7 +435,7 @@ export default function ActivityScreen() {
           alignItems: 'center',
           gap: space.sm,
           paddingHorizontal: space.lg,
-          paddingVertical: 12,
+          paddingVertical: space.md,
           borderBottomWidth: 1,
           borderBottomColor: colors.borderSoft,
           borderLeftWidth: attention ? 2 : 0,
@@ -447,7 +447,7 @@ export default function ActivityScreen() {
           style={{
             minWidth: 28,
             height: 24,
-            borderRadius: 6,
+            borderRadius: radius.sm,
             alignItems: 'center',
             justifyContent: 'center',
             backgroundColor: chipBackground,
@@ -568,7 +568,7 @@ export default function ActivityScreen() {
           alignItems: 'center',
           gap: space.sm,
           paddingHorizontal: space.lg,
-          paddingVertical: 12,
+          paddingVertical: space.md,
           borderBottomWidth: 1,
           borderBottomColor: colors.borderSoft,
           borderLeftWidth: 2,

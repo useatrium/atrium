@@ -22,7 +22,14 @@ import { VideoView, useVideoPlayer, type VideoSource } from 'expo-video';
 import Pdf from 'react-native-pdf';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { formatBytes, formatRelativeTimestamp, type Api, type HubFile } from '@atrium/surface-client';
+import {
+  createHljsStyle,
+  formatBytes,
+  formatRelativeTimestamp,
+  syntaxTheme,
+  type Api,
+  type HubFile,
+} from '@atrium/surface-client';
 // @ts-expect-error react-native-syntax-highlighter does not publish TypeScript declarations.
 import SyntaxHighlighter from 'react-native-syntax-highlighter';
 import { SessionMarkdown } from './Markdown';
@@ -34,7 +41,7 @@ import { PptxPane } from './PptxPane';
 import { artifactEntryHandle, EntryReferencesChip } from './EntryReferencesChip';
 import type { EntryReferenceMap, EntryReferenceSummary } from '../lib/entryReferences';
 import { useModalAccessibilityFocus } from '../lib/accessibility';
-import { font, space, useTheme, type Colors } from '../lib/theme';
+import { font, space, useTheme } from '../lib/theme';
 
 type HubFileWithThumbnail = HubFile & { thumbnailUrl?: string };
 
@@ -139,20 +146,6 @@ function sourceFor(
   fileHeaders?: Record<string, string>,
 ) {
   return { uri: fileContentUrl(file.artifactId), headers: fileHeaders };
-}
-
-function syntaxTheme(colors: Colors) {
-  return {
-    hljs: { backgroundColor: colors.bg, color: colors.textSecondary },
-    'hljs-comment': { color: colors.textMuted },
-    'hljs-keyword': { color: '#ff7b72' },
-    'hljs-literal': { color: '#79c0ff' },
-    'hljs-number': { color: '#79c0ff' },
-    'hljs-string': { color: '#a5d6ff' },
-    'hljs-title': { color: '#d2a8ff' },
-    'hljs-built_in': { color: '#7ee787' },
-    'hljs-attribute': { color: '#f2cc60' },
-  };
 }
 
 function parseDelimited(text: string, delimiter: string): string[][] {
@@ -423,7 +416,7 @@ function TextPane({
   fileContentUrl: (artifactId: string) => string;
   fileHeaders?: Record<string, string>;
 }) {
-  const { colors } = useTheme();
+  const { colors, scheme } = useTheme();
   const content = useTextContent(file, true, fileContentUrl, fileHeaders);
   if (content.loading) return <LoadingText label="Loading file..." />;
   if (content.error) {
@@ -484,7 +477,10 @@ function TextPane({
       <SyntaxHighlighter
         highlighter="hljs"
         language={languageFor(file)}
-        style={syntaxTheme(colors)}
+        style={createHljsStyle(syntaxTheme[scheme], {
+          backgroundColor: colors.bg,
+          color: colors.textSecondary,
+        })}
         fontFamily={Platform.select({ ios: 'Menlo', android: 'monospace', default: 'monospace' })}
         fontSize={font.xs}
         PreTag={ScrollView}
@@ -742,7 +738,7 @@ export function MediaLightbox({
         <View accessibilityViewIsModal style={{ flex: 1, backgroundColor: colors.letterbox }}>
           <View
             style={{
-              paddingTop: 4,
+              paddingTop: space.xs,
               paddingHorizontal: space.sm,
               paddingBottom: space.xs,
               borderBottomWidth: 1,

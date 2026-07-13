@@ -855,7 +855,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                     borderColor: colors.warning,
                     borderRadius: radius.sm,
                     paddingHorizontal: space.sm,
-                    paddingVertical: 2,
+                    paddingVertical: space.xxs,
                     backgroundColor: pressed ? colors.warningSurface : 'transparent',
                   })}
                 >
@@ -1000,7 +1000,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                   justifyContent: 'center',
                 }}
               >
-                <Ionicons name="stop" size={16} color="#ffffff" />
+                <Ionicons name="stop" size={16} color={colors.onMention} />
               </Pressable>
             </>
           )}
@@ -1075,7 +1075,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               backgroundColor: agentMode ? colors.accent : colors.bgElevated,
               alignItems: 'center',
               justifyContent: 'center',
-              marginBottom: 2,
+              marginBottom: space.xxs,
             }}
           >
             <Text style={{ fontSize: 18, color: agentMode ? colors.onAccent : colors.textSecondary }}>⚡</Text>
@@ -1095,7 +1095,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               backgroundColor: colors.bgElevated,
               alignItems: 'center',
               justifyContent: 'center',
-              marginBottom: 2,
+              marginBottom: space.xxs,
             }}
           >
             <Ionicons name="attach-outline" size={21} color={colors.textSecondary} />
@@ -1128,7 +1128,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               borderColor: recording ? colors.dangerBorder : 'transparent',
               alignItems: 'center',
               justifyContent: 'center',
-              marginBottom: 2,
+              marginBottom: space.xxs,
             }}
           >
             <Ionicons
@@ -1200,7 +1200,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             backgroundColor: (editing ? text.trim().length > 0 : canSend) ? colors.accent : colors.bgElevated,
             alignItems: 'center',
             justifyContent: 'center',
-            marginBottom: 2,
+            marginBottom: space.xxs,
           }}
         >
           <Ionicons

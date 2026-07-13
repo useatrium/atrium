@@ -64,7 +64,7 @@ function ArtifactTile({
           </Text>
         )}
       </View>
-      <View style={{ padding: space.sm, gap: 2 }}>
+      <View style={{ padding: space.sm, gap: space.xxs }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
           <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: kindColor(artifact.kind, colors) }} />
           <Text numberOfLines={1} style={{ flex: 1, color: colors.text, fontSize: font.xs, fontWeight: '600' }}>

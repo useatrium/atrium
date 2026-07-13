@@ -67,7 +67,7 @@ export function TimestampDisclosure({
       <span
         id={tooltipId}
         role="tooltip"
-        className={`pointer-events-none absolute top-full ${tooltipSide} z-30 mt-1 max-w-[min(20rem,80vw)] whitespace-nowrap rounded border border-edge-strong bg-surface-overlay px-1.5 py-1 text-3xs font-medium text-fg-secondary shadow-lg transition-opacity ${tooltipVisibility}`}
+        className={`pointer-events-none absolute top-full ${tooltipSide} z-tooltip mt-1 max-w-[min(20rem,80vw)] whitespace-nowrap rounded border border-edge-strong bg-surface-overlay px-1.5 py-1 text-3xs font-medium text-fg-secondary shadow-lg transition-opacity ${tooltipVisibility}`}
       >
         {exact}
       </span>

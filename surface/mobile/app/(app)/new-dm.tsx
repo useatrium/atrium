@@ -3,7 +3,7 @@ import { ActivityIndicator, Alert, Pressable, ScrollView, Text, View } from 'rea
 import { router } from 'expo-router';
 import type { UserRef } from '@atrium/surface-client';
 import { useChat } from '../../src/lib/chat';
-import { font, space, useTheme } from '../../src/lib/theme';
+import { font, radius, space, useTheme } from '../../src/lib/theme';
 import { Avatar } from '../../src/components/Avatar';
 
 export default function NewDm() {
@@ -92,7 +92,7 @@ export default function NewDm() {
             margin: space.lg,
             alignItems: 'center',
             paddingVertical: 13,
-            borderRadius: 10,
+            borderRadius: radius.md,
             backgroundColor: colors.accent,
           }}
         >
