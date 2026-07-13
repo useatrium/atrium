@@ -117,6 +117,7 @@ async function commitArtifact(sessionId: string, path: string, bytes: string, mi
     mime,
     author: `agent:${sessionId}`,
     kind: 'created',
+    baseSeq: null,
   });
 }
 
@@ -133,6 +134,7 @@ async function deleteArtifact(sessionId: string, path: string) {
     mime: 'text/html',
     author: `agent:${sessionId}`,
     kind: 'deleted',
+    baseSeq: null,
   });
 }
 

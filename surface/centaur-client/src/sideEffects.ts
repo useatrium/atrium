@@ -69,25 +69,184 @@ function categoryFor(command: string): SideEffectCategory {
  * (combined `-rf`, split `-r -f`, or long `--recursive --force`). */
 function isRmRf(command: string): boolean {
   if (!/\brm\b/i.test(command)) return false;
-  const recursive = /(?:^|\s)-[a-z]*r|--recursive\b/i.test(command);
-  const force = /(?:^|\s)-[a-z]*f|--force\b/i.test(command);
-  return recursive && force;
+  for (const match of command.matchAll(/\brm\b([^\n;&|]*)/gi)) {
+    const args = match[1] ?? '';
+    const recursive = /(?:^|\s)-[a-z]*r[a-z]*\b|--recursive\b/i.test(args);
+    const force = /(?:^|\s)-[a-z]*f[a-z]*\b|--force\b/i.test(args);
+    if (recursive && force) return true;
+  }
+  return false;
 }
 
-// Heuristic, not a security control. Known gaps left unflagged to avoid noise:
-// plain `> file` truncation and obscure destructive tools.
+interface HeredocDelimiter {
+  value: string;
+  stripTabs: boolean;
+}
+
+function heredocDelimiters(line: string): HeredocDelimiter[] {
+  const delimiters: HeredocDelimiter[] = [];
+  let quote: "'" | '"' | null = null;
+
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    if (quote) {
+      if (char === '\\' && quote === '"') index += 1;
+      else if (char === quote) quote = null;
+      continue;
+    }
+    if (char === "'" || char === '"') {
+      quote = char;
+      continue;
+    }
+    if (char === '\\') {
+      index += 1;
+      continue;
+    }
+    if (char === '#' && (index === 0 || /[\s;&|()]/.test(line[index - 1] ?? ''))) break;
+    if (char !== '<' || line[index + 1] !== '<' || line[index + 2] === '<') continue;
+
+    let cursor = index + 2;
+    const stripTabs = line[cursor] === '-';
+    if (stripTabs) cursor += 1;
+    while (/\s/.test(line[cursor] ?? '')) cursor += 1;
+
+    let value = '';
+    const delimiterQuote = line[cursor];
+    if (delimiterQuote === "'" || delimiterQuote === '"') {
+      cursor += 1;
+      while (cursor < line.length && line[cursor] !== delimiterQuote) {
+        if (line[cursor] === '\\' && delimiterQuote === '"' && cursor + 1 < line.length) cursor += 1;
+        value += line[cursor] ?? '';
+        cursor += 1;
+      }
+    } else {
+      while (cursor < line.length && !/[\s;&|<>]/.test(line[cursor] ?? '')) {
+        if (line[cursor] === '\\' && cursor + 1 < line.length) cursor += 1;
+        value += line[cursor] ?? '';
+        cursor += 1;
+      }
+    }
+    if (value) delimiters.push({ value, stripTabs });
+    index = cursor;
+  }
+
+  return delimiters;
+}
+
+function hasTruncatingRedirectOnLine(line: string): boolean {
+  let quote: "'" | '"' | null = null;
+  let inConditional = false;
+  let arithmeticDepth = 0;
+
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    if (quote) {
+      if (char === '\\' && quote === '"') index += 1;
+      else if (char === quote) quote = null;
+      continue;
+    }
+    if (char === "'" || char === '"') {
+      quote = char;
+      continue;
+    }
+    if (char === '\\') {
+      index += 1;
+      continue;
+    }
+    if (char === '#' && (index === 0 || /[\s;&|()]/.test(line[index - 1] ?? ''))) break;
+    if (inConditional) {
+      if (char === ']' && line[index + 1] === ']') {
+        inConditional = false;
+        index += 1;
+      }
+      continue;
+    }
+    if (arithmeticDepth > 0) {
+      if (char === '(' && line[index + 1] === '(') {
+        arithmeticDepth += 1;
+        index += 1;
+      } else if (char === ')' && line[index + 1] === ')') {
+        arithmeticDepth -= 1;
+        index += 1;
+      }
+      continue;
+    }
+    if (char === '[' && line[index + 1] === '[') {
+      inConditional = true;
+      index += 1;
+      continue;
+    }
+    if (char === '(' && line[index + 1] === '(') {
+      arithmeticDepth = 1;
+      index += 1;
+      continue;
+    }
+    if (char !== '>') continue;
+
+    const next = line[index + 1];
+    if (next === '>') {
+      index += 1;
+      continue;
+    }
+    if (next === '&' || next === '(' || next === '=' || line[index - 1] === '<') continue;
+
+    let tokenStart = index;
+    while (tokenStart > 0 && !/[\s;&|()<>]/.test(line[tokenStart - 1] ?? '')) tokenStart -= 1;
+    const tokenPrefix = line.slice(tokenStart, index);
+    // Values such as `--select=a>b` and revision-like `a..b>c` are noisy and
+    // ambiguous enough that this heuristic intentionally leaves them alone.
+    if (tokenPrefix.startsWith('-') || tokenPrefix.includes('..')) continue;
+
+    let targetStart = index + (next === '|' ? 2 : 1);
+    while (/\s/.test(line[targetStart] ?? '')) targetStart += 1;
+    if (targetStart < line.length && !/[;&|)]/.test(line[targetStart] ?? '')) return true;
+  }
+
+  return false;
+}
+
+function hasTruncatingRedirect(command: string): boolean {
+  const pendingHeredocs: HeredocDelimiter[] = [];
+  for (const line of command.split(/\r?\n/)) {
+    const pending = pendingHeredocs[0];
+    if (pending) {
+      const candidate = pending.stripTabs ? line.replace(/^\t+/, '') : line;
+      if (candidate === pending.value) pendingHeredocs.shift();
+      continue;
+    }
+    if (hasTruncatingRedirectOnLine(line)) return true;
+    pendingHeredocs.push(...heredocDelimiters(line));
+  }
+  return false;
+}
+
+function isDdWithOutput(command: string): boolean {
+  return /(^|[;&|]\s*)(?:sudo\s+)?dd\b[^\n;&|]*\bof\s*=/i.test(command);
+}
+
+function isXargsRm(command: string): boolean {
+  return /(^|[;&|]\s*)xargs\b(?:\s+(?:-[^\s]+|--[^\s]+))*(?:\s+--)?\s+(?:sudo\s+)?rm\b/i.test(command);
+}
+
+// Heuristic, not a shell parser or security control. It covers common destructive
+// tools and direct truncating redirects. Expansion/eval, redirects nested inside
+// quoted command substitutions, and obscure destructive tools remain out of scope;
+// absence of a danger result must not be interpreted as proof of safety.
 function isDanger(command: string): boolean {
   return (
     isRmRf(command) ||
+    hasTruncatingRedirect(command) ||
     /\bsudo\s/i.test(command) || // any elevation = attention (intentional)
-    commandStartsWith(command, 'dd') ||
-    /\bmkfs\b/i.test(command) ||
+    isDdWithOutput(command) ||
+    commandStartsWith(command, 'mkfs(?:\\.[a-z0-9_-]+)?') ||
     commandStartsWith(command, '(shred|truncate)') ||
     /(^|[;&|]\s*)find\b[^\n;&|]*-delete\b/i.test(command) ||
+    isXargsRm(command) ||
     /:\(\)\{/.test(command) ||
     /\bchmod\s+(?:-[^\s]*r[^\s]*\s+)?0?777\b/i.test(command) ||
+    /\bgit\s+reset\b[^\n;&|]*--hard\b/i.test(command) ||
+    /\bgit\s+clean\b(?=[^\n;&|]*(?:\s-[a-z]*f[a-z]*\b|\s--force\b))/i.test(command) ||
     /\bgit\s+push\b[^\n;&|]*(?:--force(?!-with-lease)|-f)\b/i.test(command) ||
-    />\s*\/dev\/sd/i.test(command) ||
     /\bmv\b[^\n;&|]*\s\/\s*(?:$|[;&|])/i.test(command) ||
     /\b(curl|wget)\b[^\n;&]*\|\s*(?:sh|bash|zsh|dash|python3?|node|perl|ruby)\b/i.test(command) ||
     /\bnpm\s+publish\b/i.test(command) ||
@@ -97,18 +256,16 @@ function isDanger(command: string): boolean {
 }
 
 function isCaution(command: string): boolean {
-  return (
-    isNetwork(command) ||
-    /\bgit\s+(push|commit)\b/i.test(command) ||
-    /\bgit\s+reset\s+--hard\b/i.test(command) ||
-    isPackage(command) ||
-    isProcess(command)
-  );
+  return isNetwork(command) || /\bgit\s+(push|commit)\b/i.test(command) || isPackage(command) || isProcess(command);
 }
 
+/**
+ * Heuristically labels noteworthy command shapes for UI attention. A `normal`
+ * result means no known pattern matched; it is not a guarantee that a command is safe.
+ */
 export function classifyCommand(command: string): { category: SideEffectCategory; risk: SideEffectRisk } {
   const text = normalized(command);
-  const risk: SideEffectRisk = isDanger(text) ? 'danger' : isCaution(text) ? 'caution' : 'normal';
+  const risk: SideEffectRisk = isDanger(command) ? 'danger' : isCaution(text) ? 'caution' : 'normal';
   return { category: categoryFor(text), risk };
 }
 

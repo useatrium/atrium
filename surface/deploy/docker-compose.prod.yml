@@ -50,6 +50,14 @@ services:
     environment:
       HOST: 0.0.0.0
       PORT: 3001
+      # Host publications are separate from the required container listener.
+      # Pass their effective values through for production boot validation/logs.
+      ATRIUM_SERVER_PUBLICATION_HOST: ${BIND_HOST:-127.0.0.1}
+      ATRIUM_OBJECT_STORAGE_PUBLICATION_HOST: ${BIND_HOST:-127.0.0.1}
+      ATRIUM_DATABASE_PUBLICATION_HOST: ${DB_BIND_HOST:-127.0.0.1}
+      SERVER_HOST_PORT: ${SERVER_HOST_PORT:-3001}
+      MINIO_HOST_PORT: ${MINIO_HOST_PORT:-9000}
+      DB_HOST_PORT: ${DB_HOST_PORT:-5433}
       DATABASE_URL: postgres://${DB_USER:-atrium}:${DB_PASSWORD:?set DB_PASSWORD in .env}@db:5432/${DB_NAME:-atrium}
       SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET in .env}
       S3_ENDPOINT: ${S3_ENDPOINT:?set S3_ENDPOINT to a phone-reachable URL}

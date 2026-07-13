@@ -3,12 +3,13 @@ import '../src/lib/promiseRejectionFilter'; // drop livekit's benign signalling-
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useRef, useState } from 'react';
-import { View } from 'react-native';
+import { Pressable, Text, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { registerGlobals } from '@livekit/react-native';
 import { registerVoIPPush, setRTCAudioSessionConfiguration } from 'expo-callkit-telecom';
 import {
   ApiError,
+  connectionHost,
   createApi,
   DEFAULT_PREFS,
   DurableOpQueue,
@@ -18,7 +19,7 @@ import {
   type UserPrefs,
 } from '@atrium/surface-client';
 import { SessionProvider, useSession } from '../src/lib/session';
-import { ThemeProvider, useTheme } from '../src/lib/theme';
+import { font, radius, space, ThemeProvider, useTheme } from '../src/lib/theme';
 import { loadStoredPrefs } from '../src/lib/prefsStorage';
 import { eventCache } from '../src/lib/cacheSqlite';
 import { NATIVE_CALL_UI } from '../src/lib/nativeCallUi';
@@ -123,9 +124,100 @@ function PrefsSessionBridge() {
 }
 
 function RootNavigator() {
-  const { session, ready } = useSession();
+  const { session, ready, invalidate } = useSession();
   const { colors, scheme } = useTheme();
+  const [preflight, setPreflight] = useState<'checking' | 'ready' | 'unreachable'>('checking');
+  const [preflightAttempt, setPreflightAttempt] = useState(0);
+
+  useEffect(() => {
+    if (!ready || !session) {
+      setPreflight('checking');
+      return;
+    }
+    let disposed = false;
+    setPreflight('checking');
+    const api = createApi({ baseUrl: session.serverUrl, getToken: () => session.token });
+    api
+      .me()
+      .then(() => {
+        if (!disposed) setPreflight('ready');
+      })
+      .catch((err: unknown) => {
+        if (disposed) return;
+        if (err instanceof ApiError && err.status === 401) {
+          void invalidate();
+          return;
+        }
+        setPreflight('unreachable');
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [invalidate, preflightAttempt, ready, session]);
+
   if (!ready) return <View style={{ flex: 1, backgroundColor: colors.bg }} />;
+  if (session && preflight === 'checking') {
+    return (
+      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.bg }}>
+        <Text accessibilityRole="text" accessibilityLiveRegion="polite" style={{ color: colors.textMuted }}>
+          Checking your sign-in…
+        </Text>
+      </View>
+    );
+  }
+  if (session && preflight === 'unreachable') {
+    const host = connectionHost(session.serverUrl);
+    return (
+      <View
+        style={{
+          flex: 1,
+          alignItems: 'center',
+          justifyContent: 'center',
+          backgroundColor: colors.bg,
+          paddingHorizontal: space.xl,
+        }}
+      >
+        <View style={{ width: '100%', maxWidth: 360, alignItems: 'center', gap: space.md }}>
+          <Text style={{ color: colors.text, fontSize: font.lg, fontWeight: '700', textAlign: 'center' }}>
+            Couldn’t verify your sign-in
+          </Text>
+          <Text accessibilityRole="alert" style={{ color: colors.textMuted, fontSize: font.sm, textAlign: 'center' }}>
+            Atrium couldn’t reach {host}. Check your connection and try again.
+          </Text>
+          <View style={{ flexDirection: 'row', gap: space.sm }}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Try again"
+              onPress={() => setPreflightAttempt((attempt) => attempt + 1)}
+              style={({ pressed }) => ({
+                minHeight: 44,
+                justifyContent: 'center',
+                borderRadius: radius.md,
+                paddingHorizontal: space.lg,
+                backgroundColor: pressed ? colors.bgPressed : colors.accent,
+              })}
+            >
+              <Text style={{ color: colors.onAccent, fontSize: font.sm, fontWeight: '700' }}>Try again</Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Sign in again"
+              onPress={() => void invalidate()}
+              style={({ pressed }) => ({
+                minHeight: 44,
+                justifyContent: 'center',
+                borderRadius: radius.md,
+                paddingHorizontal: space.lg,
+                backgroundColor: pressed ? colors.bgPressed : colors.bgElevated,
+              })}
+            >
+              <Text style={{ color: colors.textSecondary, fontSize: font.sm, fontWeight: '700' }}>Sign in again</Text>
+            </Pressable>
+          </View>
+        </View>
+      </View>
+    );
+  }
   return (
     <>
       <StatusBar style={scheme === 'dark' ? 'light' : 'dark'} />

@@ -18,6 +18,7 @@ import {
   dispatchSyncResponse,
   filesChangedWorkspaceId,
   initialAppState,
+  isNetworkFailure,
   isPendingSessionId,
   isTerminalSessionStatus,
   looksLikeSummonSigil,
@@ -27,6 +28,7 @@ import {
   reconcileDraftSnapshot,
   sessionFromWire,
   useWs,
+  wsStatusKind,
   type Api,
   type AppState,
   type AttachmentRef,
@@ -105,6 +107,7 @@ interface ChatContextValue {
   channelsLoaded: boolean;
   channelsError: string | null;
   refreshChannels: () => void;
+  signInAgain: () => void;
   /** Channel screen came into focus: select it and load history. */
   openChannel: (channelId: string) => void;
   /** Channel screen lost focus: unreads accrue everywhere again. */
@@ -275,7 +278,12 @@ export function ChatProvider({ session, children }: { session: Session; children
   const [userDirectoryVersion, setUserDirectoryVersion] = useState(0);
   const touchedDraftKeysRef = useRef<Set<string>>(new Set());
   const activeDraftKeysRef = useRef<Set<string>>(new Set());
-  const calls = useCall({ api, me, channels: state.channels, wsStatus: state.wsStatus });
+  const calls = useCall({
+    api,
+    me,
+    channels: state.channels,
+    wsStatus: wsStatusKind(state.wsStatus) === 'open' ? 'open' : 'closed',
+  });
   const refreshActiveCalls = calls.refreshActiveCalls;
   const refreshedCallsAfterChannelsLoadRef = useRef(false);
 
@@ -311,7 +319,13 @@ export function ChatProvider({ session, children }: { session: Session; children
   // A dead token can't recover — kick back to login instead of error-looping.
   const onApiError = useCallback(
     (err: unknown) => {
-      if (err instanceof ApiError && err.status === 401) void invalidate();
+      if (err instanceof ApiError && err.status === 401) {
+        void invalidate();
+        return;
+      }
+      // The WS evidence clock owns escalation so one failed request cannot
+      // turn a brief transport blip into a terminal banner.
+      if (isNetworkFailure(err)) return;
     },
     [invalidate],
   );
@@ -813,7 +827,7 @@ export function ChatProvider({ session, children }: { session: Session; children
     let disposed = false;
     eventCache
       .loadSnapshot()
-      .then(async ({ channels, timelines, syncCursor }) => {
+      .then(async ({ channels, timelines, syncCursor, lastSyncedAt }) => {
         if (disposed) return;
         if (channels) {
           dispatch({ type: 'channels-loaded', channels });
@@ -828,6 +842,7 @@ export function ChatProvider({ session, children }: { session: Session; children
           });
         }
         if (syncCursor > 0) dispatch({ type: 'sync-cursor', cursor: syncCursor });
+        if (lastSyncedAt) dispatch({ type: 'last-synced-at', at: lastSyncedAt });
         await opQueue.recoverInflight();
         const queued = await eventCache.listOps();
         if (disposed) return;
@@ -933,9 +948,13 @@ export function ChatProvider({ session, children }: { session: Session; children
   const syncInFlightRef = useRef<Promise<void> | null>(null);
   const runReconnectSync = useCallback(() => {
     if (!syncInFlightRef.current) {
-      const work = syncFromCursor().finally(() => {
-        syncInFlightRef.current = null;
-      });
+      const work = syncFromCursor()
+        .then(() => {
+          dispatch({ type: 'last-synced-at', at: new Date().toISOString() });
+        })
+        .finally(() => {
+          syncInFlightRef.current = null;
+        });
       syncInFlightRef.current = work;
     }
     return syncInFlightRef.current;
@@ -1039,6 +1058,7 @@ export function ChatProvider({ session, children }: { session: Session; children
           });
         }
         dispatch({ type: 'server-event', event });
+        dispatch({ type: 'last-synced-at', at: new Date().toISOString() });
         if (event.channelId) eventCache.enqueueEvents(event.channelId, [event]);
         cacheSyncCursor(event.id);
       },
@@ -1063,7 +1083,10 @@ export function ChatProvider({ session, children }: { session: Session; children
       onOpen: () => {
         syncThenFlushQueuedOps();
       },
-      onStatus: (status) => dispatch({ type: 'ws-status', status }),
+      onStatus: (status) => {
+        dispatch({ type: 'ws-status', status });
+        if (wsStatusKind(status) === 'auth-failed') void invalidate();
+      },
     },
     state.activeChannelId,
     { url: wsUrl, onWake: bindWake },
@@ -1810,6 +1833,7 @@ export function ChatProvider({ session, children }: { session: Session; children
       channelsLoaded,
       channelsError,
       refreshChannels: loadChannels,
+      signInAgain: () => void invalidate(),
       openChannel,
       leaveChannel,
       markRead,
@@ -1876,6 +1900,7 @@ export function ChatProvider({ session, children }: { session: Session; children
       calls,
       channelsLoaded,
       channelsError,
+      invalidate,
       loadChannels,
       openChannel,
       leaveChannel,

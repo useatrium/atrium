@@ -50,9 +50,10 @@ sandbox:
       cpu: "2"
       memory: 2Gi
 
-# Local node-sync calls Atrium from inside kind. The runbook attaches
-# atrium-prod-server-1 to the `kind` Docker network, where the usual IP is
-# 172.18.0.3 after the control-plane node takes 172.18.0.2.
+# node-sync's Surface address is topology-specific. Deliberately do not set
+# atriumBaseUrl or atriumEgress here: callers must provide them in their own
+# values layer (for example deploy/values.box.yaml) or with --set. A guessed
+# Docker/kind IP can silently send every capture to the wrong host.
 nodeSync:
   enabled: true
   overlayProvisioning:
@@ -62,10 +63,5 @@ nodeSync:
     # #213: the daemon deletes evicted (dead) sessions' overlay dirs so disk
     # stays bounded — eviction alone only stops the polling, not the pileup.
     NODE_SYNC_GC_DIRS: "1"
-  atriumBaseUrl: "http://172.18.0.3:3001"
-  atriumEgress:
-    enabled: true
-    ipBlock: "172.18.0.3/32"
-    port: 3001
   apiKeySecret:
     key: ARTIFACT_CAPTURE_API_KEY

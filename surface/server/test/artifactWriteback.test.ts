@@ -134,4 +134,42 @@ describe('writeBackArtifact', () => {
       right: { author: `human:${fx.userId}` },
     });
   });
+
+  it('records both sides when stale binary content cannot be merged', async () => {
+    const writeBinary = (bytes: number[], baseSeq?: number) =>
+      writeBackArtifact({
+        pool,
+        storage,
+        channelId: fx.channelId,
+        sessionId,
+        path: 'data.bin',
+        bytes: Buffer.from(bytes),
+        mime: 'application/octet-stream',
+        author: `human:${fx.userId}`,
+        ...(baseSeq == null ? {} : { baseSeq }),
+      });
+
+    await writeBinary([0, 1]);
+    expect(await writeBinary([0, 2], 1)).toMatchObject({ ok: true, seq: 2, status: 'normal' });
+    expect(await writeBinary([0, 3], 1)).toMatchObject({ ok: true, seq: 3, status: 'conflict' });
+    expect(await ledger.serveResolution(sessionId, 'data.bin')).toMatchObject({
+      servedSeq: 2,
+      conflicted: true,
+      conflictSeq: 3,
+    });
+
+    const conflict = await pool.query<{ conflict: Record<string, unknown> }>(
+      `SELECT v.conflict
+         FROM artifact_versions v
+         JOIN artifacts a ON a.id = v.artifact_id
+        WHERE a.workspace_id = $1 AND a.path = $2 AND v.seq = 3`,
+      [fx.workspaceId, activePath('data.bin')],
+    );
+    expect(conflict.rows[0]!.conflict).toMatchObject({
+      kind: 'unmergeable',
+      base_seq: 1,
+      left: { seq: 2, author: `human:${fx.userId}` },
+      right: { author: `human:${fx.userId}` },
+    });
+  });
 });

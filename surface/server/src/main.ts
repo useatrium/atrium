@@ -17,8 +17,24 @@ import { shutdownServerTelemetry } from './telemetry.js';
 import { startThumbnailBackfill } from './thumbnails.js';
 // === call-sweeper additions ===
 import { startCallSweeper } from './call-sweeper.js';
+import { effectiveBindAddresses, validateBootConfiguration } from './boot-config.js';
 
 export async function main() {
+  const bootConfiguration = {
+    nodeEnv: config.nodeEnv,
+    listenHost: config.host,
+    listenPort: config.port,
+    serverPublicationBindHost: config.serverPublicationBindHost,
+    objectStoragePublicationBindHost: config.objectStoragePublicationBindHost,
+    databasePublicationBindHost: config.databasePublicationBindHost,
+    serverPublicationPort: config.serverPublicationPort,
+    objectStoragePublicationPort: config.objectStoragePublicationPort,
+    databasePublicationPort: config.databasePublicationPort,
+    artifactCaptureApiKey: config.artifactCaptureApiKey,
+  };
+  console.info('atrium effective bind addresses', effectiveBindAddresses(bootConfiguration));
+  validateBootConfiguration(bootConfiguration);
+
   if ((process.env.STT_PROVIDER ?? 'noop') === 'whispercpp') {
     registerWhisperCppAdapter();
   }

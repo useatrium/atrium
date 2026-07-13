@@ -15,6 +15,8 @@ export interface CacheSnapshot {
   channels: Channel[] | null;
   timelines: Record<string, CachedTimeline>;
   syncCursor: number;
+  /** Newest persisted timeline write, when the storage backend records it. */
+  lastSyncedAt?: string | null;
 }
 
 export interface CacheStorage {
@@ -119,7 +121,7 @@ export function createEventCache(storage: CacheStorage, flushMs = DEFAULT_CACHE_
       timelines = Object.fromEntries(
         Object.entries(snapshot.timelines).map(([channelId, timeline]) => [channelId, normalizeTimeline(timeline)]),
       );
-      return { channels, timelines, syncCursor };
+      return { channels, timelines, syncCursor, lastSyncedAt: snapshot.lastSyncedAt ?? null };
     },
 
     saveChannels: async (nextChannels) => {

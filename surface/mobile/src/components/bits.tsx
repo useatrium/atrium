@@ -1,7 +1,14 @@
 // Small presentational pieces shared across screens.
 
-import { Text, View } from 'react-native';
-import { reconnectingLabel, type UnreadLevel } from '@atrium/surface-client';
+import { Pressable, Text, View } from 'react-native';
+import {
+  connectionHost,
+  formatRelativeTimestamp,
+  reconnectingLabel,
+  wsStatusKind,
+  type UnreadLevel,
+  type WsStatus,
+} from '@atrium/surface-client';
 import { font, space, useTheme } from '../lib/theme';
 import type { TypingEntry } from '../lib/chat';
 
@@ -24,10 +31,20 @@ export function DayDivider({ label }: { label?: string }) {
   );
 }
 
-export function ConnectionBanner({ status }: { status: 'connecting' | 'open' | 'closed' }) {
+export function ConnectionBanner({
+  status,
+  serverUrl,
+  lastSyncedAt,
+  onSignInAgain,
+}: {
+  status: WsStatus;
+  serverUrl: string;
+  lastSyncedAt: string | null;
+  onSignInAgain: () => void;
+}) {
   const { colors } = useTheme();
-  if (status === 'open') return null;
-  const label = reconnectingLabel(status);
+  const terminal = wsStatusKind(status) === 'unreachable';
+  const label = reconnectingLabel(status, connectionHost(serverUrl));
   if (!label) return null;
   return (
     <View
@@ -37,12 +54,24 @@ export function ConnectionBanner({ status }: { status: 'connecting' | 'open' | '
         backgroundColor: colors.warningSurface,
         borderBottomColor: colors.warningBorder,
         borderBottomWidth: 1,
-        minHeight: 24,
+        minHeight: terminal ? 48 : 24,
         paddingVertical: space.xs,
         alignItems: 'center',
       }}
     >
       <Text style={{ color: colors.warning, fontSize: font.xs, lineHeight: 15 }}>{label}</Text>
+      {terminal && (
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm }}>
+          <Text style={{ color: colors.textMuted, fontSize: font.xs, lineHeight: 15 }}>
+            Saved messages · synced {lastSyncedAt ? formatRelativeTimestamp(lastSyncedAt) : 'unknown'}
+          </Text>
+          <Pressable accessibilityRole="button" accessibilityLabel="Sign in again" onPress={onSignInAgain} hitSlop={6}>
+            <Text style={{ color: colors.warning, fontSize: font.xs, fontWeight: '700', lineHeight: 15 }}>
+              Sign in again
+            </Text>
+          </Pressable>
+        </View>
+      )}
     </View>
   );
 }

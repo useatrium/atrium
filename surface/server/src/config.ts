@@ -11,9 +11,22 @@ function nonNegativeIntEnv(name: string, fallback: number): number {
 }
 
 export const config = {
+  nodeEnv: process.env.NODE_ENV ?? '',
   databaseUrl: process.env.DATABASE_URL ?? 'postgres://atrium:atrium@localhost:5433/atrium',
   port: Number(process.env.PORT ?? 3001),
   host: process.env.HOST ?? '127.0.0.1',
+  // Host-side Docker publications are distinct from the container's required
+  // 0.0.0.0 listener. Production Compose passes these through so boot checks
+  // and logs can describe what is actually exposed on the host.
+  serverPublicationBindHost:
+    process.env.ATRIUM_SERVER_PUBLICATION_HOST?.trim() || process.env.BIND_HOST?.trim() || null,
+  objectStoragePublicationBindHost:
+    process.env.ATRIUM_OBJECT_STORAGE_PUBLICATION_HOST?.trim() || process.env.BIND_HOST?.trim() || null,
+  databasePublicationBindHost:
+    process.env.ATRIUM_DATABASE_PUBLICATION_HOST?.trim() || process.env.DB_BIND_HOST?.trim() || null,
+  serverPublicationPort: process.env.SERVER_HOST_PORT ?? '3001',
+  objectStoragePublicationPort: process.env.MINIO_HOST_PORT ?? '9000',
+  databasePublicationPort: process.env.DB_HOST_PORT ?? '5433',
   // Prototype-grade: dev default secret; override in any real deployment.
   sessionSecret: process.env.SESSION_SECRET ?? 'atrium-dev-secret-change-me',
   providerCredentialSecret:

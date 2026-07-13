@@ -7,6 +7,67 @@ function tool(name: string, input: Record<string, unknown>, id = 't-1'): ToolCal
 }
 
 describe('classifyCommand', () => {
+  it.each([
+    ['leading redirect', '> important.md'],
+    ['leading redirect with whitespace', '  >   important.md  '],
+    ['forced-clobber redirect', '>| important.md'],
+    ['redirect without target whitespace', 'printf data >important.md'],
+    ['redirect with target whitespace', 'printf data > important.md'],
+    ['redirect to a quoted target', 'printf data > "important notes.md"'],
+    ['stdout fd redirect', 'printf data 1> important.md'],
+    ['stderr fd redirect', 'failing-command 2>errors.log'],
+    ['combined stdout/stderr redirect', 'failing-command &> errors.log'],
+    ['redirect after &&', 'test -f a && > b.md'],
+    ['redirect after semicolon', 'cat a; > b.md'],
+    ['redirect after pipe', 'cat a | > b.md'],
+    ['one truncating redirect among append redirects', 'cat a >> combined.log 2> errors.log'],
+    ['heredoc command output', 'cat <<EOF > output.txt\nbody\nEOF'],
+    ['redirect after a heredoc', 'cat <<EOF\nbody > text\nEOF\n> output.txt'],
+    ['truncate', 'truncate -s0 x'],
+    ['shred', 'shred -u secret.txt'],
+    ['dd with an output', 'dd if=image.iso of=/dev/sda bs=4M'],
+    ['filesystem formatter', 'mkfs.ext4 /dev/sda1'],
+    ['combined rm flags', 'rm -fr build'],
+    ['split rm flags', 'rm -r -f build'],
+    ['long rm flags', 'rm --force --recursive build'],
+    ['forced git clean', 'git clean -fdx'],
+    ['hard git reset', 'git reset --hard HEAD~1'],
+    ['find delete action', "find . -name '*.tmp' -delete"],
+    ['xargs rm', "find . -name '*.tmp' -print0 | xargs -0 rm"],
+  ])('flags %s as danger', (_description, command) => {
+    expect(classifyCommand(command).risk).toBe('danger');
+  });
+
+  it.each([
+    ['append redirect', '>> important.md', 'normal'],
+    ['append redirect after a command', 'printf data >>important.md', 'normal'],
+    ['fd-qualified append redirect', 'failing-command 2>> errors.log', 'normal'],
+    ['combined append redirect', 'failing-command &>> errors.log', 'normal'],
+    ['fd duplication', 'failing-command 2>&1', 'normal'],
+    ['double-quoted greater-than', 'echo "a > b"', 'normal'],
+    ['single-quoted greater-than', "echo 'a > b'", 'normal'],
+    ['escaped greater-than', 'echo a \\> b', 'normal'],
+    ['shell conditional comparison', '[[ 3 > 2 ]]', 'normal'],
+    ['arithmetic comparison', '((x > y))', 'normal'],
+    ['greater-than-or-equal comparison', 'echo a >= b', 'normal'],
+    ['greater-than in a flag value', 'tool --select=a>b', 'normal'],
+    ['process substitution', 'diff <(sort a) >(sort b)', 'normal'],
+    ['comment text', 'echo done # > important.md', 'normal'],
+    ['heredoc body', 'cat <<EOF\na > b\nEOF', 'normal'],
+    ['quoted heredoc body', "cat <<'TEXT'\n> important.md\nTEXT", 'normal'],
+    ['tab-stripped heredoc body', 'cat <<-EOF\n\t> important.md\n\tEOF', 'normal'],
+    ['git revision range', 'git log main..HEAD', 'normal'],
+    ['three-dot git revision range', 'git log main...HEAD', 'normal'],
+    ['dry-run git clean', 'git clean -ndx', 'normal'],
+    ['non-hard git reset', 'git reset --soft HEAD~1', 'normal'],
+    ['dd without an output', 'dd if=/dev/zero bs=1 count=1', 'normal'],
+    ['ordinary ls', 'ls -la', 'normal'],
+    ['ordinary cat', 'cat important.md', 'normal'],
+    ['ordinary grep', "grep -R 'needle' .", 'normal'],
+  ] as const)('does not flag %s', (_description, command, expectedRisk) => {
+    expect(classifyCommand(command).risk).toBe(expectedRisk);
+  });
+
   it('classifies destructive filesystem commands as danger', () => {
     expect(classifyCommand('rm -rf node_modules')).toEqual({ category: 'filesystem', risk: 'danger' });
     expect(classifyCommand('chmod -R 777 /tmp/x')).toEqual({ category: 'filesystem', risk: 'danger' });

@@ -31,6 +31,7 @@ function capture(path: string, blobSha: string | null, kind: 'created' | 'modifi
     mime: 'text/markdown',
     author: `agent:${sessionId}`,
     kind,
+    baseSeq: null,
   });
 }
 
@@ -164,6 +165,7 @@ describe('artifact ledger GC', () => {
       mime: 'text/markdown',
       author: `agent:${sessionId}`,
       kind: 'modified',
+      baseSeq: null,
       status: 'conflict',
       conflict: {
         base_seq: 1,
@@ -251,6 +253,7 @@ describe('artifact ledger GC', () => {
       mime: 'text/markdown',
       author: `agent:${sessionId}`,
       kind: 'modified',
+      baseSeq: null,
       status: 'conflict',
       conflict: {
         base_seq: 1,
@@ -388,6 +391,7 @@ describe('artifact ledger GC', () => {
       mime: 'text/markdown',
       author: `agent:${sessionId}`,
       kind: 'modified',
+      baseSeq: null,
       status: 'conflict',
       conflict: {
         base_seq: 1,

@@ -1,12 +1,15 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   ApiError,
+  NETWORK_UNREACHABLE_CODE,
+  connectionAwareError,
   createApi,
   decodeActiveCallSnapshotResponse,
   decodeCallJoinResponse,
   decodeSessionListResponse,
   decodeSessionResponse,
   decodeSyncResponse,
+  isNetworkFailure,
 } from '../src/api';
 import type { CallJoin, CallWire } from '../src/calls';
 import type { SessionListItem, SessionWire } from '../src/sessions';
@@ -227,6 +230,24 @@ describe('session API response decoding', () => {
 
     await expect(createApi().getSession('sess-1')).resolves.toEqual({ session: sessionWire() });
     expect(fetchMock).toHaveBeenCalledWith('/api/sessions/sess-1', expect.any(Object));
+  });
+});
+
+describe('API transport failures', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('wraps fetch transport failures in a typed network error', async () => {
+    vi.stubGlobal('fetch', vi.fn<typeof fetch>().mockRejectedValue(new TypeError('Failed to fetch')));
+
+    const error = await createApi()
+      .me()
+      .catch((err: unknown) => err);
+
+    expect(error).toMatchObject({ status: 0, code: NETWORK_UNREACHABLE_CODE });
+    expect(isNetworkFailure(error)).toBe(true);
+    expect(connectionAwareError(error, 'fallback', 'server unavailable')).toBe('server unavailable');
   });
 });
 

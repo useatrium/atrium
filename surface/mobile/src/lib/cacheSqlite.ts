@@ -29,6 +29,7 @@ interface TimelineRow {
   channel_id: string;
   events_json: string;
   has_more: number;
+  updated_at: number;
 }
 
 interface OutboxRow {
@@ -145,7 +146,7 @@ const storage: CacheStorage = {
       'syncCursor',
     );
     const rows = await database.getAllAsync<TimelineRow>(
-      'SELECT channel_id, events_json, has_more FROM channel_timelines',
+      'SELECT channel_id, events_json, has_more, updated_at FROM channel_timelines',
     );
     const timelines: CacheSnapshot['timelines'] = {};
     for (const row of rows) {
@@ -158,6 +159,7 @@ const storage: CacheStorage = {
       channels: channelsRow ? (JSON.parse(channelsRow.value) as Channel[]) : null,
       timelines,
       syncCursor: Math.max(0, Number(syncCursorRow?.value ?? 0) || 0),
+      lastSyncedAt: rows.length > 0 ? new Date(Math.max(...rows.map((row) => row.updated_at))).toISOString() : null,
     };
   },
 

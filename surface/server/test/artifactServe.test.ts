@@ -45,6 +45,7 @@ function capture(
     mime: opts.mime ?? 'text/markdown',
     author: `agent:${sessionId}`,
     kind,
+    baseSeq: null,
   });
 }
 

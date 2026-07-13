@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type pg from 'pg';
+import { loadConflictDetail } from '../src/artifact-conflict.js';
 import { ArtifactLedger, casBlobKey } from '../src/artifact-ledger.js';
+import { writeBackArtifact, type ArtifactWritebackStorage } from '../src/artifact-writeback.js';
 import { createTestPool, seedFixture, truncateAll, type Fixture } from './helpers.js';
 
 let pool: pg.Pool;
@@ -19,12 +21,27 @@ async function seedSession(channelId = fx.channelId): Promise<string> {
   return r.rows[0]!.id;
 }
 
-/** A capture-shaped commit (the Lane 1 bridge path: agent author, implicit base). */
+class FakeStorage implements ArtifactWritebackStorage {
+  readonly objects = new Map<string, Buffer>();
+
+  async uploadObject(key: string, body: Buffer | Uint8Array): Promise<void> {
+    this.objects.set(key, Buffer.from(body));
+  }
+
+  async getObjectBytes(key: string): Promise<Buffer> {
+    const bytes = this.objects.get(key);
+    if (!bytes) throw new Error(`missing object ${key}`);
+    return Buffer.from(bytes);
+  }
+}
+
+/** Low-level ledger commit. Existing versions must name a base; null is used
+ * only by tests that deliberately exercise the legacy single-writer append. */
 function capture(
   path: string,
   blobSha: string | null,
   kind: 'created' | 'modified' | 'deleted',
-  opts: { mime?: string; size?: number } = {},
+  opts: { mime?: string; size?: number; baseSeq?: number | null } = {},
 ) {
   return ledger.commitVersion({
     sessionId,
@@ -35,6 +52,7 @@ function capture(
     mime: opts.mime ?? 'text/markdown',
     author: `agent:${sessionId}`,
     kind,
+    ...(opts.baseSeq === undefined ? {} : { baseSeq: opts.baseSeq }),
   });
 }
 
@@ -76,7 +94,7 @@ describe('ArtifactLedger foundation', () => {
 
   it('chains v2 and retains history', async () => {
     await capture('report.md', 'a'.repeat(64), 'created');
-    const v2 = await capture('report.md', 'b'.repeat(64), 'modified');
+    const v2 = await capture('report.md', 'b'.repeat(64), 'modified', { baseSeq: 1 });
     expect(v2).toMatchObject({ ok: true, seq: 2 });
 
     const latest = await ledger.resolveVersion(sessionId, 'report.md', { pointer: 'latest' });
@@ -89,7 +107,7 @@ describe('ArtifactLedger foundation', () => {
 
   it('content-dedups an identical re-capture (idempotent, no new version)', async () => {
     await capture('report.md', 'a'.repeat(64), 'created');
-    const again = await capture('report.md', 'a'.repeat(64), 'modified');
+    const again = await capture('report.md', 'a'.repeat(64), 'modified', { baseSeq: 1 });
     expect(again).toMatchObject({ ok: true, seq: 1, idempotent: true });
     expect(await versionCount()).toBe(1);
   });
@@ -104,7 +122,7 @@ describe('ArtifactLedger foundation', () => {
 
   it('rejects a stale base (OCC)', async () => {
     await capture('report.md', 'a'.repeat(64), 'created'); // seq 1
-    await capture('report.md', 'b'.repeat(64), 'modified'); // seq 2
+    await capture('report.md', 'b'.repeat(64), 'modified', { baseSeq: 1 }); // seq 2
 
     const stale = await ledger.commitVersion({
       sessionId,
@@ -123,23 +141,22 @@ describe('ArtifactLedger foundation', () => {
 
   it('records a delete tombstone', async () => {
     await capture('report.md', 'a'.repeat(64), 'created');
-    const del = await capture('report.md', null, 'deleted');
+    const del = await capture('report.md', null, 'deleted', { baseSeq: 1 });
     expect(del).toMatchObject({ ok: true, seq: 2 });
 
     const latest = await ledger.resolveVersion(sessionId, 'report.md', { pointer: 'latest' });
     expect(latest).toMatchObject({ seq: 2, kind: 'deleted', blobSha: null, mime: null });
   });
 
-  it('serializes concurrent commits to the same artifact (monotonic seq)', async () => {
+  it('serializes concurrent commits and rejects the writer whose named base became stale', async () => {
     await capture('report.md', 'a'.repeat(64), 'created'); // seq 1
     const [r1, r2] = await Promise.all([
-      capture('report.md', 'e'.repeat(64), 'modified'),
-      capture('report.md', 'f'.repeat(64), 'modified'),
+      capture('report.md', 'e'.repeat(64), 'modified', { baseSeq: 1 }),
+      capture('report.md', 'f'.repeat(64), 'modified', { baseSeq: 1 }),
     ]);
-    expect(r1.ok && r2.ok).toBe(true);
-    const seqs = [(r1 as { seq: number }).seq, (r2 as { seq: number }).seq].sort();
-    expect(seqs).toEqual([2, 3]); // no gap, no dup
-    expect(await versionCount()).toBe(3);
+    expect([r1, r2].filter((result) => result.ok)).toHaveLength(1);
+    expect([r1, r2].find((result) => !result.ok)).toMatchObject({ reason: 'stale_base', latestSeq: 2, baseSeq: 1 });
+    expect(await versionCount()).toBe(2);
   });
 
   it('tracks blob durability state + key', async () => {
@@ -174,6 +191,7 @@ describe('ArtifactLedger foundation', () => {
       mime: 'text/markdown',
       author: `agent:${otherSession}`,
       kind: 'created',
+      baseSeq: 1,
     });
     expect(other).toMatchObject({ ok: true, seq: 2, artifactId: first.artifactId });
     const a = await ledger.resolveVersion(sessionId, 'shared/global/report.md', { pointer: 'latest' });
@@ -188,43 +206,81 @@ describe('ArtifactLedger foundation', () => {
   });
 });
 
-// CHARACTERIZATION (green in CI on purpose): documents a KNOWN gap, not a desired
-// behavior — the blind-append clobber from docs/archive/notes/cas-ledger-build-plan.md §9
-// finding 1. capture() passes no baseSeq, so commitVersion linearizes every writer
-// onto `latest` regardless of the base it actually edited. Two agents that both
-// fork v1 → the second silently buries the first, with NO conflict recorded.
-//
-// WHEN shared-doc capture is made base-aware (the §9 fix), FLIP this test: agent
-// B's capture should carry base_seq=1 → trip stale_base → node-diff3 → a
-// status='conflict' version, not overwrite A. Rewrite the assertions then and
-// delete this comment.
-describe('ArtifactLedger — concurrent shared editing (characterization, §9)', () => {
-  it('blind-append capture buries the prior edit with no conflict', async () => {
-    const HELLO = 'a'.repeat(64);
-    const A_EDIT = 'b'.repeat(64); // agent A's edit off v1
-    const B_EDIT = 'c'.repeat(64); // agent B's edit off v1 — does NOT contain A's change
+describe('ArtifactLedger — concurrent shared editing', () => {
+  let storage: FakeStorage;
 
-    await capture('design.md', HELLO, 'created'); // v1: both agents hydrate this
+  beforeEach(() => {
+    storage = new FakeStorage();
+  });
 
-    const a = await capture('design.md', A_EDIT, 'modified'); // implicit base = latest(1) → seq 2
-    expect(a).toMatchObject({ ok: true, seq: 2 });
+  function captureText(text: string, author: string, baseSeq?: number | null) {
+    return writeBackArtifact({
+      pool,
+      storage,
+      channelId: fx.channelId,
+      sessionId,
+      path: 'design.md',
+      bytes: Buffer.from(text),
+      mime: 'text/markdown',
+      author,
+      ...(baseSeq === undefined ? {} : { baseSeq }),
+    });
+  }
 
-    const b = await capture('design.md', B_EDIT, 'modified'); // B also forked v1, but no base →
-    expect(b).toMatchObject({ ok: true, seq: 3 }); // implicit base = latest(2): appended over A
+  it('records a conflict when two writers fork the same base and preserves the first writer', async () => {
+    const base = 'title\noriginal\nend\n';
+    const aEdit = 'title\nagent A\nend\n';
+    const bEdit = 'title\nagent B\nend\n';
 
-    // The clobber: latest is B's bytes; nothing flagged that A's edit was lost.
-    const latest = await ledger.resolveVersion(sessionId, 'design.md', { pointer: 'latest' });
-    expect(latest).toMatchObject({ seq: 3, blobSha: B_EDIT, status: 'normal' });
+    await captureText(base, 'node:seed'); // v1: both agents hydrate this
+    expect(await captureText(aEdit, 'node:agent-a', 1)).toMatchObject({ ok: true, seq: 2, status: 'normal' });
+    expect(await captureText(bEdit, 'node:agent-b', 1)).toMatchObject({ ok: true, seq: 3, status: 'conflict' });
 
-    // The lost update is SILENT — no conflict version was ever recorded.
-    const conflicts = await pool.query<{ n: number }>(
-      `SELECT count(*)::int AS n FROM artifact_versions WHERE status = 'conflict'`,
-    );
-    expect(conflicts.rows[0]!.n).toBe(0);
+    const resolution = await ledger.serveResolution(sessionId, 'design.md');
+    expect(resolution).toMatchObject({ servedSeq: 2, conflicted: true, conflictSeq: 3 });
 
-    // A's edit still exists in history (seq 2) but is unreachable via latest — it
-    // never merged forward into B's version.
-    const aStill = await ledger.resolveVersion(sessionId, 'design.md', { seq: 2 });
-    expect(aStill?.blobSha).toBe(A_EDIT);
+    const detail = await loadConflictDetail(pool, storage, sessionId, 'design.md');
+    expect(detail).toMatchObject({ kind: 'diff3', conflictSeq: 3, baseSeq: 1 });
+    expect(detail?.left.text).toBe(aEdit);
+    expect(detail?.right.text).toBe(bEdit);
+    expect(detail?.markers).toContain('agent A');
+    expect(detail?.markers).toContain('agent B');
+  });
+
+  it('linearizes sequential edits whose base is latest without a false conflict', async () => {
+    await captureText('v1\n', 'node:agent-a');
+    expect(await captureText('v2\n', 'node:agent-a', 1)).toMatchObject({ ok: true, seq: 2, status: 'normal' });
+    expect(await captureText('v3\n', 'node:agent-a', 2)).toMatchObject({ ok: true, seq: 3, status: 'normal' });
+    expect(await ledger.getConflict(sessionId, 'design.md')).toBeNull();
+  });
+
+  it('allows a base-less first write and records an unknown-base append as a conflict', async () => {
+    expect(await captureText('v1\n', 'node:agent-a')).toMatchObject({ ok: true, seq: 1 });
+    expect(await captureText('blind append\n', 'node:agent-b')).toMatchObject({
+      ok: true,
+      seq: 2,
+      status: 'conflict',
+    });
+    expect(await versionCount()).toBe(2);
+    expect(await ledger.serveResolution(sessionId, 'design.md')).toMatchObject({
+      servedSeq: 1,
+      conflicted: true,
+      conflictSeq: 2,
+    });
+
+    const detail = await loadConflictDetail(pool, storage, sessionId, 'design.md');
+    expect(detail).toMatchObject({ kind: 'unmergeable', conflictSeq: 2, baseSeq: null });
+    expect(detail?.left.text).toBe('v1\n');
+    expect(detail?.right.text).toBe('blind append\n');
+  });
+
+  it('keeps explicit null as the legacy single-writer implicit append assertion', async () => {
+    expect(await captureText('v1\n', 'node:agent-a')).toMatchObject({ ok: true, seq: 1 });
+    expect(await captureText('v2\n', 'node:legacy', null)).toMatchObject({
+      ok: true,
+      seq: 2,
+      status: 'normal',
+    });
+    expect(await ledger.getConflict(sessionId, 'design.md')).toBeNull();
   });
 });

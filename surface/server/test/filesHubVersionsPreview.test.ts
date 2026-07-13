@@ -127,6 +127,7 @@ async function commitArtifact(params: {
     mime,
     author: params.author ?? `agent:${params.sessionId}`,
     kind: params.kind ?? 'created',
+    baseSeq: null,
   });
   if (!committed.ok) throw new Error('unexpected stale commit');
   return { artifactId: committed.artifactId, seq: committed.seq, sizeBytes: payload.byteLength };

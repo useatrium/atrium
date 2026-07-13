@@ -1,16 +1,29 @@
 import { useEffect, useRef, useState } from 'react';
 import type { AppState } from './appState';
 import type { OpStorage, QueuedOp } from './opQueue';
+import { isWsOpen, wsStatusKind } from './useWs';
 
 export type QueueStatusWs = AppState['wsStatus'];
+
+export function connectionHost(url: string, fallback = 'server'): string {
+  try {
+    return new URL(url).host || fallback;
+  } catch {
+    return fallback;
+  }
+}
 
 export function countActiveQueuedChanges(ops: readonly Pick<QueuedOp, 'status'>[]): number {
   return ops.filter((op) => op.status === 'pending' || op.status === 'inflight').length;
 }
 
-/** Offline is the only state loud enough for a banner; everything else stays quiet. */
-export function reconnectingLabel(wsStatus: QueueStatusWs): string | null {
-  return wsStatus === 'open' ? null : 'Reconnecting…';
+/** Connection loss is quiet at first, then escalates when evidence is sustained. */
+export function reconnectingLabel(wsStatus: QueueStatusWs, host = 'server'): string | null {
+  const kind = wsStatusKind(wsStatus);
+  if (kind === 'open') return null;
+  if (kind === 'unreachable') return `Can’t reach ${host}`;
+  if (kind === 'auth-failed') return 'Sign-in expired';
+  return 'Reconnecting…';
 }
 
 export type QueueSyncState = {
@@ -32,7 +45,7 @@ export function deriveSyncStuck(
   now: number,
   stuckAfterMs: number,
 ): { stuckSince: number | null; syncStuck: boolean } {
-  const next = wsStatus === 'open' && queuedCount > 0 ? (stuckSince ?? now) : null;
+  const next = isWsOpen(wsStatus) && queuedCount > 0 ? (stuckSince ?? now) : null;
   return { stuckSince: next, syncStuck: next !== null && now - next >= stuckAfterMs };
 }
 
@@ -66,7 +79,7 @@ export function useQueueSyncState(
     refresh();
     // Keep polling while anything is queued or the socket is down; an idle,
     // connected client runs no timer at all.
-    if (wsStatus !== 'open' || state.queuedCount > 0) {
+    if (!isWsOpen(wsStatus) || state.queuedCount > 0) {
       const timer = setInterval(refresh, intervalMs);
       return () => {
         disposed = true;

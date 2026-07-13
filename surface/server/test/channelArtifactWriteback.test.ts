@@ -160,7 +160,7 @@ describe('PUT /api/channels/:channelId/artifacts', () => {
     expect(await artifactPathFor(sessionId)).toBeNull();
   });
 
-  it('returns the stale_base conflict envelope', async () => {
+  it('returns base_not_found when the named base does not exist', async () => {
     const cookie = await loginCookie();
     const sessionId = await insertSession();
     const url = `/api/channels/${fx.channelId}/artifacts?session=${sessionId}&path=notes/plan.md`;
@@ -185,6 +185,6 @@ describe('PUT /api/channels/:channelId/artifacts', () => {
     });
 
     expect(stale.statusCode).toBe(409);
-    expect(stale.json()).toEqual({ error: 'stale_base', baseSeq: 99, latestSeq: 1 });
+    expect(stale.json()).toEqual({ error: 'base_not_found', baseSeq: 99, latestSeq: 1 });
   });
 });

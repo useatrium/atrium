@@ -23,6 +23,13 @@ interface OpRow {
   inserted_at: number;
 }
 
+interface TimelineRow {
+  channel_id: string;
+  events_json: string;
+  has_more: number;
+  updated_at: number;
+}
+
 class FakeDb {
   nextRowId = 1;
   sendOutbox: OutboxRow[] | null = [
@@ -46,6 +53,7 @@ class FakeDb {
     },
   ];
   clientOps: OpRow[] = [];
+  timelineRows: TimelineRow[] = [];
 
   async execAsync(sql: string): Promise<void> {
     if (sql.includes('DROP TABLE send_outbox')) this.sendOutbox = null;
@@ -63,6 +71,7 @@ class FakeDb {
     if (sql.includes('FROM send_outbox')) return [...(this.sendOutbox ?? [])] as T[];
     if (sql.includes('FROM client_ops'))
       return [...this.clientOps].sort((a, b) => a.inserted_at - b.inserted_at) as T[];
+    if (sql.includes('FROM channel_timelines')) return [...this.timelineRows] as T[];
     return [];
   }
 
@@ -177,5 +186,23 @@ describe('SQLite client op migration', () => {
     expect(ops.map((op) => op.opId)).toEqual(['good-op']);
     expect(fakeDb.clientOps.map((op) => op.op_id)).toEqual(['good-op']);
     expect(warn).toHaveBeenCalledWith('dropping invalid SQLite queued op', expect.any(Error));
+  });
+
+  it('loads the newest timeline write as lastSyncedAt', async () => {
+    const fakeDb = new FakeDb();
+    fakeDb.sendOutbox = null;
+    fakeDb.timelineRows = [
+      { channel_id: 'ch-1', events_json: '[]', has_more: 0, updated_at: Date.parse('2026-07-13T10:00:00Z') },
+      { channel_id: 'ch-2', events_json: '[]', has_more: 1, updated_at: Date.parse('2026-07-13T12:00:00Z') },
+    ];
+    vi.doMock('expo-sqlite', () => ({
+      openDatabaseAsync: vi.fn(async () => fakeDb),
+    }));
+
+    const { eventCache } = await import('../src/lib/cacheSqlite');
+
+    await expect(eventCache.loadSnapshot()).resolves.toMatchObject({
+      lastSyncedAt: '2026-07-13T12:00:00.000Z',
+    });
   });
 });

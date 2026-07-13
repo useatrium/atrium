@@ -100,7 +100,7 @@ export function groupMobileSessions(rows: DisplaySession[]): SessionSection[] {
 }
 
 export default function SessionsScreen() {
-  const { api, state, startDemoSession, setSessionArchived, setSessionPinned } = useChat();
+  const { api, state, startDemoSession, setSessionArchived, setSessionPinned, serverUrl, signInAgain } = useChat();
   const { colors } = useTheme();
   const [sessions, setSessions] = useState<SessionListItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -321,7 +321,12 @@ export default function SessionsScreen() {
           </Pressable>
         }
       />
-      <ConnectionBanner status={state.wsStatus} />
+      <ConnectionBanner
+        status={state.wsStatus}
+        serverUrl={serverUrl}
+        lastSyncedAt={state.lastSyncedAt}
+        onSignInAgain={signInAgain}
+      />
       {loading ? (
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
           <ActivityIndicator color={colors.textMuted} />

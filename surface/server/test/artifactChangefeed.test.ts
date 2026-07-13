@@ -28,6 +28,7 @@ function capture(path: string, sha: string, kind: 'created' | 'modified' | 'dele
     mime: 'text/markdown',
     author: `agent:${sessionId}`,
     kind,
+    baseSeq: null,
   });
 }
 

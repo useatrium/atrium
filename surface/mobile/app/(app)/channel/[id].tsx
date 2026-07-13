@@ -410,7 +410,12 @@ export default function ChannelScreen() {
           headerBackButtonDisplayMode: 'minimal',
         }}
       />
-      <ConnectionBanner status={state.wsStatus} />
+      <ConnectionBanner
+        status={state.wsStatus}
+        serverUrl={chat.serverUrl}
+        lastSyncedAt={state.lastSyncedAt}
+        onSignInAgain={chat.signInAgain}
+      />
       <KeyboardAvoidingView
         style={{ flex: 1 }}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}

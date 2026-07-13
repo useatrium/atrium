@@ -286,6 +286,9 @@ export async function registerInternalArtifactRoutes(
             LIMIT 1`,
           [session.id, canonicalPath],
         );
+        if (!prior.rows[0] && baseSeq != null) {
+          return reply.code(409).send({ error: 'base_not_found', baseSeq });
+        }
         const result = await ledger.commitVersion({
           sessionId: session.id,
           channelId: session.channelId,
@@ -294,12 +297,34 @@ export async function registerInternalArtifactRoutes(
           sizeBytes,
           mime,
           kind: prior.rows[0] ? 'modified' : 'created',
-          mergeClass: 'immutable-data',
+          mergeClass: classification.isText ? 'mergeable-doc' : 'immutable-data',
           author: `node:${id}`,
           ...(baseSeq == null ? {} : { baseSeq }),
         });
         if (!result.ok) {
-          return reply.code(409).send({ error: 'stale_base', latestSeq: result.latestSeq, baseSeq: result.baseSeq });
+          // The ordinary streaming path stays constant-memory. Only a stale
+          // or unknown-base writer reads its now-durable incoming blob back so
+          // it can enter the same diff3 / conflict-state path as buffered
+          // capture.
+          const reconciled = await writeBackArtifact({
+            pool,
+            storage: { uploadObject, getObjectBytes, headObject },
+            channelId: session.channelId,
+            sessionId: session.id,
+            path: canonicalPath,
+            bytes: await getObjectBytes(finalKey),
+            mime,
+            author: `node:${id}`,
+            ...(result.reason === 'stale_base' ? { baseSeq: result.baseSeq } : {}),
+          });
+          if (!reconciled.ok) {
+            return reply.code(409).send({
+              error: reconciled.reason,
+              ...(reconciled.baseSeq != null ? { baseSeq: reconciled.baseSeq } : {}),
+              ...(reconciled.latestSeq != null ? { latestSeq: reconciled.latestSeq } : {}),
+            });
+          }
+          return reply.send({ seq: reconciled.seq, status: reconciled.status });
         }
         enqueueThumbnailGeneration({
           pool,

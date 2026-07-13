@@ -97,6 +97,7 @@ describe('app registry publish/list/launch', () => {
       mime: 'text/javascript',
       author: `agent:${sessionId}`,
       kind: 'modified',
+      baseSeq: null,
     });
 
     const rows = await pool.query<{ rel_path: string; blob_sha: string; artifact_seq: number }>(
@@ -151,6 +152,7 @@ describe('app registry publish/list/launch', () => {
       mime: 'text/html',
       author: `agent:${sessionId}`,
       kind: 'deleted',
+      baseSeq: null,
     });
     await expect(
       registry.publish({
