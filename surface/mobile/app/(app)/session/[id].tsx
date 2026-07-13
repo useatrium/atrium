@@ -793,9 +793,9 @@ export default function SessionScreen() {
   const isDriver = !!session && sessionDriverId(session) === me.id;
   const isSpawner = !!session && session.spawnedBy === me.id;
   const canCancel = !!session && (isDriver || isSpawner) && !terminal;
-  // A completed session is resumable (a steer regresses it to queued) — only
-  // failed/cancelled are read-only, matching web and the server.
-  const canSteer = !!session && isDriver && !isEnded;
+  // No dead ends: every terminal state is resumable — a steer regresses the
+  // session to queued and starts a new turn (matching web and the server).
+  const canSteer = !!session && isDriver;
   const pendingQuestion =
     session?.pendingQuestion !== undefined ? (session.pendingQuestion ?? null) : stream.pendingQuestion;
   const activeTurn = !terminal && !stalled;
@@ -840,7 +840,8 @@ export default function SessionScreen() {
   const modelEffort = session?.modelEffort ?? null;
   const effortOptions = session ? HARNESS_EFFORT_PICKER_OPTIONS[session.harness] : undefined;
   const effortSelection = effortChoice ?? modelEffort ?? '';
-  const canPickEffort = !!session && isDriver && !isEnded && effortOptions !== undefined;
+  // Effort stays pickable on ended sessions — it applies to the revive turn.
+  const canPickEffort = !!session && isDriver && effortOptions !== undefined;
   const nameFor = useCallback(
     (userId: string | null | undefined): string => {
       if (!userId) return 'someone';
@@ -2033,13 +2034,7 @@ export default function SessionScreen() {
           onOptimisticSendFailed={removeOptimisticSteer}
         />
 
-        {isEnded ? (
-          <View style={{ borderTopWidth: 1, borderTopColor: colors.border, padding: space.sm }}>
-            <Text style={{ color: colors.textMuted, fontSize: font.xs, textAlign: 'center' }}>
-              Session ended. Transcript is read-only.
-            </Text>
-          </View>
-        ) : canSteer ? (
+        {canSteer ? (
           <View
             accessibilityViewIsModal
             style={{

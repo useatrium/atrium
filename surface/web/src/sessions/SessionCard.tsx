@@ -3,6 +3,7 @@ import { formatTime } from '@atrium/surface-client';
 import { formatCost, isPendingSessionId, isStalledSessionStatus, isTerminalSessionStatus, type Session } from './types';
 import { GlanceChip } from './GlanceChip';
 import { InlineQuestionAnswer } from './InlineQuestionAnswer';
+import { sessionsApi } from './api';
 import { SessionAppPresentationCards } from './AppPresentationCard';
 import { SessionPresenceTicker } from './SessionPresenceTicker';
 
@@ -24,6 +25,38 @@ export function useNow(active: boolean): number {
     return () => clearInterval(t);
   }, [active]);
   return now;
+}
+
+/**
+ * One-tap revive for a failed session, right on the card. The retry is an
+ * ordinary steer ("Retry the failed turn.") posted to the session thread, so
+ * the ask is visible in the conversation like any other turn boundary.
+ */
+function RetryTurnAction({ sessionId }: { sessionId: string }) {
+  const [busy, setBusy] = useState(false);
+  const [sent, setSent] = useState(false);
+  const [error, setError] = useState(false);
+  if (sent) return <span className="text-2xs text-fg-muted">Retrying…</span>;
+  return (
+    <button
+      type="button"
+      data-testid="card-retry-turn"
+      disabled={busy}
+      onClick={(e) => {
+        e.stopPropagation();
+        setBusy(true);
+        setError(false);
+        sessionsApi
+          .sendMessage(sessionId, 'Retry the failed turn.', undefined, true)
+          .then(() => setSent(true))
+          .catch(() => setError(true))
+          .finally(() => setBusy(false));
+      }}
+      className="inline-block text-2xs font-semibold text-danger-text hover:underline disabled:opacity-60"
+    >
+      {error ? "Retry didn't send — try again" : 'Retry turn'}
+    </button>
+  );
 }
 
 export function sessionElapsedMs(session: Session, now: number): number {
@@ -148,17 +181,22 @@ export function SessionCard({
       {terminal && session.resultText && (
         <div className="mt-1.5 border-l-2 border-edge-strong pl-2 text-xs leading-relaxed text-fg-secondary">
           <span className="line-clamp-3 whitespace-pre-wrap break-words">{session.resultText}</span>
-          <a
-            href={session.permalink}
-            onClick={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              open();
-            }}
-            className="mt-0.5 inline-block text-2xs font-medium text-accent-text hover:underline"
-          >
-            Open session
-          </a>
+          <span className="mt-0.5 flex items-center gap-3">
+            <a
+              href={session.permalink}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                open();
+              }}
+              className="inline-block text-2xs font-medium text-accent-text hover:underline"
+            >
+              Open session
+            </a>
+            {session.status === 'failed' && meId != null && session.driverId === meId && (
+              <RetryTurnAction sessionId={session.id} />
+            )}
+          </span>
         </div>
       )}
       {openable && <SessionAppPresentationCards session={session} surface="timeline" />}
