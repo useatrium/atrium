@@ -35,34 +35,71 @@ export function useNow(active: boolean): number {
 }
 
 /**
- * One-tap revive for a failed session, right on the card. The retry is an
- * ordinary steer ("Retry the failed turn.") posted to the session thread, so
- * the ask is visible in the conversation like any other turn boundary.
+ * One-tap failure verbs, right on the card. Each is an ordinary steer posted
+ * to the session thread, so the ask is visible in the conversation like any
+ * other turn boundary. Retry re-runs; Ask why turns the failure into a
+ * conversation instead of a wall.
  */
-function RetryTurnAction({ sessionId }: { sessionId: string }) {
+function SteerActionLink({
+  sessionId,
+  prompt,
+  label,
+  sentLabel,
+  testid,
+}: {
+  sessionId: string;
+  prompt: string;
+  label: string;
+  sentLabel: string;
+  testid: string;
+}) {
   const [busy, setBusy] = useState(false);
   const [sent, setSent] = useState(false);
   const [error, setError] = useState(false);
-  if (sent) return <span className="text-2xs text-fg-muted">Retrying…</span>;
+  if (sent) return <span className="text-2xs text-fg-muted">{sentLabel}</span>;
   return (
     <button
       type="button"
-      data-testid="card-retry-turn"
+      data-testid={testid}
       disabled={busy}
       onClick={(e) => {
         e.stopPropagation();
         setBusy(true);
         setError(false);
         sessionsApi
-          .sendMessage(sessionId, 'Retry the failed turn.', undefined, true)
+          .sendMessage(sessionId, prompt, undefined, true)
           .then(() => setSent(true))
           .catch(() => setError(true))
           .finally(() => setBusy(false));
       }}
       className="inline-block text-2xs font-semibold text-danger-text hover:underline disabled:opacity-60"
     >
-      {error ? "Retry didn't send — try again" : 'Retry turn'}
+      {error ? `${label} didn't send — try again` : label}
     </button>
+  );
+}
+
+function RetryTurnAction({ sessionId }: { sessionId: string }) {
+  return (
+    <SteerActionLink
+      sessionId={sessionId}
+      prompt="Retry the failed turn."
+      label="Retry turn"
+      sentLabel="Retrying…"
+      testid="card-retry-turn"
+    />
+  );
+}
+
+function AskWhyAction({ sessionId }: { sessionId: string }) {
+  return (
+    <SteerActionLink
+      sessionId={sessionId}
+      prompt="The last turn failed — explain what went wrong and what you'd try differently, then wait for my go-ahead."
+      label="Ask why"
+      sentLabel="Asked — check the thread"
+      testid="card-ask-why"
+    />
   );
 }
 
@@ -193,15 +230,23 @@ export function SessionCard({
         )}
       </div>
 
-      {terminal && session.resultText && (
+      {/* Failed cards render this block even with NO result text — recovery
+          must not be gated on the presence of the very output whose absence
+          defines the worst failures. */}
+      {terminal && (session.resultText || session.status === 'failed') && (
         <div className="mt-1.5 border-l-2 border-edge-strong pl-2 text-xs leading-relaxed text-fg-secondary">
-          <span className="line-clamp-3 whitespace-pre-wrap break-words">{session.resultText}</span>
+          {session.resultText ? (
+            <span className="line-clamp-3 whitespace-pre-wrap break-words">{session.resultText}</span>
+          ) : (
+            <span className="text-fg-muted">The run ended before reporting a result.</span>
+          )}
           {/* sessionDriverId, not raw driverId: feed folds create terminal
               entities with driverId null (no heal), and the seat model's
               canonical fallback is the spawner. */}
           {session.status === 'failed' && meId != null && sessionDriverId(session) === meId && (
-            <span className="mt-0.5 block">
+            <span className="mt-0.5 flex items-center gap-2.5">
               <RetryTurnAction sessionId={session.id} />
+              <AskWhyAction sessionId={session.id} />
             </span>
           )}
         </div>

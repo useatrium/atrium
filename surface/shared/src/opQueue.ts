@@ -189,6 +189,12 @@ export interface SessionSuggestPayload {
   text: string;
   /** Also post the suggestion as a human message in the session's conversation thread. */
   postToThread?: boolean;
+  /** Uploaded-file metadata; carried into the suggestion and the eventual steer. */
+  attachments?: AttachmentMeta[];
+  /** Queued upload refs; resolved to uploaded file ids before the HTTP call. */
+  attachmentRefs?: AttachmentRef[];
+  /** Existing artifact refs; sent through once a picker can populate them. */
+  existingAttachmentRefs?: AgentAttachmentRef[];
 }
 
 export interface SessionCancelPayload {
@@ -1082,11 +1088,20 @@ export function createDefaultOpRegistry(): OpRegistry {
       onRejected: () => {},
     },
     'session.suggest': {
-      execute: (api, payload, op) =>
-        api.createSuggestion(payload.sessionId, payload.text, {
+      execute: async (api, payload, op, context) => {
+        const attachments = await resolvedAttachmentIds(payload, context);
+        return api.createSuggestion(payload.sessionId, payload.text, {
           opId: op.opId,
           ...(payload.postToThread === true ? { postToThread: true } : {}),
-        }),
+          ...(attachments && attachments.length > 0 ? { attachments } : {}),
+          ...(payload.attachments && payload.attachments.length > 0 ? { attachmentMeta: payload.attachments } : {}),
+          ...(payload.existingAttachmentRefs && payload.existingAttachmentRefs.length > 0
+            ? { attachmentRefs: payload.existingAttachmentRefs }
+            : {}),
+        });
+      },
+      dependsOn: attachmentUploadDependencies,
+      removeDependenciesOnSettled: true,
       onConfirmed: () => {},
       onRejected: () => {},
     },

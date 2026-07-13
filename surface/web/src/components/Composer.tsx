@@ -103,6 +103,8 @@ type ComposerProps = {
   ) => void;
   /** Enables channel mention suggestions. Omit for agent-session composers. */
   mentionContext?: MentionContext;
+  /** Observes agent-mode entry/exit (e.g. the thread panel hides its broadcast checkbox). */
+  onAgentModeChange?: (active: boolean) => void;
 };
 
 export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Composer(
@@ -129,6 +131,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     agentMode: agentModeContext,
     onAgentSend,
     mentionContext,
+    onAgentModeChange,
   },
   imperativeRef,
 ) {
@@ -217,6 +220,10 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   useEffect(() => {
     filesRef.current = files;
   }, [files]);
+
+  useEffect(() => {
+    onAgentModeChange?.(agentMode);
+  }, [agentMode, onAgentModeChange]);
 
   useEffect(
     () => () => {
@@ -537,7 +544,11 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             <span aria-hidden>⚓ </span>
             {anchorLabel}
           </button>
-          <label className="flex shrink-0 items-center gap-1 rounded-full border border-edge-strong px-2 py-1 text-xs text-fg-secondary">
+          <label
+            className={`flex shrink-0 items-center gap-1 rounded-full border border-edge-strong px-2 py-1 text-xs text-fg-secondary ${
+              effectiveAgentTarget === 'suggest' ? 'hidden' : ''
+            }`}
+          >
             <span>effort</span>
             <select
               value={agentEffort}

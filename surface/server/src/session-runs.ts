@@ -50,7 +50,12 @@ import { Connections } from './connections.js';
 import { convergeGitHubPublicReadFallback } from './github-iron-control.js';
 import type { IronControlAdminClient } from './iron-control.js';
 import { AgentProfiles } from './agent-profiles.js';
-import { agentTurnInputLine, agentTurnMessageParts, type AgentTurnAttachmentRef } from './session-attachments.js';
+import {
+  agentTurnInputLine,
+  agentTurnMessageParts,
+  type AgentTurnAttachmentInput,
+  type AgentTurnAttachmentRef,
+} from './session-attachments.js';
 import { appendReferencedEntriesAppendix } from './referenced-entries.js';
 import { buildSteerContextBlock, type SteerContextSuggestionAttribution } from './steer-context.js';
 import { encodeEventHandle } from './entries.js';
@@ -120,6 +125,8 @@ export interface SessionSuggestionJson {
   note: string | null;
   createdAt: string;
   resolvedAt: string | null;
+  /** Display metadata for attached files, exactly as the proposer's client sent it. */
+  attachments: unknown[] | null;
 }
 
 export type AnswerProposalStatus = 'pending' | 'submitted' | 'dismissed';
@@ -325,6 +332,8 @@ interface SessionSuggestionRow {
   note: string | null;
   created_at: string;
   resolved_at: string | null;
+  attachment_inputs: unknown;
+  attachment_meta: unknown;
 }
 
 interface SessionAnswerProposalRow {
@@ -1491,6 +1500,12 @@ export class SessionRuns {
     userId: string,
     text: string,
     postToThread = false,
+    attachments: {
+      /** Validated agent-turn inputs — re-resolved into refs when the driver sends. */
+      inputs?: readonly AgentTurnAttachmentInput[];
+      /** Display metadata, passed through verbatim for chat rows and the queue. */
+      meta?: readonly unknown[];
+    } = {},
   ): Promise<WireEvent[]> {
     const session = await client.query<SessionRow>('SELECT * FROM sessions WHERE id = $1', [id]);
     const row = session.rows[0];
@@ -1502,11 +1517,19 @@ export class SessionRuns {
     if (row.status === 'failed' || row.status === 'cancelled') {
       throw new DomainError(409, 'session_ended', 'session has ended');
     }
+    const attachmentInputs = attachments.inputs?.length ? attachments.inputs : null;
+    const attachmentMeta = attachments.meta?.length ? attachments.meta : null;
     const inserted = await client.query<{ id: string }>(
-      `INSERT INTO session_suggestions (session_id, author_id, text)
-       VALUES ($1, $2, $3)
+      `INSERT INTO session_suggestions (session_id, author_id, text, attachment_inputs, attachment_meta)
+       VALUES ($1, $2, $3, $4, $5)
        RETURNING id`,
-      [id, userId, text],
+      [
+        id,
+        userId,
+        text,
+        attachmentInputs ? JSON.stringify(attachmentInputs) : null,
+        attachmentMeta ? JSON.stringify(attachmentMeta) : null,
+      ],
     );
     const suggestionId = inserted.rows[0]!.id;
     const suggestionEvent = await appendEvent(client, {
@@ -1515,13 +1538,26 @@ export class SessionRuns {
       threadRootEventId: row.thread_root_event_id,
       type: 'session.suggestion_added',
       actorId: userId,
-      payload: { sessionId: id, suggestionId, authorId: userId, text },
+      payload: {
+        sessionId: id,
+        suggestionId,
+        authorId: userId,
+        text,
+        ...(attachmentMeta ? { attachments: attachmentMeta } : {}),
+      },
     });
     if (!postToThread) return [suggestionEvent];
-    const threadEvent = await appendSessionThreadMessage(client, row, userId, text, {
-      suggested_session_id: id,
-      suggestion_id: suggestionId,
-    });
+    const threadEvent = await appendSessionThreadMessage(
+      client,
+      row,
+      userId,
+      text,
+      {
+        suggested_session_id: id,
+        suggestion_id: suggestionId,
+      },
+      attachmentMeta ?? undefined,
+    );
     return threadEvent ? [suggestionEvent, threadEvent] : [suggestionEvent];
   }
 
@@ -1539,6 +1575,12 @@ export class SessionRuns {
     suggestionId: string,
     action: 'send' | 'dismiss',
     opts: { text?: string; note?: string } = {},
+    /**
+     * Resolves the suggestion's stored attachment inputs into agent-turn refs
+     * (the route closes over pool/logger). Absent → attachments are skipped,
+     * never a hard failure: the text steer must still go through.
+     */
+    resolveAttachments?: (inputs: readonly AgentTurnAttachmentInput[]) => Promise<readonly AgentTurnAttachmentRef[]>,
   ): Promise<{ events: WireEvent[]; postedSteer: boolean }> {
     const row = await this.requireDriverInTx(client, id, driverUserId);
     const res = await client.query<{
@@ -1547,12 +1589,14 @@ export class SessionRuns {
       author_id: string;
       author_name: string;
       author_handle: string;
+      attachment_inputs: unknown;
     }>(
       `SELECT s.status,
               s.text,
               s.author_id,
               author.display_name AS author_name,
-              author.handle AS author_handle
+              author.handle AS author_handle,
+              s.attachment_inputs
          FROM session_suggestions s
          JOIN users author ON author.id = s.author_id
         WHERE s.id = $1
@@ -1579,7 +1623,22 @@ export class SessionRuns {
       const contextBlock = await this.buildUserTurnContextBlock(client, activeRow, driverUserId, 'driver', {
         suggestedBy: { name: sug.author_name, handle: sug.author_handle, kind: 'human' },
       });
-      await this.postUserMessageOnce(activeRow, driverUserId, sendText, true, client, undefined, [], contextBlock);
+      // Carry the proposer's attachments into the steer. Resolution failures
+      // degrade to a text-only send rather than blocking the driver's action.
+      let turnAttachments: readonly AgentTurnAttachmentRef[] = [];
+      if (resolveAttachments && Array.isArray(sug.attachment_inputs) && sug.attachment_inputs.length > 0) {
+        turnAttachments = await resolveAttachments(sug.attachment_inputs as AgentTurnAttachmentInput[]).catch(() => []);
+      }
+      await this.postUserMessageOnce(
+        activeRow,
+        driverUserId,
+        sendText,
+        true,
+        client,
+        undefined,
+        turnAttachments,
+        contextBlock,
+      );
       await client.query(
         `UPDATE session_suggestions
          SET status = 'sent', resolved_by = $1, sent_text = $2, resolved_at = now()
@@ -2890,7 +2949,8 @@ export class SessionRuns {
         `SELECT s.id, s.author_id, a.display_name AS author_name, s.text, s.status,
                 s.resolved_by, r.display_name AS resolved_by_name,
                 s.sent_text, s.note,
-                s.created_at, s.resolved_at
+                s.created_at, s.resolved_at,
+                s.attachment_inputs, s.attachment_meta
          FROM session_suggestions s
          JOIN users a ON a.id = s.author_id
          LEFT JOIN users r ON r.id = s.resolved_by
@@ -3058,6 +3118,7 @@ async function appendSessionThreadMessage(
   actorId: string,
   text: string,
   linkage: Record<string, string>,
+  attachments?: readonly unknown[],
 ): Promise<WireEvent | null> {
   const threadRootEventId = await sessionThreadRootEventId(client, row);
   if (threadRootEventId == null) return null;
@@ -3067,7 +3128,7 @@ async function appendSessionThreadMessage(
     threadRootEventId,
     type: 'message.posted',
     actorId,
-    payload: { text, ...linkage },
+    payload: { text, ...linkage, ...(attachments && attachments.length > 0 ? { attachments } : {}) },
   });
 }
 
@@ -3449,6 +3510,7 @@ function toSessionSuggestionJson(row: SessionSuggestionRow): SessionSuggestionJs
     note: row.note,
     createdAt: new Date(row.created_at).toISOString(),
     resolvedAt: row.resolved_at ? new Date(row.resolved_at).toISOString() : null,
+    attachments: Array.isArray(row.attachment_meta) && row.attachment_meta.length > 0 ? row.attachment_meta : null,
   };
 }
 

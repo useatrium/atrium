@@ -236,7 +236,13 @@ export function useChatMessageActions({
         void enqueueOp({
           opId: randomId(),
           opType: 'session.suggest',
-          payload: { sessionId: request.sessionId, text, postToThread: true },
+          payload: {
+            sessionId: request.sessionId,
+            text,
+            postToThread: true,
+            ...(attachments && attachments.length > 0 ? { attachments } : {}),
+            ...(attachmentRefs && attachmentRefs.length > 0 ? { attachmentRefs } : {}),
+          },
         }).catch(() => showErrorToast("Couldn't queue the agent message."));
         return;
       }
