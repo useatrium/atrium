@@ -16,7 +16,11 @@ export function isActivityUnread(
   // Prefer server-computed flag when present (includes exception math).
   if (typeof item.unread === 'boolean') return item.unread;
 
-  const exceptions = unreadExceptionIds instanceof Set ? unreadExceptionIds : new Set(unreadExceptionIds.map(String));
+  // Normalize both Set and array inputs so callers can pass either cheaply.
+  const exceptions: ReadonlySet<string> =
+    unreadExceptionIds instanceof Set
+      ? unreadExceptionIds
+      : new Set(Array.from(unreadExceptionIds as readonly string[], String));
   if (exceptions.has(String(item.eventId))) return true;
 
   const eventId = Number(item.eventId);
