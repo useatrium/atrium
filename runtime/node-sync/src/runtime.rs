@@ -143,8 +143,23 @@ pub trait AtriumClient {
     /// Poll Atrium's session-level materializer change-feed past `since` →
     /// changed session ids + the next cursor.
     fn atrium_changes(&self, since: &str) -> Result<(Vec<String>, String), String>;
-    /// Fetch one rendered Atrium document body for a target session.
+    /// Fetch one rendered Atrium document body for a target session. A request
+    /// watermark is sent only when the caller has proven the bytes on disk.
     fn atrium_doc(&self, target_id: &str, doc: &str) -> Result<Vec<u8>, String>;
+    fn atrium_doc_delta(
+        &self,
+        target_id: &str,
+        doc: &str,
+        delta: Option<&ContextDeltaRequest>,
+    ) -> Result<ContextDocResponse, String> {
+        let _ = delta;
+        Ok(ContextDocResponse {
+            body: self.atrium_doc(target_id, doc)?,
+            epoch: None,
+            mode: Some("full".to_string()),
+            next_watermark: None,
+        })
+    }
     /// Fetch readable Atrium channels for this viewer session. Default empty so
     /// legacy test fakes that only exercise session docs keep their old shape.
     fn atrium_channels(&self) -> Result<Vec<AtriumChannel>, String> {
@@ -154,6 +169,34 @@ pub trait AtriumClient {
     fn atrium_channel_doc(&self, _channel_id: &str, _doc: &str) -> Result<Vec<u8>, String> {
         Err("atrium channel docs not supported by this client".to_string())
     }
+    fn atrium_channel_doc_delta(
+        &self,
+        channel_id: &str,
+        doc: &str,
+        delta: Option<&ContextDeltaRequest>,
+    ) -> Result<ContextDocResponse, String> {
+        let _ = delta;
+        Ok(ContextDocResponse {
+            body: self.atrium_channel_doc(channel_id, doc)?,
+            epoch: None,
+            mode: Some("full".to_string()),
+            next_watermark: None,
+        })
+    }
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct ContextDeltaRequest {
+    pub epoch: String,
+    pub watermark: u64,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct ContextDocResponse {
+    pub body: Vec<u8>,
+    pub epoch: Option<String>,
+    pub mode: Option<String>,
+    pub next_watermark: Option<u64>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
@@ -163,7 +206,7 @@ pub struct AtriumChannel {
     pub kind: String,
     #[serde(default)]
     pub active: bool,
-    #[serde(default, rename = "lastEventId")]
+    #[serde(default, alias = "lastEventId")]
     pub last_event_id: u64,
 }
 

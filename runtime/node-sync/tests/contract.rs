@@ -11,11 +11,15 @@ use centaur_node_sync::eviction::HEARTBEAT_FILE;
 use centaur_node_sync::feeds::{
     parse_artifact_changes, parse_atrium_changes, parse_profile_bundles,
 };
-use centaur_node_sync::http_client::{AUTH_HEADER, SESSION_PREFIX};
+use centaur_node_sync::http_client::{
+    AUTH_HEADER, HEADER_EPOCH, HEADER_MODE, HEADER_NEXT_EVENT_ID, HEADER_NEXT_SEQ, QUERY_EPOCH,
+    QUERY_SINCE_EVENT_ID, QUERY_SINCE_SEQ, SESSION_PREFIX,
+};
 use centaur_node_sync::materializer::CONTEXT_READY_MARKER;
 use centaur_node_sync::overlay_mount::{
     DEFAULT_REPO_CACHE_ROOT, OVERLAY_SIGNATURE_FILE, READY_MARKER_FILE,
 };
+use centaur_node_sync::runtime::AtriumChannel;
 use centaur_node_sync::seam;
 use centaur_node_sync::session_manifest::SESSIONS_DIR_NAME;
 
@@ -184,6 +188,15 @@ fn atrium_changes_fixture_parses() {
 }
 
 #[test]
+fn atrium_channels_fixture_parses_with_event_watermark() {
+    let channels: Vec<AtriumChannel> =
+        serde_json::from_str(include_str!("../contract/fixtures/atrium-channels.json")).unwrap();
+    assert_eq!(channels.len(), 1);
+    assert_eq!(channels[0].id, "chan-1");
+    assert_eq!(channels[0].last_event_id, 8842);
+}
+
+#[test]
 fn profile_bundles_fixture_parses() {
     let fixture: serde_json::Value =
         serde_json::from_str(include_str!("../contract/fixtures/profile-bundles.json")).unwrap();
@@ -247,6 +260,19 @@ fn http_constants_match_the_contract() {
     let c = contract();
     assert_eq!(get_str(&c, "http.auth_header"), AUTH_HEADER);
     assert_eq!(get_str(&c, "http.session_prefix"), SESSION_PREFIX);
+    assert_eq!(get_str(&c, "atrium_delta.query_since_seq"), QUERY_SINCE_SEQ);
+    assert_eq!(
+        get_str(&c, "atrium_delta.query_since_event_id"),
+        QUERY_SINCE_EVENT_ID
+    );
+    assert_eq!(get_str(&c, "atrium_delta.query_epoch"), QUERY_EPOCH);
+    assert_eq!(get_str(&c, "atrium_delta.header_epoch"), HEADER_EPOCH);
+    assert_eq!(get_str(&c, "atrium_delta.header_mode"), HEADER_MODE);
+    assert_eq!(get_str(&c, "atrium_delta.header_next_seq"), HEADER_NEXT_SEQ);
+    assert_eq!(
+        get_str(&c, "atrium_delta.header_next_event_id"),
+        HEADER_NEXT_EVENT_ID
+    );
 }
 
 /// The daemon binary path is consumed by the image ENTRYPOINT (this crate's

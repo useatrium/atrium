@@ -56,6 +56,23 @@ pub struct DaemonState {
     /// Capture requires the same non-empty snapshot on two daemon ticks.
     #[serde(default)]
     pub warmcache_store_snapshots: HashMap<String, WarmcacheStoreSnapshot>,
+    /// Target session -> rendered doc -> proven epoch/session-record watermark.
+    #[serde(default)]
+    pub atrium_docs: HashMap<String, HashMap<String, ContextDocState>>,
+    /// Channel -> rendered doc -> proven epoch/event watermark.
+    #[serde(default)]
+    pub atrium_channel_docs: HashMap<String, HashMap<String, ContextDocState>>,
+    /// Channel-list event watermark after both channel docs were materialized.
+    #[serde(default)]
+    pub atrium_channel_watermarks: HashMap<String, u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ContextDocState {
+    /// Opaque server epoch. Never parse this value.
+    pub epoch: String,
+    /// `last_seq` for session docs, or the last event id for channel docs.
+    pub last_seq: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -78,6 +95,9 @@ impl Default for DaemonState {
             materialized_profile_bundles: HashMap::new(),
             warmcache_captured: HashSet::new(),
             warmcache_store_snapshots: HashMap::new(),
+            atrium_docs: HashMap::new(),
+            atrium_channel_docs: HashMap::new(),
+            atrium_channel_watermarks: HashMap::new(),
         }
     }
 }
@@ -193,5 +213,21 @@ mod tests {
         s.note_hydrated_version("p", 7, Some("b".into()));
         s.note_hydrated_version("p", 5, Some("c".into())); // older — ignored
         assert_eq!(s.base_seqs().get("p"), Some(&7));
+    }
+
+    #[test]
+    fn old_or_corrupt_state_has_no_context_provenance() {
+        let old: DaemonState = serde_json::from_str(r#"{"cursor":"1.2"}"#).unwrap();
+        assert!(old.atrium_docs.is_empty());
+        assert!(old.atrium_channel_docs.is_empty());
+        assert!(old.atrium_channel_watermarks.is_empty());
+
+        let f = tmp("corrupt-context");
+        std::fs::write(&f, b"not json").unwrap();
+        let corrupt = DaemonState::load(&f);
+        assert!(corrupt.atrium_docs.is_empty());
+        assert!(corrupt.atrium_channel_docs.is_empty());
+        assert!(corrupt.atrium_channel_watermarks.is_empty());
+        let _ = std::fs::remove_file(&f);
     }
 }

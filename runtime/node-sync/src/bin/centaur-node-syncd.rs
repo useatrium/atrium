@@ -1423,16 +1423,18 @@ mod linux_daemon {
             } else {
                 Some(dirty_channel_ids)
             };
-            if let Err(e) = materialize_channel_docs(client, &atrium_root, only) {
+            if let Err(e) = materialize_channel_docs(client, &atrium_root, only, state) {
                 eprintln!("atrium channel materializer: {e}");
             }
         }
+        let cursor = state.atrium_cursor.clone();
         match materialize_changed_sessions(
             client,
             &atrium_root,
-            &state.atrium_cursor,
+            &cursor,
             feed.session_ids.clone(),
             feed.next_cursor.clone(),
+            state,
         ) {
             Ok(next) => {
                 if next != state.atrium_cursor {
@@ -2655,12 +2657,16 @@ mod linux_daemon {
         client: &HttpAtriumClient,
     ) {
         let atrium_root = super::scoped_atrium_root(&global.atrium_root, &session.session);
-        if let Err(e) =
-            centaur_node_sync::materializer::materialize_channel_docs(client, &atrium_root, None)
-        {
+        if let Err(e) = centaur_node_sync::materializer::materialize_channel_docs(
+            client,
+            &atrium_root,
+            None,
+            state,
+        ) {
             eprintln!("atrium channel materializer: {e}");
         }
-        match centaur_node_sync::materialize_once(client, &atrium_root, &state.atrium_cursor) {
+        let cursor = state.atrium_cursor.clone();
+        match centaur_node_sync::materialize_once(client, &atrium_root, &cursor, state) {
             Ok(next) => {
                 if next != state.atrium_cursor {
                     println!("atrium materializer: cursor={next}");

@@ -9,13 +9,22 @@ use crate::feeds::{
     ArtifactFeed, AtriumFeed, local_artifact_paths, parse_artifact_changes, parse_atrium_changes,
     parse_profile_bundles,
 };
-use crate::runtime::{AtriumChannel, AtriumClient, BundleRef};
+use crate::runtime::{
+    AtriumChannel, AtriumClient, BundleRef, ContextDeltaRequest, ContextDocResponse,
+};
 use serde::Deserialize;
 
 /// Auth header for every internal-API request (contract: http.auth_header).
 pub const AUTH_HEADER: &str = "x-api-key";
 /// Session-scoped internal route prefix (contract: http.session_prefix).
 pub const SESSION_PREFIX: &str = "/api/internal/sessions";
+pub const QUERY_SINCE_SEQ: &str = "since_seq";
+pub const QUERY_SINCE_EVENT_ID: &str = "since_event_id";
+pub const QUERY_EPOCH: &str = "epoch";
+pub const HEADER_EPOCH: &str = "x-atrium-epoch";
+pub const HEADER_MODE: &str = "x-atrium-delta";
+pub const HEADER_NEXT_SEQ: &str = "x-atrium-next-seq";
+pub const HEADER_NEXT_EVENT_ID: &str = "x-atrium-next-event-id";
 
 pub struct HttpAtriumClient {
     base_url: String,
@@ -135,6 +144,25 @@ fn enc(s: &str) -> String {
             _ => format!("%{b:02X}"),
         })
         .collect()
+}
+
+fn context_doc_response(
+    response: ureq::Response,
+    next_header: &str,
+) -> Result<ContextDocResponse, String> {
+    let epoch = response.header(HEADER_EPOCH).map(ToOwned::to_owned);
+    let mode = response.header(HEADER_MODE).map(ToOwned::to_owned);
+    let next_watermark = response
+        .header(next_header)
+        .and_then(|value| value.parse::<u64>().ok());
+    let mut body = Vec::new();
+    std::io::copy(&mut response.into_reader(), &mut body).map_err(|e| e.to_string())?;
+    Ok(ContextDocResponse {
+        body,
+        epoch,
+        mode,
+        next_watermark,
+    })
 }
 
 #[derive(Debug, Deserialize)]
@@ -489,15 +517,31 @@ impl AtriumClient for HttpAtriumClient {
     }
 
     fn atrium_doc(&self, target_id: &str, doc: &str) -> Result<Vec<u8>, String> {
+        self.atrium_doc_delta(target_id, doc, None)
+            .map(|response| response.body)
+    }
+
+    fn atrium_doc_delta(
+        &self,
+        target_id: &str,
+        doc: &str,
+        delta: Option<&ContextDeltaRequest>,
+    ) -> Result<ContextDocResponse, String> {
+        let mut suffix = format!("/atrium/sessions/{}/{}", enc(target_id), doc);
+        if let Some(delta) = delta {
+            suffix.push_str(&format!(
+                "?{QUERY_SINCE_SEQ}={}&{QUERY_EPOCH}={}",
+                delta.watermark,
+                enc(&delta.epoch)
+            ));
+        }
         let resp = self
             .agent
-            .get(&self.url(&format!("/atrium/sessions/{}/{}", enc(target_id), doc)))
+            .get(&self.url(&suffix))
             .set(AUTH_HEADER, &self.api_key)
             .call()
             .map_err(|e| format!("atrium doc {target_id}/{doc}: {e}"))?;
-        let mut buf = Vec::new();
-        std::io::copy(&mut resp.into_reader(), &mut buf).map_err(|e| e.to_string())?;
-        Ok(buf)
+        context_doc_response(resp, HEADER_NEXT_SEQ)
     }
 
     fn atrium_channels(&self) -> Result<Vec<AtriumChannel>, String> {
@@ -512,15 +556,31 @@ impl AtriumClient for HttpAtriumClient {
     }
 
     fn atrium_channel_doc(&self, channel_id: &str, doc: &str) -> Result<Vec<u8>, String> {
+        self.atrium_channel_doc_delta(channel_id, doc, None)
+            .map(|response| response.body)
+    }
+
+    fn atrium_channel_doc_delta(
+        &self,
+        channel_id: &str,
+        doc: &str,
+        delta: Option<&ContextDeltaRequest>,
+    ) -> Result<ContextDocResponse, String> {
+        let mut suffix = format!("/atrium/channels/{}/{}", enc(channel_id), doc);
+        if let Some(delta) = delta {
+            suffix.push_str(&format!(
+                "?{QUERY_SINCE_EVENT_ID}={}&{QUERY_EPOCH}={}",
+                delta.watermark,
+                enc(&delta.epoch)
+            ));
+        }
         let resp = self
             .agent
-            .get(&self.url(&format!("/atrium/channels/{}/{}", enc(channel_id), doc)))
+            .get(&self.url(&suffix))
             .set(AUTH_HEADER, &self.api_key)
             .call()
             .map_err(|e| format!("atrium channel doc {channel_id}/{doc}: {e}"))?;
-        let mut buf = Vec::new();
-        std::io::copy(&mut resp.into_reader(), &mut buf).map_err(|e| e.to_string())?;
-        Ok(buf)
+        context_doc_response(resp, HEADER_NEXT_EVENT_ID)
     }
 }
 
