@@ -10,6 +10,13 @@ const wsTarget = apiTarget.replace(/^http/, 'ws');
 // its Caddy), which routes by Host header.
 const proxyHost = process.env.ATRIUM_PROXY_HOST;
 const proxyHeaders = proxyHost ? { headers: { host: proxyHost } } : {};
+// Extra Host headers the dev server should answer (Vite blocks non-localhost
+// hosts by default) — e.g. a Tailscale machine name when serving a demo over
+// `tailscale serve`. Comma-separated.
+const allowedHosts = (process.env.ATRIUM_DEV_ALLOWED_HOSTS ?? '')
+  .split(',')
+  .map((h) => h.trim())
+  .filter(Boolean);
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
@@ -50,6 +57,7 @@ export default defineConfig({
   },
   server: {
     port: 5173,
+    ...(allowedHosts.length ? { allowedHosts } : {}),
     fs: {
       // Allow serving @atrium/centaur-client and @atrium/surface-client
       // (linked from outside this root) and their test fixtures.

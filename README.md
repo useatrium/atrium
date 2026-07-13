@@ -65,8 +65,8 @@ Four things the product is built around:
 
 | | |
 |---|---|
-| ![An agent's results rendered in the channel: a report, charts, and a live interactive dashboard app embedded in the conversation](docs/images/app-presentation.png) | ![The Attention inbox: an agent waiting on a human decision, a failed run, mentions, DMs, and a missed call in one feed](docs/images/attention-inbox.png) |
-| **Agents publish real results.** A research agent's run ends in a report, charts, and a working dashboard app — rendered live in the conversation, next to the transcript that produced them. | **One inbox for people *and* agents.** Mentions and DMs sit alongside an agent that needs a decision and a run that failed — everything that needs you, in one place. |
+| ![A session card's thread: the agent's first-turn result, a teammate's suggestion, and the driver's steer reopening the session for a second turn](docs/images/thread-turns.png) | ![The Attention inbox: an agent waiting on a human decision, a failed run, mentions, DMs, and a missed call in one feed](docs/images/attention-inbox.png) |
+| **Sessions are conversations.** Each turn's result lands as a reply in the card's thread. A teammate suggests a follow-up, the driver steers, and the agent reopens for another turn — live in the channel. | **One inbox for people *and* agents.** Mentions and DMs sit alongside an agent that needs a decision and a run that failed — everything that needs you, in one place. |
 
 ## Who it's for
 
