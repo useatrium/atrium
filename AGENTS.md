@@ -1,5 +1,8 @@
 # Atrium — repo guide
 
+> `CLAUDE.md` is a symlink to this file (same at `surface/mobile/`). Edit `AGENTS.md`
+> only. Under `centaur/`, `CLAUDE.md` still dual-includes `AGENTS.md` + `ATRIUM_FORK.md`.
+
 This repo holds **two things that ship together**:
 
 - **Atrium** — the collaboration platform (chat, sessions, artifacts, voice). Lives in
