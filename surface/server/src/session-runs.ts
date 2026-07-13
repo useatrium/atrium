@@ -605,6 +605,11 @@ export class SessionRuns {
       payload: {
         sessionId: row.id,
         title: row.title,
+        // The ask, verbatim. `title` is an 80-char cut kept for the rail and
+        // page titles; the feed renders THIS as the spawner's own message, so
+        // the card never has to echo the prompt back at you. Events written
+        // before this field existed fall back to `title` client-side.
+        task: args.task,
         harness: row.harness,
         by: args.user.id,
         ...(row.repo ? { repo: row.repo } : {}),
@@ -2613,7 +2618,11 @@ export class SessionRuns {
               threadRootEventId: replyThreadRootEventId,
               type: 'session.replied',
               actorId: null,
-              payload: { session_id: id, text: replyText },
+              // Broadcast: the answer is the point of the run, so it lands in
+              // the channel as an ordinary agent message, not only inside the
+              // session thread. A NEW message (rather than an edit of the
+              // card) is deliberate — edits don't notify or bump unread.
+              payload: { session_id: id, text: replyText, broadcast: true },
             });
       const completedEvent = await appendEvent(client, {
         workspaceId: next.workspace_id,
