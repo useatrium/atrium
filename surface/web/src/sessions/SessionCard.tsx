@@ -1,13 +1,7 @@
 import { useEffect, useRef, useState, type MouseEvent } from 'react';
 import { formatTime } from '@atrium/surface-client';
-import {
-  formatCost,
-  isPendingSessionId,
-  isStalledSessionStatus,
-  isTerminalSessionStatus,
-  type Session,
-  type SessionStatus,
-} from './types';
+import { formatCost, isPendingSessionId, isStalledSessionStatus, isTerminalSessionStatus, type Session } from './types';
+import { GlanceChip } from './GlanceChip';
 import { SessionAppPresentationCards } from './AppPresentationCard';
 import { SessionPresenceTicker } from './SessionPresenceTicker';
 
@@ -29,41 +23,6 @@ export function useNow(active: boolean): number {
     return () => clearInterval(t);
   }, [active]);
   return now;
-}
-
-const CHIP_STYLES: Record<SessionStatus, string> = {
-  spawning: 'bg-warning/15 text-warning-text animate-pulse',
-  queued: 'bg-info/15 text-info-text',
-  running: 'bg-accent-hover/15 text-accent-text-strong',
-  completed: 'bg-success/15 text-success-text',
-  failed: 'bg-danger/15 text-danger-text',
-  cancelled: 'bg-edge-strong/40 text-fg-tertiary',
-};
-
-/** Human labels where the raw status is dev-speak. */
-const CHIP_LABELS: Partial<Record<SessionStatus, string>> = { spawning: 'starting' };
-
-export function StatusChip({
-  status,
-  label,
-  stalled,
-}: {
-  status: SessionStatus;
-  label?: string;
-  /** Non-terminal status that stopped moving — render static, no pulse. */
-  stalled?: boolean;
-}) {
-  const animatedDot = !stalled && (status === 'queued' || status === 'running');
-  return (
-    <span
-      className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-semibold ${
-        stalled ? 'bg-surface-overlay/80 text-fg-tertiary' : CHIP_STYLES[status]
-      }`}
-    >
-      <span className={`size-1.5 rounded-full bg-current ${animatedDot ? 'animate-pulse' : ''}`} />
-      {label ?? (stalled ? 'stalled' : (CHIP_LABELS[status] ?? status))}
-    </span>
-  );
 }
 
 export function sessionElapsedMs(session: Session, now: number): number {
@@ -116,13 +75,9 @@ export function SessionCard({
     >
       <div className="flex items-start gap-2">
         {spawnFailed ? (
-          <StatusChip status="failed" label="spawn failed" />
-        ) : session.providerAuthRequired ? (
-          <StatusChip status="running" label="needs auth" stalled />
-        ) : session.pendingQuestion ? (
-          <StatusChip status="running" label="needs input" stalled />
+          <GlanceChip session={session} override={{ kind: 'failed', label: 'spawn failed' }} />
         ) : (
-          <StatusChip status={session.status} stalled={stalled} />
+          <GlanceChip session={session} now={now} />
         )}
         {openable ? (
           <button
@@ -160,7 +115,7 @@ export function SessionCard({
           </>
         )}
         <span className="text-fg-faint">·</span>
-        {stalled ? <span className="tabular-nums">started {formatTime(session.createdAt)}</span> : <span>live</span>}
+        <span className="tabular-nums">started {formatTime(session.createdAt)}</span>
         {session.costUsd > 0 && (
           <>
             <span className="text-fg-faint">·</span>

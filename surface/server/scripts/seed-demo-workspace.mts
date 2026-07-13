@@ -661,6 +661,9 @@ async function main(): Promise<void> {
       questionId: 'q-backfill-lock',
       turnId: 't1',
       eventId: Number(questionEvent.rows[0]!.id),
+      // ~49 minutes ago, matching the question event's place in the timeline —
+      // drives the "Needs you · 49m" waiting clock.
+      askedAt: new Date(Date.now() - 49 * 60_000).toISOString(),
       questions: [
         {
           id: 'q1',

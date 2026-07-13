@@ -15,6 +15,7 @@ import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
+  deriveSessionGlance,
   formatExactTimestamp,
   formatTime,
   formatBytes,
@@ -23,6 +24,7 @@ import {
   questionPayloadAnswers,
   questionPayloadPrompts,
   sessionDriverId,
+  sessionGlanceClockLabel,
   sessionQuestionEventLabel,
   type Api,
   type ChatMessage,
@@ -42,6 +44,7 @@ import { MessageText } from './MessageText';
 import { TimestampText } from './TimestampText';
 import { VoiceMessage } from './VoiceMessage';
 import type { ArtifactContentResolver, EntryResolver } from '../lib/entryResolve';
+import { glanceColor } from '../lib/sessionGlance';
 
 const IMAGE_MAX_W = 240;
 const SWIPE_REPLY_THRESHOLD = 64;
@@ -462,29 +465,22 @@ function SessionCard({
   onOpen?: (sessionId: string) => void;
 }) {
   const { colors } = useTheme();
-  const status = session?.status ?? 'spawning';
-  const needsInput = session?.pendingQuestion != null;
-  // Terminal sessions freeze elapsed at completion instead of ticking forever.
-  const elapsedEnd = session?.completedAt ? Date.parse(session.completedAt) : Date.now();
-  const elapsedSeconds = Math.max(
-    0,
-    Math.floor((elapsedEnd - Date.parse(session?.createdAt ?? message.createdAt)) / 1000),
+  const now = Date.now();
+  // One status voice — the same six-word glance every other surface speaks.
+  const glance = deriveSessionGlance(
+    session ?? {
+      status: 'spawning',
+      pendingSeatRequests: [],
+      createdAt: message.createdAt,
+      completedAt: null,
+    },
+    now,
   );
-  const elapsed = `${Math.floor(elapsedSeconds / 60)}:${String(elapsedSeconds % 60).padStart(2, '0')}`;
-  const stateLabel = needsInput
-    ? '🟠 Awaiting input'
-    : status === 'completed'
-      ? 'Done'
-      : status === 'failed' || status === 'cancelled'
-        ? 'Failed'
-        : 'Working';
-  const statusColor = needsInput
-    ? colors.warning
-    : status === 'completed'
-      ? colors.online
-      : status === 'failed' || status === 'cancelled'
-        ? colors.danger
-        : colors.warning;
+  const clock = sessionGlanceClockLabel(glance, now);
+  const statusColor = glanceColor(glance.kind, colors);
+  const stateLine = [`● ${glance.label}${glance.detail ? ` · ${glance.detail}` : ''}`, ...(clock ? [clock] : [])].join(
+    ' · ',
+  );
   return (
     <Pressable
       accessibilityRole="button"
@@ -507,15 +503,10 @@ function SessionCard({
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
         <Ionicons name="hardware-chip-outline" size={13} color={colors.textMuted} />
         <Text style={{ fontSize: font.xs, color: colors.textMuted, fontWeight: '700' }}>AGENT</Text>
-        <Text style={{ fontSize: font.xs, color: statusColor, fontWeight: '700' }}>
-          {needsInput ? 'NEEDS INPUT' : status.toUpperCase()}
-        </Text>
       </View>
       <Text style={{ color: colors.text, fontSize: font.sm, lineHeight: 20 }}>{session?.title ?? message.text}</Text>
       <View testID="session-presence-ticker" style={{ gap: 2 }}>
-        <Text style={{ color: statusColor, fontSize: font.xs, fontWeight: '700' }}>
-          ● {stateLabel} · {elapsed}
-        </Text>
+        <Text style={{ color: statusColor, fontSize: font.xs, fontWeight: '700' }}>{stateLine}</Text>
         {session?.latestActivity?.summary ? (
           <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: font.xs }}>
             {session.latestActivity.summary}

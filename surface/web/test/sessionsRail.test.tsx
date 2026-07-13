@@ -58,7 +58,8 @@ describe('SessionsRail', () => {
 
     render(<SessionsRail channelId="ch-1" sessions={asMap(needs, active, done, other)} onOpenSession={() => {}} />);
 
-    expect(screen.getByText('Needs you')).toBeTruthy();
+    // "Needs you" is both the group header and the blocked card's chip label.
+    expect(screen.getAllByText('Needs you').length).toBeGreaterThanOrEqual(2);
     expect(screen.getByText('Active')).toBeTruthy();
     expect(screen.getByText('Recent')).toBeTruthy();
     expect(screen.getByText('awaiting answer')).toBeTruthy();

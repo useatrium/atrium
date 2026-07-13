@@ -63,6 +63,11 @@ function cardFor(state: AppState) {
   return <SessionCard session={session} spectators={0} onOpenPane={() => {}} />;
 }
 
+/** The glance chip's text ("Working · starting", "Needs you · 12m", …). */
+function chipText(): string {
+  return screen.getByTestId('glance-chip').textContent ?? '';
+}
+
 describe('session card transitions across session.* events', () => {
   it('spawned → status_changed → completed updates chip, excerpt, permalink', () => {
     let s = spawned(loadedState());
@@ -72,7 +77,7 @@ describe('session card transitions across session.* events', () => {
     expect(s.sessions['sess-1']!.spawnerName).toBe('Kay');
 
     const { rerender } = render(cardFor(s));
-    expect(screen.getByText('starting')).toBeTruthy();
+    expect(chipText()).toContain('starting');
     expect(screen.getByText('fix the flaky build')).toBeTruthy();
 
     s = appReducer(s, {
@@ -80,14 +85,16 @@ describe('session card transitions across session.* events', () => {
       event: wire(102, 'session.status_changed', { sessionId: 'sess-1', status: 'queued' }),
     });
     rerender(cardFor(s));
-    expect(screen.getByText('queued')).toBeTruthy();
+    expect(chipText()).toContain('Working');
+    expect(chipText()).toContain('starting');
 
     s = appReducer(s, {
       type: 'server-event',
       event: wire(103, 'session.status_changed', { sessionId: 'sess-1', status: 'running' }),
     });
     rerender(cardFor(s));
-    expect(screen.getByText('running')).toBeTruthy();
+    expect(chipText()).toContain('Working');
+    expect(chipText()).not.toContain('starting');
     expect(screen.queryByText('permalink')).toBeNull();
 
     s = appReducer(s, {
@@ -100,7 +107,7 @@ describe('session card transitions across session.* events', () => {
       }),
     });
     rerender(cardFor(s));
-    expect(screen.getByText('completed')).toBeTruthy();
+    expect(chipText()).toContain('Done');
     expect(screen.getByText(/All green: 12 tests passed/)).toBeTruthy();
     expect(screen.getByText('Open session').getAttribute('href')).toBe('/s/sess-1');
   });
@@ -117,7 +124,7 @@ describe('session card transitions across session.* events', () => {
       }),
     });
     render(cardFor(s));
-    expect(screen.getByText('failed')).toBeTruthy();
+    expect(chipText()).toContain('Failed');
     expect(screen.getByText(/harness crashed/)).toBeTruthy();
   });
 
@@ -135,7 +142,8 @@ describe('session card transitions across session.* events', () => {
       }),
     });
     render(cardFor(s));
-    expect(screen.getByText('needs auth')).toBeTruthy();
+    expect(chipText()).toContain('Needs you');
+    expect(chipText()).toContain('needs auth');
     expect(s.sessions['sess-1']!.providerAuthRequired).toMatchObject({
       provider: 'claude-code',
       reason: 'invalid_token',

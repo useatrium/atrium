@@ -213,6 +213,7 @@ export function ActivityView({
   onOpenSession,
   liveEvent = null,
   refreshKey = 0,
+  liveAttention = [],
   onCountsChange,
 }: {
   onSelectChannel: (channelId: string) => void;
@@ -221,6 +222,13 @@ export function ActivityView({
   liveEvent?: WireEvent | null;
   /** Increments after a WebSocket reconnect to heal any gap in the feed. */
   refreshKey?: number;
+  /**
+   * Synthetic pinned rows for LIVE sessions blocked on a person (question /
+   * auth / seat), so the Needs-attention tier reacts the instant a session
+   * blocks instead of waiting for the feed item — parity with the mobile tab.
+   * Synthetic eventIds ("live:…") don't parse, so read-state ops no-op.
+   */
+  liveAttention?: ActivityItem[];
   onCountsChange?: (counts: ActivityCounts) => void;
 }) {
   const [items, setItems] = useState<ActivityItem[]>([]);
@@ -430,7 +438,20 @@ export function ActivityView({
     }
   };
 
-  const { attention, history } = useMemo(() => partitionActivity(items), [items]);
+  // A live blocked session pins immediately; once the server's feed item for
+  // the same session arrives, the real (mark-readable) row takes over.
+  const merged = useMemo(() => {
+    if (liveAttention.length === 0) return items;
+    const covered = new Set(
+      items
+        .filter((item) => ATTENTION_KINDS.has(item.kind) && item.attention && item.sessionId)
+        .map((item) => item.sessionId),
+    );
+    const extra = liveAttention.filter((item) => item.sessionId && !covered.has(item.sessionId));
+    return extra.length > 0 ? [...extra, ...items] : items;
+  }, [items, liveAttention]);
+
+  const { attention, history } = useMemo(() => partitionActivity(merged), [merged]);
 
   const filteredAttention = useMemo(
     () =>

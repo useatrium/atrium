@@ -20,7 +20,9 @@ import { showNotification } from './notify';
 import {
   emptyTimeline,
   mentionsHandle,
+  sessionAttentionKind,
   type ActivityCounts,
+  type ActivityItem,
   type Channel,
   type UserRef,
   type WireEvent,
@@ -729,6 +731,34 @@ export function Chat({
         .catch(() => {}); // unreachable server — the stalled display covers it
     }
   }, [state.sessions]);
+
+  // Live sessions blocked on a person pin into Attention immediately, before
+  // (or without) the server feed item — parity with the mobile Attention tab.
+  const liveAttentionItems = useMemo(() => {
+    const items: ActivityItem[] = [];
+    for (const session of Object.values(state.sessions)) {
+      if (isPendingSessionId(session.id)) continue;
+      const kind = sessionAttentionKind(session);
+      if (!kind || kind === 'failed') continue;
+      const channel = state.channels.find((c) => c.id === session.channelId);
+      items.push({
+        eventId: `live:${session.id}`,
+        kind: kind === 'authentication' ? 'agent_auth' : kind === 'seat-request' ? 'seat_request' : 'agent_question',
+        channelId: session.channelId,
+        channelName: channel?.name ?? '',
+        actorId: null,
+        actorName: null,
+        snippet: session.pendingQuestion?.questions[0]?.question ?? session.providerAuthRequired?.message ?? '',
+        createdAt: session.pendingQuestion?.askedAt ?? session.createdAt,
+        sessionId: session.id,
+        sessionTitle: session.title,
+        sessionStatus: session.status,
+        attention: true,
+        unread: true,
+      });
+    }
+    return items;
+  }, [state.sessions, state.channels]);
 
   const active = state.channels.find((c) => c.id === state.activeChannelId) ?? null;
   const timeline = (active && state.timelines[active.id]) || emptyTimeline;
@@ -2282,6 +2312,7 @@ export function Chat({
               }}
               liveEvent={activityLiveEvent}
               refreshKey={activityRefreshKey}
+              liveAttention={liveAttentionItems}
               onCountsChange={handleActivityCountsChange}
             />
           ) : showFilesSurface ? (

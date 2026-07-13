@@ -23,12 +23,13 @@ import {
   isTerminalSessionStatus,
   matchesActivityFilter,
   sessionAttentionKind,
+  sessionGlanceClockLabel,
   type Session,
   type SessionListItem,
-  type SessionStatus,
 } from '@atrium/surface-client';
 import { useChat } from '../../../src/lib/chat';
-import { font, space, useTheme, type Colors } from '../../../src/lib/theme';
+import { glanceColor, listItemGlance } from '../../../src/lib/sessionGlance';
+import { font, space, useTheme } from '../../../src/lib/theme';
 import { ConnectionBanner } from '../../../src/components/bits';
 import { MobileHeader } from '../../../src/components/MobileHeader';
 import { navigationTargetSize } from '../../../src/components/PlatformTabBar';
@@ -49,13 +50,6 @@ const FILTERS: Array<{ id: ActivityFeedFilter; label: string }> = [
   { id: 'done', label: 'Done' },
   { id: 'all', label: 'All' },
 ];
-
-function statusColor(status: SessionStatus, colors: Colors): string {
-  if (status === 'completed') return colors.online;
-  if (status === 'failed' || status === 'cancelled') return colors.danger;
-  if (status === 'running') return colors.accent;
-  return colors.warning;
-}
 
 // DM/GDM channel names are internal keys (`dm:<ids>` / `gdm:<ids>`), so the key
 // prefix is the only signal that a "dm" item came from a group conversation.
@@ -557,14 +551,17 @@ export default function ActivityScreen() {
     }
     if (item.rowType === 'activity') return renderActivityItem(item.activity, item.attention);
     const session = item.session;
-    const status = session.live?.status ?? session.status;
+    const now = Date.now();
+    const glance = listItemGlance(session, session.live, now);
+    const clock = glance.clock?.mode === 'waiting' ? sessionGlanceClockLabel(glance, now) : null;
+    const stateWord = clock ? `${glance.label} · ${clock}` : glance.label;
     const title = session.live?.title ?? session.title;
     const time = formatRelativeTimestamp(session.createdAt) || session.createdAt;
     const exactTime = formatExactTimestamp(session.createdAt) || session.createdAt;
     return (
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={`${title}, ${status}, #${session.channelName}, started ${exactTime}`}
+        accessibilityLabel={`${title}, ${glance.label}, #${session.channelName}, started ${exactTime}`}
         onPress={() => router.push(`/session/${session.id}`)}
         style={({ pressed }) => ({
           flexDirection: 'row',
@@ -579,13 +576,13 @@ export default function ActivityScreen() {
           backgroundColor: pressed ? colors.borderSoft : 'transparent',
         })}
       >
-        <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: statusColor(status, colors) }} />
+        <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: glanceColor(glance.kind, colors) }} />
         <View style={{ flex: 1 }}>
           <Text style={{ color: colors.text, fontSize: font.md, fontWeight: '700' }} numberOfLines={1}>
             {title}
           </Text>
           <Text style={{ color: colors.textMuted, fontSize: font.xs }} numberOfLines={1}>
-            {status} · #{session.channelName} · {time}
+            {stateWord} · #{session.channelName} · {time}
           </Text>
         </View>
       </Pressable>

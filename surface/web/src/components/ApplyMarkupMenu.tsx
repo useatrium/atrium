@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { ApiError, api } from '../api';
 import { ChevronDownIcon, PlusIcon } from './icons';
 import { showErrorToast } from './Toasts';
-import { StatusChip } from '../sessions/SessionCard';
+import { GlanceChip } from '../sessions/GlanceChip';
 import type { Session } from '../sessions/types';
 import { Menu, MenuContent, MenuItem, MenuLabel, MenuSeparator, MenuTrigger } from './a11y';
 
@@ -104,7 +104,7 @@ export function ApplyMarkupMenu({ artifactId, path, channelId, sessions = {}, on
                 }}
                 className="items-start gap-2 py-2 text-left max-md:min-h-11"
               >
-                <StatusChip status={session.status} />
+                <GlanceChip session={session} showClock={false} />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-xs font-medium text-fg">{session.title}</span>
                   {busySessionId === session.id && (
