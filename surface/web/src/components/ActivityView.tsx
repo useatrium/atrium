@@ -119,6 +119,21 @@ function parseEventId(value: string): number | null {
   return Number.isSafeInteger(id) && id > 0 ? id : null;
 }
 
+/**
+ * Synthetic live-attention rows (`live:<sessionId>`) have no feed event behind
+ * them, so every read-state op no-ops on them (see `markItemRead`). Offering
+ * "Mark read" there is a button that lies — the row only leaves when the
+ * session stops blocking on a person.
+ */
+function isSyntheticRow(item: ActivityItem): boolean {
+  return parseEventId(item.eventId) == null;
+}
+
+/** What actually makes a synthetic row go away — shown where its ⋯ menu would be. */
+function clearsWhenLabel(item: ActivityItem): string {
+  return item.kind === 'agent_auth' ? 'Clears when reconnected' : 'Clears when answered';
+}
+
 function ActivityRow({
   item,
   attention,
@@ -176,37 +191,46 @@ function ActivityRow({
             )}
           </span>
         </button>
-        <Menu>
-          <MenuTrigger asChild>
-            <button
-              type="button"
-              aria-label={`Actions for ${titleFor(item)}`}
-              className="mt-0.5 shrink-0 rounded-md px-1.5 py-1 text-xs font-semibold text-fg-muted opacity-0 hover:bg-surface-raised hover:text-fg group-hover:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100"
-              onClick={(event) => event.stopPropagation()}
-            >
-              ⋯
-            </button>
-          </MenuTrigger>
-          <MenuContent align="end">
-            {unread ? (
-              <MenuItem
-                onSelect={() => {
-                  onMarkRead(item);
-                }}
+        {isSyntheticRow(item) ? (
+          <span
+            data-testid="activity-clears-when"
+            className="mt-0.5 shrink-0 whitespace-nowrap px-1.5 py-1 text-2xs text-fg-faint"
+          >
+            {clearsWhenLabel(item)}
+          </span>
+        ) : (
+          <Menu>
+            <MenuTrigger asChild>
+              <button
+                type="button"
+                aria-label={`Actions for ${titleFor(item)}`}
+                className="mt-0.5 shrink-0 rounded-md px-1.5 py-1 text-xs font-semibold text-fg-muted opacity-0 hover:bg-surface-raised hover:text-fg group-hover:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100"
+                onClick={(event) => event.stopPropagation()}
               >
-                Mark read
-              </MenuItem>
-            ) : (
-              <MenuItem
-                onSelect={() => {
-                  onMarkUnread(item);
-                }}
-              >
-                Mark unread
-              </MenuItem>
-            )}
-          </MenuContent>
-        </Menu>
+                ⋯
+              </button>
+            </MenuTrigger>
+            <MenuContent align="end">
+              {unread ? (
+                <MenuItem
+                  onSelect={() => {
+                    onMarkRead(item);
+                  }}
+                >
+                  Mark read
+                </MenuItem>
+              ) : (
+                <MenuItem
+                  onSelect={() => {
+                    onMarkUnread(item);
+                  }}
+                >
+                  Mark unread
+                </MenuItem>
+              )}
+            </MenuContent>
+          </Menu>
+        )}
       </div>
       {answerSession?.pendingQuestion && (
         <div className="px-4 pb-3 pl-14">
@@ -401,6 +425,14 @@ export function ActivityView({
       item.kind !== 'session_failed' &&
       item.kind !== 'agent_auth'
     ) {
+      return;
+    }
+    // A synthetic row already names its session — there is no feed event to
+    // resolve it from. The eventId guard below exists for that lookup, but it
+    // was also stranding this click in the channel with nothing opened: the one
+    // row in the app that says someone is waiting on you was a dead end.
+    if (isSyntheticRow(item)) {
+      if (item.sessionId) onOpenSession(item.sessionId);
       return;
     }
     const eventId = parseEventId(item.eventId);

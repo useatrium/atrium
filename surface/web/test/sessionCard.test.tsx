@@ -275,6 +275,98 @@ describe('session card transitions across session.* events', () => {
     expect(s.timelines[CH]!.main).toHaveLength(1);
   });
 
+  it('reads the meta row as a sentence on one non-wrapping line', () => {
+    const s = spawned(loadedState());
+    render(cardFor(s));
+
+    // Every token names itself — "Kay · claude-code · 8:35 AM" was token soup.
+    expect(screen.getByText('by Kay')).toBeTruthy();
+    expect(screen.getByText('claude-code agent')).toBeTruthy();
+    expect(screen.getByText(/^started /)).toBeTruthy();
+
+    // One line on a phone: the row never wraps.
+    const meta = screen.getByText('by Kay').parentElement;
+    expect(meta?.className).toContain('whitespace-nowrap');
+    expect(meta?.className).not.toContain('flex-wrap');
+  });
+
+  /**
+   * The row must give up space in order of IMPORTANCE, not in whatever order
+   * flexbox finds convenient. The first cut of this shipped the exact inverse —
+   * the author shredded to "b…" while "claude-code agent" boilerplate survived
+   * whole — and a class-name-only assertion happily passed it. So: pin the
+   * shrink priority itself, which is the thing that was actually wrong.
+   */
+  it('sheds the meta row by importance: repo first, then boilerplate, never the author', () => {
+    const s = spawned(loadedState());
+    render(cardFor(s));
+
+    // The author is the headline. It must be structurally incapable of truncating.
+    const author = screen.getByText('by Kay');
+    expect(author.className.split(' ')).toContain('shrink-0');
+    expect(author.className.split(' ')).not.toContain('truncate');
+    expect(author.className.split(' ')).not.toContain('min-w-0');
+
+    // The start time likewise holds its ground.
+    const started = screen.getByText(/^started /);
+    expect(started.className.split(' ')).toContain('shrink-0');
+    expect(started.className.split(' ')).not.toContain('truncate');
+
+    // The long, low-information harness label is what yields space.
+    const harness = screen.getByText('claude-code agent');
+    expect(harness.className).toContain('truncate');
+    expect(harness.className).toContain('shrink-[3]');
+  });
+
+  it('drops the repo below sm rather than ellipsizing it to a useless stub', () => {
+    let s = spawned(loadedState());
+    s = appReducer(s, {
+      type: 'server-event',
+      event: wire(102, 'session.spawned', {
+        sessionId: 'sess-2',
+        title: 'migrate thumbnails',
+        harness: 'claude-code',
+        repo: 'meridian/atlas-infra',
+        branch: 'main',
+        by: spawner.id,
+      }),
+    });
+    const session = s.sessions['sess-2']!;
+    expect(session.repo).toBe('meridian/atlas-infra');
+    render(<SessionCard session={session} spectators={0} onOpenPane={() => {}} />);
+
+    // "meri…" is pure noise — it's on the card's other rows and in the pane.
+    // Below sm the repo is gone entirely, not ellipsized to a stub.
+    const repo = screen.getByText('meridian/atlas-infra@main');
+    expect(repo.className.split(' ')).toContain('hidden');
+    expect(repo.className).toContain('sm:inline');
+  });
+
+  it('gives the card actions a 44px tap target on coarse pointers only', () => {
+    let s = spawned(loadedState());
+    s = appReducer(s, {
+      type: 'server-event',
+      event: wire(102, 'session.completed', {
+        sessionId: 'sess-1',
+        status: 'failed',
+        resultExcerpt: 'harness crashed',
+        permalink: '/s/sess-1',
+      }),
+    });
+    const session = s.sessions['sess-1']!;
+    render(<SessionCard session={session} spectators={0} meId={spawner.id} onOpenPane={() => {}} />);
+
+    // WCAG 2.5.8: a 14px line of text is not a tap target. Touch grows them to
+    // 44px; a mouse still sees the quiet links they were.
+    for (const testid of ['card-retry-turn', 'card-ask-why']) {
+      const action = screen.getByTestId(testid);
+      expect(action.className).toContain('[@media(pointer:coarse)]:min-h-11');
+      // …and only there — no unconditional height that would bulk up the desktop card.
+      expect(action.className.split(' ')).not.toContain('min-h-11');
+    }
+    expect(screen.getByText('Show the work →').className).toContain('[@media(pointer:coarse)]:min-h-11');
+  });
+
   it('renders generated app presentations under the timeline session card', async () => {
     vi.mocked(sessionsApi.listPresentations).mockResolvedValue({
       presentations: [

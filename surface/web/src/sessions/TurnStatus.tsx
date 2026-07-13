@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { formatTokens, type TurnLiveness, type TurnPhase } from '@atrium/centaur-client';
 export { formatTokens };
-import { formatCost, formatElapsed } from './types';
+import { formatCost, formatDurationUnits, formatElapsed } from './types';
 
 /** A small CSS spinner, accent-colored via `currentColor`. Used for the
  *  turn status line and per-tool "running" state. */
@@ -113,7 +113,10 @@ export function TurnStatusLine({
         ) : (
           <>
             <span className="min-w-0 truncate font-medium text-fg-secondary">✓ {label}</span>
-            {clock}
+            {/* A finished run's clock speaks units ("6m", not "6:00") — the
+                same canon the glance chip already uses. A colon clock next to a
+                ✓ reads as a time of day. The live ticker stays mm:ss. */}
+            {elapsedMs >= 1000 && <span className="tabular-nums text-fg-faint">{formatDurationUnits(elapsedMs)}</span>}
           </>
         )
       ) : liveness === 'reconnecting' || liveness === 'reattaching' ? (
