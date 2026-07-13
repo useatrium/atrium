@@ -37,12 +37,15 @@ export function SessionsRail({
   sessions,
   meId,
   onOpenSession,
+  onOpenThread,
 }: {
   channelId: string | null;
   sessions: Record<string, Session>;
   /** Enables answering a live question straight from the rail card. */
   meId?: string;
   onOpenSession: (sessionId: string) => void;
+  /** Opens the session's thread — the primary card activation when known. */
+  onOpenThread?: (rootEventId: number) => void;
 }) {
   const groups = useMemo(() => {
     if (!channelId) return [];
@@ -83,6 +86,11 @@ export function SessionsRail({
                     session={session}
                     spectators={0}
                     meId={meId}
+                    onOpen={
+                      onOpenThread && session.threadRootEventId != null
+                        ? () => onOpenThread(session.threadRootEventId!)
+                        : undefined
+                    }
                     onOpenPane={onOpenSession}
                   />
                 ))}
