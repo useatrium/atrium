@@ -37,7 +37,7 @@
         "item": {
           "id": "task-1",
           "type": "userMessage",
-          "text": "Fix the retry backoff in the ingestion worker — batches stall in pending_ocr whenever the OCR pool cold-starts. While you're in there, add a queue-depth log line on every retry."
+          "text": "Fix the retry backoff in the ingestion worker \u2014 batches stall in pending_ocr whenever the OCR pool cold-starts. While you're in there, add a queue-depth log line on every retry."
         }
       }
     },
@@ -143,7 +143,7 @@
           "id": "reason-2",
           "type": "reasoning",
           "summary": "The 30s cap can't survive a cold start",
-          "text": "A pool cold start takes 45–90s (autoscaler spin-up plus model load), but the delay ceiling is 30s and MAX_RETRIES is 6 — so the whole retry budget burns in under three minutes of a routine cold start, and the batch is marked stalled. Six workers retrying in lockstep also explains the sawtooth: no jitter. Fix: raise the cap well past the cold-start window and add full jitter, then log queue depth per retry as asked."
+          "text": "A pool cold start takes 45\u201390s (autoscaler spin-up plus model load), but the delay ceiling is 30s and MAX_RETRIES is 6 \u2014 so the whole retry budget burns in under three minutes of a routine cold start, and the batch is marked stalled. Six workers retrying in lockstep also explains the sawtooth: no jitter. Fix: raise the cap well past the cold-start window and add full jitter, then log queue depth per retry as asked."
         }
       }
     },
@@ -166,7 +166,7 @@
               "input": {
                 "file_path": "services/ingest/worker.py",
                 "old_string": "def next_retry_delay(attempt: int) -> float:\n    \"\"\"Exponential backoff for OCR pool retries.\n\n    Capped so a stuck batch fails fast instead of holding a worker.\n    \"\"\"\n    return min(BASE_DELAY * 2 ** attempt, 30.0)",
-                "new_string": "def next_retry_delay(attempt: int) -> float:\n    \"\"\"Exponential backoff for OCR pool retries.\n\n    The cap must outlive an OCR pool cold start (45–90s observed), and\n    full jitter keeps a fleet of workers from retrying in lockstep.\n    \"\"\"\n    ceiling = min(BASE_DELAY * 2 ** attempt, 300.0)\n    return random.uniform(0, ceiling)"
+                "new_string": "def next_retry_delay(attempt: int) -> float:\n    \"\"\"Exponential backoff for OCR pool retries.\n\n    The cap must outlive an OCR pool cold start (45\u201390s observed), and\n    full jitter keeps a fleet of workers from retrying in lockstep.\n    \"\"\"\n    ceiling = min(BASE_DELAY * 2 ** attempt, 300.0)\n    return random.uniform(0, ceiling)"
               }
             }
           ]
@@ -263,7 +263,7 @@
           {
             "tool_use_id": "toolu_pytest",
             "is_error": false,
-            "content": "....                                                    [100%]\n4 passed in 6.81s\n\ntest_retry_cold_start PASSED — pool killed mid-batch, batch recovered on attempt 3 (delay 41.2s)"
+            "content": "....                                                    [100%]\n4 passed in 6.81s\n\ntest_retry_cold_start PASSED \u2014 pool killed mid-batch, batch recovered on attempt 3 (delay 41.2s)"
           }
         ]
       }
@@ -312,7 +312,7 @@
           "content": [
             {
               "type": "text",
-              "text": "**Root cause** — `next_retry_delay` capped the delay at 30s while an OCR pool cold start takes 45–90s, "
+              "text": "**Root cause** \u2014 `next_retry_delay` capped the delay at 30s while an OCR pool cold start takes 45\u201390s, "
             }
           ]
         }
@@ -344,7 +344,7 @@
           "content": [
             {
               "type": "text",
-              "text": "No jitter meant every worker retried in lockstep — that's the sawtooth on the queue-depth chart.\n\n"
+              "text": "No jitter meant every worker retried in lockstep \u2014 that's the sawtooth on the queue-depth chart.\n\n"
             }
           ]
         }
@@ -476,7 +476,7 @@
           "content": [
             {
               "type": "text",
-              "text": "The backoff fix is in on `fix/ingest-backoff`.\n\n**Root cause** — `next_retry_delay` capped the delay at 30s while an OCR pool cold start takes 45–90s, so a routine cold start burned the entire retry budget and the batch was marked stalled in `pending_ocr`. No jitter meant every worker retried in lockstep — that's the sawtooth on the queue-depth chart.\n\n- raised the ceiling to 300s with full jitter (`worker.py:141`)\n- every retry now logs `queue_depth` and `attempt` for the latency analysis\n- added `test_retry_cold_start`: kills the pool mid-batch and asserts recovery\n\nAll 4 retry tests pass. One thing worth a look in review: `mark_stalled` also fires from the DLQ sweeper, and that path still assumes the 30s ceiling in its alert threshold. I left it untouched but flagged it in the PR description."
+              "text": "The backoff fix is in on `fix/ingest-backoff`.\n\n**Root cause** \u2014 `next_retry_delay` capped the delay at 30s while an OCR pool cold start takes 45\u201390s, so a routine cold start burned the entire retry budget and the batch was marked stalled in `pending_ocr`. No jitter meant every worker retried in lockstep \u2014 that's the sawtooth on the queue-depth chart.\n\n- raised the ceiling to 300s with full jitter (`worker.py:141`)\n- every retry now logs `queue_depth` and `attempt` for the latency analysis\n- added `test_retry_cold_start`: kills the pool mid-batch and asserts recovery\n\nAll 4 retry tests pass. One thing worth a look in review: `mark_stalled` also fires from the DLQ sweeper, and that path still assumes the 30s ceiling in its alert threshold. I left it untouched but flagged it in the PR description."
             }
           ]
         }
@@ -488,7 +488,7 @@
       "delay_ms": 400,
       "data": {
         "type": "result",
-        "text": "Fixed the retry ceiling: 30s → 300s with full jitter, queue-depth logged on every retry, cold-start regression test added. 4/4 tests pass on fix/ingest-backoff."
+        "text": "Fixed the retry ceiling: 30s \u2192 300s with full jitter, queue-depth logged on every retry, cold-start regression test added. 4/4 tests pass on fix/ingest-backoff."
       }
     },
     {
@@ -517,7 +517,7 @@
         "status": "completed",
         "thread_key": "__THREAD_KEY__",
         "execution_id": "__EXECUTION_ID__",
-        "result_text": "Fixed the retry ceiling: 30s → 300s with full jitter, queue-depth logged on every retry, cold-start regression test added. 4/4 tests pass on fix/ingest-backoff.",
+        "result_text": "Fixed the retry ceiling: 30s \u2192 300s with full jitter, queue-depth logged on every retry, cold-start regression test added. 4/4 tests pass on fix/ingest-backoff.",
         "terminal_reason": "completed"
       }
     },
@@ -541,7 +541,7 @@
         "item": {
           "id": "task-2",
           "type": "userMessage",
-          "text": "good catch — bring the sweeper's alert threshold in line with the new ceiling too"
+          "text": "good catch \u2014 bring the sweeper's alert threshold in line with the new ceiling too"
         }
       }
     },
@@ -706,7 +706,7 @@
           "content": [
             {
               "type": "text",
-              "text": "Done — the sweeper no longer hardcodes the old ceiling.\n\n"
+              "text": "Done \u2014 the sweeper no longer hardcodes the old ceiling.\n\n"
             }
           ]
         }
@@ -722,7 +722,7 @@
           "content": [
             {
               "type": "text",
-              "text": "`ALERT_AFTER_S` now derives from `worker.RETRY_CEILING_S` (×1.5 headroom), so the alert can't silently drift from the worker's backoff again. "
+              "text": "`ALERT_AFTER_S` now derives from `worker.RETRY_CEILING_S` (\u00d71.5 headroom), so the alert can't silently drift from the worker's backoff again. "
             }
           ]
         }
@@ -758,7 +758,7 @@
           "content": [
             {
               "type": "text",
-              "text": "Done — the sweeper no longer hardcodes the old ceiling.\n\n`ALERT_AFTER_S` now derives from `worker.RETRY_CEILING_S` (×1.5 headroom), so the alert can't silently drift from the worker's backoff again. All 6 ingest tests pass, including the cold-start regression test from the last turn."
+              "text": "Done \u2014 the sweeper no longer hardcodes the old ceiling.\n\n`ALERT_AFTER_S` now derives from `worker.RETRY_CEILING_S` (\u00d71.5 headroom), so the alert can't silently drift from the worker's backoff again. All 6 ingest tests pass, including the cold-start regression test from the last turn."
             }
           ]
         }
@@ -842,7 +842,7 @@
         "item": {
           "id": "task-1",
           "type": "userMessage",
-          "text": "Analyze the scanned-docs eval regression between v0.12 and v0.13 — isolate the cause and publish a drill-down the team can use."
+          "text": "Analyze the scanned-docs eval regression between v0.12 and v0.13 \u2014 isolate the cause and publish a drill-down the team can use."
         }
       }
     },
@@ -894,7 +894,7 @@
           {
             "tool_use_id": "toolu_fetch",
             "is_error": false,
-            "content": "fetched 2 runs · 4,812 pages each · cached to .evals/\ncorpus pin verified: 7f3d21 on both runs"
+            "content": "fetched 2 runs \u00b7 4,812 pages each \u00b7 cached to .evals/\ncorpus pin verified: 7f3d21 on both runs"
           }
         ]
       }
@@ -933,7 +933,7 @@
           {
             "tool_use_id": "toolu_bucket",
             "is_error": false,
-            "content": "only `rotation` separates regressed pages (all other attributes: |Δ| < 0.4)\n\nrotation    v0.12   v0.13      Δ\n0–2°         88.4    89.6   +1.2\n2–5°         87.1    88.3   +1.2\n5–10°        85.2    82.1   −3.1\n10–15°       83.6    77.8   −5.8\n>15°         81.9    75.4   −6.5"
+            "content": "only `rotation` separates regressed pages (all other attributes: |\u0394| < 0.4)\n\nrotation    v0.12   v0.13      \u0394\n0\u20132\u00b0         88.4    89.6   +1.2\n2\u20135\u00b0         87.1    88.3   +1.2\n5\u201310\u00b0        85.2    82.1   \u22123.1\n10\u201315\u00b0       83.6    77.8   \u22125.8\n>15\u00b0         81.9    75.4   \u22126.5"
           }
         ]
       }
@@ -947,8 +947,8 @@
         "item": {
           "id": "reason-2",
           "type": "reasoning",
-          "summary": "Rotation is the only separator — testing the deskew hypothesis",
-          "text": "Upright pages actually improved, so the model isn't worse — something in preprocessing hurts rotated pages. v0.13 added the deskew step. If I re-run the worst pages with deskew disabled and they recover, that's the cause."
+          "summary": "Rotation is the only separator \u2014 testing the deskew hypothesis",
+          "text": "Upright pages actually improved, so the model isn't worse \u2014 something in preprocessing hurts rotated pages. v0.13 added the deskew step. If I re-run the worst pages with deskew disabled and they recover, that's the cause."
         }
       }
     },
@@ -986,7 +986,7 @@
           {
             "tool_use_id": "toolu_rerun",
             "is_error": false,
-            "content": "worst-50 pages, deskew disabled: median F1 recovers to within ±0.4 of v0.12\ncrop bbox after deskew is on average 4.2% smaller than the page content box on rotated pages"
+            "content": "worst-50 pages, deskew disabled: median F1 recovers to within \u00b10.4 of v0.12\ncrop bbox after deskew is on average 4.2% smaller than the page content box on rotated pages"
           }
         ]
       }
@@ -1009,7 +1009,7 @@
               "name": "Write",
               "input": {
                 "file_path": "report.md",
-                "content": "# Eval regression: v0.12 → v0.13 (scanned-docs −3.1 F1)\n\n**TL;DR** — fully explained by the new deskew step. It over-crops pages\nrotated more than ~5°, cutting off margin text the extractor never sees.\nForms and tables improved; nothing else moved.\n\n## Findings\n- Rotation is the only attribute separating regressed pages\n- Regression opens at 5–10° (−3.1) and widens to −6.5 at >15°\n- With deskew disabled, the worst 50 pages recover to ±0.4 of v0.12\n- Post-deskew crop bbox averages 4.2% smaller than the content box\n\n## Recommendation\nKeep deskew, clamp the post-rotation crop to the union of the detected\ncontent box and the original page box. Threshold fix, not a rollback."
+                "content": "# Eval regression: v0.12 \u2192 v0.13 (scanned-docs \u22123.1 F1)\n\n**TL;DR** \u2014 fully explained by the new deskew step. It over-crops pages\nrotated more than ~5\u00b0, cutting off margin text the extractor never sees.\nForms and tables improved; nothing else moved.\n\n## Findings\n- Rotation is the only attribute separating regressed pages\n- Regression opens at 5\u201310\u00b0 (\u22123.1) and widens to \u22126.5 at >15\u00b0\n- With deskew disabled, the worst 50 pages recover to \u00b10.4 of v0.12\n- Post-deskew crop bbox averages 4.2% smaller than the content box\n\n## Recommendation\nKeep deskew, clamp the post-rotation crop to the union of the detected\ncontent box and the original page box. Threshold fix, not a rollback."
               }
             }
           ]
@@ -1065,7 +1065,7 @@
           {
             "tool_use_id": "toolu_plot",
             "is_error": false,
-            "content": "wrote f1-by-rotation.png (1200×675)"
+            "content": "wrote f1-by-rotation.png (1200\u00d7675)"
           }
         ]
       }
@@ -1104,7 +1104,7 @@
           {
             "tool_use_id": "toolu_app",
             "is_error": false,
-            "content": "published shared/apps/eval-dashboard (index.html · 9.8 KB)"
+            "content": "published shared/apps/eval-dashboard (index.html \u00b7 9.8 KB)"
           }
         ]
       }
@@ -1123,7 +1123,7 @@
           "content": [
             {
               "type": "text",
-              "text": "The regression is **fully explained by the new deskew step** — it over-crops pages rotated more than ~5°, and margin text falls outside the crop.\n\n| split | v0.12 | v0.13 | Δ |\n|---|---|---|---|\n| forms | 91.4 | 92.6 | **+1.2** |\n| tables | 88.2 | 89.0 | **+0.8** |\n| scanned-docs | 84.7 | 81.6 | **−3.1** |\n\n**Recommendation**: keep deskew (the upright-page wins are real) but clamp the post-rotation crop to the union of the detected content box and the original page box. A threshold fix in `pipeline/deskew.py:141`, not a rollback.\n\nPublished: `report.md`, `f1-by-rotation.png`, and an interactive drill-down at `apps/eval-dashboard`."
+              "text": "The regression is **fully explained by the new deskew step** \u2014 it over-crops pages rotated more than ~5\u00b0, and margin text falls outside the crop.\n\n| split | v0.12 | v0.13 | \u0394 |\n|---|---|---|---|\n| forms | 91.4 | 92.6 | **+1.2** |\n| tables | 88.2 | 89.0 | **+0.8** |\n| scanned-docs | 84.7 | 81.6 | **\u22123.1** |\n\n**Recommendation**: keep deskew (the upright-page wins are real) but clamp the post-rotation crop to the union of the detected content box and the original page box. A threshold fix in `pipeline/deskew.py:141`, not a rollback.\n\nPublished: `report.md`, `f1-by-rotation.png`, and an interactive drill-down at `apps/eval-dashboard`."
             }
           ]
         }
@@ -1239,7 +1239,7 @@
           "id": "reason-1",
           "type": "reasoning",
           "summary": "Sizing the backfill before touching the index",
-          "text": "Before running anything I want the corpus size, the chunk count, and an estimate against the current GPU pool — and to check whether the reindex takes a write lock."
+          "text": "Before running anything I want the corpus size, the chunk count, and an estimate against the current GPU pool \u2014 and to check whether the reindex takes a write lock."
         }
       }
     },
@@ -1277,7 +1277,7 @@
           {
             "tool_use_id": "toolu_stats",
             "is_error": false,
-            "content": "Q2 corpus: 41,238 documents · 3.1M chunks\nestimated embed time on current pool (8×A10): ~40 min\nnote: index rebuild holds a WRITE LOCK for the duration"
+            "content": "Q2 corpus: 41,238 documents \u00b7 3.1M chunks\nestimated embed time on current pool (8\u00d7A10): ~40 min\nnote: index rebuild holds a WRITE LOCK for the duration"
           }
         ]
       }
@@ -1291,7 +1291,7 @@
         "item": {
           "id": "reason-2",
           "type": "reasoning",
-          "summary": "The reindex locks writes — this needs a human call",
+          "summary": "The reindex locks writes \u2014 this needs a human call",
           "text": "40 minutes of write lock during working hours would block the ingestion pipeline. Running tonight avoids that, but the eval crunch may want the fresh embeddings sooner. Not my call to make."
         }
       }
@@ -1310,7 +1310,7 @@
           "content": [
             {
               "type": "text",
-              "text": "Sized it: **41,238 docs (~3.1M chunks)**, roughly **40 minutes** on the current pool — and the index rebuild holds a **write lock** for the duration, which would stall ingestion if I run it now. I need a decision before proceeding."
+              "text": "Sized it: **41,238 docs (~3.1M chunks)**, roughly **40 minutes** on the current pool \u2014 and the index rebuild holds a **write lock** for the duration, which would stall ingestion if I run it now. I need a decision before proceeding."
             }
           ]
         }
@@ -1426,7 +1426,7 @@
           "content": [
             {
               "type": "text",
-              "text": "The migration role can read the source bucket but has **no write access** on `atlas-derivatives`. Stopping here rather than retrying — this needs an IAM change: grant `s3:PutObject` and `s3:AbortMultipartUpload` on `atlas-derivatives/*` to `role/thumb-migrator`, then re-run me."
+              "text": "The migration role can read the source bucket but has **no write access** on `atlas-derivatives`. Stopping here rather than retrying \u2014 this needs an IAM change: grant `s3:PutObject` and `s3:AbortMultipartUpload` on `atlas-derivatives/*` to `role/thumb-migrator`, then re-run me."
             }
           ]
         }
@@ -1438,7 +1438,7 @@
       "delay_ms": 40,
       "data": {
         "type": "result",
-        "text": "Failed: destination bucket denies s3:PutObject to role/thumb-migrator — IAM change required before the migration can run."
+        "text": "Failed: destination bucket denies s3:PutObject to role/thumb-migrator \u2014 IAM change required before the migration can run."
       }
     },
     {
@@ -1467,8 +1467,172 @@
         "status": "failed",
         "thread_key": "__THREAD_KEY__",
         "execution_id": "__EXECUTION_ID__",
-        "result_text": "Failed: destination bucket denies s3:PutObject to role/thumb-migrator — IAM change required before the migration can run.",
+        "result_text": "Failed: destination bucket denies s3:PutObject to role/thumb-migrator \u2014 IAM change required before the migration can run.",
         "terminal_reason": "failed"
+      }
+    },
+    {
+      "event": "execution_state",
+      "event_id": 1000,
+      "delay_ms": 300,
+      "data": {
+        "type": "execution.state",
+        "status": "running",
+        "thread_key": "__THREAD_KEY__",
+        "execution_id": "__EXECUTION_ID__"
+      }
+    },
+    {
+      "event": "amp_raw_event",
+      "event_id": 1001,
+      "delay_ms": 400,
+      "data": {
+        "type": "item.completed",
+        "item": {
+          "id": "task-2",
+          "type": "userMessage",
+          "text": "Retry the failed turn."
+        }
+      }
+    },
+    {
+      "event": "amp_raw_event",
+      "event_id": 1002,
+      "delay_ms": 1200,
+      "data": {
+        "type": "item.completed",
+        "item": {
+          "id": "reason-t2-1",
+          "type": "reasoning",
+          "summary": "Verifying the IAM grant before moving bytes",
+          "text": "Last turn failed on s3:PutObject to atlas-derivatives. Before re-running the copy I should probe write access with a zero-byte object so a missing grant fails fast instead of half-migrating."
+        }
+      }
+    },
+    {
+      "event": "amp_raw_event",
+      "event_id": 1003,
+      "delay_ms": 700,
+      "data": {
+        "type": "assistant",
+        "uuid": "tc-t2-probe",
+        "message": {
+          "id": "msg_t2_probe",
+          "role": "assistant",
+          "type": "message",
+          "content": [
+            {
+              "type": "tool_use",
+              "id": "toolu_t2_probe",
+              "name": "Bash",
+              "input": {
+                "command": "aws s3api put-object --bucket atlas-derivatives --key .write-probe --body /dev/null && aws s3 rm s3://atlas-derivatives/.write-probe"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "event": "amp_raw_event",
+      "event_id": 1004,
+      "delay_ms": 900,
+      "data": {
+        "type": "tool",
+        "content": [
+          {
+            "tool_use_id": "toolu_t2_probe",
+            "type": "tool_result",
+            "content": [
+              {
+                "type": "text",
+                "text": "put-object: OK (ETag \"d41d8cd9\")\ndelete: OK \u2014 role/thumb-migrator now has write access."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "event": "amp_raw_event",
+      "event_id": 1005,
+      "delay_ms": 800,
+      "data": {
+        "type": "assistant",
+        "uuid": "tc-t2-sync",
+        "message": {
+          "id": "msg_t2_sync",
+          "role": "assistant",
+          "type": "message",
+          "content": [
+            {
+              "type": "tool_use",
+              "id": "toolu_t2_sync",
+              "name": "Bash",
+              "input": {
+                "command": "python scripts/migrate_thumbnails.py --source atlas-media --dest atlas-derivatives --workers 8"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "event": "amp_raw_event",
+      "event_id": 1006,
+      "delay_ms": 2000,
+      "data": {
+        "type": "tool",
+        "content": [
+          {
+            "tool_use_id": "toolu_t2_sync",
+            "type": "tool_result",
+            "content": [
+              {
+                "type": "text",
+                "text": "migrated 18,204/18,204 derivatives \u00b7 0 errors \u00b7 96s\nverify: sampled 500 objects, all ETags match source."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "event": "amp_raw_event",
+      "event_id": 1007,
+      "delay_ms": 900,
+      "data": {
+        "type": "result",
+        "text": "IAM grant confirmed and the migration is done: 18,204 thumbnail derivatives now live in atlas-derivatives (sampled verification clean). The old bucket can go read-only whenever you're ready."
+      }
+    },
+    {
+      "event": "execution_summary",
+      "event_id": 1008,
+      "delay_ms": 200,
+      "data": {
+        "type": "obs.execution_summary",
+        "engine": "demo",
+        "harness": "demo",
+        "thread_key": "__THREAD_KEY__",
+        "execution_id": "__EXECUTION_ID__",
+        "models": ["claude-fable-5"],
+        "status": "completed",
+        "cost_usd": 0.11,
+        "duration_s": 96.4,
+        "terminal_reason": "completed"
+      }
+    },
+    {
+      "event": "execution_state",
+      "event_id": 1009,
+      "delay_ms": 200,
+      "data": {
+        "type": "execution.state",
+        "status": "completed",
+        "result_text": "IAM grant confirmed; 18,204 derivatives migrated to atlas-derivatives with clean sampled verification.",
+        "thread_key": "__THREAD_KEY__",
+        "execution_id": "__EXECUTION_ID__"
       }
     }
   ]
