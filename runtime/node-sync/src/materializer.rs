@@ -30,7 +30,7 @@ If a listed path is missing, it is still materializing — wait a few seconds an
 - See who is here: `cat ~/context/channel/channel.md`.
 "#;
 
-const CONTEXT_READY_MARKER: &str = ".atrium-context-ready";
+pub const CONTEXT_READY_MARKER: &str = ".atrium-context-ready";
 
 pub const ATRIUM_DOCS: &[(&str, &str)] = &[
     ("transcript", "transcript.md"),

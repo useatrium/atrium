@@ -49,8 +49,11 @@ jobs:
             fi
           fi
 
+          # runtime/node-sync/contract is the node-sync seam data; surface's
+          # internalContract.test.ts asserts the live internal routes against
+          # it, so contract edits must run the surface suites too.
           if printf '%s\n' "${changed_files}" | grep -Eq \
-            '^(surface/|infra/|\.github/workflows/ci\.yml$)'; then
+            '^(surface/|infra/|runtime/node-sync/contract/|\.github/workflows/ci\.yml$)'; then
             echo "surface=true" >>"${GITHUB_OUTPUT}"
           else
             echo "surface=false" >>"${GITHUB_OUTPUT}"

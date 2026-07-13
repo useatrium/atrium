@@ -1,0 +1,9 @@
+{
+  "rows": [
+    {
+      "sessionId": "sess-2",
+      "cursor": { "xid": "731", "id": "44" }
+    }
+  ],
+  "next_cursor": "731.44"
+}

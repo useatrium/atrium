@@ -34,9 +34,12 @@ the wire protocol between them can now land as **one PR** across both.
   pnpm install && pnpm dev         # server :3001, web :5173
   ```
   Run `pnpm` from `surface/`, not the repo root (the workspace is rooted there).
-- **Runtime work** → `centaur/`. It is **self-contained**: its own `Justfile`, cargo
-  workspace, and `AGENTS.md`. Start with `cd centaur && just up`. When you work anywhere
-  under `centaur/`, that subtree's `AGENTS.md` + `ATRIUM_FORK.md` auto-load — follow them.
+- **Runtime work** → `centaur/`. It is **self-contained at runtime**: its own `Justfile`,
+  cargo workspace, and `AGENTS.md`. Start with `cd centaur && just up`. When you work
+  anywhere under `centaur/`, that subtree's `AGENTS.md` + `ATRIUM_FORK.md` auto-load —
+  follow them. One caveat: the api-rs workspace's *tests* read the node-sync seam
+  contract at `runtime/node-sync/contract/`, so `cargo test` there needs the full
+  Atrium checkout (see `runtime/node-sync/CONTRACT.md`).
 - **Node-sync daemon work** → `runtime/node-sync/` (plain `cargo build`/`cargo test`
   there). Its sandbox-side wiring (init containers, mounts, chart DaemonSet) stays under
   `centaur/`, so daemon-contract changes usually touch both trees in one PR.
@@ -71,7 +74,9 @@ the wire protocol between them can now land as **one PR** across both.
   Centaur CI has also been ported to the root repo in `.github/workflows/centaur-ci.yml`
   because workflows under the vendored `centaur/.github/` tree are inert here (GitHub
   only runs root workflows). The root Centaur success check runs on every PR; its heavy
-  jobs are gated on `centaur/**` or workflow changes. Image/chart publishing is
+  jobs are gated on `centaur/**`, `runtime/node-sync/**`, or workflow changes (the
+  node-sync seam-contract data at `runtime/node-sync/contract/` triggers the Rust API
+  and surface lanes too — see `runtime/node-sync/CONTRACT.md`). Image/chart publishing is
   deliberately excluded. For runtime changes, still validate locally as needed with
   `cd centaur && just …`.
 

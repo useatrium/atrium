@@ -88,6 +88,7 @@ jobs:
             '^\.github/workflows/centaur-ci\.yml$'
           set_output rust_api \
             '^centaur/services/api-rs/' \
+            '^runtime/node-sync/contract/' \
             '^\.github/workflows/centaur-ci\.yml$'
           set_output node_sync \
             '^runtime/node-sync/' \
@@ -279,10 +280,22 @@ jobs:
       - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
         with:
           toolchain: stable
+          components: rustfmt, clippy
 
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           workspaces: runtime/node-sync
+
+      # The daemon's full test suite (unit + the seam-contract suite that pins
+      # runtime/node-sync/contract/ — see runtime/node-sync/CONTRACT.md) runs
+      # here because no other lane executes cargo in this workspace. fmt and
+      # clippy mirror the rust-api job's bar.
+      - name: Daemon fmt, clippy, and tests
+        working-directory: runtime/node-sync
+        run: |
+          cargo fmt --all --check
+          cargo clippy --all-targets -- -D warnings
+          cargo test
 
       # Real overlay + scan-demo: locks in the syscall proofs (whiteout→Delete,
       # symlink→metadata-only, openat2 NO_SYMLINKS blocks the /etc/shadow escape).

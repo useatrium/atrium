@@ -37,6 +37,7 @@ pub mod profile_candidates;
 pub mod quiesce;
 pub mod runtime;
 pub mod safety;
+pub mod seam;
 pub mod secret;
 pub mod session_manifest;
 pub mod sse;

@@ -1,0 +1,12 @@
+{
+  "sessionId": "sess-1",
+  "activePrefix": "shared/channels/channel-1",
+  "paths": [
+    {
+      "path": "shared/channels/channel-1/report.md",
+      "latestSeq": 4,
+      "kind": "file",
+      "sha": "aa11aa11aa11aa11aa11aa11aa11aa11aa11aa11aa11aa11aa11aa11aa11aa11"
+    }
+  ]
+}

@@ -1,0 +1,151 @@
+# The node-sync seam, as data.
+#
+# This file is the single source of truth for every string constant the
+# node-sync daemon and the centaur sandbox runtime must agree on. It is NOT
+# read by any shipped binary — it is consumed only by unit tests on each side
+# of the seam, so the AGPL/permissive license boundary is never crossed by
+# linking (see CONTRACT.md "How enforcement works").
+#
+# Checked by:
+#   - runtime/node-sync/tests/contract.rs            (daemon side)
+#   - centaur .../centaur-sandbox-agent-k8s overlay.rs tests   (pod-spec side)
+#   - centaur .../centaur-api-server args.rs tests   (config side)
+#   - surface/server/test/internalContract.test.ts   (wire side, via fixtures/)
+#
+# Changing a value here without changing the matching side(s) turns that
+# side's test suite red — that is the point.
+
+[image]
+name = "centaur-node-sync"
+
+[image.binaries]
+daemon = "/usr/local/bin/centaur-node-syncd"
+provision_overlay = "/usr/local/bin/provision-overlay"
+warmcache_hydrate = "/usr/local/bin/warmcache-hydrate"
+
+[k8s]
+component_label = "app.kubernetes.io/component"
+component_value = "node-sync"
+# Container name inside the DaemonSet pod; centaur pod-execs into it by name
+# for post-claim home preparation.
+daemon_container = "node-sync"
+claimed_home_helper_container = "overlay-claim-home"
+
+[k8s.init_containers]
+manifest_writer = "overlay-manifest-writer"
+readiness_wait = "overlay-readiness-wait"
+warm_home_placeholder = "warm-home-placeholder"
+private_repo_hydrate = "private-repo-cache-hydrate"
+warmcache_hydrate = "warmcache-hydrate"
+
+[k8s.volumes]
+session_upper = "session-upper"
+workspace = "workspace"
+atrium_context = "atrium-context"
+warmcache_cas = "warmcache-cas"
+
+[host_paths]
+overlays_root = "/var/lib/centaur/overlays"
+merged_root = "/run/centaur/merged"
+atrium_root = "/var/lib/centaur/atrium"
+# Container mount path (agent pods + init containers) and the node host dir
+# backing it coincide today but are separate knobs — keep them separate keys.
+cas_mount = "/var/lib/centaur/cas"
+cas_host_default = "/var/lib/centaur/cas"
+depcache_mount = "/var/cache/centaur/depcache"
+repo_cache_mount = "/cache"
+workspace_mount = "/workspace"
+home_mount = "/home/agent"
+context_mount = "/home/agent/context"
+atrium_mount = "/atrium"
+
+[markers]
+workspace_ready = ".centaur-workspace-ready"
+overlay_signature = ".centaur-overlay-signature"
+context_ready = ".atrium-context-ready"
+heartbeat = ".heartbeat"
+# Session manifests are written to <overlays_root>/<sessions_dir>/<session>.json
+sessions_dir = ".sessions"
+
+# Canonical spelling first; each reader also accepts the other side's historical
+# spelling (fallback) so mixed deployments can't strand a component.
+[env.daemon]
+base_url = "ATRIUM_BASE_URL"
+api_key = "ATRIUM_CAPTURE_API_KEY"
+base_url_fallback = "ATRIUM_URL"
+api_key_fallback = "ARTIFACT_CAPTURE_API_KEY"
+
+[env.warmcache_hydrate]
+# What centaur emits into the init container today.
+url = "ATRIUM_URL"
+key = "ARTIFACT_CAPTURE_API_KEY"
+url_fallback = "ATRIUM_BASE_URL"
+key_fallback = "ATRIUM_CAPTURE_API_KEY"
+
+[env.server]
+api_key = "ARTIFACT_CAPTURE_API_KEY"
+api_key_fallback = "ATRIUM_CAPTURE_API_KEY"
+
+# Sandbox-spec env keys / labels the provisioner metadata is derived from
+# (centaur-sandbox-agent-k8s OverlayMetadata::from_sandbox_spec).
+[env.sandbox_spec]
+harness_label = "centaur.ai/harness"
+keys = [
+  "CENTAUR_THREAD_KEY",
+  "CENTAUR_HARNESS_TYPE",
+  "CENTAUR_HARNESS_HOME",
+  "CODEX_HOME",
+  "CLAUDE_CONFIG_DIR",
+  "CENTAUR_RESUME_THREAD_ID",
+  "CODEX_CONTINUE_THREAD_ID",
+  "AGENT_REPO",
+  "AGENT_REPOS_JSON",
+  "CENTAUR_WARM_RESOLVED_REPOS_JSON",
+  "CENTAUR_WARM_SANDBOX",
+]
+
+# Flags each binary's parser accepts. Centaur may emit any subset; the parser
+# side must keep accepting all of them.
+[cli.provision_overlay]
+flags = [
+  "--manifest-only",
+  "--replace",
+  "--session",
+  "--atrium-session",
+  "--overlays-root",
+  "--merged-root",
+  "--merged-path",
+  "--lower",
+  "--harness",
+  "--harness-thread-id",
+  "--harness-home",
+  "--flat-home",
+  "--generic-home-lower",
+  "--context-source",
+  "--repo",
+  "--repos-json",
+  "--agent-uid",
+  "--hydrate-private-repos",
+  "--repo-cache-root",
+  "--https-proxy",
+  "--git-ca-info",
+]
+
+[cli.warmcache_hydrate]
+flags = [
+  "--session",
+  "--repos-json",
+  "--repo-cache-root",
+  "--depcache-root",
+  "--cas-dir",
+  "--atrium-url",
+  "--atrium-key",
+  "--toolchain-id",
+]
+
+[cli.daemon]
+flags = ["--once", "--interval", "--overlays-root"]
+
+[http]
+auth_header = "x-api-key"
+session_prefix = "/api/internal/sessions"

@@ -1,0 +1,10 @@
+{
+  "bundles": [
+    {
+      "path": ".codex/skills/example/SKILL.md",
+      "sha256": "dd44ee55dd44ee55dd44ee55dd44ee55dd44ee55dd44ee55dd44ee55dd44ee55",
+      "role": "skill",
+      "executable": false
+    }
+  ]
+}

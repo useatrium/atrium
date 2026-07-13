@@ -505,6 +505,7 @@ mod linux_daemon {
         materialize_profile_bundles_from_refs, partition_entries_by_lane, profile_baseline_sweep,
         profile_candidate_sweep, sha_hex,
     };
+    use centaur_node_sync::seam;
     use centaur_node_sync::session_manifest::{
         DiscoveredSession, discover_sessions, manifest_path, state_path,
     };
@@ -579,7 +580,7 @@ mod linux_daemon {
     }
 
     pub fn main() {
-        let args = match parse_args() {
+        let args = match parse_args(std::env::args().skip(1)) {
             Ok(args) => args,
             Err(error) => {
                 eprintln!("centaur-node-syncd argument error: {error}");
@@ -596,8 +597,12 @@ mod linux_daemon {
             .interval_secs
             .unwrap_or_else(|| env("NODE_SYNC_INTERVAL_SECS").parse::<u64>().unwrap_or(2));
         let global = GlobalConfig {
-            base_url: env("ATRIUM_BASE_URL"),
-            api_key: env("ATRIUM_CAPTURE_API_KEY"),
+            // Canonical names first, historical spellings accepted (seam.rs).
+            base_url: env_with_fallback(seam::ENV_ATRIUM_BASE_URL, seam::ENV_ATRIUM_URL),
+            api_key: env_with_fallback(
+                seam::ENV_ATRIUM_CAPTURE_API_KEY,
+                seam::ENV_ARTIFACT_CAPTURE_API_KEY,
+            ),
             atrium_root: non_empty_path(&env("NODE_SYNC_ATRIUM_ROOT"), "/atrium"),
             hydrate_artifacts: env_truthy(&env("NODE_SYNC_HYDRATE_ARTIFACTS")),
             cas_dir: non_empty_pathbuf(
@@ -666,9 +671,9 @@ mod linux_daemon {
         }
     }
 
-    fn parse_args() -> Result<DaemonArgs, String> {
+    fn parse_args(argv: impl IntoIterator<Item = String>) -> Result<DaemonArgs, String> {
         let mut parsed = DaemonArgs::default();
-        let mut args = std::env::args().skip(1);
+        let mut args = argv.into_iter();
         while let Some(arg) = args.next() {
             match arg.as_str() {
                 "--once" => parsed.once = true,
@@ -701,13 +706,66 @@ mod linux_daemon {
         Ok(parsed)
     }
 
+    #[cfg(test)]
+    mod cli_contract_tests {
+        use super::parse_args;
+
+        /// Every flag declared in contract.toml [cli.daemon] must keep
+        /// parsing. The emitter is the Helm chart's DaemonSet args, which no
+        /// test lane can execute — this pins the parser side.
+        #[test]
+        fn accepts_every_declared_daemon_flag() {
+            let contract: toml::Value =
+                toml::from_str(include_str!("../../contract/contract.toml"))
+                    .expect("contract.toml must parse");
+            let declared: Vec<&str> = contract["cli"]["daemon"]["flags"]
+                .as_array()
+                .expect("cli.daemon.flags array")
+                .iter()
+                .map(|v| v.as_str().expect("flags are strings"))
+                .collect();
+            let mut argv: Vec<String> = Vec::new();
+            for flag in &declared {
+                argv.push((*flag).to_string());
+                match *flag {
+                    "--interval" => argv.push("2".to_string()),
+                    "--overlays-root" => argv.push("/var/lib/centaur/overlays".to_string()),
+                    "--once" => {}
+                    other => panic!("new daemon flag {other} needs a sample value in this test"),
+                }
+            }
+            let parsed = parse_args(argv).expect("declared daemon argv must parse");
+            assert!(parsed.once);
+            assert_eq!(parsed.interval_secs, Some(2));
+        }
+    }
+
+    /// Canonical spelling wins; the historical spelling is accepted with a log
+    /// line so an operator can tell which env var actually configured the
+    /// daemon (a stale historical value silently masking an empty canonical
+    /// one is otherwise hard to trace).
+    fn env_with_fallback(canonical: &str, fallback: &str) -> String {
+        if let Some(value) = seam::env_first(&[canonical]) {
+            return value;
+        }
+        match seam::env_first(&[fallback]) {
+            Some(value) => {
+                eprintln!(
+                    "centaur-node-syncd: {canonical} is unset/empty; using historical {fallback}"
+                );
+                value
+            }
+            None => String::new(),
+        }
+    }
+
     fn require_global_config(global: &GlobalConfig, mode: &str) {
         let mut missing = Vec::new();
         if global.base_url.is_empty() {
-            missing.push("ATRIUM_BASE_URL".to_string());
+            missing.push("ATRIUM_BASE_URL (or ATRIUM_URL)".to_string());
         }
         if global.api_key.is_empty() {
-            missing.push("ATRIUM_CAPTURE_API_KEY".to_string());
+            missing.push("ATRIUM_CAPTURE_API_KEY (or ARTIFACT_CAPTURE_API_KEY)".to_string());
         }
         if !missing.is_empty() {
             fail_config(&missing, mode);

@@ -1,0 +1,25 @@
+{
+  "_comment": "init_container: the EXACT argv + env centaur emits (asserted == emitted by centaur's contract tests; parsed by the daemon's in-bin tests). parser_coverage: not emitted — spans the rest of the declared flag inventory so declared ⊆ accepted stays pinned.",
+  "init_container": [
+    "--session", "sess-1",
+    "--repos-json", "[]",
+    "--repo-cache-root", "/cache",
+    "--depcache-root", "/var/cache/centaur/depcache",
+    "--cas-dir", "/var/lib/centaur/cas",
+    "--toolchain-id", "tc-1"
+  ],
+  "env": {
+    "ATRIUM_URL": "http://atrium-server.atrium.svc:8080",
+    "ARTIFACT_CAPTURE_API_KEY": "test-key"
+  },
+  "parser_coverage": [
+    "--session", "sess-1",
+    "--repos-json", "[]",
+    "--repo-cache-root", "/cache",
+    "--depcache-root", "/var/cache/centaur/depcache",
+    "--cas-dir", "/var/lib/centaur/cas",
+    "--atrium-url", "http://atrium:8080",
+    "--atrium-key", "flag-key",
+    "--toolchain-id", "tc-1"
+  ]
+}

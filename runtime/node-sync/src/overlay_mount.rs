@@ -15,7 +15,8 @@ use std::time::Instant;
 
 pub const DEFAULT_AGENT_UID: u32 = 1001;
 pub const READY_MARKER_FILE: &str = ".centaur-workspace-ready";
-#[cfg(target_os = "linux")]
+// Platform-neutral (contract data, asserted by tests/contract.rs everywhere);
+// only the mount code that writes it is Linux-only.
 pub const OVERLAY_SIGNATURE_FILE: &str = ".centaur-overlay-signature";
 pub const DEFAULT_REPO_CACHE_ROOT: &str = "/cache";
 /// Single top-level workspace dir that holds every session repo, nested as
