@@ -660,7 +660,7 @@ test('session question requested while disconnected heals without reload', async
   });
   const sessionRow = messageRow(page, title);
   await expect(sessionRow).toBeVisible({ timeout: 15_000 });
-  await expect(sessionRow.getByText('needs input')).toBeVisible();
+  await expect(sessionRow.getByText('Needs you')).toBeVisible();
   await sessionRow.getByRole('button', { name: '1 reply →' }).click();
   // The question card renders its prompt text in its own element (HITL
   // transcript-fidelity rendering — no emoji prefix).

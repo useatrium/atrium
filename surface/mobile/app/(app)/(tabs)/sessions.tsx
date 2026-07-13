@@ -7,12 +7,14 @@ import {
   formatCost,
   formatRelativeTimestamp,
   isTerminalSessionStatus,
+  sessionGlanceClockLabel,
   type Session,
+  type SessionGlance,
   type SessionListItem,
-  type SessionStatus,
 } from '@atrium/surface-client';
 import { useChat } from '../../../src/lib/chat';
-import { font, radius, space, useTheme, type Colors } from '../../../src/lib/theme';
+import { glanceColor, listItemGlance } from '../../../src/lib/sessionGlance';
+import { font, radius, space, useTheme } from '../../../src/lib/theme';
 import { ConnectionBanner } from '../../../src/components/bits';
 import { MobileHeader } from '../../../src/components/MobileHeader';
 
@@ -22,17 +24,13 @@ interface DisplaySession extends SessionListItem {
 
 type SessionSection = { key: string; title: string; data: DisplaySession[] };
 
-function statusColor(status: SessionStatus, colors: Colors): string {
-  if (status === 'completed') return colors.online;
-  if (status === 'failed' || status === 'cancelled') return colors.danger;
-  if (status === 'running') return colors.accent;
-  return colors.warning;
-}
-
-function StatusChip({ status }: { status: SessionStatus }) {
+function StatusChip({ glance }: { glance: SessionGlance }) {
   const { colors } = useTheme();
-  const color = statusColor(status, colors);
-  const label = status === 'spawning' ? 'STARTING' : status.toUpperCase();
+  const color = glanceColor(glance.kind, colors);
+  // The chip carries a clock only while a person is being waited on — the
+  // coarse "12m" stays honest between list refreshes; a seconds clock lies.
+  const clock = glance.clock?.mode === 'waiting' ? sessionGlanceClockLabel(glance, Date.now()) : null;
+  const label = `${glance.label.toUpperCase()}${clock ? ` · ${clock}` : ''}`;
   return (
     <View
       style={{
@@ -222,7 +220,7 @@ export default function SessionsScreen() {
         })}
       >
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm }}>
-          <StatusChip status={fields.status} />
+          <StatusChip glance={listItemGlance(fields, item.live, Date.now())} />
           {fields.pinned && <Ionicons name="pin" size={13} color={colors.textMuted} accessibilityLabel="Pinned" />}
           <Text
             style={{

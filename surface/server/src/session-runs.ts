@@ -143,6 +143,8 @@ export interface SessionPendingQuestionJson {
   turnId: string;
   questions: QuestionPrompt[];
   eventId: number;
+  /** Server time the question was raised — anchors "waiting on you for Nm". */
+  askedAt?: string;
 }
 
 export interface SessionSeatHistoryEntry {
@@ -2111,6 +2113,7 @@ export class SessionRuns {
         turnId: frame.data.turn_id,
         questions: frame.data.questions,
         eventId: frame.event_id,
+        askedAt: new Date().toISOString(),
       };
       const updated = await client.query<SessionRow>(
         `UPDATE sessions
@@ -3514,6 +3517,7 @@ function parsePendingQuestion(value: unknown): SessionPendingQuestionJson | null
     turnId: raw.turnId,
     questions,
     eventId,
+    ...(typeof raw.askedAt === 'string' ? { askedAt: raw.askedAt } : {}),
   };
 }
 

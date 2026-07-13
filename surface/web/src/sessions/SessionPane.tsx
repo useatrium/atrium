@@ -82,7 +82,8 @@ import {
   type SteerProvenance,
 } from '@atrium/surface-client';
 import { sessionsApi } from './api';
-import { StatusChip, repoBranchLabel, repoBranchTitle, sessionElapsedMs, useNow } from './SessionCard';
+import { repoBranchLabel, repoBranchTitle, useNow } from './SessionCard';
+import { GlanceChip } from './GlanceChip';
 import {
   HARNESS_EFFORT_PICKER_OPTIONS,
   formatCost,
@@ -1401,7 +1402,7 @@ export function SessionPane({
           isMacDesktop && popout ? 'pl-20 max-md:pl-20' : ''
         }`}
       >
-        <StatusChip status={displayStatus} stalled={stalled} />
+        <GlanceChip session={{ ...session, status: displayStatus }} now={now} stuck={turnLiveness === 'stuck'} />
         {/* On a phone the title+metadata drop to their own full-width row below the
             compact status/actions row, so the title stays readable instead of being
             squeezed to a couple of characters. Desktop keeps the inline flex-1 block. */}
@@ -1451,18 +1452,6 @@ export function SessionPane({
                   GitHub: {githubIdentityLabel}
                 </span>
               </>
-            )}
-            <span className="text-fg-faint">·</span>
-            {stalled ? (
-              <TimestampDisclosure
-                iso={session.createdAt}
-                label={`started ${formatTime(session.createdAt)}`}
-                className="tabular-nums"
-              >
-                started {formatTime(session.createdAt)}
-              </TimestampDisclosure>
-            ) : (
-              <span className="tabular-nums">{formatElapsed(sessionElapsedMs(session, now))}</span>
             )}
             {!connected && !displayTerminal && (
               <span role="status" className="text-warning/80">

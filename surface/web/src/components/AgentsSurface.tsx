@@ -2,8 +2,8 @@ import { useCallback, useEffect, useMemo, useState, type MouseEvent } from 'reac
 import { formatCost, formatTime, isTerminalSessionStatus, type SessionListItem } from '@atrium/surface-client';
 import { navigate } from '../router';
 import { sessionsApi } from '../sessions/api';
-import type { Session } from '../sessions/types';
-import { StatusChip } from '../sessions/SessionCard';
+import type { Session, SessionGlanceInput } from '../sessions/types';
+import { GlanceChip } from '../sessions/GlanceChip';
 import { MessageActionMenu, type MessageActionMenuState } from './MessageActionMenu';
 
 const RECENT_CAP = 200;
@@ -26,6 +26,18 @@ type SessionRowMenu = {
 function sessionNeedsAttention(session: SessionListItem, liveSession?: Session): boolean {
   if ((session as SessionListItem & SessionListItemAttentionFields).needsAttention === true) return true;
   return liveSession?.pendingQuestion != null || liveSession?.providerAuthRequired != null;
+}
+
+/** Chip input: the live entity when the socket has one, else the REST row. */
+function glanceInputFor(session: SessionListItem, live?: Session): SessionGlanceInput {
+  return (
+    live ?? {
+      status: session.status,
+      pendingSeatRequests: [],
+      createdAt: session.createdAt,
+      completedAt: session.completedAt,
+    }
+  );
 }
 
 function sessionFreshness(session: SessionListItem): number {
@@ -271,6 +283,7 @@ export function AgentsSurface({
                       <AgentSessionListButton
                         key={session.id}
                         session={session}
+                        live={liveSessions[session.id]}
                         onOpenSession={onOpenSession}
                         onOpenMenu={canActOnRows ? openRowMenu : undefined}
                       />
@@ -305,6 +318,7 @@ export function AgentsSurface({
                     <AgentSessionListButton
                       key={session.id}
                       session={session}
+                      live={liveSessions[session.id]}
                       onOpenSession={onOpenSession}
                       onOpenMenu={canActOnRows ? openRowMenu : undefined}
                     />
@@ -327,13 +341,19 @@ export function AgentsSurface({
 
 function AgentSessionListButton({
   session,
+  live,
   onOpenSession,
   onOpenMenu,
 }: {
   session: SessionListItem;
+  /** Live entity from the workspace socket, when present — richer status. */
+  live?: Session;
   onOpenSession: (sessionId: string) => void;
   onOpenMenu?: (session: SessionListItem, event: MouseEvent<HTMLButtonElement>) => void;
 }) {
+  // The REST row can flag needs-attention without carrying the live fields
+  // that prove it — honor the flag so the chip never contradicts the group.
+  const flaggedOnly = !live && (session as SessionListItem & SessionListItemAttentionFields).needsAttention === true;
   return (
     <div className="group/agent-row flex w-full min-w-0 items-center border-b border-edge last:border-b-0 hover:bg-accent/20">
       <button
@@ -341,7 +361,10 @@ function AgentSessionListButton({
         onClick={() => onOpenSession(session.id)}
         className="flex min-w-0 flex-1 items-center gap-3 px-3 py-2 text-left max-md:min-h-11"
       >
-        <StatusChip status={session.status} />
+        <GlanceChip
+          session={glanceInputFor(session, live)}
+          override={flaggedOnly ? { kind: 'needs_you', label: 'Needs you' } : undefined}
+        />
         <span className="min-w-0 flex-1">
           <span className="flex min-w-0 items-center gap-1.5">
             {session.pinned && (

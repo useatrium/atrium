@@ -361,8 +361,8 @@ describe('session pane folds the B_tooltest stream', () => {
     expect(result.textContent).toContain('atrium-roundtrip-ok');
     expect(result.textContent).toContain('/home/agent/workspace');
 
-    // status chip reached completed (from the terminal execution_state)
-    expect(screen.getByText('completed')).toBeTruthy();
+    // status chip reached Done (from the terminal execution_state)
+    expect(screen.getByTestId('glance-chip').textContent).toContain('Done');
 
     // completed session: a subtle status line reports the turn (meta only). The
     // roundtrip result itself lives in the tool card above — it is not re-carded.

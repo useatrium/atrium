@@ -59,6 +59,8 @@ export interface SessionPendingQuestion {
   turnId?: string;
   questions: QuestionPrompt[];
   eventId?: number;
+  /** Server time the question was raised — anchors "waiting on you for Nm". */
+  askedAt?: string;
 }
 
 export interface SessionProviderAuthRequired {
@@ -409,6 +411,133 @@ export function sessionAttentionKind(
   return null;
 }
 
+/**
+ * The one status vocabulary every surface speaks: Working / Needs you /
+ * Stalled / Done / Failed / Stopped. Derived — never the raw DB status — so a
+ * session with a pending question reads "Needs you" on the card, the rail, the
+ * Agents page, the pane header, and mobile alike, instead of "running" in one
+ * corner and "needs input" in another.
+ */
+export type SessionGlanceKind = 'working' | 'needs_you' | 'stalled' | 'done' | 'failed' | 'stopped';
+
+export interface SessionGlance {
+  kind: SessionGlanceKind;
+  /** Canonical chip word for the kind ("Working", "Needs you", …). */
+  label: string;
+  /** Optional qualifier rendered after the label ("starting", "needs auth"). */
+  detail?: string;
+  /** Animate the dot — only a healthy, moving session pulses. */
+  pulse: boolean;
+  /**
+   * The one clock rule: a session shows exactly one number —
+   *  - working → elapsed since spawn,
+   *  - needs_you → how long it has been waiting on a person (coarse),
+   *  - done → total duration,
+   *  - stalled/failed/stopped → no clock (the meta line keeps "started at").
+   */
+  clock: { mode: 'elapsed' | 'waiting'; fromTs: string } | { mode: 'duration'; fromTs: string; toTs: string } | null;
+}
+
+const GLANCE_LABELS: Record<SessionGlanceKind, string> = {
+  working: 'Working',
+  needs_you: 'Needs you',
+  stalled: 'Stalled',
+  done: 'Done',
+  failed: 'Failed',
+  stopped: 'Stopped',
+};
+
+export type SessionGlanceInput = Pick<
+  Session,
+  'status' | 'pendingQuestion' | 'providerAuthRequired' | 'createdAt' | 'completedAt'
+> & {
+  /** Optional here: list rows and older fixtures omit it; missing = none. */
+  pendingSeatRequests?: Session['pendingSeatRequests'];
+};
+
+export function deriveSessionGlance(
+  session: SessionGlanceInput,
+  now: number,
+  opts?: {
+    /** Live-transcript verdict (pane only): the turn went quiet past the stuck threshold. */
+    stuck?: boolean;
+  },
+): SessionGlance {
+  const glance = (kind: SessionGlanceKind, rest?: Partial<Omit<SessionGlance, 'kind' | 'label'>>): SessionGlance => ({
+    kind,
+    label: GLANCE_LABELS[kind],
+    pulse: false,
+    clock: null,
+    ...rest,
+  });
+
+  // A person is being waited on — this outranks every raw status.
+  if (!isTerminalSessionStatus(session.status)) {
+    if (session.pendingQuestion) {
+      const fromTs = session.pendingQuestion.askedAt;
+      return glance('needs_you', { clock: fromTs ? { mode: 'waiting', fromTs } : null });
+    }
+    if (session.providerAuthRequired) {
+      return glance('needs_you', {
+        detail: 'needs auth',
+        clock: { mode: 'waiting', fromTs: session.providerAuthRequired.at },
+      });
+    }
+    if ((session.pendingSeatRequests?.length ?? 0) > 0) {
+      return glance('needs_you', { detail: 'seat request' });
+    }
+  }
+
+  switch (session.status) {
+    case 'completed':
+      return glance('done', {
+        clock: session.completedAt ? { mode: 'duration', fromTs: session.createdAt, toTs: session.completedAt } : null,
+      });
+    case 'failed':
+      return glance('failed');
+    case 'cancelled':
+      return glance('stopped');
+    case 'spawning':
+    case 'queued': {
+      if (isStalledSessionStatus(session, now)) {
+        return glance('stalled', { detail: 'starting' });
+      }
+      return glance('working', {
+        detail: 'starting',
+        pulse: true,
+        clock: { mode: 'elapsed', fromTs: session.createdAt },
+      });
+    }
+    default: {
+      if (opts?.stuck) return glance('stalled');
+      return glance('working', { pulse: true, clock: { mode: 'elapsed', fromTs: session.createdAt } });
+    }
+  }
+}
+
+/** The glance's one clock, rendered ("2:13", "12m", "7:00") — null when the state has no clock. */
+export function sessionGlanceClockLabel(glance: SessionGlance, now: number): string | null {
+  if (!glance.clock) return null;
+  if (glance.clock.mode === 'waiting') return formatWaiting(now - new Date(glance.clock.fromTs).getTime());
+  if (glance.clock.mode === 'duration') {
+    return formatElapsed(new Date(glance.clock.toTs).getTime() - new Date(glance.clock.fromTs).getTime());
+  }
+  return formatElapsed(now - new Date(glance.clock.fromTs).getTime());
+}
+
+/**
+ * Coarse waiting clock ("just now", "12m", "1h 05m") — deliberately minute
+ * grained so unsynchronized viewer clocks can't render a lying number.
+ */
+export function formatWaiting(ms: number): string {
+  const totalMinutes = Math.floor(Math.max(0, ms) / 60_000);
+  if (totalMinutes < 1) return 'just now';
+  if (totalMinutes < 60) return `${totalMinutes}m`;
+  const h = Math.floor(totalMinutes / 60);
+  const m = totalMinutes % 60;
+  return `${h}h ${String(m).padStart(2, '0')}m`;
+}
+
 export interface SessionRepoSpec {
   repo: string;
   ref?: string;
@@ -480,6 +609,7 @@ export const SessionPendingQuestionSchema = Schema.mutable(
     turnId: Schema.optionalWith(Schema.String, { exact: true }),
     questions: Schema.mutable(Schema.Array(QuestionPromptSchema)),
     eventId: Schema.optionalWith(Schema.Number, { exact: true }),
+    askedAt: Schema.optionalWith(Schema.String, { exact: true }),
   }),
 );
 
@@ -734,7 +864,7 @@ export function isArchivedSession(session: Pick<Session, 'archivedAt'>): boolean
  */
 export const STALLED_AFTER_MS = 10 * 60 * 1000;
 
-export function isStalledSessionStatus(s: Session, now: number): boolean {
+export function isStalledSessionStatus(s: Pick<Session, 'status' | 'createdAt'>, now: number): boolean {
   return (s.status === 'spawning' || s.status === 'queued') && now - new Date(s.createdAt).getTime() > STALLED_AFTER_MS;
 }
 
@@ -1028,7 +1158,9 @@ export function applySessionEvent(sessions: Record<string, Session>, ev: Session
       ...sessions,
       [sessionId]: {
         ...prev,
-        pendingQuestion: { questionId, questions },
+        // askedAt anchors the "Needs you · 12m" waiting clock; the event's own
+        // server timestamp is authoritative on every fold path.
+        pendingQuestion: { questionId, questions, askedAt: ev.createdAt },
         questionEvents: appendQuestionEvent(prev.questionEvents, entry),
       },
     };

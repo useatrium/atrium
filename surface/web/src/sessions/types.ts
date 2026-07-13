@@ -6,6 +6,9 @@ import type { SessionStatus } from '@atrium/surface-client';
 
 export type {
   SessionStatus,
+  SessionGlance,
+  SessionGlanceKind,
+  SessionGlanceInput,
   SessionSeatUser,
   SeatChangeReason,
   SeatAuditEntry,
@@ -39,6 +42,9 @@ export {
   applySessionEvent,
   formatCost,
   formatElapsed,
+  formatWaiting,
+  deriveSessionGlance,
+  sessionGlanceClockLabel,
 } from '@atrium/surface-client';
 
 /** Map a Centaur execution status (stream) onto the session status vocabulary. */
