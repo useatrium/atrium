@@ -637,6 +637,11 @@ restore_harness_transcript() {
             ;;
         codex)
             atrium_harness="codex"
+            # A resume id is valid only when its rollout is present locally.
+            # Runtime asks us to restore it, but a 404/unavailable restore must
+            # fall back to a fresh thread instead of passing a stale id to
+            # Codex app-server.
+            unset CODEX_CONTINUE_THREAD_ID
             target_path="${CODEX_HOME:-$HOME_DIR/.codex}/sessions/$(date -u +%Y/%m/%d)/rollout-${CENTAUR_RESUME_THREAD_ID:-${CENTAUR_THREAD_KEY:-}}.jsonl"
             ;;
         *)
@@ -670,7 +675,7 @@ PYEOF
             mkdir -p "$(dirname "$target_path")"
             mv "$tmp" "$target_path"
             chmod 600 "$target_path" 2>/dev/null || true
-            if [ "$atrium_harness" = "codex" ] && [ -z "${CODEX_CONTINUE_THREAD_ID:-}" ]; then
+            if [ "$atrium_harness" = "codex" ]; then
                 export CODEX_CONTINUE_THREAD_ID="$resume_thread_id"
             fi
             echo "harness transcript restored for $atrium_harness resume target $resume_thread_id" >&2

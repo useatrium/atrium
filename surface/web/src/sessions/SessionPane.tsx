@@ -2017,7 +2017,7 @@ export function SessionPane({
         </div>
       )}
 
-      {session.providerAuthRequired && (!displayTerminal || session.providerAuthRequired.provider === 'github') && (
+      {session.providerAuthRequired && (
         <ProviderAuthBanner
           required={session.providerAuthRequired}
           isOwner={session.providerAuthRequired.userId === me.id}

@@ -3403,7 +3403,7 @@ impl SessionRuntime {
             for (name, value) in environment {
                 spec = spec.env(name.clone(), value.clone());
             }
-            spec = apply_resume_thread_env(spec, harness_type, resume_thread_id);
+            spec = apply_resume_thread_env(spec, resume_thread_id);
             if let Some(principal) = iron_control_principal {
                 spec.iron_control_principal = Some(principal.to_owned());
             }
@@ -6994,20 +6994,17 @@ fn append_spec_env_csv(spec: &mut SandboxSpec, name: &str, values: &str) {
     upsert_spec_env(spec, name, merged);
 }
 
-fn apply_resume_thread_env(
-    mut spec: SandboxSpec,
-    harness_type: &HarnessType,
-    resume_thread_id: Option<&str>,
-) -> SandboxSpec {
+fn apply_resume_thread_env(mut spec: SandboxSpec, resume_thread_id: Option<&str>) -> SandboxSpec {
     let Some(resume_thread_id) = resume_thread_id.map(str::trim).filter(|id| !id.is_empty()) else {
         return spec;
     };
     spec = spec
         .env("CENTAUR_HARNESS_TRANSCRIPT_RESTORE", "1")
         .env("CENTAUR_RESUME_THREAD_ID", resume_thread_id);
-    if harness_type == &HarnessType::Codex {
-        spec = spec.env("CODEX_CONTINUE_THREAD_ID", resume_thread_id);
-    }
+    // Codex may resume only after entrypoint.sh has actually restored the
+    // matching rollout. Injecting CODEX_CONTINUE_THREAD_ID here made a 404 or
+    // unavailable transcript restore fatal (`no rollout found for thread id`).
+    // The entrypoint exports it after a successful 200 response instead.
     spec
 }
 
@@ -9590,7 +9587,7 @@ mod tests {
     }
 
     #[test]
-    fn codex_resume_env_injects_continue_thread_id_for_resume_target() {
+    fn codex_resume_env_defers_continue_thread_id_until_transcript_restore() {
         let workload = SandboxWorkloadMode::codex_app_server(
             "centaur-agent:latest",
             Vec::new(),
@@ -9600,14 +9597,10 @@ mod tests {
 
         let spec = apply_resume_thread_env(
             workload.spec(&thread_key, &HarnessType::Codex, None),
-            &HarnessType::Codex,
             Some("codex-thread-1"),
         );
 
-        assert_eq!(
-            env_value(&spec, "CODEX_CONTINUE_THREAD_ID"),
-            Some("codex-thread-1")
-        );
+        assert_eq!(env_value(&spec, "CODEX_CONTINUE_THREAD_ID"), None);
         assert_eq!(
             env_value(&spec, "CENTAUR_RESUME_THREAD_ID"),
             Some("codex-thread-1")
@@ -9630,7 +9623,6 @@ mod tests {
 
         let spec = apply_resume_thread_env(
             workload.spec(&thread_key, &HarnessType::ClaudeCode, None),
-            &HarnessType::ClaudeCode,
             Some("claude-thread-1"),
         );
 
