@@ -140,11 +140,16 @@ test('popout renders the lean pane, folds the stream, tracks unseen output, and 
   await expect(page.getByTestId('session-pane-page')).toBeVisible({ timeout: 15_000 });
   await expect(page.getByTestId('user-steer')).toBeVisible({ timeout: 15_000 });
   await expect(page.getByText('Channels', { exact: true })).toHaveCount(0);
-  const fullApp = page.getByRole('link', { name: 'Open in full app' });
-  await expect(fullApp).toHaveAttribute('href', `/s/${sessionId}`);
+  // Full-app escape and watcher count live behind the overflow / details now.
+  await page.getByRole('button', { name: 'Agent actions' }).click();
+  await expect(page.getByRole('button', { name: 'Open in full app' })).toBeVisible();
+  await page.keyboard.press('Escape');
 
-  // Presence over the real WS: this popout counts as a watcher.
-  await expect(page.getByText('1 watching')).toBeVisible({ timeout: 15_000 });
+  // Presence over the real WS: this popout counts as a watcher (details popover).
+  await page.getByRole('button', { name: 'Agent actions' }).click();
+  await page.getByRole('button', { name: 'Session details & scope' }).click();
+  await expect(page.getByTestId('session-details')).toContainText('Watching', { timeout: 15_000 });
+  await page.keyboard.press('Escape');
 
   // The replayed artifact frame is unseen output: strip accent + title ●.
   await expect(page.getByTestId('artifacts-strip')).toBeVisible();
