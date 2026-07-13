@@ -125,13 +125,17 @@ test('focus mode hides agent work and the persisted toggle restores it', async (
   await chip.click();
   await expect(page.getByTestId('tool-card')).toBeVisible();
 
-  const hideWork = page.getByRole('button', { name: 'Hide agent work' });
-  await hideWork.click();
+  // The transcript-view toggle lives behind the header overflow menu now.
+  await page.getByRole('button', { name: 'Agent actions' }).click();
+  await page.getByRole('button', { name: 'Hide agent work' }).click();
+  await page.getByRole('button', { name: 'Agent actions' }).click();
   await page.getByRole('button', { name: 'Show agent work' }).click();
   await page.reload();
 
   await expect(page.getByTestId('tool-card')).toBeVisible({ timeout: 15_000 });
-  await expect(page.getByRole('button', { name: 'Hide agent work' })).toHaveAttribute('aria-pressed', 'true');
+  // Full view persisted: the menu offers to hide the work again.
+  await page.getByRole('button', { name: 'Agent actions' }).click();
+  await expect(page.getByRole('button', { name: 'Hide agent work' })).toBeVisible();
 });
 
 test('transcript turns show a wall-clock timestamp on hover', async ({ page }) => {

@@ -156,10 +156,13 @@ test('focus layout is URL-driven and reload-restored', async ({ page }) => {
 
   await page.goto(`/c/${roomId}/s/${sessionId}`);
   await expect(page.getByRole('heading', { name: title })).toBeVisible();
+  // View controls live behind the header overflow menu now.
+  await page.getByRole('button', { name: 'Agent actions' }).click();
   await page.getByRole('button', { name: 'Expand to focus view' }).click();
 
   await expect(page).toHaveURL(new RegExp(`/c/${roomId}/s/${sessionId}\\?view=focus$`));
   await page.reload();
   await expect(page.getByRole('heading', { name: title })).toBeVisible();
+  await page.getByRole('button', { name: 'Agent actions' }).click();
   await expect(page.getByRole('button', { name: 'Collapse to split view' })).toBeVisible();
 });
