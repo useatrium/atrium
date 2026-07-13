@@ -63,6 +63,12 @@ function isGroupDm(item: ActivityItem): boolean {
   return item.kind === 'dm' && item.channelName.startsWith('gdm:');
 }
 
+// Calls only happen in DMs/GDMs, whose channel names are internal keys — the
+// row title already names the caller, so these kinds never show a channel tag.
+function hideChannelLabel(item: ActivityItem): boolean {
+  return item.kind === 'dm' || item.kind === 'missed_call' || item.kind === 'call_declined';
+}
+
 export function activityItemTitle(item: ActivityItem): string {
   const sessionTitle = item.sessionTitle ?? 'Agent';
   if (item.kind === 'mention') return `${item.actorName ?? 'Someone'} mentioned you`;
@@ -419,7 +425,7 @@ export default function ActivityScreen() {
           unread ? 'Unread' : null,
           title,
           snippet,
-          item.kind !== 'dm' ? `#${item.channelName}` : null,
+          hideChannelLabel(item) ? null : `#${item.channelName}`,
           exactTime,
         ]
           .filter(Boolean)
@@ -468,8 +474,7 @@ export default function ActivityScreen() {
             </Text>
           )}
           <Text style={{ color: colors.textMuted, fontSize: font.xs }} numberOfLines={1}>
-            {/* DM channel names are internal keys; the title already names the sender. */}
-            {item.kind === 'dm' ? time : `#${item.channelName} · ${time}`}
+            {hideChannelLabel(item) ? time : `#${item.channelName} · ${time}`}
           </Text>
         </View>
       </Pressable>

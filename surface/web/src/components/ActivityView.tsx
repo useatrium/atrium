@@ -49,13 +49,19 @@ function titleFor(item: ActivityItem): string {
   return 'Activity';
 }
 
+// DM channel names are internal keys (dm:/gdm:), and calls only happen in
+// DMs/GDMs — the row title already names the other person in all these kinds.
+function hideChannelLabel(item: ActivityItem): boolean {
+  return item.kind === 'dm' || item.kind === 'missed_call' || item.kind === 'call_declined';
+}
+
 function activityAriaLabel(item: ActivityItem, exactTimestamp: string, unread: boolean): string {
   return [
     unread ? 'Unread' : null,
     titleFor(item),
     exactTimestamp ? `created ${exactTimestamp}` : null,
     item.snippet,
-    item.kind !== 'dm' ? `channel ${item.channelName}` : null,
+    hideChannelLabel(item) ? null : `channel ${item.channelName}`,
   ]
     .filter(Boolean)
     .join(', ');
@@ -161,8 +167,7 @@ function ActivityRow({
             <span className="mt-0.5 block truncate text-sm text-fg-secondary">
               <CompactMarkdownText text={item.snippet} />
             </span>
-            {/* DM channel names are internal keys; the title already names the sender. */}
-            {item.kind !== 'dm' && (
+            {!hideChannelLabel(item) && (
               <span className="mt-1 block truncate text-xs text-fg-muted">#{item.channelName}</span>
             )}
           </span>

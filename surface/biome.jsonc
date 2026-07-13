@@ -15,7 +15,9 @@
       "!desktop/release",
       "!**/playwright-report",
       "!**/test-results",
-      "!mobile/.expo"
+      "!mobile/.expo",
+      // Demo-seed content props (fake artifacts uploaded by the seed), not code.
+      "!server/scripts/demo-assets"
     ]
   },
   "formatter": {

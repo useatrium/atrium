@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import {
   CentaurClient,
   type CentaurEventFrame,
@@ -26,6 +27,7 @@ type TailOptions = Parameters<CentaurClient['tailEvents']>[1];
 
 export class DemoCentaurClient extends CentaurClient {
   private readonly demoThreads = new Set<string>();
+  private readonly demoTasks = new Map<string, string>();
 
   constructor(private readonly wrapped: CentaurClient) {
     super({ baseUrl: wrapped.baseUrl, apiKey: wrapped.apiKey });
@@ -53,9 +55,11 @@ export class DemoCentaurClient extends CentaurClient {
   ): Promise<PostMessageResponse> {
     if (this.isDemo(threadKey)) {
       void generation;
-      void parts;
       void meta;
       void opts;
+      // Remember the task text so tailEvents can select a scripted transcript.
+      const text = parts.find((p) => p.type === 'text')?.text;
+      if (typeof text === 'string' && text && !this.demoTasks.has(threadKey)) this.demoTasks.set(threadKey, text);
       return Promise.resolve({ ok: true, demo: true });
     }
     return this.wrapped.postMessage(threadKey, generation, parts, meta, opts);
@@ -109,11 +113,14 @@ export class DemoCentaurClient extends CentaurClient {
 
     const executionId = options.executionId ?? `exec-demo-${Date.now()}`;
     const afterEventId = options.afterEventId ?? 0;
-    for (const frame of demoFrames(threadKey, executionId)) {
+    const frames: DemoScriptFrame[] =
+      scriptedFrames(this.demoTasks.get(threadKey), threadKey, executionId) ?? demoFrames(threadKey, executionId);
+    for (const frame of frames) {
       if (options.signal?.aborted) return;
       if (frame.event_id <= afterEventId) continue;
-      if (!(await delay(480, options.signal))) return;
-      yield frame;
+      const { delay_ms, ...clean } = frame;
+      if (!(await delay(delay_ms ?? 480, options.signal))) return;
+      yield clean;
     }
   }
 
@@ -128,6 +135,39 @@ function isDemoHarness(harness: string): boolean {
 
 function isDemoThread(threadKey: string): boolean {
   return threadKey.startsWith('demo:');
+}
+
+// Optional scripted transcripts: ATRIUM_DEMO_SCRIPT_PATH points at a JSON file
+// mapping a task-substring key to an array of frames (each frame may carry a
+// `delay_ms` pacing hint). Used by demo/staging seeds to stream custom runs.
+type DemoScriptFrame = CentaurEventFrame & { delay_ms?: number };
+
+let scriptCache: Record<string, DemoScriptFrame[]> | null | undefined;
+
+function loadScripts(): Record<string, DemoScriptFrame[]> | null {
+  if (scriptCache !== undefined) return scriptCache;
+  scriptCache = null;
+  const path = process.env.ATRIUM_DEMO_SCRIPT_PATH;
+  if (path) {
+    try {
+      scriptCache = JSON.parse(readFileSync(path, 'utf8')) as Record<string, DemoScriptFrame[]>;
+    } catch (err) {
+      console.warn(`demo scripts unreadable at ${path}: ${(err as Error).message}`);
+    }
+  }
+  return scriptCache;
+}
+
+function scriptedFrames(task: string | undefined, threadKey: string, executionId: string): DemoScriptFrame[] | null {
+  if (!task) return null;
+  const scripts = loadScripts();
+  if (!scripts) return null;
+  const key = Object.keys(scripts).find((k) => task.toLowerCase().includes(k.toLowerCase()));
+  if (!key) return null;
+  const hydrated = JSON.stringify(scripts[key])
+    .replaceAll('__THREAD_KEY__', threadKey)
+    .replaceAll('__EXECUTION_ID__', executionId);
+  return JSON.parse(hydrated) as DemoScriptFrame[];
 }
 
 function demoFrames(threadKey: string, executionId: string): CentaurEventFrame[] {

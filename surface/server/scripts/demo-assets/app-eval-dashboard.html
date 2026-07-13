@@ -1,0 +1,125 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Eval dashboard — v0.12 → v0.13</title>
+<style>
+  :root {
+    --surface: #fcfcfb; --plane: #f9f9f7; --ink: #0b0b0b; --ink-2: #52514e;
+    --muted: #898781; --grid: #e1e0d9; --baseline: #c3c2b7;
+    --s1: #2a78d6; --good: #006300; --bad: #d03b3b;
+    --ring: rgba(11,11,11,0.10);
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--plane); color: var(--ink);
+         font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 20px; }
+  header h1 { font-size: 20px; margin: 0; font-weight: 650; }
+  header p { margin: 2px 0 16px; color: var(--ink-2); font-size: 13px; }
+  .tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 14px; }
+  .tile { background: var(--surface); border: 1px solid var(--ring); border-radius: 10px; padding: 14px 16px; }
+  .tile .k { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+  .tile .v { font-size: 26px; font-weight: 650; }
+  .tile .d { font-size: 12px; margin-top: 4px; }
+  .up { color: var(--good); } .down { color: var(--bad); }
+  .card { background: var(--surface); border: 1px solid var(--ring); border-radius: 10px; padding: 16px; margin-bottom: 14px; }
+  .card h2 { font-size: 14px; margin: 0 0 2px; font-weight: 600; }
+  .card .sub { font-size: 12px; color: var(--muted); margin: 0 0 10px; }
+  svg text { font-family: inherit; }
+  .tick { font-size: 11px; fill: var(--muted); }
+  .dlabel { font-size: 12px; font-weight: 600; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; color: var(--muted); font-weight: 500; font-size: 12px;
+       border-bottom: 1px solid var(--grid); padding: 6px 8px; }
+  td { padding: 7px 8px; border-bottom: 1px solid var(--grid); font-variant-numeric: tabular-nums; }
+  tr:last-child td { border-bottom: none; }
+  .legend { display: flex; gap: 16px; font-size: 12px; color: var(--ink-2); margin-top: 6px; }
+  .sw { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Extraction eval — v0.12 → v0.13</h1>
+    <p>full eval suite · 3 splits · 11,304 pages · run 2026-07-11T13:58Z</p>
+  </header>
+
+  <div class="tiles">
+    <div class="tile">
+      <div class="k">Overall F1</div>
+      <div class="v">87.7</div>
+      <div class="d down">−0.4 vs v0.12</div>
+    </div>
+    <div class="tile">
+      <div class="k">scanned-docs F1</div>
+      <div class="v">81.6</div>
+      <div class="d down">−3.1 vs v0.12</div>
+    </div>
+    <div class="tile">
+      <div class="k">Worst bucket</div>
+      <div class="v">&gt;15° rotation</div>
+      <div class="d down">−6.5 vs v0.12</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>scanned-docs F1 by page rotation</h2>
+    <p class="sub">the regression is isolated to pages the new deskew step over-crops</p>
+    <svg id="chart" width="100%" height="240" viewBox="0 0 900 240"></svg>
+    <div class="legend">
+      <span><span class="sw" style="background:var(--s1)"></span>v0.13</span>
+      <span><span class="sw" style="background:#898781"></span>v0.12</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>All splits</h2>
+    <p class="sub">page-weighted F1, higher is better</p>
+    <table>
+      <thead><tr><th>split</th><th>pages</th><th>v0.12</th><th>v0.13</th><th>Δ</th></tr></thead>
+      <tbody>
+        <tr><td>forms</td><td>3,908</td><td>91.4</td><td>92.6</td><td class="up">+1.2</td></tr>
+        <tr><td>tables</td><td>2,584</td><td>88.2</td><td>89.0</td><td class="up">+0.8</td></tr>
+        <tr><td>scanned-docs</td><td>4,812</td><td>84.7</td><td>81.6</td><td class="down">−3.1</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+const NS = 'http://www.w3.org/2000/svg';
+const svg = document.getElementById('chart');
+function el(tag, attrs, text) {
+  const n = document.createElementNS(NS, tag);
+  for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+  if (text != null) n.textContent = text;
+  svg.appendChild(n);
+  return n;
+}
+const W = 900, H = 240, L = 40, R = 70, T = 12, B = 30;
+const pw = W - L - R, ph = H - T - B;
+const cats = ['0–2°', '2–5°', '5–10°', '10–15°', '>15°'];
+const v12 = [88.4, 87.1, 85.2, 83.6, 81.9];
+const v13 = [89.6, 88.3, 82.1, 77.8, 75.4];
+const ymin = 72, ymax = 92;
+const x = (i) => L + (i + 0.5) * (pw / cats.length);
+const y = (v) => T + ph - ((v - ymin) / (ymax - ymin)) * ph;
+for (const g of [75, 80, 85, 90]) {
+  el('line', { x1: L, x2: W - R, y1: y(g), y2: y(g), stroke: '#e1e0d9', 'stroke-width': 1 });
+  el('text', { x: L - 8, y: y(g) + 4, 'text-anchor': 'end', class: 'tick' }, g);
+}
+cats.forEach((c, i) => el('text', { x: x(i), y: H - 8, 'text-anchor': 'middle', class: 'tick' }, c));
+function series(vals, color, w) {
+  let d = `M ${x(0)} ${y(vals[0])}`;
+  for (let i = 1; i < vals.length; i++) d += ` L ${x(i)} ${y(vals[i])}`;
+  el('path', { d, fill: 'none', stroke: color, 'stroke-width': w, 'stroke-linejoin': 'round' });
+  vals.forEach((v, i) => el('circle', { cx: x(i), cy: y(v), r: 4, fill: color, stroke: '#fcfcfb', 'stroke-width': 2 }));
+}
+series(v12, '#898781', 2);
+series(v13, '#2a78d6', 2.5);
+el('text', { x: x(4) + 12, y: y(81.9) + 4, class: 'dlabel', fill: '#52514e' }, 'v0.12');
+el('text', { x: x(4) + 12, y: y(75.4) + 4, class: 'dlabel', fill: '#2a78d6' }, 'v0.13');
+</script>
+</body>
+</html>
