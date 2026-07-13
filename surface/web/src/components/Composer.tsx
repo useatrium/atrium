@@ -778,7 +778,11 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           </div>
         )}
         {attachmentNotice && <div className="mb-2 px-1 text-xs font-medium text-danger-text">{attachmentNotice}</div>}
-        <div className="flex items-end gap-2">
+        {/* flex-wrap + a real min-width on the textarea is the contract that keeps the
+            pill from starving the input: in a narrow frame (a dragged-in thread pane)
+            the textarea drops to its own line under the pill instead of being squeezed
+            to zero width. A flex child with flex-basis:0 will happily shrink to nothing. */}
+        <div className="flex flex-wrap items-end gap-2">
           {allowAttachments && !disabled && (
             <>
               <Tooltip content="Attach a file">
@@ -826,18 +830,28 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                 type="button"
                 data-testid="composer-audience-pill"
                 aria-pressed={agentAudience}
+                // Named explicitly, not by its own text: the chat label is literally
+                // "#channel", which would give this button the same accessible name as
+                // the channel's sidebar button.
+                aria-label={
+                  agentAudience
+                    ? `Sending to the agent: ${pillAgentLabel}. Switch to the conversation`
+                    : `Sending to people: ${pillChatLabel}. Switch to the agent`
+                }
                 onClick={() => {
                   if (agentAudience) leaveAgentAudience();
                   else setAgentAudience(true);
                 }}
-                className={`inline-flex min-w-0 max-w-56 shrink items-center gap-1 self-center whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-semibold transition-colors [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:px-3 ${
+                className={`inline-flex min-w-0 max-w-[45%] shrink basis-auto items-center gap-1 self-center whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-semibold transition-colors [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:px-3 ${
                   agentAudience
                     ? 'bg-accent text-on-accent hover:bg-accent-hover'
                     : 'border border-edge-strong bg-surface-overlay text-fg-secondary hover:bg-surface-raised hover:text-fg'
                 }`}
               >
                 <span aria-hidden>{agentAudience ? '⚡' : '💬'}</span>
-                <span className="truncate">{agentAudience ? pillAgentLabel : pillChatLabel}</span>
+                <span aria-hidden className="truncate">
+                  {agentAudience ? pillAgentLabel : pillChatLabel}
+                </span>
               </button>
             </Tooltip>
           )}
@@ -849,7 +863,14 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                 value={text}
                 disabled={disabled}
                 placeholder={
-                  disabled ? (disabledHint ?? placeholder) : agentAudience ? 'Describe the task…' : placeholder
+                  disabled
+                    ? (disabledHint ?? placeholder)
+                    : // The pane supplies its own audience-aware placeholder ("Steer the
+                      // agent…" / "Reply in the thread…"); only the composers that own
+                      // agent mode internally get the generic task prompt.
+                      agentAudience && agentModeContext
+                      ? 'Describe the task…'
+                      : placeholder
                 }
                 aria-label="Message input"
                 aria-expanded={mentions.open}
@@ -869,6 +890,12 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                   if (entering) {
                     setAgentAudience(true);
                     value = summon?.task ?? '';
+                    e.target.value = value;
+                    mentions.onValueChange(value, value.length);
+                  } else if ((entering || agentAudience) && text === '' && value !== value.trimStart()) {
+                    // Typing "!!" swallows the sigil and empties the input, so the space
+                    // in "!! task" lands as a leading space on an empty agent draft.
+                    value = value.trimStart();
                     e.target.value = value;
                     mentions.onValueChange(value, value.length);
                   } else {
@@ -898,7 +925,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                     addFiles(e.clipboardData.files);
                   }
                 }}
-                className="max-h-40 flex-1 resize-none bg-transparent text-sm leading-relaxed text-fg placeholder-fg-muted outline-none disabled:cursor-not-allowed disabled:placeholder-fg-faint"
+                className="max-h-40 min-w-40 flex-1 resize-none bg-transparent text-sm leading-relaxed text-fg placeholder-fg-muted outline-none disabled:cursor-not-allowed disabled:placeholder-fg-faint"
               />
               <Tooltip content={sendTooltip} shortcut={SHORTCUTS.sendMessage.keys}>
                 <button

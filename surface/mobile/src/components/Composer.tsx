@@ -1193,23 +1193,23 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             />
           </Pressable>
         )}
+        {/* The pill sits inside the input frame but on its own line: a phone frame is
+            never wide enough to share a row with the text without starving it (three
+            44px buttons already eat the width), and the label carries a session title. */}
         <View
           style={{
-            alignItems: 'flex-end',
+            alignItems: 'flex-start',
             backgroundColor: colors.bgInput,
             borderColor: agentMode ? colors.accent : colors.border,
             borderRadius: radius.lg,
             borderWidth: 1,
             flex: 1,
-            flexDirection: 'row',
-            gap: space.xs,
-            paddingLeft: space.xs,
+            flexDirection: 'column',
+            gap: 2,
+            paddingHorizontal: space.xs,
             paddingVertical: 4,
           }}
         >
-          {/* One audience grammar, every composer: a persistent pill inside the
-              input frame that names who the message is for. Tap flips it; !!
-              flips it to the agent. There is no other door. */}
           {audienceAvailable ? (
             <Pressable
               testID="composer-audience-pill"
@@ -1224,9 +1224,12 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                 if (agentMode) leaveAgentMode();
                 else enterAgentMode();
               }}
-              hitSlop={6}
+              // 32px tall + 8px of slop on every side clears the 44px touch target
+              // without making the frame two thumbs high.
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
               style={({ pressed }) => ({
                 alignItems: 'center',
+                alignSelf: 'flex-start',
                 backgroundColor: agentMode ? colors.accent : pressed ? colors.bgPressed : colors.bgElevated,
                 borderColor: agentMode ? colors.accent : colors.border,
                 borderRadius: radius.lg,
@@ -1234,8 +1237,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                 flexDirection: 'row',
                 flexShrink: 1,
                 justifyContent: 'center',
-                maxWidth: 168,
-                minHeight: 40,
+                maxWidth: '100%',
+                minHeight: 32,
                 opacity: pressed && agentMode ? 0.85 : 1,
                 paddingHorizontal: space.sm,
               })}
@@ -1264,7 +1267,11 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               // truth for the task-bearing form.
               const summon = parseSummonSigil(v);
               const enteredAgentMode = !editing && !agentMode && (summon != null || v === '!!' || v.startsWith('!! '));
-              const next = enteredAgentMode ? (summon?.task ?? v.slice(2).replace(/^\s/, '')) : v;
+              const nextAgentModeNow = enteredAgentMode || agentMode;
+              const swallowed = enteredAgentMode ? (summon?.task ?? v.slice(2).replace(/^\s/, '')) : v;
+              // Typing "!!" swallows the sigil and empties the input, so the space in
+              // "!! task" would otherwise land as a leading space on an empty draft.
+              const next = !editing && nextAgentModeNow && text === '' ? swallowed.replace(/^\s+/, '') : swallowed;
               if (enteredAgentMode) setAgentMode(true);
               if (editing) editDirtyRef.current = true;
               setMentionRanges((current) => {
@@ -1275,8 +1282,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               setText(next);
               // The draft carries its audience from the first keystroke, so a
               // reload (or another device) restores it as an agent draft.
-              const nextAgentMode = enteredAgentMode || agentMode;
-              const nextIntent = !editing && next.trim().length > 0 && (nextAgentMode || draftAgentIntent);
+              const nextIntent = !editing && next.trim().length > 0 && (nextAgentModeNow || draftAgentIntent);
               if (!editing) setDraftAgentIntent(nextIntent);
               if (!editing && draftKey) {
                 onDraftTouched?.(draftKey);
@@ -1290,13 +1296,15 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             placeholderTextColor={colors.textFaint}
             multiline
             style={{
-              flex: 1,
+              // width (not flex) — in the frame's column layout, flex:1 would fight the
+              // pill for vertical space instead of filling the line.
+              width: '100%',
               minHeight: 38,
               maxHeight: 120,
               backgroundColor: 'transparent',
               color: colors.text,
               fontSize: font.md,
-              paddingHorizontal: space.sm,
+              paddingHorizontal: space.xs,
               paddingTop: 9,
               paddingBottom: 9,
             }}
