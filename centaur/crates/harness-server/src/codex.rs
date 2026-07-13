@@ -125,6 +125,14 @@ pub(crate) fn run_codex_blocks_server(config: CodexHarnessServer) -> Result<()> 
     let mut stdout = io::stdout().lock();
     let mut request_id = 1_i64;
     let mut thread_id: Option<String> = None;
+    // Keep the last real Codex thread as the restart target. Reading the
+    // environment on every child restart can resurrect a stale startup value
+    // after this process has already fallen back to a fresh thread.
+    let mut resume_thread_id = env::var("CODEX_CONTINUE_THREAD_ID")
+        .or_else(|_| env::var("AMP_CONTINUE_THREAD_ID"))
+        .ok()
+        .map(|id| id.trim().to_owned())
+        .filter(|id| !id.is_empty());
     // The provider the thread was started/resumed on. codex pins the provider at
     // thread start (the app-server protocol has no per-turn provider), so this
     // lets a later conflicting override be surfaced rather than silently dropped.
@@ -194,6 +202,7 @@ pub(crate) fn run_codex_blocks_server(config: CodexHarnessServer) -> Result<()> 
                     stdout: &mut stdout,
                     request_id: &mut request_id,
                     thread_id: &mut thread_id,
+                    resume_thread_id: &mut resume_thread_id,
                     thread_provider: &mut thread_provider,
                     input_rx: &input_rx,
                     blocks_state: &mut blocks_state,
@@ -286,6 +295,7 @@ struct CodexBlocksTurn<'a, W: Write> {
     stdout: &'a mut W,
     request_id: &'a mut i64,
     thread_id: &'a mut Option<String>,
+    resume_thread_id: &'a mut Option<String>,
     thread_provider: &'a mut Option<String>,
     input_rx: &'a Receiver<io::Result<String>>,
     blocks_state: &'a mut BlocksState,
@@ -316,13 +326,16 @@ fn run_codex_user_turn<W: Write>(
     turn: CodexTurnInput,
 ) -> Result<()> {
     if ctx.thread_id.is_none() {
-        *ctx.thread_id = Some(start_or_resume_thread(
+        let started_thread_id = start_or_resume_thread(
             ctx.codex,
             ctx.stdout,
             ctx.request_id,
+            ctx.resume_thread_id.as_deref(),
             &turn.model_provider,
             turn.traceparent.as_deref(),
-        )?);
+        )?;
+        *ctx.resume_thread_id = Some(started_thread_id.clone());
+        *ctx.thread_id = Some(started_thread_id);
         *ctx.thread_provider = Some(turn.model_provider.clone());
     } else if let (Some(requested), Some(pinned)) = (
         turn.requested_provider.as_deref(),
@@ -421,14 +434,13 @@ fn start_or_resume_thread<W: Write>(
     codex: &mut CodexJsonRpcChild,
     stdout: &mut W,
     request_id: &mut i64,
+    resume_thread_id: Option<&str>,
     model_provider: &str,
     traceparent: Option<&str>,
 ) -> Result<String> {
     let cwd = env::current_dir()?.display().to_string();
-    let resume = env::var("CODEX_CONTINUE_THREAD_ID")
-        .or_else(|_| env::var("AMP_CONTINUE_THREAD_ID"))
-        .unwrap_or_default();
-    let (method, params) = if resume.trim().is_empty() {
+    let resume = resume_thread_id.unwrap_or_default().trim();
+    let (mut method, params) = if resume.is_empty() {
         (
             "thread/start",
             json!({
@@ -456,7 +468,35 @@ fn start_or_resume_thread<W: Write>(
 
     let id = next_request_id(request_id);
     codex.send_request(id, method, params, traceparent)?;
-    let result = codex.read_response_or_forward(id, method, startup_rpc_timeout(), stdout)?;
+    let result = match codex.read_response_or_forward(id, method, startup_rpc_timeout(), stdout) {
+        Ok(result) => result,
+        Err(error)
+            if method == "thread/resume"
+                && matches!(
+                    &error,
+                    HarnessServerError::Protocol(message)
+                        if message.contains("no rollout found for thread id")
+                ) =>
+        {
+            eprintln!("Codex rollout {resume} is unavailable; starting a fresh thread instead");
+            method = "thread/start";
+            let id = next_request_id(request_id);
+            codex.send_request(
+                id,
+                method,
+                json!({
+                    "cwd": cwd,
+                    "approvalPolicy": "never",
+                    "approvalsReviewer": "user",
+                    "sandbox": "danger-full-access",
+                    "modelProvider": model_provider,
+                }),
+                traceparent,
+            )?;
+            codex.read_response_or_forward(id, method, startup_rpc_timeout(), stdout)?
+        }
+        Err(error) => return Err(error),
+    };
     result
         .pointer("/thread/id")
         .and_then(Value::as_str)
@@ -497,7 +537,11 @@ impl CodexJsonRpcChild {
             .take()
             .ok_or(HarnessServerError::CodexStderrUnavailable)?;
         thread::spawn(move || {
-            let mut parent_stderr = io::stderr().lock();
+            // Do not hold the process stderr lock for the entire Codex child
+            // lifetime. The main harness thread also emits diagnostics while
+            // the child is live (including resume fallback); a lifetime lock
+            // makes those writes deadlock before the next RPC is sent.
+            let mut parent_stderr = io::stderr();
             let _ = io::copy(&mut stderr, &mut parent_stderr);
         });
 
