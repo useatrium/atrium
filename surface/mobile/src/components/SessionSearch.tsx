@@ -204,7 +204,7 @@ export function SessionSearch() {
             paddingHorizontal: space.lg,
             paddingTop: space.lg,
             paddingBottom: space.sm,
-            gap: 2,
+            gap: space.xxs,
           }}
         >
           <Text style={{ color: colors.text, fontSize: font.md, fontWeight: '800' }} numberOfLines={1}>
@@ -241,9 +241,9 @@ export function SessionSearch() {
             style={{
               borderWidth: 1,
               borderColor: colors.border,
-              borderRadius: 999,
+              borderRadius: radius.pill,
               backgroundColor: colors.bgElevated,
-              paddingHorizontal: 8,
+              paddingHorizontal: space.sm,
               paddingVertical: 3,
             }}
           >

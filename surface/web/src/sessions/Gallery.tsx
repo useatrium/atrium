@@ -776,7 +776,7 @@ export function Gallery({
         />
       )}
       {notice && (
-        <div className="pointer-events-none absolute bottom-4 left-1/2 z-[75] -translate-x-1/2 rounded-md border border-accent-border/60 bg-surface-overlay px-3 py-2 text-xs font-medium text-accent-text-strong shadow-lg">
+        <div className="pointer-events-none absolute bottom-4 left-1/2 z-toast -translate-x-1/2 rounded-md border border-accent-border/60 bg-surface-overlay px-3 py-2 text-xs font-medium text-accent-text-strong shadow-lg">
           {notice}
         </div>
       )}

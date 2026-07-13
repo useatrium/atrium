@@ -142,7 +142,7 @@ export default function Search() {
                   backgroundColor: pressed ? colors.borderSoft : 'transparent',
                 })}
               >
-                <View style={{ flexDirection: 'row', gap: 8, marginBottom: 2 }}>
+                <View style={{ flexDirection: 'row', gap: space.sm, marginBottom: space.xxs }}>
                   <Text style={{ color: colors.accent, fontSize: font.xs, fontWeight: '700' }}>#{r.channelName}</Text>
                   <Text style={{ color: colors.textMuted, fontSize: font.xs }}>
                     {r.event.author?.displayName ?? 'Unknown'}

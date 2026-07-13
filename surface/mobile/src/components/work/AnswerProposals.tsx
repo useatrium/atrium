@@ -98,7 +98,7 @@ function AnswerProposalRow({
 
       <View style={{ gap: 6 }}>
         {prompts.map((prompt) => (
-          <View key={prompt.id} style={{ gap: 2 }}>
+          <View key={prompt.id} style={{ gap: space.xxs }}>
             <Text style={{ color: colors.textMuted, fontSize: font.xs, fontWeight: '800' }}>{prompt.header}</Text>
             <Text style={{ color: colors.text, fontSize: font.sm, lineHeight: 19 }}>
               {formatAnswers(proposal.answers[prompt.id]?.answers)}

@@ -38,7 +38,7 @@ export function ConnectionBanner({ status }: { status: 'connecting' | 'open' | '
         borderBottomColor: colors.warningBorder,
         borderBottomWidth: 1,
         minHeight: 24,
-        paddingVertical: 4,
+        paddingVertical: space.xs,
         alignItems: 'center',
       }}
     >

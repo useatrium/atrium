@@ -27,7 +27,7 @@ export function TurnRail({ turns, onJump }: { turns: { id: string; text: string 
     onJump(id);
   };
   return (
-    <div data-testid="turn-rail" className="group absolute right-1.5 top-1/2 z-10 -translate-y-1/2">
+    <div data-testid="turn-rail" className="group absolute right-1.5 top-1/2 z-raised -translate-y-1/2">
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}

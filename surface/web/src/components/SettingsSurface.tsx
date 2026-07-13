@@ -187,7 +187,7 @@ function SettingsControls({
       <div className="flex min-h-full flex-col md:flex-row">
         <nav
           aria-label="Settings sections"
-          className="sticky top-0 z-10 shrink-0 border-b border-edge bg-surface px-3 py-2 md:w-44 md:self-start md:border-b-0 md:border-r md:px-2 md:py-4"
+          className="sticky top-0 z-sticky shrink-0 border-b border-edge bg-surface px-3 py-2 md:w-44 md:self-start md:border-b-0 md:border-r md:px-2 md:py-4"
         >
           <div className="flex gap-1 overflow-x-auto [scrollbar-width:none] md:flex-col md:overflow-visible [&::-webkit-scrollbar]:hidden">
             {SETTINGS_SECTIONS.map((section) => {

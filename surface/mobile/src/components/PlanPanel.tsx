@@ -120,7 +120,7 @@ function TodoStatusIcon({ status }: { status: TodoEntry['status'] }) {
       <View
         aria-hidden
         style={{
-          marginTop: 2,
+          marginTop: space.xxs,
           width: 15,
           height: 15,
           borderRadius: 8,
@@ -137,10 +137,10 @@ function TodoStatusIcon({ status }: { status: TodoEntry['status'] }) {
     <View
       aria-hidden
       style={{
-        marginTop: 4,
+        marginTop: space.xs,
         width: 12,
         height: 12,
-        borderRadius: 6,
+        borderRadius: radius.sm,
         borderWidth: 1,
         borderColor: status === 'in_progress' ? colors.accent : colors.textFaint,
         backgroundColor: status === 'in_progress' ? colors.accent : 'transparent',

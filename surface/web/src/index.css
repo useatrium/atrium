@@ -52,6 +52,15 @@
   --text-2xs--line-height: 1rem;
   --text-3xs: 0.625rem;
   --text-3xs--line-height: 0.875rem;
+
+  /* === layering additions === */
+  --z-index-raised: 10;
+  --z-index-sticky: 20;
+  --z-index-dropdown: 30;
+  --z-index-overlay: 40;
+  --z-index-toast: 50;
+  --z-index-tooltip: 60;
+  --z-index-max: 70;
 }
 
 :root {

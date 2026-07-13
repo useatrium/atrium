@@ -31,6 +31,7 @@ const baseFont = {
   md: 15,
   lg: 17,
   xl: 20,
+  display: 38,
 } as const;
 
 export type FontScale = Record<keyof typeof baseFont, number>;
@@ -42,12 +43,25 @@ export const space = {
   md: 12,
   lg: 16,
   xl: 24,
+  xxs: 2,
 } as const;
 
 export const radius = {
   sm: 6,
   md: 10,
   lg: 14,
+  xl: 20,
+  pill: 999,
+} as const;
+
+export const shadows = {
+  overlay: {
+    shadowColor: '#000000',
+    shadowOpacity: 0.2,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 5 },
+    elevation: 5,
+  },
 } as const;
 
 interface ThemeContextValue {

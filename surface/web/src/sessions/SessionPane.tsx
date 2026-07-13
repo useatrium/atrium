@@ -1537,7 +1537,7 @@ export function SessionPane({
           data-testid="pane-resize-handle"
           onPointerDown={startResize}
           onDoubleClick={resetWidth}
-          className={`absolute inset-y-0 -left-0.5 z-20 w-1.5 cursor-col-resize touch-none transition-colors hover:bg-accent/50 ${
+          className={`absolute inset-y-0 -left-0.5 z-raised w-1.5 cursor-col-resize touch-none transition-colors hover:bg-accent/50 ${
             resizing ? 'bg-accent/50' : ''
           }`}
         />
@@ -2060,7 +2060,7 @@ export function SessionPane({
       </div>
 
       {markupNotice && (
-        <div className="pointer-events-none absolute bottom-24 left-1/2 z-[75] -translate-x-1/2 rounded-md border border-accent-border/60 bg-surface-overlay px-3 py-2 text-xs font-medium text-accent-text-strong shadow-lg">
+        <div className="pointer-events-none absolute bottom-24 left-1/2 z-toast -translate-x-1/2 rounded-md border border-accent-border/60 bg-surface-overlay px-3 py-2 text-xs font-medium text-accent-text-strong shadow-lg">
           {markupNotice}
         </div>
       )}
@@ -2590,7 +2590,7 @@ export function AnnotatedTranscriptRow({
       >
         {children}
       </div>
-      <div className="pointer-events-none absolute -top-1 right-0 z-10 flex items-start gap-1">
+      <div className="pointer-events-none absolute -top-1 right-0 z-raised flex items-start gap-1">
         <div className="pointer-events-auto">
           <EntryReferencesChip summary={references} />
         </div>

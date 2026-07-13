@@ -6,7 +6,7 @@ import { useRef, type ReactNode } from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import { Modal, Pressable, ScrollView, Text, View } from 'react-native';
 import { useModalAccessibilityFocus } from '../../lib/accessibility';
-import { font, space, useTheme } from '../../lib/theme';
+import { font, radius, space, useTheme } from '../../lib/theme';
 
 export interface WorkSurfaceTab {
   key: string;
@@ -99,7 +99,7 @@ export function MobileWorkSheet({
               height: 48,
               alignItems: 'center',
               justifyContent: 'center',
-              borderRadius: 6,
+              borderRadius: radius.sm,
             }}
           >
             <Ionicons name="close" size={22} color={colors.textSecondary} />

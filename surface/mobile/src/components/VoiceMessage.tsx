@@ -73,7 +73,7 @@ export function VoiceMessage({ voice, api, fileUrl, fileHeaders }: VoiceMessageP
   return (
     <View
       style={{
-        marginTop: 4,
+        marginTop: space.xs,
         gap: 6,
         alignSelf: 'flex-start',
         maxWidth: 300,
@@ -110,11 +110,11 @@ export function VoiceMessage({ voice, api, fileUrl, fileHeaders }: VoiceMessageP
             name={status.playing ? 'pause' : 'play'}
             size={18}
             color={colors.onAccent}
-            style={status.playing ? undefined : { marginLeft: 2 }}
+            style={status.playing ? undefined : { marginLeft: space.xxs }}
           />
         </Pressable>
         <View style={{ flex: 1, minWidth: 150, gap: 5 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2, height: 28 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.xxs, height: 28 }}>
             {bars.map((bar, i) => {
               const active = bars.length <= 1 ? progress > 0 : i / (bars.length - 1) <= progress;
               return (

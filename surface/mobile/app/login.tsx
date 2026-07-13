@@ -115,7 +115,7 @@ export default function Login() {
     color: colors.text,
     fontSize: font.md,
     paddingHorizontal: space.md,
-    paddingVertical: 12,
+    paddingVertical: space.md,
   } as const;
 
   const revealServerField = () => {
@@ -187,7 +187,7 @@ export default function Login() {
         autoCorrect={false}
         keyboardType="url"
       />
-      <Text style={{ color: colors.textMuted, fontSize: font.xs, marginTop: 4 }}>
+      <Text style={{ color: colors.textMuted, fontSize: font.xs, marginTop: space.xs }}>
         Server address, e.g. {SERVER_ADDRESS_EXAMPLE}. On a real device, use your computer's LAN IP.
       </Text>
     </View>
@@ -204,9 +204,9 @@ export default function Login() {
             <Text
               style={{
                 color: colors.text,
-                fontSize: 38,
+                fontSize: font.display,
                 fontWeight: '800',
-                marginBottom: 8,
+                marginBottom: space.sm,
               }}
             >
               Atrium

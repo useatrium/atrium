@@ -31,7 +31,7 @@ export function MenuContent({
         sideOffset={sideOffset}
         align={align}
         collisionPadding={8}
-        className={`z-[80] min-w-[10rem] rounded-md border border-edge-strong bg-surface-overlay p-1 text-fg-body shadow-lg ${className ?? ''}`}
+        className={`z-dropdown min-w-[10rem] rounded-md border border-edge-strong bg-surface-overlay p-1 text-fg-body shadow-lg ${className ?? ''}`}
         {...props}
       />
     </DropdownMenu.Portal>

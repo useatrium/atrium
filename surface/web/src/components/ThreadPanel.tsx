@@ -140,7 +140,7 @@ export function ThreadPanel({
         data-testid="thread-resize-handle"
         onPointerDown={startResize}
         onDoubleClick={resetWidth}
-        className={`absolute inset-y-0 -left-0.5 z-20 w-1.5 cursor-col-resize touch-none transition-colors hover:bg-accent/50 max-md:hidden ${
+        className={`absolute inset-y-0 -left-0.5 z-raised w-1.5 cursor-col-resize touch-none transition-colors hover:bg-accent/50 max-md:hidden ${
           resizing ? 'bg-accent/50' : ''
         }`}
       />

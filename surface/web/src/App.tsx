@@ -229,7 +229,7 @@ export function App() {
     <TooltipProvider>
       <a
         href="#main-content"
-        className="sr-only focus:not-sr-only focus:absolute focus:left-3 focus:top-3 focus:z-[200] focus:rounded-md focus:border focus:border-edge-strong focus:bg-surface-overlay focus:px-3 focus:py-2 focus:text-sm focus:font-medium focus:text-fg"
+        className="sr-only focus:not-sr-only focus:absolute focus:left-3 focus:top-3 focus:z-max focus:rounded-md focus:border focus:border-edge-strong focus:bg-surface-overlay focus:px-3 focus:py-2 focus:text-sm focus:font-medium focus:text-fg"
       >
         Skip to main content
       </a>

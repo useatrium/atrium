@@ -54,7 +54,7 @@ export function GitHubConnectionDialog({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-surface/60 p-4">
+    <div className="fixed inset-0 z-overlay flex items-start justify-center overflow-y-auto bg-surface/60 p-4">
       <div
         ref={containerRef}
         role="dialog"

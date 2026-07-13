@@ -201,7 +201,7 @@ function ReactionChips({
   const selectedReaction = selectedEmoji ? reactions.find((r) => r.emoji === selectedEmoji) : undefined;
   return (
     <>
-      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 4 }}>
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: space.xs }}>
         {reactions.map((r) => {
           const mine = r.userIds.includes(meId);
           const countLabel = r.userIds.length === 1 ? '1 reaction' : `${r.userIds.length} reactions`;
@@ -229,11 +229,11 @@ function ReactionChips({
               style={{
                 flexDirection: 'row',
                 alignItems: 'center',
-                gap: 4,
+                gap: space.xs,
                 minHeight: 44,
-                paddingHorizontal: 12,
+                paddingHorizontal: space.md,
                 paddingVertical: 3,
-                borderRadius: 999,
+                borderRadius: radius.pill,
                 backgroundColor: mine ? colors.accentBg : colors.bgElevated,
                 borderWidth: 1,
                 borderColor: mine ? colors.accent : colors.border,
@@ -395,7 +395,7 @@ function Attachments({
   const { colors } = useTheme();
   if (!message.attachments?.length) return null;
   return (
-    <View style={{ gap: 6, marginTop: 4 }}>
+    <View style={{ gap: 6, marginTop: space.xs }}>
       {message.attachments.map((a, index) => {
         if (a.contentType.startsWith('image/')) {
           const ratio = a.width && a.height ? a.width / a.height : 4 / 3;
@@ -430,7 +430,7 @@ function Attachments({
             style={{
               flexDirection: 'row',
               alignItems: 'center',
-              gap: 8,
+              gap: space.sm,
               padding: space.sm,
               borderRadius: radius.md,
               borderWidth: 1,
@@ -500,8 +500,8 @@ function SessionCard({
         backgroundColor: colors.bgElevated,
         borderRadius: radius.md,
         padding: space.md,
-        gap: 4,
-        marginTop: 2,
+        gap: space.xs,
+        marginTop: space.xxs,
       }}
     >
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
@@ -509,7 +509,7 @@ function SessionCard({
         <Text style={{ fontSize: font.xs, color: colors.textMuted, fontWeight: '700' }}>AGENT</Text>
       </View>
       <Text style={{ color: colors.text, fontSize: font.sm, lineHeight: 20 }}>{session?.title ?? message.text}</Text>
-      <View testID="session-presence-ticker" style={{ gap: 2 }}>
+      <View testID="session-presence-ticker" style={{ gap: space.xxs }}>
         <Text style={{ color: statusColor, fontSize: font.xs, fontWeight: '700' }}>{stateLine}</Text>
         {session?.latestActivity?.summary ? (
           <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: font.xs }}>
@@ -539,7 +539,7 @@ function SessionCard({
 function AgentReplyRow({ message, session }: { message: ChatMessage; session?: Session }) {
   const { colors } = useTheme();
   return (
-    <View testID="agent-reply-row" style={{ gap: 4 }}>
+    <View testID="agent-reply-row" style={{ gap: space.xs }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
         <Text numberOfLines={1} style={{ color: colors.text, flexShrink: 1, fontSize: font.md, fontWeight: '700' }}>
           {session?.title ?? message.author.displayName}
@@ -586,7 +586,7 @@ function SessionEventLine({
         backgroundColor: colors.bgElevated,
         padding: space.sm,
         gap: 6,
-        marginTop: 4,
+        marginTop: space.xs,
       }}
     >
       {message.sessionEventType === 'question_requested' && session != null && (
@@ -1054,9 +1054,9 @@ export const MessageRow = memo(function MessageRow({
             alignSelf: 'flex-start',
             backgroundColor: colors.accentBg,
             borderRadius: radius.sm,
-            marginTop: 4,
+            marginTop: space.xs,
             paddingHorizontal: 6,
-            paddingVertical: 2,
+            paddingVertical: space.xxs,
           }}
         >
           <Text style={{ color: colors.accent, fontSize: font.xs, fontWeight: '700' }}>→ agent</Text>
@@ -1068,9 +1068,9 @@ export const MessageRow = memo(function MessageRow({
             alignSelf: 'flex-start',
             backgroundColor: colors.warningSurface,
             borderRadius: radius.sm,
-            marginTop: 4,
+            marginTop: space.xs,
             paddingHorizontal: 6,
-            paddingVertical: 2,
+            paddingVertical: space.xxs,
           }}
         >
           <Text style={{ color: colors.warning, fontSize: font.xs, fontWeight: '700' }}>Suggested to agent</Text>
@@ -1087,7 +1087,7 @@ export const MessageRow = memo(function MessageRow({
 
   const header =
     !grouped && !isAgentReply ? (
-      <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 8, minWidth: 0 }}>
+      <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: space.sm, minWidth: 0 }}>
         <Text style={{ flexShrink: 1, color: colors.text, fontSize: font.md, fontWeight: '700' }} numberOfLines={1}>
           {m.author.displayName}
         </Text>
@@ -1251,7 +1251,7 @@ export const MessageRow = memo(function MessageRow({
                 accessibilityHint="Opens the parent thread"
                 onPress={() => onOpenThread(m)}
                 hitSlop={10}
-                style={{ marginTop: 4, minHeight: 44, justifyContent: 'center', alignSelf: 'flex-start' }}
+                style={{ marginTop: space.xs, minHeight: 44, justifyContent: 'center', alignSelf: 'flex-start' }}
               >
                 <Text style={{ color: colors.textMuted, fontSize: font.sm, fontWeight: '600' }}>
                   {'↳ replied to a thread'}
@@ -1268,7 +1268,7 @@ export const MessageRow = memo(function MessageRow({
                 hitSlop={10}
                 style={{ minHeight: 44, justifyContent: 'center', alignSelf: 'flex-start' }}
               >
-                <Text style={{ color: colors.danger, fontSize: font.xs, marginTop: 2 }}>
+                <Text style={{ color: colors.danger, fontSize: font.xs, marginTop: space.xxs }}>
                   Failed to send — tap to retry
                 </Text>
               </Pressable>
@@ -1290,7 +1290,7 @@ export const MessageRow = memo(function MessageRow({
                 accessibilityLabel={`${m.replyCount} ${m.replyCount === 1 ? 'reply' : 'replies'}`}
                 onPress={() => onOpenThread(m)}
                 hitSlop={10}
-                style={{ marginTop: 4, minHeight: 44, justifyContent: 'center', alignSelf: 'flex-start' }}
+                style={{ marginTop: space.xs, minHeight: 44, justifyContent: 'center', alignSelf: 'flex-start' }}
               >
                 <Text style={{ color: colors.accent, fontSize: font.sm, fontWeight: '600' }}>
                   {m.replyCount} {m.replyCount === 1 ? 'reply' : 'replies'} →

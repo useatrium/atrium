@@ -328,5 +328,5 @@ export function AppsSurface({
 
   if (embedded) return body;
 
-  return <div className="absolute inset-0 z-10 flex flex-col bg-surface/95 backdrop-blur-sm">{body}</div>;
+  return <div className="absolute inset-0 z-raised flex flex-col bg-surface/95 backdrop-blur-sm">{body}</div>;
 }

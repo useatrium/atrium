@@ -71,7 +71,7 @@ function TodoStatusIcon({ status }: { status: TodoEntry['status'] }) {
     return (
       <span
         aria-hidden="true"
-        className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-success-text text-[10px] font-bold leading-none text-surface"
+        className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-success-text text-3xs font-bold leading-none text-surface"
       >
         ✓
       </span>

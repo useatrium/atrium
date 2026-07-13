@@ -411,14 +411,14 @@ export function Timeline({
         </div>
       </div>
       {!atBottom && (
-        <div className="absolute bottom-4 right-4 z-10 inline-flex max-w-[calc(100%-2rem)] overflow-hidden rounded-full border border-edge-strong bg-surface-raised text-xs font-semibold text-fg-secondary shadow-lg shadow-black/15">
+        <div className="absolute bottom-4 right-4 z-raised inline-flex max-w-[calc(100%-2rem)] overflow-hidden rounded-full border border-edge-strong bg-surface-raised text-xs font-semibold text-fg-secondary shadow-lg shadow-black/15">
           {firstUnreadId != null && unreadCount > 0 && (
             <button
               type="button"
               data-testid="jump-to-unread"
               aria-label={`Jump to ${unreadCount} new ${unreadCount === 1 ? 'message' : 'messages'}`}
               onClick={jumpToUnread}
-              className="inline-flex h-9 items-center whitespace-nowrap border-r border-edge px-3 text-accent-text-strong transition-colors hover:bg-accent-tint/35 focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
+              className="inline-flex h-9 items-center whitespace-nowrap border-r border-edge px-3 text-accent-text-strong transition-colors hover:bg-accent-tint/35 focus-visible:z-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
             >
               {unreadCount} new
             </button>
@@ -433,7 +433,7 @@ export function Timeline({
             }
             title="Jump to latest messages"
             onClick={jumpToLatest}
-            className="inline-flex h-9 min-w-0 items-center gap-1.5 whitespace-nowrap px-3 transition-colors hover:bg-surface-overlay hover:text-fg focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
+            className="inline-flex h-9 min-w-0 items-center gap-1.5 whitespace-nowrap px-3 transition-colors hover:bg-surface-overlay hover:text-fg focus-visible:z-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
           >
             <ChevronDownIcon size={15} aria-hidden className="shrink-0" />
             <span className="truncate">Jump to latest</span>

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type JSX } from 'react';
 import { Platform, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import type { HubFileConflict, HubFileConflictSide, HubFileResolveChoice } from '@atrium/surface-client';
-import { font, space, useTheme, type Colors } from '../lib/theme';
+import { font, radius, space, useTheme, type Colors } from '../lib/theme';
 
 type SideKey = 'left' | 'right';
 
@@ -62,7 +62,7 @@ export function ConflictSurface(props: {
             backgroundColor: colors.dangerSurface,
             borderColor: colors.dangerBorder,
             borderWidth: 1,
-            borderRadius: 6,
+            borderRadius: radius.sm,
             paddingHorizontal: space.sm,
             paddingVertical: space.xs,
           }}
@@ -219,7 +219,7 @@ function SideToggle({
         minHeight: 36,
         alignItems: 'center',
         justifyContent: 'center',
-        borderRadius: 6,
+        borderRadius: radius.sm,
         backgroundColor: selected ? colors.accentBg : 'transparent',
         paddingHorizontal: space.sm,
       }}

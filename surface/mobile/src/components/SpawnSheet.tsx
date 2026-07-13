@@ -65,7 +65,7 @@ function SelectionCard({
           <Text maxFontSizeMultiplier={2} style={{ color: colors.text, fontSize: font.sm, fontWeight: '800' }}>
             {label}
           </Text>
-          <Text maxFontSizeMultiplier={2} style={{ color: colors.textMuted, fontSize: font.xs, marginTop: 2 }}>
+          <Text maxFontSizeMultiplier={2} style={{ color: colors.textMuted, fontSize: font.xs, marginTop: space.xxs }}>
             {hint}
           </Text>
         </View>
@@ -209,7 +209,7 @@ export function SpawnSheet({
                 <Text
                   maxFontSizeMultiplier={2}
                   numberOfLines={1}
-                  style={{ color: colors.textMuted, fontSize: font.xs, marginTop: 2 }}
+                  style={{ color: colors.textMuted, fontSize: font.xs, marginTop: space.xxs }}
                 >
                   {channelLabel}
                 </Text>

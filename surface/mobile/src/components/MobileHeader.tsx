@@ -67,7 +67,7 @@ export function MobileHeader({ title, right }: { title: string; right?: ReactNod
         <Text style={{ flex: 1, color: colors.text, fontSize: font.lg, fontWeight: '800' }} numberOfLines={1}>
           {title}
         </Text>
-        {right ? <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2 }}>{right}</View> : null}
+        {right ? <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.xxs }}>{right}</View> : null}
       </View>
     </View>
   );

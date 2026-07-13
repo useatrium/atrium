@@ -13,7 +13,7 @@ export function Kbd({ keys, className, decorative }: { keys: Chord; className?: 
       {parts.map((part, i) => (
         <kbd
           key={`${part}-${i}`}
-          className="min-w-[1.25rem] rounded border border-edge-strong bg-surface-raised px-1 py-px text-center text-[0.65rem] font-medium leading-[1.1rem] text-fg-muted"
+          className="min-w-[1.25rem] rounded border border-edge-strong bg-surface-raised px-1 py-px text-center text-3xs font-medium leading-[1.1rem] text-fg-muted"
         >
           {part}
         </kbd>

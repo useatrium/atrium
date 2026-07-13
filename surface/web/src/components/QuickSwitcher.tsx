@@ -186,7 +186,7 @@ export function QuickSwitcher({
   return (
     // biome-ignore lint/a11y/useKeyWithClickEvents: backdrop click dismisses the dialog; Escape is handled by useDialog and the input handler.
     <div
-      className="fixed inset-0 z-50 flex items-end bg-surface/70 md:items-start md:justify-center md:p-4"
+      className="fixed inset-0 z-overlay flex items-end bg-surface/70 md:items-start md:justify-center md:p-4"
       onClick={onClose}
       role="dialog"
       aria-modal="true"

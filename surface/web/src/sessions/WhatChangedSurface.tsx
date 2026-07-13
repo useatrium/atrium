@@ -122,7 +122,7 @@ export function WhatChangedSurface({
         <EmptyState title="No changes yet" hint="Files the agent edits or creates will show up here." />
       ) : (
         <>
-          <div className="sticky top-0 z-10 flex shrink-0 gap-1.5 border-b border-edge bg-surface/95 px-3 py-2 backdrop-blur-sm">
+          <div className="sticky top-0 z-sticky flex shrink-0 gap-1.5 border-b border-edge bg-surface/95 px-3 py-2 backdrop-blur-sm">
             <FilterChip active={filter === 'all'} label="All" count={totalCount} onClick={() => setFilter('all')} />
             <FilterChip
               active={filter === 'edited'}
@@ -208,7 +208,7 @@ export function WhatChangedSurface({
       data-testid="what-changed-surface"
       role="dialog"
       aria-label="What changed"
-      className="absolute inset-0 z-10 flex flex-col bg-surface/95 backdrop-blur-sm"
+      className="absolute inset-0 z-raised flex flex-col bg-surface/95 backdrop-blur-sm"
     >
       <header className="flex h-10 shrink-0 items-center justify-between border-b border-edge px-3">
         <h3 className="text-xs font-semibold text-fg">

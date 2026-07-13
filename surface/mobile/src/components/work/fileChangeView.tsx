@@ -115,7 +115,7 @@ export function InlineFileChange({
             borderColor: accent,
             borderRadius: radius.sm,
             paddingHorizontal: 6,
-            paddingVertical: 2,
+            paddingVertical: space.xxs,
             backgroundColor: colors.bg,
           }}
         >

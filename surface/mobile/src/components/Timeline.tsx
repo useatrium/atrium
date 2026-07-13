@@ -20,7 +20,7 @@ import {
   type TimelineItem,
   type UserRef,
 } from '@atrium/surface-client';
-import { font, radius, space, useTheme } from '../lib/theme';
+import { font, radius, shadows, space, useTheme } from '../lib/theme';
 import { useReactionUserResolver } from '../lib/chat';
 import { DayDivider } from './bits';
 import { MessageRow } from './MessageRow';
@@ -473,11 +473,7 @@ export function Timeline({
             borderWidth: 1,
             borderColor: unreadCount > 0 ? colors.accent : colors.border,
             opacity: pressed ? 0.82 : 1,
-            shadowColor: '#000',
-            shadowOpacity: 0.2,
-            shadowRadius: 12,
-            shadowOffset: { width: 0, height: 5 },
-            elevation: 5,
+            ...shadows.overlay,
           })}
         >
           <Ionicons name="arrow-down" size={18} color={unreadCount > 0 ? colors.accent : colors.text} />

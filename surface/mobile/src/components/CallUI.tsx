@@ -53,7 +53,7 @@ export function IncomingCallBanner({
         style={{
           width: 40,
           height: 40,
-          borderRadius: 20,
+          borderRadius: radius.xl,
           backgroundColor: colors.dangerSurface,
           borderColor: colors.dangerBorder,
           borderWidth: 1,
@@ -72,7 +72,7 @@ export function IncomingCallBanner({
         style={{
           width: 40,
           height: 40,
-          borderRadius: 20,
+          borderRadius: radius.xl,
           backgroundColor: answering ? colors.bgPressed : colors.accent,
           alignItems: 'center',
           justifyContent: 'center',
@@ -250,7 +250,7 @@ export function InCallPanel({
             </Text>
           </View>
           {call.error ? (
-            <Text style={{ marginTop: 2, color: colors.danger, fontSize: font.xs }}>{call.error}</Text>
+            <Text style={{ marginTop: space.xxs, color: colors.danger, fontSize: font.xs }}>{call.error}</Text>
           ) : (
             <View style={{ marginTop: space.xs, flexDirection: 'row', flexWrap: 'wrap', gap: space.xs }}>
               {call.participants.map((participant) => {
@@ -290,7 +290,7 @@ export function InCallPanel({
           style={{
             width: 40,
             height: 40,
-            borderRadius: 20,
+            borderRadius: radius.xl,
             borderColor: call.muted ? colors.warningBorder : colors.border,
             borderWidth: 1,
             backgroundColor: call.muted ? colors.warningSurface : colors.bg,
@@ -313,7 +313,7 @@ export function InCallPanel({
           style={{
             width: 40,
             height: 40,
-            borderRadius: 20,
+            borderRadius: radius.xl,
             backgroundColor: colors.dangerSurface,
             borderColor: colors.dangerBorder,
             borderWidth: 1,

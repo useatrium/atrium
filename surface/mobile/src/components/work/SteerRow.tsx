@@ -32,7 +32,7 @@ function SteerProvenanceByline({ provenance }: { provenance?: SteerRowProvenance
         marginTop: space.xs,
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 4,
+        gap: space.xs,
         flexWrap: 'wrap',
       }}
     >

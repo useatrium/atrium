@@ -112,7 +112,7 @@ export function ClaudeConnectDialog({
   }
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-start justify-center overflow-y-auto bg-surface/60 p-4">
+    <div className="fixed inset-0 z-overlay flex items-start justify-center overflow-y-auto bg-surface/60 p-4">
       <form
         ref={containerRef}
         onSubmit={submit}
