@@ -9,8 +9,9 @@ import type {
 } from '@atrium/surface-client';
 import type { Session } from '../sessions/types';
 import { sessionDriverId, buildTimelineItems } from '@atrium/surface-client';
+import { encodeEventHandle } from '@atrium/surface-client/handle';
 import { Composer } from './Composer';
-import type { AgentComposerRequest } from './Composer';
+import type { AgentComposerRequest, ComposerHandle } from './Composer';
 import { XIcon } from './icons';
 import { MessageRow } from './MessageRow';
 import type { MentionContext } from './useMentionTypeahead';
@@ -112,6 +113,7 @@ export function ThreadPanel({
   );
   const spectatorsFor = (m: ChatMessage) => (m.sessionId != null ? (spectators[m.sessionId] ?? 0) : 0);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const composerRef = useRef<ComposerHandle>(null);
   const count = replies.length;
   useLayoutEffect(() => {
     const el = scrollRef.current;
@@ -176,6 +178,13 @@ export function ThreadPanel({
           onReact={onReact}
           resolveUser={resolveUser}
           onMarkupEntry={onMarkupEntry}
+          onDelegateToAgent={(m) =>
+            m.id != null &&
+            composerRef.current?.activateAgentMode({
+              eventId: m.id,
+              label: `/e/${encodeEventHandle(m.id)}`,
+            })
+          }
         />
         <div className="my-2 flex items-center gap-2 px-4">
           <div className="h-px flex-1 bg-surface-overlay" />
@@ -201,6 +210,13 @@ export function ThreadPanel({
               onReact={onReact}
               resolveUser={resolveUser}
               onMarkupEntry={onMarkupEntry}
+              onDelegateToAgent={(m) =>
+                m.id != null &&
+                composerRef.current?.activateAgentMode({
+                  eventId: m.id,
+                  label: `/e/${encodeEventHandle(m.id)}`,
+                })
+              }
             />
           ),
         )}
@@ -224,6 +240,7 @@ export function ThreadPanel({
         </label>
       </div>
       <Composer
+        ref={composerRef}
         placeholder="Reply…"
         onSend={(text, attachments, attachmentRefs, voice) => {
           onSend(text, attachments, attachmentRefs, voice, alsoSendToChannel);

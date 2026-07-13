@@ -12,6 +12,7 @@ import {
   type OpRegistry,
   type QueuedOp,
   type SessionSpawnPayload,
+  type SessionSuggestPayload,
   type UploadPayload,
   type WireEvent,
 } from '../src/index';
@@ -273,6 +274,27 @@ describe('durable op queue coalescing', () => {
     const ops = await storage.listOps();
     expect(ops.map((op) => op.queueKey)).toEqual(['steer:sess-1', 'steer:sess-1']);
     expect(ops.map((op) => (op.payload as { text: string }).text)).toEqual(['first', 'second']);
+  });
+
+  it('does not coalesce session suggestions', async () => {
+    const storage = new MemoryOpStorage();
+    const queue = new DurableOpQueue({ storage, api, dispatch: () => {} });
+    await queue.enqueue({
+      opId: '00000000-0000-4000-8000-000000000001',
+      opType: 'session.suggest',
+      payload: { sessionId: 'sess-1', text: 'first' },
+    });
+    await queue.enqueue({
+      opId: '00000000-0000-4000-8000-000000000002',
+      opType: 'session.suggest',
+      payload: { sessionId: 'sess-1', text: 'second', postToThread: true },
+    });
+    const ops = await storage.listOps();
+    expect(ops.map((op) => op.queueKey)).toEqual(['suggest:sess-1', 'suggest:sess-1']);
+    expect(ops.map((op) => op.payload)).toEqual([
+      { sessionId: 'sess-1', text: 'first' },
+      { sessionId: 'sess-1', text: 'second', postToThread: true },
+    ]);
   });
 
   it('coalesces duplicate session cancels', async () => {
@@ -667,6 +689,36 @@ describe('durable op queue flushing', () => {
 });
 
 describe('upload op dependencies', () => {
+  it('executes a queued session suggestion with its payload and op id', async () => {
+    const registry = createDefaultOpRegistry();
+    const createSuggestion = vi.fn(async () => ({ ok: true as const }));
+    const op = makeQueuedOp(
+      {
+        opId: 'suggest-op-1',
+        opType: 'session.suggest',
+        payload: { sessionId: 'sess-1', text: 'Try the narrow fix', postToThread: true },
+      },
+      '2026-06-11T12:00:00.000Z',
+    );
+
+    await registry['session.suggest'].execute(
+      { createSuggestion } as unknown as Api,
+      op.payload as SessionSuggestPayload,
+      op,
+      {
+        listOps: async () => [],
+        putOp: async () => {},
+        uploadFetch: async () => new Response(),
+        readUploadBody: async () => new Blob(),
+      },
+    );
+
+    expect(createSuggestion).toHaveBeenCalledWith('sess-1', 'Try the narrow fix', {
+      opId: 'suggest-op-1',
+      postToThread: true,
+    });
+  });
+
   it('passes thread broadcast voice sends with resolved attachments through the default executor', async () => {
     const registry = createDefaultOpRegistry();
     const payload: MsgSendPayload = {

@@ -19,6 +19,7 @@ export const VALID_OP_TYPES = [
   'session.pin',
   'session.answer',
   'session.steer',
+  'session.suggest',
   'session.cancel',
   'session.stop_turn',
   'prefs.set',
@@ -183,6 +184,13 @@ export interface SessionSteerPayload {
   existingAttachmentRefs?: AgentAttachmentRef[];
 }
 
+export interface SessionSuggestPayload {
+  sessionId: string;
+  text: string;
+  /** Also post the suggestion as a human message in the session's conversation thread. */
+  postToThread?: boolean;
+}
+
 export interface SessionCancelPayload {
   sessionId: string;
 }
@@ -223,6 +231,7 @@ export type OpPayloadByType = {
   'session.pin': SessionPinPayload;
   'session.answer': SessionAnswerPayload;
   'session.steer': SessionSteerPayload;
+  'session.suggest': SessionSuggestPayload;
   'session.cancel': SessionCancelPayload;
   'session.stop_turn': SessionStopTurnPayload;
   'prefs.set': PrefsSetPayload;
@@ -246,6 +255,7 @@ type OpResultByType = {
   'session.pin': Awaited<ReturnType<Api['setSessionPinned']>>;
   'session.answer': { ok: true };
   'session.steer': { ok: true };
+  'session.suggest': { ok: true };
   'session.cancel': { ok: true };
   'session.stop_turn': { ok: true };
   'prefs.set': Awaited<ReturnType<Api['patchPrefs']>>;
@@ -323,6 +333,8 @@ export function queueKeyForOp<T extends OpType>(opType: T, payload: OpPayloadByT
       return `answer:${(payload as SessionAnswerPayload).sessionId}`;
     case 'session.steer':
       return `steer:${(payload as SessionSteerPayload).sessionId}`;
+    case 'session.suggest':
+      return `suggest:${(payload as SessionSuggestPayload).sessionId}`;
     case 'session.cancel':
       return `cancel:${(payload as SessionCancelPayload).sessionId}`;
     case 'session.stop_turn':
@@ -492,7 +504,12 @@ function coalescedPayload(existing: QueuedOp, next: QueuedOp): unknown {
 
 function coalescePendingOps(ops: QueuedOp[], op: QueuedOp): { op: QueuedOp | null; remove: string[] } {
   const pendingSameKey = ops.filter((current) => current.status === 'pending' && current.queueKey === op.queueKey);
-  if (op.opType === 'msg.send' || op.opType === 'session.spawn' || op.opType === 'session.steer') {
+  if (
+    op.opType === 'msg.send' ||
+    op.opType === 'session.spawn' ||
+    op.opType === 'session.steer' ||
+    op.opType === 'session.suggest'
+  ) {
     return { op, remove: [] };
   }
 
@@ -1061,6 +1078,15 @@ export function createDefaultOpRegistry(): OpRegistry {
       },
       dependsOn: attachmentUploadDependencies,
       removeDependenciesOnSettled: true,
+      onConfirmed: () => {},
+      onRejected: () => {},
+    },
+    'session.suggest': {
+      execute: (api, payload, op) =>
+        api.createSuggestion(payload.sessionId, payload.text, {
+          opId: op.opId,
+          ...(payload.postToThread === true ? { postToThread: true } : {}),
+        }),
       onConfirmed: () => {},
       onRejected: () => {},
     },

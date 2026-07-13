@@ -6,6 +6,7 @@ import { Text, View } from 'react-native';
 import { Composer } from '../src/components/Composer';
 import { AgentModeConfig } from '../src/components/AgentModeConfig';
 import { MessageRow } from '../src/components/MessageRow';
+import { enqueueSessionSuggestion } from '../src/lib/sessionSuggestion';
 import { renderWithTheme } from './rnTestUtils';
 
 vi.mock('expo-image-picker', () => ({}));
@@ -61,6 +62,19 @@ describe('agent-mode composer', () => {
       />,
     );
     expect(screen.getByRole('radio', { name: 'Suggest · “Release fixes”' })).toBeInTheDocument();
+  });
+
+  it('queues a non-driver suggestion with thread provenance', async () => {
+    const enqueueOp = vi.fn().mockResolvedValue(undefined);
+
+    await enqueueSessionSuggestion(enqueueOp, 'session-1', 'Please reconsider the migration');
+
+    expect(enqueueOp).toHaveBeenCalledWith(
+      expect.objectContaining({
+        opType: 'session.suggest',
+        payload: { sessionId: 'session-1', text: 'Please reconsider the migration', postToThread: true },
+      }),
+    );
   });
 
   it('renders session replies as an AI-authored markdown row and folds ticker activity into the session card', () => {

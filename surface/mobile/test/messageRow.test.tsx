@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import '@testing-library/jest-dom/vitest';
-import { cleanup, fireEvent, screen } from '@testing-library/react';
+import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
 import { Text, View } from 'react-native';
 import type { ChatMessage } from '@atrium/surface-client';
 import type { ComponentProps, ReactNode } from 'react';
@@ -100,5 +100,123 @@ describe('MessageRow', () => {
     const { container } = renderRow({ text: `hello <@${meId}>` }, { meId });
 
     expect(container.querySelector('[style*="border-left-width: 3px"]')).not.toBeNull();
+  });
+
+  it('lets the driver answer a pending question from an option or typed text', async () => {
+    const answerQuestion = vi.fn(async () => {});
+    const questionMessage = {
+      sessionId: 's-1',
+      sessionEventType: 'question_requested' as const,
+      sessionEventPayload: {
+        questionId: 'pending-1',
+        questions: [{ question: 'Should we deploy?' }],
+      },
+    };
+    const session = {
+      id: 's-1',
+      driverId: 'u-2',
+      pendingQuestion: {
+        questionId: 'pending-1',
+        questions: [
+          {
+            id: 'deploy',
+            header: 'Deploy',
+            question: 'Should we deploy?',
+            options: [
+              { label: 'Deploy now', description: 'Ship the current build.' },
+              { label: 'Wait', description: 'Hold this release.' },
+            ],
+          },
+        ],
+      },
+    };
+    const first = renderRow(questionMessage, {
+      session: session as never,
+      onAnswerSessionQuestion: answerQuestion,
+      onSuggestSessionAnswer: vi.fn(async () => {}),
+    });
+
+    expect(screen.getByRole('button', { name: 'Deploy now' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Type an answer')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Deploy now' }));
+    await waitFor(() =>
+      expect(answerQuestion).toHaveBeenCalledWith('s-1', 'pending-1', {
+        deploy: { answers: ['Deploy now'] },
+      }),
+    );
+
+    first.unmount();
+    const typedAnswer = vi.fn(async () => {});
+    renderRow(questionMessage, {
+      session: session as never,
+      onAnswerSessionQuestion: typedAnswer,
+      onSuggestSessionAnswer: vi.fn(async () => {}),
+    });
+    fireEvent.change(screen.getByLabelText('Type an answer'), { target: { value: 'Deploy after review' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Answer question' }));
+    await waitFor(() =>
+      expect(typedAnswer).toHaveBeenCalledWith('s-1', 'pending-1', {
+        deploy: { answers: ['Deploy after review'] },
+      }),
+    );
+  });
+
+  it('lets a non-driver suggest an answer', async () => {
+    const suggestAnswer = vi.fn(async () => {});
+    renderRow(
+      {
+        sessionId: 's-1',
+        sessionEventType: 'question_requested',
+        sessionEventPayload: {
+          questionId: 'pending-1',
+          questions: [{ question: 'Should we deploy?' }],
+        },
+      },
+      {
+        session: {
+          id: 's-1',
+          driverId: 'u-driver',
+          pendingQuestion: {
+            questionId: 'pending-1',
+            questions: [{ id: 'deploy', header: 'Deploy', question: 'Should we deploy?' }],
+          },
+        } as never,
+        onAnswerSessionQuestion: vi.fn(async () => {}),
+        onSuggestSessionAnswer: suggestAnswer,
+      },
+    );
+
+    expect(screen.getByRole('button', { name: 'Suggest an answer' })).toBeInTheDocument();
+    expect(screen.getByText('The current driver decides what to send.')).toBeInTheDocument();
+    fireEvent.change(screen.getByPlaceholderText('Suggest an answer…'), {
+      target: { value: 'Wait for the smoke test' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Suggest an answer' }));
+    await waitFor(() => expect(suggestAnswer).toHaveBeenCalledWith('s-1', 'Wait for the smoke test'));
+  });
+
+  it('keeps answered question cards unchanged', () => {
+    renderRow(
+      {
+        sessionId: 's-1',
+        sessionEventType: 'question_answered',
+        sessionEventPayload: {
+          answers: [{ id: 'deploy', header: 'Deploy', answers: ['Deploy now'], count: 1 }],
+        },
+      },
+      {
+        session: {
+          id: 's-1',
+          pendingQuestion: null,
+        } as never,
+        onAnswerSessionQuestion: vi.fn(async () => {}),
+        onSuggestSessionAnswer: vi.fn(async () => {}),
+      },
+    );
+
+    expect(screen.getByText('Question answered')).toBeInTheDocument();
+    expect(screen.getByText('Deploy now')).toBeInTheDocument();
+    expect(screen.queryByTestId('inline-question-answer')).not.toBeInTheDocument();
   });
 });

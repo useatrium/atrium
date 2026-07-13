@@ -159,6 +159,8 @@ export default function ThreadScreen() {
             onOpenAttachment={openAttachment}
             onOpenChannel={(channelId) => router.push(`/channel/${channelId}`)}
             onOpenSession={(sessionId) => router.push(`/session/${sessionId}`)}
+            onAnswerSessionQuestion={chat.answerSessionQuestion}
+            onSuggestSessionAnswer={chat.suggestToSession}
           />
         )}
         <Composer
