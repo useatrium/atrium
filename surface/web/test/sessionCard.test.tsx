@@ -109,7 +109,7 @@ describe('session card transitions across session.* events', () => {
     rerender(cardFor(s));
     expect(chipText()).toContain('Done');
     expect(screen.getByText(/All green: 12 tests passed/)).toBeTruthy();
-    expect(screen.getByText('Under the hood →').getAttribute('href')).toBe('/s/sess-1');
+    expect(screen.getByText('Show the work →').getAttribute('href')).toBe('/s/sess-1');
   });
 
   it('renders a failed terminal state from session.completed', () => {

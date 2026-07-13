@@ -666,7 +666,7 @@ export const MessageRow = memo(function MessageRow({
             meId={meId}
             onOpen={
               // Primary click lands on the conversation: the card's thread
-              // (turns, questions, steers). The pane is "Under the hood".
+              // (turns, questions, steers). The pane is "Show the work".
               !inThread && onOpenThread && m.id != null ? () => onOpenThread(m.id!) : undefined
             }
             onOpenPane={(id) => onOpenSession?.(id)}
@@ -1165,7 +1165,7 @@ function SessionEventCard({
           aria-label={openLabel}
           className="mt-1 font-medium text-fg-tertiary hover:text-fg-body hover:underline"
         >
-          Open pane
+          Show the work →
         </button>
       )}
     </div>

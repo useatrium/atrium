@@ -2439,6 +2439,24 @@ export function Chat({
           typers={Object.values(sessionTyping[paneSession.id] ?? {}).map((t) => t.user)}
           onComposerTyping={() => notifySessionTyping(paneSession.id)}
           onClose={closeSession}
+          liveEvent={activityLiveEvent}
+          origin={
+            active && paneSession.channelId === active.id
+              ? {
+                  channelLabel:
+                    active.kind === 'dm' || active.kind === 'gdm' ? channelLabel(active, me.id) : `#${active.name}`,
+                  onOpenChannel: closeSession,
+                  ...(paneSession.threadRootEventId != null
+                    ? {
+                        onOpenThread: () => {
+                          const root = paneSession.threadRootEventId;
+                          if (root != null) openThread(root);
+                        },
+                      }
+                    : {}),
+                }
+              : undefined
+          }
           onAnswerQuestion={answerSessionQuestion}
           onSteer={steerSession}
           queueUpload={queueUpload}

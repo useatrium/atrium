@@ -465,7 +465,7 @@ function SessionCard({
   session?: Session;
   /** Primary tap — the conversation (thread) when the caller can open one. */
   onOpen?: (sessionId: string) => void;
-  /** The workbench ("Under the hood") — full transcript screen. */
+  /** The workbench ("Show the work") — full transcript screen. */
   onOpenPane?: (sessionId: string) => void;
 }) {
   const { colors } = useTheme();
@@ -522,7 +522,7 @@ function SessionCard({
       ) : null}
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel="Under the hood — full transcript"
+        accessibilityLabel="Show the work — full transcript"
         disabled={!message.sessionId || !(onOpenPane ?? onOpen)}
         onPress={() => {
           if (message.sessionId) (onOpenPane ?? onOpen)?.(message.sessionId);
@@ -530,7 +530,7 @@ function SessionCard({
         hitSlop={8}
         style={{ alignSelf: 'flex-start', minHeight: 36, justifyContent: 'center' }}
       >
-        <Text style={{ color: colors.textMuted, fontSize: font.xs, fontWeight: '700' }}>Under the hood →</Text>
+        <Text style={{ color: colors.textMuted, fontSize: font.xs, fontWeight: '700' }}>Show the work →</Text>
       </Pressable>
     </Pressable>
   );
@@ -640,7 +640,7 @@ function SessionEventLine({
           hitSlop={8}
           style={{ alignSelf: 'flex-start', minHeight: 36, justifyContent: 'center' }}
         >
-          <Text style={{ color: colors.accent, fontSize: font.xs, fontWeight: '700' }}>Open pane</Text>
+          <Text style={{ color: colors.accent, fontSize: font.xs, fontWeight: '700' }}>Show the work →</Text>
         </Pressable>
       ) : null}
     </View>
@@ -1026,7 +1026,7 @@ export const MessageRow = memo(function MessageRow({
       message={m}
       session={session}
       // Primary tap lands on the conversation (the card's thread); the full
-      // transcript stays one tap away via "Under the hood".
+      // transcript stays one tap away via "Show the work".
       onOpen={!inThread && onOpenThread ? () => onOpenThread(m) : onOpenSession}
       onOpenPane={onOpenSession}
     />
