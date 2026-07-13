@@ -23,6 +23,7 @@ import {
   questionAnswerSummaryText,
   questionPayloadAnswers,
   questionPayloadPrompts,
+  sessionAnsweredQuestion,
   sessionDriverId,
   sessionGlanceClockLabel,
   sessionQuestionEventLabel,
@@ -37,6 +38,7 @@ import { font, radius, space, useTheme } from '../lib/theme';
 import { useAccessibilityAnnouncement } from '../lib/accessibility';
 import { lightImpactHaptic, selectionHaptic } from '../lib/haptics';
 import { partitionEntryLinks } from '../lib/entryLinks';
+import { AnsweredQuestionTrace } from './AnsweredQuestionTrace';
 import { Avatar } from './Avatar';
 import { EntryQuoteCards } from './EntryQuoteCards';
 import { EntryReferenceMarkdownProvider, MarkdownText } from './Markdown';
@@ -576,6 +578,12 @@ function SessionEventLine({
   const answers = questionPayloadAnswers(payload);
   const questionText = questions[0]?.question ?? 'Agent asked a question';
   const label = sessionQuestionEventLabel(message.sessionEventType, payload.reason);
+  // The asked-row keeps the seat once the question resolves: the answer form is
+  // replaced by who answered it, and with what.
+  const answeredTrace =
+    session != null && typeof payload.questionId === 'string'
+      ? sessionAnsweredQuestion(session, payload.questionId)
+      : null;
 
   return (
     <View
@@ -615,6 +623,9 @@ function SessionEventLine({
           onAnswerSessionQuestion={onAnswerSessionQuestion}
           onSuggestSessionAnswer={onSuggestSessionAnswer}
         />
+      ) : null}
+      {message.sessionEventType === 'question_requested' && answeredTrace ? (
+        <AnsweredQuestionTrace trace={answeredTrace} />
       ) : null}
       {answers.map((answer) => (
         <View

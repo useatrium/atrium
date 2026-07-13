@@ -1,8 +1,22 @@
-import { useEffect, useId, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState, useSyncExternalStore } from 'react';
 import type { AgentProfileProposal } from '../api';
-import { formatWaiting, randomId } from '@atrium/surface-client';
+import { formatRelativeTimestamp, formatWaiting, randomId } from '@atrium/surface-client';
 import { sessionsApi } from './api';
-import type { QuestionPrompt, SessionAnswerProposal, SessionProviderAuthRequired } from './types';
+import {
+  getScheduledAnswer,
+  releaseAnswer,
+  type ScheduledAnswer,
+  scheduleAnswer,
+  subscribeScheduledAnswers,
+  undoAnswer,
+} from './pendingAnswers';
+import type {
+  QuestionPrompt,
+  SessionAnsweredQuestion,
+  SessionAnswerProposal,
+  SessionPendingQuestion,
+  SessionProviderAuthRequired,
+} from './types';
 
 export function ProfileChangesBanner({
   proposals,
@@ -183,15 +197,50 @@ function providerAuthActionLabel(provider: SessionProviderAuthRequired['provider
   return `Connect ${providerActionLabel(provider)}`;
 }
 
+/** Live view of the scheduled (undoable) answer for this question, if any. */
+function useScheduledAnswer(sessionId: string, questionId: string): ScheduledAnswer | undefined {
+  const snapshot = useCallback(() => getScheduledAnswer(sessionId, questionId), [sessionId, questionId]);
+  return useSyncExternalStore(subscribeScheduledAnswers, snapshot, snapshot);
+}
+
+/** Whole seconds left on the undo window; ticks only while one is open. */
+function useUndoSecondsLeft(scheduled: ScheduledAnswer | undefined): number {
+  const open = scheduled?.status === 'scheduled';
+  const submitAt = scheduled?.submitAt ?? 0;
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!open) return;
+    setNow(Date.now());
+    const t = setInterval(() => setNow(Date.now()), 250);
+    return () => clearInterval(t);
+  }, [open]);
+  if (!open) return 0;
+  return Math.max(0, Math.ceil((submitAt - now) / 1000));
+}
+
+/** What the driver picked, for the "Answered: …" line. Secrets never echo. */
+function answerLabel(questions: QuestionPrompt[], answers: Record<string, { answers: string[] }>): string {
+  const parts: string[] = [];
+  for (const q of questions) {
+    for (const value of answers[q.id]?.answers ?? []) parts.push(q.isSecret ? 'redacted' : value);
+  }
+  return parts.join(', ');
+}
+
 /**
  * THE canonical answerable question — one design, rendered by reference at
  * every full altitude (feed card flip, thread root, pane banner). Answering
  * any instance resolves them all (they share the session's pendingQuestion).
  * Compact surfaces (rail, Attention) point here instead of re-rendering it.
+ *
+ * It owns both halves of the question's life: the live form (with the driver's
+ * 5s undo window) and, once the question resolves, the durable "who answered
+ * what" trace. Callers render it whenever there is a question OR an answer.
  */
 export function QuestionCard({
   sessionId,
   pending,
+  answered,
   isDriver,
   driverName,
   proposals,
@@ -199,7 +248,10 @@ export function QuestionCard({
   variant = 'banner',
 }: {
   sessionId: string;
-  pending: { questionId: string; questions: QuestionPrompt[]; askedAt?: string };
+  /** Null/absent once the question resolves — the card flips to the trace. */
+  pending?: SessionPendingQuestion | null;
+  /** Who answered the session's most recent question, and with what. */
+  answered?: SessionAnsweredQuestion | null;
   isDriver: boolean;
   driverName: string;
   /** Pending answer proposals for this question (driver decides). */
@@ -215,19 +267,34 @@ export function QuestionCard({
 }) {
   const bannerId = useId();
   const titleId = `${bannerId}-title`;
+  const questionId = pending?.questionId ?? '';
   const [values, setValues] = useState<Record<string, QuestionDraftValue>>({});
   const [submitting, setSubmitting] = useState(false);
-  const [cleared, setCleared] = useState<string | null>(null);
   const [proposed, setProposed] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const scheduled = useScheduledAnswer(sessionId, questionId);
+  const undoSecondsLeft = useUndoSecondsLeft(scheduled);
   useEffect(() => {
     setValues({});
     setSubmitting(false);
-    setCleared(null);
     setProposed(false);
     setError(null);
-  }, [pending.questionId]);
-  if (cleared === pending.questionId) return null;
+  }, [questionId]);
+
+  // The question stopped being pending. If our answer is what resolved it the
+  // schedule is already spent; if it resolved *without* us (another user
+  // answered, the agent gave up) a still-scheduled answer must be cancelled
+  // rather than posted into a dead question.
+  const previousQuestionId = useRef<string | null>(null);
+  useEffect(() => {
+    const previous = previousQuestionId.current;
+    previousQuestionId.current = questionId || null;
+    if (previous && previous !== questionId) releaseAnswer(sessionId, previous);
+  }, [questionId, sessionId]);
+
+  if (!pending) {
+    return answered ? <AnsweredQuestionTrace trace={answered} variant={variant} /> : null;
+  }
 
   const setAnswer = (id: string, value: string) => {
     setError(null);
@@ -249,33 +316,51 @@ export function QuestionCard({
     if (!complete || submitting) return;
     const answers: Record<string, { answers: string[] }> = {};
     for (const q of pending.questions) answers[q.id] = { answers: answerValuesForPrompt(q, values[q.id]) };
-    setSubmitting(true);
     setError(null);
     if (isDriver) {
-      const answer = onAnswerQuestion
-        ? onAnswerQuestion(sessionId, pending.questionId, answers)
-        : sessionsApi.answerQuestion(sessionId, pending.questionId, answers, randomId());
-      answer
-        .then(() => setCleared(pending.questionId))
-        .catch(() => setError("Answer didn't send. Try again."))
-        .finally(() => setSubmitting(false));
-    } else {
-      sessionsApi
-        .proposeAnswer(sessionId, pending.questionId, answers, randomId())
-        .then(() => setProposed(true))
-        .catch(() => setError("Proposal didn't send. Try again."))
-        .finally(() => setSubmitting(false));
+      // Scheduled, not posted: the driver gets ANSWER_UNDO_MS to take it back.
+      // A second answer inside the window simply replaces this one.
+      scheduleAnswer({
+        sessionId,
+        questionId: pending.questionId,
+        answers,
+        label: answerLabel(pending.questions, answers),
+        ...(onAnswerQuestion ? { submit: onAnswerQuestion } : {}),
+      });
+      return;
     }
+    setSubmitting(true);
+    sessionsApi
+      .proposeAnswer(sessionId, pending.questionId, answers, randomId())
+      .then(() => setProposed(true))
+      .catch(() => setError("Proposal didn't send. Try again."))
+      .finally(() => setSubmitting(false));
   };
 
   const errorId = `${bannerId}-error`;
+
+  // A scheduled/sending/sent answer takes over the card body: the options are
+  // gone, the answer is stated, and Undo is the only move left.
+  if (scheduled && scheduled.status !== 'failed') {
+    return (
+      <ScheduledAnswerStrip
+        scheduled={scheduled}
+        secondsLeft={undoSecondsLeft}
+        variant={variant}
+        onUndo={() => undoAnswer(sessionId, scheduled.questionId)}
+      />
+    );
+  }
+  // The delayed post failed (it may well have failed after the card unmounted)
+  // — the form comes back with everything intact so the answer can be re-sent.
+  const shownError = error ?? (scheduled?.status === 'failed' ? "Answer didn't send. Try again." : null);
 
   const askedAgo = pending.askedAt ? formatWaiting(Date.now() - new Date(pending.askedAt).getTime()) : null;
   return (
     <section
       data-testid="question-banner"
       aria-labelledby={titleId}
-      aria-describedby={error ? errorId : undefined}
+      aria-describedby={shownError ? errorId : undefined}
       aria-busy={submitting ? 'true' : undefined}
       aria-live="polite"
       className={
@@ -401,13 +486,13 @@ export function QuestionCard({
           );
         })}
       </div>
-      {error && (
+      {shownError && (
         <div
           id={errorId}
           role="alert"
           className="mt-2 rounded border border-danger-border/50 bg-danger-tint/20 px-2 py-1 text-2xs text-danger-text"
         >
-          {error}
+          {shownError}
         </div>
       )}
 
@@ -450,6 +535,88 @@ export function QuestionCard({
           </button>
         )}
       </div>
+    </section>
+  );
+}
+
+/**
+ * The answer is committed but not yet posted. One line, one verb: Undo. The
+ * countdown is honest — when it hits zero the answer really does go.
+ */
+function ScheduledAnswerStrip({
+  scheduled,
+  secondsLeft,
+  variant,
+  onUndo,
+}: {
+  scheduled: ScheduledAnswer;
+  secondsLeft: number;
+  variant: 'banner' | 'card';
+  onUndo: () => void;
+}) {
+  const undoable = scheduled.status === 'scheduled';
+  return (
+    <section
+      data-testid="question-scheduled-answer"
+      aria-live="polite"
+      aria-label="Answer scheduled"
+      className={
+        variant === 'card'
+          ? 'mt-1.5 flex flex-wrap items-center gap-2 rounded-md border border-warning-border/50 bg-warning-tint/15 px-2.5 py-2 text-xs'
+          : 'flex shrink-0 flex-wrap items-center gap-2 border-b border-warning-border/50 bg-warning-tint/20 px-3 py-2 text-xs'
+      }
+    >
+      <span className="min-w-0 flex-1 text-fg-body">
+        <span className="font-semibold text-fg">Answered:</span> <span className="break-words">{scheduled.label}</span>
+      </span>
+      {undoable ? (
+        <button
+          type="button"
+          data-testid="question-undo"
+          onClick={onUndo}
+          className="shrink-0 rounded-md border border-edge-strong px-2 py-1 text-2xs font-semibold text-fg-secondary hover:bg-surface-overlay hover:text-fg"
+        >
+          Undo ({secondsLeft}s)
+        </button>
+      ) : (
+        <span className="shrink-0 text-2xs text-fg-muted">sending…</span>
+      )}
+    </section>
+  );
+}
+
+/**
+ * The durable record the question leaves behind: who answered, what they
+ * picked, when. Same component on the feed card, the thread, and the pane, so
+ * "the 2am approval" always has a name on it.
+ */
+export function AnsweredQuestionTrace({
+  trace,
+  variant = 'card',
+}: {
+  trace: SessionAnsweredQuestion;
+  variant?: 'banner' | 'card';
+}) {
+  return (
+    <section
+      data-testid="question-answered-trace"
+      aria-label="Answered question"
+      className={
+        variant === 'card'
+          ? 'mt-1.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 rounded-md border border-edge bg-surface-raised/60 px-2.5 py-1.5 text-2xs'
+          : 'flex shrink-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 border-b border-edge bg-surface-raised/70 px-3 py-1.5 text-2xs'
+      }
+    >
+      <span aria-hidden="true" className="font-semibold text-accent-text-strong">
+        ✓
+      </span>
+      <span className="text-fg-body">
+        Answered by <span className="font-semibold text-fg">{trace.answeredByName}</span>
+      </span>
+      <span className="text-fg-faint">·</span>
+      <span className="min-w-0 break-words font-medium text-fg-secondary">{trace.answerText}</span>
+      <span className="text-fg-faint">·</span>
+      <span className="tabular-nums text-fg-muted">{formatRelativeTimestamp(trace.at)}</span>
     </section>
   );
 }

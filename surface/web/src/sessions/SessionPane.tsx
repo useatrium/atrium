@@ -79,6 +79,7 @@ import {
   isStalledSessionStatus,
   isTerminalSessionStatus,
   normalizeExecutionStatus,
+  sessionAnsweredQuestion,
   sessionDriverId,
   type SeatAuditEntry,
   type Session,
@@ -644,6 +645,7 @@ export function SessionPane({
   const pendingQuestion = session.pendingQuestion !== undefined ? session.pendingQuestion : stream.pendingQuestion;
   const questionEvents = session.questionEvents ?? [];
   const questionEventsByQuestion = useMemo(() => groupQuestionEventsByQuestion(questionEvents), [questionEvents]);
+  const answeredQuestion = useMemo(() => sessionAnsweredQuestion(session), [session]);
   const discussContext =
     !popout && session.threadRootEventId != null
       ? { channelId: session.channelId, threadRootEventId: session.threadRootEventId }
@@ -1782,10 +1784,13 @@ export function SessionPane({
         />
       )}
 
-      {pendingQuestion && !displayTerminal && (
+      {/* One component owns the whole arc: the live question, the driver's undo
+          window, and the "✓ Answered by …" trace it leaves behind. */}
+      {((pendingQuestion && !displayTerminal) || answeredQuestion) && (
         <QuestionCard
           sessionId={session.id}
-          pending={pendingQuestion}
+          pending={displayTerminal ? null : pendingQuestion}
+          answered={answeredQuestion}
           isDriver={isDriver}
           driverName={driverName}
           proposals={questionProposals}

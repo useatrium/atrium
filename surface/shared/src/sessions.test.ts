@@ -4,11 +4,14 @@ import {
   maxSessionStatus,
   normalizeSteerProvenanceText,
   questionAnswerSummaryText,
+  questionAnswerTraceText,
   questionPayloadAnswers,
   questionPayloadPrompts,
+  sessionAnsweredQuestion,
   sessionAttentionKind,
   sessionQuestionEventLabel,
   steerProvenanceKey,
+  type SessionQuestionEvent,
   type SessionSuggestion,
 } from './sessions';
 
@@ -238,5 +241,72 @@ describe('session question event helpers', () => {
     expect(questionAnswerSummaryText({ id: 'q', header: 'Q', answers: [], count: 1 })).toBe('1 answer recorded');
     expect(sessionQuestionEventLabel('question_requested', undefined)).toBe('Question asked');
     expect(sessionQuestionEventLabel('question_resolved', 'empty')).toBe('Question expired without an answer');
+  });
+
+  it('joins the chosen option labels for the one-line answered trace', () => {
+    expect(
+      questionAnswerTraceText([
+        { id: 'lock', header: 'Write lock', answers: ['Run now'], count: 1 },
+        { id: 'tests', header: 'Tests', answers: ['Skip', 'Notify'], count: 2 },
+      ]),
+    ).toBe('Run now, Skip, Notify');
+    // A secret answer arrives redacted from the server; nothing to echo otherwise.
+    expect(questionAnswerTraceText([{ id: 'q', header: 'Q', answers: [], count: 2 }])).toBe('2 answers recorded');
+  });
+});
+
+describe('sessionAnsweredQuestion', () => {
+  const asked = (id: number, questionId: string): SessionQuestionEvent => ({
+    id,
+    questionId,
+    kind: 'requested',
+    at: '2026-07-13T02:00:00.000Z',
+  });
+  const answered = (id: number, questionId: string, by: string): SessionQuestionEvent => ({
+    id,
+    questionId,
+    kind: 'answered',
+    at: '2026-07-13T02:05:00.000Z',
+    actorId: 'u-maya',
+    actorName: by,
+    answers: [{ id: 'lock', header: 'Write lock', answers: ['Run now'], count: 1 }],
+  });
+
+  it('names who answered the most recent question, and what they picked', () => {
+    expect(sessionAnsweredQuestion({ questionEvents: [asked(1, 'q-1'), answered(2, 'q-1', 'Maya')] })).toEqual({
+      questionId: 'q-1',
+      at: '2026-07-13T02:05:00.000Z',
+      answeredById: 'u-maya',
+      answeredByName: 'Maya',
+      answerText: 'Run now',
+    });
+  });
+
+  it('falls back to the actor id when the event carried no display name', () => {
+    const event = { ...answered(2, 'q-1', 'Maya') };
+    delete event.actorName;
+    expect(sessionAnsweredQuestion({ questionEvents: [event] })?.answeredByName).toBe('u-maya');
+  });
+
+  it('is null while the newest question is unanswered — it never shows a stale answer', () => {
+    const events = [asked(1, 'q-1'), answered(2, 'q-1', 'Maya'), asked(3, 'q-2')];
+    expect(sessionAnsweredQuestion({ questionEvents: events })).toBeNull();
+    // …but that earlier answer is still addressable by id.
+    expect(sessionAnsweredQuestion({ questionEvents: events }, 'q-1')?.answeredByName).toBe('Maya');
+  });
+
+  it('is null for a cancelled question rather than the answer before it', () => {
+    const events: SessionQuestionEvent[] = [
+      asked(1, 'q-1'),
+      answered(2, 'q-1', 'Maya'),
+      asked(3, 'q-2'),
+      { id: 4, questionId: 'q-2', kind: 'resolved', at: '2026-07-13T02:10:00.000Z', reason: 'cancelled' },
+    ];
+    expect(sessionAnsweredQuestion({ questionEvents: events })).toBeNull();
+  });
+
+  it('is null with no question history at all', () => {
+    expect(sessionAnsweredQuestion({ questionEvents: [] })).toBeNull();
+    expect(sessionAnsweredQuestion({})).toBeNull();
   });
 });

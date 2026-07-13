@@ -147,6 +147,75 @@ export interface SessionQuestionEvent {
   reason?: QuestionResolutionReason;
 }
 
+/**
+ * Who answered an agent question, and with what — the durable record that
+ * replaces the question once it resolves. Derived entirely from the folded
+ * `session.question_answered` event (the answering user is that event's actor
+ * and the chosen labels are its payload), so no extra persistence is needed.
+ */
+export interface SessionAnsweredQuestion {
+  questionId: string;
+  /** Server time of the answer. */
+  at: string;
+  answeredById: string | null;
+  /** Display name when the event carried one; the user id otherwise. */
+  answeredByName: string;
+  /** The chosen option labels ("Run now"). Secret answers arrive redacted. */
+  answerText: string;
+}
+
+/** One-line "· <option label>" summary for the answered trace. */
+export function questionAnswerTraceText(summaries: readonly SessionQuestionAnswerSummary[]): string {
+  const labels: string[] = [];
+  let count = 0;
+  for (const summary of summaries) {
+    count += summary.count;
+    for (const answer of summary.answers) {
+      const trimmed = answer.trim();
+      if (trimmed) labels.push(trimmed);
+    }
+  }
+  if (labels.length > 0) return labels.join(', ');
+  return count === 1 ? '1 answer recorded' : `${count} answers recorded`;
+}
+
+/**
+ * How the session's most recent question was answered — or null when it was
+ * cancelled, expired, or is still open. Scoped to the most recent question on
+ * purpose: a cancelled question must not fall back to displaying the answer to
+ * the question before it. Pass `questionId` to ask about a specific one.
+ *
+ * The question_answered events are folded onto the entity from the workspace
+ * event log — WS live, and channel/thread history on reload — so the trace
+ * outlives the question itself with no extra persistence.
+ */
+export function sessionAnsweredQuestion(
+  session: Pick<Session, 'questionEvents'>,
+  questionId?: string,
+): SessionAnsweredQuestion | null {
+  const events = session.questionEvents ?? [];
+  let target = questionId;
+  if (target === undefined) {
+    let newest: SessionQuestionEvent | undefined;
+    for (const event of events) if (!newest || event.id > newest.id) newest = event;
+    if (!newest) return null;
+    target = newest.questionId;
+  }
+  let latest: SessionQuestionEvent | undefined;
+  for (const event of events) {
+    if (event.kind !== 'answered' || event.questionId !== target) continue;
+    if (!latest || event.id > latest.id) latest = event;
+  }
+  if (!latest) return null;
+  return {
+    questionId: latest.questionId,
+    at: latest.at,
+    answeredById: latest.actorId ?? null,
+    answeredByName: latest.actorName ?? latest.actorId ?? 'someone',
+    answerText: questionAnswerTraceText(latest.answers ?? []),
+  };
+}
+
 export type SuggestionStatus = 'pending' | 'sent' | 'dismissed';
 
 /**

@@ -30,6 +30,7 @@ import {
   normalizeSteerProvenanceText,
   questionAnswerSummaryText,
   randomId,
+  sessionAnsweredQuestion,
   sessionDriverId,
   sessionFromWire,
   steerProvenanceKey,
@@ -69,6 +70,7 @@ import {
   sideEffectCount,
   toolDisplay,
 } from '@atrium/centaur-client';
+import { AnsweredQuestionTrace } from '../../../src/components/AnsweredQuestionTrace';
 import { ArtifactsSurface } from '../../../src/components/work/ArtifactsSurface';
 import { ChangesSurface } from '../../../src/components/work/ChangesSurface';
 import { InlineFileChange } from '../../../src/components/work/fileChangeView';
@@ -1113,6 +1115,9 @@ export default function SessionScreen() {
   const proposalsForQuestion = (session?.answerProposals ?? []).filter(
     (p) => p.status === 'pending' && p.questionId === pendingQuestion?.questionId,
   );
+  // Who answered the last question, and with what — the record the question
+  // leaves behind on every surface once it resolves.
+  const answeredTrace = session ? sessionAnsweredQuestion(session) : null;
 
   useEffect(() => {
     setQuestionValues({});
@@ -1821,6 +1826,8 @@ export default function SessionScreen() {
               error={questionError}
               onSubmit={isDriver ? answerQuestion : proposeAnswer}
             />
+          ) : answeredTrace ? (
+            <AnsweredQuestionTrace trace={answeredTrace} />
           ) : null}
 
           {isDriver && pendingQuestion && !terminal && proposalsForQuestion.length > 0 ? (
