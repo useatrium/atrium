@@ -126,16 +126,50 @@ daemon's tests):
 | `POST sessions/:id/artifacts/capture` (+ `capture-stream`, delete via `x-artifact-delete`) | `capture-response.json` |
 | `GET  sessions/:id/cache/hydration` + `PUT sessions/:id/cache/manifest` | `warmcache-hydration.json` |
 | `GET  sessions/:viewerId/atrium/changes` | `atrium-changes.json` |
+| `GET  sessions/:viewerId/atrium/channels` | `atrium-channels.json` |
 | `GET  sessions/:id/profile-bundles` | `profile-bundles.json` (element shape daemon-side; live check pins the envelope — seeding a real bundle needs the whole profile-writeback pipeline) |
 
 Lanes covered by route-existence + daemon-side parsing only (their payloads
-are opaque blobs or one-way writes): `artifacts/raw`, `atrium/channels`,
-`atrium/sessions/:target/:doc`, `harness-transcript`, `harness-state-bundle`,
-`profile-candidates`, `profile-baseline`, `profile-bundle-blob`,
-`provider-credential-refresh`, `cache/blob`, `sessions/changes/batch`, and the
-`changes/stream` SSE wake-up channel. The daemon treats every response as a
-tolerant reader (unknown fields ignored, `serde(default)` everywhere) — keep
-that doctrine; the fixtures are *minimums*, not exhaustive schemas.
+are opaque blobs or one-way writes): `artifacts/raw`, `harness-transcript`,
+`harness-state-bundle`, `profile-candidates`, `profile-baseline`,
+`profile-bundle-blob`, `provider-credential-refresh`, `cache/blob`,
+`sessions/changes/batch`, and the `changes/stream` SSE wake-up channel. The
+daemon treats every response as a tolerant reader (unknown fields ignored,
+`serde(default)` everywhere) — keep that doctrine; the fixtures are *minimums*,
+not exhaustive schemas.
+
+`atrium/sessions/:target/:doc` and `atrium/channels/:id/chat` carry opaque
+(markdown/jsonl) bodies, so their contract lives in the *headers* — see below.
+
+### The context-doc delta protocol
+
+Constants: `contract.toml [atrium_delta]`. The context mount projects an
+append-only log, so shipping whole documents made the daemon's work quadratic
+in session length. The daemon now says what it already has
+(`?since_seq=`/`?since_event_id=` + `?epoch=`) and the **server decides**
+whether a delta is possible, answering `x-atrium-delta: append` (body = new
+bytes only) or `full` (body = whole doc). The daemon never infers the mode; it
+does what the header says.
+
+Three rules carry the safety of this, and all three are load-bearing:
+
+1. **The epoch is opaque.** The daemon compares it for equality and never
+   parses it. The server composes it from the projection generation *and* a
+   `render_version`, so a renderer edit invalidates already-written bytes
+   instead of stranding old-format text at the head of an appended file.
+   Bump `render_version` in the same commit as any renderer change.
+2. **Append only against proven state.** Missing or corrupt daemon state, an
+   epoch mismatch, or `mode = full` all mean truncate-and-rewrite. Appending
+   onto a file whose provenance is unproven silently doubles it.
+3. **Aggregates never delta.** `summary`/`meta` are recomputed from the whole
+   session on every read (counts, first-N actions) and are ~1KB. The server
+   always answers `full` for them. Do not contort them into deltas.
+
+`last_event_id` on `atrium/channels` is now load-bearing (it was previously
+decorative — the daemon rendered it into a table cell and compared it to
+nothing). It is the watermark that lets the daemon skip an unchanged
+`chat.md`, which is what stops the reconcile tick from re-downloading every
+channel's chat for every viewer forever.
 
 ### Known quirks (documented, not bugs)
 

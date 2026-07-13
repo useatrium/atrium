@@ -149,3 +149,53 @@ flags = ["--once", "--interval", "--overlays-root"]
 [http]
 auth_header = "x-api-key"
 session_prefix = "/api/internal/sessions"
+
+# --- Atrium context-doc delta protocol (daemon ⟷ surface/server) ---
+#
+# The context mount is a projection of an append-only log. Re-rendering and
+# re-shipping a whole doc on every change makes the daemon's work quadratic in
+# session length (a 5k-record session re-downloads megabytes thousands of
+# times). These constants define the delta protocol that makes the steady-state
+# cost proportional to the CHANGE, not to the session.
+[atrium_delta]
+# Request: the daemon states what it already has on disk. Both are optional;
+# omitting them (or sending an unknown epoch) requests a full document.
+query_since_seq = "since_seq"              # session docs: last session_records.seq on disk
+query_since_event_id = "since_event_id"    # channel chat: last events.id on disk
+query_epoch = "epoch"                      # opaque; echoed back from a prior response
+
+# Response: the server DECIDES whether it could honour the delta. The daemon
+# never infers this — it does what the mode header says.
+header_epoch = "x-atrium-epoch"            # opaque to the daemon: compare for EQUALITY, never parse
+header_mode = "x-atrium-delta"             # "full" | "append"
+header_next_seq = "x-atrium-next-seq"      # session docs: watermark to send next time
+header_next_event_id = "x-atrium-next-event-id"  # channel chat: ditto
+
+mode_full = "full"        # body is the WHOLE doc  -> daemon truncates and rewrites
+mode_append = "append"    # body is ONLY new bytes -> daemon appends, no rewrite
+
+# The epoch is a server-composed opaque string. It MUST change whenever
+# already-written bytes on the daemon's disk could be wrong — that is:
+#   1. the session was re-projected (session_records.seq is NOT stable across a
+#      re-projection; that is precisely why entry_uid exists), or
+#   2. the rendered FORMAT changed (a deploy that edits a renderer would
+#      otherwise leave old-format bytes permanently stranded at the head of an
+#      appended file), or
+#   3. history behind the watermark mutated (a message edit/delete, or the
+#      chat.md elision boundary moving as it crosses its byte cap).
+# Composing render_version into the epoch is what makes (2) safe. Bump it in
+# the same commit as any renderer change.
+render_version = "1"
+
+# Docs whose renderer is append-only, so a delta is possible at all. The rest
+# (summary, meta) are aggregates — recomputed from the whole session on every
+# read — and the server always answers mode_full for them. They are ~1KB, so
+# that is fine; do NOT contort them into deltas.
+appendable_docs = ["transcript", "full", "events", "tools", "changes-doc", "artifacts", "chat"]
+full_only_docs = ["summary", "meta", "channel"]
+
+# Safety rule, load-bearing: the daemon appends ONLY when it can prove what is
+# already on disk — i.e. it holds persisted {epoch, watermark} state for that
+# doc AND the response epoch matches it. Missing/corrupt state, epoch mismatch,
+# or mode_full all mean TRUNCATE AND REWRITE. Never append onto a file whose
+# provenance is unproven: that silently doubles content.
