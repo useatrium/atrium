@@ -2183,34 +2183,6 @@ export function SessionPane({
           <SessionTypingLine typers={typers} />
           <div className="flex shrink-0 items-center justify-between gap-2 border-t border-edge bg-surface-overlay px-4 py-1 text-2xs font-medium text-fg-muted">
             <span className="truncate py-0.5">{composerStatusText}</span>
-            {session.threadRootEventId != null && (
-              <span data-testid="pane-send-mode" className="flex shrink-0 gap-0.5">
-                <button
-                  type="button"
-                  aria-pressed={paneSendMode === 'agent'}
-                  onClick={() => setPaneSendMode('agent')}
-                  className={`rounded px-1.5 py-0.5 ${
-                    paneSendMode === 'agent'
-                      ? 'bg-accent-hover/15 text-accent-text-strong'
-                      : 'text-fg-tertiary hover:bg-surface-raised hover:text-fg-body'
-                  }`}
-                >
-                  ⚡ {isDriver ? 'Steer' : 'Suggest'}
-                </button>
-                <button
-                  type="button"
-                  aria-pressed={paneSendMode === 'thread'}
-                  onClick={() => setPaneSendMode('thread')}
-                  className={`rounded px-1.5 py-0.5 ${
-                    paneSendMode === 'thread'
-                      ? 'bg-accent-hover/15 text-accent-text-strong'
-                      : 'text-fg-tertiary hover:bg-surface-raised hover:text-fg-body'
-                  }`}
-                >
-                  💬 Thread
-                </button>
-              </span>
-            )}
           </div>
           <div ref={composerAreaRef} className="shrink-0">
             <Composer
@@ -2227,6 +2199,18 @@ export function SessionPane({
               allowAttachments={isDriver}
               allowVoice={false}
               previewEntryLinks
+              audiencePill={
+                session.threadRootEventId != null
+                  ? {
+                      mode: paneSendMode,
+                      agentLabel: isDriver ? 'agent' : 'suggest',
+                      threadLabel: 'this thread',
+                      onModeChange: setPaneSendMode,
+                      agentSendLabel: isDriver ? 'Steer' : 'Suggest',
+                      threadSendLabel: 'Reply',
+                    }
+                  : undefined
+              }
               footer={
                 isDriver ? (
                   canPickEffort ? (

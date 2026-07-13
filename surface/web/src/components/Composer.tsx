@@ -105,6 +105,22 @@ type ComposerProps = {
   mentionContext?: MentionContext;
   /** Observes agent-mode entry/exit (e.g. the thread panel hides its broadcast checkbox). */
   onAgentModeChange?: (active: boolean) => void;
+  /**
+   * Session-pane audience control: a pill docked inside the input frame that
+   * IS the send mode. Tap flips it, typing !! flips to agent, Esc flips back
+   * to thread. The Send button speaks the mode's verb.
+   */
+  audiencePill?: {
+    mode: 'agent' | 'thread';
+    /** Pill text in agent mode (e.g. "agent" / "suggest"). */
+    agentLabel: string;
+    /** Pill text in thread mode (e.g. "this thread"). */
+    threadLabel: string;
+    onModeChange: (mode: 'agent' | 'thread') => void;
+    /** Send-button verb per mode (e.g. "Steer"/"Suggest" and "Reply"). */
+    agentSendLabel: string;
+    threadSendLabel: string;
+  };
 };
 
 export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Composer(
@@ -132,6 +148,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     onAgentSend,
     mentionContext,
     onAgentModeChange,
+    audiencePill,
   },
   imperativeRef,
 ) {
@@ -473,10 +490,17 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       e.preventDefault();
       setAgentMode((value) => !value);
     } else if (e.key === 'Escape' && agentMode) {
+      // stopPropagation too: the window-level Escape handler closes the
+      // thread/pane, and exiting a composer mode must not also close the room.
       e.preventDefault();
+      e.stopPropagation();
       setAgentOptionsOpen(false);
       setAgentTargetOpen(false);
       setAgentMode(false);
+    } else if (e.key === 'Escape' && audiencePill && audiencePill.mode === 'agent') {
+      e.preventDefault();
+      e.stopPropagation();
+      audiencePill.onModeChange('thread');
     } else if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
       send();
@@ -486,8 +510,9 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     }
   };
 
+  const agentTinted = agentMode || audiencePill?.mode === 'agent';
   return (
-    <div className={`border-t bg-surface p-3 ${agentMode ? 'border-accent/60 bg-accent/5' : 'border-edge'}`}>
+    <div className={`border-t bg-surface p-3 ${agentTinted ? 'border-accent/60 bg-accent/5' : 'border-edge'}`}>
       {agentMode && agentModeContext && (
         <div className="mb-2 hidden min-w-0 flex-wrap items-center gap-1.5 px-1 min-[431px]:flex">
           <div className="relative min-w-0">
@@ -617,7 +642,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             ? 'border-edge bg-surface-raised/40'
             : dragOver
               ? 'border-accent-hover bg-surface-raised'
-              : agentMode
+              : agentTinted
                 ? 'border-accent/60 bg-surface-raised focus-within:border-accent'
                 : 'border-edge-strong bg-surface-raised focus-within:border-edge-focus'
         }`}
@@ -726,6 +751,27 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               onActiveChange={setVoiceActive}
             />
           )}
+          {!voiceActive && audiencePill && !disabled && (
+            <button
+              type="button"
+              data-testid="composer-audience-pill"
+              aria-pressed={audiencePill.mode === 'agent'}
+              onClick={() => audiencePill.onModeChange(audiencePill.mode === 'agent' ? 'thread' : 'agent')}
+              title={
+                audiencePill.mode === 'agent'
+                  ? 'Talking to the agent — tap to reply to people instead (Esc)'
+                  : 'Talking to people — tap to address the agent (or type !!)'
+              }
+              className={`inline-flex shrink-0 items-center gap-1 self-center whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-semibold transition-colors [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:px-3 ${
+                audiencePill.mode === 'agent'
+                  ? 'bg-accent text-on-accent hover:bg-accent-hover'
+                  : 'border border-edge-strong bg-surface-overlay text-fg-secondary hover:bg-surface-raised hover:text-fg'
+              }`}
+            >
+              <span aria-hidden>{audiencePill.mode === 'agent' ? '⚡' : '💬'}</span>
+              {audiencePill.mode === 'agent' ? audiencePill.agentLabel : audiencePill.threadLabel}
+            </button>
+          )}
           {!voiceActive && (
             <>
               {agentModeContext && !disabled && (
@@ -760,11 +806,21 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                   const next = e.target.value;
                   const summonSource = next.trimStart();
                   const summon =
-                    agentModeContext && !agentMode && looksLikeSummonSigil(summonSource)
+                    ((agentModeContext && !agentMode) || audiencePill?.mode === 'thread') &&
+                    looksLikeSummonSigil(summonSource)
                       ? parseSummonSigil(summonSource)
                       : null;
                   if (agentModeContext && !agentMode && (summonSource === '!!' || summon != null)) {
                     setAgentMode(true);
+                    const task = summon?.task ?? '';
+                    e.target.value = task;
+                    mentions.onValueChange(task, task.length);
+                  } else if (
+                    audiencePill &&
+                    audiencePill.mode === 'thread' &&
+                    (summonSource === '!!' || summon != null)
+                  ) {
+                    audiencePill.onModeChange('agent');
                     const task = summon?.task ?? '';
                     e.target.value = task;
                     mentions.onValueChange(task, task.length);
@@ -805,7 +861,11 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                   aria-disabled={sendDisabled || undefined}
                   className="rounded-md bg-accent px-3 py-1 text-sm font-medium text-on-accent transition-colors hover:bg-accent-hover aria-disabled:cursor-default aria-disabled:bg-surface-overlay aria-disabled:text-fg-muted"
                 >
-                  Send
+                  {audiencePill
+                    ? audiencePill.mode === 'agent'
+                      ? audiencePill.agentSendLabel
+                      : audiencePill.threadSendLabel
+                    : 'Send'}
                 </button>
               </Tooltip>
             </>

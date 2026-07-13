@@ -250,7 +250,7 @@ export function ThreadPanel({
       </div>
       <Composer
         ref={composerRef}
-        placeholder="Reply…"
+        placeholder={attachedSession ? "Reply — the agent won't read this · !! to steer" : 'Reply…'}
         onSend={(text, attachments, attachmentRefs, voice) => {
           onSend(text, attachments, attachmentRefs, voice, alsoSendToChannel);
           setAlsoSendToChannel(false);
