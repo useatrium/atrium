@@ -17,6 +17,7 @@ import {
   questionAnswerSummaryText,
   questionPayloadAnswers,
   questionPayloadPrompts,
+  sessionDriverId,
   sessionQuestionEventLabel,
   type ChatMessage,
   type UserRef,
@@ -1174,7 +1175,8 @@ function MessageProvenance({ message, session, meId }: { message: ChatMessage; s
   const [dismissed, setDismissed] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const suggested = message.suggestedSessionId && message.suggestionId;
-  const isDriver = session?.driverId === meId;
+  // Canonical seat resolution — feed-folded entities can carry null driverId.
+  const isDriver = session != null && meId != null && sessionDriverId(session) === meId;
   if (!message.steeredSessionId && !suggested) return null;
   const resolve = (action: 'send' | 'dismiss') => {
     if (!suggested || busy) return;

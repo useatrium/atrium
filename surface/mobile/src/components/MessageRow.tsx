@@ -459,10 +459,14 @@ function SessionCard({
   message,
   session,
   onOpen,
+  onOpenPane,
 }: {
   message: ChatMessage;
   session?: Session;
+  /** Primary tap — the conversation (thread) when the caller can open one. */
   onOpen?: (sessionId: string) => void;
+  /** The workbench ("Under the hood") — full transcript screen. */
+  onOpenPane?: (sessionId: string) => void;
 }) {
   const { colors } = useTheme();
   const now = Date.now();
@@ -484,7 +488,7 @@ function SessionCard({
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`Open agent transcript: ${session?.title ?? message.text}`}
+      accessibilityLabel={`Open agent conversation: ${session?.title ?? message.text}`}
       accessibilityState={{ disabled: !message.sessionId || !onOpen }}
       disabled={!message.sessionId || !onOpen}
       onPress={() => {
@@ -516,7 +520,18 @@ function SessionCard({
       {session?.resultText ? (
         <Text style={{ color: colors.textSecondary, fontSize: font.xs, lineHeight: 18 }}>{session.resultText}</Text>
       ) : null}
-      <Text style={{ color: colors.accent, fontSize: font.xs, fontWeight: '700' }}>Open full transcript</Text>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Under the hood — full transcript"
+        disabled={!message.sessionId || !(onOpenPane ?? onOpen)}
+        onPress={() => {
+          if (message.sessionId) (onOpenPane ?? onOpen)?.(message.sessionId);
+        }}
+        hitSlop={8}
+        style={{ alignSelf: 'flex-start', minHeight: 36, justifyContent: 'center' }}
+      >
+        <Text style={{ color: colors.textMuted, fontSize: font.xs, fontWeight: '700' }}>Under the hood →</Text>
+      </Pressable>
     </Pressable>
   );
 }
@@ -1007,7 +1022,14 @@ export const MessageRow = memo(function MessageRow({
       onSuggestSessionAnswer={onSuggestSessionAnswer}
     />
   ) : m.sessionId != null ? (
-    <SessionCard message={m} session={session} onOpen={onOpenSession} />
+    <SessionCard
+      message={m}
+      session={session}
+      // Primary tap lands on the conversation (the card's thread); the full
+      // transcript stays one tap away via "Under the hood".
+      onOpen={!inThread && onOpenThread ? () => onOpenThread(m) : onOpenSession}
+      onOpenPane={onOpenSession}
+    />
   ) : (
     <>
       {partitionedEntryLinks.bodyText ? (

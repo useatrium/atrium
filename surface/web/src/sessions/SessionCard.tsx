@@ -1,6 +1,13 @@
 import { useEffect, useRef, useState, type MouseEvent } from 'react';
 import { formatTime } from '@atrium/surface-client';
-import { formatCost, isPendingSessionId, isStalledSessionStatus, isTerminalSessionStatus, type Session } from './types';
+import {
+  formatCost,
+  isPendingSessionId,
+  isStalledSessionStatus,
+  isTerminalSessionStatus,
+  sessionDriverId,
+  type Session,
+} from './types';
 import { GlanceChip } from './GlanceChip';
 import { InlineQuestionAnswer } from './InlineQuestionAnswer';
 import { sessionsApi } from './api';
@@ -189,7 +196,10 @@ export function SessionCard({
       {terminal && session.resultText && (
         <div className="mt-1.5 border-l-2 border-edge-strong pl-2 text-xs leading-relaxed text-fg-secondary">
           <span className="line-clamp-3 whitespace-pre-wrap break-words">{session.resultText}</span>
-          {session.status === 'failed' && meId != null && session.driverId === meId && (
+          {/* sessionDriverId, not raw driverId: feed folds create terminal
+              entities with driverId null (no heal), and the seat model's
+              canonical fallback is the spawner. */}
+          {session.status === 'failed' && meId != null && sessionDriverId(session) === meId && (
             <span className="mt-0.5 block">
               <RetryTurnAction sessionId={session.id} />
             </span>
