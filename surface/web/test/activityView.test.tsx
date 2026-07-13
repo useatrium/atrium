@@ -278,6 +278,84 @@ describe('ActivityView', () => {
     expect(screen.getByTestId('activity-clears-when').textContent).toBe('Clears when answered');
   });
 
+  // The row that says someone is waiting on you must not be a dead end: it has
+  // no feed event to resolve, but it names its session outright.
+  it('opens the session a synthetic row names, without hunting for a feed event', async () => {
+    apiMock.getActivity.mockResolvedValue(activityResponse([activityItem({ eventId: '9' })], { unread: 1 }));
+    const onOpenSession = vi.fn();
+    const onSelectChannel = vi.fn();
+
+    render(
+      <ActivityView
+        onSelectChannel={onSelectChannel}
+        onOpenSession={onOpenSession}
+        liveAttention={[
+          activityItem({
+            eventId: 'live:s-live',
+            kind: 'agent_question',
+            channelId: 'ch-agent',
+            channelName: 'agents',
+            snippet: 'Deploy now?',
+            sessionId: 's-live',
+            sessionTitle: 'Deploy assistant',
+            attention: true,
+          }),
+        ]}
+      />,
+    );
+
+    fireEvent.click(await screen.findByText('Deploy assistant · needs your answer'));
+
+    expect(onSelectChannel).toHaveBeenCalledWith('ch-agent');
+    await waitFor(() => expect(onOpenSession).toHaveBeenCalledWith('s-live'));
+    // There is no event behind a synthetic row — we must not go looking for one.
+    expect(apiMock.messages).not.toHaveBeenCalled();
+    // …and the click still must not mark anything read (that op no-ops anyway).
+    expect(apiMock.markActivityItemRead).not.toHaveBeenCalled();
+  });
+
+  it('still resolves a real attention row through its feed event', async () => {
+    const onOpenSession = vi.fn();
+    apiMock.getActivity.mockResolvedValue(
+      activityResponse(
+        [
+          activityItem({
+            eventId: '12',
+            kind: 'agent_question',
+            channelId: 'ch-agent',
+            sessionId: 's-1',
+            sessionTitle: 'Deploy assistant',
+            attention: true,
+          }),
+        ],
+        { attention: 1, unread: 1 },
+      ),
+    );
+    apiMock.messages.mockResolvedValue({
+      events: [
+        {
+          id: 12,
+          workspaceId: 'ws-1',
+          channelId: 'ch-agent',
+          threadRootEventId: 1,
+          type: 'session.question_requested',
+          actorId: 'u-me',
+          payload: { sessionId: 's-from-event' },
+          createdAt: '2026-07-02T10:15:00.000Z',
+        },
+      ],
+      hasMore: false,
+    });
+
+    render(<ActivityView onSelectChannel={vi.fn()} onOpenSession={onOpenSession} />);
+
+    fireEvent.click(await screen.findByText('Deploy assistant · needs your answer'));
+
+    // Unchanged: the real path still trusts the event payload, not the row.
+    await waitFor(() => expect(apiMock.messages).toHaveBeenCalledWith('ch-agent', { afterId: 11, limit: 1 }));
+    await waitFor(() => expect(onOpenSession).toHaveBeenCalledWith('s-from-event'));
+  });
+
   it('tells an auth-blocked synthetic row what actually clears it', async () => {
     apiMock.getActivity.mockResolvedValue(activityResponse([activityItem({ eventId: '9' })], { unread: 1 }));
 

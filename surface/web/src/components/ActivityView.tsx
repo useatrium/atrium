@@ -427,6 +427,14 @@ export function ActivityView({
     ) {
       return;
     }
+    // A synthetic row already names its session — there is no feed event to
+    // resolve it from. The eventId guard below exists for that lookup, but it
+    // was also stranding this click in the channel with nothing opened: the one
+    // row in the app that says someone is waiting on you was a dead end.
+    if (isSyntheticRow(item)) {
+      if (item.sessionId) onOpenSession(item.sessionId);
+      return;
+    }
     const eventId = parseEventId(item.eventId);
     if (eventId == null) return;
     try {
