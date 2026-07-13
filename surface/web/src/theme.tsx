@@ -5,6 +5,7 @@ import {
   normalizePrefs,
   normalizePrefsPatch,
   randomId,
+  webPalette,
   type UserPrefs,
 } from '@atrium/surface-client';
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
@@ -14,8 +15,8 @@ import { showErrorToast } from './components/Toasts';
 
 const PREFS_KEY = 'atrium:prefs';
 const THEME_META: Record<'dark' | 'light', string> = {
-  dark: '#09090b',
-  light: '#fafafa',
+  dark: webPalette.dark.surface,
+  light: webPalette.light.surface,
 };
 
 type Scheme = 'dark' | 'light';

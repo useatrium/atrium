@@ -29,3 +29,4 @@ export * from './files-hub';
 export * from './markup';
 export * from './sessionCapabilities';
 export * from './textDiff';
+export * from './tokens';
