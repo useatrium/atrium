@@ -80,7 +80,8 @@ Open http://localhost:5173. First boot auto-creates workspace **atrium** with
 Useful:
 
 ```bash
-pnpm lint          # Biome lint, error diagnostics only
+pnpm lint          # Biome check (lint rules + formatting); same gate as CI Surface static
+pnpm lint:fix     # auto-fix format + safe Biome fixes
 pnpm check:migrations  # migration filename guard
 pnpm test          # vitest across workspace packages
 pnpm typecheck     # typecheck packages that expose a typecheck script

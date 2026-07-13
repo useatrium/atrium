@@ -1,5 +1,8 @@
 # Atrium — repo guide
 
+> `CLAUDE.md` is a symlink to this file (same at `surface/mobile/`). Edit `AGENTS.md`
+> only. Under `centaur/`, `CLAUDE.md` still dual-includes `AGENTS.md` + `ATRIUM_FORK.md`.
+
 This repo holds **two things that ship together**:
 
 - **Atrium** — the collaboration platform (chat, sessions, artifacts, voice). Lives in
@@ -71,3 +74,35 @@ the wire protocol between them can now land as **one PR** across both.
   jobs are gated on `centaur/**` or workflow changes. Image/chart publishing is
   deliberately excluded. For runtime changes, still validate locally as needed with
   `cd centaur && just …`.
+
+### Before opening a surface PR
+
+CI's **Surface static** job is the hard gate. Do **not** open or push a surface PR without
+running at least the lint step locally — remote CI should not be the first place Biome runs.
+
+From `surface/`:
+
+```bash
+pnpm lint          # biome check = lint rules + formatting (not lint-only)
+# or auto-fix format + safe fixes:
+pnpm lint:fix
+```
+
+Fuller local bar (matches more of Surface static):
+
+```bash
+pnpm check         # lint + migration filenames + typecheck + unit tests
+pnpm --filter @atrium/mobile lint:a11y
+pnpm --filter @atrium/centaur-client build
+pnpm --filter @atrium/web build:ci
+```
+
+Notes:
+
+- `pnpm lint` is **`biome check`**, not `biome lint`. Format drift fails CI the same as rule
+  errors. If static fails with "Formatter would have printed…", run `pnpm lint:fix`,
+  commit, and push.
+- Typecheck/tests alone are not enough; subagent "lanes" that only typecheck still need a
+  final `pnpm lint` (or `lint:fix`) before the PR.
+- There is no repo-enforced pre-commit hook. Local format-on-save (Biome) helps humans;
+  agents must run the commands above explicitly.
