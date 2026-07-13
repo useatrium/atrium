@@ -10,6 +10,8 @@ interface InternalViewer extends UserRef {
   driver: UserRef | null;
 }
 
+type DeltaMode = 'full' | 'append';
+
 export interface InternalAtriumRouteDeps {
   pool: Db;
   sessionRuns: SessionRuns;
@@ -68,6 +70,18 @@ export function registerInternalAtriumRoutes(app: FastifyInstance, deps: Interna
     };
   }
 
+  function setSessionDeltaHeaders(reply: FastifyReply, epoch: string, mode: DeltaMode, nextSeq: number): void {
+    reply.header('x-atrium-epoch', epoch);
+    reply.header('x-atrium-delta', mode);
+    reply.header('x-atrium-next-seq', String(nextSeq));
+  }
+
+  function setChannelDeltaHeaders(reply: FastifyReply, epoch: string, mode: DeltaMode, nextEventId: number): void {
+    reply.header('x-atrium-epoch', epoch);
+    reply.header('x-atrium-delta', mode);
+    reply.header('x-atrium-next-event-id', String(nextEventId));
+  }
+
   app.get('/api/internal/sessions/:viewerId/atrium/changes', async (req, reply) => {
     if (!requireCaptureKey(req, reply)) return;
     const { viewerId } = req.params as { viewerId: string };
@@ -97,12 +111,11 @@ export function registerInternalAtriumRoutes(app: FastifyInstance, deps: Interna
     const viewer = await resolveViewer(viewerId, reply);
     if (!viewer) return;
     const projection = await import('../atrium-channel-projection.js');
-    return reply.send(
-      await projection.loadReadableChannels(pool, {
-        userId: viewer.id,
-        activeChannelId: viewer.activeChannelId,
-      }),
-    );
+    const channels = await projection.loadReadableChannels(pool, {
+      userId: viewer.id,
+      activeChannelId: viewer.activeChannelId,
+    });
+    return reply.send(channels.map((channel) => ({ ...channel, last_event_id: channel.lastEventId })));
   });
 
   app.get('/api/internal/sessions/:viewerId/atrium/channels/:channelId/:doc', async (req, reply) => {
@@ -128,10 +141,23 @@ export function registerInternalAtriumRoutes(app: FastifyInstance, deps: Interna
       return reply.code(404).send({ error: 'channel_not_found', message: 'channel not found' });
     }
     if (doc === 'channel') {
+      setChannelDeltaHeaders(reply, projection.CHANNEL_EPOCH, 'full', info.lastEventId);
       return reply.type('text/markdown; charset=utf-8').send(projection.renderChannelMarkdown(info));
     }
-    const messages = await projection.loadChannelChatMessages(pool, channelId);
-    return reply.type('text/markdown; charset=utf-8').send(projection.renderChannelChatMarkdown(messages));
+    const query = req.query as { since_event_id?: string; epoch?: string };
+    const sinceEventId = parseWatermark(query.since_event_id);
+    const requestedAppend =
+      sinceEventId != null && query.epoch === projection.CHANNEL_EPOCH && sinceEventId <= info.lastEventId;
+    const chat = await projection.loadChannelChatProjection(pool, channelId, sinceEventId);
+    if (requestedAppend && !chat.historyMutated) {
+      const delta = projection.renderChannelChatDelta(chat.messages, sinceEventId);
+      if (delta.preservesHistory) {
+        setChannelDeltaHeaders(reply, projection.CHANNEL_EPOCH, 'append', info.lastEventId);
+        return reply.type('text/markdown; charset=utf-8').send(delta.body);
+      }
+    }
+    setChannelDeltaHeaders(reply, projection.CHANNEL_EPOCH, 'full', info.lastEventId);
+    return reply.type('text/markdown; charset=utf-8').send(projection.renderChannelChatMarkdown(chat.messages));
   });
 
   app.get('/api/internal/sessions/:viewerId/atrium/sessions/:targetId/:doc', async (req, reply) => {
@@ -149,15 +175,40 @@ export function registerInternalAtriumRoutes(app: FastifyInstance, deps: Interna
     }
 
     const projection = await import('../atrium-session-projection.js');
+    const query = req.query as { since_seq?: string; epoch?: string };
+    const sinceSeq = parseWatermark(query.since_seq);
+    const state = await projection.loadSessionDeltaState(pool, targetId);
+    const afterSeq = sinceSeq ?? 0;
+    const appendRequested =
+      doc !== 'summary' &&
+      doc !== 'meta' &&
+      sinceSeq != null &&
+      query.epoch === state.epoch &&
+      sinceSeq <= state.nextSeq;
+    const appendable = appendRequested && (await projection.sessionDocHadContent(pool, targetId, doc, afterSeq));
+    const mode: DeltaMode = appendable ? 'append' : 'full';
+    setSessionDeltaHeaders(reply, state.epoch, mode, state.nextSeq);
     switch (doc) {
       case 'transcript': {
-        const records = await projection.loadSessionRecords(pool, targetId, 'lean');
-        return reply.type('text/markdown; charset=utf-8').send(projection.renderTranscriptMarkdown(records));
+        const records = appendable
+          ? await projection.loadSessionRecordsAfter(pool, targetId, 'lean', afterSeq)
+          : await projection.loadSessionRecords(pool, targetId, 'lean');
+        return reply
+          .type('text/markdown; charset=utf-8')
+          .send(
+            appendable
+              ? projection.renderTranscriptMarkdownAppend(records)
+              : projection.renderTranscriptMarkdown(records),
+          );
       }
       case 'full': {
         if (!(await canViewFull(viewerUser.id))) return fullViewForbidden(reply);
-        const records = await projection.loadSessionRecords(pool, targetId, 'full');
-        return reply.type('text/markdown; charset=utf-8').send(projection.renderFullMarkdown(records));
+        const records = appendable
+          ? await projection.loadSessionRecordsAfter(pool, targetId, 'full', afterSeq)
+          : await projection.loadSessionRecords(pool, targetId, 'full');
+        return reply
+          .type('text/markdown; charset=utf-8')
+          .send(appendable ? projection.renderFullMarkdownAppend(records) : projection.renderFullMarkdown(records));
       }
       case 'summary': {
         const records = await projection.loadSessionRecords(pool, targetId, 'full');
@@ -167,24 +218,50 @@ export function registerInternalAtriumRoutes(app: FastifyInstance, deps: Interna
       case 'meta':
         return reply.type('application/json').send(await projection.buildSessionMeta(pool, targetId));
       case 'tools': {
-        const records = await projection.loadSessionRecords(pool, targetId, 'full');
-        return reply.type('text/markdown; charset=utf-8').send(projection.renderToolsMarkdown(records));
+        const records = appendable
+          ? await projection.loadSessionRecordsAfter(pool, targetId, 'full', afterSeq)
+          : await projection.loadSessionRecords(pool, targetId, 'full');
+        return reply
+          .type('text/markdown; charset=utf-8')
+          .send(appendable ? projection.renderToolsMarkdownAppend(records) : projection.renderToolsMarkdown(records));
       }
       case 'artifacts': {
-        const records = await projection.loadSessionRecords(pool, targetId, 'lean');
-        return reply.type('text/markdown; charset=utf-8').send(projection.renderArtifactsMarkdown(records));
+        const records = appendable
+          ? await projection.loadSessionRecordsAfter(pool, targetId, 'lean', afterSeq)
+          : await projection.loadSessionRecords(pool, targetId, 'lean');
+        return reply
+          .type('text/markdown; charset=utf-8')
+          .send(
+            appendable
+              ? projection.renderArtifactsMarkdownAppend(records)
+              : projection.renderArtifactsMarkdown(records),
+          );
       }
       case 'changes-doc': {
-        const records = await projection.loadSessionRecords(pool, targetId, 'full');
-        return reply.type('text/markdown; charset=utf-8').send(projection.renderChangesMarkdown(records));
+        const records = appendable
+          ? await projection.loadSessionRecordsAfter(pool, targetId, 'full', afterSeq)
+          : await projection.loadSessionRecords(pool, targetId, 'full');
+        return reply
+          .type('text/markdown; charset=utf-8')
+          .send(
+            appendable ? projection.renderChangesMarkdownAppend(records) : projection.renderChangesMarkdown(records),
+          );
       }
       case 'events': {
         if (!(await canViewFull(viewerUser.id))) return fullViewForbidden(reply);
-        const records = await projection.loadSessionRecords(pool, targetId, 'full');
+        const records = appendable
+          ? await projection.loadSessionRecordsAfter(pool, targetId, 'full', afterSeq)
+          : await projection.loadSessionRecords(pool, targetId, 'full');
         return reply.type('application/jsonl; charset=utf-8').send(projection.renderEventsJsonl(records));
       }
       default:
         return reply.code(404).send({ error: 'doc_not_found', message: 'atrium doc not found' });
     }
   });
+}
+
+function parseWatermark(value: string | undefined): number | undefined {
+  if (value == null || !/^\d+$/.test(value)) return undefined;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) ? parsed : undefined;
 }

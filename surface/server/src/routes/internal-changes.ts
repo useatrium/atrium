@@ -368,7 +368,7 @@ class InternalChangeBroadcaster {
     const changes = await this.mapNotification(notification);
     if (changes.length === 0) return;
     for (const change of changes) {
-      if (change.feed === 'artifacts' && change.workspaceId) {
+      if ((change.feed === 'artifacts' || change.feed === 'atrium') && change.workspaceId) {
         this.filesNudge?.nudge(change.workspaceId);
       }
       this.seq += 1;
@@ -460,6 +460,7 @@ class InternalChangeBroadcaster {
          JOIN sessions s ON s.workspace_id = c.workspace_id
         WHERE c.id = $1::uuid
           AND s.centaur_thread_key IS NOT NULL
+          AND s.status IN ('spawning', 'queued', 'running')
           AND (
             (c.kind = 'public' AND ${workspaceMemberExists('c.workspace_id', 's.spawned_by')})
             OR EXISTS (SELECT 1 FROM channel_members cm

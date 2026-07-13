@@ -293,6 +293,86 @@ describe('internal /atrium node-facing routes', () => {
     expect(userEvents.statusCode).toBe(200);
   });
 
+  it('appends only session records after the acknowledged seq', async () => {
+    const { viewerId, targetId } = await seedViewerAndTarget();
+    const initial = await app.inject({
+      method: 'GET',
+      url: `/api/internal/sessions/${viewerId}/atrium/sessions/${targetId}/transcript`,
+      headers: { 'x-api-key': KEY },
+    });
+    expect(initial.headers['x-atrium-delta']).toBe('full');
+    expect(initial.headers['x-atrium-next-seq']).toBe('2');
+    const epoch = String(initial.headers['x-atrium-epoch']);
+
+    await insertRecord({
+      sessionId: targetId,
+      seq: 3,
+      kind: 'message',
+      actor: 'agent',
+      viewTier: 'lean',
+      text: 'Only this newly projected answer should be appended.',
+    });
+    const delta = await app.inject({
+      method: 'GET',
+      url: `/api/internal/sessions/${viewerId}/atrium/sessions/${targetId}/transcript?since_seq=2&epoch=${encodeURIComponent(epoch)}`,
+      headers: { 'x-api-key': KEY },
+    });
+
+    expect(delta.statusCode).toBe(200);
+    expect(delta.headers['x-atrium-delta']).toBe('append');
+    expect(delta.headers['x-atrium-next-seq']).toBe('3');
+    expect(delta.body).toContain('Only this newly projected answer should be appended.');
+    expect(delta.body).not.toContain('# Transcript');
+    expect(delta.body).not.toContain('Please repair the sprocket index.');
+    const current = await app.inject({
+      method: 'GET',
+      url: `/api/internal/sessions/${viewerId}/atrium/sessions/${targetId}/transcript`,
+      headers: { 'x-api-key': KEY },
+    });
+    expect(initial.body + delta.body).toBe(current.body);
+  });
+
+  it('downgrades an epoch mismatch and aggregate docs to full', async () => {
+    const { viewerId, targetId } = await seedViewerAndTarget();
+    const mismatch = await app.inject({
+      method: 'GET',
+      url: `/api/internal/sessions/${viewerId}/atrium/sessions/${targetId}/transcript?since_seq=1&epoch=stale`,
+      headers: { 'x-api-key': KEY },
+    });
+    expect(mismatch.headers['x-atrium-delta']).toBe('full');
+    expect(mismatch.body).toContain('# Transcript');
+    const epoch = String(mismatch.headers['x-atrium-epoch']);
+
+    for (const doc of ['summary', 'meta']) {
+      const aggregate = await app.inject({
+        method: 'GET',
+        url: `/api/internal/sessions/${viewerId}/atrium/sessions/${targetId}/${doc}?since_seq=1&epoch=${encodeURIComponent(epoch)}`,
+        headers: { 'x-api-key': KEY },
+      });
+      expect(aggregate.statusCode).toBe(200);
+      expect(aggregate.headers['x-atrium-delta']).toBe('full');
+      expect(aggregate.headers['x-atrium-next-seq']).toBe('2');
+    }
+  });
+
+  it('keeps no-since session bodies backward compatible', async () => {
+    const { viewerId, targetId } = await seedViewerAndTarget();
+    const internal = await app.inject({
+      method: 'GET',
+      url: `/api/internal/sessions/${viewerId}/atrium/sessions/${targetId}/transcript`,
+      headers: { 'x-api-key': KEY },
+    });
+    const cookie = await login('alice', 'Alice');
+    const existing = await app.inject({
+      method: 'GET',
+      url: `/api/sessions/${targetId}/atrium/transcript`,
+      headers: { cookie },
+    });
+
+    expect(internal.headers['x-atrium-delta']).toBe('full');
+    expect(internal.body).toBe(existing.body);
+  });
+
   it('lists readable channels and excludes DMs unless they are the viewer session channel', async () => {
     const bobId = await seedMember(pool, fx.workspaceId, 'bob', 'Bob Jones');
     const dmId = await insertDmChannel([fx.userId, bobId]);
@@ -384,6 +464,59 @@ describe('internal /atrium node-facing routes', () => {
     expect(chat.body).not.toContain('deleted secret text');
   });
 
+  it('appends new channel messages but downgrades edits behind the watermark', async () => {
+    const viewerId = await insertSession({ title: 'Channel delta viewer' });
+    const root = await postMessage(pool, {
+      workspaceId: fx.workspaceId,
+      channelId: fx.channelId,
+      actorId: fx.userId,
+      text: 'stable root',
+    });
+    const initial = await app.inject({
+      method: 'GET',
+      url: `/api/internal/sessions/${viewerId}/atrium/channels/${fx.channelId}/chat`,
+      headers: { 'x-api-key': KEY },
+    });
+    const epoch = String(initial.headers['x-atrium-epoch']);
+    expect(initial.headers['x-atrium-next-event-id']).toBe(String(root.id));
+
+    const next = await postMessage(pool, {
+      workspaceId: fx.workspaceId,
+      channelId: fx.channelId,
+      actorId: fx.userId,
+      text: 'new tail message',
+    });
+    const appended = await app.inject({
+      method: 'GET',
+      url: `/api/internal/sessions/${viewerId}/atrium/channels/${fx.channelId}/chat?since_event_id=${root.id}&epoch=${encodeURIComponent(epoch)}`,
+      headers: { 'x-api-key': KEY },
+    });
+    expect(appended.headers['x-atrium-delta']).toBe('append');
+    expect(appended.headers['x-atrium-next-event-id']).toBe(String(next.id));
+    expect(appended.body).toContain('new tail message');
+    expect(appended.body).not.toContain('stable root');
+    const current = await app.inject({
+      method: 'GET',
+      url: `/api/internal/sessions/${viewerId}/atrium/channels/${fx.channelId}/chat`,
+      headers: { 'x-api-key': KEY },
+    });
+    expect(initial.body + appended.body).toBe(current.body);
+
+    await editMessage(pool, {
+      targetEventId: root.id,
+      actorId: fx.userId,
+      text: 'mutated root',
+    });
+    const edited = await app.inject({
+      method: 'GET',
+      url: `/api/internal/sessions/${viewerId}/atrium/channels/${fx.channelId}/chat?since_event_id=${next.id}&epoch=${encodeURIComponent(epoch)}`,
+      headers: { 'x-api-key': KEY },
+    });
+    expect(edited.headers['x-atrium-delta']).toBe('full');
+    expect(edited.body).toContain('mutated root');
+    expect(edited.body).toContain('new tail message');
+  });
+
   it('gates full and events views while keeping lean transcript available', async () => {
     const { viewerId, targetId } = await seedViewerAndTarget();
 
@@ -425,6 +558,15 @@ describe('internal /atrium node-facing routes', () => {
 
   it('reprojects a user-accessible session on demand and emits a change row', async () => {
     const targetId = await insertSession({ title: 'Reproject target' });
+    await insertRecord({
+      sessionId: targetId,
+      seq: 0,
+      kind: 'message',
+      actor: 'user',
+      viewTier: 'lean',
+      text: 'Old projected text.',
+    });
+    await pool.query('INSERT INTO session_projection_state (session_id, last_event_id) VALUES ($1, 0)', [targetId]);
     await insertCompletedSessionEvent(targetId, 'Reprojected transcript text.');
     const cookie = await login('alice', 'Alice');
 
@@ -445,6 +587,11 @@ describe('internal /atrium node-facing routes', () => {
       [targetId],
     );
     expect(Number(changes.rows[0]?.count ?? 0)).toBe(1);
+    const generation = await pool.query<{ generation: string }>(
+      'SELECT generation::text FROM session_projection_state WHERE session_id = $1',
+      [targetId],
+    );
+    expect(generation.rows[0]?.generation).toBe('2');
   });
 
   it('404s for a private target the viewer user cannot access', async () => {
