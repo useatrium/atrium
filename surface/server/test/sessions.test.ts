@@ -3379,6 +3379,137 @@ describe('Phase 2 sessions', () => {
     await app.close();
   });
 
+  it('durably mirrors and revives the same released session after a terminal startup failure', async () => {
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const cookie = await loginCookie(app);
+    const root = await postMessage(pool, {
+      workspaceId: fx.workspaceId,
+      channelId: fx.channelId,
+      actorId: fx.userId,
+      text: 'Original attached conversation',
+    });
+    const inserted = await pool.query<{ id: string }>(
+      `INSERT INTO sessions (
+         workspace_id, channel_id, thread_root_event_id, centaur_thread_key, harness, title, status, spawned_by,
+         driver_id, current_execution_id, assignment_generation, last_event_id, completed_at
+       )
+       VALUES ($1, $2, $3, 'thread-released-startup-failure', 'claude-code', 'released startup failure',
+               'completed', $4, $4, 'exe_original', NULL, 499, now())
+       RETURNING id`,
+      [fx.workspaceId, fx.channelId, root.id, fx.userId],
+    );
+    const id = inserted.rows[0]!.id;
+    fake.setFrames([
+      {
+        event: 'execution_state',
+        event_id: 500,
+        data: {
+          type: 'execution.state',
+          status: 'failed',
+          terminal_reason: 'startup_timeout',
+          thread_key: 'thread-released-startup-failure',
+          execution_id: 'exe_fake_1',
+          result_text: 'execution never started',
+        },
+      },
+    ]);
+
+    const firstOpId = randomUUID();
+    const first = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${id}/messages`,
+      headers: { cookie },
+      payload: { text: 'evt_319 steer after release', opId: firstOpId },
+    });
+    expect(first.statusCode).toBe(202);
+
+    // Replaying the client operation neither reaches Centaur again nor mirrors
+    // a second top-level user event.
+    const replay = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${id}/messages`,
+      headers: { cookie },
+      payload: { text: 'evt_319 steer after release', opId: firstOpId },
+    });
+    expect(replay.statusCode).toBe(202);
+    expect(fake.acceptedMessages).toHaveLength(1);
+    expect(fake.acceptedExecutions).toEqual(['exe_fake_1']);
+
+    await waitFor(async () => {
+      const row = await pool.query(
+        `SELECT status, current_execution_id, assignment_generation,
+                centaur_execute_id, centaur_message_id, last_event_id
+           FROM sessions
+          WHERE id = $1`,
+        [id],
+      );
+      expect(row.rows[0]).toMatchObject({
+        status: 'failed',
+        current_execution_id: null,
+        assignment_generation: 1,
+        centaur_execute_id: null,
+        centaur_message_id: null,
+      });
+      expect(Number(row.rows[0].last_event_id)).toBe(500);
+    });
+
+    const firstMirrors = await pool.query(
+      `SELECT payload
+         FROM events
+        WHERE type = 'message.posted'
+          AND thread_root_event_id = $1`,
+      [root.id],
+    );
+    expect(firstMirrors.rows).toEqual([
+      {
+        payload: {
+          text: 'evt_319 steer after release',
+          steered_session_id: id,
+          client_msg_id: firstOpId,
+        },
+      },
+    ]);
+
+    // Centaur owns the startup watchdog. Once its durable terminal frame has
+    // folded, the next steer is one fresh turn on the same thread/history.
+    fake.clearFrames();
+    const secondOpId = randomUUID();
+    const second = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${id}/messages`,
+      headers: { cookie },
+      payload: { text: 'retry after startup failure', opId: secondOpId },
+    });
+    expect(second.statusCode).toBe(202);
+    expect(fake.acceptedMessages).toHaveLength(2);
+    expect(fake.acceptedExecutions).toEqual(['exe_fake_1', 'exe_fake_2']);
+
+    const requests = fake.requests.filter((request) =>
+      ['/agent/spawn', '/agent/message', '/agent/execute'].includes(request.path),
+    );
+    expect(requests).not.toHaveLength(0);
+    expect(requests.every((request) => request.body.thread_key === 'thread-released-startup-failure')).toBe(true);
+    const sessions = await pool.query(`SELECT count(*)::int AS count FROM sessions WHERE id = $1`, [id]);
+    expect(sessions.rows[0].count).toBe(1);
+    const mirrors = await pool.query(
+      `SELECT payload
+         FROM events
+        WHERE type = 'message.posted'
+          AND thread_root_event_id = $1
+        ORDER BY id`,
+      [root.id],
+    );
+    expect(mirrors.rows.map((row) => row.payload)).toEqual([
+      { text: 'evt_319 steer after release', steered_session_id: id, client_msg_id: firstOpId },
+      { text: 'retry after startup failure', steered_session_id: id, client_msg_id: secondOpId },
+    ]);
+    await app.close();
+  });
+
   it('steer mints a fresh execute id when a crashed steer left one pending', async () => {
     const app = await buildApp({
       pool,

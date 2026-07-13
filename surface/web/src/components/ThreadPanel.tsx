@@ -8,7 +8,7 @@ import type {
   VoiceMeta,
 } from '@atrium/surface-client';
 import type { Session } from '../sessions/types';
-import { sessionDriverId, buildTimelineItems } from '@atrium/surface-client';
+import { sessionDriverId, buildTimelineItems, normalizeSteerProvenanceText } from '@atrium/surface-client';
 import { encodeEventHandle } from '@atrium/surface-client/handle';
 import { Composer } from './Composer';
 import type { AgentComposerRequest, ComposerHandle } from './Composer';
@@ -22,6 +22,46 @@ import {
   threadPaneSizing,
   useThreadPaneWidth,
 } from '../sessions/useSessionPaneWidth';
+
+const STEER_ECHO_WINDOW_MS = 5 * 60 * 1000;
+
+function steerFallbackMatches(pending: ChatMessage, confirmed: ChatMessage): boolean {
+  if (pending.steeredSessionId == null || pending.steeredSessionId !== confirmed.steeredSessionId) return false;
+  if (pending.author.id !== confirmed.author.id) return false;
+  if (normalizeSteerProvenanceText(pending.text) !== normalizeSteerProvenanceText(confirmed.text)) return false;
+  const pendingAt = Date.parse(pending.createdAt);
+  const confirmedAt = Date.parse(confirmed.createdAt);
+  return (
+    Number.isFinite(pendingAt) &&
+    Number.isFinite(confirmedAt) &&
+    confirmedAt >= pendingAt &&
+    confirmedAt - pendingAt <= STEER_ECHO_WINDOW_MS
+  );
+}
+
+/** Hide each optimistic steer only when one durable thread echo can consume it. */
+export function reconcileThreadSteerReplies(replies: ChatMessage[]): ChatMessage[] {
+  const confirmed = replies.filter((message) => message.status === 'confirmed' && message.steeredSessionId != null);
+  if (confirmed.length === 0) return replies;
+  const consumed = new Set<ChatMessage>();
+  const hidden = new Set<ChatMessage>();
+  for (const pending of replies) {
+    if (pending.status === 'confirmed' || pending.steeredSessionId == null) continue;
+    const match = confirmed.find(
+      (candidate) =>
+        !consumed.has(candidate) && pending.clientMsgId != null && pending.clientMsgId === candidate.clientMsgId,
+    );
+    const fallback =
+      pending.status === 'pending'
+        ? confirmed.find((candidate) => !consumed.has(candidate) && steerFallbackMatches(pending, candidate))
+        : undefined;
+    const echo = match ?? fallback;
+    if (!echo) continue;
+    consumed.add(echo);
+    hidden.add(pending);
+  }
+  return hidden.size === 0 ? replies : replies.filter((message) => !hidden.has(message));
+}
 
 export function ThreadPanel({
   root,
@@ -115,13 +155,14 @@ export function ThreadPanel({
   const spectatorsFor = (m: ChatMessage) => (m.sessionId != null ? (spectators[m.sessionId] ?? 0) : 0);
   const scrollRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<ComposerHandle>(null);
-  const count = replies.length;
+  const reconciledReplies = useMemo(() => reconcileThreadSteerReplies(replies), [replies]);
+  const count = reconciledReplies.length;
   useLayoutEffect(() => {
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [count]);
 
-  const items = useMemo(() => buildTimelineItems(replies), [replies]);
+  const items = useMemo(() => buildTimelineItems(reconciledReplies), [reconciledReplies]);
 
   return (
     <aside
@@ -221,7 +262,7 @@ export function ThreadPanel({
             />
           ),
         )}
-        {replies.length === 0 && (
+        {reconciledReplies.length === 0 && (
           <div className="px-4 py-6 text-center text-xs text-fg-muted">
             {loaded ? 'No replies yet. Start the thread.' : 'Loading replies…'}
           </div>

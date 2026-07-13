@@ -3,7 +3,7 @@ use std::io::{self, BufRead, Write};
 use std::process::{Child, ChildStdin, Command as ProcessCommand, Stdio};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use codex_app_server_protocol::UserInput;
 use serde_json::{Value, json};
@@ -17,6 +17,8 @@ use crate::util::write_value;
 use crate::{AppServerRuntime, HarnessServerError, Result};
 
 const ACTIVE_TURN_POLL_INTERVAL: Duration = Duration::from_millis(50);
+const DEFAULT_STARTUP_RPC_TIMEOUT: Duration = Duration::from_secs(60);
+const CODEX_STARTUP_RPC_TIMEOUT_MS_ENV: &str = "CODEX_STARTUP_RPC_TIMEOUT_MS";
 
 #[derive(Debug, Clone, Copy)]
 pub struct CodexHarnessServer {
@@ -149,15 +151,30 @@ pub(crate) fn run_codex_blocks_server(config: CodexHarnessServer) -> Result<()> 
             }) => {
                 let traceparent = trace_context.effective_traceparent();
                 if codex.is_none() {
-                    otel::configure_codex_otel_for_startup(&trace_context)?;
-                    let mut child = CodexJsonRpcChild::spawn()?;
-                    initialize_codex(
-                        &mut child,
-                        &mut stdout,
-                        &mut request_id,
-                        traceparent.as_deref(),
-                    )?;
-                    codex = Some(child);
+                    let startup = (|| {
+                        otel::configure_codex_otel_for_startup(&trace_context)?;
+                        let mut child = CodexJsonRpcChild::spawn()?;
+                        initialize_codex(
+                            &mut child,
+                            &mut stdout,
+                            &mut request_id,
+                            traceparent.as_deref(),
+                        )?;
+                        Ok::<_, HarnessServerError>(child)
+                    })();
+                    match startup {
+                        Ok(child) => codex = Some(child),
+                        Err(error) => {
+                            eprintln!("Codex blocks startup failed: {error:#}");
+                            write_blocks_error(
+                                &mut stdout,
+                                thread_id.as_deref().unwrap_or("codex"),
+                                "startup",
+                                format!("Codex startup failed: {error}"),
+                            )?;
+                            continue;
+                        }
+                    }
                 }
                 let model = model.or_else(|| config.default_model());
                 let model_provider =
@@ -184,9 +201,17 @@ pub(crate) fn run_codex_blocks_server(config: CodexHarnessServer) -> Result<()> 
                 if let Err(error) = run_codex_user_turn(&mut turn_ctx, turn) {
                     let fallback_thread_id =
                         turn_ctx.thread_id.as_deref().unwrap_or("codex").to_string();
+                    // A timeout/protocol error before a turn becomes active can
+                    // leave the app-server child permanently poisoned. Drop all
+                    // child-local thread state so the next steer starts a fresh
+                    // child and resumes the durable thread from the environment.
+                    drop(turn_ctx);
+                    codex = None;
+                    thread_id = None;
+                    thread_provider = None;
                     eprintln!("Codex blocks turn failed: {error:#}");
                     write_blocks_error(
-                        turn_ctx.stdout,
+                        &mut stdout,
                         &fallback_thread_id,
                         "turn",
                         error.to_string(),
@@ -252,7 +277,7 @@ fn initialize_codex<W: Write>(
         traceparent,
     )?;
     codex
-        .read_response_or_forward(initialize_id, stdout)
+        .read_response_or_forward(initialize_id, "initialize", startup_rpc_timeout(), stdout)
         .map(|_| ())
 }
 
@@ -349,9 +374,12 @@ fn run_codex_user_turn<W: Write>(
             params.clone(),
             turn.traceparent.as_deref(),
         )?;
-        let result = ctx
-            .codex
-            .read_response_or_forward(turn_request_id, ctx.stdout)?;
+        let result = ctx.codex.read_response_or_forward(
+            turn_request_id,
+            "turn/start",
+            startup_rpc_timeout(),
+            ctx.stdout,
+        )?;
         let turn_id = result
             .pointer("/turn/id")
             .and_then(Value::as_str)
@@ -428,7 +456,7 @@ fn start_or_resume_thread<W: Write>(
 
     let id = next_request_id(request_id);
     codex.send_request(id, method, params, traceparent)?;
-    let result = codex.read_response_or_forward(id, stdout)?;
+    let result = codex.read_response_or_forward(id, method, startup_rpc_timeout(), stdout)?;
     result
         .pointer("/thread/id")
         .and_then(Value::as_str)
@@ -538,10 +566,19 @@ impl CodexJsonRpcChild {
     fn read_response_or_forward<W: Write>(
         &mut self,
         expected_id: i64,
+        operation: &str,
+        timeout: Duration,
         stdout: &mut W,
     ) -> Result<Value> {
+        let deadline = Instant::now() + timeout;
         loop {
-            let value = self.read_value()?;
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(startup_rpc_timeout_error(operation, timeout));
+            }
+            let Some(value) = self.read_value_timeout(remaining)? else {
+                return Err(startup_rpc_timeout_error(operation, timeout));
+            };
             if is_server_request(&value) {
                 self.send_error_response(&value)?;
                 continue;
@@ -680,26 +717,14 @@ impl CodexJsonRpcChild {
         Ok(())
     }
 
-    fn read_value(&mut self) -> Result<Value> {
-        loop {
-            let line = match self.stdout.recv() {
-                Ok(line) => line?,
-                Err(_) => {
-                    let status = self.child.wait()?;
-                    return Err(HarnessServerError::CodexExited { status });
-                }
-            };
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
-                continue;
-            }
-            return Ok(serde_json::from_str(trimmed)?);
-        }
-    }
-
     fn read_value_timeout(&mut self, timeout: Duration) -> Result<Option<Value>> {
+        let deadline = Instant::now() + timeout;
         loop {
-            let line = match self.stdout.recv_timeout(timeout) {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Ok(None);
+            }
+            let line = match self.stdout.recv_timeout(remaining) {
                 Ok(line) => line?,
                 Err(RecvTimeoutError::Timeout) => return Ok(None),
                 Err(RecvTimeoutError::Disconnected) => {
@@ -714,6 +739,22 @@ impl CodexJsonRpcChild {
             return Ok(Some(serde_json::from_str(trimmed)?));
         }
     }
+}
+
+fn startup_rpc_timeout() -> Duration {
+    env::var(CODEX_STARTUP_RPC_TIMEOUT_MS_ENV)
+        .ok()
+        .and_then(|raw| raw.trim().parse::<u64>().ok())
+        .filter(|millis| *millis > 0)
+        .map(Duration::from_millis)
+        .unwrap_or(DEFAULT_STARTUP_RPC_TIMEOUT)
+}
+
+fn startup_rpc_timeout_error(operation: &str, timeout: Duration) -> HarnessServerError {
+    HarnessServerError::Protocol(format!(
+        "Codex app-server {operation} response timed out after {}ms",
+        timeout.as_millis()
+    ))
 }
 
 impl Drop for CodexJsonRpcChild {
@@ -995,6 +1036,58 @@ fn codex_supports_stdio_listen(bin: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resume_rpc_hang_times_out_despite_remote_control_notification() {
+        let mut child = ProcessCommand::new("sh")
+            .args([
+                "-c",
+                "printf '%s\\n' '{\"method\":\"codex/event/remote_control_status_changed\",\"params\":{\"enabled\":false}}'; sleep 10",
+            ])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn hanging fake app-server");
+        let stdin = child.stdin.take().expect("fake app-server stdin");
+        let stdout = child.stdout.take().expect("fake app-server stdout");
+        let (stdout_tx, stdout_rx) = mpsc::channel();
+        thread::spawn(move || {
+            for raw in io::BufReader::new(stdout).lines() {
+                let should_stop = raw.is_err();
+                if stdout_tx.send(raw).is_err() || should_stop {
+                    break;
+                }
+            }
+        });
+        let mut codex = CodexJsonRpcChild {
+            child,
+            stdin,
+            stdout: stdout_rx,
+        };
+        let mut forwarded = Vec::new();
+
+        let error = codex
+            .read_response_or_forward(
+                7,
+                "thread/resume",
+                Duration::from_millis(50),
+                &mut forwarded,
+            )
+            .expect_err("missing resume response must time out");
+
+        assert!(
+            error
+                .to_string()
+                .contains("thread/resume response timed out after 50ms")
+        );
+        assert!(
+            String::from_utf8(forwarded)
+                .expect("forwarded notification is utf-8")
+                .contains("remote_control_status_changed"),
+            "notification should be forwarded without resetting the RPC deadline"
+        );
+    }
 
     // A non-empty explicit provider override (the `--bedrock` blocks `provider`
     // field) short-circuits before any env/model heuristic, so these assertions

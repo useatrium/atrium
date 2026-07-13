@@ -15,7 +15,13 @@ import type {
 import { randomId } from '@atrium/surface-client';
 import { PENDING_SESSION_PREFIX } from './sessions/types';
 import type { SpawnConfig } from './sessions/SpawnDialog';
-import { pendingMessageFromSendPayload, pendingSpawnFromPayload, type VoiceMsgSendPayload } from './chatQueuedOverlays';
+import {
+  pendingMessageFromSendPayload,
+  pendingMessageFromThreadSteerPayload,
+  pendingSpawnFromPayload,
+  type QueuedThreadSteerPayload,
+  type VoiceMsgSendPayload,
+} from './chatQueuedOverlays';
 import { showErrorToast } from './components/Toasts';
 import type { AttachmentMeta } from '@atrium/surface-client';
 import type { AgentComposerRequest } from './components/Composer';
@@ -218,18 +224,46 @@ export function useChatMessageActions({
         return;
       }
       if (request.target === 'steer' && request.sessionId) {
-        void enqueueOp({
-          opId: randomId(),
-          opType: 'session.steer',
-          payload: {
-            sessionId: request.sessionId,
-            text,
-            postToThread: true,
-            ...(request.effort ? { effort: request.effort } : {}),
-            ...(attachments && attachments.length > 0 ? { attachments } : {}),
-            ...(attachmentRefs && attachmentRefs.length > 0 ? { attachmentRefs } : {}),
+        const clientMsgId = randomId();
+        const threadRootEventId = request.threadRootEventId;
+        const payload = {
+          sessionId: request.sessionId,
+          text,
+          postToThread: true,
+          ...(request.effort ? { effort: request.effort } : {}),
+          ...(attachments && attachments.length > 0 ? { attachments } : {}),
+          ...(attachmentRefs && attachmentRefs.length > 0 ? { attachmentRefs } : {}),
+          ...(threadRootEventId != null
+            ? {
+                channelId,
+                threadRootEventId,
+                clientMsgId,
+                createdAt: new Date().toISOString(),
+              }
+            : {}),
+        };
+        void enqueueOp(
+          {
+            opId: clientMsgId,
+            opType: 'session.steer',
+            payload,
           },
-        }).catch(() => showErrorToast("Couldn't queue the agent message."));
+          threadRootEventId != null
+            ? {
+                onStored: () => {
+                  const threadPayload = payload as QueuedThreadSteerPayload;
+                  dispatch({
+                    type: 'send-pending',
+                    channelId,
+                    message: pendingMessageFromThreadSteerPayload(threadPayload, me),
+                  });
+                },
+              }
+            : undefined,
+        ).catch(() => {
+          if (threadRootEventId != null) dispatch({ type: 'send-failed', channelId, clientMsgId });
+          showErrorToast("Couldn't queue the agent message.");
+        });
         return;
       }
       if (request.target === 'suggest' && request.sessionId) {
@@ -248,7 +282,7 @@ export function useChatMessageActions({
       }
       showErrorToast('This agent action is unavailable here.');
     },
-    [enqueueOp, spawnQueuedSession],
+    [dispatch, enqueueOp, me, spawnQueuedSession],
   );
 
   const editMessage = useCallback(
@@ -360,6 +394,15 @@ export function useChatMessageActions({
         });
         return;
       }
+      if (m.steeredSessionId != null && m.threadRootEventId != null) {
+        sendAgent(
+          m.channelId,
+          { target: 'steer', sessionId: m.steeredSessionId, threadRootEventId: m.threadRootEventId },
+          m.text,
+          m.attachments,
+        );
+        return;
+      }
       send(
         m.channelId,
         m.text,
@@ -369,7 +412,7 @@ export function useChatMessageActions({
         m.voice ? { fileId: m.voice.fileId, durationMs: m.voice.durationMs, waveform: m.voice.waveform } : undefined,
       );
     },
-    [dispatch, send, spawnQueuedSession],
+    [dispatch, send, sendAgent, spawnQueuedSession],
   );
 
   return {

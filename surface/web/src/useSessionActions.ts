@@ -6,7 +6,9 @@ import {
   type AttachmentRef,
   type EnqueueOpInput,
   type SessionQuestionAnswers,
+  type UserRef,
 } from '@atrium/surface-client';
+import { pendingMessageFromThreadSteerPayload, type QueuedThreadSteerPayload } from './chatQueuedOverlays';
 
 type SessionActionType =
   | 'session.answer'
@@ -15,7 +17,17 @@ type SessionActionType =
   | 'session.pin'
   | 'session.stop_turn'
   | 'session.steer';
-type SessionActionEnqueue = <T extends SessionActionType>(input: EnqueueOpInput<T>) => Promise<unknown>;
+type SessionActionEnqueue = <T extends SessionActionType>(
+  input: EnqueueOpInput<T>,
+  options?: { onStored?: () => void },
+) => Promise<unknown>;
+
+export type SessionSteerContext = {
+  channelId: string;
+  threadRootEventId: number;
+  clientMsgId: string;
+  createdAt: string;
+};
 
 export type { SessionQuestionAnswers } from '@atrium/surface-client';
 
@@ -24,11 +36,13 @@ export function useSessionActions({
   clearFailedSteer,
   dispatch,
   enqueueOp,
+  me,
 }: {
   clearFailedCancel: (sessionId: string) => void;
   clearFailedSteer: (sessionId: string) => void;
   dispatch?: (action: AppAction) => void;
   enqueueOp: SessionActionEnqueue;
+  me?: UserRef;
 }) {
   const steerSession = useCallback(
     async (
@@ -37,21 +51,36 @@ export function useSessionActions({
       effort?: string,
       attachments?: AttachmentMeta[],
       attachmentRefs?: AttachmentRef[],
+      context?: SessionSteerContext,
     ): Promise<void> => {
       clearFailedSteer(sessionId);
-      await enqueueOp({
-        opId: randomId(),
-        opType: 'session.steer',
-        payload: {
-          sessionId,
-          text,
-          ...(effort ? { effort } : {}),
-          ...(attachments && attachments.length > 0 ? { attachments } : {}),
-          ...(attachmentRefs && attachmentRefs.length > 0 ? { attachmentRefs } : {}),
-        },
-      });
+      const payload = {
+        sessionId,
+        text,
+        ...(context ? { postToThread: true, ...context } : {}),
+        ...(effort ? { effort } : {}),
+        ...(attachments && attachments.length > 0 ? { attachments } : {}),
+        ...(attachmentRefs && attachmentRefs.length > 0 ? { attachmentRefs } : {}),
+      };
+      const input = {
+        opId: context?.clientMsgId ?? randomId(),
+        opType: 'session.steer' as const,
+        payload,
+      };
+      if (context && dispatch && me) {
+        await enqueueOp(input, {
+          onStored: () =>
+            dispatch({
+              type: 'send-pending',
+              channelId: context.channelId,
+              message: pendingMessageFromThreadSteerPayload(payload as QueuedThreadSteerPayload, me),
+            }),
+        });
+      } else {
+        await enqueueOp(input);
+      }
     },
-    [clearFailedSteer, enqueueOp],
+    [clearFailedSteer, dispatch, enqueueOp, me],
   );
 
   const cancelSession = useCallback(

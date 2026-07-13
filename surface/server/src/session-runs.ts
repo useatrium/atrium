@@ -979,7 +979,15 @@ export class SessionRuns {
         const row = await this.requireDriverInTx(client, id, userId);
         const revived = await this.unarchiveSessionInTx(client, row, userId);
         await this.postUserMessageOnce(revived.row, userId, text, true, client, undefined, attachments);
-        return revived.event ? [revived.event] : [];
+        const threadEvent = await appendSessionThreadMessage(
+          client,
+          revived.row,
+          userId,
+          text,
+          { steered_session_id: id },
+          threadAttachmentMeta(attachments),
+        );
+        return [...(revived.event ? [revived.event] : []), ...(threadEvent ? [threadEvent] : [])];
       });
       for (const event of events) this.hub.publishEvent(event);
     } catch (err) {
@@ -1003,6 +1011,7 @@ export class SessionRuns {
     effort?: SessionEffortLevel,
     attachments: readonly AgentTurnAttachmentRef[] = [],
     postToThread = false,
+    clientMsgId?: string,
   ): Promise<WireEvent[]> {
     this.cancelScheduledRelease(id);
     const row = await this.requireDriverInTx(client, id, userId);
@@ -1015,12 +1024,20 @@ export class SessionRuns {
         `the ${activeRow.harness} harness does not support effort "${effort}"`,
       );
     }
-    await this.postUserMessageOnce(activeRow, userId, text, true, client, effort, attachments);
+    await this.postUserMessageOnce(activeRow, userId, text, true, client, effort, attachments, undefined, clientMsgId);
     const events = revived.event ? [revived.event] : [];
     if (postToThread) {
-      const threadEvent = await appendSessionThreadMessage(client, activeRow, userId, text, {
-        steered_session_id: id,
-      });
+      const threadEvent = await appendSessionThreadMessage(
+        client,
+        activeRow,
+        userId,
+        text,
+        {
+          steered_session_id: id,
+          ...(clientMsgId ? { client_msg_id: clientMsgId } : {}),
+        },
+        threadAttachmentMeta(attachments),
+      );
       if (threadEvent) events.push(threadEvent);
     }
     if (!effort || effort === activeRow.model_effort) return events;
@@ -1158,6 +1175,7 @@ export class SessionRuns {
     effort?: SessionEffortLevel,
     attachments: readonly AgentTurnAttachmentRef[] = [],
     contextBlock?: string,
+    clientUserMessageId?: string,
   ): Promise<void> {
     const turnContextBlock = contextBlock ?? (await this.buildUserTurnContextBlock(client, row, userId, 'driver'));
     text = await appendReferencedEntriesAppendix(client, { sessionId: row.id, userId, text });
@@ -1192,7 +1210,17 @@ export class SessionRuns {
     } catch (err) {
       if (allowStaleRetry && isCentaurCode(err, 'ASSIGNMENT_GENERATION_STALE')) {
         const refreshed = await this.clearAssignment(row.id, client);
-        await this.postUserMessageOnce(refreshed, userId, text, false, client, effort, attachments, turnContextBlock);
+        await this.postUserMessageOnce(
+          refreshed,
+          userId,
+          text,
+          false,
+          client,
+          effort,
+          attachments,
+          turnContextBlock,
+          clientUserMessageId,
+        );
         return;
       }
       if (isCentaurCode(err, 'IDEMPOTENCY_PAYLOAD_MISMATCH')) {
@@ -1224,7 +1252,7 @@ export class SessionRuns {
     try {
       exec = await this.executeWithProviderEnvironment(row, generation, {
         executeId,
-        inputLines: [agentTurnInputLine(text, attachments, effort, turnContextBlock)],
+        inputLines: [agentTurnInputLine(text, attachments, effort, turnContextBlock, clientUserMessageId)],
       });
     } catch (err) {
       if (isCentaurCode(err, 'execution_already_active')) {
@@ -2536,7 +2564,10 @@ export class SessionRuns {
       const completed = await client.query<SessionRow>(
         `UPDATE sessions
          SET status = $1, result_text = $2, completed_at = now(), pending_question = NULL,
-             last_event_id = GREATEST(last_event_id, $3)
+             last_event_id = GREATEST(last_event_id, $3),
+             current_execution_id = NULL,
+             centaur_execute_id = NULL,
+             centaur_message_id = NULL
          WHERE id = $4
          RETURNING *`,
         [status, resultText, lastEventId, id],
@@ -3130,6 +3161,20 @@ async function appendSessionThreadMessage(
     actorId,
     payload: { text, ...linkage, ...(attachments && attachments.length > 0 ? { attachments } : {}) },
   });
+}
+
+function threadAttachmentMeta(attachments: readonly AgentTurnAttachmentRef[]): Array<{
+  id: string;
+  filename: string;
+  contentType: string;
+  size: number;
+}> {
+  return attachments.map((attachment) => ({
+    id: attachment.id,
+    filename: attachment.name,
+    contentType: attachment.contentType,
+    size: attachment.size,
+  }));
 }
 
 function boundedSessionReplyText(text: string | null): string | null {

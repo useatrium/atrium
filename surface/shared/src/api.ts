@@ -819,6 +819,7 @@ export function createApi(opts: ApiOptions = {}) {
       opts: {
         effort?: string;
         postToThread?: boolean;
+        clientMsgId?: string;
         attachments?: string[];
         attachmentRefs?: AgentAttachmentRef[];
       } = {},
@@ -827,6 +828,7 @@ export function createApi(opts: ApiOptions = {}) {
         text,
         ...(opts.effort ? { effort: opts.effort } : {}),
         ...(opts.postToThread === true ? { postToThread: true } : {}),
+        ...(opts.clientMsgId ? { clientMsgId: opts.clientMsgId } : {}),
         ...(opts.attachments && opts.attachments.length > 0 ? { attachments: opts.attachments } : {}),
         ...(opts.attachmentRefs && opts.attachmentRefs.length > 0 ? { attachmentRefs: opts.attachmentRefs } : {}),
         ...(op.opId ? { opId: op.opId } : {}),

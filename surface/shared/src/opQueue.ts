@@ -182,6 +182,11 @@ export interface SessionSteerPayload {
   attachmentRefs?: AttachmentRef[];
   /** Existing artifact refs; sent through once a picker can populate them. */
   existingAttachmentRefs?: AgentAttachmentRef[];
+  /** UI correlation for an optimistic thread reply. */
+  channelId?: string;
+  threadRootEventId?: number;
+  clientMsgId?: string;
+  createdAt?: string;
 }
 
 export interface SessionSuggestPayload {
@@ -1079,13 +1084,18 @@ export function createDefaultOpRegistry(): OpRegistry {
             ...(payload.existingAttachmentRefs && payload.existingAttachmentRefs.length > 0
               ? { attachmentRefs: payload.existingAttachmentRefs }
               : {}),
+            ...(payload.clientMsgId ? { clientMsgId: payload.clientMsgId } : {}),
           },
         );
       },
       dependsOn: attachmentUploadDependencies,
       removeDependenciesOnSettled: true,
       onConfirmed: () => {},
-      onRejected: () => {},
+      onRejected: (dispatch, payload) => {
+        if (payload.channelId && payload.clientMsgId) {
+          dispatch({ type: 'send-failed', channelId: payload.channelId, clientMsgId: payload.clientMsgId });
+        }
+      },
     },
     'session.suggest': {
       execute: async (api, payload, op, context) => {

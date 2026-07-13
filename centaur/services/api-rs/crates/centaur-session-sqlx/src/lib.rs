@@ -955,6 +955,94 @@ impl PgSessionStore {
         row.try_into().map(Some)
     }
 
+    /// Fail an execution and detach the sandbox it was using in one database
+    /// transaction. The active-execution uniqueness constraint keeps a
+    /// replacement execution waiting for this transaction to commit, so it
+    /// cannot observe and reuse the poisoned sandbox between the terminal
+    /// transition and the detach.
+    pub async fn fail_execution_if_active_and_stdout_owner_and_detach_sandbox(
+        &self,
+        execution_id: &str,
+        owner_id: &str,
+        error: &str,
+    ) -> Result<Option<(SessionExecution, Option<String>)>, SessionStoreError> {
+        let mut tx = self.pool.begin().await?;
+        let row = sqlx::query_as::<_, SessionExecutionRow>(
+            r#"
+            update session_executions
+            set status = $2,
+                error = $3,
+                completed_at = coalesce(completed_at, now()),
+                stdout_owner_id = null,
+                stdout_owner_lease_expires_at = null,
+                updated_at = now()
+            where execution_id = $1
+              and status in ($4, $5)
+              and stdout_owner_id = $6
+            returning execution_id, idempotency_key, thread_key, status, metadata, error, created_at, updated_at, started_at, completed_at
+            "#,
+        )
+        .bind(execution_id)
+        .bind(ExecutionStatus::Failed.as_ref())
+        .bind(error)
+        .bind(ExecutionStatus::Queued.as_ref())
+        .bind(ExecutionStatus::Running.as_ref())
+        .bind(owner_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+
+        let Some(row) = row else {
+            tx.commit().await?;
+            return Ok(None);
+        };
+
+        let stale_sandbox_id = sqlx::query_scalar::<_, Option<String>>(
+            r#"
+            select sandbox_id
+            from sessions
+            where thread_key = $1
+            for update
+            "#,
+        )
+        .bind(&row.thread_key)
+        .fetch_one(&mut *tx)
+        .await?;
+
+        let detach = sqlx::query(
+            r#"
+            update sessions
+            set
+                status = $2,
+                sandbox_id = null,
+                sandbox_repo_cache_enabled = null,
+                sandbox_repo_cache_access = null,
+                sandbox_observability_enabled = null,
+                sandbox_api_server_enabled = null,
+                sandbox_last_active_at = null,
+                updated_at = now()
+            where thread_key = $1
+              and not exists (
+                  select 1
+                  from session_executions
+                  where thread_key = $1 and status in ($3, $4)
+              )
+            "#,
+        )
+        .bind(&row.thread_key)
+        .bind(SessionStatus::Failed.as_ref())
+        .bind(ExecutionStatus::Queued.as_ref())
+        .bind(ExecutionStatus::Running.as_ref())
+        .execute(&mut *tx)
+        .await?;
+
+        let execution = row.try_into()?;
+        tx.commit().await?;
+        let detached_sandbox_id = (detach.rows_affected() > 0)
+            .then_some(stale_sandbox_id)
+            .flatten();
+        Ok(Some((execution, detached_sandbox_id)))
+    }
+
     pub async fn cancel_execution_if_active_and_stdout_owner(
         &self,
         execution_id: &str,
@@ -2171,7 +2259,7 @@ fn stdout_lease_expires_at(lease: Duration) -> OffsetDateTime {
 mod tests {
     use std::time::Duration;
 
-    use centaur_session_core::{HarnessType, ThreadKey};
+    use centaur_session_core::{ExecutionStatus, HarnessType, ThreadKey};
     use serde_json::json;
     use time::{Duration as TimeDuration, OffsetDateTime};
     use uuid::Uuid;
@@ -2240,6 +2328,79 @@ mod tests {
             SessionStoreError::ExecutionAlreadyActive { thread_key: key }
                 if key == thread_key.as_str()
         ));
+    }
+
+    #[tokio::test]
+    async fn startup_failure_detaches_sandbox_before_replacement_can_reuse_it() {
+        let Some(store) = test_store().await else {
+            return;
+        };
+        let thread_key = ThreadKey::parse(format!(
+            "sqlx-test:startup-failure-detach-{}",
+            Uuid::new_v4().simple()
+        ))
+        .unwrap();
+
+        store
+            .create_or_get_session(&thread_key, &HarnessType::Codex, None, json!({}))
+            .await
+            .expect("create session");
+        sqlx::query("update sessions set sandbox_id = $2 where thread_key = $1")
+            .bind(thread_key.as_str())
+            .bind("sbx-poisoned")
+            .execute(&store.pool)
+            .await
+            .expect("assign poisoned sandbox");
+        let execution = store
+            .create_execution(&thread_key, None, json!({}))
+            .await
+            .expect("create execution")
+            .execution;
+        assert!(
+            store
+                .claim_stdout_owner(
+                    &execution.execution_id,
+                    "startup-watchdog",
+                    Duration::from_secs(60),
+                )
+                .await
+                .expect("claim stdout owner")
+        );
+
+        let (failed, detached_sandbox_id) = store
+            .fail_execution_if_active_and_stdout_owner_and_detach_sandbox(
+                &execution.execution_id,
+                "startup-watchdog",
+                "turn was not accepted",
+            )
+            .await
+            .expect("fail and detach atomically")
+            .expect("execution was active and owned");
+
+        assert_eq!(failed.status, ExecutionStatus::Failed);
+        assert_eq!(detached_sandbox_id.as_deref(), Some("sbx-poisoned"));
+        assert_eq!(
+            store
+                .get_session(&thread_key)
+                .await
+                .expect("get detached session")
+                .sandbox_id,
+            None
+        );
+
+        store
+            .create_execution(&thread_key, None, json!({}))
+            .await
+            .expect("replacement execution may start after atomic failure");
+        assert_eq!(
+            store
+                .get_session(&thread_key)
+                .await
+                .expect("get replacement session")
+                .sandbox_id,
+            None,
+            "replacement must not inherit the poisoned sandbox"
+        );
     }
 
     fn idle_row(

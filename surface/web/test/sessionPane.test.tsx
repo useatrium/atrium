@@ -5,14 +5,14 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { forwardRef, useImperativeHandle, useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { CentaurEventFrame } from '@atrium/centaur-client';
+import type { CentaurEventFrame, UserMessageItem } from '@atrium/centaur-client';
 import rawB from '../../centaur-client/test/fixtures/B_tooltest.json';
 import { appReducer, initialAppState, type AppState } from '@atrium/surface-client';
-import { SessionPane } from '../src/sessions/SessionPane';
+import { reconcileLinkedSteers, SessionPane } from '../src/sessions/SessionPane';
 import { api } from '../src/api';
 import { sessionsApi } from '../src/sessions/api';
 import type { Session } from '../src/sessions/types';
-import type { UserRef, WireEvent } from '@atrium/surface-client';
+import type { ChatMessage, UserRef, WireEvent } from '@atrium/surface-client';
 import { FakeEventSource, installFakeEventSource } from './helpers/fakeEventSource';
 
 vi.mock('/src/markup/MarkupEditor', () => ({
@@ -521,6 +521,181 @@ describe('session pane folds the B_tooltest stream', () => {
     expect(((await screen.findByLabelText('Mock markup editor')) as HTMLTextAreaElement).value).toBe(
       '# Body from artifact\n',
     );
+  });
+});
+
+describe('linked thread steers', () => {
+  const STAMP = '2026-07-13T12:00:00.000Z';
+  const linkedSteer: WireEvent = {
+    id: 319,
+    workspaceId: 'ws-1',
+    channelId: 'ch-1',
+    threadRootEventId: 42,
+    type: 'message.posted',
+    actorId: me.id,
+    payload: { text: 'Inspect the durable event', steered_session_id: 's-b' },
+    createdAt: STAMP,
+    author: me,
+  };
+
+  it('uses stable ids and never consumes an earlier same-text prompt', () => {
+    const linked = {
+      id: 319,
+      clientMsgId: 'steer-client-1',
+      author: me.displayName,
+      createdAt: STAMP,
+      text: 'Repeat this',
+      status: 'confirmed' as const,
+    };
+    const earlier: UserMessageItem = {
+      type: 'user_message',
+      id: 'original-prompt',
+      text: 'Repeat this',
+      ts: '2026-07-13T11:59:59.000Z',
+      sourceEventIds: [1],
+    };
+    const exact: UserMessageItem = {
+      ...earlier,
+      id: 'steer-client-1',
+      ts: '2026-07-14T12:00:00.000Z',
+      sourceEventIds: [2],
+    };
+
+    expect(reconcileLinkedSteers([linked], [earlier])).toEqual([linked]);
+    expect(reconcileLinkedSteers([linked], [earlier, exact])).toEqual([]);
+  });
+
+  it('shows a queue-backed thread steer eagerly in the work transcript', async () => {
+    vi.spyOn(api, 'thread').mockResolvedValue({ events: [] });
+    const optimistic: ChatMessage = {
+      id: null,
+      clientMsgId: 'steer-eager-1',
+      channelId: 'ch-1',
+      threadRootEventId: 42,
+      text: '',
+      edited: false,
+      reactions: [],
+      attachments: [{ id: 'file-1', filename: 'trace.txt', contentType: 'text/plain', size: 12 }],
+      author: me,
+      createdAt: STAMP,
+      replyCount: 0,
+      lastReplyId: 0,
+      status: 'pending',
+      steeredSessionId: 's-b',
+    };
+
+    render(
+      <SessionPane
+        session={bSession({ threadRootEventId: 42 })}
+        me={me}
+        watchers={[]}
+        optimisticThreadSteers={[optimistic]}
+        onClose={() => {}}
+        onAnswerQuestion={async () => {}}
+      />,
+    );
+
+    const turn = screen.getByTestId('user-steer');
+    expect(within(turn).getByText('trace.txt')).toBeTruthy();
+    expect(turn.textContent).not.toContain('THREAD');
+  });
+
+  it('shows one work turn when a pane send becomes a queue-backed thread steer', async () => {
+    vi.spyOn(api, 'thread').mockResolvedValue({ events: [] });
+
+    function PaneHarness() {
+      const [optimistic, setOptimistic] = useState<ChatMessage[]>([]);
+      return (
+        <SessionPane
+          session={bSession({ threadRootEventId: 42 })}
+          me={me}
+          watchers={[]}
+          optimisticThreadSteers={optimistic}
+          onClose={() => {}}
+          onAnswerQuestion={async () => {}}
+          onSteer={async (sessionId, text, _effort, _attachments, _attachmentRefs, context) => {
+            if (!context) return;
+            setOptimistic([
+              {
+                id: null,
+                clientMsgId: context.clientMsgId,
+                channelId: context.channelId,
+                threadRootEventId: context.threadRootEventId,
+                text,
+                edited: false,
+                reactions: [],
+                author: me,
+                createdAt: context.createdAt,
+                replyCount: 0,
+                lastReplyId: 0,
+                status: 'pending',
+                steeredSessionId: sessionId,
+              },
+            ]);
+          }}
+        />
+      );
+    }
+
+    render(<PaneHarness />);
+    fireEvent.change(screen.getByPlaceholderText(/steer the agent/i), { target: { value: 'Inspect once' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Steer' }));
+
+    await waitFor(() => expect(screen.getAllByTestId('user-steer')).toHaveLength(1), { timeout: 10_000 });
+    expect(within(screen.getByTestId('user-steer')).getByText('Inspect once')).toBeTruthy();
+  }, 15_000);
+
+  it('promotes a pre-existing linked steer to a first-class work turn', async () => {
+    vi.spyOn(api, 'thread').mockResolvedValue({ events: [linkedSteer] });
+    render(
+      <SessionPane
+        session={bSession({ threadRootEventId: 42 })}
+        me={me}
+        watchers={[]}
+        onClose={() => {}}
+        onAnswerQuestion={async () => {}}
+      />,
+    );
+
+    const turn = await screen.findByTestId('user-steer');
+    expect(within(turn).getByText('Inspect the durable event')).toBeTruthy();
+    expect(screen.queryByTestId('pane-aside')).toBeNull();
+    expect(turn.textContent).not.toContain('THREAD');
+  });
+
+  it('removes the linked duplicate after the harness userMessage echo', async () => {
+    vi.spyOn(api, 'thread').mockResolvedValue({ events: [linkedSteer] });
+    render(
+      <SessionPane
+        session={bSession({ threadRootEventId: 42 })}
+        me={me}
+        watchers={[]}
+        onClose={() => {}}
+        onAnswerQuestion={async () => {}}
+      />,
+    );
+    await screen.findByTestId('user-steer');
+    const source = FakeEventSource.last();
+    await act(async () => {
+      source.open();
+      source.emit({
+        event: 'amp_raw_event',
+        event_id: 320,
+        ts: '2026-07-13T12:00:01.000Z',
+        data: {
+          type: 'item.completed',
+          item: {
+            id: 'centaur-steer-320',
+            type: 'userMessage',
+            content: [{ type: 'text', text: 'Inspect the durable event' }],
+          },
+        },
+      } as CentaurEventFrame);
+      await new Promise((resolve) => setTimeout(resolve, 60));
+    });
+
+    await waitFor(() => expect(screen.getAllByTestId('user-steer')).toHaveLength(1));
+    expect(within(screen.getByTestId('user-steer')).getAllByText('Inspect the durable event')).toHaveLength(1);
   });
 });
 

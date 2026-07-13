@@ -570,6 +570,7 @@ export function Chat({
       clearFailedSteer,
       dispatch,
       enqueueOp,
+      me,
     });
 
   useEffect(() => {
@@ -1356,6 +1357,13 @@ export function Chat({
     presence: state.presence,
     sessions: state.sessions,
   });
+  const paneOptimisticThreadSteers = useMemo(() => {
+    const root = paneSession?.threadRootEventId;
+    if (!paneSession || root == null) return [];
+    return (state.timelines[paneSession.channelId]?.threads[root] ?? []).filter(
+      (message) => message.steeredSessionId === paneSession.id && message.status !== 'confirmed',
+    );
+  }, [paneSession, state.timelines]);
 
   const defaultChannelId = useCallback((): string | null => {
     const channels = stateRef.current.channels;
@@ -2440,6 +2448,7 @@ export function Chat({
           onComposerTyping={() => notifySessionTyping(paneSession.id)}
           onClose={closeSession}
           liveEvent={activityLiveEvent}
+          optimisticThreadSteers={paneOptimisticThreadSteers}
           origin={
             active && paneSession.channelId === active.id
               ? {

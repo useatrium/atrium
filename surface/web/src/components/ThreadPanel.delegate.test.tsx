@@ -5,7 +5,7 @@ import type { ChatMessage, UserRef } from '@atrium/surface-client';
 import { encodeEventHandle } from '@atrium/surface-client/handle';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ThemeProvider } from '../theme';
-import { ThreadPanel } from './ThreadPanel';
+import { reconcileThreadSteerReplies, ThreadPanel } from './ThreadPanel';
 
 const ada: UserRef = {
   id: 'u-1',
@@ -38,6 +38,56 @@ afterEach(() => {
 });
 
 describe('ThreadPanel delegate to agent', () => {
+  it('reconciles one optimistic steer per durable thread echo', () => {
+    const pending = message({
+      id: null,
+      clientMsgId: 'local-1',
+      threadRootEventId: 42,
+      text: 'Try another path',
+      createdAt: '2026-07-05T12:00:00.000Z',
+      status: 'pending',
+      steeredSessionId: 's-1',
+    });
+    const durable = message({
+      id: 84,
+      threadRootEventId: 42,
+      text: 'Try another path',
+      createdAt: '2026-07-05T12:00:01.000Z',
+      steeredSessionId: 's-1',
+    });
+
+    expect(reconcileThreadSteerReplies([pending, durable])).toEqual([durable]);
+    expect(reconcileThreadSteerReplies([pending, { ...pending, clientMsgId: 'local-2' }, durable])).toHaveLength(2);
+  });
+
+  it('preserves failed and newly repeated steers instead of consuming an older echo', () => {
+    const durable = message({
+      id: 84,
+      threadRootEventId: 42,
+      text: 'Try another path',
+      createdAt: '2026-07-05T12:00:01.000Z',
+      steeredSessionId: 's-1',
+    });
+    const failed = message({
+      id: null,
+      clientMsgId: 'failed-1',
+      threadRootEventId: 42,
+      text: 'Try another path',
+      createdAt: '2026-07-05T12:00:00.000Z',
+      status: 'failed',
+      steeredSessionId: 's-1',
+    });
+    const repeatedLater = message({
+      ...failed,
+      clientMsgId: 'pending-2',
+      createdAt: '2026-07-05T12:00:02.000Z',
+      status: 'pending',
+    });
+
+    expect(reconcileThreadSteerReplies([failed, durable])).toEqual([failed, durable]);
+    expect(reconcileThreadSteerReplies([durable, repeatedLater])).toEqual([durable, repeatedLater]);
+  });
+
   it('anchors the thread composer to the selected reply', () => {
     const reply = message({
       id: 84,
