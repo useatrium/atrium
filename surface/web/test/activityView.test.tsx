@@ -8,6 +8,8 @@ import { ActivityView, partitionActivity } from '../src/components/ActivityView'
 const apiMock = vi.hoisted(() => ({
   getActivity: vi.fn(),
   markActivityRead: vi.fn(),
+  markActivityItemRead: vi.fn(),
+  markActivityItemUnread: vi.fn(),
   messages: vi.fn(),
 }));
 
@@ -20,7 +22,12 @@ afterEach(cleanup);
 beforeEach(() => {
   apiMock.getActivity.mockReset();
   apiMock.markActivityRead.mockReset();
+  apiMock.markActivityItemRead.mockReset();
+  apiMock.markActivityItemUnread.mockReset();
   apiMock.messages.mockReset();
+  apiMock.markActivityRead.mockResolvedValue({ lastReadEventId: '0', unreadExceptionIds: [] });
+  apiMock.markActivityItemRead.mockResolvedValue({ lastReadEventId: '0', unreadExceptionIds: [] });
+  apiMock.markActivityItemUnread.mockResolvedValue({ lastReadEventId: '0', unreadExceptionIds: [] });
 });
 
 function activityItem(overrides: Partial<ActivityItem> = {}): ActivityItem {
@@ -43,12 +50,19 @@ function activityItem(overrides: Partial<ActivityItem> = {}): ActivityItem {
 
 function activityResponse(
   items: ActivityItem[],
-  opts: Partial<{ nextCursor: string | null; lastReadEventId: string; attention: number; unread: number }> = {},
+  opts: Partial<{
+    nextCursor: string | null;
+    lastReadEventId: string;
+    attention: number;
+    unread: number;
+    unreadExceptionIds: string[];
+  }> = {},
 ) {
   return {
     items,
     nextCursor: opts.nextCursor ?? null,
     lastReadEventId: opts.lastReadEventId ?? '0',
+    unreadExceptionIds: opts.unreadExceptionIds ?? [],
     counts: { attention: opts.attention ?? 0, unread: opts.unread ?? items.length },
   };
 }
@@ -91,44 +105,42 @@ describe('ActivityView', () => {
     const questionCreatedAt = '2026-07-02T10:15:00.000Z';
     const mentionCreatedAt = '2026-07-02T10:10:00.000Z';
     const dmCreatedAt = '2026-07-02T10:05:00.000Z';
-    apiMock.getActivity
-      .mockResolvedValueOnce(
-        activityResponse(
-          [
-            activityItem({
-              eventId: '12',
-              kind: 'agent_question',
-              channelId: 'ch-agent',
-              actorId: 'u-me',
-              actorName: 'Me',
-              snippet: 'Deploy now?',
-              createdAt: questionCreatedAt,
-              sessionId: 's-1',
-              attention: true,
-            }),
-            activityItem({
-              eventId: '9',
-              snippet: 'hello **@me** with `code` and [docs](https://example.com)',
-              createdAt: mentionCreatedAt,
-            }),
-          ],
-          { nextCursor: '9', lastReadEventId: '8', attention: 1, unread: 2 },
-        ),
-      )
-      .mockResolvedValueOnce(
-        activityResponse(
-          [
-            activityItem({
-              eventId: '5',
-              kind: 'dm',
-              channelId: 'ch-dm',
-              channelName: 'dm-alice',
-              createdAt: dmCreatedAt,
-            }),
-          ],
-          { lastReadEventId: '8', attention: 1, unread: 2 },
-        ),
-      );
+    const firstPage = activityResponse(
+      [
+        activityItem({
+          eventId: '12',
+          kind: 'agent_question',
+          channelId: 'ch-agent',
+          actorId: 'u-me',
+          actorName: 'Me',
+          snippet: 'Deploy now?',
+          createdAt: questionCreatedAt,
+          sessionId: 's-1',
+          attention: true,
+        }),
+        activityItem({
+          eventId: '9',
+          snippet: 'hello **@me** with `code` and [docs](https://example.com)',
+          createdAt: mentionCreatedAt,
+        }),
+      ],
+      { nextCursor: '9', lastReadEventId: '8', attention: 1, unread: 2 },
+    );
+    const secondPage = activityResponse(
+      [
+        activityItem({
+          eventId: '5',
+          kind: 'dm',
+          channelId: 'ch-dm',
+          channelName: 'dm-alice',
+          createdAt: dmCreatedAt,
+        }),
+      ],
+      { lastReadEventId: '8', attention: 1, unread: 2 },
+    );
+    // Default to first page so background refetches after mark-read stay stable.
+    apiMock.getActivity.mockImplementation(async (cursor?: string) => (cursor ? secondPage : firstPage));
+    apiMock.markActivityItemRead.mockResolvedValue({ lastReadEventId: '9', unreadExceptionIds: [] });
     apiMock.messages.mockResolvedValue({
       events: [
         {
@@ -162,10 +174,14 @@ describe('ActivityView', () => {
     fireEvent.click(screen.getByText('Alice mentioned you'));
     expect(onSelectChannel).toHaveBeenCalledWith('ch-public');
     expect(apiMock.messages).not.toHaveBeenCalled();
+    // History rows auto-mark read on open.
+    await waitFor(() => expect(apiMock.markActivityItemRead).toHaveBeenCalledWith(9));
 
     fireEvent.click(screen.getByText('Agent needs your input'));
     await waitFor(() => expect(onOpenSession).toHaveBeenCalledWith('s-1'));
     expect(onSelectChannel).toHaveBeenCalledWith('ch-agent');
+    // Pinned attention questions do not auto-mark read.
+    expect(apiMock.markActivityItemRead).not.toHaveBeenCalledWith(12);
 
     fireEvent.click(screen.getByRole('button', { name: 'Load more' }));
     await screen.findByText('Alice sent a DM');
@@ -187,12 +203,14 @@ describe('ActivityView', () => {
     apiMock.getActivity
       .mockResolvedValueOnce(activityResponse(items, { lastReadEventId: '8', attention: 1, unread: 1 }))
       .mockResolvedValueOnce(activityResponse(items, { lastReadEventId: '12', attention: 0, unread: 0 }));
-    apiMock.markActivityRead.mockResolvedValue({ lastReadEventId: '12' });
+    apiMock.markActivityRead.mockResolvedValue({ lastReadEventId: '12', unreadExceptionIds: [] });
 
     render(<ActivityView onSelectChannel={vi.fn()} onOpenSession={vi.fn()} onCountsChange={onCountsChange} />);
 
     await screen.findByText('Build docs failed');
     expect(screen.getAllByLabelText('Unread')).toHaveLength(1);
+    expect(screen.getByRole('tab', { name: 'Inbox' })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: 'Done' })).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', { name: 'Mark all read' }));
 
@@ -200,6 +218,32 @@ describe('ActivityView', () => {
     expect(screen.queryByLabelText('Unread')).toBeNull();
     expect(onCountsChange).toHaveBeenCalledWith({ attention: 1, unread: 0 });
     await waitFor(() => expect(apiMock.getActivity).toHaveBeenCalledTimes(2));
+  });
+
+  it('hides completions under Done until the Done filter is selected', async () => {
+    apiMock.getActivity.mockResolvedValue(
+      activityResponse(
+        [
+          activityItem({
+            eventId: '20',
+            kind: 'session_completed',
+            sessionTitle: 'Ship notes',
+            snippet: 'Done shipping',
+          }),
+          activityItem({ eventId: '19', kind: 'mention', snippet: 'see this' }),
+        ],
+        { lastReadEventId: '0', unread: 2 },
+      ),
+    );
+
+    render(<ActivityView onSelectChannel={vi.fn()} onOpenSession={vi.fn()} />);
+
+    expect(await screen.findByText('Alice mentioned you')).toBeTruthy();
+    expect(screen.queryByText(/Ship notes · completed/)).toBeNull();
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Done' }));
+    expect(await screen.findByText(/Ship notes · completed/)).toBeTruthy();
+    expect(screen.queryByText('Alice mentioned you')).toBeNull();
   });
 
   it('debounces a refresh from the shared live event stream', async () => {

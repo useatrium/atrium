@@ -1,30 +1,27 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  activityKindMarker,
   formatExactTimestamp,
   formatRelativeTimestamp,
+  isActivityUnread,
+  matchesActivityFilter,
   type ActivityCounts,
+  type ActivityFeedFilter,
   type ActivityItem,
   type WireEvent,
 } from '@atrium/surface-client';
 import { api } from '../api';
+import { Menu, MenuContent, MenuItem, MenuTrigger } from './a11y';
 import { CompactMarkdownText } from './MessageText';
 
 const ATTENTION_KINDS = new Set<ActivityItem['kind']>(['agent_question', 'agent_auth', 'session_failed']);
 
-const KIND_LABEL: Record<ActivityItem['kind'], string> = {
-  mention: '@',
-  dm: 'DM',
-  thread_reply: '↩',
-  agent_question: '?',
-  session_completed: 'OK',
-  session_failed: '!',
-  agent_auth: '⚿',
-  reaction: '☺',
-  channel_invite: '+',
-  seat_request: '⇄',
-  missed_call: '✆',
-  call_declined: '✆',
-};
+const FILTERS: Array<{ id: ActivityFeedFilter; label: string }> = [
+  { id: 'inbox', label: 'Inbox' },
+  { id: 'unread', label: 'Unread' },
+  { id: 'done', label: 'Done' },
+  { id: 'all', label: 'All' },
+];
 
 function titleFor(item: ActivityItem): string {
   if (item.kind === 'mention') return `${item.actorName ?? 'Someone'} mentioned you`;
@@ -52,8 +49,9 @@ function titleFor(item: ActivityItem): string {
   return 'Activity';
 }
 
-function activityAriaLabel(item: ActivityItem, exactTimestamp: string): string {
+function activityAriaLabel(item: ActivityItem, exactTimestamp: string, unread: boolean): string {
   return [
+    unread ? 'Unread' : null,
     titleFor(item),
     exactTimestamp ? `created ${exactTimestamp}` : null,
     item.snippet,
@@ -63,10 +61,9 @@ function activityAriaLabel(item: ActivityItem, exactTimestamp: string): string {
     .join(', ');
 }
 
-function isUnread(item: ActivityItem, lastReadEventId: string): boolean {
-  const eventId = Number(item.eventId);
-  const watermark = Number(lastReadEventId);
-  return Number.isSafeInteger(eventId) && Number.isSafeInteger(watermark) && eventId > watermark;
+/** Pinned Needs attention kinds that stay until session state clears (except failures). */
+function isHistoryKind(kind: ActivityItem['kind']): boolean {
+  return !ATTENTION_KINDS.has(kind) || kind === 'session_failed';
 }
 
 export function partitionActivity(items: readonly ActivityItem[]): {
@@ -110,53 +107,98 @@ function attentionEdgeClass(item: ActivityItem, attention: boolean): string {
   return item.kind === 'session_failed' ? 'border-l-2 border-l-danger' : 'border-l-2 border-l-warning';
 }
 
+function parseEventId(value: string): number | null {
+  const id = Number(value);
+  return Number.isSafeInteger(id) && id > 0 ? id : null;
+}
+
 function ActivityRow({
   item,
   attention,
-  lastReadEventId,
+  unread,
   onActivate,
+  onMarkRead,
+  onMarkUnread,
 }: {
   item: ActivityItem;
   attention: boolean;
-  lastReadEventId: string;
+  unread: boolean;
   onActivate: (item: ActivityItem) => void;
+  onMarkRead: (item: ActivityItem) => void;
+  onMarkUnread: (item: ActivityItem) => void;
 }) {
   const relativeTimestamp = formatRelativeTimestamp(item.createdAt);
   const exactTimestamp = formatExactTimestamp(item.createdAt);
-  const unread = isUnread(item, lastReadEventId) && !item.muted;
 
   return (
     <li>
-      <button
-        type="button"
-        onClick={() => onActivate(item)}
-        aria-label={activityAriaLabel(item, exactTimestamp)}
-        className={`flex w-full items-start gap-3 px-4 py-3 text-left hover:bg-surface-overlay/70 ${attentionEdgeClass(item, attention)}`}
+      <div
+        className={`group flex w-full items-start gap-2 px-4 py-3 hover:bg-surface-overlay/70 ${attentionEdgeClass(item, attention)}`}
       >
-        <span
-          className={`mt-0.5 grid h-6 min-w-8 place-items-center rounded text-2xs font-bold ${kindChipClass(item, attention)}`}
+        <button
+          type="button"
+          onClick={() => onActivate(item)}
+          aria-label={activityAriaLabel(item, exactTimestamp, unread)}
+          className="flex min-w-0 flex-1 items-start gap-3 text-left"
         >
-          {KIND_LABEL[item.kind] ?? '•'}
-        </span>
-        <span className="min-w-0 flex-1">
-          <span className="flex min-w-0 items-center gap-2">
-            {unread && (
-              <span role="img" aria-label="Unread" className="size-1.5 shrink-0 rounded-full bg-accent-text" />
-            )}
-            <span className="truncate text-sm font-semibold text-fg">{titleFor(item)}</span>
-            {relativeTimestamp && (
-              <span className="shrink-0 text-2xs text-fg-faint" title={exactTimestamp || undefined}>
-                {relativeTimestamp}
-              </span>
+          <span
+            className={`mt-0.5 grid h-6 min-w-8 place-items-center rounded text-2xs font-bold ${kindChipClass(item, attention)}`}
+          >
+            {activityKindMarker(item.kind)}
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="flex min-w-0 items-center gap-2">
+              {unread && (
+                <span role="img" aria-label="Unread" className="size-1.5 shrink-0 rounded-full bg-accent-text" />
+              )}
+              <span className="truncate text-sm font-semibold text-fg">{titleFor(item)}</span>
+              {relativeTimestamp && (
+                <span className="shrink-0 text-2xs text-fg-faint" title={exactTimestamp || undefined}>
+                  {relativeTimestamp}
+                </span>
+              )}
+            </span>
+            <span className="mt-0.5 block truncate text-sm text-fg-secondary">
+              <CompactMarkdownText text={item.snippet} />
+            </span>
+            {/* DM channel names are internal keys; the title already names the sender. */}
+            {item.kind !== 'dm' && (
+              <span className="mt-1 block truncate text-xs text-fg-muted">#{item.channelName}</span>
             )}
           </span>
-          <span className="mt-0.5 block truncate text-sm text-fg-secondary">
-            <CompactMarkdownText text={item.snippet} />
-          </span>
-          {/* DM channel names are internal keys; the title already names the sender. */}
-          {item.kind !== 'dm' && <span className="mt-1 block truncate text-xs text-fg-muted">#{item.channelName}</span>}
-        </span>
-      </button>
+        </button>
+        <Menu>
+          <MenuTrigger asChild>
+            <button
+              type="button"
+              aria-label={`Actions for ${titleFor(item)}`}
+              className="mt-0.5 shrink-0 rounded-md px-1.5 py-1 text-xs font-semibold text-fg-muted opacity-0 hover:bg-surface-raised hover:text-fg group-hover:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100"
+              onClick={(event) => event.stopPropagation()}
+            >
+              ⋯
+            </button>
+          </MenuTrigger>
+          <MenuContent align="end">
+            {unread ? (
+              <MenuItem
+                onSelect={() => {
+                  onMarkRead(item);
+                }}
+              >
+                Mark read
+              </MenuItem>
+            ) : (
+              <MenuItem
+                onSelect={() => {
+                  onMarkUnread(item);
+                }}
+              >
+                Mark unread
+              </MenuItem>
+            )}
+          </MenuContent>
+        </Menu>
+      </div>
     </li>
   );
 }
@@ -179,13 +221,30 @@ export function ActivityView({
   const [items, setItems] = useState<ActivityItem[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [lastReadEventId, setLastReadEventId] = useState('0');
+  const [unreadExceptionIds, setUnreadExceptionIds] = useState<string[]>([]);
   const [counts, setCounts] = useState<ActivityCounts>({ attention: 0, unread: 0 });
+  const [filter, setFilter] = useState<ActivityFeedFilter>('inbox');
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [markingRead, setMarkingRead] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const loadRequestRef = useRef(0);
   const lastRefreshKeyRef = useRef(refreshKey);
+  const exceptionSet = useMemo(() => new Set(unreadExceptionIds), [unreadExceptionIds]);
+
+  const applyReadState = useCallback(
+    (state: { lastReadEventId: string; unreadExceptionIds?: string[] }, nextCounts?: ActivityCounts) => {
+      setLastReadEventId(state.lastReadEventId);
+      if (Array.isArray(state.unreadExceptionIds)) {
+        setUnreadExceptionIds(state.unreadExceptionIds.map(String));
+      }
+      if (nextCounts) {
+        setCounts(nextCounts);
+        onCountsChange?.(nextCounts);
+      }
+    },
+    [onCountsChange],
+  );
 
   const load = useCallback(
     async (cursor?: string, background = false) => {
@@ -200,9 +259,10 @@ export function ActivityView({
         setNextCursor(res.nextCursor);
         // Decode-with-default: a deploy-skewed server may predate read-state.
         setLastReadEventId(typeof res.lastReadEventId === 'string' ? res.lastReadEventId : '0');
-        const counts = { attention: Number(res.counts?.attention) || 0, unread: Number(res.counts?.unread) || 0 };
-        setCounts(counts);
-        onCountsChange?.(counts);
+        setUnreadExceptionIds(Array.isArray(res.unreadExceptionIds) ? res.unreadExceptionIds.map(String) : []);
+        const nextCounts = { attention: Number(res.counts?.attention) || 0, unread: Number(res.counts?.unread) || 0 };
+        setCounts(nextCounts);
+        onCountsChange?.(nextCounts);
       } catch (err) {
         if (requestId === loadRequestRef.current) {
           setError(err instanceof Error ? err.message : 'Unable to load activity');
@@ -227,7 +287,78 @@ export function ActivityView({
     return () => window.clearTimeout(timer);
   }, [liveEvent, load, refreshKey]);
 
+  const markItemRead = useCallback(
+    async (item: ActivityItem) => {
+      const eventId = parseEventId(item.eventId);
+      if (eventId == null) return;
+      const previous = { lastReadEventId, unreadExceptionIds, counts, items };
+      // Optimistic: strip this exception and bump watermark through this id.
+      const nextExceptions = unreadExceptionIds.filter((id) => id !== item.eventId);
+      const nextWatermark = Number(lastReadEventId) < eventId ? String(eventId) : lastReadEventId;
+      setLastReadEventId(nextWatermark);
+      setUnreadExceptionIds(nextExceptions);
+      setCounts((c) => {
+        const next = { attention: c.attention, unread: Math.max(0, c.unread - 1) };
+        onCountsChange?.(next);
+        return next;
+      });
+      setItems((rows) => rows.map((row) => (row.eventId === item.eventId ? { ...row, unread: false } : row)));
+      try {
+        const response = await api.markActivityItemRead(eventId);
+        applyReadState(response);
+        void load(undefined, true);
+      } catch (err) {
+        setLastReadEventId(previous.lastReadEventId);
+        setUnreadExceptionIds(previous.unreadExceptionIds);
+        setCounts(previous.counts);
+        setItems(previous.items);
+        onCountsChange?.(previous.counts);
+        setError(err instanceof Error ? err.message : 'Unable to mark activity read');
+        void load(undefined, true);
+      }
+    },
+    [applyReadState, counts, items, lastReadEventId, load, onCountsChange, unreadExceptionIds],
+  );
+
+  const markItemUnread = useCallback(
+    async (item: ActivityItem) => {
+      const eventId = parseEventId(item.eventId);
+      if (eventId == null) return;
+      const previous = { lastReadEventId, unreadExceptionIds, counts, items };
+      if (!unreadExceptionIds.includes(item.eventId) && Number(item.eventId) <= Number(lastReadEventId)) {
+        setUnreadExceptionIds((ids) => [...ids, item.eventId]);
+      }
+      setCounts((c) => {
+        const next = { attention: c.attention, unread: Math.min(99, c.unread + 1) };
+        onCountsChange?.(next);
+        return next;
+      });
+      setItems((rows) => rows.map((row) => (row.eventId === item.eventId ? { ...row, unread: true } : row)));
+      try {
+        const response = await api.markActivityItemUnread(eventId);
+        applyReadState(response);
+        void load(undefined, true);
+      } catch (err) {
+        setLastReadEventId(previous.lastReadEventId);
+        setUnreadExceptionIds(previous.unreadExceptionIds);
+        setCounts(previous.counts);
+        setItems(previous.items);
+        onCountsChange?.(previous.counts);
+        setError(err instanceof Error ? err.message : 'Unable to mark activity unread');
+        void load(undefined, true);
+      }
+    },
+    [applyReadState, counts, items, lastReadEventId, load, onCountsChange, unreadExceptionIds],
+  );
+
   const activate = async (item: ActivityItem) => {
+    // History rows (including failures in history) auto-mark read on open.
+    // Live question/auth pins stay until the session state clears.
+    const unread = isActivityUnread(item, lastReadEventId, exceptionSet);
+    if (unread && isHistoryKind(item.kind) && !item.attention) {
+      void markItemRead(item);
+    }
+
     onSelectChannel(item.channelId);
     if (
       item.kind !== 'agent_question' &&
@@ -237,8 +368,8 @@ export function ActivityView({
     ) {
       return;
     }
-    const eventId = Number(item.eventId);
-    if (!Number.isSafeInteger(eventId) || eventId <= 0) return;
+    const eventId = parseEventId(item.eventId);
+    if (eventId == null) return;
     try {
       const { events } = await api.messages(item.channelId, {
         afterId: eventId - 1,
@@ -262,20 +393,31 @@ export function ActivityView({
     );
     if (newestEventId <= 0 || markingRead) return;
 
-    const previousCursor = lastReadEventId;
+    const previous = {
+      cursor: lastReadEventId,
+      exceptions: unreadExceptionIds,
+      counts,
+      items,
+    };
     const optimisticCounts = { attention: counts.attention, unread: 0 };
     setMarkingRead(true);
     setLastReadEventId(String(newestEventId));
+    setUnreadExceptionIds([]);
     setCounts(optimisticCounts);
     onCountsChange?.(optimisticCounts);
+    setItems((rows) => rows.map((row) => ({ ...row, unread: false })));
     try {
       const response = await api.markActivityRead(newestEventId);
-      setLastReadEventId(response.lastReadEventId);
+      applyReadState(response);
       // Refetch without blanking the list so state-cleared attention rows and
       // sidebar totals settle from the server's canonical snapshot.
       void load(undefined, true);
     } catch (err) {
-      setLastReadEventId(previousCursor);
+      setLastReadEventId(previous.cursor);
+      setUnreadExceptionIds(previous.exceptions);
+      setCounts(previous.counts);
+      setItems(previous.items);
+      onCountsChange?.(previous.counts);
       setError(err instanceof Error ? err.message : 'Unable to mark activity read');
       void load(undefined, true);
     } finally {
@@ -285,14 +427,54 @@ export function ActivityView({
 
   const { attention, history } = useMemo(() => partitionActivity(items), [items]);
 
+  const filteredAttention = useMemo(
+    () =>
+      attention.filter((item) =>
+        matchesActivityFilter(item, filter, isActivityUnread(item, lastReadEventId, exceptionSet)),
+      ),
+    [attention, exceptionSet, filter, lastReadEventId],
+  );
+  const filteredHistory = useMemo(
+    () =>
+      history.filter((item) =>
+        matchesActivityFilter(item, filter, isActivityUnread(item, lastReadEventId, exceptionSet)),
+      ),
+    [exceptionSet, filter, history, lastReadEventId],
+  );
+
   if (loading) {
     return <div className="flex flex-1 items-center justify-center text-sm text-fg-muted">Loading attention...</div>;
   }
 
+  const empty = filteredAttention.length === 0 && filteredHistory.length === 0;
+
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-surface">
-      <div className="flex items-center gap-2 border-b border-edge px-4 py-2">
+      <div className="flex flex-wrap items-center gap-2 border-b border-edge px-4 py-2">
         <h2 className="text-sm font-bold text-fg">Attention</h2>
+        <div
+          role="tablist"
+          aria-label="Activity filters"
+          className="flex flex-wrap items-center gap-1 rounded-md border border-edge bg-surface-raised/30 p-0.5"
+        >
+          {FILTERS.map((entry) => {
+            const selected = filter === entry.id;
+            return (
+              <button
+                key={entry.id}
+                type="button"
+                role="tab"
+                aria-selected={selected}
+                onClick={() => setFilter(entry.id)}
+                className={`rounded px-2 py-0.5 text-2xs font-semibold ${
+                  selected ? 'bg-surface-overlay text-fg shadow-sm' : 'text-fg-muted hover:text-fg-body'
+                }`}
+              >
+                {entry.label}
+              </button>
+            );
+          })}
+        </div>
         <button
           type="button"
           onClick={() => void markAllRead()}
@@ -318,45 +500,64 @@ export function ActivityView({
             Mentions, DMs, agent questions, and agent results will land here when they need you.
           </p>
         </div>
+      ) : empty ? (
+        <div className="flex flex-1 flex-col items-center justify-center gap-1 px-6 text-center">
+          <p className="text-sm font-semibold text-fg">
+            {filter === 'done'
+              ? 'No completed sessions'
+              : filter === 'unread'
+                ? 'No unread activity'
+                : 'Nothing in this view'}
+          </p>
+          <p className="max-w-md text-sm text-fg-muted">
+            {filter === 'done'
+              ? 'Completed agent work lives under Done. Switch to Inbox or All for the rest.'
+              : 'Try another filter, or mark items unread to keep them here.'}
+          </p>
+        </div>
       ) : (
         <div className="min-h-0 flex-1 overflow-y-auto">
-          {attention.length > 0 && (
+          {filteredAttention.length > 0 && (
             <section aria-labelledby="activity-needs-attention">
               <h2
                 id="activity-needs-attention"
                 className="px-4 pb-1 pt-3 text-2xs font-semibold uppercase tracking-wider text-warning-text"
               >
-                Needs attention · {attention.length}
+                Needs attention · {filteredAttention.length}
               </h2>
               <ul className="divide-y divide-edge border-b border-edge">
-                {attention.map((item) => (
+                {filteredAttention.map((item) => (
                   <ActivityRow
                     key={`${item.kind}:${item.eventId}`}
                     item={item}
                     attention
-                    lastReadEventId={lastReadEventId}
+                    unread={isActivityUnread(item, lastReadEventId, exceptionSet)}
                     onActivate={(target) => void activate(target)}
+                    onMarkRead={(target) => void markItemRead(target)}
+                    onMarkUnread={(target) => void markItemUnread(target)}
                   />
                 ))}
               </ul>
             </section>
           )}
-          {history.length > 0 && (
+          {filteredHistory.length > 0 && (
             <section aria-labelledby="activity-history">
               <h2
                 id="activity-history"
                 className="px-4 pb-1 pt-3 text-2xs font-semibold uppercase tracking-wider text-fg-muted"
               >
-                Activity
+                {filter === 'done' ? 'Done' : 'Activity'}
               </h2>
               <ul className="divide-y divide-edge">
-                {history.map((item) => (
+                {filteredHistory.map((item) => (
                   <ActivityRow
                     key={`${item.kind}:${item.eventId}`}
                     item={item}
                     attention={false}
-                    lastReadEventId={lastReadEventId}
+                    unread={isActivityUnread(item, lastReadEventId, exceptionSet)}
                     onActivate={(target) => void activate(target)}
+                    onMarkRead={(target) => void markItemRead(target)}
+                    onMarkUnread={(target) => void markItemUnread(target)}
                   />
                 ))}
               </ul>
