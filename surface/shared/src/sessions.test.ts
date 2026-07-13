@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { decodeSessionResponse } from './api';
 import {
   matchSteerProvenance,
   maxSessionStatus,
@@ -9,8 +10,10 @@ import {
   questionPayloadPrompts,
   sessionAnsweredQuestion,
   sessionAttentionKind,
+  sessionFromWire,
   sessionQuestionEventLabel,
   steerProvenanceKey,
+  type SessionAnsweredQuestion,
   type SessionQuestionEvent,
   type SessionSuggestion,
 } from './sessions';
@@ -308,5 +311,71 @@ describe('sessionAnsweredQuestion', () => {
   it('is null with no question history at all', () => {
     expect(sessionAnsweredQuestion({ questionEvents: [] })).toBeNull();
     expect(sessionAnsweredQuestion({})).toBeNull();
+  });
+
+  const durable: SessionAnsweredQuestion = {
+    questionId: 'q-1',
+    at: '2026-07-13T02:05:00.000Z',
+    answeredById: 'u-maya',
+    answeredByName: 'Maya',
+    answerText: 'Run now',
+  };
+
+  it('falls back to the session row on a cold load that folded no events', () => {
+    // The pane a week later: the session row still names the answerer.
+    expect(sessionAnsweredQuestion({ questionEvents: [], answeredQuestion: durable })).toEqual(durable);
+  });
+
+  it('trusts the row for the current question when its answered event is outside the window', () => {
+    expect(sessionAnsweredQuestion({ questionEvents: [asked(1, 'q-1')], answeredQuestion: durable })).toEqual(durable);
+  });
+
+  it('never lets a stale row resurface an answer to a superseded question', () => {
+    // A newer question is open; the row's answer belongs to the previous one.
+    expect(
+      sessionAnsweredQuestion({ questionEvents: [asked(1, 'q-1'), asked(3, 'q-2')], answeredQuestion: durable }),
+    ).toBeNull();
+  });
+});
+
+describe('session wire decoding of the answered trace', () => {
+  const wire = {
+    id: 's-1',
+    workspaceId: 'ws-1',
+    channelId: 'c-1',
+    threadRootEventId: null,
+    title: 'migrate the ledger',
+    status: 'running',
+    harness: 'claude-code',
+    spawnedBy: 'u-kay',
+    driverId: 'u-maya',
+    pendingQuestion: null,
+    answeredQuestion: {
+      questionId: 'q-1',
+      at: '2026-07-13T02:05:00.000Z',
+      answeredById: 'u-maya',
+      answeredByName: 'Maya',
+      answerText: 'Run now',
+    },
+    costUsd: 0,
+    resultText: null,
+    createdAt: '2026-07-13T02:00:00.000Z',
+    completedAt: null,
+    lastEventId: 7,
+    permalink: '/s/s-1',
+  };
+
+  // Effect Schema DROPS unknown fields, and sessionFromWire narrows explicitly:
+  // a field that is missing from either one works in a unit test and vanishes
+  // in prod. Both seams are asserted here.
+  it('keeps answeredQuestion through the REST decode and the wire→entity seam', () => {
+    const decoded = decodeSessionResponse({ session: wire }).session;
+    expect(decoded.answeredQuestion).toEqual(wire.answeredQuestion);
+    expect(sessionFromWire(decoded).answeredQuestion).toEqual(wire.answeredQuestion);
+  });
+
+  it('decodes an older payload that carries no trace at all', () => {
+    const { answeredQuestion: _omitted, ...older } = wire;
+    expect(sessionFromWire(decodeSessionResponse({ session: older }).session).answeredQuestion).toBeNull();
   });
 });

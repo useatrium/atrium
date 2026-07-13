@@ -5,6 +5,7 @@ import { basename } from 'node:path';
 import { Effect } from 'effect';
 import { encodeRecordHandle } from '@atrium/surface-client/handle';
 import { HARNESS_EFFORT_LEVELS, isSessionEffortLevel } from '@atrium/surface-client/effort';
+import { questionAnswerTraceText } from '@atrium/surface-client/sessions';
 import {
   CentaurApiError,
   CentaurClient,
@@ -80,6 +81,10 @@ export interface SessionJson {
   suggestions: SessionSuggestionJson[];
   answerProposals: SessionAnswerProposalJson[];
   pendingQuestion: SessionPendingQuestionJson | null;
+  /** Who answered the most recent question, and with what (null while it is
+   * open, or if it was cancelled/expired). The durable half of the trace the
+   * clients also fold from session.question_answered events. */
+  answeredQuestion: SessionAnsweredQuestionJson | null;
   providerAuthRequired: ProviderAuthRequiredJson | null;
   githubIdentityMode: string | null;
   providerConnectionId: string | null;
@@ -152,6 +157,20 @@ export interface SessionPendingQuestionJson {
   eventId: number;
   /** Server time the question was raised — anchors "waiting on you for Nm". */
   askedAt?: string;
+}
+
+/**
+ * The durable answered trace, persisted on the session row. Deliberately the
+ * same shape the clients derive from the event log, so the cold read and the
+ * live fold can never disagree about who answered what.
+ */
+export interface SessionAnsweredQuestionJson {
+  questionId: string;
+  at: string;
+  answeredById: string;
+  answeredByName: string;
+  /** The chosen option labels; secret answers arrive already redacted. */
+  answerText: string;
 }
 
 export interface SessionSeatHistoryEntry {
@@ -290,6 +309,7 @@ interface SessionRow {
   centaur_message_attempt: number;
   centaur_message_id: string | null;
   pending_question: unknown | null;
+  answered_question: unknown | null;
   provider_credential_user_id: string | null;
   provider_auth_required: unknown | null;
   provider_connection_id: string | null;
@@ -1067,9 +1087,13 @@ export class SessionRuns {
       const locked = before.rows[0];
       const stillPending = locked ? parsePendingQuestion(locked.pending_question) : null;
       if (!locked || !stillPending || stillPending.questionId !== questionId) return null;
+      // One summary feeds both halves of the trace — the durable column and the
+      // event payload — so a cold read and a live fold can't disagree.
+      const summaries = summarizeAnswers(stillPending, answers);
+      const trace = answeredQuestionTrace(questionId, user, summaries);
       const updated = await client.query<SessionRow>(
-        'UPDATE sessions SET pending_question = NULL WHERE id = $1 RETURNING *',
-        [id],
+        'UPDATE sessions SET pending_question = NULL, answered_question = $2 WHERE id = $1 RETURNING *',
+        [id, JSON.stringify(trace)],
       );
       const next = updated.rows[0]!;
       return appendEvent(client, {
@@ -1082,7 +1106,7 @@ export class SessionRuns {
           sessionId: id,
           questionId,
           by: user.id,
-          answers: summarizeAnswers(stillPending, answers),
+          answers: summaries,
         },
       });
     });
@@ -1127,9 +1151,11 @@ export class SessionRuns {
       throw err;
     }
 
+    const summaries = summarizeAnswers(pending, answers);
+    const trace = answeredQuestionTrace(questionId, user, summaries);
     const updated = await client.query<SessionRow>(
-      'UPDATE sessions SET pending_question = NULL WHERE id = $1 RETURNING *',
-      [id],
+      'UPDATE sessions SET pending_question = NULL, answered_question = $2 WHERE id = $1 RETURNING *',
+      [id, JSON.stringify(trace)],
     );
     this.cancelScheduledQuestionRenotify(id);
     const next = updated.rows[0]!;
@@ -1143,7 +1169,7 @@ export class SessionRuns {
         sessionId: id,
         questionId,
         by: user.id,
-        answers: summarizeAnswers(pending, answers),
+        answers: summaries,
       },
     });
     return revived.event ? [revived.event, answerEvent] : [answerEvent];
@@ -2178,8 +2204,11 @@ export class SessionRuns {
         askedAt: new Date().toISOString(),
       };
       const updated = await client.query<SessionRow>(
+        // A new question supersedes the last answered one: the trace always
+        // describes the session's MOST RECENT question, never the one before.
         `UPDATE sessions
          SET pending_question = $1,
+             answered_question = NULL,
              last_event_id = GREATEST(last_event_id, $2)
          WHERE id = $3
          RETURNING *`,
@@ -3458,6 +3487,7 @@ function toJson(
     suggestions: seatInfo.suggestions ?? [],
     answerProposals: seatInfo.answerProposals ?? [],
     pendingQuestion: parsePendingQuestion(row.pending_question),
+    answeredQuestion: parseAnsweredQuestion(row.answered_question),
     providerAuthRequired: parseProviderAuthRequired(row.provider_auth_required),
     githubIdentityMode: row.github_identity_mode ?? 'automatic',
     providerConnectionId: row.provider_connection_id,
@@ -3586,6 +3616,39 @@ function parsePendingQuestion(value: unknown): SessionPendingQuestionJson | null
   };
 }
 
+/**
+ * The trace we persist alongside clearing pending_question. `answerText` is
+ * built with the SAME helper the clients use on the event payload, so the cold
+ * read and the folded event render identical text.
+ */
+function answeredQuestionTrace(
+  questionId: string,
+  user: UserRef,
+  summaries: SessionQuestionAnswerJson[],
+): SessionAnsweredQuestionJson {
+  return {
+    questionId,
+    at: new Date().toISOString(),
+    answeredById: user.id,
+    answeredByName: user.displayName,
+    answerText: questionAnswerTraceText(summaries),
+  };
+}
+
+function parseAnsweredQuestion(value: unknown): SessionAnsweredQuestionJson | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const raw = value as Record<string, unknown>;
+  if (typeof raw.questionId !== 'string' || typeof raw.at !== 'string') return null;
+  if (typeof raw.answeredById !== 'string') return null;
+  return {
+    questionId: raw.questionId,
+    at: raw.at,
+    answeredById: raw.answeredById,
+    answeredByName: typeof raw.answeredByName === 'string' ? raw.answeredByName : raw.answeredById,
+    answerText: typeof raw.answerText === 'string' ? raw.answerText : '',
+  };
+}
+
 function parseProviderAuthRequired(value: unknown): ProviderAuthRequiredJson | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const raw = value as Record<string, unknown>;
@@ -3656,7 +3719,10 @@ function eventQuestions(questions: QuestionPrompt[]): Record<string, unknown>[] 
   }));
 }
 
-function summarizeAnswers(pending: SessionPendingQuestionJson, answers: QuestionAnswerBody): Record<string, unknown>[] {
+function summarizeAnswers(
+  pending: SessionPendingQuestionJson,
+  answers: QuestionAnswerBody,
+): SessionQuestionAnswerJson[] {
   return Object.entries(answers).map(([id, value]) => {
     const prompt = pending.questions.find((q) => q.id === id);
     const answerValues = Array.isArray(value.answers) ? value.answers : [];

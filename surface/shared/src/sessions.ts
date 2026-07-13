@@ -185,20 +185,26 @@ export function questionAnswerTraceText(summaries: readonly SessionQuestionAnswe
  * purpose: a cancelled question must not fall back to displaying the answer to
  * the question before it. Pass `questionId` to ask about a specific one.
  *
- * The question_answered events are folded onto the entity from the workspace
- * event log — WS live, and channel/thread history on reload — so the trace
- * outlives the question itself with no extra persistence.
+ * Two sources, one answer. The folded `session.question_answered` events are
+ * authoritative when we have them (WS live, and channel/thread history), and
+ * `session.answeredQuestion` — the column the server writes in the same
+ * transaction that clears the question — carries a COLD load (a fresh pane, a
+ * week-old thread) that folds no events at all. The column is only trusted for
+ * the question the events say is current, so it can never resurface a stale
+ * answer.
  */
 export function sessionAnsweredQuestion(
-  session: Pick<Session, 'questionEvents'>,
+  session: Pick<Session, 'questionEvents' | 'answeredQuestion'>,
   questionId?: string,
 ): SessionAnsweredQuestion | null {
   const events = session.questionEvents ?? [];
+  const durable = session.answeredQuestion ?? null;
   let target = questionId;
   if (target === undefined) {
     let newest: SessionQuestionEvent | undefined;
     for (const event of events) if (!newest || event.id > newest.id) newest = event;
-    if (!newest) return null;
+    // No question events folded at all → the cold read is all we have.
+    if (!newest) return durable;
     target = newest.questionId;
   }
   let latest: SessionQuestionEvent | undefined;
@@ -206,7 +212,11 @@ export function sessionAnsweredQuestion(
     if (event.kind !== 'answered' || event.questionId !== target) continue;
     if (!latest || event.id > latest.id) latest = event;
   }
-  if (!latest) return null;
+  if (!latest) {
+    // The answered event may simply be outside the loaded window while the
+    // session row already knows the answer — but only for THIS question.
+    return durable && durable.questionId === target ? durable : null;
+  }
   return {
     questionId: latest.questionId,
     at: latest.at,
@@ -384,6 +394,9 @@ export interface SessionWire {
   /** Pending HITL answer proposals (Phase 2; absent on older payloads). */
   answerProposals?: SessionAnswerProposal[];
   pendingQuestion?: SessionPendingQuestion | null;
+  /** Durable answered trace for the most recent question (absent on older
+   * payloads — the event fold covers those). */
+  answeredQuestion?: SessionAnsweredQuestion | null;
   providerAuthRequired?: SessionProviderAuthRequired | null;
   githubIdentityMode?: string | null;
   providerConnectionId?: string | null;
@@ -442,6 +455,10 @@ export interface Session {
   /** HITL answer proposals folded from session.answer_proposal_* events. */
   answerProposals: SessionAnswerProposal[];
   pendingQuestion?: SessionPendingQuestion | null;
+  /** Durable answered trace served with the session row — what a COLD load
+   * (fresh pane, week-old thread) reads before any event is folded. Prefer
+   * `sessionAnsweredQuestion()` over reading this directly. */
+  answeredQuestion?: SessionAnsweredQuestion | null;
   providerAuthRequired?: SessionProviderAuthRequired | null;
   githubIdentityMode?: string | null;
   providerConnectionId?: string | null;
@@ -702,6 +719,16 @@ export const SessionPendingQuestionSchema = Schema.mutable(
   }),
 );
 
+export const SessionAnsweredQuestionSchema = Schema.mutable(
+  Schema.Struct({
+    questionId: Schema.String,
+    at: Schema.String,
+    answeredById: NullableStringSchema,
+    answeredByName: Schema.String,
+    answerText: Schema.String,
+  }),
+);
+
 export const SessionProviderAuthRequiredSchema = Schema.mutable(
   Schema.Struct({
     provider: Schema.Literal('claude-code', 'codex', 'github'),
@@ -778,6 +805,9 @@ export const SessionWireSchema = Schema.mutable(
     suggestions: Schema.optionalWith(Schema.mutable(Schema.Array(SessionSuggestionSchema)), { exact: true }),
     answerProposals: Schema.optionalWith(Schema.mutable(Schema.Array(SessionAnswerProposalSchema)), { exact: true }),
     pendingQuestion: Schema.optionalWith(Schema.Union(SessionPendingQuestionSchema, Schema.Null), { exact: true }),
+    // Schema decoding DROPS fields it doesn't know about — this entry and the
+    // explicit copy in sessionFromWire below are both load-bearing.
+    answeredQuestion: Schema.optionalWith(Schema.Union(SessionAnsweredQuestionSchema, Schema.Null), { exact: true }),
     providerAuthRequired: Schema.optionalWith(Schema.Union(SessionProviderAuthRequiredSchema, Schema.Null), {
       exact: true,
     }),
@@ -1027,6 +1057,7 @@ export function sessionFromWire(w: SessionWire): Session {
     }),
     answerProposals: [...(w.answerProposals ?? [])],
     pendingQuestion: w.pendingQuestion ?? null,
+    answeredQuestion: w.answeredQuestion ?? null,
     providerAuthRequired: parseProviderAuthRequired(w.providerAuthRequired),
     githubIdentityMode: w.githubIdentityMode ?? null,
     providerConnectionId: w.providerConnectionId ?? null,
@@ -1082,6 +1113,7 @@ export function mergeSpawnResponse(live: Session | undefined, resp: Session): Se
     suggestions: live.suggestions.length > 0 ? live.suggestions : resp.suggestions,
     answerProposals: live.answerProposals.length > 0 ? live.answerProposals : resp.answerProposals,
     pendingQuestion,
+    answeredQuestion: live.answeredQuestion ?? resp.answeredQuestion ?? null,
     // A live effort change (WS event mid-flight) wins over the fetch snapshot.
     modelEffort: live.modelEffort ?? resp.modelEffort ?? null,
     providerAuthRequired: live.providerAuthRequired ?? resp.providerAuthRequired ?? null,
@@ -1270,6 +1302,9 @@ export function applySessionEvent(sessions: Record<string, Session>, ev: Session
         // askedAt anchors the "Needs you · 12m" waiting clock; the event's own
         // server timestamp is authoritative on every fold path.
         pendingQuestion: { questionId, questions, askedAt: ev.createdAt },
+        // A new question supersedes the last answered one — the same rule the
+        // server applies to the durable column.
+        answeredQuestion: null,
         questionEvents: appendQuestionEvent(prev.questionEvents, entry),
       },
     };
@@ -1287,11 +1322,27 @@ export function applySessionEvent(sessions: Record<string, Session>, ev: Session
         : questionEventFromPayload(ev, questionId, 'resolved', {
             reason: parseQuestionResolutionReason(p.reason),
           });
+    // Keep the entity's durable field in step with the event log, so a reader
+    // that never consults the fold still sees the same answer the server has.
+    const answeredQuestion: SessionAnsweredQuestion | null =
+      entry.kind === 'answered'
+        ? {
+            questionId,
+            at: entry.at,
+            answeredById: entry.actorId ?? null,
+            answeredByName: entry.actorName ?? entry.actorId ?? 'someone',
+            answerText: questionAnswerTraceText(entry.answers ?? []),
+          }
+        : // A cancelled/expired question drops ITS OWN trace and nobody else's.
+          prev.answeredQuestion?.questionId === questionId
+          ? null
+          : (prev.answeredQuestion ?? null);
     return {
       ...sessions,
       [sessionId]: {
         ...prev,
         ...(isMatchingPending ? { pendingQuestion: null } : {}),
+        answeredQuestion,
         questionEvents: appendQuestionEvent(prev.questionEvents, entry),
       },
     };

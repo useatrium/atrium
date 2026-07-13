@@ -2675,6 +2675,18 @@ describe('Phase 2 sessions', () => {
   it('folds question_requested into pending state and a thread event', async () => {
     fake.setFrames([questionRequestedFrame()]);
     const id = await insertSessionRow({ title: 'needs input', status: 'running' });
+    // A previous question's answered trace is on the row; the new question
+    // must supersede it rather than leave a stale "✓ Answered by …" behind.
+    await pool.query('UPDATE sessions SET answered_question = $1 WHERE id = $2', [
+      JSON.stringify({
+        questionId: 'q-old',
+        at: new Date().toISOString(),
+        answeredById: fx.userId,
+        answeredByName: 'Kay',
+        answerText: 'Tonight',
+      }),
+      id,
+    ]);
     // Real sessions are thread-rooted; the question event must land as a
     // thread child that thread reads return.
     const root = await pool.query<{ id: number }>(
@@ -2691,12 +2703,16 @@ describe('Phase 2 sessions', () => {
     await app.ready();
 
     await waitFor(async () => {
-      const row = await pool.query('SELECT pending_question, last_event_id FROM sessions WHERE id = $1', [id]);
+      const row = await pool.query(
+        'SELECT pending_question, answered_question, last_event_id FROM sessions WHERE id = $1',
+        [id],
+      );
       expect(row.rows[0].pending_question).toMatchObject({
         questionId: 'q-main',
         turnId: 'turn-1',
         questions: [{ id: 'choice', header: 'Decision' }],
       });
+      expect(row.rows[0].answered_question).toBeNull();
       expect(Number(row.rows[0].last_event_id)).toBe(1);
       const event = await pool.query('SELECT thread_root_event_id, payload FROM events WHERE type = $1', [
         'session.question_requested',
@@ -2976,8 +2992,27 @@ describe('Phase 2 sessions', () => {
       question_id: 'q-main',
       answers: { choice: { answers: ['Fast'] } },
     });
-    const row = await pool.query('SELECT pending_question FROM sessions WHERE id = $1', [id]);
+    const row = await pool.query('SELECT pending_question, answered_question FROM sessions WHERE id = $1', [id]);
     expect(row.rows[0].pending_question).toBeNull();
+    // The durable half of the trace: who answered, and what they picked. It
+    // rides the session row, so a cold read (fresh pane, week-old thread) sees
+    // it without replaying the event log.
+    expect(row.rows[0].answered_question).toMatchObject({
+      questionId: 'q-main',
+      answeredById: fx.userId,
+      answerText: 'Fast',
+    });
+    const fetched = await app.inject({
+      method: 'GET',
+      url: `/api/sessions/${id}`,
+      headers: { cookie: driverCookie },
+    });
+    expect(fetched.statusCode).toBe(200);
+    expect(fetched.json().session.answeredQuestion).toMatchObject({
+      questionId: 'q-main',
+      answeredById: fx.userId,
+      answerText: 'Fast',
+    });
     const event = await pool.query('SELECT actor_id, payload FROM events WHERE type = $1', [
       'session.question_answered',
     ]);
