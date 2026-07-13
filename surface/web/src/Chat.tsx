@@ -2313,6 +2313,8 @@ export function Chat({
               liveEvent={activityLiveEvent}
               refreshKey={activityRefreshKey}
               liveAttention={liveAttentionItems}
+              sessions={state.sessions}
+              meId={me.id}
               onCountsChange={handleActivityCountsChange}
             />
           ) : showFilesSurface ? (
@@ -2544,7 +2546,7 @@ export function Chat({
         active &&
         hasChannelSessions && (
           <div className="hidden md:contents">
-            <SessionsRail channelId={active.id} sessions={state.sessions} onOpenSession={openSession} />
+            <SessionsRail channelId={active.id} sessions={state.sessions} meId={me.id} onOpenSession={openSession} />
           </div>
         )
       )}

@@ -529,7 +529,7 @@ function AgentReplyRow({ message, session }: { message: ChatMessage; session?: S
         <Text numberOfLines={1} style={{ color: colors.text, flexShrink: 1, fontSize: font.md, fontWeight: '700' }}>
           {session?.title ?? message.author.displayName}
         </Text>
-        <Text style={{ color: colors.accent, fontSize: font.xs, fontWeight: '800' }}>AI</Text>
+        <Text style={{ color: colors.accent, fontSize: font.xs, fontWeight: '800' }}>AGENT</Text>
       </View>
       <MarkdownText text={message.text} />
     </View>
@@ -574,6 +574,14 @@ function SessionEventLine({
         marginTop: 4,
       }}
     >
+      {message.sessionEventType === 'question_requested' && session != null && (
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          <Text numberOfLines={1} style={{ color: colors.text, flexShrink: 1, fontSize: font.md, fontWeight: '700' }}>
+            {session.title}
+          </Text>
+          <Text style={{ color: colors.accent, fontSize: font.xs, fontWeight: '800' }}>AGENT</Text>
+        </View>
+      )}
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 6 }}>
         <Text style={{ color: colors.textSecondary, fontSize: font.xs, fontWeight: '800' }}>{label}</Text>
         <Text style={{ color: colors.textMuted, fontSize: font.xs }}>{formatTime(message.createdAt)}</Text>

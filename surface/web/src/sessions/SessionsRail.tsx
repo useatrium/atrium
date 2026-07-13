@@ -35,10 +35,13 @@ function groupSessions(sessions: Session[]): Group[] {
 export function SessionsRail({
   channelId,
   sessions,
+  meId,
   onOpenSession,
 }: {
   channelId: string | null;
   sessions: Record<string, Session>;
+  /** Enables answering a live question straight from the rail card. */
+  meId?: string;
   onOpenSession: (sessionId: string) => void;
 }) {
   const groups = useMemo(() => {
@@ -75,7 +78,13 @@ export function SessionsRail({
               </div>
               <div className="space-y-1.5">
                 {group.sessions.map((session) => (
-                  <SessionCard key={session.id} session={session} spectators={0} onOpenPane={onOpenSession} />
+                  <SessionCard
+                    key={session.id}
+                    session={session}
+                    spectators={0}
+                    meId={meId}
+                    onOpenPane={onOpenSession}
+                  />
                 ))}
               </div>
             </section>

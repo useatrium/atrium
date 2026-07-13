@@ -318,6 +318,38 @@ describe('session question events', () => {
     expect(screen.getByText('Agent asked a question')).toBeTruthy();
   });
 
+  it('question rows speak as the session persona, never a human or Unknown', () => {
+    renderThemed(
+      <MessageRow
+        message={sessionEvent({
+          sessionEventType: 'question_requested',
+          sessionEventPayload: {
+            questions: [{ id: 'q1', header: 'Decision', question: 'Deploy now?' }],
+          },
+          author: { id: 'u-spawner', handle: 'maya', displayName: 'Maya Chen' },
+        })}
+        session={
+          {
+            id: 'sess-1',
+            title: 'Backfill Q2 corpus embeddings',
+            status: 'running',
+            driverId: 'u-spawner',
+            pendingSeatRequests: [],
+            suggestions: [],
+            answerProposals: [],
+            createdAt: new Date().toISOString(),
+            completedAt: null,
+          } as unknown as Session
+        }
+        grouped={false}
+      />,
+    );
+
+    expect(screen.getByText('Backfill Q2 corpus embeddings')).toBeTruthy();
+    expect(screen.getByText('AGENT')).toBeTruthy();
+    expect(screen.queryByText('Maya Chen')).toBeNull();
+  });
+
   it('renders answered questions with answer summaries', () => {
     renderThemed(
       <MessageRow

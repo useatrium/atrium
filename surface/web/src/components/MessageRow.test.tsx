@@ -194,7 +194,7 @@ describe('MessageRow web presence', () => {
     });
 
     expect(screen.getByText('Timeline migration')).toBeTruthy();
-    expect(screen.getByText('AI')).toBeTruthy();
+    expect(screen.getByText('AGENT')).toBeTruthy();
     expect(screen.getByRole('link', { name: 'timeline' })).toBeTruthy();
     expect(screen.getByText('Shipped')).toBeTruthy();
   });

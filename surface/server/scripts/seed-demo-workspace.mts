@@ -646,14 +646,31 @@ async function main(): Promise<void> {
     createdAt: min(48),
     repo: 'meridian/atlas',
   });
+  // Shaped exactly like persistQuestionRequested's event: attributed to the
+  // spawner, threaded under the session card, questionId in the payload —
+  // so the client renders the same persona'd, answerable question card the
+  // live path produces (no "Unknown", no dead top-level message).
   const questionEvent = await pool.query<{ id: string }>(
-    `INSERT INTO events (workspace_id, channel_id, type, actor_id, payload, created_at)
-     SELECT workspace_id, $1, 'session.question_requested', NULL,
-            jsonb_build_object('sessionId', $2::text, 'questions', jsonb_build_array(
-              jsonb_build_object('question', 'The reindex holds a write lock for ~40 minutes. Run it now or schedule for tonight?', 'header', 'Write lock')
-            )), $3::timestamptz
-     FROM channels WHERE id = $1 RETURNING id`,
-    [dataPipeline, backfillSession, min(46)],
+    `INSERT INTO events (workspace_id, channel_id, thread_root_event_id, type, actor_id, payload, created_at)
+     SELECT s.workspace_id, s.channel_id, s.thread_root_event_id, 'session.question_requested', s.spawned_by,
+            jsonb_build_object(
+              'sessionId', s.id::text,
+              'questionId', 'q-backfill-lock',
+              'questions', jsonb_build_array(
+                jsonb_build_object(
+                  'id', 'q1',
+                  'header', 'Write lock',
+                  'question', 'The reindex holds a write lock for ~40 minutes. Run it now or schedule for tonight?',
+                  'options', jsonb_build_array(
+                    jsonb_build_object('label', 'Run now', 'description', 'blocks ingestion writes until ~finished'),
+                    jsonb_build_object('label', 'Tonight 02:00', 'description', 'schedule for the quiet window')
+                  )
+                )
+              ),
+              'permalink', '/s/' || s.id::text
+            ), $2::timestamptz
+     FROM sessions s WHERE s.id = $1 RETURNING id`,
+    [backfillSession, min(46)],
   );
   await pool.query(`UPDATE sessions SET status='running', pending_question=$2 WHERE id=$1`, [
     backfillSession,

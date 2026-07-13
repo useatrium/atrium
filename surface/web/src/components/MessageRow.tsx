@@ -25,6 +25,7 @@ import {
 } from '@atrium/surface-client';
 import { encodeEventHandle } from '@atrium/surface-client/handle';
 import { SessionCard } from '../sessions/SessionCard';
+import { InlineQuestionAnswer } from '../sessions/InlineQuestionAnswer';
 import type { Session } from '../sessions/types';
 import { formatBytes, formatGutterTime, formatTime } from '@atrium/surface-client';
 import { Avatar } from './Avatar';
@@ -155,6 +156,10 @@ export const MessageRow = memo(function MessageRow({
   const threadTargetEventId = isBroadcastReplyInMain ? m.threadRootEventId : m.id;
   const canThread = !inThread && threadTargetEventId != null && onOpenThread && !deleted;
   const isAgentReply = m.sessionEventType === 'replied';
+  // Utterances the SESSION itself makes (turn recaps, questions) wear the
+  // session's persona — title, session-seeded avatar, AGENT chip — never a
+  // human's name and never "Unknown". Humans keep their own rows.
+  const isAgentVoice = isAgentReply || m.sessionEventType === 'question_requested';
   const isSessionRow = m.sessionId != null && session != null && !isAgentReply;
   const isSessionEventRow = m.sessionEventType != null && !isAgentReply;
   const explicitHandle = (m as MessageWithHandle).handle ?? null;
@@ -189,7 +194,7 @@ export const MessageRow = memo(function MessageRow({
     entryHandle != null &&
     isStructuredTextForMarkup(m.text) &&
     !!onMarkupEntry;
-  const authorName = isAgentReply ? (session?.title ?? m.author.displayName) : m.author.displayName;
+  const authorName = isAgentVoice ? (session?.title ?? m.author.displayName) : m.author.displayName;
   const [pickerOpen, setPickerOpen] = useState(false);
   const [openReactionEmoji, setOpenReactionEmoji] = useState<string | null>(null);
   const reactionPopoverBaseId = useId();
@@ -583,7 +588,9 @@ export const MessageRow = memo(function MessageRow({
       } ${dim ? 'opacity-50' : ''} ${highlighted ? 'entry-flash bg-accent-hover/10' : ''}`}
     >
       <div className="w-8 shrink-0">
-        {(!grouped || isAgentReply) && <Avatar name={authorName} seed={m.author.id} />}
+        {(!grouped || isAgentVoice) && (
+          <Avatar name={authorName} seed={isAgentVoice ? (m.sessionId ?? m.author.id) : m.author.id} />
+        )}
         {grouped && (
           <TimestampDisclosure
             iso={m.createdAt}
@@ -623,12 +630,12 @@ export const MessageRow = memo(function MessageRow({
         }}
         className={`relative min-w-0 max-w-3xl flex-1 ${swiping ? 'transition-none' : 'transition-transform duration-150 ease-out'}`}
       >
-        {(!grouped || isAgentReply) && (
+        {(!grouped || isAgentVoice) && (
           <div className="flex items-baseline gap-2">
             <span className="text-sm font-semibold text-fg">{authorName}</span>
-            {isAgentReply && (
+            {isAgentVoice && (
               <span className="rounded-full bg-accent-hover/15 px-1.5 py-px text-3xs font-semibold text-accent-text-strong">
-                AI
+                AGENT
               </span>
             )}
             <TimestampDisclosure
@@ -656,6 +663,7 @@ export const MessageRow = memo(function MessageRow({
             session={session}
             spectators={spectators}
             spawnFailed={failed}
+            meId={meId}
             onOpenPane={(id) => onOpenSession?.(id)}
           />
         ) : editing ? (
@@ -1151,90 +1159,6 @@ function SessionEventCard({
         >
           Open pane
         </button>
-      )}
-    </div>
-  );
-}
-
-function InlineQuestionAnswer({ session, meId }: { session: Session; meId?: string }) {
-  const pending = session.pendingQuestion;
-  const question = pending?.questions[0];
-  const [draft, setDraft] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [sent, setSent] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  if (!pending || !question) return null;
-  const isDriver = session.driverId === meId;
-  const submit = (value: string) => {
-    const answer = value.trim();
-    if (!answer || busy) return;
-    setBusy(true);
-    setError(null);
-    const answers = { [question.id]: { answers: [answer] } };
-    const request = isDriver
-      ? sessionsApi.answerQuestion(session.id, pending.questionId, answers, randomId())
-      : sessionsApi.createSuggestion(session.id, answer, randomId(), true);
-    request
-      .then(() => {
-        setSent(true);
-        setDraft('');
-      })
-      .catch(() => setError(isDriver ? "Answer didn't send. Try again." : "Suggestion didn't send. Try again."))
-      .finally(() => setBusy(false));
-  };
-
-  return (
-    <div data-testid="inline-question-answer" className="mt-2 border-t border-warning-border/30 pt-2">
-      {question.options?.length ? (
-        <div className="flex flex-wrap gap-1.5">
-          {question.options.map((option) => (
-            <button
-              key={option.label}
-              type="button"
-              disabled={busy || sent}
-              title={option.description}
-              onClick={() => submit(option.label)}
-              className="rounded-md border border-warning-border/60 bg-warning-tint/15 px-2 py-1 text-2xs font-medium text-warning-text-strong hover:bg-warning-tint/35 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {option.label}
-            </button>
-          ))}
-        </div>
-      ) : null}
-      <form
-        className="mt-1.5 flex min-w-0 gap-1.5"
-        onSubmit={(event) => {
-          event.preventDefault();
-          submit(draft);
-        }}
-      >
-        <label className="sr-only" htmlFor={`inline-answer-${session.id}-${pending.questionId}`}>
-          {isDriver ? 'Type an answer' : 'Suggest an answer'}
-        </label>
-        <input
-          id={`inline-answer-${session.id}-${pending.questionId}`}
-          value={draft}
-          disabled={busy || sent}
-          onChange={(event) => setDraft(event.target.value)}
-          placeholder={isDriver ? 'type an answer…' : 'Suggest an answer…'}
-          className="min-w-0 flex-1 rounded-md border border-warning-border/50 bg-surface px-2 py-1 text-xs text-fg outline-none placeholder:text-fg-muted focus:border-warning disabled:opacity-60"
-        />
-        <button
-          type="submit"
-          disabled={!draft.trim() || busy || sent}
-          className="shrink-0 rounded-md bg-warning px-2 py-1 text-2xs font-semibold text-surface hover:bg-warning-hover disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {busy ? 'Sending…' : isDriver ? 'Answer' : 'Suggest'}
-        </button>
-      </form>
-      {!isDriver && !sent && (
-        <div className="mt-1 text-3xs text-fg-muted">The current driver decides what to send.</div>
-      )}
-      {sent && <div className="mt-1 text-3xs text-fg-muted">{isDriver ? 'Answer sent.' : 'Suggestion sent.'}</div>}
-      {error && (
-        <div role="alert" className="mt-1 text-3xs text-danger-text">
-          {error}
-        </div>
       )}
     </div>
   );

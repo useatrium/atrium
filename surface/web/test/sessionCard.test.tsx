@@ -150,6 +150,33 @@ describe('session card transitions across session.* events', () => {
     });
   });
 
+  it('flips the card to an answerable question while one is pending', () => {
+    let s = spawned(loadedState());
+    s = appReducer(s, {
+      type: 'server-event',
+      event: wire(102, 'session.question_requested', {
+        sessionId: 'sess-1',
+        questionId: 'q-1',
+        questions: [
+          {
+            id: 'q1',
+            header: 'Write lock',
+            question: 'Run it now or schedule for tonight?',
+            options: [
+              { label: 'Run now', description: 'blocks writes' },
+              { label: 'Tonight', description: 'quiet window' },
+            ],
+          },
+        ],
+      }),
+    });
+    render(cardFor(s));
+    expect(chipText()).toContain('Needs you');
+    expect(screen.getByText('Run it now or schedule for tonight?')).toBeTruthy();
+    expect(screen.getByTestId('inline-question-answer')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Run now' })).toBeTruthy();
+  });
+
   it('preserves GitHub auth-required state across terminal checkout failure', () => {
     let s = spawned(loadedState());
     s = appReducer(s, {
