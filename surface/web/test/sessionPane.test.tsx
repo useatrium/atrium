@@ -106,18 +106,19 @@ async function renderPaneWithB() {
 }
 
 describe('session pane folds the B_tooltest stream', () => {
-  it('opens the lean pane route from the in-app header', () => {
+  it('opens the lean pane route from the header overflow menu', () => {
+    const openSpy = vi.spyOn(window, 'open').mockReturnValue(null);
     render(
       <SessionPane session={bSession()} me={me} watchers={[]} onClose={() => {}} onAnswerQuestion={async () => {}} />,
     );
 
-    const link = screen.getByRole('link', { name: 'Open agent in a new tab' });
-    expect(link.getAttribute('href')).toBe('/s/s-b/pane');
-    expect(link.getAttribute('target')).toBe('_blank');
-    expect(link.getAttribute('rel')).toBe('noopener noreferrer');
+    fireEvent.click(screen.getByRole('button', { name: 'Agent actions' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open in a new tab' }));
+    expect(openSpy).toHaveBeenCalledWith('/s/s-b/pane', '_blank', 'noopener,noreferrer');
+    openSpy.mockRestore();
   });
 
-  it('points the popout header link back to the full app in the same tab', () => {
+  it('offers the full-app action from the popout overflow menu', () => {
     render(
       <SessionPane
         session={bSession()}
@@ -129,11 +130,9 @@ describe('session pane folds the B_tooltest stream', () => {
       />,
     );
 
-    const link = screen.getByRole('link', { name: 'Open in full app' });
-    expect(link.getAttribute('href')).toBe('/s/s-b');
-    expect(link.getAttribute('target')).toBeNull();
-    expect(link.getAttribute('rel')).toBeNull();
-    expect(link.getAttribute('aria-label')).toBe('Open in full app');
+    fireEvent.click(screen.getByRole('button', { name: 'Agent actions' }));
+    expect(screen.getByRole('button', { name: 'Open in full app' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Open in a new tab' })).toBeNull();
   });
 
   it('opens a session capabilities popover from the header', async () => {
@@ -197,7 +196,8 @@ describe('session pane folds the B_tooltest stream', () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: 'Inspect session capabilities' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Agent actions' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Session details & scope' }));
 
     expect(await screen.findByRole('dialog', { name: 'Session capabilities' })).toBeTruthy();
     expect(sessionsApi.getCapabilities).toHaveBeenCalledWith('s-b');
@@ -338,7 +338,12 @@ describe('session pane folds the B_tooltest stream', () => {
       />,
     );
 
-    expect(screen.getByText('GitHub: App installation')).toBeTruthy();
+    // Metadata moved into the details popover behind the overflow menu.
+    fireEvent.click(screen.getByRole('button', { name: 'Agent actions' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Session details & scope' }));
+    const details = screen.getByTestId('session-details');
+    expect(within(details).getByText('GitHub')).toBeTruthy();
+    expect(within(details).getByText('App installation')).toBeTruthy();
   });
 
   it('renders one Bash tool card with the roundtrip result, completed status', async () => {
@@ -383,6 +388,7 @@ describe('session pane folds the B_tooltest stream', () => {
     expect(screen.queryByTestId('hidden-work-chip')).toBeNull();
     expect(window.localStorage.getItem('atrium:transcript-view')).toBe('full');
 
+    fireEvent.click(screen.getByRole('button', { name: 'Agent actions' }));
     fireEvent.click(screen.getByRole('button', { name: 'Hide agent work' }));
     expect(screen.queryByTestId('tool-card')).toBeNull();
     expect(window.localStorage.getItem('atrium:transcript-view')).toBe('focus');
@@ -901,7 +907,8 @@ describe('driver seat', () => {
 
     fireEvent.keyDown(screen.getByPlaceholderText(/Steer the agent/), { key: 'Escape' });
     fireEvent.keyDown(window, { key: 'Escape', metaKey: true });
-    fireEvent.click(screen.getByRole('button', { name: 'Inspect session capabilities' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Agent actions' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Session details & scope' }));
     const dialog = await screen.findByRole('dialog', { name: 'Session capabilities' });
     fireEvent.keyDown(dialog, { key: 'Escape' });
 
@@ -1140,15 +1147,12 @@ describe('focus + detach controls', () => {
       />,
     );
 
-    // Detach is a new-tab link to the lean standalone pane.
-    const detach = screen.getByRole('link', { name: /open agent in a new tab/i });
-    expect(detach.getAttribute('href')).toBe('/s/s-b/pane');
-    expect(detach.getAttribute('target')).toBe('_blank');
+    // Detach and view controls live behind the overflow menu now.
+    fireEvent.click(screen.getByRole('button', { name: 'Agent actions' }));
+    expect(screen.getByRole('button', { name: 'Open in a new tab' })).toBeTruthy();
 
-    // Split → the control offers Expand.
-    const expand = screen.getByRole('button', { name: /expand to focus/i });
-    expect(expand.getAttribute('aria-pressed')).toBe('false');
-    fireEvent.click(expand);
+    // Split → the menu offers Expand.
+    fireEvent.click(screen.getByRole('button', { name: /expand to focus/i }));
     expect(onToggleFocus).toHaveBeenCalledTimes(1);
 
     // Focus → it offers Collapse and reports pressed.
@@ -1163,8 +1167,8 @@ describe('focus + detach controls', () => {
         onToggleFocus={onToggleFocus}
       />,
     );
-    const collapse = screen.getByRole('button', { name: /collapse to split/i });
-    expect(collapse.getAttribute('aria-pressed')).toBe('true');
+    fireEvent.click(screen.getByRole('button', { name: 'Agent actions' }));
+    expect(screen.getByRole('button', { name: /collapse to split/i })).toBeTruthy();
   });
 
   it('hides the expand control when no handler is given, and detach when pending', () => {

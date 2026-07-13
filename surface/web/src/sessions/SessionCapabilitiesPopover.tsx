@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
+import { Fragment, useCallback, useEffect, useRef, useState, type RefObject } from 'react';
 import type {
   SessionCapabilityItem,
   SessionCapabilityNamespace,
@@ -13,11 +13,14 @@ export function SessionCapabilitiesPopover({
   sessionId,
   open,
   invokerRef,
+  details,
   onClose,
 }: {
   sessionId: string;
   open: boolean;
   invokerRef: RefObject<HTMLButtonElement | null>;
+  /** Session metadata rows (spawner, cost, repo…) shown above the scope. */
+  details?: Array<{ label: string; value: string }>;
   onClose: () => void;
 }) {
   const popoverRef = useRef<HTMLDivElement | null>(null);
@@ -108,6 +111,21 @@ export function SessionCapabilitiesPopover({
           <XIcon size={14} />
         </button>
       </header>
+      {details && details.length > 0 && (
+        <dl
+          data-testid="session-details"
+          className="grid shrink-0 grid-cols-[auto_1fr] gap-x-3 gap-y-1 border-b border-edge px-3 py-2 text-xs"
+        >
+          {details.map((row) => (
+            <Fragment key={row.label}>
+              <dt className="text-fg-muted">{row.label}</dt>
+              <dd className="min-w-0 truncate text-fg-body" title={row.value}>
+                {row.value}
+              </dd>
+            </Fragment>
+          ))}
+        </dl>
+      )}
       <div className="min-h-0 overflow-y-auto p-3 text-xs">
         {error && (
           <div

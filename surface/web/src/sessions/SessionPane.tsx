@@ -56,20 +56,7 @@ import { splitMarkdownFrontmatter } from '@atrium/surface-client';
 import { MarkupPane, type MarkupPaneSource } from '../components/MarkupPane';
 import { MarkupSteerCard } from '../components/MarkupSteerCard';
 import { Tooltip } from '../components/a11y';
-import {
-  ArchiveIcon,
-  ArchiveRestoreIcon,
-  ChevronDownIcon,
-  ChevronRightIcon,
-  CornerUpLeftIcon,
-  ExpandIcon,
-  ExternalLinkIcon,
-  GearIcon,
-  PinIcon,
-  PinOffIcon,
-  ShrinkIcon,
-  XIcon,
-} from '../components/icons';
+import { ChevronDownIcon, ChevronRightIcon, CornerUpLeftIcon, GearIcon, XIcon } from '../components/icons';
 import type { AttachmentMeta, AttachmentRef, UploadPayload, UserRef } from '@atrium/surface-client';
 import {
   formatExactTimestamp,
@@ -82,7 +69,7 @@ import {
   type SteerProvenance,
 } from '@atrium/surface-client';
 import { sessionsApi } from './api';
-import { repoBranchLabel, repoBranchTitle, useNow } from './SessionCard';
+import { repoBranchTitle, useNow } from './SessionCard';
 import { GlanceChip } from './GlanceChip';
 import {
   HARNESS_EFFORT_PICKER_OPTIONS,
@@ -826,13 +813,33 @@ export function SessionPane({
     : driverPresent
       ? `You're watching — ${driverName} is driving`
       : "You're watching";
-  const composerPlaceholder = isDriver
-    ? isEnded
-      ? 'Steer to retry — starts a new turn…'
-      : displayTerminal
-        ? 'Steer — starts a new turn…'
-        : 'Steer the agent...'
-    : `Suggest a message — ${driverName} decides`;
+  // The pane composer speaks to the agent by default (it's the workbench),
+  // with a one-tap thread mode for talking to PEOPLE about the work — the
+  // agent never reads thread replies.
+  const [paneSendMode, setPaneSendMode] = useState<'agent' | 'thread'>('agent');
+  const [asideRefresh, setAsideRefresh] = useState(0);
+  const sendThreadReply = useCallback(
+    (text: string) => {
+      const root = session.threadRootEventId;
+      const trimmed = text.trim();
+      if (root == null || !trimmed) return;
+      api
+        .postMessage({ channelId: session.channelId, text: trimmed, clientMsgId: randomId(), threadRootEventId: root })
+        .then(() => setAsideRefresh((n) => n + 1))
+        .catch(() => {});
+    },
+    [session.channelId, session.threadRootEventId],
+  );
+  const composerPlaceholder =
+    paneSendMode === 'thread'
+      ? "Reply in the thread — the agent won't read this…"
+      : isDriver
+        ? isEnded
+          ? 'Steer to retry — starts a new turn…'
+          : displayTerminal
+            ? 'Steer — starts a new turn…'
+            : 'Steer the agent...'
+        : `Suggest a message — ${driverName} decides`;
   const providerAuthOwnerName = nameFor(session.providerAuthRequired?.userId ?? null);
   // Steer frames carry no author; attribute to the spawner (Phase-1 approximation —
   // per-steer seat-aware attribution arrives with the session record in Phase 2).
@@ -1176,6 +1183,69 @@ export function SessionPane({
     [codexChangesAt, showAgentWork, stream.items],
   );
 
+  // The pane is the thread with the work unfolded: the session thread's plain
+  // chat (asides — not steers, which the transcript already carries as user
+  // messages) interleaves into the transcript by wall-clock time.
+  const [asides, setAsides] = useState<PaneAside[]>([]);
+  useEffect(() => {
+    const root = session.threadRootEventId;
+    if (root == null) {
+      setAsides([]);
+      return;
+    }
+    let disposed = false;
+    const load = () => {
+      api
+        .thread(root)
+        .then(({ events }) => {
+          if (disposed) return;
+          setAsides(
+            events
+              .filter(
+                (ev) =>
+                  ev.type === 'message.posted' &&
+                  typeof ev.payload?.text === 'string' &&
+                  ev.payload.deleted !== true &&
+                  typeof ev.payload.steered_session_id !== 'string' &&
+                  typeof ev.payload.suggested_session_id !== 'string',
+              )
+              .map((ev) => ({
+                id: ev.id,
+                author: ev.author?.displayName ?? 'Someone',
+                createdAt: ev.createdAt,
+                text: String(ev.payload?.text ?? ''),
+              })),
+          );
+        })
+        .catch(() => {});
+    };
+    load();
+    const timer = window.setInterval(load, 7000);
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+    };
+  }, [session.threadRootEventId, asideRefresh]);
+  // Anchor each aside to the first transcript item that happened after it.
+  const asideAnchors = useMemo(() => {
+    if (asides.length === 0) return [] as Array<{ anchorIndex: number; aside: PaneAside }>;
+    const itemTs = stream.items.map((item) => (item.ts ? Date.parse(item.ts) : null));
+    return asides
+      .map((aside) => {
+        const t = Date.parse(aside.createdAt);
+        let anchorIndex = Number.MAX_SAFE_INTEGER;
+        for (let i = 0; i < itemTs.length; i += 1) {
+          const ts = itemTs[i];
+          if (ts != null && ts > t) {
+            anchorIndex = i;
+            break;
+          }
+        }
+        return { anchorIndex, aside };
+      })
+      .sort((a, b) => a.anchorIndex - b.anchorIndex || a.aside.id - b.aside.id);
+  }, [asides, stream.items]);
+
   // Manual expand/collapse overrides; default = open while running. When the
   // result arrives the card auto-collapses only if the view is pinned to the
   // bottom — if the user scrolled up to read it, it stays open under them.
@@ -1318,9 +1388,77 @@ export function SessionPane({
     }, 100);
   }, [onClose, popout, session.id]);
   const githubIdentityLabel = session.githubIdentityMode ? githubIdentityModeLabel(session.githubIdentityMode) : null;
-  const capabilitiesLabel = 'Inspect session capabilities';
   const [capabilitiesOpen, setCapabilitiesOpen] = useState(false);
   const capabilitiesButtonRef = useRef<HTMLButtonElement | null>(null);
+  // Maximal-calm header: everything that isn't the kill switch or close lives
+  // behind one overflow menu; the metadata line lives in the details popover.
+  const [headerMenu, setHeaderMenu] = useState<MessageActionMenuState | null>(null);
+  const openHeaderMenu = useCallback((event: ReactMouseEvent<HTMLButtonElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    setHeaderMenu({ mode: 'popover', anchor: { x: rect.right - 240, y: rect.bottom + 4 } });
+  }, []);
+  const headerMenuActions: MessageActionMenuAction[] = [
+    {
+      key: 'work',
+      label: showAgentWork ? 'Hide agent work' : 'Show agent work',
+      onSelect: () => setTranscriptView(showAgentWork ? 'focus' : 'full'),
+    },
+    ...(onToggleFocus
+      ? [
+          {
+            key: 'focus',
+            label: focused ? 'Collapse to split view' : 'Expand to focus view',
+            onSelect: onToggleFocus,
+          },
+        ]
+      : []),
+    { key: 'details', label: 'Session details & scope', onSelect: () => setCapabilitiesOpen(true) },
+    ...(canDetach
+      ? [
+          {
+            key: 'copy-link',
+            label: sessionLinkCopied ? 'Copied agent link ✓' : 'Copy link to agent',
+            onSelect: copySessionLink,
+          },
+          {
+            key: 'popout',
+            label: popout ? 'Open in full app' : 'Open in a new tab',
+            onSelect: () => {
+              if (popout) window.location.assign(`/s/${session.id}`);
+              else window.open(`/s/${session.id}/pane`, '_blank', 'noopener,noreferrer');
+            },
+          },
+        ]
+      : []),
+    ...(onSetPinned
+      ? [
+          {
+            key: 'pin',
+            label: session.pinned ? 'Unpin agent' : 'Pin agent',
+            onSelect: () => onSetPinned(session.id, !session.pinned, session.pinned),
+          },
+        ]
+      : []),
+    ...(onSetArchived
+      ? [
+          {
+            key: 'archive',
+            label: session.archivedAt ? 'Unarchive agent' : 'Archive agent',
+            onSelect: () => onSetArchived(session.id, session.archivedAt == null, session.archivedAt),
+          },
+        ]
+      : []),
+  ];
+  const sessionDetails = [
+    { label: 'Spawned by', value: session.spawnerName ?? session.spawnedBy },
+    { label: 'Driver', value: driverName },
+    ...(spectators > 0 ? [{ label: 'Watching', value: String(spectators) }] : []),
+    ...(costUsd > 0 ? [{ label: 'Cost', value: formatCost(costUsd) }] : []),
+    ...(session.repo ? [{ label: 'Repo', value: repoBranchTitle(session.repo, session.branch) }] : []),
+    ...(githubIdentityLabel ? [{ label: 'GitHub', value: githubIdentityLabel }] : []),
+    { label: 'Harness', value: session.harness },
+    { label: 'Started', value: formatTime(session.createdAt) },
+  ];
   const composerAreaRef = useRef<HTMLDivElement | null>(null);
   const focusSteerComposer = useCallback(() => {
     const composerArea = composerAreaRef.current;
@@ -1410,63 +1548,21 @@ export function SessionPane({
         }`}
       >
         <GlanceChip session={{ ...session, status: displayStatus }} now={now} stuck={turnLiveness === 'stuck'} />
-        {/* On a phone the title+metadata drop to their own full-width row below the
-            compact status/actions row, so the title stays readable instead of being
-            squeezed to a couple of characters. Desktop keeps the inline flex-1 block. */}
-        <div className="min-w-0 flex-1 max-md:order-last max-md:mt-1 max-md:basis-full">
-          <h2 className="truncate text-sm font-semibold text-fg" title={session.title}>
-            {session.title}
-          </h2>
-          <div className="flex items-center gap-1.5 text-3xs text-fg-muted max-md:min-w-0 max-md:flex-wrap max-md:gap-y-0.5">
-            {driverId !== session.spawnedBy && (
-              <span className="truncate max-md:min-w-0">{session.spawnerName ?? session.spawnedBy}</span>
-            )}
-            <span
-              data-testid="driver-chip"
-              className={`shrink-0 truncate rounded-full px-1.5 py-px font-medium max-md:min-w-0 max-md:shrink ${
-                isDriver ? 'bg-accent-hover/15 text-accent-text-strong' : 'bg-surface-overlay/80 text-fg-secondary'
-              }`}
-            >
-              driver: {driverName}
-            </span>
-            {spectators > 0 && (
-              <>
-                <span className="text-fg-faint">·</span>
-                <span className="tabular-nums">{spectators} watching</span>
-              </>
-            )}
-            {costUsd > 0 && (
-              <>
-                <span className="text-fg-faint">·</span>
-                <span className="tabular-nums">{formatCost(costUsd)}</span>
-              </>
-            )}
-            {session.repo && (
-              <>
-                <span className="text-fg-faint">·</span>
-                <span className="truncate max-md:min-w-0" title={repoBranchTitle(session.repo, session.branch)}>
-                  {repoBranchLabel(session.repo, session.branch)}
-                </span>
-              </>
-            )}
-            {githubIdentityLabel && (
-              <>
-                <span className="text-fg-faint">·</span>
-                <span
-                  className="shrink-0 truncate max-md:min-w-0 max-md:shrink"
-                  title={`GitHub identity: ${githubIdentityLabel}`}
-                >
-                  GitHub: {githubIdentityLabel}
-                </span>
-              </>
-            )}
-            {!connected && !displayTerminal && (
-              <span role="status" className="text-warning/80">
-                · reconnecting…
-              </span>
-            )}
-          </div>
-        </div>
+        {/* One calm row: chip · title · driver · (stop) · overflow · close.
+            Everything else lives behind the overflow menu; the metadata line
+            moved into the details popover; transport liveness is the turn
+            status line's job. */}
+        <h2 className="min-w-0 flex-1 truncate text-sm font-semibold text-fg" title={session.title}>
+          {session.title}
+        </h2>
+        <span
+          data-testid="driver-chip"
+          className={`shrink-0 truncate rounded-full px-1.5 py-px text-3xs font-medium max-md:hidden ${
+            isDriver ? 'bg-accent-hover/15 text-accent-text-strong' : 'bg-surface-overlay/80 text-fg-secondary'
+          }`}
+        >
+          driver: {driverName}
+        </span>
         {(isSpawner || isDriver) && !displayTerminal && (
           <Tooltip content={canStopTurn ? 'Stop current turn' : 'Cancel this agent'}>
             <button
@@ -1494,105 +1590,33 @@ export function SessionPane({
             </button>
           </Tooltip>
         )}
-        {onSetPinned && (
-          <Tooltip content={session.pinned ? 'Unpin this agent' : 'Pin this agent'}>
-            <button
-              type="button"
-              onClick={() => onSetPinned(session.id, !session.pinned, session.pinned)}
-              aria-label={session.pinned ? 'Unpin this agent' : 'Pin this agent'}
-              aria-pressed={session.pinned}
-              className={`rounded-md px-2 py-1 hover:bg-surface-overlay hover:text-fg max-md:inline-flex max-md:size-11 max-md:items-center max-md:justify-center max-md:p-0 [@media(pointer:coarse)]:inline-flex [@media(pointer:coarse)]:size-11 [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center [@media(pointer:coarse)]:p-0 ${
-                session.pinned ? 'text-accent-text-strong' : 'text-fg-tertiary'
-              }`}
-            >
-              {session.pinned ? <PinOffIcon size={15} /> : <PinIcon size={15} />}
-            </button>
-          </Tooltip>
-        )}
-        {onSetArchived && (
-          <Tooltip content={session.archivedAt ? 'Unarchive this agent' : 'Archive this agent'}>
-            <button
-              type="button"
-              onClick={() => onSetArchived(session.id, session.archivedAt == null, session.archivedAt)}
-              aria-label={session.archivedAt ? 'Unarchive this agent' : 'Archive this agent'}
-              className="rounded-md px-2 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg max-md:inline-flex max-md:size-11 max-md:items-center max-md:justify-center max-md:p-0 [@media(pointer:coarse)]:inline-flex [@media(pointer:coarse)]:size-11 [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center [@media(pointer:coarse)]:p-0"
-            >
-              {session.archivedAt ? <ArchiveRestoreIcon size={15} /> : <ArchiveIcon size={15} />}
-            </button>
-          </Tooltip>
-        )}
-        <div className="relative max-md:shrink-0">
-          <Tooltip content={capabilitiesLabel}>
+        <div className="relative">
+          <Tooltip content="Agent actions">
             <button
               ref={capabilitiesButtonRef}
               type="button"
-              onClick={() => setCapabilitiesOpen((value) => !value)}
-              aria-label={capabilitiesLabel}
-              aria-expanded={capabilitiesOpen}
+              onClick={openHeaderMenu}
+              aria-label="Agent actions"
               aria-haspopup="dialog"
-              className="rounded-md px-2 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg max-md:inline-flex max-md:size-11 max-md:items-center max-md:justify-center max-md:p-0 [@media(pointer:coarse)]:inline-flex [@media(pointer:coarse)]:size-11 [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center [@media(pointer:coarse)]:p-0"
+              className="rounded-md px-2 py-1 text-sm font-semibold leading-none text-fg-tertiary hover:bg-surface-overlay hover:text-fg max-md:inline-flex max-md:size-11 max-md:items-center max-md:justify-center max-md:p-0 [@media(pointer:coarse)]:inline-flex [@media(pointer:coarse)]:size-11 [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center [@media(pointer:coarse)]:p-0"
             >
-              <SessionDetailsIcon width={15} height={15} />
+              ⋯
             </button>
           </Tooltip>
           <SessionCapabilitiesPopover
             sessionId={session.id}
             open={capabilitiesOpen}
             invokerRef={capabilitiesButtonRef}
+            details={sessionDetails}
             onClose={() => setCapabilitiesOpen(false)}
           />
         </div>
-        {canDetach && (
-          <Tooltip content={sessionLinkCopied ? 'Copied agent link' : 'Copy link to this agent'}>
-            <button
-              type="button"
-              onClick={copySessionLink}
-              aria-label={sessionLinkCopied ? 'Copied agent link' : 'Copy link to this agent'}
-              className={`rounded-md px-2 py-1 hover:bg-surface-overlay hover:text-fg max-md:inline-flex max-md:size-11 max-md:items-center max-md:justify-center max-md:p-0 [@media(pointer:coarse)]:inline-flex [@media(pointer:coarse)]:size-11 [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center [@media(pointer:coarse)]:p-0 ${
-                sessionLinkCopied ? 'text-accent-text-strong' : 'text-fg-tertiary'
-              }`}
-            >
-              {sessionLinkCopied ? <CheckIcon /> : <LinkIcon />}
-            </button>
-          </Tooltip>
-        )}
-        {canDetach && (
-          <Tooltip content={popout ? 'Open in full app' : 'Open agent in a new tab'}>
-            <a
-              href={popout ? `/s/${session.id}` : `/s/${session.id}/pane`}
-              target={popout ? undefined : '_blank'}
-              rel={popout ? undefined : 'noopener noreferrer'}
-              aria-label={popout ? 'Open in full app' : 'Open agent in a new tab'}
-              className="rounded-md px-2 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg max-md:inline-flex max-md:size-11 max-md:items-center max-md:justify-center max-md:p-0 [@media(pointer:coarse)]:inline-flex [@media(pointer:coarse)]:size-11 [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center [@media(pointer:coarse)]:p-0"
-            >
-              <ExternalLinkIcon size={15} />
-            </a>
-          </Tooltip>
-        )}
-        <Tooltip content={showAgentWork ? 'Hide agent work' : 'Show agent work'}>
-          <button
-            type="button"
-            onClick={() => setTranscriptView(showAgentWork ? 'focus' : 'full')}
-            aria-label={showAgentWork ? 'Hide agent work' : 'Show agent work'}
-            aria-pressed={showAgentWork}
-            className="rounded-md px-2 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg max-md:inline-flex max-md:size-11 max-md:items-center max-md:justify-center max-md:p-0 [@media(pointer:coarse)]:inline-flex [@media(pointer:coarse)]:size-11 [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center [@media(pointer:coarse)]:p-0"
-          >
-            <GearIcon size={15} />
-          </button>
-        </Tooltip>
-        {onToggleFocus && (
-          <Tooltip content={focused ? 'Collapse to split view' : 'Expand to focus view'}>
-            <button
-              type="button"
-              onClick={onToggleFocus}
-              aria-label={focused ? 'Collapse to split view' : 'Expand to focus view'}
-              aria-pressed={focused}
-              className="rounded-md px-2 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg max-md:inline-flex max-md:size-11 max-md:items-center max-md:justify-center max-md:p-0 [@media(pointer:coarse)]:inline-flex [@media(pointer:coarse)]:size-11 [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center [@media(pointer:coarse)]:p-0"
-            >
-              {focused ? <ShrinkIcon size={15} /> : <ExpandIcon size={15} />}
-            </button>
-          </Tooltip>
-        )}
+        <MessageActionMenu
+          state={headerMenu}
+          onClose={() => setHeaderMenu(null)}
+          actions={headerMenuActions}
+          label="Agent actions"
+        />
         <Tooltip content="Close session details">
           <button
             type="button"
@@ -1860,17 +1884,29 @@ export function SessionPane({
                 }
                 return lines;
               };
+              let asideCursor = 0;
+              const flushAsidesThrough = (index: number) => {
+                const lines: ReactNode[] = [];
+                while (asideCursor < asideAnchors.length && asideAnchors[asideCursor]!.anchorIndex <= index) {
+                  const { aside } = asideAnchors[asideCursor]!;
+                  lines.push(<PaneAsideRow key={`aside-${aside.id}`} aside={aside} />);
+                  asideCursor += 1;
+                }
+                return lines;
+              };
 
               return (
                 <>
                   {rows.map((row) => {
                     const rowStartIndex = row.kind === 'hidden' ? row.startIndex : row.index;
                     const seatLinesBefore = flushSeatLinesThrough(rowStartIndex);
+                    const asideLinesBefore = flushAsidesThrough(rowStartIndex);
 
                     if (row.kind === 'change') {
                       return (
                         <Fragment key={`change-${row.change.change.id}`}>
                           {seatLinesBefore}
+                          {asideLinesBefore}
                           <div className="pl-3.5">
                             <InlineFileChange change={row.change.change} />
                           </div>
@@ -1882,8 +1918,10 @@ export function SessionPane({
                       return (
                         <Fragment key={row.key}>
                           {seatLinesBefore}
+                          {asideLinesBefore}
                           <HiddenWorkChip count={row.count} onClick={() => setTranscriptView('full')} />
                           {flushSeatLinesThrough(row.endIndex)}
+                          {flushAsidesThrough(row.endIndex)}
                         </Fragment>
                       );
                     }
@@ -1892,6 +1930,7 @@ export function SessionPane({
                     return (
                       <Fragment key={item.id}>
                         {seatLinesBefore}
+                        {asideLinesBefore}
                         <AnnotatedTranscriptRow
                           handle={item.handle ?? null}
                           onMarkupEntry={item.type === 'text' ? openMarkupFromEntry : undefined}
@@ -1954,6 +1993,7 @@ export function SessionPane({
                     );
                   })}
                   {flushSeatLinesThrough(stream.items.length)}
+                  {flushAsidesThrough(Number.MAX_SAFE_INTEGER)}
                 </>
               );
             })()}
@@ -2115,13 +2155,47 @@ export function SessionPane({
             </div>
           )}
           <SessionTypingLine typers={typers} />
-          <div className="shrink-0 border-t border-edge bg-surface-overlay px-4 py-1.5 text-2xs font-medium text-fg-muted">
-            {composerStatusText}
+          <div className="flex shrink-0 items-center justify-between gap-2 border-t border-edge bg-surface-overlay px-4 py-1 text-2xs font-medium text-fg-muted">
+            <span className="truncate py-0.5">{composerStatusText}</span>
+            {session.threadRootEventId != null && (
+              <span data-testid="pane-send-mode" className="flex shrink-0 gap-0.5">
+                <button
+                  type="button"
+                  aria-pressed={paneSendMode === 'agent'}
+                  onClick={() => setPaneSendMode('agent')}
+                  className={`rounded px-1.5 py-0.5 ${
+                    paneSendMode === 'agent'
+                      ? 'bg-accent-hover/15 text-accent-text-strong'
+                      : 'text-fg-tertiary hover:bg-surface-raised hover:text-fg-body'
+                  }`}
+                >
+                  ⚡ {isDriver ? 'Steer' : 'Suggest'}
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={paneSendMode === 'thread'}
+                  onClick={() => setPaneSendMode('thread')}
+                  className={`rounded px-1.5 py-0.5 ${
+                    paneSendMode === 'thread'
+                      ? 'bg-accent-hover/15 text-accent-text-strong'
+                      : 'text-fg-tertiary hover:bg-surface-raised hover:text-fg-body'
+                  }`}
+                >
+                  💬 Thread
+                </button>
+              </span>
+            )}
           </div>
           <div ref={composerAreaRef} className="shrink-0">
             <Composer
               placeholder={composerPlaceholder}
-              onSend={isDriver ? sendSteer : (text) => sendSuggestion(text)}
+              onSend={
+                paneSendMode === 'thread' && session.threadRootEventId != null
+                  ? sendThreadReply
+                  : isDriver
+                    ? sendSteer
+                    : (text) => sendSuggestion(text)
+              }
               queueUpload={isDriver ? queueUpload : undefined}
               onTyping={onComposerTyping}
               allowAttachments={isDriver}
@@ -2622,27 +2696,6 @@ export function AnnotatedTranscriptRow({
   );
 }
 
-function SessionDetailsIcon(props: SVGProps<SVGSVGElement>) {
-  return (
-    <svg
-      aria-hidden="true"
-      viewBox="0 0 24 24"
-      width={16}
-      height={16}
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={2}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      {...props}
-    >
-      <circle cx="12" cy="12" r="9" />
-      <path d="M12 11v5" />
-      <path d="M12 8h.01" />
-    </svg>
-  );
-}
-
 function CopyIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <svg
@@ -2880,3 +2933,24 @@ const ToolCard = memo(
     prev.item.result?.content === next.item.result?.content &&
     prev.item.result?.is_error === next.item.result?.is_error,
 );
+
+/** A thread chat message (not a steer) interleaved into the pane transcript. */
+type PaneAside = { id: number; author: string; createdAt: string; text: string };
+
+function PaneAsideRow({ aside }: { aside: PaneAside }) {
+  return (
+    <div
+      data-testid="pane-aside"
+      className="my-1.5 ml-3.5 max-w-xl rounded-md border border-edge bg-surface-raised/50 px-2.5 py-1.5 text-xs"
+    >
+      <div className="flex items-baseline gap-2">
+        <span className="font-semibold text-fg">{aside.author}</span>
+        <span className="tabular-nums text-2xs text-fg-muted">{formatTime(aside.createdAt)}</span>
+        <span className="text-3xs uppercase tracking-wide text-fg-faint">thread</span>
+      </div>
+      <div className="mt-0.5 whitespace-pre-wrap break-words leading-relaxed text-fg-body">
+        <SessionMarkdown text={aside.text} />
+      </div>
+    </div>
+  );
+}
