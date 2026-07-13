@@ -57,7 +57,7 @@ import { MarkupPane, type MarkupPaneSource } from '../components/MarkupPane';
 import { MarkupSteerCard } from '../components/MarkupSteerCard';
 import { Tooltip } from '../components/a11y';
 import { ChevronDownIcon, ChevronRightIcon, CornerUpLeftIcon, GearIcon, XIcon } from '../components/icons';
-import type { AttachmentMeta, AttachmentRef, UploadPayload, UserRef } from '@atrium/surface-client';
+import type { AttachmentMeta, AttachmentRef, UploadPayload, UserRef, WireEvent } from '@atrium/surface-client';
 import {
   formatExactTimestamp,
   formatTime,
@@ -351,6 +351,8 @@ export function SessionPane({
   layout = 'split',
   onToggleFocus,
   initialEntryHandle = null,
+  origin,
+  liveEvent = null,
   popout = false,
   onUnseenOutputs,
   filesDefaultScope,
@@ -402,6 +404,19 @@ export function SessionPane({
   /** Toggle between split and focus; omit to hide the expand control. */
   onToggleFocus?: () => void;
   initialEntryHandle?: string | null;
+  /** Live wire events from Chat's socket — folds thread replies instantly. */
+  liveEvent?: WireEvent | null;
+  /**
+   * Where this pane was zoomed from — renders the place crumb
+   * (#channel ▸ thread ▸ work) so the zoom levels stay legible and
+   * reversible. Absent in popouts, which have no host surface.
+   */
+  origin?: {
+    channelLabel: string;
+    onOpenChannel: () => void;
+    /** Zoom out one level: the session's conversation thread. */
+    onOpenThread?: () => void;
+  };
   /** Standalone `/s/:id/pane` context; retargets header controls back to the full app. */
   popout?: boolean;
   /** Fired when any output strip has grown since it was last viewed. */
@@ -826,12 +841,25 @@ export function SessionPane({
       const trimmed = text.trim();
       if (root == null || !trimmed) return;
       setThreadReplyError(null);
+      // Optimistic echo: your note appears the instant you send it. The WS
+      // fold or the healing refetch replaces it with the real event row.
+      const tempId = -Date.now();
+      setAsides((prev) => [
+        ...prev,
+        { id: tempId, author: me.displayName, createdAt: new Date().toISOString(), text: trimmed },
+      ]);
       api
         .postMessage({ channelId: session.channelId, text: trimmed, clientMsgId: randomId(), threadRootEventId: root })
-        .then(() => setAsideRefresh((n) => n + 1))
-        .catch(() => setThreadReplyError(trimmed));
+        .then(() => {
+          setAsides((prev) => prev.filter((a) => a.id !== tempId));
+          setAsideRefresh((n) => n + 1);
+        })
+        .catch(() => {
+          setAsides((prev) => prev.filter((a) => a.id !== tempId));
+          setThreadReplyError(trimmed);
+        });
     },
-    [session.channelId, session.threadRootEventId],
+    [me.displayName, session.channelId, session.threadRootEventId],
   );
   const composerPlaceholder =
     paneSendMode === 'thread'
@@ -1197,38 +1225,55 @@ export function SessionPane({
       return;
     }
     let disposed = false;
-    const load = () => {
-      api
-        .thread(root)
-        .then(({ events }) => {
-          if (disposed) return;
-          setAsides(
-            events
-              .filter(
-                (ev) =>
-                  ev.type === 'message.posted' &&
-                  typeof ev.payload?.text === 'string' &&
-                  ev.payload.deleted !== true &&
-                  typeof ev.payload.steered_session_id !== 'string' &&
-                  typeof ev.payload.suggested_session_id !== 'string',
-              )
-              .map((ev) => ({
-                id: ev.id,
-                author: ev.author?.displayName ?? 'Someone',
-                createdAt: ev.createdAt,
-                text: String(ev.payload?.text ?? ''),
-              })),
-          );
-        })
-        .catch(() => {});
-    };
-    load();
-    const timer = window.setInterval(load, 7000);
+    // One catch-up fetch per open/reconnect; live arrivals fold in over the
+    // workspace socket below — the thread and the pane are the same
+    // conversation, so they get the same transport.
+    api
+      .thread(root)
+      .then(({ events }) => {
+        if (disposed) return;
+        setAsides(
+          events
+            .filter(
+              (ev) =>
+                ev.type === 'message.posted' &&
+                typeof ev.payload?.text === 'string' &&
+                ev.payload.deleted !== true &&
+                typeof ev.payload.steered_session_id !== 'string' &&
+                typeof ev.payload.suggested_session_id !== 'string',
+            )
+            .map((ev) => ({
+              id: ev.id,
+              author: ev.author?.displayName ?? 'Someone',
+              createdAt: ev.createdAt,
+              text: String(ev.payload?.text ?? ''),
+            })),
+        );
+      })
+      .catch(() => {});
     return () => {
       disposed = true;
-      window.clearInterval(timer);
     };
   }, [session.threadRootEventId, asideRefresh]);
+  // Fold live thread replies straight off the workspace socket (instant, like
+  // the thread panel) — dedupe by event id against catch-up overlap.
+  useEffect(() => {
+    const ev = liveEvent;
+    const root = session.threadRootEventId;
+    if (!ev || root == null) return;
+    if (ev.type !== 'message.posted' || ev.threadRootEventId !== root) return;
+    const p = ev.payload ?? {};
+    if (typeof p.text !== 'string' || p.deleted === true) return;
+    if (typeof p.steered_session_id === 'string' || typeof p.suggested_session_id === 'string') return;
+    setAsides((prev) =>
+      prev.some((a) => a.id === ev.id)
+        ? prev
+        : [
+            ...prev,
+            { id: ev.id, author: ev.author?.displayName ?? 'Someone', createdAt: ev.createdAt, text: String(p.text) },
+          ],
+    );
+  }, [liveEvent, session.threadRootEventId]);
   // Anchor each aside to the first transcript item that happened after it.
   const asideAnchors = useMemo(() => {
     if (asides.length === 0) return [] as Array<{ anchorIndex: number; aside: PaneAside }>;
@@ -1521,7 +1566,7 @@ export function SessionPane({
   return (
     <aside
       id={focused && !popout ? 'main-content' : undefined}
-      className={`relative flex min-w-0 flex-col border-l border-edge bg-surface ${
+      className={`pane-zoom-in relative flex min-w-0 flex-col border-l border-edge bg-surface ${
         focused ? 'flex-1' : `shrink-0 ${paneSizing.className}`
       }`}
       style={focused ? undefined : paneSizing.style}
@@ -1544,6 +1589,31 @@ export function SessionPane({
             resizing ? 'bg-accent/50' : ''
           }`}
         />
+      )}
+      {origin && (
+        <nav
+          aria-label="Zoom level"
+          data-testid="pane-crumb"
+          className="flex h-6 shrink-0 items-center gap-1 border-b border-edge bg-surface-overlay/60 px-3 text-3xs text-fg-muted"
+        >
+          <button
+            type="button"
+            onClick={origin.onOpenChannel}
+            className="max-w-40 truncate hover:text-fg-body hover:underline"
+          >
+            {origin.channelLabel}
+          </button>
+          {origin.onOpenThread && (
+            <>
+              <span aria-hidden>▸</span>
+              <button type="button" onClick={origin.onOpenThread} className="hover:text-fg-body hover:underline">
+                thread
+              </button>
+            </>
+          )}
+          <span aria-hidden>▸</span>
+          <span className="font-semibold text-fg-secondary">work</span>
+        </nav>
       )}
       <header
         className={`flex h-12 shrink-0 items-center gap-2 border-b border-edge px-3 max-md:h-auto max-md:min-h-12 max-md:flex-wrap max-md:gap-1 max-md:px-2 max-md:py-1.5 ${

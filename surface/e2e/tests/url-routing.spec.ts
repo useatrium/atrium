@@ -107,8 +107,8 @@ test('opening a session updates the URL and Back closes it without a document re
     (window as Window & { __urlRoutingMarker?: string }).__urlRoutingMarker = 'kept';
   });
   // Card activation is thread-first now; the pane (this spec's subject) is
-  // reached through the card's explicit "Under the hood" affordance.
-  await page.getByTestId('session-card').filter({ hasText: title }).getByText('Under the hood →').first().click();
+  // reached through the card's explicit "Show the work" affordance.
+  await page.getByTestId('session-card').filter({ hasText: title }).getByText('Show the work →').first().click();
   await expect(page).toHaveURL(new RegExp(`/c/${roomId}/s/${sessionId}$`));
   await expect(page.getByRole('button', { name: 'Close session details' })).toBeVisible();
 

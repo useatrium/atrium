@@ -134,7 +134,7 @@ export function SessionCard({
    * one. Falls back to the pane when absent.
    */
   onOpen?: (sessionId: string) => void;
-  /** The workbench ("Under the hood") — full transcript, plan, artifacts. */
+  /** The workbench ("Show the work") — full transcript, plan, artifacts. */
   onOpenPane: (sessionId: string) => void;
   /**
    * How a live question renders: the full canonical card (feed/thread), or a
@@ -286,7 +286,7 @@ export function SessionCard({
           }}
           className="mt-1 inline-block text-2xs font-medium text-fg-tertiary hover:text-fg-body hover:underline"
         >
-          Under the hood →
+          Show the work →
         </a>
       )}
       {openable && <SessionAppPresentationCards session={session} surface="timeline" />}
