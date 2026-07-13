@@ -1228,8 +1228,11 @@ export class SessionRuns {
     }
     await client.query(
       `UPDATE sessions
-       SET current_execution_id = $1, status = CASE WHEN status = 'completed' THEN 'queued' ELSE status END,
-           completed_at = CASE WHEN status = 'completed' THEN NULL ELSE completed_at END,
+       SET current_execution_id = $1,
+           -- No dead ends: a steer revives ANY terminal session as a new
+           -- turn — failed and cancelled included, not just completed.
+           status = CASE WHEN status IN ('completed', 'failed', 'cancelled') THEN 'queued' ELSE status END,
+           completed_at = CASE WHEN status IN ('completed', 'failed', 'cancelled') THEN NULL ELSE completed_at END,
            provider_auth_required = NULL,
            centaur_execute_id = NULL,
            centaur_message_id = NULL

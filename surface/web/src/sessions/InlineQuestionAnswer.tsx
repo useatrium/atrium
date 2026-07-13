@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { randomId } from '@atrium/surface-client';
+import { randomId, sessionDriverId } from '@atrium/surface-client';
 import { sessionsApi } from './api';
 import type { Session } from './types';
 
@@ -19,7 +19,9 @@ export function InlineQuestionAnswer({ session, meId }: { session: Session; meId
   const [sent, setSent] = useState(false);
   const [error, setError] = useState<string | null>(null);
   if (!pending || !question) return null;
-  const isDriver = session.driverId === meId;
+  // Canonical seat resolution (driverId ?? spawnedBy) — feed-folded entities
+  // can carry a null driverId even when the viewer is the de-facto driver.
+  const isDriver = meId != null && sessionDriverId(session) === meId;
   const submit = (value: string) => {
     const answer = value.trim();
     if (!answer || busy) return;
