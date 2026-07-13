@@ -123,6 +123,15 @@ function SuggestionRow({
       <div className="leading-relaxed">
         <span className="font-semibold text-fg">{authorName}</span>{' '}
         {mode !== 'editing' && <span className="whitespace-pre-wrap break-words text-fg-body">{suggestion.text}</span>}
+        {suggestion.attachments && suggestion.attachments.length > 0 && (
+          <span
+            className="ml-1.5 inline-flex items-center gap-0.5 rounded border border-edge-strong px-1 text-3xs text-fg-muted"
+            title={suggestion.attachments.map((a) => a.filename).join(', ')}
+          >
+            <span aria-hidden>📎</span>
+            {suggestion.attachments.length === 1 ? suggestion.attachments[0]?.filename : suggestion.attachments.length}
+          </span>
+        )}
       </div>
 
       {mode === 'editing' ? (

@@ -818,15 +818,18 @@ export function SessionPane({
   // agent never reads thread replies.
   const [paneSendMode, setPaneSendMode] = useState<'agent' | 'thread'>('agent');
   const [asideRefresh, setAsideRefresh] = useState(0);
+  // A note that fails must never vanish — hold the text for an explicit retry.
+  const [threadReplyError, setThreadReplyError] = useState<string | null>(null);
   const sendThreadReply = useCallback(
     (text: string) => {
       const root = session.threadRootEventId;
       const trimmed = text.trim();
       if (root == null || !trimmed) return;
+      setThreadReplyError(null);
       api
         .postMessage({ channelId: session.channelId, text: trimmed, clientMsgId: randomId(), threadRootEventId: root })
         .then(() => setAsideRefresh((n) => n + 1))
-        .catch(() => {});
+        .catch(() => setThreadReplyError(trimmed));
     },
     [session.channelId, session.threadRootEventId],
   );
@@ -2148,6 +2151,29 @@ export function SessionPane({
               <button
                 type="button"
                 onClick={() => setSuggestError(null)}
+                className="rounded-md px-2 py-0.5 text-2xs font-medium text-fg-tertiary hover:bg-surface-overlay hover:text-fg-body"
+              >
+                Dismiss
+              </button>
+            </div>
+          )}
+          {threadReplyError != null && (
+            <div
+              role="alert"
+              data-testid="thread-reply-error"
+              className="flex shrink-0 items-center gap-2 border-t border-danger-border/40 bg-danger-tint/20 px-3 py-1.5 text-xs"
+            >
+              <span className="min-w-0 flex-1 truncate text-danger-text">Note didn't send: "{threadReplyError}"</span>
+              <button
+                type="button"
+                onClick={() => sendThreadReply(threadReplyError)}
+                className="rounded-md bg-danger-surface/50 px-2 py-0.5 text-2xs font-medium text-danger-text-strong hover:bg-danger-surface/80"
+              >
+                Retry
+              </button>
+              <button
+                type="button"
+                onClick={() => setThreadReplyError(null)}
                 className="rounded-md px-2 py-0.5 text-2xs font-medium text-fg-tertiary hover:bg-surface-overlay hover:text-fg-body"
               >
                 Dismiss

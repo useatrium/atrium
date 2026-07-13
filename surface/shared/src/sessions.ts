@@ -1,6 +1,7 @@
 // Session entities + pure fold helpers. No React imports — unit tested directly.
 
 import { Schema } from 'effect';
+import { parseAttachments, type AttachmentMeta } from './timeline.js';
 
 const NullableStringSchema = Schema.Union(Schema.String, Schema.Null);
 const NullableNumberSchema = Schema.Union(Schema.Number, Schema.Null);
@@ -169,6 +170,8 @@ export interface SessionSuggestion {
   note?: string | null;
   createdAt: string;
   resolvedAt?: string | null;
+  /** Files the proposer attached; carried into the steer when sent. */
+  attachments?: AttachmentMeta[];
 }
 
 // === jul6steer-prov additions ===
@@ -283,9 +286,13 @@ export interface SessionAnswerProposal {
   note?: string | null;
   createdAt: string;
   resolvedAt?: string | null;
+  /** Files the proposer attached; carried into the steer when sent. */
+  attachments?: AttachmentMeta[];
 }
 
 /** Session JSON as served by POST/GET /api/sessions. */
+export type SessionSuggestionWire = Omit<SessionSuggestion, 'attachments'> & { attachments?: unknown };
+
 export interface SessionWire {
   id: string;
   workspaceId: string;
@@ -304,7 +311,7 @@ export interface SessionWire {
   driver?: SessionSeatUser | null;
   pendingSeatRequests?: SessionSeatUser[];
   /** Suggestion queue, oldest-first (Phase 2; absent on older payloads). */
-  suggestions?: SessionSuggestion[];
+  suggestions?: SessionSuggestionWire[];
   /** Pending HITL answer proposals (Phase 2; absent on older payloads). */
   answerProposals?: SessionAnswerProposal[];
   pendingQuestion?: SessionPendingQuestion | null;
@@ -520,9 +527,22 @@ export function sessionGlanceClockLabel(glance: SessionGlance, now: number): str
   if (!glance.clock) return null;
   if (glance.clock.mode === 'waiting') return formatWaiting(now - new Date(glance.clock.fromTs).getTime());
   if (glance.clock.mode === 'duration') {
-    return formatElapsed(new Date(glance.clock.toTs).getTime() - new Date(glance.clock.fromTs).getTime());
+    // Terminal durations speak units ("7m", not "7:00") — a colon clock next
+    // to "Done" reads as a time of day, and that misread never self-corrects.
+    return formatDurationUnits(new Date(glance.clock.toTs).getTime() - new Date(glance.clock.fromTs).getTime());
   }
   return formatElapsed(now - new Date(glance.clock.fromTs).getTime());
+}
+
+/** Unit-spoken duration for finished work: "42s", "7m", "1h 05m". */
+export function formatDurationUnits(ms: number): string {
+  const totalSeconds = Math.floor(Math.max(0, ms) / 1000);
+  if (totalSeconds < 60) return `${totalSeconds}s`;
+  const totalMinutes = Math.floor(totalSeconds / 60);
+  if (totalMinutes < 60) return `${totalMinutes}m`;
+  const h = Math.floor(totalMinutes / 60);
+  const m = totalMinutes % 60;
+  return `${h}h ${String(m).padStart(2, '0')}m`;
 }
 
 /**
@@ -647,6 +667,8 @@ export const SessionSuggestionSchema = Schema.mutable(
     note: Schema.optionalWith(NullableStringSchema, { exact: true }),
     createdAt: Schema.String,
     resolvedAt: Schema.optionalWith(NullableStringSchema, { exact: true }),
+    // Raw display metadata; narrowed to AttachmentMeta[] at the wire->entity seam.
+    attachments: Schema.optionalWith(Schema.Unknown, { exact: true }),
   }),
 );
 
@@ -784,11 +806,20 @@ export const SessionSuggestionCreateBodySchema = Schema.Struct({
   text: Schema.optional(Schema.Unknown),
   postToThread: Schema.optional(Schema.Unknown),
   opId: Schema.optional(Schema.Unknown),
+  attachments: Schema.optional(Schema.Unknown),
+  attachmentMeta: Schema.optional(Schema.Unknown),
+  attachmentRefs: Schema.optional(Schema.Unknown),
 });
 export interface SessionSuggestionCreateBody {
   text: string;
   postToThread?: boolean;
   opId?: string;
+  /** Uploaded file ids (agent-turn inputs). */
+  attachments?: unknown[];
+  /** Display metadata for the attached files. */
+  attachmentMeta?: unknown[];
+  /** Existing artifact refs. */
+  attachmentRefs?: unknown[];
 }
 
 export const SessionSuggestionResolveBodySchema = Schema.Struct({
@@ -920,7 +951,11 @@ export function sessionFromWire(w: SessionWire): Session {
     driverId: w.driverId ?? w.driver?.userId ?? null,
     ...optionalProp('driverName', w.driver?.displayName),
     pendingSeatRequests: [...(w.pendingSeatRequests ?? [])],
-    suggestions: [...(w.suggestions ?? [])],
+    suggestions: (w.suggestions ?? []).map((sug) => {
+      const { attachments: rawAttachments, ...rest } = sug;
+      const attachments = parseAttachments(rawAttachments);
+      return { ...rest, ...(attachments ? { attachments } : {}) };
+    }),
     answerProposals: [...(w.answerProposals ?? [])],
     pendingQuestion: w.pendingQuestion ?? null,
     providerAuthRequired: parseProviderAuthRequired(w.providerAuthRequired),
@@ -1254,12 +1289,14 @@ export function applySessionEvent(sessions: Record<string, Session>, ev: Session
     if (!suggestionId || text === null) return sessions;
     if (prev.suggestions.some((s) => s.id === suggestionId)) return sessions; // WS + catch-up overlap
     const authorId = typeof p.authorId === 'string' ? p.authorId : (ev.actorId ?? '');
+    const attachments = parseAttachments(p.attachments);
     const suggestion: SessionSuggestion = {
       id: suggestionId,
       authorId,
       text,
       status: 'pending',
       createdAt: ev.createdAt,
+      ...(attachments ? { attachments } : {}),
     };
     if (ev.author && ev.author.id === authorId && ev.author.displayName) {
       suggestion.authorName = ev.author.displayName;

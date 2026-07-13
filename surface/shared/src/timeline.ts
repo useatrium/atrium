@@ -1,7 +1,7 @@
 // Pure client-side timeline state. No React imports — unit tested directly.
 
 import { Schema } from 'effect';
-import { eventIdFromTarget } from './handle';
+import { eventIdFromTarget } from './handle.js';
 
 const NullableNumberSchema = Schema.Union(Schema.Number, Schema.Null);
 const NullableStringSchema = Schema.Union(Schema.String, Schema.Null);
@@ -311,7 +311,7 @@ export function messageFromEvent(ev: WireEvent): ChatMessage {
   };
 }
 
-function parseAttachments(v: unknown): AttachmentMeta[] | undefined {
+export function parseAttachments(v: unknown): AttachmentMeta[] | undefined {
   if (!Array.isArray(v)) return undefined;
   const out: AttachmentMeta[] = [];
   for (const a of v) {

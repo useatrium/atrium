@@ -881,11 +881,26 @@ export function createApi(opts: ApiOptions = {}) {
         body: JSON.stringify(body),
       });
     },
-    createSuggestion: (id: string, text: string, opts: OpOptions & { postToThread?: boolean } = {}) => {
+    createSuggestion: (
+      id: string,
+      text: string,
+      opts: OpOptions & {
+        postToThread?: boolean;
+        /** Uploaded file ids (agent-turn inputs). */
+        attachments?: string[];
+        /** Display metadata for the attached files (chat rows, queue chips). */
+        attachmentMeta?: unknown[];
+        /** Existing artifact refs. */
+        attachmentRefs?: AgentAttachmentRef[];
+      } = {},
+    ) => {
       const body: SessionSuggestionCreateBody = {
         text,
         ...(opts.postToThread === true ? { postToThread: true } : {}),
         ...(opts.opId ? { opId: opts.opId } : {}),
+        ...(opts.attachments && opts.attachments.length > 0 ? { attachments: opts.attachments } : {}),
+        ...(opts.attachmentMeta && opts.attachmentMeta.length > 0 ? { attachmentMeta: opts.attachmentMeta } : {}),
+        ...(opts.attachmentRefs && opts.attachmentRefs.length > 0 ? { attachmentRefs: opts.attachmentRefs } : {}),
       };
       return req<{ ok: true }>(`/api/sessions/${id}/suggestions`, {
         method: 'POST',

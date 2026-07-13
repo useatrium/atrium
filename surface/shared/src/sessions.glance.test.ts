@@ -63,7 +63,7 @@ describe('deriveSessionGlance', () => {
       NOW,
     );
     expect(g.kind).toBe('done');
-    expect(sessionGlanceClockLabel(g, NOW)).toBe('30:00');
+    expect(sessionGlanceClockLabel(g, NOW)).toBe('30m');
   });
 
   it('auth and seat requests are Needs you with details', () => {
@@ -115,7 +115,7 @@ describe('deriveSessionGlance', () => {
     expect(deriveSessionGlance(input({ status: 'cancelled' }), NOW).kind).toBe('stopped');
     const done = deriveSessionGlance(input({ status: 'completed', completedAt: '2026-07-13T11:07:00.000Z' }), NOW);
     expect(done.kind).toBe('done');
-    expect(sessionGlanceClockLabel(done, NOW)).toBe('7:00');
+    expect(sessionGlanceClockLabel(done, NOW)).toBe('7m');
   });
 });
 

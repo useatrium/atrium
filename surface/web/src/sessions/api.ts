@@ -279,11 +279,22 @@ export const sessionsApi = {
   // ---- suggestion queue (Phase 2) ----
 
   /** A watcher proposes a steer the driver later sends or dismisses. */
-  createSuggestion(id: string, text: string, opId?: string, postToThread?: boolean): Promise<void> {
+  createSuggestion(
+    id: string,
+    text: string,
+    opId?: string,
+    postToThread?: boolean,
+    /** Uploaded file ids (agent-turn inputs). */
+    attachments?: string[],
+    /** Display metadata for the attached files. */
+    attachmentMeta?: unknown[],
+  ): Promise<void> {
     const body: SessionSuggestionCreateBody = {
       text,
       ...(postToThread === true ? { postToThread: true } : {}),
       ...(opId ? { opId } : {}),
+      ...(attachments && attachments.length > 0 ? { attachments } : {}),
+      ...(attachmentMeta && attachmentMeta.length > 0 ? { attachmentMeta } : {}),
     };
     return reqAccepted(`/api/sessions/${id}/suggestions`, {
       method: 'POST',

@@ -91,6 +91,7 @@ export function ThreadPanel({
   const { width: paneWidth, resizing, startResize, resetWidth } = useThreadPaneWidth();
   const alsoSendToChannelId = useId();
   const [alsoSendToChannel, setAlsoSendToChannel] = useState(false);
+  const [composerAgentMode, setComposerAgentMode] = useState(false);
   const paneSizing = threadPaneSizing(paneWidth);
   const paneMaxWidth =
     typeof window === 'undefined'
@@ -227,17 +228,25 @@ export function ThreadPanel({
         )}
       </div>
       <div className="border-t border-edge bg-surface px-3 pt-2">
-        <label htmlFor={alsoSendToChannelId} className="flex items-center gap-2 text-xs text-fg-secondary">
-          <input
-            id={alsoSendToChannelId}
-            type="checkbox"
-            checked={alsoSendToChannel}
-            onChange={(e) => setAlsoSendToChannel(e.target.checked)}
-            className="h-3.5 w-3.5 rounded border-edge-strong bg-surface-raised text-accent focus:ring-accent"
-          />
-          <span className="font-medium">Also send to channel</span>
-          <span className="text-fg-muted">Visible in the channel too</span>
-        </label>
+        {/* Agent sends ignore the broadcast flag — showing a checkable-but-inert
+            checkbox would lie, so agent mode swaps it for the reason why. */}
+        {composerAgentMode ? (
+          <p className="flex items-center gap-2 text-xs text-fg-muted">
+            Goes to the agent — its card already shows this session in the channel.
+          </p>
+        ) : (
+          <label htmlFor={alsoSendToChannelId} className="flex items-center gap-2 text-xs text-fg-secondary">
+            <input
+              id={alsoSendToChannelId}
+              type="checkbox"
+              checked={alsoSendToChannel}
+              onChange={(e) => setAlsoSendToChannel(e.target.checked)}
+              className="h-3.5 w-3.5 rounded border-edge-strong bg-surface-raised text-accent focus:ring-accent"
+            />
+            <span className="font-medium">Also send to channel</span>
+            <span className="text-fg-muted">Visible in the channel too</span>
+          </label>
+        )}
       </div>
       <Composer
         ref={composerRef}
@@ -245,6 +254,10 @@ export function ThreadPanel({
         onSend={(text, attachments, attachmentRefs, voice) => {
           onSend(text, attachments, attachmentRefs, voice, alsoSendToChannel);
           setAlsoSendToChannel(false);
+        }}
+        onAgentModeChange={(active) => {
+          setComposerAgentMode(active);
+          if (active) setAlsoSendToChannel(false);
         }}
         queueUpload={queueUpload}
         autoFocus

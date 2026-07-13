@@ -235,14 +235,24 @@ export function registerSessionInteractionRoutes(app: FastifyInstance, deps: Ses
       return reply.code(400).send({ error: 'bad_request', message: 'postToThread must be boolean' });
     }
     const postToThread = body.postToThread === true;
+    const attachmentInputs = parseAgentTurnAttachmentInputPayloads(body.attachments, body.attachmentRefs);
+    const attachmentMeta = Array.isArray(body.attachmentMeta) ? body.attachmentMeta : [];
     let events: WireEvent[] = [];
     await runMutation({
       userId: user.id,
       opId,
       opType: 'session.suggestion.create',
-      body: { sessionId: id, text, ...(postToThread ? { postToThread: true } : {}) },
+      body: {
+        sessionId: id,
+        text,
+        ...(postToThread ? { postToThread: true } : {}),
+        attachments: attachmentInputs,
+      },
       fn: async (client) => {
-        events = await sessionRuns.createSuggestionInTx(client, id, user.id, text, postToThread);
+        events = await sessionRuns.createSuggestionInTx(client, id, user.id, text, postToThread, {
+          inputs: attachmentInputs,
+          meta: attachmentMeta,
+        });
         return { ok: true as const };
       },
       onApplied: () => {
@@ -283,7 +293,15 @@ export function registerSessionInteractionRoutes(app: FastifyInstance, deps: Ses
         ...(note !== undefined ? { note } : {}),
       },
       fn: async (client) => {
-        result = await sessionRuns.resolveSuggestionInTx(client, id, user.id, suggestionId, action, { text, note });
+        result = await sessionRuns.resolveSuggestionInTx(
+          client,
+          id,
+          user.id,
+          suggestionId,
+          action,
+          { text, note },
+          (inputs) => resolveAgentTurnAttachments(pool, { userId: user.id, sessionId: id, inputs, logger: req.log }),
+        );
         return { ok: true as const };
       },
       onApplied: () => {
