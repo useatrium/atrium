@@ -1205,7 +1205,10 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             borderWidth: 1,
             flex: 1,
             flexDirection: 'column',
-            gap: 2,
+            // 6, not 2: the pill's bottom hitSlop has to land in this gap. Any slop that
+            // reaches the TextInput's frame is swallowed by it (later sibling wins the
+            // overlap), which silently shrinks the pill's real touch target.
+            gap: 6,
             paddingHorizontal: space.xs,
             paddingVertical: 4,
           }}
@@ -1224,9 +1227,10 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                 if (agentMode) leaveAgentMode();
                 else enterAgentMode();
               }}
-              // 32px tall + 8px of slop on every side clears the 44px touch target
-              // without making the frame two thumbs high.
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              // 36 tall + 8 above + 6 below (the frame's gap) = a 50pt touch target,
+              // over the 44pt floor, without making the frame two thumbs high. The
+              // bottom value is capped by the gap on purpose — see the note there.
+              hitSlop={{ top: 8, bottom: 6, left: 8, right: 8 }}
               style={({ pressed }) => ({
                 alignItems: 'center',
                 alignSelf: 'flex-start',
@@ -1238,7 +1242,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                 flexShrink: 1,
                 justifyContent: 'center',
                 maxWidth: '100%',
-                minHeight: 32,
+                minHeight: 36,
                 opacity: pressed && agentMode ? 0.85 : 1,
                 paddingHorizontal: space.sm,
               })}
