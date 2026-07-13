@@ -77,7 +77,7 @@ describe('IronControlAdminClient', () => {
     expect(calls[0]!.init.headers).toMatchObject({ authorization: 'Bearer iak_test' });
   });
 
-  it('upserts GitHub PAT replacement secrets as write-only control-plane source', async () => {
+  it('upserts GitHub PAT Authorization-inject secrets as write-only control-plane source', async () => {
     const calls: Array<{ url: string; init: RequestInit }> = [];
     const client = new IronControlAdminClient({
       baseUrl: 'http://iron.test/',
@@ -99,10 +99,8 @@ describe('IronControlAdminClient', () => {
         foreign_id: 'github-token-atrium-workspace-ws-user-user',
         name: 'GitHub token for user',
         labels: { provider: 'github' },
-        replace_config: {
-          proxy_value: 'GITHUB_TOKEN',
-          match_headers: ['Authorization'],
-          require: true,
+        inject_config: {
+          header: 'Authorization',
         },
         source: {
           source_type: 'control_plane',
@@ -134,10 +132,8 @@ describe('IronControlAdminClient', () => {
         foreign_id: 'github-public-read-token',
         name: 'GitHub public-read fallback token',
         labels: { provider: 'github', token_kind: 'public_read' },
-        replace_config: {
-          proxy_value: 'GITHUB_TOKEN',
-          match_headers: ['Authorization'],
-          require: true,
+        inject_config: {
+          header: 'Authorization',
         },
         source: {
           source_type: 'control_plane',
@@ -149,7 +145,7 @@ describe('IronControlAdminClient', () => {
     });
   });
 
-  it('upserts GitHub App replacement secrets from token broker credentials', async () => {
+  it('upserts GitHub App Authorization-inject secrets from token broker credentials', async () => {
     const calls: Array<{ url: string; init: RequestInit }> = [];
     const client = new IronControlAdminClient({
       baseUrl: 'http://iron.test/',
@@ -170,10 +166,8 @@ describe('IronControlAdminClient', () => {
         foreign_id: 'github-token-atrium-workspace-ws-user-user',
         name: 'GitHub app token for user',
         labels: { provider: 'github', token_kind: 'app_installation' },
-        replace_config: {
-          proxy_value: 'GITHUB_TOKEN',
-          match_headers: ['Authorization'],
-          require: true,
+        inject_config: {
+          header: 'Authorization',
         },
         source: {
           source_type: 'token_broker',
@@ -384,19 +378,39 @@ describe('IronControlAdminClient', () => {
     });
   });
 
-  it('counts GitHub GITHUB_TOKEN replacement transforms in effective config', () => {
+  it('counts GitHub Authorization transforms in both inject and legacy replace shapes', () => {
     expect(
       countGitHubTokenTransforms({
         secrets: [
           {
-            replace: { proxy_value: 'GITHUB_TOKEN' },
+            inject: { header: 'Authorization' },
             rules: [{ host: 'github.com' }, { host: 'api.github.com' }],
+          },
+          {
+            replace: { proxy_value: 'GITHUB_TOKEN' },
+            rules: [{ host: 'github.com' }],
           },
           {
             replace: { proxy_value: 'SLACK_BOT_TOKEN' },
             rules: [{ host: 'slack.com' }],
           },
+          {
+            inject: { header: 'Authorization' },
+            rules: [{ host: 'chatgpt.com' }],
+          },
+          {
+            inject: { header: 'ChatGPT-Account-ID' },
+            rules: [{ host: 'github.com' }],
+          },
         ],
+      }),
+    ).toBe(2);
+  });
+
+  it('matches the Authorization inject header case-insensitively', () => {
+    expect(
+      countGitHubTokenTransforms({
+        secrets: [{ inject: { header: 'authorization' }, rules: [{ host: 'api.github.com' }] }],
       }),
     ).toBe(1);
   });
@@ -411,7 +425,7 @@ describe('IronControlAdminClient', () => {
         return new Response(
           JSON.stringify({
             data: {
-              secrets: [{ replace: { proxy_value: 'GITHUB_TOKEN' }, rules: [{ host: 'api.github.com' }] }],
+              secrets: [{ inject: { header: 'Authorization' }, rules: [{ host: 'api.github.com' }] }],
             },
           }),
           { status: 200, headers: { 'content-type': 'application/json' } },
@@ -425,6 +439,29 @@ describe('IronControlAdminClient', () => {
     });
     expect(calls[0]!.url).toBe(
       'http://iron.test/api/v1/principals/lookup/default/atrium-workspace-ws-user-user/effective_config',
+    );
+  });
+
+  it('rejects a principal holding both a legacy replace and a new inject GitHub transform', async () => {
+    const client = new IronControlAdminClient({
+      baseUrl: 'http://iron.test',
+      apiKey: 'iak_test',
+      fetchImpl: (async () =>
+        new Response(
+          JSON.stringify({
+            data: {
+              secrets: [
+                { inject: { header: 'Authorization' }, rules: [{ host: 'api.github.com' }] },
+                { replace: { proxy_value: 'GITHUB_TOKEN' }, rules: [{ host: 'github.com' }] },
+              ],
+            },
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        )) as unknown as typeof fetch,
+    });
+
+    await expect(client.verifySingleGitHubTokenTransform('atrium-workspace-ws-user-user')).rejects.toThrow(
+      'expected exactly one GitHub Authorization transform for atrium-workspace-ws-user-user, found 2',
     );
   });
 });

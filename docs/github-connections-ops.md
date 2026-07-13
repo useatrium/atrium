@@ -2,9 +2,20 @@
 
 This runbook covers the per-user GitHub connection cutover for Atrium sessions
 that route `gh`, `git`, and GitHub API traffic through Centaur's iron-proxy.
-The goal is one effective `GITHUB_TOKEN` replacement per
+The goal is one effective GitHub `Authorization` transform per
 `workspace_id`/credential-owner `user_id` principal at run time, with no real
 GitHub token in sandbox env, logs, artifacts, or Atrium's database.
+
+GitHub credentials are proxy-side `Authorization` header **injects** (like the
+Codex bearer): the proxy overwrites the whole header on `github.com` /
+`api.github.com`, pre-formatted by console as
+`Basic base64(x-access-token:<token>)` (`authorization_format: github_basic`,
+the only scheme git accepts). Because the header is overwritten rather than
+placeholder-substituted, the shape the sandbox sends is irrelevant — git's bare
+`GITHUB_TOKEN` extraheader and gh's `token GITHUB_TOKEN` both work. The
+sandbox's `GITHUB_TOKEN` env var is a dummy placeholder that only exists so
+`gh`/`git` attempt authenticated requests at all; the baked
+`GITHUB_TOKEN=GITHUB_TOKEN` sandbox env stays required.
 
 ## Required Config
 
@@ -40,7 +51,7 @@ GITHUB_PUBLIC_READ_TOKEN=... # optional, seeds github-default fallback
 The private key is sent only to iron-control, stored encrypted there, and is not
 stored in Atrium. The broker mints short-lived installation tokens from GitHub's
 `/app/installations/:installation_id/access_tokens` endpoint and delivers the
-current token through the existing `token_broker` `GITHUB_TOKEN` replacement.
+current token through the existing `token_broker` `Authorization` inject.
 
 Centaur must run with console / iron-control enabled:
 
@@ -60,7 +71,7 @@ log a warning and keep the static path). Otherwise, if
 `GITHUB_PUBLIC_READ_TOKEN` is set, Surface seeds the role's minimal public-read
 GitHub fallback secret and role grant idempotently. If neither is available,
 pre-provision that static secret and grant in iron-control. The fallback secret
-must replace the placeholder `GITHUB_TOKEN` for `github.com` and
+must inject the `Authorization` header for `github.com` and
 `api.github.com`. Do not include `github-default` in Centaur's normal startup
 `assign_role_ids`; Atrium owns assignment and removal for workspace/user
 principals.
@@ -101,7 +112,7 @@ Atrium stores GitHub connection metadata in two layers:
 New GitHub identities get per-identity iron-control static secrets. The current
 principal grant is switched by activating the selected identity, revoking stale
 direct GitHub grants for the same principal, and verifying the principal still
-has exactly one GitHub `GITHUB_TOKEN` transform. Older identities that predate
+has exactly one GitHub `Authorization` transform. Older identities that predate
 per-identity static secret metadata may appear in the UI but require reconnect
 before they can be activated for a session.
 
@@ -147,8 +158,9 @@ assuming the previous handler completed. For each
   active, and update `user_connections` to match.
 
 After each batch, sample `effective_config` from iron-control and count
-transforms that replace `GITHUB_TOKEN` for GitHub hosts. The expected count is
-exactly one.
+transforms that set the GitHub `Authorization` header (the current inject
+shape, plus any legacy `GITHUB_TOKEN` replace not yet re-converged). The
+expected count is exactly one.
 
 ## Rollback
 

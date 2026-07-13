@@ -103,7 +103,7 @@ export class IronControlAdminClient {
     token: string;
     labels?: Record<string, unknown>;
   }): Promise<IronControlSecret> {
-    return this.upsertGitHubReplacementSecret({
+    return this.upsertGitHubAuthorizationSecret({
       ...args,
       source: {
         source_type: 'control_plane',
@@ -117,7 +117,7 @@ export class IronControlAdminClient {
     token: string;
     labels?: Record<string, unknown>;
   }): Promise<IronControlSecret> {
-    return this.upsertGitHubReplacementSecret({
+    return this.upsertGitHubAuthorizationSecret({
       foreignId: githubPublicReadSecretForeignId(),
       name: 'GitHub public-read fallback token',
       labels: args.labels,
@@ -135,7 +135,7 @@ export class IronControlAdminClient {
     brokerCredentialId: string;
     labels?: Record<string, unknown>;
   }): Promise<IronControlSecret> {
-    return this.upsertGitHubReplacementSecret({
+    return this.upsertGitHubAuthorizationSecret({
       ...args,
       source: {
         source_type: 'token_broker',
@@ -147,7 +147,16 @@ export class IronControlAdminClient {
     });
   }
 
-  private async upsertGitHubReplacementSecret(args: {
+  /**
+   * GitHub secrets are proxy-side INJECTS (like the Codex bearer), not
+   * placeholder replaces: the proxy overwrites the whole Authorization header
+   * on GitHub hosts, so the header shape the sandbox sends is irrelevant —
+   * git's bare `GITHUB_TOKEN` extraheader and gh's `token GITHUB_TOKEN` both
+   * end up as the same valid header. No formatter: console pre-formats the
+   * value as `Basic base64(x-access-token:<token>)` via
+   * `authorization_format: github_basic` (the only scheme git accepts).
+   */
+  private async upsertGitHubAuthorizationSecret(args: {
     foreignId: string;
     name: string;
     labels?: Record<string, unknown>;
@@ -158,10 +167,8 @@ export class IronControlAdminClient {
       foreign_id: args.foreignId,
       name: args.name,
       labels: args.labels ?? {},
-      replace_config: {
-        proxy_value: 'GITHUB_TOKEN',
-        match_headers: ['Authorization'],
-        require: true,
+      inject_config: {
+        header: 'Authorization',
       },
       source: args.source,
       rules: [{ host: 'github.com' }, { host: 'api.github.com' }],
@@ -340,7 +347,7 @@ export class IronControlAdminClient {
     const config = await this.effectiveConfig(principalForeignId);
     const count = countGitHubTokenTransforms(config);
     if (count !== 1) {
-      throw new Error(`expected exactly one GitHub GITHUB_TOKEN transform for ${principalForeignId}, found ${count}`);
+      throw new Error(`expected exactly one GitHub Authorization transform for ${principalForeignId}, found ${count}`);
     }
     return { count, ok: true };
   }
@@ -465,13 +472,23 @@ export function countGitHubTokenTransforms(config: unknown): number {
   return count;
 }
 
+// A "GitHub token transform" is any effective-config entry that sets the
+// Authorization header on a GitHub host: the current shape (an Authorization
+// inject) and the legacy shape (a GITHUB_TOKEN placeholder replace). Counting
+// both keeps the single-transform invariant honest during the transition —
+// a principal holding one old-shape and one new-shape secret is a double.
 function isGitHubTokenTransform(value: unknown): boolean {
   if (!value || typeof value !== 'object') return false;
   const record = value as Record<string, unknown>;
+  if (!hasGitHubHostRule(record)) return false;
   const replace = plainRecord(record.replace) ?? plainRecord(plainRecord(record.config)?.replace);
-  const proxyValue = replace?.proxy_value;
-  if (proxyValue !== 'GITHUB_TOKEN') return false;
+  if (replace?.proxy_value === 'GITHUB_TOKEN') return true;
+  const inject = plainRecord(record.inject) ?? plainRecord(plainRecord(record.config)?.inject);
+  const header = inject?.header;
+  return typeof header === 'string' && header.toLowerCase() === 'authorization';
+}
 
+function hasGitHubHostRule(record: Record<string, unknown>): boolean {
   const rules = Array.isArray(record.rules)
     ? record.rules
     : Array.isArray(plainRecord(record.config)?.rules)
