@@ -35,6 +35,15 @@ export function useNow(active: boolean): number {
 }
 
 /**
+ * The card's actions read as quiet links on a mouse, but a 14px line of text
+ * is not a tap target. On coarse pointers they grow to the 44px minimum
+ * (WCAG 2.5.8) without gaining a button's chrome — same idiom the composer's
+ * audience pill and the pane's icon buttons use.
+ */
+const TOUCH_TARGET =
+  '[@media(pointer:coarse)]:inline-flex [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:items-center';
+
+/**
  * One-tap failure verbs, right on the card. Each is an ordinary steer posted
  * to the session thread, so the ask is visible in the conversation like any
  * other turn boundary. Retry re-runs; Ask why turns the failure into a
@@ -72,7 +81,7 @@ function SteerActionLink({
           .catch(() => setError(true))
           .finally(() => setBusy(false));
       }}
-      className="inline-block text-2xs font-semibold text-danger-text hover:underline disabled:opacity-60"
+      className={`inline-block text-2xs font-semibold text-danger-text hover:underline disabled:opacity-60 ${TOUCH_TARGET}`}
     >
       {error ? `${label} didn't send — try again` : label}
     </button>
@@ -221,36 +230,40 @@ export function SessionCard({
           />
         ))}
 
-      <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-2xs text-fg-muted">
-        <span className="truncate">{session.spawnerName ?? session.spawnedBy}</span>
+      {/* Every token names itself ("by Maya Chen · codex agent"), so the row
+          reads as a sentence instead of a string of unlabelled ids. One line,
+          always: the free-text tokens shrink and ellipsize rather than wrap the
+          card to a second row on a phone. */}
+      <div className="mt-1 flex items-center gap-x-2 overflow-hidden whitespace-nowrap text-2xs text-fg-muted">
+        <span className="min-w-0 truncate">by {session.spawnerName ?? session.spawnedBy}</span>
         {session.driverId !== null && session.driverId !== session.spawnedBy && (
           <>
-            <span className="text-fg-faint">·</span>
-            <span className="truncate text-fg-tertiary">driver: {session.driverName ?? session.driverId}</span>
+            <span className="shrink-0 text-fg-faint">·</span>
+            <span className="min-w-0 truncate text-fg-tertiary">driver: {session.driverName ?? session.driverId}</span>
           </>
         )}
-        <span className="text-fg-faint">·</span>
-        <span>{session.harness}</span>
+        <span className="shrink-0 text-fg-faint">·</span>
+        <span className="shrink-0">{session.harness} agent</span>
         {session.repo && (
           <>
-            <span className="text-fg-faint">·</span>
-            <span className="truncate" title={repoBranchTitle(session.repo, session.branch)}>
+            <span className="shrink-0 text-fg-faint">·</span>
+            <span className="min-w-0 truncate" title={repoBranchTitle(session.repo, session.branch)}>
               {repoBranchLabel(session.repo, session.branch)}
             </span>
           </>
         )}
-        <span className="text-fg-faint">·</span>
-        <span className="tabular-nums">started {formatTime(session.createdAt)}</span>
+        <span className="shrink-0 text-fg-faint">·</span>
+        <span className="shrink-0 tabular-nums">started {formatTime(session.createdAt)}</span>
         {session.costUsd > 0 && (
           <>
-            <span className="text-fg-faint">·</span>
-            <span className="tabular-nums">{formatCost(session.costUsd)}</span>
+            <span className="shrink-0 text-fg-faint">·</span>
+            <span className="shrink-0 tabular-nums">{formatCost(session.costUsd)}</span>
           </>
         )}
         {spectators > 0 && (
           <>
-            <span className="text-fg-faint">·</span>
-            <span className="tabular-nums">{spectators} watching</span>
+            <span className="shrink-0 text-fg-faint">·</span>
+            <span className="shrink-0 tabular-nums">{spectators} watching</span>
           </>
         )}
       </div>
@@ -284,7 +297,7 @@ export function SessionCard({
             e.stopPropagation();
             openPane();
           }}
-          className="mt-1 inline-block text-2xs font-medium text-fg-tertiary hover:text-fg-body hover:underline"
+          className={`mt-1 inline-block text-2xs font-medium text-fg-tertiary hover:text-fg-body hover:underline ${TOUCH_TARGET}`}
         >
           Show the work →
         </a>

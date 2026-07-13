@@ -41,6 +41,7 @@ export {
   mergeSpawnResponse,
   applySessionEvent,
   formatCost,
+  formatDurationUnits,
   formatElapsed,
   formatWaiting,
   deriveSessionGlance,

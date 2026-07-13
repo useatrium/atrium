@@ -69,7 +69,8 @@ describe('TurnStatusLine', () => {
     expect(screen.getByTestId('turn-status').textContent).toContain('Reattaching to sandbox…');
   });
 
-  it('done: keeps the turn duration and meta', () => {
+  // A finished run reports a duration, not a time of day: "4m", never "4:31".
+  it('done: reports the turn duration in units, plus meta', () => {
     render(
       <TurnStatusLine
         {...base}
@@ -83,7 +84,8 @@ describe('TurnStatusLine', () => {
     const status = screen.getByTestId('turn-status');
     expect(status.getAttribute('data-liveness')).toBeNull();
     expect(status.textContent).toContain('✓ Turn complete');
-    expect(status.textContent).toContain('4:31');
+    expect(status.textContent).toContain('4m');
+    expect(status.textContent).not.toContain('4:31');
     expect(status.textContent).toContain('gpt-5.5');
   });
 

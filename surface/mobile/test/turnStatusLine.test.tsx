@@ -110,13 +110,14 @@ describe('TurnStatusLine (mobile)', () => {
     expect(screen.queryByTestId('heartbeat-dot')).toBeNull();
   });
 
-  it('renders done with final clock and meta', () => {
+  // A finished run reports a duration, not a time of day: "6m", never "6:00".
+  it('renders done with a unit-spoken duration and meta', () => {
     renderWithTheme(
       <TurnStatusLine
         phase="done"
         liveness="live"
         label="Turn complete"
-        elapsedMs={72_000}
+        elapsedMs={360_000}
         quietMs={0}
         pulse={11}
         tokens={{ count: 2400, estimated: true }}
@@ -127,9 +128,33 @@ describe('TurnStatusLine (mobile)', () => {
     );
 
     expect(screen.getByText('✓ Turn complete')).toBeTruthy();
-    expect(screen.getByText('1:12')).toBeTruthy();
+    expect(screen.getByText('6m')).toBeTruthy();
+    expect(screen.queryByText('6:00')).toBeNull();
     expect(screen.getByTestId('token-count')).toHaveTextContent('≈2.4k tok');
     expect(screen.getByText('$0.3800')).toBeTruthy();
     expect(screen.getByText('gpt-5.5 xhigh')).toBeTruthy();
+  });
+
+  it('keeps sub-minute and multi-hour done durations in units', () => {
+    const done = (elapsedMs: number) => (
+      <TurnStatusLine
+        phase="done"
+        liveness="live"
+        label="Turn complete"
+        elapsedMs={elapsedMs}
+        quietMs={0}
+        pulse={1}
+        tokens={null}
+        costUsd={0}
+        models={[]}
+      />
+    );
+
+    renderWithTheme(done(42_000));
+    expect(screen.getByText('42s')).toBeTruthy();
+    cleanup();
+
+    renderWithTheme(done(3_900_000));
+    expect(screen.getByText('1h 05m')).toBeTruthy();
   });
 });

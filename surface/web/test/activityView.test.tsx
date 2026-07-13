@@ -246,6 +246,61 @@ describe('ActivityView', () => {
     expect(screen.queryByText('Alice mentioned you')).toBeNull();
   });
 
+  // Synthetic `live:<sessionId>` rows have no feed event behind them, so every
+  // read-state op no-ops on them. A "Mark read" there is a button that lies.
+  it('offers no dead ⋯ menu on synthetic live rows, and says what clears them instead', async () => {
+    apiMock.getActivity.mockResolvedValue(activityResponse([activityItem({ eventId: '9' })], { unread: 1 }));
+
+    render(
+      <ActivityView
+        onSelectChannel={vi.fn()}
+        onOpenSession={vi.fn()}
+        liveAttention={[
+          activityItem({
+            eventId: 'live:s-live',
+            kind: 'agent_question',
+            channelId: 'ch-agent',
+            channelName: 'agents',
+            snippet: 'Deploy now?',
+            sessionId: 's-live',
+            sessionTitle: 'Deploy assistant',
+            attention: true,
+          }),
+        ]}
+      />,
+    );
+
+    expect(await screen.findByText('Deploy assistant · needs your answer')).toBeTruthy();
+    // The real (mark-readable) mention row keeps its ⋯ menu…
+    expect(screen.getByRole('button', { name: 'Actions for Alice mentioned you' })).toBeTruthy();
+    // …the synthetic one has none, because there is nothing behind it to mark.
+    expect(screen.queryByRole('button', { name: /Actions for Deploy assistant/ })).toBeNull();
+    expect(screen.getByTestId('activity-clears-when').textContent).toBe('Clears when answered');
+  });
+
+  it('tells an auth-blocked synthetic row what actually clears it', async () => {
+    apiMock.getActivity.mockResolvedValue(activityResponse([activityItem({ eventId: '9' })], { unread: 1 }));
+
+    render(
+      <ActivityView
+        onSelectChannel={vi.fn()}
+        onOpenSession={vi.fn()}
+        liveAttention={[
+          activityItem({
+            eventId: 'live:s-auth',
+            kind: 'agent_auth',
+            sessionId: 's-auth',
+            sessionTitle: 'Deploy assistant',
+            attention: true,
+          }),
+        ]}
+      />,
+    );
+
+    expect(await screen.findByText(/reconnect provider/)).toBeTruthy();
+    expect(screen.getByTestId('activity-clears-when').textContent).toBe('Clears when reconnected');
+  });
+
   it('debounces a refresh from the shared live event stream', async () => {
     const first = activityResponse([activityItem({ eventId: '4' })], { lastReadEventId: '0', unread: 1 });
     const second = activityResponse([activityItem({ eventId: '5', snippet: 'fresh inbox item' })], {

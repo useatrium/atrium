@@ -275,6 +275,47 @@ describe('session card transitions across session.* events', () => {
     expect(s.timelines[CH]!.main).toHaveLength(1);
   });
 
+  it('reads the meta row as a sentence on one non-wrapping line', () => {
+    const s = spawned(loadedState());
+    render(cardFor(s));
+
+    // Every token names itself — "Kay · claude-code · 8:35 AM" was token soup.
+    expect(screen.getByText('by Kay')).toBeTruthy();
+    expect(screen.getByText('claude-code agent')).toBeTruthy();
+    expect(screen.getByText(/^started /)).toBeTruthy();
+
+    // One line on a phone: the row never wraps; long tokens ellipsize instead.
+    const meta = screen.getByText('by Kay').parentElement;
+    expect(meta?.className).toContain('whitespace-nowrap');
+    expect(meta?.className).not.toContain('flex-wrap');
+    expect(screen.getByText('by Kay').className).toContain('truncate');
+  });
+
+  it('gives the card actions a 44px tap target on coarse pointers only', () => {
+    let s = spawned(loadedState());
+    s = appReducer(s, {
+      type: 'server-event',
+      event: wire(102, 'session.completed', {
+        sessionId: 'sess-1',
+        status: 'failed',
+        resultExcerpt: 'harness crashed',
+        permalink: '/s/sess-1',
+      }),
+    });
+    const session = s.sessions['sess-1']!;
+    render(<SessionCard session={session} spectators={0} meId={spawner.id} onOpenPane={() => {}} />);
+
+    // WCAG 2.5.8: a 14px line of text is not a tap target. Touch grows them to
+    // 44px; a mouse still sees the quiet links they were.
+    for (const testid of ['card-retry-turn', 'card-ask-why']) {
+      const action = screen.getByTestId(testid);
+      expect(action.className).toContain('[@media(pointer:coarse)]:min-h-11');
+      // …and only there — no unconditional height that would bulk up the desktop card.
+      expect(action.className.split(' ')).not.toContain('min-h-11');
+    }
+    expect(screen.getByText('Show the work →').className).toContain('[@media(pointer:coarse)]:min-h-11');
+  });
+
   it('renders generated app presentations under the timeline session card', async () => {
     vi.mocked(sessionsApi.listPresentations).mockResolvedValue({
       presentations: [

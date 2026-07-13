@@ -1,7 +1,7 @@
 import { useEffect, useRef, type ReactNode } from 'react';
 import { ActivityIndicator, Animated, Pressable, Text, View } from 'react-native';
 import { formatTokens, type TurnLiveness, type TurnPhase } from '@atrium/centaur-client';
-import { formatCost, formatElapsed } from '@atrium/surface-client';
+import { formatCost, formatDurationUnits, formatElapsed } from '@atrium/surface-client';
 import { font, space, useTheme } from '../lib/theme';
 
 function HeartbeatDot({ pulse, parked }: { pulse: number; parked: boolean }) {
@@ -94,9 +94,13 @@ export function TurnStatusLine({
       ) : (
         <>
           <Text style={{ color: colors.textSecondary, fontSize: font.xs, fontWeight: '700' }}>✓ {label}</Text>
+          {/* A finished run's clock speaks units ("6m", not "6:00") — the same
+              canon the glance chip already uses. A colon clock next to a ✓
+              reads as a time of day, and that misread never self-corrects.
+              The LIVE ticker above stays mm:ss: it's counting, not reporting. */}
           {showClock ? (
             <Text style={{ color: colors.textFaint, fontSize: font.xs, fontVariant: ['tabular-nums'] }}>
-              {formatElapsed(elapsedMs)}
+              {formatDurationUnits(elapsedMs)}
             </Text>
           ) : null}
         </>
