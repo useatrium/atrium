@@ -601,7 +601,7 @@ describe('reactions', () => {
 });
 
 describe('terminal session pane', () => {
-  it('is read-only: no composer, no seat controls, ended notice', () => {
+  it('a failed session keeps the composer — steer revives it as a new turn', () => {
     FakeEventSource.reset();
     installFakeEventSource();
     const done: Session = {
@@ -630,13 +630,50 @@ describe('terminal session pane', () => {
       permalink: '/s/s-done',
     };
     render(<SessionPane session={done} me={me} watchers={[]} onClose={() => {}} onAnswerQuestion={async () => {}} />);
-    expect(screen.getByText(/Agent ended/)).toBeTruthy();
-    expect(screen.queryByText('Take seat')).toBeNull();
-    expect(screen.queryByText('Request seat')).toBeNull();
-    expect(screen.queryByPlaceholderText(/Message this session/)).toBeNull();
-    expect(screen.queryByText('Cancel')).toBeNull();
+    // No dead ends: the read-only notice is gone; the (non-driver) composer
+    // offers the suggestion path, and the failure banner offers the retry.
+    expect(screen.queryByText(/Agent ended/)).toBeNull();
+    expect(screen.getByPlaceholderText(/Suggest a message/)).toBeTruthy();
+    expect(screen.getByText(/Failed — review the transcript/)).toBeTruthy();
+    // Retry is driver-only; `me` is a watcher here.
+    expect(screen.queryByTestId('retry-turn')).toBeNull();
     // Transcript replay hasn't finished → loading, not a false "No transcript."
     expect(screen.getByText('Loading transcript…')).toBeTruthy();
+  });
+
+  it('the driver of a failed session gets a one-tap retry', () => {
+    FakeEventSource.reset();
+    installFakeEventSource();
+    const failedMine: Session = {
+      id: 's-failed-mine',
+      workspaceId: 'ws-1',
+      channelId: 'ch-1',
+      threadRootEventId: null,
+      title: 'failed task',
+      status: 'failed',
+      harness: 'claude-code',
+      spawnedBy: me.id,
+      spawnerName: 'Me',
+      driverId: me.id,
+      driverName: 'Me',
+      archivedAt: null,
+      pinned: false,
+      pendingSeatRequests: [],
+      suggestions: [],
+      answerProposals: [],
+      seatEvents: [],
+      costUsd: 0.1,
+      resultText: 'IAM change required',
+      createdAt: new Date(Date.now() - 60_000).toISOString(),
+      completedAt: new Date().toISOString(),
+      lastEventId: 9,
+      permalink: '/s/s-failed-mine',
+    };
+    render(
+      <SessionPane session={failedMine} me={me} watchers={[]} onClose={() => {}} onAnswerQuestion={async () => {}} />,
+    );
+    expect(screen.getByTestId('retry-turn')).toBeTruthy();
+    expect(screen.getByPlaceholderText(/Steer to retry/)).toBeTruthy();
   });
 
   it('a completed session is resumable, not read-only', () => {
@@ -787,7 +824,8 @@ describe('session transcript rendering', () => {
     const src = FakeEventSource.last();
     src.open();
 
-    const box = screen.getByPlaceholderText('Steer the agent...');
+    // Completed sessions advertise the revive ("Steer — starts a new turn…").
+    const box = screen.getByPlaceholderText(/^Steer/);
     fireEvent.change(box, { target: { value: 'follow up please' } });
     fireEvent.keyDown(box, { key: 'Enter' });
 

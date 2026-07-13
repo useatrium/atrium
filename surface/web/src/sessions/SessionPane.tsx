@@ -725,7 +725,8 @@ export function SessionPane({
   const [effortChoice, setEffortChoice] = useState<string | null>(null);
   const effortSelection = effortChoice ?? modelEffort ?? '';
   const effortOptions = HARNESS_EFFORT_PICKER_OPTIONS[session.harness];
-  const canPickEffort = sessionDriverId(session) === me.id && effortOptions !== undefined && !isEnded;
+  // Effort stays pickable on ended sessions — it applies to the revive turn.
+  const canPickEffort = sessionDriverId(session) === me.id && effortOptions !== undefined;
   // Seat-aware waiting copy: only the driver can actually answer — telling a
   // spectator "waiting for YOUR reply" would send them hunting for an answer
   // box they don't have.
@@ -825,7 +826,13 @@ export function SessionPane({
     : driverPresent
       ? `You're watching — ${driverName} is driving`
       : "You're watching";
-  const composerPlaceholder = isDriver ? 'Steer the agent...' : `Suggest a message — ${driverName} decides`;
+  const composerPlaceholder = isDriver
+    ? isEnded
+      ? 'Steer to retry — starts a new turn…'
+      : displayTerminal
+        ? 'Steer — starts a new turn…'
+        : 'Steer the agent...'
+    : `Suggest a message — ${driverName} decides`;
   const providerAuthOwnerName = nameFor(session.providerAuthRequired?.userId ?? null);
   // Steer frames carry no author; attribute to the spawner (Phase-1 approximation —
   // per-steer seat-aware attribution arrives with the session record in Phase 2).
@@ -1696,11 +1703,21 @@ export function SessionPane({
             </h3>
             <span className={`text-xs ${isEnded ? 'text-danger-text' : 'text-fg-muted'}`}>
               {displayStatus === 'failed'
-                ? 'Failed — review the transcript before retrying.'
+                ? 'Failed — review the transcript, then retry.'
                 : displayStatus === 'cancelled'
                   ? 'Cancelled — review completed work before continuing.'
                   : 'Completed — review the work before continuing.'}
             </span>
+            {displayStatus === 'failed' && isDriver && (
+              <button
+                type="button"
+                data-testid="retry-turn"
+                onClick={() => sendSteer('Retry the failed turn.')}
+                className="ml-auto shrink-0 rounded-md bg-danger px-2 py-0.5 text-2xs font-semibold text-surface hover:bg-danger/85"
+              >
+                Retry turn
+              </button>
+            )}
           </div>
           {resultText && (
             <div className="mt-1 max-h-24 overflow-y-auto whitespace-pre-wrap break-words text-xs leading-relaxed text-fg-body">
@@ -2032,11 +2049,10 @@ export function SessionPane({
         />
       )}
 
-      {isEnded ? (
-        <div className="shrink-0 border-t border-edge px-4 py-2.5 text-2xs text-fg-muted">
-          Agent ended — transcript is read-only.
-        </div>
-      ) : (
+      {/* No dead ends: the composer stays in every terminal state. A steer on
+          a failed/cancelled session revives it as a new turn — the same
+          mechanism completed sessions already use. */}
+      {
         <>
           {pendingSuggestions.length > 0 && (
             <SuggestionStrip
@@ -2177,7 +2193,7 @@ export function SessionPane({
             />
           </div>
         </>
-      )}
+      }
     </aside>
   );
 }
