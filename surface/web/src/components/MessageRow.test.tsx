@@ -199,7 +199,7 @@ describe('MessageRow web presence', () => {
     expect(screen.getByText('Shipped')).toBeTruthy();
   });
 
-  it('shows a direct inline answer for the current driver', () => {
+  it('points the live question row at the canonical card instead of a second form', () => {
     renderRow({
       session: session({
         pendingQuestion: {
@@ -216,12 +216,12 @@ describe('MessageRow web presence', () => {
       }),
     });
 
-    expect(screen.getByRole('button', { name: 'Yes' })).toBeTruthy();
-    expect(screen.getByRole('textbox', { name: 'Type an answer' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Answer' })).toBeTruthy();
+    // One live answer form per screen: the root card owns it; this row points up.
+    expect(screen.getByTestId('question-pointer-row')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Answer' })).toBeNull();
   });
 
-  it('offers a suggestion instead of a direct answer to non-drivers', () => {
+  it('points non-drivers at the card too — no parallel suggestion form', () => {
     renderRow({
       session: session({
         driverId: 'u-2',
@@ -234,9 +234,8 @@ describe('MessageRow web presence', () => {
       }),
     });
 
-    expect(screen.getByRole('textbox', { name: 'Suggest an answer' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Suggest' })).toBeTruthy();
-    expect(screen.getByText('The current driver decides what to send.')).toBeTruthy();
+    expect(screen.getByTestId('question-pointer-row')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Suggest' })).toBeNull();
   });
 
   it('renders steer and driver-actionable suggestion provenance chips', () => {

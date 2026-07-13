@@ -2314,7 +2314,6 @@ export function Chat({
               refreshKey={activityRefreshKey}
               liveAttention={liveAttentionItems}
               sessions={state.sessions}
-              meId={me.id}
               onCountsChange={handleActivityCountsChange}
             />
           ) : showFilesSurface ? (

@@ -82,6 +82,7 @@ export function SessionsRail({
               <div className="space-y-1.5">
                 {group.sessions.map((session) => (
                   <SessionCard
+                    questionDisplay="pointer"
                     key={session.id}
                     session={session}
                     spectators={0}

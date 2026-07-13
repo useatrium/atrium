@@ -99,7 +99,7 @@ import { SessionCapabilitiesPopover } from './SessionCapabilitiesPopover';
 import { SessionMarkdown } from './Markdown';
 import { ReasoningBlock } from './ReasoningBlock';
 import { SeatAuditLine, SessionTypingLine, TurnRail } from './SessionActivity';
-import { ProfileChangesBanner, ProviderAuthBanner, QuestionBanner, profileProviderLabel } from './SessionBanners';
+import { ProfileChangesBanner, ProviderAuthBanner, QuestionCard, profileProviderLabel } from './SessionBanners';
 import { groupQuestionEventsByQuestion, QuestionTranscriptCard } from './SessionQuestionTranscript';
 import { SuggestionStrip } from './SessionSuggestions';
 import { showErrorToast } from '../components/Toasts';
@@ -1708,7 +1708,7 @@ export function SessionPane({
       )}
 
       {pendingQuestion && !displayTerminal && (
-        <QuestionBanner
+        <QuestionCard
           sessionId={session.id}
           pending={pendingQuestion}
           isDriver={isDriver}
