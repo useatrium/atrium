@@ -75,6 +75,7 @@ export function SessionCard({
   spectators,
   spawnFailed,
   meId,
+  onOpen,
   onOpenPane,
 }: {
   session: Session;
@@ -83,6 +84,12 @@ export function SessionCard({
   spawnFailed?: boolean;
   /** Enables answering a live question straight from the card. */
   meId?: string;
+  /**
+   * Primary activation — the conversation (thread) when the caller can open
+   * one. Falls back to the pane when absent.
+   */
+  onOpen?: (sessionId: string) => void;
+  /** The workbench ("Under the hood") — full transcript, plan, artifacts. */
   onOpenPane: (sessionId: string) => void;
 }) {
   const terminal = isTerminalSessionStatus(session.status);
@@ -94,7 +101,8 @@ export function SessionCard({
   stalledRef.current = stalled;
   const pending = isPendingSessionId(session.id);
   const openable = !pending && !spawnFailed;
-  const open = () => openable && onOpenPane(session.id);
+  const open = () => openable && (onOpen ?? onOpenPane)(session.id);
+  const openPane = () => openable && onOpenPane(session.id);
   const onCardClick = (e: MouseEvent<HTMLDivElement>) => {
     if ((e.target as HTMLElement).closest('button,a')) return;
     open();
@@ -181,23 +189,25 @@ export function SessionCard({
       {terminal && session.resultText && (
         <div className="mt-1.5 border-l-2 border-edge-strong pl-2 text-xs leading-relaxed text-fg-secondary">
           <span className="line-clamp-3 whitespace-pre-wrap break-words">{session.resultText}</span>
-          <span className="mt-0.5 flex items-center gap-3">
-            <a
-              href={session.permalink}
-              onClick={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                open();
-              }}
-              className="inline-block text-2xs font-medium text-accent-text hover:underline"
-            >
-              Open session
-            </a>
-            {session.status === 'failed' && meId != null && session.driverId === meId && (
+          {session.status === 'failed' && meId != null && session.driverId === meId && (
+            <span className="mt-0.5 block">
               <RetryTurnAction sessionId={session.id} />
-            )}
-          </span>
+            </span>
+          )}
         </div>
+      )}
+      {openable && (
+        <a
+          href={session.permalink}
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            openPane();
+          }}
+          className="mt-1 inline-block text-2xs font-medium text-fg-tertiary hover:text-fg-body hover:underline"
+        >
+          Under the hood →
+        </a>
       )}
       {openable && <SessionAppPresentationCards session={session} surface="timeline" />}
     </div>

@@ -405,7 +405,12 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
         attachments,
         attachmentRefs,
       );
-      setAgentMode(false);
+      // Sticky steer: once you're driving a session, stay in agent mode for
+      // the follow-ups (Esc exits). Spawn targets still exit — the message
+      // after "start an agent" is normally chat, not another spawn.
+      if (effectiveAgentTarget !== 'steer' && effectiveAgentTarget !== 'suggest') {
+        setAgentMode(false);
+      }
     } else {
       onSend(mentions.serialize(text).trim(), attachments, attachmentRefs);
     }

@@ -664,6 +664,11 @@ export const MessageRow = memo(function MessageRow({
             spectators={spectators}
             spawnFailed={failed}
             meId={meId}
+            onOpen={
+              // Primary click lands on the conversation: the card's thread
+              // (turns, questions, steers). The pane is "Under the hood".
+              !inThread && onOpenThread && m.id != null ? () => onOpenThread(m.id!) : undefined
+            }
             onOpenPane={(id) => onOpenSession?.(id)}
           />
         ) : editing ? (

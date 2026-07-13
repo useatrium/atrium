@@ -2546,7 +2546,13 @@ export function Chat({
         active &&
         hasChannelSessions && (
           <div className="hidden md:contents">
-            <SessionsRail channelId={active.id} sessions={state.sessions} meId={me.id} onOpenSession={openSession} />
+            <SessionsRail
+              channelId={active.id}
+              sessions={state.sessions}
+              meId={me.id}
+              onOpenSession={openSession}
+              onOpenThread={openThread}
+            />
           </div>
         )
       )}

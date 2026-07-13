@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // (a) The session card transitions across session.* WS events without refetch.
 
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { appReducer, initialAppState, type AppState } from '@atrium/surface-client';
 import { SessionCard } from '../src/sessions/SessionCard';
@@ -109,7 +109,7 @@ describe('session card transitions across session.* events', () => {
     rerender(cardFor(s));
     expect(chipText()).toContain('Done');
     expect(screen.getByText(/All green: 12 tests passed/)).toBeTruthy();
-    expect(screen.getByText('Open session').getAttribute('href')).toBe('/s/sess-1');
+    expect(screen.getByText('Under the hood →').getAttribute('href')).toBe('/s/sess-1');
   });
 
   it('renders a failed terminal state from session.completed', () => {
@@ -302,14 +302,19 @@ describe('session card transitions across session.* events', () => {
 
     render(cardFor(state));
 
-    await waitFor(() => expect(screen.getByTestId('app-presentation-card')).toBeTruthy());
+    // Feed altitude: the app arrives as a compact chip, not a full render.
+    await waitFor(() => expect(screen.getByTestId('app-presentation-chip')).toBeTruthy());
     expect(screen.getByText('Support Triage Console')).toBeTruthy();
-    expect(screen.queryByText('Embedded support queue demo.')).toBeNull();
-    expect(screen.queryByText('html-app')).toBeNull();
-    expect(screen.queryByText('v2')).toBeNull();
+    expect(screen.queryByTestId('app-presentation-card')).toBeNull();
+
+    // One click opens the full preview in place; Collapse folds it back.
+    fireEvent.click(screen.getByTestId('app-presentation-chip'));
+    await waitFor(() => expect(screen.getByTestId('app-presentation-card')).toBeTruthy());
     const frame = screen.getByTitle('Support Triage Console preview') as HTMLIFrameElement;
     expect(frame.getAttribute('src')).toContain('path=shared%2Fapps%2Fsupport-triage-console%2Fpreview.html');
     expect(frame.getAttribute('src')).toContain('preview=1');
     expect(frame.className).toContain('h-[28rem]');
+    fireEvent.click(screen.getByText('Collapse'));
+    await waitFor(() => expect(screen.queryByTestId('app-presentation-card')).toBeNull());
   });
 });
