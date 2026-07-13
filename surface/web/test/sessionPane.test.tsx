@@ -1068,7 +1068,7 @@ describe('answer proposals', () => {
 
     fireEvent.click(screen.getByText('Summary'));
     fireEvent.click(screen.getByText('Timeline'));
-    fireEvent.click(screen.getByRole('button', { name: 'Submit answer' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Answer' }));
 
     await waitFor(() => expect(onAnswerQuestion).toHaveBeenCalledTimes(1));
     expect(onAnswerQuestion).toHaveBeenCalledWith('s-b', 'q-preview', {

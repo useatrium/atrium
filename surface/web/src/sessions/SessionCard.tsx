@@ -9,7 +9,7 @@ import {
   type Session,
 } from './types';
 import { GlanceChip } from './GlanceChip';
-import { InlineQuestionAnswer } from './InlineQuestionAnswer';
+import { QuestionCard } from './SessionBanners';
 import { sessionsApi } from './api';
 import { SessionAppPresentationCards } from './AppPresentationCard';
 import { SessionPresenceTicker } from './SessionPresenceTicker';
@@ -121,6 +121,7 @@ export function SessionCard({
   meId,
   onOpen,
   onOpenPane,
+  questionDisplay = 'full',
 }: {
   session: Session;
   spectators: number;
@@ -135,6 +136,12 @@ export function SessionCard({
   onOpen?: (sessionId: string) => void;
   /** The workbench ("Under the hood") — full transcript, plan, artifacts. */
   onOpenPane: (sessionId: string) => void;
+  /**
+   * How a live question renders: the full canonical card (feed/thread), or a
+   * one-line "Answer →" pointer for compact surfaces (rail) so one screen
+   * never holds two live answer forms.
+   */
+  questionDisplay?: 'full' | 'pointer';
 }) {
   const terminal = isTerminalSessionStatus(session.status);
   // Stop the 1s ticker once a card goes stalled — the gate trails by one
@@ -185,16 +192,34 @@ export function SessionCard({
 
       {!spawnFailed && <SessionPresenceTicker session={session} className="mt-1 pl-0.5" />}
 
-      {/* The card IS the channel's view of a live question — it flips to
-          answerable in place instead of posting a second channel message. */}
-      {!spawnFailed && !terminal && session.pendingQuestion?.questions[0] && (
-        <div className="mt-1.5 rounded-md border border-warning-border/40 bg-warning-tint/10 px-2 py-1.5 text-xs">
-          <div className="whitespace-pre-wrap break-words text-fg-body">
-            {session.pendingQuestion.questions[0].question}
-          </div>
-          <InlineQuestionAnswer session={session} meId={meId} />
-        </div>
-      )}
+      {/* The card IS the channel's view of a live question — it flips to the
+          canonical answerable QuestionCard in place instead of posting a
+          second channel message. Compact surfaces point at it instead. */}
+      {!spawnFailed &&
+        !terminal &&
+        session.pendingQuestion?.questions[0] &&
+        (questionDisplay === 'pointer' ? (
+          <button
+            type="button"
+            data-testid="question-pointer"
+            onClick={open}
+            className="mt-1.5 flex w-full items-center gap-1.5 rounded-md border border-warning-border/40 bg-warning-tint/10 px-2 py-1.5 text-left text-xs text-warning-text-strong hover:bg-warning-tint/25"
+          >
+            <span className="min-w-0 flex-1 truncate">{session.pendingQuestion.questions[0].question}</span>
+            <span className="shrink-0 font-semibold">Answer →</span>
+          </button>
+        ) : (
+          <QuestionCard
+            variant="card"
+            sessionId={session.id}
+            pending={session.pendingQuestion}
+            isDriver={meId != null && sessionDriverId(session) === meId}
+            driverName={session.driverName ?? session.spawnerName ?? 'the driver'}
+            proposals={(session.answerProposals ?? []).filter(
+              (p) => p.status === 'pending' && p.questionId === session.pendingQuestion?.questionId,
+            )}
+          />
+        ))}
 
       <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-2xs text-fg-muted">
         <span className="truncate">{session.spawnerName ?? session.spawnedBy}</span>

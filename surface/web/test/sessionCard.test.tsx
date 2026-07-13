@@ -173,8 +173,13 @@ describe('session card transitions across session.* events', () => {
     render(cardFor(s));
     expect(chipText()).toContain('Needs you');
     expect(screen.getByText('Run it now or schedule for tonight?')).toBeTruthy();
-    expect(screen.getByTestId('inline-question-answer')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Run now' })).toBeTruthy();
+    // The flip IS the canonical QuestionCard: options with visible
+    // descriptions plus one verb (this viewer isn't the driver, so their
+    // submission files an answer proposal).
+    expect(screen.getByTestId('question-banner')).toBeTruthy();
+    expect(screen.getByRole('radio', { name: /Run now/ })).toBeTruthy();
+    expect(screen.getByText('blocks writes')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Propose answer' })).toBeTruthy();
   });
 
   it('preserves GitHub auth-required state across terminal checkout failure', () => {

@@ -11,7 +11,6 @@ import {
   type WireEvent,
 } from '@atrium/surface-client';
 import { api } from '../api';
-import { InlineQuestionAnswer } from '../sessions/InlineQuestionAnswer';
 import type { Session } from '../sessions/types';
 import { Menu, MenuContent, MenuItem, MenuTrigger } from './a11y';
 import { CompactMarkdownText } from './MessageText';
@@ -125,7 +124,6 @@ function ActivityRow({
   attention,
   unread,
   answerSession,
-  meId,
   onActivate,
   onMarkRead,
   onMarkUnread,
@@ -133,9 +131,8 @@ function ActivityRow({
   item: ActivityItem;
   attention: boolean;
   unread: boolean;
-  /** Live session whose pending question this row is about — makes the row answerable in place. */
+  /** Live session whose pending question this row points at ("Answer →" opens it). */
   answerSession?: Session;
-  meId?: string;
   onActivate: (item: ActivityItem) => void;
   onMarkRead: (item: ActivityItem) => void;
   onMarkUnread: (item: ActivityItem) => void;
@@ -213,7 +210,17 @@ function ActivityRow({
       </div>
       {answerSession?.pendingQuestion && (
         <div className="px-4 pb-3 pl-14">
-          <InlineQuestionAnswer session={answerSession} meId={meId} />
+          <button
+            type="button"
+            data-testid="question-pointer"
+            onClick={() => onActivate(item)}
+            className="flex w-full items-center gap-1.5 rounded-md border border-warning-border/40 bg-warning-tint/10 px-2 py-1.5 text-left text-xs text-warning-text-strong hover:bg-warning-tint/25"
+          >
+            <span className="min-w-0 flex-1 truncate">
+              {answerSession.pendingQuestion.questions[0]?.question ?? 'The agent asked a question'}
+            </span>
+            <span className="shrink-0 font-semibold">Answer →</span>
+          </button>
         </div>
       )}
     </li>
@@ -227,7 +234,6 @@ export function ActivityView({
   refreshKey = 0,
   liveAttention = [],
   sessions = {},
-  meId,
   onCountsChange,
 }: {
   onSelectChannel: (channelId: string) => void;
@@ -243,9 +249,8 @@ export function ActivityView({
    * Synthetic eventIds ("live:…") don't parse, so read-state ops no-op.
    */
   liveAttention?: ActivityItem[];
-  /** Live session entities — lets needs-attention question rows answer in place. */
+  /** Live session entities — needs-attention question rows point at them ("Answer →"). */
   sessions?: Record<string, Session>;
-  meId?: string;
   onCountsChange?: (counts: ActivityCounts) => void;
 }) {
   const [items, setItems] = useState<ActivityItem[]>([]);
@@ -578,7 +583,6 @@ export function ActivityView({
                     answerSession={
                       item.kind === 'agent_question' && item.sessionId ? sessions[item.sessionId] : undefined
                     }
-                    meId={meId}
                     onActivate={(target) => void activate(target)}
                     onMarkRead={(target) => void markItemRead(target)}
                     onMarkUnread={(target) => void markItemUnread(target)}

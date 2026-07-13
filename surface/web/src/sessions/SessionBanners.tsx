@@ -1,6 +1,6 @@
 import { useEffect, useId, useState } from 'react';
 import type { AgentProfileProposal } from '../api';
-import { randomId } from '@atrium/surface-client';
+import { formatWaiting, randomId } from '@atrium/surface-client';
 import { sessionsApi } from './api';
 import type { QuestionPrompt, SessionAnswerProposal, SessionProviderAuthRequired } from './types';
 
@@ -183,25 +183,35 @@ function providerAuthActionLabel(provider: SessionProviderAuthRequired['provider
   return `Connect ${providerActionLabel(provider)}`;
 }
 
-export function QuestionBanner({
+/**
+ * THE canonical answerable question — one design, rendered by reference at
+ * every full altitude (feed card flip, thread root, pane banner). Answering
+ * any instance resolves them all (they share the session's pendingQuestion).
+ * Compact surfaces (rail, Attention) point here instead of re-rendering it.
+ */
+export function QuestionCard({
   sessionId,
   pending,
   isDriver,
   driverName,
   proposals,
   onAnswerQuestion,
+  variant = 'banner',
 }: {
   sessionId: string;
-  pending: { questionId: string; questions: QuestionPrompt[] };
+  pending: { questionId: string; questions: QuestionPrompt[]; askedAt?: string };
   isDriver: boolean;
   driverName: string;
   /** Pending answer proposals for this question (driver decides). */
   proposals: SessionAnswerProposal[];
-  onAnswerQuestion: (
+  /** Optimistic pane path; card surfaces default to the direct API call. */
+  onAnswerQuestion?: (
     sessionId: string,
     questionId: string,
     answers: Record<string, { answers: string[] }>,
   ) => Promise<void>;
+  /** banner = pane top strip; card = rounded in-conversation card. */
+  variant?: 'banner' | 'card';
 }) {
   const bannerId = useId();
   const titleId = `${bannerId}-title`;
@@ -242,7 +252,10 @@ export function QuestionBanner({
     setSubmitting(true);
     setError(null);
     if (isDriver) {
-      onAnswerQuestion(sessionId, pending.questionId, answers)
+      const answer = onAnswerQuestion
+        ? onAnswerQuestion(sessionId, pending.questionId, answers)
+        : sessionsApi.answerQuestion(sessionId, pending.questionId, answers, randomId());
+      answer
         .then(() => setCleared(pending.questionId))
         .catch(() => setError("Answer didn't send. Try again."))
         .finally(() => setSubmitting(false));
@@ -257,6 +270,7 @@ export function QuestionBanner({
 
   const errorId = `${bannerId}-error`;
 
+  const askedAgo = pending.askedAt ? formatWaiting(Date.now() - new Date(pending.askedAt).getTime()) : null;
   return (
     <section
       data-testid="question-banner"
@@ -264,15 +278,20 @@ export function QuestionBanner({
       aria-describedby={error ? errorId : undefined}
       aria-busy={submitting ? 'true' : undefined}
       aria-live="polite"
-      className="shrink-0 border-b border-warning-border/50 bg-warning-tint/20 px-3 py-2 text-xs"
+      className={
+        variant === 'card'
+          ? 'mt-1.5 rounded-md border border-warning-border/50 bg-warning-tint/15 px-2.5 py-2 text-xs'
+          : 'shrink-0 border-b border-warning-border/50 bg-warning-tint/20 px-3 py-2 text-xs'
+      }
     >
       <div className="mb-2 flex items-center gap-2">
         <span
           id={titleId}
           className="rounded-full bg-warning/15 px-2 py-0.5 text-3xs font-semibold uppercase tracking-wide text-warning-text"
         >
-          needs input
+          {variant === 'card' ? 'question · blocks the run' : 'needs input'}
         </span>
+        {askedAgo && askedAgo !== 'just now' && <span className="text-3xs text-fg-muted">asked {askedAgo} ago</span>}
         {!isDriver && <span className="text-fg-tertiary">waiting for {driverName} to answer</span>}
       </div>
       <div className="space-y-2">
@@ -335,6 +354,31 @@ export function QuestionBanner({
                       </label>
                     );
                   })}
+                  {!q.multiSelect && (
+                    <label
+                      className={`flex min-w-0 items-center gap-1.5 rounded-md border px-2 py-1 text-2xs sm:col-span-2 ${
+                        typeof values[q.id] === 'string' &&
+                        values[q.id] !== '' &&
+                        !q.options.some((o) => o.label === values[q.id])
+                          ? 'border-warning bg-warning/15 text-warning-text-strong'
+                          : 'border-dashed border-edge-strong text-fg-muted'
+                      }`}
+                    >
+                      <span className="shrink-0">something else:</span>
+                      <input
+                        type="text"
+                        disabled={submitting}
+                        value={
+                          typeof values[q.id] === 'string' && !q.options.some((o) => o.label === values[q.id])
+                            ? (values[q.id] as string)
+                            : ''
+                        }
+                        onChange={(e) => setAnswer(q.id, e.target.value)}
+                        placeholder="type it…"
+                        className="min-w-0 flex-1 bg-transparent text-2xs text-fg outline-none placeholder:text-fg-faint"
+                      />
+                    </label>
+                  )}
                 </div>
               ) : (
                 <>
@@ -391,7 +435,7 @@ export function QuestionBanner({
             disabled={!complete || submitting}
             className="rounded-md bg-warning px-2.5 py-1 text-2xs font-semibold text-surface hover:bg-warning-hover disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {submitting ? 'Answering…' : 'Submit answer'}
+            {submitting ? 'Answering…' : 'Answer'}
           </button>
         ) : proposed ? (
           <span className="text-2xs text-fg-muted">proposal sent — {driverName} decides</span>

@@ -26,7 +26,6 @@ import {
 } from '@atrium/surface-client';
 import { encodeEventHandle } from '@atrium/surface-client/handle';
 import { SessionCard } from '../sessions/SessionCard';
-import { InlineQuestionAnswer } from '../sessions/InlineQuestionAnswer';
 import type { Session } from '../sessions/types';
 import { formatBytes, formatGutterTime, formatTime } from '@atrium/surface-client';
 import { Avatar } from './Avatar';
@@ -658,7 +657,7 @@ export const MessageRow = memo(function MessageRow({
           </button>
         )}
         {isSessionEventRow ? (
-          <SessionEventCard message={m} session={session} meId={meId} onOpenSession={onOpenSession} />
+          <SessionEventCard message={m} session={session} onOpenSession={onOpenSession} />
         ) : isSessionRow ? (
           <SessionCard
             session={session}
@@ -1103,12 +1102,10 @@ function PenLineIcon(props: SVGProps<SVGSVGElement>) {
 function SessionEventCard({
   message,
   session,
-  meId,
   onOpenSession,
 }: {
   message: ChatMessage;
   session?: Session;
-  meId?: string;
   onOpenSession?: (sessionId: string) => void;
 }) {
   const payload = message.sessionEventPayload ?? {};
@@ -1137,10 +1134,15 @@ function SessionEventCard({
           <CompactMarkdownText text={questionText} />
         </div>
       )}
+      {/* While the question is live, the ANSWER form lives once per screen —
+          on the session card at the thread root. This row marks when it was
+          asked and points up instead of rendering a second live form. */}
       {message.sessionEventType === 'question_requested' &&
         session?.pendingQuestion &&
         payload.questionId === session.pendingQuestion.questionId && (
-          <InlineQuestionAnswer session={session} meId={meId} />
+          <div data-testid="question-pointer-row" className="mt-1 text-2xs font-medium text-warning-text-strong">
+            answer on the session card ↑
+          </div>
         )}
       {answers.length > 0 && (
         <div className="mt-1 space-y-1">
