@@ -16,7 +16,10 @@ async function composerWidths(frame: Locator) {
 }
 
 function threadPanel(page: Page): Locator {
-  return page.locator('aside').filter({ has: page.getByRole('heading', { name: 'Thread' }) });
+  // The thread panel's heading is the conversation's identity (the attached
+  // session's title, or the root message's author) — there is no generic
+  // "Thread" heading to select it by. Identify it by the control only it has.
+  return page.locator('aside').filter({ has: page.getByLabel('Close thread') });
 }
 
 test('thread composer keeps a typable input next to the audience pill, in both audiences', async ({ page }) => {

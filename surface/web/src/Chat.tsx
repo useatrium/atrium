@@ -2570,6 +2570,9 @@ export function Chat({
                 includeSpecials: active.kind !== 'dm' && active.kind !== 'gdm',
                 publicChannel: active.kind === 'public',
               }}
+              channelLabel={
+                active.kind === 'dm' || active.kind === 'gdm' ? channelLabel(active, me.id) : `#${active.name}`
+              }
               onClose={() => goToRoute({ surface: 'chat', channelId: active.id, sessionId: null, focusSession: false })}
               onSend={(text, attachments, attachmentRefs, voice, broadcast) =>
                 send(active.id, text, openThreadRoot.id!, attachments, attachmentRefs, voice, broadcast)

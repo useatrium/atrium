@@ -200,7 +200,12 @@ test('markup reply creates a thread card and can apply the markup with an agent'
   await suggestReplacement(page, 'careful', 'direct');
   await page.getByRole('dialog', { name: /./ }).getByRole('button', { name: 'Reply in thread' }).click();
 
-  const threadPanel = page.getByRole('complementary').filter({ has: page.getByRole('heading', { name: /thread/i }) });
+  // The thread panel no longer has a generic "Thread" heading — its heading is
+  // the conversation's identity (the attached session, or the root message's
+  // author). Identify the panel by the control that only it has.
+  const threadPanel = page
+    .getByRole('complementary')
+    .filter({ has: page.getByRole('button', { name: 'Close thread' }) });
   await expect(threadPanel.locator('a[href*="/e/art_"]').first()).toBeVisible();
   const artifactLink = threadPanel.locator('a[href*="/e/art_"]').first();
   const href = await artifactLink.getAttribute('href');
