@@ -771,6 +771,7 @@ export const SessionSteerBodySchema = Schema.Struct({
   text: Schema.optional(Schema.Unknown),
   effort: Schema.optional(Schema.Unknown),
   postToThread: Schema.optional(Schema.Unknown),
+  clientMsgId: Schema.optional(Schema.Unknown),
   attachments: Schema.optional(Schema.Unknown),
   attachmentRefs: Schema.optional(Schema.Unknown),
   opId: Schema.optional(Schema.Unknown),
@@ -779,6 +780,7 @@ export interface SessionSteerBody {
   text: string;
   effort?: string;
   postToThread?: boolean;
+  clientMsgId?: string;
   attachments?: string[];
   attachmentRefs?: SessionAttachmentRef[];
   opId?: string;

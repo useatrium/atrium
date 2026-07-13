@@ -1,5 +1,6 @@
 import type {
   AppAction,
+  AttachmentMeta,
   ChatMessage,
   MsgSendPayload,
   OpType,
@@ -15,6 +16,17 @@ export type VoiceMsgSendPayload = MsgSendPayload & {
 };
 
 export type QueuedOverlayOp = { opType: OpType; payload: unknown; opId: string };
+
+export type QueuedThreadSteerPayload = {
+  sessionId: string;
+  text: string;
+  postToThread: true;
+  channelId: string;
+  threadRootEventId: number;
+  clientMsgId: string;
+  createdAt: string;
+  attachments?: AttachmentMeta[];
+};
 
 export function pendingMessageFromSendPayload(msg: MsgSendPayload, me: UserRef): ChatMessage {
   const voice = (msg as VoiceMsgSendPayload).voice;
@@ -43,6 +55,13 @@ export function pendingMessageFromSendPayload(msg: MsgSendPayload, me: UserRef):
           },
         }
       : {}),
+  };
+}
+
+export function pendingMessageFromThreadSteerPayload(msg: QueuedThreadSteerPayload, me: UserRef): ChatMessage {
+  return {
+    ...pendingMessageFromSendPayload(msg, me),
+    steeredSessionId: msg.sessionId,
   };
 }
 
@@ -121,6 +140,27 @@ export function queuedOverlayAction(
         channelId: payload.channelId,
         message: pending.message,
         session: pending.session,
+      },
+    };
+  }
+  if (op.opType === 'session.steer') {
+    const payload = op.payload as Partial<QueuedThreadSteerPayload>;
+    if (
+      payload.postToThread !== true ||
+      typeof payload.channelId !== 'string' ||
+      typeof payload.threadRootEventId !== 'number' ||
+      typeof payload.clientMsgId !== 'string' ||
+      typeof payload.createdAt !== 'string' ||
+      typeof payload.sessionId !== 'string' ||
+      typeof payload.text !== 'string'
+    ) {
+      return null;
+    }
+    return {
+      action: {
+        type: 'send-pending',
+        channelId: payload.channelId,
+        message: pendingMessageFromThreadSteerPayload(payload as QueuedThreadSteerPayload, me),
       },
     };
   }

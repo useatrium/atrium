@@ -2,7 +2,7 @@
 
 import { act, cleanup, renderHook } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { EnqueueOpInput } from '@atrium/surface-client';
+import type { AppAction, EnqueueOpInput, UserRef } from '@atrium/surface-client';
 import { useSessionActions } from '../src/useSessionActions';
 
 type SessionActionType =
@@ -12,16 +12,26 @@ type SessionActionType =
   | 'session.pin'
   | 'session.stop_turn'
   | 'session.steer';
-type TestEnqueue = <T extends SessionActionType>(input: EnqueueOpInput<T>) => Promise<unknown>;
+type TestEnqueue = <T extends SessionActionType>(
+  input: EnqueueOpInput<T>,
+  options?: { onStored?: () => void },
+) => Promise<unknown>;
 
-function renderActions(enqueueOp = vi.fn(async () => ({ opId: 'op-1' }))) {
+const me: UserRef = { id: 'u-me', handle: 'me', displayName: 'Me' };
+
+function renderActions(
+  enqueueOp: ReturnType<typeof vi.fn> = vi.fn(async () => ({ opId: 'op-1' })),
+  dispatch?: (action: AppAction) => void,
+) {
   const clearFailedCancel = vi.fn();
   const clearFailedSteer = vi.fn();
   const view = renderHook(() =>
     useSessionActions({
       clearFailedCancel,
       clearFailedSteer,
+      dispatch,
       enqueueOp: enqueueOp as TestEnqueue,
+      me,
     }),
   );
   return { ...view, clearFailedCancel, clearFailedSteer, enqueueOp };
@@ -73,6 +83,45 @@ describe('useSessionActions', () => {
           attachments: [attachment],
           attachmentRefs: [{ uploadKey: 'upload-1' }],
         },
+      }),
+    );
+  });
+
+  it('uses one stable id and eagerly inserts a pane steer into its thread', async () => {
+    const dispatch = vi.fn<(action: AppAction) => void>();
+    const enqueueOp = vi.fn(async (_input: unknown, options?: { onStored?: () => void }) => {
+      options?.onStored?.();
+      return { opId: 'steer-client-1' };
+    });
+    const { result } = renderActions(enqueueOp, dispatch);
+    const context = {
+      channelId: 'ch-1',
+      threadRootEventId: 42,
+      clientMsgId: 'steer-client-1',
+      createdAt: '2026-07-13T12:00:00.000Z',
+    };
+
+    await act(async () => {
+      await result.current.steerSession('session-1', 'inspect this', undefined, undefined, undefined, context);
+    });
+
+    expect(enqueueOp).toHaveBeenCalledWith(
+      {
+        opId: 'steer-client-1',
+        opType: 'session.steer',
+        payload: { sessionId: 'session-1', text: 'inspect this', postToThread: true, ...context },
+      },
+      expect.objectContaining({ onStored: expect.any(Function) }),
+    );
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'send-pending',
+        channelId: 'ch-1',
+        message: expect.objectContaining({
+          clientMsgId: 'steer-client-1',
+          steeredSessionId: 'session-1',
+          status: 'pending',
+        }),
       }),
     );
   });

@@ -60,6 +60,7 @@ use title_generator::{
 
 pub const SESSION_OUTPUT_LINE_EVENT: &str = "session.output.line";
 pub const SESSION_FIRST_TOKEN_EVENT: &str = "session.first_token";
+const SESSION_TURN_ACCEPTED_EVENT: &str = "session.turn_accepted";
 
 const EVENT_STREAM_SAFETY_POLL_INTERVAL: Duration = Duration::from_secs(30);
 const STEERING_STARTUP_RETRY_INTERVAL: Duration = Duration::from_millis(250);
@@ -70,6 +71,12 @@ const STDOUT_OWNER_LEASE: Duration = Duration::from_secs(45);
 const STDOUT_OWNER_RENEW_INTERVAL: Duration = Duration::from_secs(10);
 const EXECUTION_HANDOFF_POLL_INTERVAL: Duration = Duration::from_millis(500);
 const EXECUTION_HANDOFF_DB_TIMEOUT: Duration = Duration::from_secs(5);
+/// Bounds the entire cold-start path (pod scheduling, transcript restore,
+/// app-server initialization/resume, and turn delivery). Five minutes is
+/// deliberately above ordinary cold Kubernetes starts while still turning a
+/// wedged resume into a recoverable terminal execution.
+const DEFAULT_EXECUTION_STARTUP_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+const EXECUTION_STARTUP_TIMEOUT_MS_ENV: &str = "CENTAUR_EXECUTION_STARTUP_TIMEOUT_MS";
 /// Executions are queued only between `create_execution` and the
 /// running transition a few statements later in `execute_session`, so a
 /// healthy row spends milliseconds in that state. An adoption scan racing a
@@ -2318,6 +2325,13 @@ impl SessionRuntime {
                     }),
                 )
                 .await?;
+            if session.harness_type == HarnessType::Codex {
+                spawn_execution_startup_watchdog(
+                    self.context(),
+                    execution.clone(),
+                    execution_startup_timeout(),
+                );
+            }
             let desired_capabilities = self
                 .resolve_sandbox_capabilities(session.iron_control_principal.as_deref())
                 .await?;
@@ -3889,6 +3903,67 @@ impl SessionRuntime {
         let mut deferred = HashSet::new();
         for candidate in executions {
             let execution_id = candidate.execution.execution_id.clone();
+            let startup_timeout = execution_startup_timeout();
+            if candidate.execution.status == ExecutionStatus::Running
+                && execution_age(&candidate.execution) >= startup_timeout
+            {
+                let is_codex = self
+                    .store
+                    .get_session(&candidate.execution.thread_key)
+                    .await
+                    .map(|session| session.harness_type == HarnessType::Codex);
+                match is_codex {
+                    Ok(true) => {
+                        match execution_has_startup_acceptance(&self.store, &candidate.execution)
+                            .await
+                        {
+                            Ok(true) => {}
+                            Ok(false) => {
+                                match record_execution_startup_failure(
+                                    &self.context(),
+                                    &candidate.execution,
+                                    candidate.stdout_owner_id.as_deref(),
+                                    startup_timeout,
+                                )
+                                .await
+                                {
+                                    Ok(true) => failed += 1,
+                                    Ok(false) => {}
+                                    Err(error) => warn!(
+                                        component = COMPONENT_SESSION_RUNTIME,
+                                        event = "execution_startup_reconciliation_failed",
+                                        thread_key = %candidate.execution.thread_key,
+                                        execution_id = %candidate.execution.execution_id,
+                                        %error,
+                                        "failed to reconcile execution that missed turn acceptance deadline"
+                                    ),
+                                }
+                                // Ownership may have changed while the deadline
+                                // reconciliation raced; revisit a fresh snapshot
+                                // instead of adopting from this stale candidate.
+                                continue;
+                            }
+                            Err(error) => warn!(
+                                component = COMPONENT_SESSION_RUNTIME,
+                                event = "execution_startup_acceptance_check_failed",
+                                thread_key = %candidate.execution.thread_key,
+                                execution_id = %candidate.execution.execution_id,
+                                %error,
+                                "failed to check startup acceptance during periodic reconciliation"
+                            ),
+                        }
+                    }
+                    Ok(false) => {}
+                    Err(error) => warn!(
+                        component = COMPONENT_SESSION_RUNTIME,
+                        event = "execution_startup_session_load_failed",
+                        thread_key = %candidate.execution.thread_key,
+                        execution_id = %candidate.execution.execution_id,
+                        %error,
+                        "failed to load harness type during startup reconciliation"
+                    ),
+                }
+            }
             // Advisory fast path: a live lease means the execution has an
             // active pump somewhere. Skip our own executions silently and
             // defer peers' without touching the session row or the sandbox
@@ -5314,6 +5389,7 @@ async fn run_stdout_pump(
     );
     async {
         ensure_thread_trace_root_span(&thread_key);
+        let harness_type = ctx.store.get_session(&thread_key).await?.harness_type;
         let mut stdout = FramedRead::new(stdout, LinesCodec::new());
         info!(
             component = COMPONENT_SESSION_RUNTIME,
@@ -5395,6 +5471,31 @@ async fn run_stdout_pump(
                 output_state.forget(&output_execution_id);
                 continue;
             };
+            if output_state.startup_acceptance_unrecorded(&output_execution_id)
+                && let Some(signal) = output_value
+                    .as_ref()
+                    .and_then(|value| startup_acceptance_signal(&harness_type, value))
+                && ctx
+                    .store
+                    .append_event_if_stdout_owner(
+                        &thread_key,
+                        &output_execution_id,
+                        &ctx.stdout_owner_id,
+                        STDOUT_OWNER_LEASE,
+                        SESSION_TURN_ACCEPTED_EVENT,
+                        json!({
+                            "execution_id": output_execution_id.as_str(),
+                            "thread_key": thread_key.as_str(),
+                            "harness_type": harness_type.to_string(),
+                            "signal": signal,
+                            "output_event_id": output_event.event_id,
+                        }),
+                    )
+                    .await?
+                    .is_some()
+            {
+                output_state.mark_startup_accepted(&output_execution_id);
+            }
             if let Some(execution) = first_token_execution {
                 record_first_token_observation(
                     &ctx,
@@ -5590,6 +5691,7 @@ fn first_token_latency(
 struct StdoutPumpState {
     final_answer_text_by_execution: HashMap<String, String>,
     first_token_recorded_by_execution: HashSet<String>,
+    startup_accepted_by_execution: HashSet<String>,
     turn_execution_by_id: HashMap<String, String>,
     item_execution_by_id: HashMap<String, String>,
     tool_call_by_id: HashMap<String, ToolCallLabels>,
@@ -5683,9 +5785,19 @@ impl StdoutPumpState {
             .insert(execution_id.to_owned());
     }
 
+    fn startup_acceptance_unrecorded(&self, execution_id: &str) -> bool {
+        !self.startup_accepted_by_execution.contains(execution_id)
+    }
+
+    fn mark_startup_accepted(&mut self, execution_id: &str) {
+        self.startup_accepted_by_execution
+            .insert(execution_id.to_owned());
+    }
+
     fn forget(&mut self, execution_id: &str) {
         self.final_answer_text_by_execution.remove(execution_id);
         self.first_token_recorded_by_execution.remove(execution_id);
+        self.startup_accepted_by_execution.remove(execution_id);
         let tool_ids_to_forget = self
             .item_execution_by_id
             .iter()
@@ -6328,6 +6440,176 @@ fn spawn_max_duration_failure(
             warn!(%thread_key, %execution_id, %error, "max duration failure task failed");
         }
     });
+}
+
+fn execution_startup_timeout() -> Duration {
+    env::var(EXECUTION_STARTUP_TIMEOUT_MS_ENV)
+        .ok()
+        .and_then(|raw| raw.trim().parse::<u64>().ok())
+        .filter(|millis| *millis > 0)
+        .map(Duration::from_millis)
+        .unwrap_or(DEFAULT_EXECUTION_STARTUP_TIMEOUT)
+}
+
+fn execution_age(execution: &SessionExecution) -> Duration {
+    let since = execution.started_at.unwrap_or(execution.created_at);
+    SystemTime::now()
+        .duration_since(SystemTime::from(since))
+        .unwrap_or_default()
+}
+
+fn spawn_execution_startup_watchdog(
+    ctx: RuntimeContext,
+    execution: SessionExecution,
+    startup_timeout: Duration,
+) {
+    tokio::spawn(async move {
+        sleep(startup_timeout.saturating_sub(execution_age(&execution))).await;
+        match execution_has_startup_acceptance(&ctx.store, &execution).await {
+            Ok(true) => return,
+            Ok(false) => {}
+            Err(error) => {
+                warn!(
+                    component = COMPONENT_SESSION_RUNTIME,
+                    event = "execution_startup_watchdog_check_failed",
+                    thread_key = %execution.thread_key,
+                    execution_id = %execution.execution_id,
+                    %error,
+                    "failed to check turn acceptance; periodic reconciliation will retry"
+                );
+                return;
+            }
+        }
+        if let Err(error) = record_execution_startup_failure(
+            &ctx,
+            &execution,
+            Some(&ctx.stdout_owner_id),
+            startup_timeout,
+        )
+        .await
+        {
+            warn!(
+                component = COMPONENT_SESSION_RUNTIME,
+                event = "execution_startup_watchdog_fail_record_failed",
+                thread_key = %execution.thread_key,
+                execution_id = %execution.execution_id,
+                %error,
+                "failed to terminalize execution that missed turn acceptance deadline"
+            );
+        }
+    });
+}
+
+async fn execution_has_startup_acceptance(
+    store: &PgSessionStore,
+    execution: &SessionExecution,
+) -> Result<bool, SessionRuntimeError> {
+    if store
+        .execution_event_exists(&execution.execution_id, SESSION_TURN_ACCEPTED_EVENT)
+        .await?
+    {
+        return Ok(true);
+    }
+    // Compatibility for executions already running when this version deploys:
+    // their native acceptance line predates the durable marker. Acceptance is
+    // an early startup event, so the first page is sufficient and bounded.
+    let events = store
+        .list_events_after(&execution.thread_key, 0, Some(&execution.execution_id), 512)
+        .await?;
+    Ok(events.iter().any(|event| {
+        event.event_type == SESSION_OUTPUT_LINE_EVENT
+            && event
+                .payload
+                .as_str()
+                .and_then(|line| serde_json::from_str::<Value>(line).ok())
+                .as_ref()
+                .and_then(|value| startup_acceptance_signal(&HarnessType::Codex, value))
+                .is_some()
+    }))
+}
+
+async fn record_execution_startup_failure(
+    ctx: &RuntimeContext,
+    execution: &SessionExecution,
+    observed_owner_id: Option<&str>,
+    startup_timeout: Duration,
+) -> Result<bool, SessionRuntimeError> {
+    let owner_id = if let Some(owner_id) = observed_owner_id {
+        owner_id.to_owned()
+    } else {
+        if !ctx
+            .store
+            .claim_expired_stdout_owner(
+                &execution.execution_id,
+                &ctx.stdout_owner_id,
+                STDOUT_OWNER_LEASE,
+            )
+            .await?
+        {
+            return Ok(false);
+        }
+        ctx.stdout_owner_id.clone()
+    };
+    let startup_timeout_ms = duration_millis_u64(startup_timeout);
+    let error = format!(
+        "execution startup deadline exceeded before Codex accepted the turn ({startup_timeout_ms}ms)"
+    );
+    let Some((failed, stale_sandbox_id)) = ctx
+        .store
+        .fail_execution_if_active_and_stdout_owner_and_detach_sandbox(
+            &execution.execution_id,
+            &owner_id,
+            &error,
+        )
+        .await?
+    else {
+        return Ok(false);
+    };
+    ctx.execution_spans
+        .lock()
+        .await
+        .remove(&execution.execution_id);
+    ctx.store
+        .append_event(
+            &execution.thread_key,
+            Some(&execution.execution_id),
+            "session.execution_failed",
+            json!({
+                "execution_id": execution.execution_id.as_str(),
+                "thread_key": execution.thread_key.as_str(),
+                "error": error,
+                "reason": "startup_turn_not_accepted",
+                "startup_timeout_ms": startup_timeout_ms,
+            }),
+        )
+        .await?;
+    record_finished_execution_metric(
+        &ctx.store,
+        &execution.thread_key,
+        &failed,
+        "failed",
+        Some("timeout"),
+    )
+    .await;
+
+    // A process stuck before turn acceptance is not safe to reuse. Its
+    // assignment was detached in the same transaction as the terminal
+    // transition, before this externally visible event was emitted.
+    if let Some(sandbox_id) = stale_sandbox_id {
+        // Do not stop the backend inline: a client can submit a replacement
+        // immediately after the terminal event, and killing by sandbox ID
+        // would race that execution. The normal orphan cleanup path retires
+        // the now-detached backend with its existing safety checks.
+        info!(
+            component = COMPONENT_SESSION_RUNTIME,
+            event = "execution_startup_sandbox_detached",
+            thread_key = %execution.thread_key,
+            execution_id = %execution.execution_id,
+            sandbox_id,
+            "detached stale startup sandbox for safe asynchronous cleanup"
+        );
+    }
+    Ok(true)
 }
 
 fn spawn_stdout_owner_renewer(ctx: RuntimeContext, execution_id: String) {
@@ -7035,6 +7317,14 @@ fn result_is_failure(value: &Value) -> bool {
 }
 
 fn terminal_error_text(value: &Value) -> String {
+    if let Some(text) = value
+        .pointer("/params/error/message")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+    {
+        return text.to_owned();
+    }
     for key in ["error", "message", "result", "text"] {
         if let Some(text) = value.get(key).and_then(Value::as_str)
             && !text.trim().is_empty()
@@ -7582,6 +7872,36 @@ fn harness_thread_id_from_output_line(line: &str) -> Option<String> {
         .map(str::trim)
         .filter(|thread_id| !thread_id.is_empty())
         .map(ToOwned::to_owned)
+}
+
+/// Returns the harness-native signal proving startup advanced beyond merely
+/// opening stdout. Codex can emit unrelated notifications (notably remote
+/// control status) before a resumed thread or delivered turn is accepted;
+/// those deliberately do not satisfy this predicate.
+fn startup_acceptance_signal(harness_type: &HarnessType, value: &Value) -> Option<&'static str> {
+    if harness_type != &HarnessType::Codex {
+        return None;
+    }
+    let event_type = value
+        .get("method")
+        .and_then(Value::as_str)
+        .or_else(|| value.get("type").and_then(Value::as_str));
+    match event_type {
+        Some("thread/started" | "thread.started") => Some("thread_started"),
+        Some("turn/started" | "turn.started") => Some("turn_started"),
+        Some("item/started" | "item.started" | "item/completed" | "item.completed")
+            if value
+                .pointer("/params/item/type")
+                .or_else(|| value.pointer("/item/type"))
+                .and_then(Value::as_str)
+                .is_some_and(|item_type| {
+                    matches!(item_type, "userMessage" | "user_message" | "user")
+                }) =>
+        {
+            Some("user_message")
+        }
+        _ => None,
+    }
 }
 
 fn validate_input_lines(lines: &[String]) -> Result<(), SessionRuntimeError> {
@@ -9154,6 +9474,32 @@ mod tests {
         assert_eq!(
             harness_thread_id_from_output_line(r#"{"type":"turn.started","turn_id":"turn-1"}"#),
             None
+        );
+    }
+
+    #[test]
+    fn codex_remote_control_notification_is_not_startup_acceptance() {
+        let notification = json!({
+            "method": "codex/event/remote_control_status_changed",
+            "params": {"enabled": false}
+        });
+
+        assert_eq!(
+            startup_acceptance_signal(&HarnessType::Codex, &notification),
+            None
+        );
+    }
+
+    #[test]
+    fn codex_thread_started_is_startup_acceptance() {
+        let notification = json!({
+            "method": "thread/started",
+            "params": {"thread": {"id": "codex-thread-real"}}
+        });
+
+        assert_eq!(
+            startup_acceptance_signal(&HarnessType::Codex, &notification),
+            Some("thread_started")
         );
     }
 
@@ -12464,6 +12810,122 @@ mod adoption_tests {
         runtime.adopt_orphaned_executions().await;
         wait_for_event(&store, &thread_key, "session.execution_adopted").await;
         wait_for_event(&store, &thread_key, "session.execution_completed").await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn periodic_scan_reconciles_preexisting_owned_execution_without_start_acceptance() {
+        let Some(store) = test_store().await else {
+            return;
+        };
+        let _serial = TEST_LOCK.lock().await;
+        let thread_key =
+            ThreadKey::parse(format!("test:startup-stuck-{}", uuid::Uuid::new_v4())).unwrap();
+        let execution_id = orphaned_execution(&store, &thread_key, Some("sbx-stuck"), true).await;
+        store
+            .claim_stdout_owner(
+                &execution_id,
+                "live-but-stuck-owner",
+                Duration::from_secs(60),
+            )
+            .await
+            .expect("claim live owner");
+        backdate_execution(&store, &execution_id, 600.0).await;
+
+        let backend = Arc::new(MockBackend::new(SandboxStatus::Running, Vec::new()));
+        let runtime = runtime_with(&store, backend.clone());
+        let mut state = OrphanAdoptionState::default();
+        runtime
+            .run_orphan_adoption_scan(&mut state, Some(QUEUED_ORPHAN_GRACE))
+            .await;
+
+        let execution = store.get_execution(&execution_id).await.unwrap();
+        assert_eq!(execution.status, ExecutionStatus::Failed);
+        assert!(
+            execution
+                .error
+                .as_deref()
+                .unwrap_or_default()
+                .contains("before Codex accepted the turn")
+        );
+        let all = events(&store, &thread_key).await;
+        assert!(all.iter().any(|event| {
+            event.event_type == "session.execution_failed"
+                && event.payload["reason"] == "startup_turn_not_accepted"
+        }));
+        assert_eq!(
+            backend.stops(),
+            0,
+            "watchdog cleanup must not race-stop a replacement"
+        );
+        assert_eq!(
+            store.get_session(&thread_key).await.unwrap().sandbox_id,
+            None,
+            "next steer must cold-resume instead of reusing the stuck harness"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn accepted_long_running_execution_is_not_failed_by_startup_reconciliation() {
+        let Some(store) = test_store().await else {
+            return;
+        };
+        let _serial = TEST_LOCK.lock().await;
+        let thread_key =
+            ThreadKey::parse(format!("test:startup-accepted-{}", uuid::Uuid::new_v4())).unwrap();
+        let execution_id = orphaned_execution(&store, &thread_key, Some("sbx-healthy"), true).await;
+        store
+            .claim_stdout_owner(
+                &execution_id,
+                "healthy-long-running-owner",
+                Duration::from_secs(60),
+            )
+            .await
+            .expect("claim live owner");
+        store
+            .append_event(
+                &thread_key,
+                Some(&execution_id),
+                SESSION_OUTPUT_LINE_EVENT,
+                Value::String(
+                    json!({
+                        "method": "thread/started",
+                        "params": {"thread": {"id": "restored-thread"}}
+                    })
+                    .to_string(),
+                ),
+            )
+            .await
+            .expect("append pre-deploy native acceptance line");
+        backdate_execution(&store, &execution_id, 600.0).await;
+
+        let backend = Arc::new(MockBackend::new(SandboxStatus::Running, Vec::new()));
+        let runtime = runtime_with(&store, backend.clone());
+        let mut state = OrphanAdoptionState::default();
+        runtime
+            .run_orphan_adoption_scan(&mut state, Some(QUEUED_ORPHAN_GRACE))
+            .await;
+
+        assert_eq!(
+            store.get_execution(&execution_id).await.unwrap().status,
+            ExecutionStatus::Running,
+            "accepted tool-heavy turns are outside the startup watchdog"
+        );
+        assert_eq!(backend.stops(), 0);
+        store
+            .complete_execution_if_active_and_stdout_owner(
+                &execution_id,
+                "healthy-long-running-owner",
+            )
+            .await
+            .expect("complete accepted execution");
+        runtime
+            .run_orphan_adoption_scan(&mut state, Some(QUEUED_ORPHAN_GRACE))
+            .await;
+        assert_eq!(
+            store.get_execution(&execution_id).await.unwrap().status,
+            ExecutionStatus::Completed,
+            "completed long-running turns remain terminal and unchanged"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

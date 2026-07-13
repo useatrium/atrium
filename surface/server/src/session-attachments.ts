@@ -360,6 +360,7 @@ export function agentTurnInputLine(
   attachments: readonly AgentTurnAttachmentRef[] = [],
   effort?: string | null,
   contextBlock?: string,
+  clientUserMessageId?: string,
 ): string {
   return JSON.stringify({
     type: 'user',
@@ -367,6 +368,7 @@ export function agentTurnInputLine(
       content: agentTurnMessageParts(text, attachments, contextBlock),
     },
     ...(effort ? { reasoning: effort } : {}),
+    ...(clientUserMessageId ? { client_user_message_id: clientUserMessageId } : {}),
   });
 }
 

@@ -87,4 +87,11 @@ describe('agent turn attachments', () => {
       { type: 'text', text: 'review this' },
     ]);
   });
+
+  it('carries the optimistic steer id into the harness user-message echo', () => {
+    expect(JSON.parse(agentTurnInputLine('continue', [], null, undefined, 'steer-client-1'))).toMatchObject({
+      type: 'user',
+      client_user_message_id: 'steer-client-1',
+    });
+  });
 });

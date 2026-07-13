@@ -96,8 +96,14 @@ export function registerSessionInteractionRoutes(app: FastifyInstance, deps: Ses
     if (body.postToThread !== undefined && typeof body.postToThread !== 'boolean') {
       return reply.code(400).send({ error: 'bad_request', message: 'postToThread must be boolean' });
     }
+    if (body.clientMsgId !== undefined && (typeof body.clientMsgId !== 'string' || body.clientMsgId.length > 200)) {
+      return reply.code(400).send({ error: 'bad_request', message: 'clientMsgId must be a short string' });
+    }
     const effort = body.effort as SessionEffortLevel | undefined;
-    const postToThread = body.postToThread === true;
+    // This route is the manual driver-turn boundary. Internal generated turns
+    // call SessionRuns directly and retain explicit control over mirroring.
+    const postToThread = true;
+    const clientMsgId = typeof body.clientMsgId === 'string' ? body.clientMsgId : opId;
     try {
       await runMutation({
         userId: user.id,
@@ -125,6 +131,7 @@ export function registerSessionInteractionRoutes(app: FastifyInstance, deps: Ses
             effort,
             attachments,
             postToThread,
+            clientMsgId,
           );
           return { ok: true as const, events };
         },

@@ -32,6 +32,7 @@ import {
   type UserMessageItem,
 } from '@atrium/centaur-client';
 import { isMacDesktop } from '../desktop';
+import type { SessionSteerContext } from '../useSessionActions';
 import {
   ApiError,
   api,
@@ -52,12 +53,19 @@ import {
   queryEntryReferencesForHandles,
   type EntryReferenceSummary,
 } from '../components/EntryReferencesChip';
-import { splitMarkdownFrontmatter } from '@atrium/surface-client';
+import { parseAttachments, splitMarkdownFrontmatter } from '@atrium/surface-client';
 import { MarkupPane, type MarkupPaneSource } from '../components/MarkupPane';
 import { MarkupSteerCard } from '../components/MarkupSteerCard';
 import { Tooltip } from '../components/a11y';
 import { ChevronDownIcon, ChevronRightIcon, CornerUpLeftIcon, GearIcon, XIcon } from '../components/icons';
-import type { AttachmentMeta, AttachmentRef, UploadPayload, UserRef, WireEvent } from '@atrium/surface-client';
+import type {
+  AttachmentMeta,
+  AttachmentRef,
+  ChatMessage,
+  UploadPayload,
+  UserRef,
+  WireEvent,
+} from '@atrium/surface-client';
 import {
   formatExactTimestamp,
   formatTime,
@@ -213,16 +221,95 @@ type OutputSurface = 'conflicts' | 'changes' | 'sideEffects' | 'artifacts';
 type OutputCounts = Record<OutputSurface, number>;
 type PendingSteer = {
   id: string;
+  clientMsgId?: string;
   text: string;
   ts: string;
   delivered?: boolean;
+  existingMessageIds?: string[];
   provenance?: SteerProvenance;
   acceptedByMe?: boolean;
+  attachments?: AttachmentMeta[];
+};
+type LinkedSteer = {
+  id: number | string;
+  clientMsgId: string | null;
+  author: string;
+  createdAt: string;
+  text: string;
+  attachments?: AttachmentMeta[];
+  status?: ChatMessage['status'];
 };
 type SteerProvenanceView = {
   provenance: SteerProvenance;
   acceptedByMe: boolean;
 };
+
+const STEER_ECHO_WINDOW_MS = 5 * 60 * 1000;
+
+function laterSteerEchoMatches(sentAt: string | undefined, echoedAt: string | undefined): boolean {
+  if (!sentAt || !echoedAt) return false;
+  const sentMs = Date.parse(sentAt);
+  const echoedMs = Date.parse(echoedAt);
+  return (
+    Number.isFinite(sentMs) &&
+    Number.isFinite(echoedMs) &&
+    echoedMs >= sentMs &&
+    echoedMs - sentMs <= STEER_ECHO_WINDOW_MS
+  );
+}
+
+function linkedSteerMatchesUserMessage(linked: LinkedSteer, item: UserMessageItem): boolean {
+  if (
+    linked.clientMsgId != null &&
+    (item.id === linked.clientMsgId || item.sourceEventIds.some((id) => String(id) === linked.clientMsgId))
+  ) {
+    return true;
+  }
+  return (
+    normalizeSteerProvenanceText(linked.text) === normalizeSteerProvenanceText(item.text) &&
+    laterSteerEchoMatches(linked.createdAt, item.ts)
+  );
+}
+
+export function reconcileLinkedSteers(linkedSteers: LinkedSteer[], userMessages: UserMessageItem[]): LinkedSteer[] {
+  const consumed = new Set<string>();
+  return linkedSteers.filter((linked) => {
+    const match = userMessages.find(
+      (item) =>
+        !consumed.has(item.id) &&
+        (linked.status === 'failed'
+          ? linked.clientMsgId != null && item.id === linked.clientMsgId
+          : linkedSteerMatchesUserMessage(linked, item)),
+    );
+    if (!match) return true;
+    consumed.add(match.id);
+    return false;
+  });
+}
+
+function reconcileOptimisticLinkedSteers(optimistic: LinkedSteer[], durable: LinkedSteer[]): LinkedSteer[] {
+  const consumed = new Set<number | string>();
+  const remaining = optimistic.filter((pending) => {
+    const match = durable.find(
+      (confirmed) =>
+        !consumed.has(confirmed.id) && pending.clientMsgId != null && pending.clientMsgId === confirmed.clientMsgId,
+    );
+    const fallback =
+      pending.status === 'pending'
+        ? durable.find(
+            (confirmed) =>
+              !consumed.has(confirmed.id) &&
+              normalizeSteerProvenanceText(pending.text) === normalizeSteerProvenanceText(confirmed.text) &&
+              laterSteerEchoMatches(pending.createdAt, confirmed.createdAt),
+          )
+        : undefined;
+    const echo = match ?? fallback;
+    if (!echo) return true;
+    consumed.add(echo.id);
+    return false;
+  });
+  return [...durable, ...remaining];
+}
 
 function outputsVisibleInTab(tab: WorkTab | null): OutputSurface[] {
   if (tab === 'conflicts') return ['conflicts'];
@@ -353,6 +440,7 @@ export function SessionPane({
   initialEntryHandle = null,
   origin,
   liveEvent = null,
+  optimisticThreadSteers = [],
   popout = false,
   onUnseenOutputs,
   filesDefaultScope,
@@ -379,6 +467,7 @@ export function SessionPane({
     effort?: string,
     attachments?: AttachmentMeta[],
     attachmentRefs?: AttachmentRef[],
+    context?: SessionSteerContext,
   ) => Promise<void>;
   queueUpload?: (payload: UploadPayload) => Promise<{ fileId: string }>;
   failedSteer?: string | null;
@@ -406,6 +495,8 @@ export function SessionPane({
   initialEntryHandle?: string | null;
   /** Live wire events from Chat's socket — folds thread replies instantly. */
   liveEvent?: WireEvent | null;
+  /** Queue-backed thread steers shown before their durable event arrives. */
+  optimisticThreadSteers?: ChatMessage[];
   /**
    * Where this pane was zoomed from — renders the place crumb
    * (#channel ▸ thread ▸ work) so the zoom levels stay legible and
@@ -760,6 +851,20 @@ export function SessionPane({
     setOptimisticProvenanceByMessageId(new Map());
   }, [session.id]);
   useEffect(() => {
+    if (failedSteer == null) return;
+    const failedText = normalizeSteerProvenanceText(failedSteer);
+    setPendingSteers((prev) => {
+      let index = -1;
+      for (let candidateIndex = prev.length - 1; candidateIndex >= 0; candidateIndex -= 1) {
+        if (normalizeSteerProvenanceText(prev[candidateIndex]?.text ?? '') === failedText) {
+          index = candidateIndex;
+          break;
+        }
+      }
+      return index < 0 ? prev : prev.filter((_, candidateIndex) => candidateIndex !== index);
+    });
+  }, [failedSteer]);
+  useEffect(() => {
     if (!activeTurn) return;
     // Same-reference return when nothing is undelivered keeps this loop-free
     // with pendingSteers in the deps (covers steers sent mid-turn too).
@@ -770,20 +875,23 @@ export function SessionPane({
     // Compute the surviving set OUTSIDE the state updater: the updater must be
     // pure (StrictMode double-invokes it), and consuming the echo map inside it
     // made the second invocation see spent counts and resurrect the bubble.
-    const echoed = new Map<string, UserMessageItem[]>();
-    for (const it of stream.items) {
-      if (it.type === 'user_message') {
-        const t = normalizeSteerProvenanceText(it.text);
-        const matches = echoed.get(t);
-        if (matches) matches.push(it);
-        else echoed.set(t, [it]);
-      }
-    }
+    const echoed = stream.items.filter((it): it is UserMessageItem => it.type === 'user_message');
     const consumedEchoes = new Set<string>();
     const carriedProvenance = new Map<string, { provenance: SteerProvenance; acceptedByMe: boolean }>();
     const keep = pendingSteers.filter((p) => {
       const t = normalizeSteerProvenanceText(p.text);
-      const match = echoed.get(t)?.find((it) => !consumedEchoes.has(it.id));
+      const exactMatch = p.clientMsgId
+        ? echoed.find((it) => !consumedEchoes.has(it.id) && it.id === p.clientMsgId)
+        : undefined;
+      const match =
+        exactMatch ??
+        echoed.find(
+          (it) =>
+            !consumedEchoes.has(it.id) &&
+            !p.existingMessageIds?.includes(it.id) &&
+            normalizeSteerProvenanceText(it.text) === t &&
+            (it.ts == null || laterSteerEchoMatches(p.ts, it.ts)),
+        );
       if (match) {
         consumedEchoes.add(match.id);
         if (p.provenance) {
@@ -875,14 +983,6 @@ export function SessionPane({
   // Steer frames carry no author; attribute to the spawner (Phase-1 approximation —
   // per-steer seat-aware attribution arrives with the session record in Phase 2).
   const steerAuthor = nameFor(session.spawnedBy);
-  // Turn navigation skeleton: index the steers (the user's turns), not agent replies.
-  const turns = useMemo(
-    () =>
-      stream.items
-        .filter((it): it is UserMessageItem => it.type === 'user_message')
-        .map((it) => ({ id: it.id, text: it.text })),
-    [stream.items],
-  );
   // Hover timestamps, formatted once per fold — the 1Hz `useNow` tick re-renders
   // the pane, and running Intl per row per second on a long transcript adds up.
   const turnTimes = useMemo(() => {
@@ -988,7 +1088,29 @@ export function SessionPane({
     // Optimistic: show the steer immediately; reconciled away when the harness
     // echoes it back as a user_message (see the pendingSteers effect above).
     const pendingId = randomId();
-    setPendingSteers((prev) => [...prev, { id: pendingId, text, ts: new Date().toISOString() }]);
+    const createdAt = new Date().toISOString();
+    const context =
+      session.threadRootEventId == null
+        ? undefined
+        : {
+            channelId: session.channelId,
+            threadRootEventId: session.threadRootEventId,
+            clientMsgId: pendingId,
+            createdAt,
+          };
+    setPendingSteers((prev) => [
+      ...prev,
+      {
+        id: pendingId,
+        ...(context ? { clientMsgId: context.clientMsgId } : {}),
+        text,
+        ts: createdAt,
+        ...(attachments && attachments.length > 0 ? { attachments } : {}),
+        existingMessageIds: stream.items
+          .filter((item): item is UserMessageItem => item.type === 'user_message')
+          .map((item) => item.id),
+      },
+    ]);
     // The server re-attaches the session's recorded effort to every steer
     // (stickiness lives there, so mobile/suggestion steers inherit it too);
     // the client only sends an explicit CHANGE, guarded to the harness's
@@ -1001,9 +1123,11 @@ export function SessionPane({
         ? effortSelection
         : undefined;
     const hasAttachments = (attachments?.length ?? 0) > 0 || (attachmentRefs?.length ?? 0) > 0;
-    const steer = hasAttachments
-      ? onSteer(session.id, text, effortOverride, attachments, attachmentRefs)
-      : onSteer(session.id, text, effortOverride);
+    const steer = context
+      ? onSteer(session.id, text, effortOverride, attachments, attachmentRefs, context)
+      : hasAttachments
+        ? onSteer(session.id, text, effortOverride, attachments, attachmentRefs)
+        : onSteer(session.id, text, effortOverride);
     steer.catch((err: unknown) => {
       setLocalSteerError(text);
       setPendingSteers((prev) => prev.filter((p) => p.id !== pendingId));
@@ -1049,6 +1173,9 @@ export function SessionPane({
         id: pendingId,
         text,
         ts,
+        existingMessageIds: stream.items
+          .filter((item): item is UserMessageItem => item.type === 'user_message')
+          .map((item) => item.id),
         provenance: {
           proposerName: suggestion.authorName ?? nameFor(suggestion.authorId),
           resolvedByName: me.displayName,
@@ -1219,14 +1346,16 @@ export function SessionPane({
     [codexChangesAt, showAgentWork, stream.items],
   );
 
-  // The pane is the thread with the work unfolded: the session thread's plain
-  // chat (asides — not steers, which the transcript already carries as user
-  // messages) interleaves into the transcript by wall-clock time.
+  // The pane is the thread with the work unfolded: plain chat stays an aside,
+  // while linked steers are first-class user turns even when Centaur never
+  // echoes a matching user_message.
   const [asides, setAsides] = useState<PaneAside[]>([]);
+  const [linkedSteers, setLinkedSteers] = useState<LinkedSteer[]>([]);
   useEffect(() => {
     const root = session.threadRootEventId;
     if (root == null) {
       setAsides([]);
+      setLinkedSteers([]);
       return;
     }
     let disposed = false;
@@ -1254,12 +1383,34 @@ export function SessionPane({
               text: String(ev.payload?.text ?? ''),
             })),
         );
+        setLinkedSteers(
+          events
+            .filter(
+              (ev) =>
+                ev.type === 'message.posted' &&
+                typeof ev.payload?.text === 'string' &&
+                ev.payload.deleted !== true &&
+                ev.payload.steered_session_id === session.id,
+            )
+            .map((ev) => {
+              const attachments = parseAttachments(ev.payload?.attachments);
+              return {
+                id: ev.id,
+                clientMsgId: typeof ev.payload?.client_msg_id === 'string' ? ev.payload.client_msg_id : null,
+                author: ev.author?.displayName ?? 'Someone',
+                createdAt: ev.createdAt,
+                text: String(ev.payload?.text ?? ''),
+                ...(attachments ? { attachments } : {}),
+                status: 'confirmed' as const,
+              };
+            }),
+        );
       })
       .catch(() => {});
     return () => {
       disposed = true;
     };
-  }, [session.threadRootEventId, asideRefresh]);
+  }, [session.id, session.threadRootEventId, asideRefresh]);
   // Fold live thread replies straight off the workspace socket (instant, like
   // the thread panel) — dedupe by event id against catch-up overlap.
   useEffect(() => {
@@ -1269,6 +1420,26 @@ export function SessionPane({
     if (ev.type !== 'message.posted' || ev.threadRootEventId !== root) return;
     const p = ev.payload ?? {};
     if (typeof p.text !== 'string' || p.deleted === true) return;
+    if (p.steered_session_id === session.id) {
+      const attachments = parseAttachments(p.attachments);
+      setLinkedSteers((prev) =>
+        prev.some((steer) => steer.id === ev.id)
+          ? prev
+          : [
+              ...prev,
+              {
+                id: ev.id,
+                clientMsgId: typeof p.client_msg_id === 'string' ? p.client_msg_id : null,
+                author: ev.author?.displayName ?? 'Someone',
+                createdAt: ev.createdAt,
+                text: String(p.text),
+                ...(attachments ? { attachments } : {}),
+                status: 'confirmed' as const,
+              },
+            ],
+      );
+      return;
+    }
     if (typeof p.steered_session_id === 'string' || typeof p.suggested_session_id === 'string') return;
     setAsides((prev) =>
       prev.some((a) => a.id === ev.id)
@@ -1278,7 +1449,40 @@ export function SessionPane({
             { id: ev.id, author: ev.author?.displayName ?? 'Someone', createdAt: ev.createdAt, text: String(p.text) },
           ],
     );
-  }, [liveEvent, session.threadRootEventId]);
+  }, [liveEvent, session.id, session.threadRootEventId]);
+  const userMessages = useMemo(
+    () => stream.items.filter((item): item is UserMessageItem => item.type === 'user_message'),
+    [stream.items],
+  );
+  const queuedLinkedSteers = useMemo<LinkedSteer[]>(
+    () =>
+      optimisticThreadSteers
+        .filter((message) => message.steeredSessionId === session.id && message.status !== 'confirmed')
+        .map((message) => ({
+          id: `queued-${message.clientMsgId ?? message.createdAt}`,
+          clientMsgId: message.clientMsgId ?? null,
+          author: message.author.displayName,
+          createdAt: message.createdAt,
+          text: message.text,
+          ...(message.attachments ? { attachments: message.attachments } : {}),
+          status: message.status,
+        })),
+    [optimisticThreadSteers, session.id],
+  );
+  const allLinkedSteers = useMemo(
+    () => reconcileOptimisticLinkedSteers(queuedLinkedSteers, linkedSteers),
+    [linkedSteers, queuedLinkedSteers],
+  );
+  const visiblePendingSteers = useMemo(() => {
+    const linkedClientIds = new Set(
+      allLinkedSteers.flatMap((steer) => (steer.clientMsgId == null ? [] : [steer.clientMsgId])),
+    );
+    return pendingSteers.filter((pending) => pending.clientMsgId == null || !linkedClientIds.has(pending.clientMsgId));
+  }, [allLinkedSteers, pendingSteers]);
+  const visibleLinkedSteers = useMemo(
+    () => reconcileLinkedSteers(allLinkedSteers, userMessages),
+    [allLinkedSteers, userMessages],
+  );
   // Anchor each aside to the first transcript item that happened after it.
   const asideAnchors = useMemo(() => {
     if (asides.length === 0) return [] as Array<{ anchorIndex: number; aside: PaneAside }>;
@@ -1298,6 +1502,63 @@ export function SessionPane({
       })
       .sort((a, b) => a.anchorIndex - b.anchorIndex || a.aside.id - b.aside.id);
   }, [asides, stream.items]);
+  const linkedSteerAnchors = useMemo(() => {
+    const itemTs = stream.items.map((item) => (item.ts ? Date.parse(item.ts) : null));
+    return visibleLinkedSteers
+      .map((steer) => {
+        const t = Date.parse(steer.createdAt);
+        let anchorIndex = Number.MAX_SAFE_INTEGER;
+        for (let i = 0; i < itemTs.length; i += 1) {
+          const ts = itemTs[i];
+          if (ts != null && ts > t) {
+            anchorIndex = i;
+            break;
+          }
+        }
+        return { anchorIndex, steer };
+      })
+      .sort(
+        (a, b) =>
+          a.anchorIndex - b.anchorIndex ||
+          Date.parse(a.steer.createdAt) - Date.parse(b.steer.createdAt) ||
+          String(a.steer.id).localeCompare(String(b.steer.id)),
+      );
+  }, [stream.items, visibleLinkedSteers]);
+  const threadAnchors = useMemo(
+    () =>
+      [
+        ...asideAnchors.map(({ anchorIndex, aside }) => ({
+          anchorIndex,
+          createdAt: aside.createdAt,
+          row: { kind: 'aside' as const, aside },
+        })),
+        ...linkedSteerAnchors.map(({ anchorIndex, steer }) => ({
+          anchorIndex,
+          createdAt: steer.createdAt,
+          row: { kind: 'steer' as const, steer },
+        })),
+      ].sort(
+        (left, right) =>
+          left.anchorIndex - right.anchorIndex || Date.parse(left.createdAt) - Date.parse(right.createdAt),
+      ),
+    [asideAnchors, linkedSteerAnchors],
+  );
+  // Turn navigation indexes both Centaur echoes and durable linked-thread
+  // steers that have no harness echo.
+  const turns = useMemo(
+    () =>
+      [
+        ...userMessages.map((item) => ({ id: item.id, text: item.text, ts: item.ts ?? '' })),
+        ...visibleLinkedSteers.map((steer) => ({
+          id: `thread-steer-${steer.id}`,
+          text: steer.text,
+          ts: steer.createdAt,
+        })),
+      ]
+        .sort((left, right) => Date.parse(left.ts) - Date.parse(right.ts))
+        .map(({ id, text }) => ({ id, text })),
+    [userMessages, visibleLinkedSteers],
+  );
 
   // Manual expand/collapse overrides; default = open while running. When the
   // result arrives the card auto-collapses only if the view is pinned to the
@@ -1939,7 +2200,7 @@ export function SessionPane({
           )}
           <div ref={scrollRef} onScroll={onScroll} className="h-full overflow-y-auto px-3 py-2">
             <PlanPanel todos={stream.todos} plan={stream.plan} />
-            {stream.items.length === 0 && !activeTurn && (
+            {stream.items.length === 0 && visibleLinkedSteers.length === 0 && !activeTurn && (
               <div className="flex h-full items-center justify-center text-xs text-fg-muted">
                 {!displayTerminal ? (
                   <span className="animate-pulse">Waiting for agent output…</span>
@@ -1962,13 +2223,19 @@ export function SessionPane({
                 }
                 return lines;
               };
-              let asideCursor = 0;
-              const flushAsidesThrough = (index: number) => {
+              let threadCursor = 0;
+              const flushThreadRowsThrough = (index: number) => {
                 const lines: ReactNode[] = [];
-                while (asideCursor < asideAnchors.length && asideAnchors[asideCursor]!.anchorIndex <= index) {
-                  const { aside } = asideAnchors[asideCursor]!;
-                  lines.push(<PaneAsideRow key={`aside-${aside.id}`} aside={aside} />);
-                  asideCursor += 1;
+                while (threadCursor < threadAnchors.length && threadAnchors[threadCursor]!.anchorIndex <= index) {
+                  const row = threadAnchors[threadCursor]!.row;
+                  lines.push(
+                    row.kind === 'aside' ? (
+                      <PaneAsideRow key={`aside-${row.aside.id}`} aside={row.aside} />
+                    ) : (
+                      <LinkedSteerRow key={`linked-steer-${row.steer.id}`} steer={row.steer} />
+                    ),
+                  );
+                  threadCursor += 1;
                 }
                 return lines;
               };
@@ -1978,13 +2245,13 @@ export function SessionPane({
                   {rows.map((row) => {
                     const rowStartIndex = row.kind === 'hidden' ? row.startIndex : row.index;
                     const seatLinesBefore = flushSeatLinesThrough(rowStartIndex);
-                    const asideLinesBefore = flushAsidesThrough(rowStartIndex);
+                    const threadRowsBefore = flushThreadRowsThrough(rowStartIndex);
 
                     if (row.kind === 'change') {
                       return (
                         <Fragment key={`change-${row.change.change.id}`}>
                           {seatLinesBefore}
-                          {asideLinesBefore}
+                          {threadRowsBefore}
                           <div className="pl-3.5">
                             <InlineFileChange change={row.change.change} />
                           </div>
@@ -1996,10 +2263,10 @@ export function SessionPane({
                       return (
                         <Fragment key={row.key}>
                           {seatLinesBefore}
-                          {asideLinesBefore}
+                          {threadRowsBefore}
                           <HiddenWorkChip count={row.count} onClick={() => setTranscriptView('full')} />
                           {flushSeatLinesThrough(row.endIndex)}
-                          {flushAsidesThrough(row.endIndex)}
+                          {flushThreadRowsThrough(row.endIndex)}
                         </Fragment>
                       );
                     }
@@ -2008,7 +2275,7 @@ export function SessionPane({
                     return (
                       <Fragment key={item.id}>
                         {seatLinesBefore}
-                        {asideLinesBefore}
+                        {threadRowsBefore}
                         <AnnotatedTranscriptRow
                           handle={item.handle ?? null}
                           onMarkupEntry={item.type === 'text' ? openMarkupFromEntry : undefined}
@@ -2071,11 +2338,11 @@ export function SessionPane({
                     );
                   })}
                   {flushSeatLinesThrough(stream.items.length)}
-                  {flushAsidesThrough(Number.MAX_SAFE_INTEGER)}
+                  {flushThreadRowsThrough(Number.MAX_SAFE_INTEGER)}
                 </>
               );
             })()}
-            {pendingSteers.map((p) => (
+            {visiblePendingSteers.map((p) => (
               <div
                 key={p.id}
                 data-testid="user-steer-pending"
@@ -2089,6 +2356,7 @@ export function SessionPane({
                   provenance={p.provenance ? { provenance: p.provenance, acceptedByMe: p.acceptedByMe === true } : null}
                 />
                 <div className="whitespace-pre-wrap text-sm leading-relaxed text-fg-body">{p.text}</div>
+                <SteerAttachments attachments={p.attachments} />
               </div>
             ))}
             {artifactPresentations.length > 0 && (
@@ -3026,6 +3294,44 @@ const ToolCard = memo(
     prev.item.result?.content === next.item.result?.content &&
     prev.item.result?.is_error === next.item.result?.is_error,
 );
+
+/** A durable linked-thread steer promoted to the same chrome as harness turns. */
+function LinkedSteerRow({ steer }: { steer: LinkedSteer }) {
+  return (
+    <div
+      data-testid="user-steer"
+      data-turn={`thread-steer-${steer.id}`}
+      title={formatExactTimestamp(steer.createdAt) || undefined}
+      className="group pt-2 pb-0.5"
+    >
+      <SteerAuthorLine
+        author={steer.author}
+        iso={steer.createdAt}
+        time={formatTurnTime(steer.createdAt)}
+        provenance={null}
+      />
+      <MarkupSteerCard text={steer.text} />
+      <SteerAttachments attachments={steer.attachments} />
+      {steer.status === 'failed' ? <div className="mt-1 text-2xs text-danger-text">Not sent</div> : null}
+    </div>
+  );
+}
+
+function SteerAttachments({ attachments }: { attachments?: AttachmentMeta[] }) {
+  if (!attachments?.length) return null;
+  return (
+    <div className="mt-1 flex flex-wrap gap-1.5">
+      {attachments.map((attachment) => (
+        <span
+          key={attachment.id}
+          className="max-w-56 truncate rounded-md border border-edge bg-surface-raised/70 px-2 py-1 text-xs text-fg-secondary"
+        >
+          {attachment.filename}
+        </span>
+      ))}
+    </div>
+  );
+}
 
 /** A thread chat message (not a steer) interleaved into the pane transcript. */
 type PaneAside = { id: number; author: string; createdAt: string; text: string; pending?: boolean };

@@ -505,6 +505,37 @@ describe('durable op queue flushing', () => {
     }
   });
 
+  it('marks an optimistic thread steer failed after a durable HTTP rejection', async () => {
+    const storage = new MemoryOpStorage([
+      makeQueuedOp(
+        {
+          opId: 'steer-client-1',
+          opType: 'session.steer',
+          payload: {
+            sessionId: 'sess-1',
+            text: 'retry this',
+            postToThread: true,
+            channelId: 'ch-1',
+            threadRootEventId: 42,
+            clientMsgId: 'steer-client-1',
+            createdAt: '2026-06-11T12:00:00.000Z',
+          },
+        },
+        '2026-06-11T12:00:00.000Z',
+      ),
+    ]);
+    const actions: AppAction[] = [];
+    const steerApi = {
+      steerSession: vi.fn().mockRejectedValue(new ApiError(400, 'bad_request', 'bad')),
+    } as unknown as Api;
+    const queue = new DurableOpQueue({ storage, api: steerApi, dispatch: (action) => actions.push(action) });
+
+    await queue.flush();
+
+    expect(actions).toEqual([{ type: 'send-failed', channelId: 'ch-1', clientMsgId: 'steer-client-1' }]);
+    expect(await storage.listOps()).toEqual([]);
+  });
+
   it('retries op_in_flight without surfacing rejection and confirms on replay', async () => {
     vi.useFakeTimers();
     try {
