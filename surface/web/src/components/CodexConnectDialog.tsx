@@ -22,12 +22,17 @@ export function CodexConnectDialog({
 }) {
   const containerRef = useRef<HTMLFormElement>(null);
   const [flow, setFlow] = useState<CodexDeviceStartResponse | null>(null);
-  const [phase, setPhase] = useState<'starting' | 'waiting' | 'finalizing' | 'error' | 'expired'>('starting');
+  const [phase, setPhase] = useState<'starting' | 'waiting' | 'finalizing' | 'connected' | 'error' | 'expired'>(
+    'starting',
+  );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const completedRef = useRef(false);
+  const closedRef = useRef(false);
   const connected = status?.connected === true;
+  const connectedOnOpenRef = useRef(connected);
+  const externallyConnected = connected && !connectedOnOpenRef.current;
   const titleId = 'codex-connect-title';
   const statusErrorId = 'codex-connect-status-error';
   const errorId = 'codex-connect-error';
@@ -44,6 +49,12 @@ export function CodexConnectDialog({
     .join(' ');
 
   useDialog({ open: true, containerRef, onClose: onCancel, closeOnOutsidePointer: true });
+
+  const closeOnce = useCallback(() => {
+    if (closedRef.current) return;
+    closedRef.current = true;
+    onCancel();
+  }, [onCancel]);
 
   const start = useCallback(async () => {
     setPhase('starting');
@@ -65,7 +76,7 @@ export function CodexConnectDialog({
   }, [start]);
 
   useEffect(() => {
-    if (!flow || (phase !== 'waiting' && phase !== 'finalizing')) return undefined;
+    if (!flow || externallyConnected || (phase !== 'waiting' && phase !== 'finalizing')) return undefined;
     let cancelled = false;
     let timeout: ReturnType<typeof setTimeout> | undefined;
 
@@ -85,7 +96,7 @@ export function CodexConnectDialog({
         if (result.status === 'connected') {
           completedRef.current = true;
           await onSave(PROVIDER_CREDENTIALS_REFRESH_SENTINEL);
-          if (!cancelled) onCancel();
+          if (!cancelled) closeOnce();
           return;
         }
         setPhase(result.status);
@@ -107,7 +118,15 @@ export function CodexConnectDialog({
       cancelled = true;
       if (timeout) clearTimeout(timeout);
     };
-  }, [flow, onCancel, onSave, phase]);
+  }, [closeOnce, externallyConnected, flow, onSave, phase]);
+
+  useEffect(() => {
+    if (!externallyConnected) return;
+    completedRef.current = true;
+    setPhase('connected');
+    setError(null);
+    closeOnce();
+  }, [closeOnce, externallyConnected]);
 
   function openSignIn() {
     if (!flow?.verificationUri) return;

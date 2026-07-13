@@ -325,6 +325,45 @@ describe('session pane folds the B_tooltest stream', () => {
     expect(onConnectGitHub).toHaveBeenCalled();
   });
 
+  it('keeps Codex reconnect available when an auth-required session is terminal', () => {
+    const onConnect = vi.fn();
+    render(
+      <SessionPane
+        session={bSession({
+          status: 'failed',
+          completedAt: new Date().toISOString(),
+          providerAuthRequired: {
+            provider: 'codex',
+            userId: me.id,
+            reason: 'invalid_token',
+            message: 'Codex authentication failed. Reconnect Codex to continue this session.',
+            at: new Date().toISOString(),
+          },
+        })}
+        me={me}
+        watchers={[]}
+        onClose={() => {}}
+        onAnswerQuestion={async () => {}}
+        providerCredentials={{
+          codex: {
+            provider: 'codex',
+            connected: false,
+            status: 'needs_auth',
+            lastValidatedAt: null,
+            lastError: null,
+            updatedAt: null,
+          },
+        }}
+        onConnectProvider={onConnect}
+      />,
+    );
+
+    expect(screen.getByTestId('provider-auth-banner')).toBeTruthy();
+    expect(screen.getByText(/Reconnect Codex to continue this session/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Connect Codex' }));
+    expect(onConnect).toHaveBeenCalledWith('codex');
+  });
+
   it('renders the GitHub identity mode used by the session', () => {
     render(
       <SessionPane

@@ -18,15 +18,29 @@ vi.mock('../api', () => ({
 const staleError = 'Codex authentication failed. Reconnect Codex to continue this session.';
 
 function renderDialog(onSave = vi.fn().mockResolvedValue(undefined), onCancel = vi.fn()) {
-  render(
+  const onDisconnect = vi.fn().mockResolvedValue(undefined);
+  const view = render(
     <CodexConnectDialog
       status={{ connected: false, lastError: staleError } as never}
       onCancel={onCancel}
       onSave={onSave}
-      onDisconnect={vi.fn().mockResolvedValue(undefined)}
+      onDisconnect={onDisconnect}
     />,
   );
-  return { onCancel, onSave };
+  return {
+    onCancel,
+    onSave,
+    rerenderConnected() {
+      view.rerender(
+        <CodexConnectDialog
+          status={{ connected: true, lastError: null } as never}
+          onCancel={onCancel}
+          onSave={onSave}
+          onDisconnect={onDisconnect}
+        />,
+      );
+    },
+  };
 }
 
 async function advance(ms: number) {
@@ -92,6 +106,35 @@ describe('CodexConnectDialog', () => {
     await advance(2000);
 
     expect(onSave).toHaveBeenCalledWith('__refresh__');
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it('closes once when status connects while credential convergence is still pending', async () => {
+    let resolveSave!: () => void;
+    const onSave = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveSave = resolve;
+        }),
+    );
+    pollCodexDeviceFlow.mockResolvedValueOnce({ status: 'connected' });
+    const { onCancel, rerenderConnected } = renderDialog(onSave);
+
+    await settleStart();
+    await advance(1000);
+    expect(onSave).toHaveBeenCalledWith('__refresh__');
+    expect(onCancel).not.toHaveBeenCalled();
+
+    rerenderConnected();
+    await settleStart();
+    expect(onCancel).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText('Waiting for approval on OpenAI...')).toBeNull();
+    expect(screen.queryByText('This Codex sign-in expired')).toBeNull();
+
+    await act(async () => {
+      resolveSave();
+      await Promise.resolve();
+    });
     expect(onCancel).toHaveBeenCalledTimes(1);
   });
 
