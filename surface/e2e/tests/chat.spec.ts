@@ -662,9 +662,10 @@ test('session question requested while disconnected heals without reload', async
   await expect(sessionRow).toBeVisible({ timeout: 15_000 });
   await expect(sessionRow.getByText('Needs you')).toBeVisible();
   await sessionRow.getByRole('button', { name: '1 reply →' }).click();
-  // The question card renders its prompt text in its own element (HITL
-  // transcript-fidelity rendering — no emoji prefix).
-  await expect(page.getByText(injected.questionText)).toBeVisible();
+  // The question now renders at more than one altitude by design — the feed
+  // card flips to it AND the thread question card carries it. Assert at least
+  // one is visible instead of strict-mode single-match.
+  await expect(page.getByText(injected.questionText).first()).toBeVisible();
   expect(injected.rootId).toBeGreaterThan(0);
   expect(injected.sessionId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
 });
