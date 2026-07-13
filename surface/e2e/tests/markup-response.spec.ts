@@ -147,7 +147,7 @@ async function openMarkupSession(
   });
 
   await page.goto(`/s/${sessionId}`);
-  await expect(page.getByText('The rollout has three phases.')).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText('The rollout has three phases.')).toBeVisible();
   return { sessionId, handle: entryHandle, threadKey };
 }
 

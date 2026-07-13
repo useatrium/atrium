@@ -103,7 +103,7 @@ test.describe('Files Hub', () => {
     });
     // Pre-send preview: an <img> whose src is a local object URL (lane F).
     const thumb = page.locator('img[src^="blob:"]').first();
-    await expect(thumb).toBeVisible({ timeout: 10_000 });
+    await expect(thumb).toBeVisible();
   });
 
   test('a message attachment opens in the shared lightbox', async ({ page }) => {
@@ -233,7 +233,7 @@ test.describe('Files Hub', () => {
             thumbUrl = f?.thumbnailUrl;
             return thumbUrl ?? null;
           },
-          { timeout: 15_000, intervals: [500, 1000, 2000] },
+          { intervals: [500, 1000, 2000] },
         )
         .not.toBeNull();
 

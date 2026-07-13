@@ -13,7 +13,10 @@ async function assertPortFree(port, label) {
     server.once('error', () => {
       reject(
         new Error(
-          `${label} port ${port} is already in use. Stop the dev stack before running e2e, or set E2E_SERVER_PORT/E2E_WEB_PORT to free ports.`,
+          `${label} port ${port} is already in use. Ports are derived per checkout, so this is either your own dev stack, ` +
+            `or a rare hash collision with another worktree — set E2E_PORT_OFFSET to a different number to break the tie. ` +
+            `Do NOT kill whatever holds the port without checking: on a box running several worktrees it is probably ` +
+            `another session's live e2e run.`,
         ),
       );
     });

@@ -142,7 +142,7 @@ test('channel read position lands on first unread and marks read only at bottom'
     // Away from the bottom, the jump pill must offer a way down — this is the
     // suite's only coverage of it, so it stays even though it's incidental to
     // the cursor story.
-    await expect(page.getByTestId('jump-to-latest')).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByTestId('jump-to-latest')).toBeVisible();
 
     // Leave the partially-read channel WITHOUT scrolling to the bottom. Its
     // sidebar badge must stay unread in-session (no reload) — select-channel

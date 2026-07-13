@@ -112,7 +112,7 @@ async function openSeededSession(page: Page, prefix: string, includeWork = false
     });
   });
   await page.goto(`/s/${sessionId}`);
-  await expect(page.getByTestId('user-steer')).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId('user-steer')).toBeVisible();
 }
 
 test('focus mode hides agent work and the persisted toggle restores it', async ({ page }) => {
@@ -132,7 +132,7 @@ test('focus mode hides agent work and the persisted toggle restores it', async (
   await page.getByRole('button', { name: 'Show agent work' }).click();
   await page.reload();
 
-  await expect(page.getByTestId('tool-card')).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId('tool-card')).toBeVisible();
   // Full view persisted: the menu offers to hide the work again.
   await page.getByRole('button', { name: 'Agent actions' }).click();
   await expect(page.getByRole('button', { name: 'Hide agent work' })).toBeVisible();
@@ -171,7 +171,7 @@ test('session pane resizes by dragging its left edge and the width persists acro
 
   // Persisted: a fresh load opens at the dragged width.
   await page.reload();
-  await expect(page.getByTestId('user-steer')).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId('user-steer')).toBeVisible();
   const reloaded = (await page
     .locator('aside')
     .filter({ has: page.getByTestId('pane-resize-handle') })

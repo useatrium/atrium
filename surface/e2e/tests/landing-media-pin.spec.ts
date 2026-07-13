@@ -151,8 +151,8 @@ test('fully read channel stays pinned when a landing image finishes loading late
 
     const log = page.getByRole('log', { name: 'Messages' });
     await expect(log.getByText('late image attachment', { exact: true })).toBeVisible();
-    await expect.poll(() => imageRequestSeen, { timeout: 10_000 }).toBe(true);
-    await expect.poll(() => distanceFromBottom(log), { timeout: 10_000 }).toBeLessThan(8);
+    await expect.poll(() => imageRequestSeen).toBe(true);
+    await expect.poll(() => distanceFromBottom(log)).toBeLessThan(8);
     const scrollHeightInFlight = await scrollHeight(log);
     releaseImageResponse();
 
@@ -170,7 +170,7 @@ test('fully read channel stays pinned when a landing image finishes loading late
 
     const scrollHeightComplete = await scrollHeight(log);
     expect(Math.abs(scrollHeightComplete - scrollHeightInFlight)).toBeLessThanOrEqual(2);
-    await expect.poll(() => distanceFromBottom(log), { timeout: 10_000 }).toBeLessThan(8);
+    await expect.poll(() => distanceFromBottom(log)).toBeLessThan(8);
   } finally {
     releaseImageResponse();
     await writer.dispose();
