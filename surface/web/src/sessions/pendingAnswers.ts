@@ -1,0 +1,182 @@
+import { ApiError, randomId } from '@atrium/surface-client';
+import { showErrorToast } from '../components/Toasts';
+import { sessionsApi } from './api';
+
+/**
+ * An answer to an agent question is often irreversible on the agent's side
+ * ("Run now" takes the write lock), so the driver's click does not post
+ * immediately: it is *scheduled*, and for this long the card shows
+ * "Answered: <label> · Undo (5s)".
+ *
+ * The schedule lives here — module scope, not component state — because the
+ * window must survive the card unmounting (route change, pane close, the feed
+ * scrolling the card out of view). Dropping a driver's answer silently would
+ * be worse than the missing undo.
+ */
+export const ANSWER_UNDO_MS = 5_000;
+
+export type ScheduledAnswerStatus = 'scheduled' | 'sending' | 'sent' | 'failed';
+
+export interface ScheduledAnswer {
+  sessionId: string;
+  questionId: string;
+  answers: Record<string, { answers: string[] }>;
+  /** What the driver picked, for the "Answered: …" line ("Run now"). */
+  label: string;
+  /** Epoch ms at which the answer actually posts. */
+  submitAt: number;
+  status: ScheduledAnswerStatus;
+}
+
+type Submit = (sessionId: string, questionId: string, answers: Record<string, { answers: string[] }>) => Promise<void>;
+
+interface Slot {
+  entry: ScheduledAnswer;
+  submit: Submit;
+  timer: ReturnType<typeof setTimeout> | null;
+}
+
+const slots = new Map<string, Slot>();
+const listeners = new Set<() => void>();
+
+function key(sessionId: string, questionId: string): string {
+  return `${sessionId}\u0000${questionId}`;
+}
+
+function emit(): void {
+  for (const listener of listeners) listener();
+}
+
+function setStatus(slot: Slot, status: ScheduledAnswerStatus): void {
+  slot.entry = { ...slot.entry, status };
+}
+
+const defaultSubmit: Submit = (sessionId, questionId, answers) =>
+  sessionsApi.answerQuestion(sessionId, questionId, answers, randomId());
+
+/** The question is gone (someone else answered, the agent gave up) — a 409. */
+function isResolvedRace(err: unknown): boolean {
+  return err instanceof ApiError && err.status === 409;
+}
+
+function fire(slotKey: string): void {
+  const slot = slots.get(slotKey);
+  if (!slot || slot.entry.status !== 'scheduled') return;
+  slot.timer = null;
+  setStatus(slot, 'sending');
+  emit();
+  const { sessionId, questionId, answers } = slot.entry;
+  slot
+    .submit(sessionId, questionId, answers)
+    .then(() => {
+      const current = slots.get(slotKey);
+      if (!current) return;
+      // Held (not deleted) until the session's pendingQuestion clears, so the
+      // card shows "Answered: …" straight through instead of blinking back to
+      // the form while the server event is in flight.
+      setStatus(current, 'sent');
+      emit();
+    })
+    .catch((err) => {
+      const current = slots.get(slotKey);
+      if (!current) return;
+      if (isResolvedRace(err)) {
+        slots.delete(slotKey);
+        emit();
+        return;
+      }
+      setStatus(current, 'failed');
+      emit();
+      // The card may well be unmounted by now — say it out loud either way.
+      showErrorToast("Answer didn't send. Open the session and try again.");
+    });
+}
+
+export function scheduleAnswer(input: {
+  sessionId: string;
+  questionId: string;
+  answers: Record<string, { answers: string[] }>;
+  label: string;
+  /** Optimistic/queued path (the pane). Defaults to the direct API call. */
+  submit?: Submit;
+}): void {
+  const slotKey = key(input.sessionId, input.questionId);
+  const existing = slots.get(slotKey);
+  // Too late to change your mind once it is on the wire.
+  if (existing?.entry.status === 'sending') return;
+  // A second answer inside the window replaces the first outright — including
+  // its countdown; the driver gets a fresh 5s on the answer they actually see.
+  if (existing?.timer) clearTimeout(existing.timer);
+  const slot: Slot = {
+    entry: {
+      sessionId: input.sessionId,
+      questionId: input.questionId,
+      answers: input.answers,
+      label: input.label,
+      submitAt: Date.now() + ANSWER_UNDO_MS,
+      status: 'scheduled',
+    },
+    submit: input.submit ?? defaultSubmit,
+    timer: null,
+  };
+  slots.set(slotKey, slot);
+  slot.timer = setTimeout(() => fire(slotKey), ANSWER_UNDO_MS);
+  emit();
+}
+
+/** The driver hit Undo — nothing is posted, the form comes back intact. */
+export function undoAnswer(sessionId: string, questionId: string): void {
+  const slotKey = key(sessionId, questionId);
+  const slot = slots.get(slotKey);
+  if (!slot || slot.entry.status !== 'scheduled') return;
+  if (slot.timer) clearTimeout(slot.timer);
+  slots.delete(slotKey);
+  emit();
+}
+
+/**
+ * The question resolved without us (another user answered, the agent cancelled
+ * it). Cancel a still-scheduled answer rather than posting into a dead
+ * question, and clear any terminal entry we were only holding for display.
+ */
+export function releaseAnswer(sessionId: string, questionId: string): void {
+  const slotKey = key(sessionId, questionId);
+  const slot = slots.get(slotKey);
+  if (!slot) return;
+  if (slot.entry.status === 'sending') return; // in flight; its own handler cleans up
+  if (slot.timer) clearTimeout(slot.timer);
+  slots.delete(slotKey);
+  emit();
+}
+
+export function getScheduledAnswer(sessionId: string, questionId: string): ScheduledAnswer | undefined {
+  return slots.get(key(sessionId, questionId))?.entry;
+}
+
+export function subscribeScheduledAnswers(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
+/** Post every waiting answer now — the tab is going away. Best effort. */
+export function flushScheduledAnswers(): void {
+  for (const [slotKey, slot] of slots) {
+    if (slot.entry.status !== 'scheduled') continue;
+    if (slot.timer) clearTimeout(slot.timer);
+    slot.timer = null;
+    fire(slotKey);
+  }
+}
+
+/** Test-only reset. */
+export function resetScheduledAnswers(): void {
+  for (const slot of slots.values()) if (slot.timer) clearTimeout(slot.timer);
+  slots.clear();
+  emit();
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('pagehide', flushScheduledAnswers);
+}

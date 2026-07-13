@@ -196,6 +196,44 @@ describe('MessageRow', () => {
     await waitFor(() => expect(suggestAnswer).toHaveBeenCalledWith('s-1', 'Wait for the smoke test'));
   });
 
+  it('replaces the answer form with who answered, once the question resolves', () => {
+    renderRow(
+      {
+        sessionId: 's-1',
+        sessionEventType: 'question_requested',
+        sessionEventPayload: {
+          questionId: 'pending-1',
+          questions: [{ question: 'Should we deploy?' }],
+        },
+      },
+      {
+        session: {
+          id: 's-1',
+          driverId: 'u-2',
+          pendingQuestion: null,
+          questionEvents: [
+            {
+              id: 12,
+              questionId: 'pending-1',
+              kind: 'answered',
+              at: new Date().toISOString(),
+              actorId: 'u-2',
+              actorName: 'Maya',
+              answers: [{ id: 'deploy', header: 'Deploy', answers: ['Deploy now'], count: 1 }],
+            },
+          ],
+        } as never,
+        onAnswerSessionQuestion: vi.fn(async () => {}),
+        onSuggestSessionAnswer: vi.fn(async () => {}),
+      },
+    );
+
+    expect(screen.queryByTestId('inline-question-answer')).not.toBeInTheDocument();
+    expect(screen.getByText('Answered by')).toBeInTheDocument();
+    expect(screen.getByText('Maya')).toBeInTheDocument();
+    expect(screen.getByText('Deploy now')).toBeInTheDocument();
+  });
+
   it('keeps answered question cards unchanged', () => {
     renderRow(
       {

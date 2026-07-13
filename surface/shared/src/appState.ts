@@ -566,6 +566,9 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         // A slow GET must never roll back a status WS already advanced.
         status: existing ? maxSessionStatus(existing.status, action.session.status) : action.session.status,
         pendingQuestion: action.session.pendingQuestion ?? existing?.pendingQuestion ?? null,
+        // The durable answered trace: a fetch that predates the answer must not
+        // erase what WS already folded.
+        answeredQuestion: action.session.answeredQuestion ?? existing?.answeredQuestion ?? null,
         providerAuthRequired: action.session.providerAuthRequired ?? existing?.providerAuthRequired ?? null,
         ...(existing?.latestActivity ? { latestActivity: existing.latestActivity } : {}),
         questionEvents,

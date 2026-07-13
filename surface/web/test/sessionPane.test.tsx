@@ -11,6 +11,7 @@ import { appReducer, initialAppState, type AppState } from '@atrium/surface-clie
 import { reconcileLinkedSteers, SessionPane } from '../src/sessions/SessionPane';
 import { api } from '../src/api';
 import { sessionsApi } from '../src/sessions/api';
+import { ANSWER_UNDO_MS, resetScheduledAnswers } from '../src/sessions/pendingAnswers';
 import type { Session } from '../src/sessions/types';
 import type { ChatMessage, UserRef, WireEvent } from '@atrium/surface-client';
 import { FakeEventSource, installFakeEventSource } from './helpers/fakeEventSource';
@@ -86,6 +87,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
+  resetScheduledAnswers();
   vi.restoreAllMocks();
   vi.useRealTimers();
   vi.unstubAllGlobals();
@@ -1243,8 +1245,16 @@ describe('answer proposals', () => {
 
     fireEvent.click(screen.getByText('Summary'));
     fireEvent.click(screen.getByText('Timeline'));
+    vi.useFakeTimers({ shouldAdvanceTime: true });
     fireEvent.click(screen.getByRole('button', { name: 'Answer' }));
 
+    // The driver's answer is scheduled, not posted — 5s of undo comes first.
+    expect(screen.getByTestId('question-undo').textContent).toBe('Undo (5s)');
+    expect(onAnswerQuestion).not.toHaveBeenCalled();
+
+    await act(async () => {
+      vi.advanceTimersByTime(ANSWER_UNDO_MS + 100);
+    });
     await waitFor(() => expect(onAnswerQuestion).toHaveBeenCalledTimes(1));
     expect(onAnswerQuestion).toHaveBeenCalledWith('s-b', 'q-preview', {
       sections: { answers: ['Summary', 'Timeline'] },

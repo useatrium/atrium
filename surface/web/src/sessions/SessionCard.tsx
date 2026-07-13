@@ -5,6 +5,7 @@ import {
   isPendingSessionId,
   isStalledSessionStatus,
   isTerminalSessionStatus,
+  sessionAnsweredQuestion,
   sessionDriverId,
   type Session,
 } from './types';
@@ -167,6 +168,8 @@ export function SessionCard({
     if ((e.target as HTMLElement).closest('button,a')) return;
     open();
   };
+  const livePending = !terminal && session.pendingQuestion?.questions[0] ? session.pendingQuestion : null;
+  const answered = sessionAnsweredQuestion(session);
 
   return (
     // biome-ignore lint/a11y/noStaticElementInteractions: card click mirrors the nested title button; keyboard users use that button.
@@ -203,32 +206,34 @@ export function SessionCard({
 
       {/* The card IS the channel's view of a live question — it flips to the
           canonical answerable QuestionCard in place instead of posting a
-          second channel message. Compact surfaces point at it instead. */}
+          second channel message, and the QuestionCard keeps the seat once the
+          question resolves: "✓ Answered by <name> · <option>". Compact
+          surfaces (the rail) point at a LIVE question instead, and show
+          nothing once it's answered. */}
       {!spawnFailed &&
-        !terminal &&
-        session.pendingQuestion?.questions[0] &&
-        (questionDisplay === 'pointer' ? (
+        (livePending && questionDisplay === 'pointer' ? (
           <button
             type="button"
             data-testid="question-pointer"
             onClick={open}
             className="mt-1.5 flex w-full items-center gap-1.5 rounded-md border border-warning-border/40 bg-warning-tint/10 px-2 py-1.5 text-left text-xs text-warning-text-strong hover:bg-warning-tint/25"
           >
-            <span className="min-w-0 flex-1 truncate">{session.pendingQuestion.questions[0].question}</span>
+            <span className="min-w-0 flex-1 truncate">{livePending.questions[0]?.question}</span>
             <span className="shrink-0 font-semibold">Answer →</span>
           </button>
-        ) : (
+        ) : questionDisplay === 'full' && (livePending || answered) ? (
           <QuestionCard
             variant="card"
             sessionId={session.id}
-            pending={session.pendingQuestion}
+            pending={livePending}
+            answered={answered}
             isDriver={meId != null && sessionDriverId(session) === meId}
             driverName={session.driverName ?? session.spawnerName ?? 'the driver'}
             proposals={(session.answerProposals ?? []).filter(
-              (p) => p.status === 'pending' && p.questionId === session.pendingQuestion?.questionId,
+              (p) => p.status === 'pending' && p.questionId === livePending?.questionId,
             )}
           />
-        ))}
+        ) : null)}
 
       {/* Every token names itself ("by Maya Chen · codex agent"), so the row
           reads as a sentence instead of a string of unlabelled ids. One line,

@@ -5,8 +5,10 @@ import {
   channelId,
   confirmedRowsWithText,
   createTestChannel,
+  e2eDatabaseUrl,
   expectRead,
   expectUnread,
+  injectQuestionRequested,
   login,
   loginViaForm,
   mainComposer,
@@ -19,105 +21,6 @@ import {
   unique,
   warmOfflineShell,
 } from './helpers.js';
-
-const e2eDatabaseUrl = process.env.E2E_DATABASE_URL ?? 'postgres://atrium:atrium@localhost:5433/atrium_e2e';
-
-const questionPrompts = [
-  {
-    id: 'choice',
-    header: 'Decision',
-    question: 'Which deployment path should I take?',
-    options: [
-      { label: 'Fast', description: 'Ship the smallest change' },
-      { label: 'Careful', description: 'Run the full suite first' },
-    ],
-  },
-];
-
-async function injectQuestionRequested(args: {
-  handle: string;
-  channelId: string;
-  title: string;
-}): Promise<{ rootId: number; sessionId: string; questionText: string }> {
-  const pool = new Pool({ connectionString: e2eDatabaseUrl });
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    const user = await client.query<{ id: string }>('SELECT id FROM users WHERE handle = $1', [args.handle]);
-    const channel = await client.query<{ workspace_id: string }>('SELECT workspace_id FROM channels WHERE id = $1', [
-      args.channelId,
-    ]);
-    if (!user.rows[0] || !channel.rows[0]) throw new Error('missing e2e user or channel');
-
-    const userId = user.rows[0].id;
-    const workspaceId = channel.rows[0].workspace_id;
-    const session = await client.query<{ id: string }>(
-      `INSERT INTO sessions (
-         workspace_id, channel_id, centaur_thread_key, harness, title, status, spawned_by,
-         driver_id, current_execution_id, assignment_generation
-       )
-       VALUES ($1, $2, $3, 'claude-code', $4, 'running', $5, $5, 'exe_e2e_question', 1)
-       RETURNING id`,
-      [workspaceId, args.channelId, `thread-${unique('question')}`, args.title, userId],
-    );
-    const sessionId = session.rows[0]!.id;
-    const root = await client.query<{ id: string }>(
-      `INSERT INTO events (workspace_id, channel_id, type, actor_id, payload)
-       VALUES ($1, $2, 'session.spawned', $3, $4)
-       RETURNING id`,
-      [
-        workspaceId,
-        args.channelId,
-        userId,
-        JSON.stringify({
-          sessionId,
-          title: args.title,
-          harness: 'claude-code',
-          by: userId,
-        }),
-      ],
-    );
-    const rootId = Number(root.rows[0]!.id);
-    const pendingQuestion = {
-      questionId: 'q-main',
-      turnId: 'turn-1',
-      eventId: 1,
-      questions: questionPrompts,
-    };
-    await client.query(
-      `UPDATE sessions
-       SET thread_root_event_id = $1,
-           pending_question = $2,
-           last_event_id = GREATEST(last_event_id, $3)
-       WHERE id = $4`,
-      [rootId, JSON.stringify(pendingQuestion), pendingQuestion.eventId, sessionId],
-    );
-    await client.query(
-      `INSERT INTO events (workspace_id, channel_id, thread_root_event_id, type, actor_id, payload)
-       VALUES ($1, $2, $3, 'session.question_requested', $4, $5)`,
-      [
-        workspaceId,
-        args.channelId,
-        rootId,
-        userId,
-        JSON.stringify({
-          sessionId,
-          questionId: pendingQuestion.questionId,
-          questions: questionPrompts,
-          permalink: `/s/${sessionId}`,
-        }),
-      ],
-    );
-    await client.query('COMMIT');
-    return { rootId, sessionId, questionText: questionPrompts[0]!.question };
-  } catch (err) {
-    await client.query('ROLLBACK');
-    throw err;
-  } finally {
-    client.release();
-    await pool.end();
-  }
-}
 
 async function injectTranscriptSession(args: {
   handle: string;
