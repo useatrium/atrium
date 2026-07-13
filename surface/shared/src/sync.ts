@@ -32,6 +32,9 @@ const DraftSnapshotEntrySchema = Schema.mutable(
   Schema.Struct({
     text: Schema.String,
     updatedAt: Schema.String,
+    // Decode-with-default: pre-076 servers (and cached snapshots) omit it. A
+    // missing flag means "ordinary chat draft", which is the safe reading.
+    agentIntent: Schema.optionalWith(Schema.Boolean, { default: () => false }),
   }),
 );
 

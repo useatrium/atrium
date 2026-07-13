@@ -40,13 +40,61 @@ describe('agent-mode composer', () => {
         onSend={vi.fn()}
         onTyping={vi.fn()}
         onAgentSend={onAgentSend}
-        agentTargetLabel="New agent"
+        agentTargetLabel="New agent · #engineering"
+        chatTargetLabel="#engineering"
       />,
     );
+    expect(screen.getByTestId('composer-audience-pill')).toHaveTextContent('💬 #engineering');
     fireEvent.change(screen.getByLabelText('Message'), { target: { value: '!! fix the mobile app' } });
+    expect(screen.getByTestId('composer-audience-pill')).toHaveTextContent('⚡ New agent · #engineering');
     expect(screen.getByTestId('agent-mode-strip')).toBeInTheDocument();
     fireEvent.click(screen.getByLabelText('Send message'));
     expect(onAgentSend).toHaveBeenCalledWith('fix the mobile app', undefined);
+  });
+
+  it('taps the pill to flip audience, and keeps the draft marked for the agent on the way out', () => {
+    const onDraftChange = vi.fn();
+    renderWithTheme(
+      <Composer
+        placeholder="Message"
+        onSend={vi.fn()}
+        onTyping={vi.fn()}
+        onAgentSend={vi.fn()}
+        draftKey="channel:c1"
+        onDraftChange={onDraftChange}
+        agentTargetLabel="New agent · #engineering"
+        chatTargetLabel="#engineering"
+      />,
+    );
+    fireEvent.change(screen.getByLabelText('Message'), { target: { value: '!! fix the build' } });
+
+    fireEvent.click(screen.getByTestId('composer-audience-pill'));
+
+    expect(screen.getByTestId('composer-audience-pill')).toHaveTextContent('💬 #engineering');
+    expect(screen.getByTestId('composer-agent-intent-strip')).toHaveTextContent('Agent mode off — draft kept');
+    expect(onDraftChange).toHaveBeenLastCalledWith('channel:c1', 'fix the build', true);
+  });
+
+  it('restores an agent-intent draft wearing its strip rather than as a chat draft', () => {
+    renderWithTheme(
+      <Composer
+        placeholder="Message"
+        onSend={vi.fn()}
+        onTyping={vi.fn()}
+        onAgentSend={vi.fn()}
+        draftKey="channel:c1"
+        initialDraft="fix the build"
+        initialDraftAgentIntent
+        agentTargetLabel="New agent · #engineering"
+        chatTargetLabel="#engineering"
+      />,
+    );
+
+    expect(screen.getByTestId('composer-agent-intent-strip')).toBeInTheDocument();
+    expect(screen.getByTestId('composer-audience-pill')).toHaveTextContent('💬 #engineering');
+
+    fireEvent.click(screen.getByLabelText('Resume agent mode'));
+    expect(screen.getByTestId('composer-audience-pill')).toHaveTextContent('⚡ New agent · #engineering');
   });
 
   it('uses Suggest wording for a non-driver attached session', () => {

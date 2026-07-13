@@ -49,6 +49,7 @@ export default function ThreadScreen() {
   const [attachmentLightbox, setAttachmentLightbox] = useState<AttachmentLightboxState | null>(null);
   const [editing, setEditing] = useState<ChatMessage | null>(null);
   const [initialDraft, setInitialDraft] = useState('');
+  const [initialDraftAgentIntent, setInitialDraftAgentIntent] = useState(false);
   const [agentConfigVisible, setAgentConfigVisible] = useState(false);
   const [agentTarget, setAgentTarget] = useState<AgentModeTarget>('steer');
   const [agentEffort, setAgentEffort] = useState<AgentEffort>('medium');
@@ -65,7 +66,7 @@ export default function ThreadScreen() {
   const isDriver = attachedSession != null && sessionDriverId(attachedSession) === me.id;
   const agentTargetLabel = attachedSession
     ? `${agentTarget === 'new' ? 'New session' : isDriver ? 'Steer' : 'Suggest'} · ${attachedSession.title}`
-    : 'New session in this thread';
+    : 'New agent · this thread';
 
   useEffect(() => {
     if (!draftKey) return;
@@ -77,12 +78,14 @@ export default function ThreadScreen() {
     if (!draftKey) return;
     let disposed = false;
     setInitialDraft('');
+    setInitialDraftAgentIntent(false);
     void getDraft(draftKey)
       .then((draft) => {
         if (disposed) return;
-        const nextDraft = draft || prefill || '';
+        const nextDraft = draft?.text || prefill || '';
         setInitialDraft(nextDraft);
-        if (!draft && prefill) void setDraft(draftKey, prefill);
+        setInitialDraftAgentIntent(draft?.agentIntent === true);
+        if (!draft?.text && prefill) void setDraft(draftKey, prefill);
       })
       .catch((err: unknown) => {
         console.warn('failed to load thread draft', err);
@@ -92,7 +95,10 @@ export default function ThreadScreen() {
     };
   }, [draftKey, getDraft, prefill, setDraft]);
 
-  const saveDraft = useCallback((key: string, text: string) => setDraft(key, text), [setDraft]);
+  const saveDraft = useCallback(
+    (key: string, text: string, agentIntent: boolean) => setDraft(key, text, agentIntent),
+    [setDraft],
+  );
 
   const openAttachment = useCallback((message: ChatMessage, index: number) => {
     const attachments = message.attachments ?? [];
@@ -172,6 +178,7 @@ export default function ThreadScreen() {
           onTyping={() => chat.notifyTyping(channelId)}
           draftKey={draftKey}
           initialDraft={initialDraft}
+          initialDraftAgentIntent={initialDraftAgentIntent}
           onDraftChange={saveDraft}
           onDraftPersisted={chat.enqueueDraft}
           onDraftTouched={chat.markDraftTouched}
@@ -221,6 +228,7 @@ export default function ThreadScreen() {
             });
           }}
           agentTargetLabel={agentTargetLabel}
+          chatTargetLabel="this thread"
           onConfigureAgentMode={() => setAgentConfigVisible(true)}
         />
       </KeyboardAvoidingView>

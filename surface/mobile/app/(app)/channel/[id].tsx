@@ -133,6 +133,7 @@ export default function ChannelScreen() {
   const [attachmentLightbox, setAttachmentLightbox] = useState<AttachmentLightboxState | null>(null);
   const [editing, setEditing] = useState<ChatMessage | null>(null);
   const [initialDraft, setInitialDraft] = useState('');
+  const [initialDraftAgentIntent, setInitialDraftAgentIntent] = useState(false);
   const [spawnSheetVisible, setSpawnSheetVisible] = useState(false);
   const [spawnSheetInitialTask, setSpawnSheetInitialTask] = useState('');
   const [agentConfigVisible, setAgentConfigVisible] = useState(false);
@@ -143,6 +144,11 @@ export default function ChannelScreen() {
 
   const title = channel ? channelLabel(channel, me.id) : '';
   const isDm = channel?.kind === 'dm';
+  // What the audience pill calls this room, in both modes.
+  const channelAudienceLabel =
+    channel == null || channel.kind === 'dm' || channel.kind === 'gdm' || channel.kind === 'private'
+      ? title || 'this channel'
+      : `#${title}`;
   const isGroupLike = channel?.kind === 'private' || channel?.kind === 'gdm';
   const draftKey = id ? `channel:${id}` : '';
   const channelRecoverableCall = id ? (calls.recoverableCalls.find((call) => call.channelId === id) ?? null) : null;
@@ -163,9 +169,12 @@ export default function ChannelScreen() {
     if (!draftKey) return;
     let disposed = false;
     setInitialDraft('');
+    setInitialDraftAgentIntent(false);
     void getDraft(draftKey)
       .then((draft) => {
-        if (!disposed) setInitialDraft(draft ?? '');
+        if (disposed) return;
+        setInitialDraft(draft?.text ?? '');
+        setInitialDraftAgentIntent(draft?.agentIntent === true);
       })
       .catch((err: unknown) => {
         console.warn('failed to load draft', err);
@@ -175,7 +184,10 @@ export default function ChannelScreen() {
     };
   }, [draftKey, getDraft]);
 
-  const saveDraft = useCallback((key: string, text: string) => setDraft(key, text), [setDraft]);
+  const saveDraft = useCallback(
+    (key: string, text: string, agentIntent: boolean) => setDraft(key, text, agentIntent),
+    [setDraft],
+  );
 
   const openThread = useCallback(
     (m: ChatMessage) => {
@@ -466,6 +478,7 @@ export default function ChannelScreen() {
           onTyping={() => chat.notifyTyping(id)}
           draftKey={draftKey}
           initialDraft={initialDraft}
+          initialDraftAgentIntent={initialDraftAgentIntent}
           onDraftChange={saveDraft}
           onDraftPersisted={chat.enqueueDraft}
           onDraftTouched={chat.markDraftTouched}
@@ -501,7 +514,8 @@ export default function ChannelScreen() {
               ...(anchorEventId != null ? { anchorEventId } : {}),
             })
           }
-          agentTargetLabel="New agent in this channel"
+          agentTargetLabel={`New agent · ${channelAudienceLabel}`}
+          chatTargetLabel={channelAudienceLabel}
           onConfigureAgentMode={() => setAgentConfigVisible(true)}
         />
       </KeyboardAvoidingView>

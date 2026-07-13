@@ -40,6 +40,8 @@ interface DraftRow {
   key: string;
   text: string;
   updatedAt: number;
+  /** Absent on rows written before the agent-intent flag existed. */
+  agentIntent?: boolean;
 }
 
 export interface BootSnapshot {
@@ -175,7 +177,7 @@ function asTimeline(row: unknown): { channelId: string; timeline: CachedTimeline
 function asDraftEntry(row: unknown): DraftSnapshotEntry {
   if (!isRecord(row) || typeof row.text !== 'string') throw new Error('invalid draft');
   const updatedAt = numberField(row, 'updatedAt');
-  return { text: row.text, updatedAt: new Date(updatedAt).toISOString() };
+  return { text: row.text, updatedAt: new Date(updatedAt).toISOString(), agentIntent: row.agentIntent === true };
 }
 
 async function clearStores(database: IDBPDatabase<AtriumCacheDb>): Promise<void> {
@@ -336,7 +338,7 @@ const idbStorage: CacheStorage = {
     }
   },
 
-  setDraft: async (key, text, updatedAt) => {
+  setDraft: async (key, text, updatedAt, agentIntent) => {
     const database = await db();
     if (text.length === 0) {
       await database.delete('composerDrafts', key);
@@ -347,6 +349,7 @@ const idbStorage: CacheStorage = {
       key,
       text,
       updatedAt: Number.isFinite(parsed) ? parsed : Date.now(),
+      agentIntent: agentIntent === true,
     });
   },
 
@@ -390,9 +393,14 @@ function createMemoryStorage(): CacheStorage {
     getDraft: async (key) => drafts.get(key)?.text ?? null,
     getDraftEntry: async (key) => drafts.get(key) ?? null,
     listDrafts: async () => Object.fromEntries([...drafts].map(([key, draft]) => [key, structuredClone(draft)])),
-    setDraft: async (key, text, updatedAt) => {
+    setDraft: async (key, text, updatedAt, agentIntent) => {
       if (text.length === 0) drafts.delete(key);
-      else drafts.set(key, { text, updatedAt: updatedAt ?? new Date().toISOString() });
+      else
+        drafts.set(key, {
+          text,
+          updatedAt: updatedAt ?? new Date().toISOString(),
+          agentIntent: agentIntent === true,
+        });
     },
     clearCache: async () => {
       snapshot = clone(EMPTY_SNAPSHOT);

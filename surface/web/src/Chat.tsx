@@ -856,13 +856,20 @@ export function Chat({
     }
     return keys;
   }, [state.activeChannelId, state.openThreadRootId]);
-  const { drafts, enqueueDraft, markDraftTouched, putTextInComposer, reconcileDraftsFromSnapshot, saveDraft } =
-    useDraftState({
-      activeDraftKeysForSync,
-      activeDraftKey,
-      enqueueOp,
-      threadDraftKey,
-    });
+  const {
+    drafts,
+    draftAgentIntents,
+    enqueueDraft,
+    markDraftTouched,
+    putTextInComposer,
+    reconcileDraftsFromSnapshot,
+    saveDraft,
+  } = useDraftState({
+    activeDraftKeysForSync,
+    activeDraftKey,
+    enqueueOp,
+    threadDraftKey,
+  });
 
   // ---- websocket ----
   // Channels for fanout + a `session:<id>` presence key while spectating a pane.
@@ -2421,6 +2428,7 @@ export function Chat({
                 onArrowUpOnEmpty={editLastOwn}
                 draftKey={activeDraftKey}
                 initialDraft={drafts[activeDraftKey] ?? ''}
+                initialDraftAgentIntent={draftAgentIntents[activeDraftKey] ?? false}
                 onDraftChange={saveDraft}
                 onDraftPersisted={enqueueDraft}
                 onDraftTouched={markDraftTouched}
@@ -2570,6 +2578,7 @@ export function Chat({
               onMarkupEntry={(handle, message) => void openMarkupReply(handle, message)}
               draftKey={threadDraftKey}
               initialDraft={drafts[threadDraftKey] ?? ''}
+              initialDraftAgentIntent={draftAgentIntents[threadDraftKey] ?? false}
               onDraftChange={saveDraft}
               onDraftPersisted={enqueueDraft}
               onDraftTouched={markDraftTouched}

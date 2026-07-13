@@ -48,7 +48,6 @@ import { createDraftChangeDebouncer } from '../lib/outbox';
 import { Avatar } from './Avatar';
 import { EntryInlineChip } from './EntryQuoteCards';
 import { lightImpactHaptic } from '../lib/haptics';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { downsamplePeaks, formatVoiceDuration, normalizeMetering, type VoiceSendMeta } from '../lib/voice';
 import {
   decodeEditingText,
@@ -82,8 +81,10 @@ export interface ComposerProps {
   onCancelEdit?: () => void;
   draftKey?: string;
   initialDraft?: string;
-  onDraftChange?: (key: string, text: string) => void | Promise<void>;
-  onDraftPersisted?: (key: string, text: string) => void | Promise<void>;
+  /** The restored draft was written for an agent — re-show the "draft kept" strip. */
+  initialDraftAgentIntent?: boolean;
+  onDraftChange?: (key: string, text: string, agentIntent: boolean) => void | Promise<void>;
+  onDraftPersisted?: (key: string, text: string, agentIntent: boolean) => void | Promise<void>;
   onDraftTouched?: (key: string) => void;
   mentionUsers?: UserRef[] | null;
   mentionMembers?: UserRef[] | null;
@@ -110,7 +111,10 @@ export interface ComposerProps {
   onConfigureAgent?: (fullText: string) => void;
   /** Agent mode owns the normal text input but dispatches through session ops. */
   onAgentSend?: (text: string, anchorEventId?: number) => void;
+  /** Audience pill in agent mode, e.g. "New agent · #engineering" / "Steer · “Fix tests”". */
   agentTargetLabel?: string;
+  /** Audience pill in chat mode, e.g. "#engineering" / "this thread". */
+  chatTargetLabel?: string;
   onConfigureAgentMode?: () => void;
 }
 
@@ -147,6 +151,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     onCancelEdit,
     draftKey,
     initialDraft,
+    initialDraftAgentIntent,
     onDraftChange,
     onDraftPersisted,
     onDraftTouched,
@@ -167,6 +172,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     onConfigureAgent,
     onAgentSend,
     agentTargetLabel,
+    chatTargetLabel,
     onConfigureAgentMode,
   }: ComposerProps,
   ref,
@@ -184,23 +190,10 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const [recordingBusy, setRecordingBusy] = useState(false);
   const [recordingError, setRecordingError] = useState<string | null>(null);
   const [agentMode, setAgentMode] = useState(false);
-  // One-time coach mark on first agent-mode entry (device-local).
-  const [agentCoachSeen, setAgentCoachSeen] = useState(true);
-  useEffect(() => {
-    let cancelled = false;
-    AsyncStorage.getItem('atrium.agentCoachSeen')
-      .then((v) => {
-        if (!cancelled) setAgentCoachSeen(v === '1');
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-  const dismissAgentCoach = useCallback(() => {
-    setAgentCoachSeen(true);
-    AsyncStorage.setItem('atrium.agentCoachSeen', '1').catch(() => {});
-  }, []);
+  // The draft was typed for an agent. Survives leaving agent mode (and a
+  // cross-device restore) so an agent command can never quietly become chat.
+  const [draftAgentIntent, setDraftAgentIntent] = useState(false);
+  const [agentIntentSeen, setAgentIntentSeen] = useState(false);
   const [agentAnchor, setAgentAnchor] = useState<{ eventId: number; label: string } | null>(null);
   const [agentMentionHintDismissed, setAgentMentionHintDismissed] = useState(false);
   const audioRecorder = useAudioRecorder(VOICE_RECORDING_OPTIONS);
@@ -217,9 +210,9 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const draftWriter = useMemo(
     () =>
       createDraftChangeDebouncer(
-        (key, value) => onDraftChange?.(key, value),
+        (key, value, agentIntent) => onDraftChange?.(key, value, agentIntent),
         400,
-        (key, value) => onDraftPersisted?.(key, value),
+        (key, value, agentIntent) => onDraftPersisted?.(key, value, agentIntent),
       ),
     [onDraftChange, onDraftPersisted],
   );
@@ -243,6 +236,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       setMentionRanges([]);
       setWarnedNonMembers([]);
       setSelection({ start: 0, end: 0 });
+      setDraftAgentIntent(false);
+      setAgentIntentSeen(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draftKey]);
@@ -251,7 +246,13 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     if (textRef.current !== '') return;
     setText(initialDraft);
     setSelection({ start: initialDraft.length, end: initialDraft.length });
-  }, [editing, initialDraft]);
+    // A restored draft brings its audience with it: an agent-intent draft comes
+    // back wearing the "draft kept" strip, never as an innocent chat draft.
+    if (initialDraftAgentIntent) {
+      setDraftAgentIntent(true);
+      setAgentIntentSeen(false);
+    }
+  }, [editing, initialDraft, initialDraftAgentIntent]);
 
   useEffect(() => {
     if (editingText != null) {
@@ -280,6 +281,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           setText('');
           setMentionRanges([]);
           setSelection({ start: 0, end: 0 });
+          setDraftAgentIntent(false);
+          setAgentIntentSeen(false);
           if (draftKey) {
             onDraftTouched?.(draftKey);
             draftWriter.saveNow(draftKey, '');
@@ -314,6 +317,45 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     }),
     [draftKey, draftWriter, editing, mentionRanges, onDraftTouched, text],
   );
+
+  const persistDraftValue = useCallback(
+    (value: string, agentIntent: boolean) => {
+      if (!draftKey) return;
+      onDraftTouched?.(draftKey);
+      draftWriter.saveNow(draftKey, value, agentIntent);
+    },
+    [draftKey, draftWriter, onDraftTouched],
+  );
+
+  /** Leaving agent mode with text still in the input: the draft keeps its
+   *  audience and says so, rather than silently becoming an ordinary reply. */
+  const leaveAgentMode = useCallback(() => {
+    setAgentMode(false);
+    setAgentAnchor(null);
+    const kept = textRef.current.trim().length > 0;
+    setDraftAgentIntent(kept);
+    setAgentIntentSeen(false);
+    persistDraftValue(textRef.current, kept);
+  }, [persistDraftValue]);
+
+  const enterAgentMode = useCallback(() => {
+    setAgentMode(true);
+    if (textRef.current.trim()) {
+      setDraftAgentIntent(true);
+      persistDraftValue(textRef.current, true);
+    }
+    setTimeout(() => inputRef.current?.focus(), 0);
+  }, [persistDraftValue]);
+
+  const clearAgentIntentDraft = useCallback(() => {
+    setText('');
+    setMentionRanges([]);
+    setWarnedNonMembers([]);
+    setSelection({ start: 0, end: 0 });
+    setDraftAgentIntent(false);
+    setAgentIntentSeen(false);
+    persistDraftValue('', false);
+  }, [persistDraftValue]);
 
   const startUpload = async (file: PickedAttachment) => {
     if (!uploadFile) return;
@@ -435,6 +477,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   }));
   const readyRefs = ready.map(({ meta }) => ({ uploadKey: meta.uploadKey }));
   const canSend = !uploading && (text.trim().length > 0 || readyMeta.length > 0);
+  const audienceAvailable = !editing && onAgentSend != null;
+  const showAgentIntentStrip = audienceAvailable && draftAgentIntent && !agentMode && text.trim().length > 0;
   const showConfigureAgentChip = !editing && onConfigureAgent != null && looksLikeSummonSigil(text);
   const showAgentMentionHint = !editing && !agentMentionHintDismissed && /^@agent(?:\s|$)/i.test(text);
   const mentionMatch = !editing ? matchMentionPrefix(text.slice(0, selection.start)) : null;
@@ -461,6 +505,10 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   useEffect(() => {
     if (mentionMatch) onMentionTrigger?.();
   }, [mentionMatch, onMentionTrigger]);
+
+  useEffect(() => {
+    if (showAgentIntentStrip) setAgentIntentSeen(true);
+  }, [showAgentIntentStrip]);
 
   useEffect(() => {
     if (!recorderState.isRecording) return;
@@ -503,6 +551,12 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       return;
     }
     if (!canSend) return;
+    // An agent-intent draft cannot be sent as chat before its strip has been on
+    // screen — that strip is the whole point of remembering the audience.
+    if (!agentMode && draftAgentIntent && !agentIntentSeen) {
+      setAgentIntentSeen(true);
+      return;
+    }
     lightImpactHaptic();
     if (agentMode && onAgentSend) {
       onAgentSend(trimmed, agentAnchor?.eventId);
@@ -514,6 +568,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       setAttachments([]);
       setAgentAnchor(null);
       setAgentMode(false);
+      setDraftAgentIntent(false);
+      setAgentIntentSeen(false);
       return;
     }
     const broadcast = showBroadcastToggle && alsoSendToChannel;
@@ -536,6 +592,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     setWarnedNonMembers([]);
     setSelection({ start: 0, end: 0 });
     setAttachments([]);
+    setDraftAgentIntent(false);
+    setAgentIntentSeen(false);
   };
 
   const startRecording = async () => {
@@ -654,30 +712,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
         </View>
       )}
 
-      {agentMode && !editing && !agentCoachSeen ? (
-        <View
-          style={{
-            alignItems: 'flex-start',
-            flexDirection: 'row',
-            gap: space.sm,
-            paddingHorizontal: space.xs,
-            paddingTop: space.xs,
-          }}
-        >
-          <Text style={{ color: colors.textSecondary, flex: 1, fontSize: font.xs, lineHeight: 16 }}>
-            Summon an agent with !!, the ⚡ button, or “Delegate to agent…” on a message. It reads this conversation
-            before starting.
-          </Text>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Dismiss agent mode tip"
-            onPress={dismissAgentCoach}
-            hitSlop={8}
-          >
-            <Text style={{ color: colors.textMuted, fontSize: font.sm }}>✕</Text>
-          </Pressable>
-        </View>
-      ) : null}
+      {/* The pill in the input frame already names the target — this strip is
+          only the options that change it (target, anchor). */}
       {agentMode && !editing ? (
         <View
           testID="agent-mode-strip"
@@ -689,7 +725,6 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             paddingHorizontal: space.xs,
           }}
         >
-          <Text style={{ color: colors.accent, fontSize: font.sm, fontWeight: '800' }}>⚡</Text>
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Configure agent target"
@@ -707,28 +742,71 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             }}
           >
             <Text numberOfLines={1} style={{ color: colors.text, fontSize: font.xs, fontWeight: '700' }}>
-              {agentTargetLabel ?? 'New agent'}
+              Options ▾
             </Text>
           </Pressable>
           {agentAnchor ? (
             <Text
               numberOfLines={1}
-              style={{ color: colors.textSecondary, flexShrink: 1, fontSize: font.xs, maxWidth: 92 }}
+              style={{ color: colors.textSecondary, flexShrink: 1, fontSize: font.xs, maxWidth: 120 }}
             >
               ⚓ {agentAnchor.label}
             </Text>
           ) : null}
+        </View>
+      ) : null}
+
+      {showAgentIntentStrip ? (
+        <View
+          testID="composer-agent-intent-strip"
+          accessibilityLiveRegion="polite"
+          style={{
+            alignItems: 'center',
+            backgroundColor: colors.accentBg,
+            borderColor: colors.accent,
+            borderRadius: radius.md,
+            borderWidth: 1,
+            flexDirection: 'row',
+            gap: space.sm,
+            paddingHorizontal: space.sm,
+            paddingVertical: space.xs,
+          }}
+        >
+          <Text numberOfLines={2} style={{ color: colors.accent, flex: 1, fontSize: font.xs, fontWeight: '700' }}>
+            ⚡ Agent mode off — draft kept
+          </Text>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Exit agent mode"
-            onPress={() => {
-              setAgentAnchor(null);
-              setAgentMode(false);
+            accessibilityLabel="Resume agent mode"
+            onPress={enterAgentMode}
+            hitSlop={8}
+            style={{
+              alignItems: 'center',
+              backgroundColor: colors.accent,
+              borderRadius: radius.lg,
+              justifyContent: 'center',
+              minHeight: 34,
+              paddingHorizontal: space.sm,
             }}
-            hitSlop={10}
-            style={{ minHeight: 34, minWidth: 34, alignItems: 'center', justifyContent: 'center' }}
           >
-            <Text style={{ color: colors.textSecondary, fontSize: font.md }}>✕</Text>
+            <Text style={{ color: colors.onAccent, fontSize: font.xs, fontWeight: '800' }}>Resume ⚡</Text>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Clear draft"
+            onPress={clearAgentIntentDraft}
+            hitSlop={8}
+            style={{
+              alignItems: 'center',
+              borderColor: colors.border,
+              borderRadius: radius.lg,
+              borderWidth: 1,
+              justifyContent: 'center',
+              minHeight: 34,
+              paddingHorizontal: space.sm,
+            }}
+          >
+            <Text style={{ color: colors.textSecondary, fontSize: font.xs, fontWeight: '700' }}>Clear draft</Text>
           </Pressable>
         </View>
       ) : null}
@@ -1058,29 +1136,6 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       ) : null}
 
       <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: space.sm }}>
-        {!editing && onAgentSend ? (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={agentMode ? 'Exit agent mode' : 'Enter agent mode'}
-            onPress={() => {
-              setAgentAnchor(null);
-              setAgentMode((value) => !value);
-              setTimeout(() => inputRef.current?.focus(), 0);
-            }}
-            hitSlop={8}
-            style={{
-              minWidth: 44,
-              minHeight: 44,
-              borderRadius: 22,
-              backgroundColor: agentMode ? colors.accent : colors.bgElevated,
-              alignItems: 'center',
-              justifyContent: 'center',
-              marginBottom: space.xxs,
-            }}
-          >
-            <Text style={{ fontSize: 18, color: agentMode ? colors.onAccent : colors.textSecondary }}>⚡</Text>
-          </Pressable>
-        ) : null}
         {allowAttachments && !editing && (
           <Pressable
             accessibilityRole="button"
@@ -1138,52 +1193,115 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             />
           </Pressable>
         )}
-        <TextInput
-          accessibilityLabel={editing ? 'Edit message' : 'Message'}
-          ref={inputRef}
-          value={text}
-          onChangeText={(v) => {
-            // The summon sigil is strictly position-zero. Swallow it as soon as
-            // it is complete so `!! task` feels like entering a mode, not a
-            // message grammar. `parseSummonSigil` remains the shared source of
-            // truth for the task-bearing form.
-            const summon = parseSummonSigil(v);
-            const enteredAgentMode = !editing && !agentMode && (summon != null || v === '!!' || v.startsWith('!! '));
-            const next = enteredAgentMode ? (summon?.task ?? v.slice(2).replace(/^\s/, '')) : v;
-            if (enteredAgentMode) setAgentMode(true);
-            if (editing) editDirtyRef.current = true;
-            setMentionRanges((current) => {
-              const nextRanges = updateMentionRangesForEdit(text, next, current);
-              setWarnedNonMembers((warned) => pruneWarnedMentions(warned, nextRanges));
-              return nextRanges;
-            });
-            setText(next);
-            if (!editing && draftKey) {
-              onDraftTouched?.(draftKey);
-              draftWriter.schedule(draftKey, next);
-            }
-            if (next.trim()) onTyping();
-          }}
-          selection={selection}
-          onSelectionChange={(event) => setSelection(event.nativeEvent.selection)}
-          placeholder={agentMode && !editing ? 'Describe the task…' : placeholder}
-          placeholderTextColor={colors.textFaint}
-          multiline
+        <View
           style={{
-            flex: 1,
-            minHeight: 38,
-            maxHeight: 120,
+            alignItems: 'flex-end',
             backgroundColor: colors.bgInput,
+            borderColor: agentMode ? colors.accent : colors.border,
             borderRadius: radius.lg,
             borderWidth: 1,
-            borderColor: colors.border,
-            color: colors.text,
-            fontSize: font.md,
-            paddingHorizontal: space.md,
-            paddingTop: 9,
-            paddingBottom: 9,
+            flex: 1,
+            flexDirection: 'row',
+            gap: space.xs,
+            paddingLeft: space.xs,
+            paddingVertical: 4,
           }}
-        />
+        >
+          {/* One audience grammar, every composer: a persistent pill inside the
+              input frame that names who the message is for. Tap flips it; !!
+              flips it to the agent. There is no other door. */}
+          {audienceAvailable ? (
+            <Pressable
+              testID="composer-audience-pill"
+              accessibilityRole="button"
+              accessibilityState={{ selected: agentMode }}
+              accessibilityLabel={
+                agentMode
+                  ? `Talking to the agent: ${agentTargetLabel ?? 'New agent'}. Tap to reply to people instead.`
+                  : `Talking to people: ${chatTargetLabel ?? 'this conversation'}. Tap to address the agent.`
+              }
+              onPress={() => {
+                if (agentMode) leaveAgentMode();
+                else enterAgentMode();
+              }}
+              hitSlop={6}
+              style={({ pressed }) => ({
+                alignItems: 'center',
+                backgroundColor: agentMode ? colors.accent : pressed ? colors.bgPressed : colors.bgElevated,
+                borderColor: agentMode ? colors.accent : colors.border,
+                borderRadius: radius.lg,
+                borderWidth: 1,
+                flexDirection: 'row',
+                flexShrink: 1,
+                justifyContent: 'center',
+                maxWidth: 168,
+                minHeight: 40,
+                opacity: pressed && agentMode ? 0.85 : 1,
+                paddingHorizontal: space.sm,
+              })}
+            >
+              <Text
+                numberOfLines={1}
+                maxFontSizeMultiplier={1.6}
+                style={{
+                  color: agentMode ? colors.onAccent : colors.textSecondary,
+                  fontSize: font.xs,
+                  fontWeight: '800',
+                }}
+              >
+                {agentMode ? `⚡ ${agentTargetLabel ?? 'New agent'}` : `💬 ${chatTargetLabel ?? 'this conversation'}`}
+              </Text>
+            </Pressable>
+          ) : null}
+          <TextInput
+            accessibilityLabel={editing ? 'Edit message' : 'Message'}
+            ref={inputRef}
+            value={text}
+            onChangeText={(v) => {
+              // The summon sigil is strictly position-zero. Swallow it as soon as
+              // it is complete so `!! task` feels like entering a mode, not a
+              // message grammar. `parseSummonSigil` remains the shared source of
+              // truth for the task-bearing form.
+              const summon = parseSummonSigil(v);
+              const enteredAgentMode = !editing && !agentMode && (summon != null || v === '!!' || v.startsWith('!! '));
+              const next = enteredAgentMode ? (summon?.task ?? v.slice(2).replace(/^\s/, '')) : v;
+              if (enteredAgentMode) setAgentMode(true);
+              if (editing) editDirtyRef.current = true;
+              setMentionRanges((current) => {
+                const nextRanges = updateMentionRangesForEdit(text, next, current);
+                setWarnedNonMembers((warned) => pruneWarnedMentions(warned, nextRanges));
+                return nextRanges;
+              });
+              setText(next);
+              // The draft carries its audience from the first keystroke, so a
+              // reload (or another device) restores it as an agent draft.
+              const nextAgentMode = enteredAgentMode || agentMode;
+              const nextIntent = !editing && next.trim().length > 0 && (nextAgentMode || draftAgentIntent);
+              if (!editing) setDraftAgentIntent(nextIntent);
+              if (!editing && draftKey) {
+                onDraftTouched?.(draftKey);
+                draftWriter.schedule(draftKey, next, nextIntent);
+              }
+              if (next.trim()) onTyping();
+            }}
+            selection={selection}
+            onSelectionChange={(event) => setSelection(event.nativeEvent.selection)}
+            placeholder={agentMode && !editing ? 'Describe the task…' : placeholder}
+            placeholderTextColor={colors.textFaint}
+            multiline
+            style={{
+              flex: 1,
+              minHeight: 38,
+              maxHeight: 120,
+              backgroundColor: 'transparent',
+              color: colors.text,
+              fontSize: font.md,
+              paddingHorizontal: space.sm,
+              paddingTop: 9,
+              paddingBottom: 9,
+            }}
+          />
+        </View>
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={editing ? 'Save edit' : 'Send message'}

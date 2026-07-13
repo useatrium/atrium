@@ -37,6 +37,7 @@ import {
   type ChatMessage,
   type DraftDeletionSnapshot,
   type DraftSnapshot,
+  type DraftSnapshotEntry,
   type EnqueueOpInput,
   type MsgSendPayload,
   type MentionRange,
@@ -190,9 +191,10 @@ interface ChatContextValue {
     width?: number;
     height?: number;
   }) => Promise<AttachmentMeta & { uploadKey: string; localUri: string }>;
-  getDraft: (key: string) => Promise<string | null>;
-  setDraft: (key: string, text: string) => Promise<void>;
-  enqueueDraft: (key: string, text: string) => void;
+  /** The draft *and* its audience — an agent-intent draft must not restore as chat. */
+  getDraft: (key: string) => Promise<DraftSnapshotEntry | null>;
+  setDraft: (key: string, text: string, agentIntent?: boolean) => Promise<void>;
+  enqueueDraft: (key: string, text: string, agentIntent?: boolean) => void;
   markDraftTouched: (key: string) => void;
   setActiveDraftKey: (key: string, active: boolean) => void;
   /** From search: load the message's channel (paging back as needed) + highlight. */
@@ -583,12 +585,12 @@ export function ChatProvider({ session, children }: { session: Session; children
   }, []);
 
   const enqueueDraft = useCallback(
-    (key: string, text: string) => {
+    (key: string, text: string, agentIntent = false) => {
       markDraftTouched(key);
       void enqueueOp({
         opId: randomId(),
         opType: 'draft.set',
-        payload: { draftKey: key, text },
+        payload: { draftKey: key, text, agentIntent },
       }).catch((err: unknown) => {
         console.warn('failed to queue draft sync', err);
       });
@@ -615,7 +617,9 @@ export function ChatProvider({ session, children }: { session: Session; children
         });
         await Promise.all(
           Object.entries(hydrate)
-            .map(([draftKey, draft]) => eventCache.setDraft(draftKey, draft.text, draft.updatedAt))
+            .map(([draftKey, draft]) =>
+              eventCache.setDraft(draftKey, draft.text, draft.updatedAt, draft.agentIntent === true),
+            )
             .concat(remove.map((draftKey) => eventCache.setDraft(draftKey, ''))),
         );
       })
@@ -1755,9 +1759,12 @@ export function ChatProvider({ session, children }: { session: Session; children
     [enqueueOp, waitForUpload],
   );
 
-  const getDraft = useCallback((key: string) => eventCache.getDraft(key), []);
+  const getDraft = useCallback((key: string) => eventCache.getDraftEntry(key), []);
 
-  const setDraft = useCallback((key: string, text: string) => eventCache.setDraft(key, text), []);
+  const setDraft = useCallback(
+    (key: string, text: string, agentIntent = false) => eventCache.setDraft(key, text, undefined, agentIntent),
+    [],
+  );
 
   const fileUrl = useCallback((fileId: string) => `${serverUrl}/api/files/${fileId}`, [serverUrl]);
 

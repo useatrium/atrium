@@ -41,12 +41,21 @@ async function login() {
   return { cookie: res.headers['set-cookie'] as string, user: res.json().user };
 }
 
-async function putDraft(cookie: string, draftKey: string, text: string, opId?: string) {
+async function putDraft(
+  cookie: string,
+  draftKey: string,
+  text: string,
+  opts: { opId?: string; agentIntent?: boolean } = {},
+) {
   return app.inject({
     method: 'PUT',
     url: `/api/me/drafts/${encodeURIComponent(draftKey)}`,
     headers: { cookie },
-    payload: { text, ...(opId ? { opId } : {}) },
+    payload: {
+      text,
+      ...(opts.agentIntent != null ? { agentIntent: opts.agentIntent } : {}),
+      ...(opts.opId ? { opId: opts.opId } : {}),
+    },
   });
 }
 
@@ -128,18 +137,37 @@ describe('user drafts', () => {
   it('replays a draft opId without reapplying the upsert', async () => {
     const { cookie, user } = await login();
     const opId = randomUUID();
-    expect((await putDraft(cookie, 'channel:one', 'hello', opId)).statusCode).toBe(200);
+    expect((await putDraft(cookie, 'channel:one', 'hello', { opId })).statusCode).toBe(200);
     await pool.query('UPDATE user_drafts SET text = $1 WHERE user_id = $2 AND draft_key = $3', [
       'manual edit',
       user.id,
       'channel:one',
     ]);
 
-    expect((await putDraft(cookie, 'channel:one', 'hello', opId)).statusCode).toBe(200);
+    expect((await putDraft(cookie, 'channel:one', 'hello', { opId })).statusCode).toBe(200);
     const row = await pool.query<{ text: string }>(
       'SELECT text FROM user_drafts WHERE user_id = $1 AND draft_key = $2',
       [user.id, 'channel:one'],
     );
     expect(row.rows[0]?.text).toBe('manual edit');
+  });
+
+  it('roams the draft audience: an agent-intent draft syncs back marked, not as chat', async () => {
+    const { cookie } = await login();
+    expect((await putDraft(cookie, 'channel:one', 'fix the build', { agentIntent: true })).statusCode).toBe(200);
+    expect((await putDraft(cookie, 'channel:two', 'see you at 3')).statusCode).toBe(200);
+
+    const body = await sync(cookie);
+    expect(body.state.drafts['channel:one']).toMatchObject({ text: 'fix the build', agentIntent: true });
+    expect(body.state.drafts['channel:two']).toMatchObject({ text: 'see you at 3', agentIntent: false });
+  });
+
+  it('drops the agent intent when the draft is retyped for people', async () => {
+    const { cookie } = await login();
+    expect((await putDraft(cookie, 'channel:one', 'fix the build', { agentIntent: true })).statusCode).toBe(200);
+    expect((await putDraft(cookie, 'channel:one', 'anyone around?', { agentIntent: false })).statusCode).toBe(200);
+
+    const body = await sync(cookie);
+    expect(body.state.drafts['channel:one']).toMatchObject({ text: 'anyone around?', agentIntent: false });
   });
 });

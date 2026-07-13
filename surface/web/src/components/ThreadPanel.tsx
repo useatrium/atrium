@@ -44,6 +44,7 @@ export function ThreadPanel({
   onMarkupEntry,
   draftKey,
   initialDraft,
+  initialDraftAgentIntent,
   onDraftChange,
   onDraftPersisted,
   onDraftTouched,
@@ -77,8 +78,9 @@ export function ThreadPanel({
   onMarkupEntry?: (handle: string, message: ChatMessage) => void;
   draftKey?: string;
   initialDraft?: string;
-  onDraftChange?: (key: string, text: string) => void | Promise<void>;
-  onDraftPersisted?: (key: string, text: string) => void | Promise<void>;
+  initialDraftAgentIntent?: boolean;
+  onDraftChange?: (key: string, text: string, agentIntent: boolean) => void | Promise<void>;
+  onDraftPersisted?: (key: string, text: string, agentIntent: boolean) => void | Promise<void>;
   onDraftTouched?: (key: string) => void;
   previewEntryLinks?: boolean;
   onAgentSend?: (
@@ -282,6 +284,7 @@ export function ThreadPanel({
         allowAttachments
         draftKey={draftKey}
         initialDraft={initialDraft}
+        initialDraftAgentIntent={initialDraftAgentIntent}
         onDraftChange={onDraftChange}
         onDraftPersisted={onDraftPersisted}
         onDraftTouched={onDraftTouched}
