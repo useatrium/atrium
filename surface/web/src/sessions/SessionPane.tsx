@@ -846,7 +846,7 @@ export function SessionPane({
       const tempId = -Date.now();
       setAsides((prev) => [
         ...prev,
-        { id: tempId, author: me.displayName, createdAt: new Date().toISOString(), text: trimmed },
+        { id: tempId, author: me.displayName, createdAt: new Date().toISOString(), text: trimmed, pending: true },
       ]);
       api
         .postMessage({ channelId: session.channelId, text: trimmed, clientMsgId: randomId(), threadRootEventId: root })
@@ -1020,12 +1020,17 @@ export function SessionPane({
     [session.suggestions],
   );
   const [suggestError, setSuggestError] = useState<string | null>(null);
+  const [suggestSending, setSuggestSending] = useState(false);
   const sendSuggestion = (text: string) => {
     setSuggestError(null);
-    sessionsApi.createSuggestion(session.id, text, randomId()).catch((err: unknown) => {
-      setSuggestError(text);
-      reportSessionActionError(err, "Couldn't send the suggestion.", { toast: false });
-    });
+    setSuggestSending(true);
+    sessionsApi
+      .createSuggestion(session.id, text, randomId())
+      .catch((err: unknown) => {
+        setSuggestError(text);
+        reportSessionActionError(err, "Couldn't send the suggestion.", { toast: false });
+      })
+      .finally(() => setSuggestSending(false));
   };
   const addOptimisticSuggestionSteer = ({
     suggestion,
@@ -2227,6 +2232,14 @@ export function SessionPane({
               </button>
             </div>
           )}
+          {suggestSending && (
+            <div
+              data-testid="suggestion-sending"
+              className="flex shrink-0 items-center gap-2 border-t border-edge bg-surface-overlay px-3 py-1 text-2xs text-fg-muted"
+            >
+              Suggestion sending… the driver will see it in the queue.
+            </div>
+          )}
           {threadReplyError != null && (
             <div
               role="alert"
@@ -3015,18 +3028,25 @@ const ToolCard = memo(
 );
 
 /** A thread chat message (not a steer) interleaved into the pane transcript. */
-type PaneAside = { id: number; author: string; createdAt: string; text: string };
+type PaneAside = { id: number; author: string; createdAt: string; text: string; pending?: boolean };
 
 function PaneAsideRow({ aside }: { aside: PaneAside }) {
   return (
     <div
       data-testid="pane-aside"
-      className="my-1.5 ml-3.5 max-w-xl rounded-md border border-edge bg-surface-raised/50 px-2.5 py-1.5 text-xs"
+      className={`my-1.5 ml-3.5 max-w-xl rounded-md border border-edge bg-surface-raised/50 px-2.5 py-1.5 text-xs ${
+        aside.pending ? 'opacity-70' : ''
+      }`}
     >
       <div className="flex items-baseline gap-2">
         <span className="font-semibold text-fg">{aside.author}</span>
         <span className="tabular-nums text-2xs text-fg-muted">{formatTime(aside.createdAt)}</span>
         <span className="text-3xs uppercase tracking-wide text-fg-faint">thread</span>
+        {aside.pending && (
+          <span data-testid="aside-sending" className="text-3xs text-fg-muted">
+            sending…
+          </span>
+        )}
       </div>
       <div className="mt-0.5 whitespace-pre-wrap break-words leading-relaxed text-fg-body">
         <SessionMarkdown text={aside.text} />
