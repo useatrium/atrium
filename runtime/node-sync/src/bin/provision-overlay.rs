@@ -743,5 +743,19 @@ mod tests {
             parse_args(argv("private_repo_hydrate")).expect("private-repo-hydrate argv must parse");
         assert!(cfg.hydrate_private_repos);
         assert_eq!(cfg.repo_cache_root, PathBuf::from("/cache"));
+
+        // parser_coverage spans the declared flags no emitted argv uses
+        // (--replace, --lower, --generic-home-lower); the contract suite
+        // asserts the fixture entries together cover the whole declared list.
+        let cfg = parse_args(argv("parser_coverage")).expect("parser-coverage argv must parse");
+        assert!(cfg.replace);
+        assert_eq!(
+            cfg.lower,
+            Some(PathBuf::from("/var/lib/centaur/overlay-lower/sess-1"))
+        );
+        assert_eq!(
+            cfg.generic_home_lower,
+            PathBuf::from("/var/lib/centaur/overlays/.warm-home-lower/sess-1")
+        );
     }
 }

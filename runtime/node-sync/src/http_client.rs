@@ -12,6 +12,11 @@ use crate::feeds::{
 use crate::runtime::{AtriumChannel, AtriumClient, BundleRef};
 use serde::Deserialize;
 
+/// Auth header for every internal-API request (contract: http.auth_header).
+pub const AUTH_HEADER: &str = "x-api-key";
+/// Session-scoped internal route prefix (contract: http.session_prefix).
+pub const SESSION_PREFIX: &str = "/api/internal/sessions";
+
 pub struct HttpAtriumClient {
     base_url: String,
     api_key: String,
@@ -37,8 +42,8 @@ impl HttpAtriumClient {
 
     fn url(&self, suffix: &str) -> String {
         format!(
-            "{}/api/internal/sessions/{}{}",
-            self.base_url, self.session_id, suffix
+            "{}{}/{}{}",
+            self.base_url, SESSION_PREFIX, self.session_id, suffix
         )
     }
 
@@ -46,7 +51,7 @@ impl HttpAtriumClient {
         let resp = self
             .agent
             .get(&self.url(&format!("/artifacts/changes?since={}", enc(cursor))))
-            .set("x-api-key", &self.api_key)
+            .set(AUTH_HEADER, &self.api_key)
             .call()
             .map_err(|e| http_feed_error("poll", e))?;
         let value: serde_json::Value = resp
@@ -59,7 +64,7 @@ impl HttpAtriumClient {
         let resp = self
             .agent
             .get(&self.url(&format!("/atrium/changes?since={}", enc(since))))
-            .set("x-api-key", &self.api_key)
+            .set(AUTH_HEADER, &self.api_key)
             .call()
             .map_err(|e| http_feed_error("atrium changes", e))?;
         let value: serde_json::Value = resp
@@ -72,7 +77,7 @@ impl HttpAtriumClient {
         let resp = self
             .agent
             .get(&self.url(&format!("/profile-bundles?harness={}", enc(harness))))
-            .set("x-api-key", &self.api_key)
+            .set(AUTH_HEADER, &self.api_key)
             .call()
             .map_err(|e| http_feed_error("get profile bundles", e))?;
         let value: serde_json::Value = resp
@@ -192,7 +197,7 @@ impl AtriumClient for HttpAtriumClient {
         let mut req = self
             .agent
             .post(&self.url(&format!("/artifacts/capture?path={}", enc(path))))
-            .set("x-api-key", &self.api_key)
+            .set(AUTH_HEADER, &self.api_key)
             .set("content-type", "application/octet-stream");
         if base_seq > 0 {
             req = req.set("x-artifact-base-seq", &base_seq.to_string());
@@ -220,7 +225,7 @@ impl AtriumClient for HttpAtriumClient {
         let mut req = self
             .agent
             .post(&self.url(&format!("/artifacts/capture-stream?path={}", enc(path))))
-            .set("x-api-key", &self.api_key)
+            .set(AUTH_HEADER, &self.api_key)
             .set("content-type", "application/octet-stream")
             .set("x-artifact-size", &size_hint.to_string());
         if base_seq > 0 {
@@ -239,7 +244,7 @@ impl AtriumClient for HttpAtriumClient {
         let mut req = self
             .agent
             .post(&self.url(&format!("/artifacts/capture?path={}", enc(path))))
-            .set("x-api-key", &self.api_key)
+            .set(AUTH_HEADER, &self.api_key)
             .set("x-artifact-delete", "true");
         if base_seq > 0 {
             req = req.set("x-artifact-base-seq", &base_seq.to_string());
@@ -257,7 +262,7 @@ impl AtriumClient for HttpAtriumClient {
         let resp = self
             .agent
             .get(&self.url(&format!("/artifacts/raw?path={}&seq={}", enc(path), seq)))
-            .set("x-api-key", &self.api_key)
+            .set(AUTH_HEADER, &self.api_key)
             .call()
             .map_err(|e| format!("fetch {path}@{seq}: {e}"))?;
         let mut buf = Vec::new();
@@ -269,7 +274,7 @@ impl AtriumClient for HttpAtriumClient {
         let resp = self
             .agent
             .get(&self.url("/hydration-scope"))
-            .set("x-api-key", &self.api_key)
+            .set(AUTH_HEADER, &self.api_key)
             .call()
             .map_err(|e| format!("hydration-scope: {e}"))?;
         let value: serde_json::Value = resp.into_json().map_err(|e| e.to_string())?;
@@ -288,7 +293,7 @@ impl AtriumClient for HttpAtriumClient {
                 enc(lockfile_hash),
                 enc(kind)
             )))
-            .set("x-api-key", &self.api_key)
+            .set(AUTH_HEADER, &self.api_key)
             .call()
             .map_err(|e| format!("cache/hydration: {e}"))?;
         #[derive(serde::Deserialize)]
@@ -309,7 +314,7 @@ impl AtriumClient for HttpAtriumClient {
                 self.base_url,
                 enc(sha256)
             ))
-            .set("x-api-key", &self.api_key)
+            .set(AUTH_HEADER, &self.api_key)
             .call()
             .map_err(|e| format!("cache/blob: {e}"))?;
         // Defensive: read with a hard cap so an oversized/malicious body can't OOM
@@ -339,7 +344,7 @@ impl AtriumClient for HttpAtriumClient {
                 self.base_url,
                 enc(sha256)
             ))
-            .set("x-api-key", &self.api_key)
+            .set(AUTH_HEADER, &self.api_key)
             .set("content-type", "application/octet-stream")
             .send_bytes(bytes)
             .map_err(|e| format!("put cache blob {sha256}: {e}"))?;
@@ -359,7 +364,7 @@ impl AtriumClient for HttpAtriumClient {
         });
         self.agent
             .put(&self.url("/cache/manifest"))
-            .set("x-api-key", &self.api_key)
+            .set(AUTH_HEADER, &self.api_key)
             .send_json(body)
             .map_err(|e| format!("register cache manifest: {e}"))?;
         Ok(())
@@ -368,7 +373,7 @@ impl AtriumClient for HttpAtriumClient {
     fn put_harness_transcript(&mut self, harness: &str, bytes: &[u8]) -> Result<(), String> {
         self.agent
             .put(&self.url(&format!("/harness-transcript?harness={}", enc(harness))))
-            .set("x-api-key", &self.api_key)
+            .set(AUTH_HEADER, &self.api_key)
             .set("content-type", "application/jsonl")
             .send_bytes(bytes)
             .map(|_| ())
@@ -382,7 +387,7 @@ impl AtriumClient for HttpAtriumClient {
     ) -> Result<(), String> {
         self.agent
             .put(&self.url(&format!("/profile-candidates?harness={}", enc(harness))))
-            .set("x-api-key", &self.api_key)
+            .set(AUTH_HEADER, &self.api_key)
             .set("content-type", "application/json")
             .send_json(payload)
             .map(|_| ())
@@ -399,7 +404,7 @@ impl AtriumClient for HttpAtriumClient {
                 "/provider-credential-refresh?harness={}",
                 enc(harness)
             )))
-            .set("x-api-key", &self.api_key)
+            .set(AUTH_HEADER, &self.api_key)
             .set("content-type", "application/json")
             .send_json(body)
             .map(|_| ())
@@ -413,7 +418,7 @@ impl AtriumClient for HttpAtriumClient {
     ) -> Result<(), String> {
         self.agent
             .put(&self.url(&format!("/harness-state-bundle?harness={}", enc(harness))))
-            .set("x-api-key", &self.api_key)
+            .set(AUTH_HEADER, &self.api_key)
             .set("content-type", "application/json")
             .send_json(manifest)
             .map(|_| ())
@@ -427,7 +432,7 @@ impl AtriumClient for HttpAtriumClient {
     ) -> Result<(), String> {
         self.agent
             .put(&self.url(&format!("/profile-baseline?harness={}", enc(harness))))
-            .set("x-api-key", &self.api_key)
+            .set(AUTH_HEADER, &self.api_key)
             .set("content-type", "application/json")
             .send_json(payload)
             .map(|_| ())
@@ -446,7 +451,7 @@ impl AtriumClient for HttpAtriumClient {
                 enc(sha256),
                 enc(path)
             )))
-            .set("x-api-key", &self.api_key)
+            .set(AUTH_HEADER, &self.api_key)
             .set("content-type", "application/octet-stream")
             .send_bytes(bytes)
             .map(|_| ())
@@ -462,7 +467,7 @@ impl AtriumClient for HttpAtriumClient {
         let resp = self
             .agent
             .get(&self.url(&format!("/profile-bundle-blob?sha256={}", enc(sha256))))
-            .set("x-api-key", &self.api_key)
+            .set(AUTH_HEADER, &self.api_key)
             .call()
             .map_err(|e| format!("get profile bundle blob {sha256}: {e}"))?;
         let mut buf = Vec::new();
@@ -487,7 +492,7 @@ impl AtriumClient for HttpAtriumClient {
         let resp = self
             .agent
             .get(&self.url(&format!("/atrium/sessions/{}/{}", enc(target_id), doc)))
-            .set("x-api-key", &self.api_key)
+            .set(AUTH_HEADER, &self.api_key)
             .call()
             .map_err(|e| format!("atrium doc {target_id}/{doc}: {e}"))?;
         let mut buf = Vec::new();
@@ -499,7 +504,7 @@ impl AtriumClient for HttpAtriumClient {
         let resp = self
             .agent
             .get(&self.url("/atrium/channels"))
-            .set("x-api-key", &self.api_key)
+            .set(AUTH_HEADER, &self.api_key)
             .call()
             .map_err(|e| format!("atrium channels: {e}"))?;
         resp.into_json()
@@ -510,7 +515,7 @@ impl AtriumClient for HttpAtriumClient {
         let resp = self
             .agent
             .get(&self.url(&format!("/atrium/channels/{}/{}", enc(channel_id), doc)))
-            .set("x-api-key", &self.api_key)
+            .set(AUTH_HEADER, &self.api_key)
             .call()
             .map_err(|e| format!("atrium channel doc {channel_id}/{doc}: {e}"))?;
         let mut buf = Vec::new();

@@ -19,7 +19,7 @@ next to it:
 |---|---|---|
 | Constants (mounts, env, markers, labels, container names, CLI flags) | [`contract/contract.toml`](contract/contract.toml) | `tests/contract.rs` (daemon) · `centaur-sandbox-agent-k8s` `overlay.rs` contract tests · `centaur-api-server` `args.rs` contract test |
 | Wire shapes (minimum JSON each response must carry) | [`contract/fixtures/*.json`](contract/fixtures/) | `tests/contract.rs` + in-module parser tests (daemon) · `surface/server/test/internalContract.test.ts` (live routes) |
-| Emitted argv (the exact init-container command lines) | `contract/fixtures/*-argv.json` | in-bin parser tests (daemon) · emitted-flags-⊆-declared tests (centaur) |
+| Emitted argv (the exact init-container command lines + env) | `contract/fixtures/*-argv.json` | in-bin parser tests (daemon) · **emitted == fixture** equality tests (centaur) |
 
 ## How enforcement works
 
@@ -29,10 +29,24 @@ side reads the files at test time (`CARGO_MANIFEST_DIR`-relative), which has no
 effect on what its distributed binaries contain. Keep it that way: never
 `include_str!` contract data into non-test centaur code.
 
+The argv coverage is deliberately two-directional: centaur asserts its emitted
+container args (and env) equal the fixture byte-for-byte, and the fixtures'
+`parser_coverage` entries span the rest of each declared flag inventory (the
+daemon suite asserts fixtures and declared lists span each other), so the
+daemon's in-bin parse tests give `declared ⊆ accepted`. A renamed flag,
+argument, or env var therefore cannot pass one side while starving the other.
+
+Two seam participants live where no test lane can hook them: the heartbeat
+WRITER is a `touch` in centaur's sandbox `entrypoint.sh` (shell), and the
+context-ready READER is harness-server (a separate cargo workspace). The
+daemon suite pins their literals by file-content assertion — deliberate
+grep-tripwires, the exception rather than the pattern.
+
 Drift on any side turns that side's own test lane red:
 
-- **Daemon change** → `cargo test` in `runtime/node-sync` (runs in the
-  `node-sync overlay` CI job on `runtime/node-sync/**` changes).
+- **Daemon change** → `cargo fmt/clippy/test` in `runtime/node-sync` (the
+  "Daemon fmt, clippy, and tests" step of the `node-sync overlay` CI job, on
+  `runtime/node-sync/**` changes).
 - **Pod-spec / config change in centaur** → `cargo test --workspace` in
   `centaur/services/api-rs` (the `Rust API` CI job; its path filter includes
   `runtime/node-sync/contract/**` so contract edits re-run it).
@@ -86,9 +100,9 @@ every reader accepts both its own historical name and the canonical one:
 
 | Component | Reads (in order) |
 |---|---|
-| daemon (`centaur-node-syncd`) | `ATRIUM_BASE_URL`, then `ATRIUM_URL` · `ATRIUM_CAPTURE_API_KEY`, then `ARTIFACT_CAPTURE_API_KEY` |
-| `warmcache-hydrate` init | `--atrium-url`/`--atrium-key` flags, then `ATRIUM_URL`/`ARTIFACT_CAPTURE_API_KEY`, then the canonical pair |
-| Atrium server | `ARTIFACT_CAPTURE_API_KEY` (unchanged) |
+| daemon (`centaur-node-syncd`) | `ATRIUM_BASE_URL`, then `ATRIUM_URL` · `ATRIUM_CAPTURE_API_KEY`, then `ARTIFACT_CAPTURE_API_KEY` (a log line names the spelling when a fallback supplied the value) |
+| `warmcache-hydrate` init | `--atrium-url`/`--atrium-key` flags, then `ATRIUM_URL`/`ARTIFACT_CAPTURE_API_KEY` (what centaur injects), then the canonical pair |
+| Atrium server | `ARTIFACT_CAPTURE_API_KEY`, then `ATRIUM_CAPTURE_API_KEY` (pinned by `surface/server/test/configCaptureKey.test.ts`) |
 
 The Helm chart's `secretKeyRef` mapping (`nodeSync.apiKeySecret`) is therefore
 no longer the only thing standing between a misspelled key and a silent 401.

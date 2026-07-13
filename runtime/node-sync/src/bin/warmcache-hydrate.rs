@@ -37,16 +37,31 @@ fn main() {
     }
 }
 
-#[derive(Debug, Default, PartialEq)]
+#[derive(Debug)]
 struct Args {
     session: Option<String>,
     repos_json: Option<String>,
-    repo_cache_root: Option<PathBuf>,
-    depcache_root: Option<PathBuf>,
-    cas_dir: Option<PathBuf>,
+    repo_cache_root: PathBuf,
+    depcache_root: PathBuf,
+    cas_dir: PathBuf,
     atrium_url: Option<String>,
     atrium_key: Option<String>,
     toolchain_id: Option<String>,
+}
+
+impl Default for Args {
+    fn default() -> Self {
+        Self {
+            session: None,
+            repos_json: None,
+            repo_cache_root: PathBuf::from("/var/lib/centaur/repos"),
+            depcache_root: PathBuf::from("/var/lib/centaur/depcache"),
+            cas_dir: PathBuf::from("/var/lib/centaur/cas"),
+            atrium_url: None,
+            atrium_key: None,
+            toolchain_id: None,
+        }
+    }
 }
 
 fn parse_args<I: IntoIterator<Item = String>>(argv: I) -> Result<Args, String> {
@@ -57,9 +72,9 @@ fn parse_args<I: IntoIterator<Item = String>>(argv: I) -> Result<Args, String> {
         match a.as_str() {
             "--session" => parsed.session = Some(take()?),
             "--repos-json" => parsed.repos_json = Some(take()?),
-            "--repo-cache-root" => parsed.repo_cache_root = Some(PathBuf::from(take()?)),
-            "--depcache-root" => parsed.depcache_root = Some(PathBuf::from(take()?)),
-            "--cas-dir" => parsed.cas_dir = Some(PathBuf::from(take()?)),
+            "--repo-cache-root" => parsed.repo_cache_root = PathBuf::from(take()?),
+            "--depcache-root" => parsed.depcache_root = PathBuf::from(take()?),
+            "--cas-dir" => parsed.cas_dir = PathBuf::from(take()?),
             "--atrium-url" => parsed.atrium_url = Some(take()?),
             "--atrium-key" => parsed.atrium_key = Some(take()?),
             "--toolchain-id" => parsed.toolchain_id = Some(take()?),
@@ -69,31 +84,49 @@ fn parse_args<I: IntoIterator<Item = String>>(argv: I) -> Result<Args, String> {
     Ok(parsed)
 }
 
+/// Resolve the Atrium endpoint from flags-then-env. In production centaur
+/// passes NO url/key flags and injects ATRIUM_URL / ARTIFACT_CAPTURE_API_KEY
+/// into the init container (contract/fixtures/warmcache-hydrate-argv.json),
+/// so the env path is the load-bearing one; the canonical spellings are
+/// accepted as fallbacks (seam.rs). `lookup` is injected so tests cover
+/// resolution without touching process env.
+fn resolve_atrium_endpoint(
+    atrium_url: Option<String>,
+    atrium_key: Option<String>,
+    lookup: impl Fn(&str) -> Option<String>,
+) -> Result<(String, String), String> {
+    let url = atrium_url
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            seam::first_non_empty(&[seam::ENV_ATRIUM_URL, seam::ENV_ATRIUM_BASE_URL], &lookup)
+        })
+        .ok_or("--atrium-url / ATRIUM_URL / ATRIUM_BASE_URL is required")?;
+    let key = atrium_key
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            seam::first_non_empty(
+                &[
+                    seam::ENV_ARTIFACT_CAPTURE_API_KEY,
+                    seam::ENV_ATRIUM_CAPTURE_API_KEY,
+                ],
+                &lookup,
+            )
+        })
+        .ok_or("--atrium-key / ARTIFACT_CAPTURE_API_KEY / ATRIUM_CAPTURE_API_KEY is required")?;
+    Ok((url, key))
+}
+
 fn run() -> Result<(), String> {
     let parsed = parse_args(std::env::args().skip(1))?;
     let repos_json = parsed.repos_json;
-    let repo_cache_root = parsed
-        .repo_cache_root
-        .unwrap_or_else(|| PathBuf::from("/var/lib/centaur/repos"));
-    let depcache_root = parsed
-        .depcache_root
-        .unwrap_or_else(|| PathBuf::from("/var/lib/centaur/depcache"));
-    let cas_dir = parsed
-        .cas_dir
-        .unwrap_or_else(|| PathBuf::from("/var/lib/centaur/cas"));
+    let repo_cache_root = parsed.repo_cache_root;
+    let depcache_root = parsed.depcache_root;
+    let cas_dir = parsed.cas_dir;
 
     let session = parsed.session.ok_or("--session is required")?;
-    let env_nonempty = |name: &str| std::env::var(name).ok().filter(|value| !value.is_empty());
-    let url = parsed
-        .atrium_url
-        .or_else(|| env_nonempty(seam::ENV_ATRIUM_URL))
-        .or_else(|| env_nonempty(seam::ENV_ATRIUM_BASE_URL))
-        .ok_or("--atrium-url / ATRIUM_URL / ATRIUM_BASE_URL is required")?;
-    let key = parsed
-        .atrium_key
-        .or_else(|| env_nonempty(seam::ENV_ARTIFACT_CAPTURE_API_KEY))
-        .or_else(|| env_nonempty(seam::ENV_ATRIUM_CAPTURE_API_KEY))
-        .ok_or("--atrium-key / ARTIFACT_CAPTURE_API_KEY / ATRIUM_CAPTURE_API_KEY is required")?;
+    let (url, key) = resolve_atrium_endpoint(parsed.atrium_url, parsed.atrium_key, |name| {
+        std::env::var(name).ok()
+    })?;
     let toolchain_id = parsed
         .toolchain_id
         .or_else(|| std::env::var("WARMCACHE_TOOLCHAIN_ID").ok())
@@ -180,29 +213,87 @@ fn run() -> Result<(), String> {
 mod tests {
     use super::*;
 
-    /// The exact argv centaur-sandbox-agent-k8s emits into the init container
-    /// (pinned in contract/fixtures/warmcache-hydrate-argv.json) must keep parsing.
-    #[test]
-    fn parses_the_contract_argv_fixture() {
-        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+    fn fixture() -> serde_json::Value {
+        serde_json::from_str(include_str!(
             "../../contract/fixtures/warmcache-hydrate-argv.json"
         ))
-        .expect("argv fixture must be valid JSON");
-        let argv: Vec<String> = fixture["init_container"]
+        .expect("argv fixture must be valid JSON")
+    }
+
+    fn argv(fixture: &serde_json::Value, key: &str) -> Vec<String> {
+        fixture[key]
             .as_array()
-            .expect("init_container must be an array")
+            .unwrap_or_else(|| panic!("fixture key {key} must be an array"))
             .iter()
             .map(|v| v.as_str().expect("argv items are strings").to_string())
-            .collect();
+            .collect()
+    }
 
-        let parsed = parse_args(argv).expect("contract argv must parse");
+    /// The exact argv centaur emits into the init container (pinned by the
+    /// emitted-==-fixture test on the centaur side) must keep parsing, and the
+    /// env vars centaur injects must resolve the endpoint — env is the
+    /// load-bearing channel in production (centaur passes no url/key flags).
+    #[test]
+    fn parses_the_emitted_argv_and_resolves_via_fixture_env() {
+        let fixture = fixture();
+        let parsed = parse_args(argv(&fixture, "init_container")).expect("emitted argv must parse");
         assert_eq!(parsed.session.as_deref(), Some("sess-1"));
-        assert_eq!(parsed.repo_cache_root, Some(PathBuf::from("/cache")));
+        assert_eq!(parsed.repo_cache_root, PathBuf::from("/cache"));
         assert_eq!(
             parsed.depcache_root,
-            Some(PathBuf::from("/var/cache/centaur/depcache"))
+            PathBuf::from("/var/cache/centaur/depcache")
         );
-        assert_eq!(parsed.cas_dir, Some(PathBuf::from("/var/lib/centaur/cas")));
+        assert_eq!(parsed.cas_dir, PathBuf::from("/var/lib/centaur/cas"));
         assert_eq!(parsed.toolchain_id.as_deref(), Some("tc-1"));
+        assert_eq!(
+            parsed.atrium_url, None,
+            "centaur passes url via env, not flags"
+        );
+        assert_eq!(
+            parsed.atrium_key, None,
+            "centaur passes key via env, not flags"
+        );
+
+        let env = fixture["env"].as_object().expect("fixture env map").clone();
+        let (url, key) = resolve_atrium_endpoint(parsed.atrium_url, parsed.atrium_key, |name| {
+            env.get(name).and_then(|v| v.as_str()).map(str::to_string)
+        })
+        .expect("fixture env must resolve the endpoint");
+        assert_eq!(url, "http://atrium-server.atrium.svc:8080");
+        assert_eq!(key, "test-key");
+    }
+
+    /// Every declared flag (contract.toml cli.warmcache_hydrate) must keep
+    /// parsing — covered by the parser_coverage fixture entry, which the
+    /// contract suite asserts spans the full declared list.
+    #[test]
+    fn parses_the_full_declared_flag_set() {
+        let fixture = fixture();
+        let parsed =
+            parse_args(argv(&fixture, "parser_coverage")).expect("declared argv must parse");
+        assert_eq!(parsed.atrium_url.as_deref(), Some("http://atrium:8080"));
+        assert_eq!(parsed.atrium_key.as_deref(), Some("flag-key"));
+    }
+
+    /// Canonical spellings are accepted when the historical ones are unset,
+    /// and empty values fall through instead of being used verbatim.
+    #[test]
+    fn endpoint_resolution_accepts_canonical_spellings_and_skips_empties() {
+        let lookup = |name: &str| match name {
+            "ATRIUM_URL" => Some(String::new()),
+            "ATRIUM_BASE_URL" => Some("http://canonical:8080".to_string()),
+            "ATRIUM_CAPTURE_API_KEY" => Some("canonical-key".to_string()),
+            _ => None,
+        };
+        let (url, key) =
+            resolve_atrium_endpoint(None, None, lookup).expect("canonical env must resolve");
+        assert_eq!(url, "http://canonical:8080");
+        assert_eq!(key, "canonical-key");
+
+        let err = resolve_atrium_endpoint(None, None, |_| None).unwrap_err();
+        assert!(
+            err.contains("ATRIUM_BASE_URL"),
+            "error names every knob: {err}"
+        );
     }
 }

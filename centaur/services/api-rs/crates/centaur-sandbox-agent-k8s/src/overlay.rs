@@ -18,7 +18,14 @@ pub(crate) const DEFAULT_HOME_PARENT_MOUNT_PATH: &str = "/home";
 const DEFAULT_ATRIUM_MOUNT_PATH: &str = "/atrium";
 const DEFAULT_CONTEXT_MOUNT_PATH: &str = "/home/agent/context";
 const DEFAULT_AGENT_UID: u32 = 1001;
-const READY_MARKER_FILE: &str = ".centaur-workspace-ready";
+pub(crate) const READY_MARKER_FILE: &str = ".centaur-workspace-ready";
+// Session manifests live at <overlays_root>/SESSIONS_DIR/<session>.json; the
+// warm-home lower snapshots at <overlays_root>/WARM_HOME_LOWER_DIR/<session>.
+pub(crate) const SESSIONS_DIR: &str = ".sessions";
+pub(crate) const WARM_HOME_LOWER_DIR: &str = ".warm-home-lower";
+pub(crate) const PROVISION_OVERLAY_BIN: &str = "/usr/local/bin/provision-overlay";
+pub(crate) const WARMCACHE_HYDRATE_BIN: &str = "/usr/local/bin/warmcache-hydrate";
+pub(crate) const HARNESS_LABEL: &str = "centaur.ai/harness";
 const READINESS_TIMEOUT_SECS: u64 = 120;
 const CENTAUR_WARM_RESOLVED_REPOS_JSON_ENV: &str = "CENTAUR_WARM_RESOLVED_REPOS_JSON";
 
@@ -73,7 +80,7 @@ impl OverlayMetadata {
     pub(crate) fn from_sandbox_spec(spec: &SandboxSpec, agent_uid: u32) -> Self {
         let harness = spec
             .labels
-            .get("centaur.ai/harness")
+            .get(HARNESS_LABEL)
             .map(String::as_str)
             .or_else(|| env_value(spec, "CENTAUR_HARNESS_TYPE"))
             .and_then(supported_provisioner_harness);
@@ -164,7 +171,7 @@ pub(crate) fn overlay_manifest_init_container_json(
         // explicit policy, k8s defaults to Always for a `:latest` tag and the kubelet
         // fails on a locally-loaded image (no registry to pull from).
         "imagePullPolicy": "IfNotPresent",
-        "command": ["/usr/local/bin/provision-overlay"],
+        "command": [PROVISION_OVERLAY_BIN],
         "args": args,
         "securityContext": {
             "privileged": false,
@@ -290,7 +297,7 @@ pub(crate) fn private_repo_hydrate_init_container_json(
         "name": "private-repo-cache-hydrate",
         "image": overlay.image,
         "imagePullPolicy": "IfNotPresent",
-        "command": ["/usr/local/bin/provision-overlay"],
+        "command": [PROVISION_OVERLAY_BIN],
         "args": [
             "--hydrate-private-repos",
             "--repos-json",
@@ -342,7 +349,7 @@ pub(crate) fn warmcache_hydrate_init_container_json(
         "name": "warmcache-hydrate",
         "image": overlay.image,
         "imagePullPolicy": "IfNotPresent",
-        "command": ["/usr/local/bin/warmcache-hydrate"],
+        "command": [WARMCACHE_HYDRATE_BIN],
         "args": [
             "--session",
             init.session,
@@ -683,6 +690,34 @@ mod contract_tests {
             .unwrap_or_else(|| panic!("contract.toml {path} must be a string"))
     }
 
+    fn fixture(name: &str) -> serde_json::Value {
+        let path = format!(
+            "{}/../../../../../runtime/node-sync/contract/fixtures/{name}",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        let raw = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("read argv fixture at {path}: {e}"));
+        serde_json::from_str(&raw).expect("argv fixture must be valid JSON")
+    }
+
+    fn fixture_argv(fixture: &serde_json::Value, key: &str) -> Vec<String> {
+        fixture[key]
+            .as_array()
+            .unwrap_or_else(|| panic!("fixture key {key} must be an array"))
+            .iter()
+            .map(|v| v.as_str().expect("argv items are strings").to_string())
+            .collect()
+    }
+
+    fn container_args(container: &Value) -> Vec<String> {
+        container["args"]
+            .as_array()
+            .expect("args array")
+            .iter()
+            .map(|v| v.as_str().expect("args are strings").to_string())
+            .collect()
+    }
+
     fn assert_args_declared(container: &Value, contract: &toml::Value, flags_path: &str) {
         let declared: Vec<&str> = get(contract, flags_path)
             .as_array()
@@ -708,7 +743,7 @@ mod contract_tests {
             harness: Some("codex".to_owned()),
             harness_thread_id: Some("thread-1".to_owned()),
             harness_home: Some("/home/agent/.codex".to_owned()),
-            repo: Some("acme/widget".to_owned()),
+            repo: Some("/cache/github.com/acme/widget".to_owned()),
             repos_json: Some("[]".to_owned()),
             resolved_repos_json: Some("[]".to_owned()),
             warm_sandbox: true,
@@ -793,6 +828,13 @@ mod contract_tests {
             get_str(&c, "image.binaries.provision_overlay")
         );
         assert_args_declared(&container, &c, "cli.provision_overlay.flags");
+        // The fixture records the EXACT argv this builder emits for these
+        // inputs; the daemon's in-bin tests parse the same fixture, so this
+        // equality is what ties golden-argv coverage to reality.
+        assert_eq!(
+            container_args(&container),
+            fixture_argv(&fixture("provision-overlay-argv.json"), "manifest_writer")
+        );
     }
 
     #[test]
@@ -839,6 +881,13 @@ mod contract_tests {
             get_str(&c, "image.binaries.provision_overlay")
         );
         assert_args_declared(&container, &c, "cli.provision_overlay.flags");
+        assert_eq!(
+            container_args(&container),
+            fixture_argv(
+                &fixture("provision-overlay-argv.json"),
+                "private_repo_hydrate"
+            )
+        );
     }
 
     #[test]
@@ -856,8 +905,8 @@ mod contract_tests {
                 repo_cache_volume: "repo-cache",
                 depcache_volume: "depcache",
                 cas_volume: "warmcache-cas",
-                atrium_url: Some("http://atrium:8080"),
-                atrium_key: Some("key"),
+                atrium_url: Some("http://atrium-server.atrium.svc:8080"),
+                atrium_key: Some("test-key"),
                 toolchain_id: Some("tc-1"),
             },
         );
@@ -870,14 +919,44 @@ mod contract_tests {
             get_str(&c, "image.binaries.warmcache_hydrate")
         );
         assert_args_declared(&container, &c, "cli.warmcache_hydrate.flags");
-        let env_names: Vec<&str> = container["env"]
+
+        // Exact emitted == fixture: argv AND the env channel (which is how
+        // url/key actually reach the binary in production — no flags).
+        let f = fixture("warmcache-hydrate-argv.json");
+        assert_eq!(
+            container_args(&container),
+            fixture_argv(&f, "init_container")
+        );
+        // Env order is immaterial to k8s; compare as sorted sets.
+        let mut emitted_env: Vec<(String, String)> = container["env"]
             .as_array()
             .expect("warmcache env array")
             .iter()
-            .map(|e| e["name"].as_str().expect("env name"))
+            .map(|e| {
+                (
+                    e["name"].as_str().expect("env name").to_string(),
+                    e["value"].as_str().expect("env value").to_string(),
+                )
+            })
             .collect();
-        assert!(env_names.contains(&get_str(&c, "env.warmcache_hydrate.url")));
-        assert!(env_names.contains(&get_str(&c, "env.warmcache_hydrate.key")));
+        emitted_env.sort();
+        let fixture_env: Vec<(String, String)> = f["env"]
+            .as_object()
+            .expect("fixture env map")
+            .iter()
+            .map(|(k, v)| (k.clone(), v.as_str().expect("env value").to_string()))
+            .collect();
+        assert_eq!(emitted_env, fixture_env);
+        assert!(
+            emitted_env
+                .iter()
+                .any(|(k, _)| k == get_str(&c, "env.warmcache_hydrate.url"))
+        );
+        assert!(
+            emitted_env
+                .iter()
+                .any(|(k, _)| k == get_str(&c, "env.warmcache_hydrate.key"))
+        );
     }
 
     /// The sandbox-spec env keys the contract declares must actually populate
@@ -910,10 +989,7 @@ mod contract_tests {
                 "sandbox-spec key {key} is not declared in contract.toml"
             );
         }
-        assert_eq!(
-            get_str(&c, "env.sandbox_spec.harness_label"),
-            "centaur.ai/harness"
-        );
+        assert_eq!(get_str(&c, "env.sandbox_spec.harness_label"), HARNESS_LABEL);
 
         let mut spec = centaur_sandbox_core::SandboxSpec::new("centaur-agent:test");
         for (name, value) in [
@@ -933,6 +1009,14 @@ mod contract_tests {
         let metadata = OverlayMetadata::from_sandbox_spec(&spec, 1001);
         assert_eq!(metadata.atrium_session.as_deref(), Some("slack:C1:1.2"));
         assert_eq!(metadata.harness.as_deref(), Some("codex"));
+
+        // The label path (not just env) must populate harness too.
+        let mut labeled = centaur_sandbox_core::SandboxSpec::new("centaur-agent:test");
+        labeled
+            .labels
+            .insert(HARNESS_LABEL.to_owned(), "claude".to_owned());
+        let labeled_metadata = OverlayMetadata::from_sandbox_spec(&labeled, 1001);
+        assert_eq!(labeled_metadata.harness.as_deref(), Some("claude"));
         assert_eq!(metadata.harness_home.as_deref(), Some("/home/agent/.codex"));
         assert_eq!(metadata.harness_thread_id.as_deref(), Some("thread-1"));
         assert_eq!(metadata.repo.as_deref(), Some("acme/widget"));

@@ -74,7 +74,10 @@ export const config = {
   // The Centaur artifact-byte endpoint authenticates with its own
   // sandbox-token key, distinct from CENTAUR_API_KEY. Unset falls back to
   // centaurApiKey (works only if Centaur accepts the session key there).
-  artifactCaptureApiKey: process.env.ARTIFACT_CAPTURE_API_KEY ?? '',
+  // ATRIUM_CAPTURE_API_KEY is the canonical spelling of the same key (the
+  // node-sync seam contract, runtime/node-sync/CONTRACT.md): every seam
+  // reader accepts both spellings so a mixed deployment can't strand one.
+  artifactCaptureApiKey: process.env.ARTIFACT_CAPTURE_API_KEY ?? process.env.ATRIUM_CAPTURE_API_KEY ?? '',
   // === gc additions ===
   artifactGcEnabled: process.env.ARTIFACT_GC_ENABLED === '1',
   artifactGcIntervalMs: Number(process.env.ARTIFACT_GC_INTERVAL_MS ?? 300_000),

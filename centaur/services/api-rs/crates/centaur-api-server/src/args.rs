@@ -3311,8 +3311,11 @@ mod tests {
             get("host_paths.depcache_mount"),
             SANDBOX_DEP_CACHE_MOUNT_PATH
         );
-        assert_eq!(get("host_paths.cas"), SANDBOX_CAS_MOUNT_PATH);
-        assert_eq!(get("host_paths.cas"), DEFAULT_SANDBOX_CAS_HOST_PATH);
+        assert_eq!(get("host_paths.cas_mount"), SANDBOX_CAS_MOUNT_PATH);
+        assert_eq!(
+            get("host_paths.cas_host_default"),
+            DEFAULT_SANDBOX_CAS_HOST_PATH
+        );
         assert_eq!(
             format!("{}:latest", get("image.name")),
             DEFAULT_SANDBOX_OVERLAY_NODE_SYNC_IMAGE

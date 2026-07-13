@@ -48,7 +48,10 @@ warmcache_cas = "warmcache-cas"
 overlays_root = "/var/lib/centaur/overlays"
 merged_root = "/run/centaur/merged"
 atrium_root = "/var/lib/centaur/atrium"
-cas = "/var/lib/centaur/cas"
+# Container mount path (agent pods + init containers) and the node host dir
+# backing it coincide today but are separate knobs — keep them separate keys.
+cas_mount = "/var/lib/centaur/cas"
+cas_host_default = "/var/lib/centaur/cas"
 depcache_mount = "/var/cache/centaur/depcache"
 repo_cache_mount = "/cache"
 workspace_mount = "/workspace"
@@ -81,6 +84,7 @@ key_fallback = "ATRIUM_CAPTURE_API_KEY"
 
 [env.server]
 api_key = "ARTIFACT_CAPTURE_API_KEY"
+api_key_fallback = "ATRIUM_CAPTURE_API_KEY"
 
 # Sandbox-spec env keys / labels the provisioner metadata is derived from
 # (centaur-sandbox-agent-k8s OverlayMetadata::from_sandbox_spec).

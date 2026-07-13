@@ -1479,10 +1479,10 @@ fn claimed_overlay_home_script(
     let merged_slot = overlay.merged_root.join(id.as_str());
     let merged_home = merged_slot.join("agent");
     let context_source = overlay::atrium_context_host_path(id.as_str());
-    let ready_marker = merged_home.join(".centaur-workspace-ready");
+    let ready_marker = merged_home.join(overlay::READY_MARKER_FILE);
     let manifest_path = overlay
         .overlays_root
-        .join(".sessions")
+        .join(overlay::SESSIONS_DIR)
         .join(format!("{}.json", id.as_str()));
     let mut provision_args = vec![
         "--manifest-only".to_owned(),
@@ -1507,7 +1507,7 @@ fn claimed_overlay_home_script(
     let generic_home_lower = (!request.precomposed).then(|| {
         overlay
             .overlays_root
-            .join(".warm-home-lower")
+            .join(overlay::WARM_HOME_LOWER_DIR)
             .join(id.as_str())
     });
     if let Some(generic_home_lower) = &generic_home_lower {
@@ -1548,12 +1548,13 @@ fn snapshot_generic_home_script(source_home: &Path, generic_home_lower: &Path) -
          \tfor entry in \"$src\"/.[!.]* \"$src\"/..?* \"$src\"/*; do\n\
          \t\t[ -e \"$entry\" ] || continue\n\
          \t\tname=${{entry##*/}}\n\
-         \t\tcase \"$name\" in context|.centaur-workspace-ready) continue ;; esac\n\
+         \t\tcase \"$name\" in context|{ready_marker}) continue ;; esac\n\
          \t\tcp -a \"$entry\" \"$dst/\"\n\
          \tdone\n\
          fi",
         src = path_string(source_home),
         dst = path_string(generic_home_lower),
+        ready_marker = overlay::READY_MARKER_FILE,
     )
 }
 
@@ -1587,7 +1588,7 @@ fn readiness_wait_script(
 }
 
 fn shell_join_provision_overlay(args: &[String]) -> String {
-    let mut command = "/usr/local/bin/provision-overlay".to_owned();
+    let mut command = overlay::PROVISION_OVERLAY_BIN.to_owned();
     for arg in args {
         command.push(' ');
         command.push_str(&shell_quote(arg));

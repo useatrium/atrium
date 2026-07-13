@@ -82,14 +82,10 @@ function loadFixture(name: string): unknown {
 
 // The fixture is a minimum-shape template: every key it has must exist in the
 // live response with a matching type. Extra keys in the response are fine —
-// the daemon's parsers are tolerant readers. A `null` template value only
-// requires key presence. A non-empty template array requires a non-empty
-// response array whose first element matches the template element.
+// the daemon's parsers are tolerant readers. A non-empty template array
+// requires a non-empty response array whose first element matches the
+// template element.
 function expectShape(actual: unknown, template: unknown, path = '$'): void {
-  if (template === null) {
-    expect(actual, `${path} must be present`).not.toBeUndefined();
-    return;
-  }
   if (Array.isArray(template)) {
     expect(Array.isArray(actual), `${path} must be an array`).toBe(true);
     if (template.length > 0) {

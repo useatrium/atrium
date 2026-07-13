@@ -54,10 +54,13 @@ the Atrium repo (not a separate `gbasin/centaur`) is the source of truth.
 - **No current exceptions.** The Atrium-original `centaur-node-sync` crate (AGPL) was
   briefly such an exception inside this subtree; it now lives outside at repo-root
   **`runtime/node-sync`** (its own cargo workspace), so this subtree is uniformly
-  Apache-2.0 OR MIT. The rest of Centaur talks to that daemon only via pod exec,
-  mount-path conventions, and HTTP — keep it that way: **never add `centaur-node-sync`
-  as a library dependency of any crate here** (that would link AGPL code into
-  permissive binaries).
+  Apache-2.0 OR MIT. At runtime, Centaur talks to that daemon only via pod exec,
+  mount-path conventions, and HTTP. At **test time only**, centaur crates may read the
+  seam-contract data files under `runtime/node-sync/contract/` (see
+  `runtime/node-sync/CONTRACT.md`) — reading data in tests distributes nothing. The
+  hard line stays: **never add `centaur-node-sync` as a library dependency of any
+  crate here, and never `include_str!` its contract data into non-test code** (either
+  would put AGPL-adjacent material into permissive binaries).
 - External contributions everywhere in the repo (including here) are covered by the
   CLA — see the repo-root `CONTRIBUTING.md`.
 
