@@ -9,7 +9,7 @@ import {
   sessionDriverId,
   type Session,
 } from './types';
-import { GlanceChip } from './GlanceChip';
+import { ConversationHeader } from './ConversationHeader';
 import { QuestionCard } from './SessionBanners';
 import { sessionsApi } from './api';
 import { SessionAppPresentationCards } from './AppPresentationCard';
@@ -21,6 +21,64 @@ export function repoBranchLabel(repo: string, branch?: string | null): string {
 }
 export function repoBranchTitle(repo: string, branch?: string | null): string {
   return branch ? `${repo} · branch ${branch}` : repo;
+}
+
+/**
+ * The session's meta line — who spawned it, on what, since when. It lives next
+ * to the identity it belongs to (the header slots it below the identity row),
+ * so every surface that shows these facts shows the same facts in the same
+ * order. The panel headers deliberately don't render it: the pane moved its
+ * metadata into the details popover, and the thread mirrors the pane.
+ *
+ * Every token names itself ("by Maya Chen · codex agent"), so the row reads as
+ * a sentence instead of a string of unlabelled ids. One line, always — and when
+ * the line runs out it gives up space in order of importance, not in whatever
+ * order flexbox finds convenient:
+ *   1. the repo drops out entirely below `sm` (a repo ellipsized to "meri…" is
+ *      pure noise, and it's still on the card and in the pane)
+ *   2. then the harness boilerplate ellipsizes
+ *   3. the author and the start time never shrink at all.
+ * The author is the headline here; it is the last thing that may go. The tokens
+ * are FLAT flex children (the separators are siblings, not wrappers) — nesting
+ * them would hand the shrink decision back to the wrapper and re-break this.
+ */
+export function SessionMetaLine({ session, spectators }: { session: Session; spectators: number }) {
+  return (
+    <div className="mt-1 flex items-center gap-x-2 overflow-hidden whitespace-nowrap text-2xs text-fg-muted">
+      <span className="shrink-0">by {session.spawnerName ?? session.spawnedBy}</span>
+      {session.driverId !== null && session.driverId !== session.spawnedBy && (
+        <>
+          <span className="shrink-0 text-fg-faint">·</span>
+          <span className="min-w-0 truncate text-fg-tertiary">driver: {session.driverName ?? session.driverId}</span>
+        </>
+      )}
+      <span className="shrink-0 text-fg-faint">·</span>
+      {/* Long, low-information boilerplate — it yields before any name does. */}
+      <span className="min-w-0 shrink-[3] truncate">{session.harness} agent</span>
+      {session.repo && (
+        <>
+          <span className="hidden shrink-0 text-fg-faint sm:inline">·</span>
+          <span className="hidden min-w-0 truncate sm:inline" title={repoBranchTitle(session.repo, session.branch)}>
+            {repoBranchLabel(session.repo, session.branch)}
+          </span>
+        </>
+      )}
+      <span className="shrink-0 text-fg-faint">·</span>
+      <span className="shrink-0 tabular-nums">started {formatTime(session.createdAt)}</span>
+      {session.costUsd > 0 && (
+        <>
+          <span className="shrink-0 text-fg-faint">·</span>
+          <span className="shrink-0 tabular-nums">{formatCost(session.costUsd)}</span>
+        </>
+      )}
+      {spectators > 0 && (
+        <>
+          <span className="shrink-0 text-fg-faint">·</span>
+          <span className="shrink-0 tabular-nums">{spectators} watching</span>
+        </>
+      )}
+    </div>
+  );
 }
 
 /** 1s ticker for live elapsed displays; idle when `active` is false. */
@@ -181,103 +239,54 @@ export function SessionCard({
         openable ? 'cursor-pointer hover:border-edge-strong' : ''
       }`}
     >
-      <div className="flex items-start gap-2">
-        {spawnFailed ? (
-          <GlanceChip session={session} override={{ kind: 'failed', label: 'spawn failed' }} />
-        ) : (
-          <GlanceChip session={session} now={now} />
-        )}
-        {openable ? (
-          <button
-            type="button"
-            onClick={open}
-            className="min-w-0 flex-1 whitespace-pre-wrap break-words text-left text-sm font-medium leading-snug text-fg hover:underline focus-visible:underline"
-          >
-            {session.title}
-          </button>
-        ) : (
-          <span className="min-w-0 flex-1 whitespace-pre-wrap break-words text-sm font-medium leading-snug text-fg">
-            {session.title}
-          </span>
-        )}
-      </div>
+      {/* The identity row + meta line are the SHARED header (see
+          ConversationHeader): the same chip · title · meta the thread and the
+          pane pin to the top of the right panel. Zooming in never renames the
+          thing you're looking at. */}
+      <ConversationHeader
+        variant="card"
+        identity={{
+          kind: 'session',
+          session,
+          now,
+          ...(spawnFailed ? { glanceOverride: { kind: 'failed' as const, label: 'spawn failed' } } : {}),
+        }}
+        onOpenTitle={openable ? open : undefined}
+        meta={<SessionMetaLine session={session} spectators={spectators} />}
+      >
+        {!spawnFailed && <SessionPresenceTicker session={session} className="mt-1 pl-0.5" />}
 
-      {!spawnFailed && <SessionPresenceTicker session={session} className="mt-1 pl-0.5" />}
-
-      {/* The card IS the channel's view of a live question — it flips to the
-          canonical answerable QuestionCard in place instead of posting a
-          second channel message, and the QuestionCard keeps the seat once the
-          question resolves: "✓ Answered by <name> · <option>". Compact
-          surfaces (the rail) point at a LIVE question instead, and show
-          nothing once it's answered. */}
-      {!spawnFailed &&
-        (livePending && questionDisplay === 'pointer' ? (
-          <button
-            type="button"
-            data-testid="question-pointer"
-            onClick={open}
-            className="mt-1.5 flex w-full items-center gap-1.5 rounded-md border border-warning-border/40 bg-warning-tint/10 px-2 py-1.5 text-left text-xs text-warning-text-strong hover:bg-warning-tint/25"
-          >
-            <span className="min-w-0 flex-1 truncate">{livePending.questions[0]?.question}</span>
-            <span className="shrink-0 font-semibold">Answer →</span>
-          </button>
-        ) : questionDisplay === 'full' && (livePending || answered) ? (
-          <QuestionCard
-            variant="card"
-            sessionId={session.id}
-            pending={livePending}
-            answered={answered}
-            isDriver={meId != null && sessionDriverId(session) === meId}
-            driverName={session.driverName ?? session.spawnerName ?? 'the driver'}
-            proposals={(session.answerProposals ?? []).filter(
-              (p) => p.status === 'pending' && p.questionId === livePending?.questionId,
-            )}
-          />
-        ) : null)}
-
-      {/* Every token names itself ("by Maya Chen · codex agent"), so the row
-          reads as a sentence instead of a string of unlabelled ids. One line,
-          always — and when the line runs out it gives up space in order of
-          importance, not in whatever order flexbox finds convenient:
-            1. the repo drops out entirely below `sm` (a repo ellipsized to
-               "meri…" is pure noise, and it's still on the card and in the pane)
-            2. then the harness boilerplate ellipsizes
-            3. the author and the start time never shrink at all.
-          The author is the headline here; it is the last thing that may go. */}
-      <div className="mt-1 flex items-center gap-x-2 overflow-hidden whitespace-nowrap text-2xs text-fg-muted">
-        <span className="shrink-0">by {session.spawnerName ?? session.spawnedBy}</span>
-        {session.driverId !== null && session.driverId !== session.spawnedBy && (
-          <>
-            <span className="shrink-0 text-fg-faint">·</span>
-            <span className="min-w-0 truncate text-fg-tertiary">driver: {session.driverName ?? session.driverId}</span>
-          </>
-        )}
-        <span className="shrink-0 text-fg-faint">·</span>
-        {/* Long, low-information boilerplate — it yields before any name does. */}
-        <span className="min-w-0 shrink-[3] truncate">{session.harness} agent</span>
-        {session.repo && (
-          <>
-            <span className="hidden shrink-0 text-fg-faint sm:inline">·</span>
-            <span className="hidden min-w-0 truncate sm:inline" title={repoBranchTitle(session.repo, session.branch)}>
-              {repoBranchLabel(session.repo, session.branch)}
-            </span>
-          </>
-        )}
-        <span className="shrink-0 text-fg-faint">·</span>
-        <span className="shrink-0 tabular-nums">started {formatTime(session.createdAt)}</span>
-        {session.costUsd > 0 && (
-          <>
-            <span className="shrink-0 text-fg-faint">·</span>
-            <span className="shrink-0 tabular-nums">{formatCost(session.costUsd)}</span>
-          </>
-        )}
-        {spectators > 0 && (
-          <>
-            <span className="shrink-0 text-fg-faint">·</span>
-            <span className="shrink-0 tabular-nums">{spectators} watching</span>
-          </>
-        )}
-      </div>
+        {/* The card IS the channel's view of a live question — it flips to the
+            canonical answerable QuestionCard in place instead of posting a
+            second channel message, and the QuestionCard keeps the seat once the
+            question resolves: "✓ Answered by <name> · <option>". Compact
+            surfaces (the rail) point at a LIVE question instead, and show
+            nothing once it's answered. */}
+        {!spawnFailed &&
+          (livePending && questionDisplay === 'pointer' ? (
+            <button
+              type="button"
+              data-testid="question-pointer"
+              onClick={open}
+              className="mt-1.5 flex w-full items-center gap-1.5 rounded-md border border-warning-border/40 bg-warning-tint/10 px-2 py-1.5 text-left text-xs text-warning-text-strong hover:bg-warning-tint/25"
+            >
+              <span className="min-w-0 flex-1 truncate">{livePending.questions[0]?.question}</span>
+              <span className="shrink-0 font-semibold">Answer →</span>
+            </button>
+          ) : questionDisplay === 'full' && (livePending || answered) ? (
+            <QuestionCard
+              variant="card"
+              sessionId={session.id}
+              pending={livePending}
+              answered={answered}
+              isDriver={meId != null && sessionDriverId(session) === meId}
+              driverName={session.driverName ?? session.spawnerName ?? 'the driver'}
+              proposals={(session.answerProposals ?? []).filter(
+                (p) => p.status === 'pending' && p.questionId === livePending?.questionId,
+              )}
+            />
+          ) : null)}
+      </ConversationHeader>
 
       {/* Failed cards render this block even with NO result text — recovery
           must not be gated on the presence of the very output whose absence

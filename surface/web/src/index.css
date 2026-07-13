@@ -448,7 +448,14 @@ body {
 
 /* "Show the work" zoom: the session pane mounts as an expansion of the thread
    panel it replaces, not a hard swap — a short slide+fade reads as zooming in
-   on the same conversation. Honors reduced-motion. */
+   on the same conversation. Honors reduced-motion.
+
+   The animation runs on the panel's CONTENTS, not the panel, so the one thing
+   both zoom levels share — the identity header ([data-zoom-anchor], see
+   ConversationHeader) — can opt out. The work below it slides in; the row that
+   names the conversation does not move, because it is the same row. Animating
+   each child instead of the parent is visually identical here (the children are
+   stacked full-width blocks, all starting together on the same easing). */
 @media (prefers-reduced-motion: no-preference) {
   @keyframes pane-zoom-in {
     from {
@@ -460,7 +467,7 @@ body {
       transform: none;
     }
   }
-  .pane-zoom-in {
+  .pane-zoom-in > *:not([data-zoom-anchor]) {
     animation: pane-zoom-in 180ms ease-out;
   }
 }

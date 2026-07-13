@@ -7,7 +7,7 @@ import type {
   UserRef,
   VoiceMeta,
 } from '@atrium/surface-client';
-import type { Session } from '../sessions/types';
+import { isTerminalSessionStatus, type Session } from '../sessions/types';
 import { sessionDriverId, buildTimelineItems, normalizeSteerProvenanceText } from '@atrium/surface-client';
 import { encodeEventHandle } from '@atrium/surface-client/handle';
 import { Composer } from './Composer';
@@ -15,6 +15,8 @@ import type { AgentComposerRequest, ComposerHandle } from './Composer';
 import { XIcon } from './icons';
 import { MessageRow } from './MessageRow';
 import type { MentionContext } from './useMentionTypeahead';
+import { ConversationHeader } from '../sessions/ConversationHeader';
+import { useNow } from '../sessions/SessionCard';
 import {
   THREAD_PANE_FALLBACK_WIDTH,
   THREAD_PANE_MAX_VW,
@@ -63,6 +65,15 @@ export function reconcileThreadSteerReplies(replies: ChatMessage[]): ChatMessage
   return hidden.size === 0 ? replies : replies.filter((message) => !hidden.has(message));
 }
 
+const THREAD_SNIPPET_MAX = 140;
+
+/** A human thread's name is the message that started it — one line of it. */
+export function threadSnippet(text: string): string {
+  const oneLine = text.replace(/\s+/g, ' ').trim();
+  if (oneLine.length === 0) return 'Thread';
+  return oneLine.length > THREAD_SNIPPET_MAX ? `${oneLine.slice(0, THREAD_SNIPPET_MAX - 1)}…` : oneLine;
+}
+
 export function ThreadPanel({
   root,
   replies,
@@ -72,6 +83,7 @@ export function ThreadPanel({
   meId,
   meHandle,
   mentionContext,
+  channelLabel,
   onClose,
   onSend,
   queueUpload,
@@ -100,6 +112,8 @@ export function ThreadPanel({
   meId?: string;
   meHandle?: string;
   mentionContext?: MentionContext;
+  /** Owning channel, for the zoom crumb (`#eng ▸ thread`). */
+  channelLabel?: string;
   onClose: () => void;
   onSend: (
     text: string,
@@ -154,6 +168,9 @@ export function ThreadPanel({
         : Object.values(sessions).find((session) => session.threadRootEventId === root.id),
     [root.id, root.sessionId, sessions],
   );
+  // The header's glance chip carries a live clock; tick it here (as the card
+  // does) so the thread's identity is as alive as the card's.
+  const now = useNow(attachedSession != null && !isTerminalSessionStatus(attachedSession.status));
   const spectatorsFor = (m: ChatMessage) => (m.sessionId != null ? (spectators[m.sessionId] ?? 0) : 0);
   const scrollRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<ComposerHandle>(null);
@@ -168,7 +185,7 @@ export function ThreadPanel({
 
   return (
     <aside
-      className={`relative flex shrink-0 flex-col border-l border-edge bg-surface max-md:!w-full max-md:shrink ${paneSizing.className}`}
+      className={`pane-zoom-in relative flex shrink-0 flex-col border-l border-edge bg-surface max-md:!w-full max-md:shrink ${paneSizing.className}`}
       style={paneSizing.style}
     >
       {/* biome-ignore lint/a11y/useSemanticElements: resizable pane separator uses a div for pointer capture and custom sizing. */}
@@ -188,23 +205,41 @@ export function ThreadPanel({
           resizing ? 'bg-accent/50' : ''
         }`}
       />
-      <header className="flex h-12 shrink-0 items-center justify-between border-b border-edge px-4">
-        <h2 className="text-sm font-semibold text-fg">
-          Thread
-          <span className="ml-2 text-xs font-normal text-fg-muted">
-            {root.replyCount} {root.replyCount === 1 ? 'reply' : 'replies'}
-          </span>
-        </h2>
-        <button
-          type="button"
-          onClick={onClose}
-          title="Close thread"
-          aria-label="Close thread"
-          className="rounded-md px-2 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg max-md:size-11 max-md:p-0"
-        >
-          <XIcon />
-        </button>
-      </header>
+      {/* The middle zoom says its own name. When a session is attached, this is
+          the SAME header component the card and the pane render — same chip,
+          same title, same place — so zooming in reads as a zoom, not a
+          teleport. A human thread has no session identity, so it gets its own:
+          the root message's author and snippet. Either way the generic
+          "Thread · 1 reply" chrome is gone — the reply count demotes to the
+          crumb line, which speaks the pane's `#channel ▸ thread ▸ work`
+          vocabulary. */}
+      <ConversationHeader
+        identity={
+          attachedSession
+            ? { kind: 'session', session: attachedSession, now }
+            : {
+                kind: 'thread',
+                authorId: root.author.id,
+                authorName: root.author.displayName,
+                snippet: threadSnippet(root.text),
+              }
+        }
+        onOpenTitle={attachedSession ? () => onOpenSession(attachedSession.id) : undefined}
+        openTitleHint={attachedSession ? 'Show the work' : undefined}
+        crumbs={[...(channelLabel ? [{ label: channelLabel, onClick: onClose }] : []), { label: 'thread' }]}
+        crumbNote={`${root.replyCount} ${root.replyCount === 1 ? 'reply' : 'replies'}`}
+        actions={
+          <button
+            type="button"
+            onClick={onClose}
+            title="Close thread"
+            aria-label="Close thread"
+            className="shrink-0 rounded-md px-2 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg max-md:size-11 max-md:p-0"
+          >
+            <XIcon />
+          </button>
+        }
+      />
       <div ref={scrollRef} className="flex-1 overflow-y-auto py-2">
         <MessageRow
           message={root}

@@ -78,7 +78,7 @@ import {
 } from '@atrium/surface-client';
 import { sessionsApi } from './api';
 import { repoBranchTitle, useNow } from './SessionCard';
-import { GlanceChip } from './GlanceChip';
+import { ConversationHeader } from './ConversationHeader';
 import {
   HARNESS_EFFORT_PICKER_OPTIONS,
   formatCost,
@@ -1858,117 +1858,107 @@ export function SessionPane({
           }`}
         />
       )}
-      {origin && (
-        <nav
-          aria-label="Zoom level"
-          data-testid="pane-crumb"
-          className="flex h-6 shrink-0 items-center gap-1 border-b border-edge bg-surface-overlay/60 px-3 text-3xs text-fg-muted"
-        >
-          <button
-            type="button"
-            onClick={origin.onOpenChannel}
-            className="max-w-40 truncate hover:text-fg-body hover:underline"
-          >
-            {origin.channelLabel}
-          </button>
-          {origin.onOpenThread && (
-            <>
-              <span aria-hidden>▸</span>
-              <button type="button" onClick={origin.onOpenThread} className="hover:text-fg-body hover:underline">
-                thread
-              </button>
-            </>
-          )}
-          <span aria-hidden>▸</span>
-          <span className="font-semibold text-fg-secondary">work</span>
-        </nav>
-      )}
-      <header
-        className={`flex h-12 shrink-0 items-center gap-2 border-b border-edge px-3 max-md:h-auto max-md:min-h-12 max-md:flex-wrap max-md:gap-1 max-md:px-2 max-md:py-1.5 ${
-          isMacDesktop && popout ? 'pl-20 max-md:pl-20' : ''
-        }`}
-      >
-        <GlanceChip session={{ ...session, status: displayStatus }} now={now} stuck={turnLiveness === 'stuck'} />
-        {/* One calm row: chip · title · driver · (stop) · overflow · close.
-            Everything else lives behind the overflow menu; the metadata line
-            moved into the details popover; transport liveness is the turn
-            status line's job. */}
-        <h2 className="min-w-0 flex-1 truncate text-sm font-semibold text-fg" title={session.title}>
-          {session.title}
-        </h2>
-        <span
-          data-testid="driver-chip"
-          className={`shrink-0 truncate rounded-full px-1.5 py-px text-3xs font-medium max-md:hidden ${
-            isDriver ? 'bg-accent-hover/15 text-accent-text-strong' : 'bg-surface-overlay/80 text-fg-secondary'
-          }`}
-        >
-          driver: {driverName}
-        </span>
-        {(isSpawner || isDriver) && !displayTerminal && (
-          <Tooltip content={canStopTurn ? 'Stop current turn' : 'Cancel this agent'}>
-            <button
-              type="button"
-              onClick={onCancel}
-              className={`rounded-md border px-2 py-1 text-2xs font-medium max-md:max-w-[8rem] max-md:truncate [@media(pointer:coarse)]:min-h-11 ${
-                displayCancelAsk === 'failed'
-                  ? 'border-danger-border-strong bg-danger-tint/60 text-danger-text-strong hover:bg-danger-surface/60'
-                  : canStopTurn
-                    ? 'border-warning-border bg-warning-tint/20 text-warning-text hover:bg-warning-tint/40'
-                    : displayCancelAsk === 'confirm'
-                      ? 'border-danger-border-strong bg-danger-tint/60 text-danger-text-strong hover:bg-danger-surface/60'
-                      : 'border-danger-border/60 text-danger hover:bg-danger-tint/40 hover:text-danger-text'
+      {/* The deepest zoom, wearing the SAME identity header as the card and the
+          thread (see ConversationHeader) — chip · title, then the crumb line.
+          The row stays put while the panel widens; only the work below it is
+          new. One calm row: chip · title · driver · (stop) · overflow · close.
+          Everything else lives behind the overflow menu; the metadata line
+          moved into the details popover; transport liveness is the turn status
+          line's job. */}
+      <ConversationHeader
+        identity={{
+          kind: 'session',
+          session: { ...session, status: displayStatus },
+          now,
+          stuck: turnLiveness === 'stuck',
+        }}
+        className={isMacDesktop && popout ? 'pl-20 max-md:pl-20' : ''}
+        crumbs={
+          origin
+            ? [
+                { label: origin.channelLabel, onClick: origin.onOpenChannel },
+                ...(origin.onOpenThread ? [{ label: 'thread', onClick: origin.onOpenThread }] : []),
+                { label: 'work' },
+              ]
+            : []
+        }
+        actions={
+          <>
+            <span
+              data-testid="driver-chip"
+              className={`shrink-0 truncate rounded-full px-1.5 py-px text-3xs font-medium max-md:hidden ${
+                isDriver ? 'bg-accent-hover/15 text-accent-text-strong' : 'bg-surface-overlay/80 text-fg-secondary'
               }`}
             >
-              {canStopTurn
-                ? displayCancelAsk === 'failed'
-                  ? 'Stop failed — retry'
-                  : 'Stop turn'
-                : displayCancelAsk === 'confirm'
-                  ? 'Confirm cancel'
-                  : displayCancelAsk === 'failed'
-                    ? 'Cancel failed — retry'
-                    : 'Cancel'}
-            </button>
-          </Tooltip>
-        )}
-        <div className="relative">
-          <Tooltip content="Agent actions">
-            <button
-              ref={capabilitiesButtonRef}
-              type="button"
-              onClick={openHeaderMenu}
-              aria-label="Agent actions"
-              aria-haspopup="dialog"
-              className="rounded-md px-2 py-1 text-sm font-semibold leading-none text-fg-tertiary hover:bg-surface-overlay hover:text-fg max-md:inline-flex max-md:size-11 max-md:items-center max-md:justify-center max-md:p-0 [@media(pointer:coarse)]:inline-flex [@media(pointer:coarse)]:size-11 [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center [@media(pointer:coarse)]:p-0"
-            >
-              ⋯
-            </button>
-          </Tooltip>
-          <SessionCapabilitiesPopover
-            sessionId={session.id}
-            open={capabilitiesOpen}
-            invokerRef={capabilitiesButtonRef}
-            details={sessionDetails}
-            onClose={() => setCapabilitiesOpen(false)}
-          />
-        </div>
-        <MessageActionMenu
-          state={headerMenu}
-          onClose={() => setHeaderMenu(null)}
-          actions={headerMenuActions}
-          label="Agent actions"
-        />
-        <Tooltip content="Close session details">
-          <button
-            type="button"
-            onClick={closePane}
-            aria-label="Close session details"
-            className="rounded-md px-2 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg max-md:inline-flex max-md:size-11 max-md:items-center max-md:justify-center max-md:p-0 [@media(pointer:coarse)]:inline-flex [@media(pointer:coarse)]:size-11 [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center [@media(pointer:coarse)]:p-0"
-          >
-            <XIcon />
-          </button>
-        </Tooltip>
-      </header>
+              driver: {driverName}
+            </span>
+            {(isSpawner || isDriver) && !displayTerminal && (
+              <Tooltip content={canStopTurn ? 'Stop current turn' : 'Cancel this agent'}>
+                <button
+                  type="button"
+                  onClick={onCancel}
+                  className={`rounded-md border px-2 py-1 text-2xs font-medium max-md:max-w-[8rem] max-md:truncate [@media(pointer:coarse)]:min-h-11 ${
+                    displayCancelAsk === 'failed'
+                      ? 'border-danger-border-strong bg-danger-tint/60 text-danger-text-strong hover:bg-danger-surface/60'
+                      : canStopTurn
+                        ? 'border-warning-border bg-warning-tint/20 text-warning-text hover:bg-warning-tint/40'
+                        : displayCancelAsk === 'confirm'
+                          ? 'border-danger-border-strong bg-danger-tint/60 text-danger-text-strong hover:bg-danger-surface/60'
+                          : 'border-danger-border/60 text-danger hover:bg-danger-tint/40 hover:text-danger-text'
+                  }`}
+                >
+                  {canStopTurn
+                    ? displayCancelAsk === 'failed'
+                      ? 'Stop failed — retry'
+                      : 'Stop turn'
+                    : displayCancelAsk === 'confirm'
+                      ? 'Confirm cancel'
+                      : displayCancelAsk === 'failed'
+                        ? 'Cancel failed — retry'
+                        : 'Cancel'}
+                </button>
+              </Tooltip>
+            )}
+            <div className="relative">
+              <Tooltip content="Agent actions">
+                <button
+                  ref={capabilitiesButtonRef}
+                  type="button"
+                  onClick={openHeaderMenu}
+                  aria-label="Agent actions"
+                  aria-haspopup="dialog"
+                  className="rounded-md px-2 py-1 text-sm font-semibold leading-none text-fg-tertiary hover:bg-surface-overlay hover:text-fg max-md:inline-flex max-md:size-11 max-md:items-center max-md:justify-center max-md:p-0 [@media(pointer:coarse)]:inline-flex [@media(pointer:coarse)]:size-11 [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center [@media(pointer:coarse)]:p-0"
+                >
+                  ⋯
+                </button>
+              </Tooltip>
+              <SessionCapabilitiesPopover
+                sessionId={session.id}
+                open={capabilitiesOpen}
+                invokerRef={capabilitiesButtonRef}
+                details={sessionDetails}
+                onClose={() => setCapabilitiesOpen(false)}
+              />
+            </div>
+            <MessageActionMenu
+              state={headerMenu}
+              onClose={() => setHeaderMenu(null)}
+              actions={headerMenuActions}
+              label="Agent actions"
+            />
+            <Tooltip content="Close session details">
+              <button
+                type="button"
+                onClick={closePane}
+                aria-label="Close session details"
+                className="rounded-md px-2 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg max-md:inline-flex max-md:size-11 max-md:items-center max-md:justify-center max-md:p-0 [@media(pointer:coarse)]:inline-flex [@media(pointer:coarse)]:size-11 [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center [@media(pointer:coarse)]:p-0"
+              >
+                <XIcon />
+              </button>
+            </Tooltip>
+          </>
+        }
+      />
 
       {session.archivedAt != null && (
         <div
