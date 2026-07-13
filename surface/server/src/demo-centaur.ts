@@ -121,6 +121,9 @@ export class DemoCentaurClient extends CentaurClient {
       const { delay_ms, ...clean } = frame;
       if (!(await delay(delay_ms ?? 480, options.signal))) return;
       yield clean;
+      // A turn's stream ends at its terminal state; frames beyond it belong to
+      // a later turn and only play after the next execute resumes the tail.
+      if (isTerminalStateFrame(clean)) return;
     }
   }
 
@@ -135,6 +138,18 @@ function isDemoHarness(harness: string): boolean {
 
 function isDemoThread(threadKey: string): boolean {
   return threadKey.startsWith('demo:');
+}
+
+const TERMINAL_EXECUTION_STATUSES = new Set(['completed', 'failed', 'cancelled']);
+
+function isTerminalStateFrame(frame: CentaurEventFrame): boolean {
+  const data = frame.data as { type?: string; status?: string } | undefined;
+  return (
+    frame.event === 'execution_state' &&
+    data?.type === 'execution.state' &&
+    typeof data.status === 'string' &&
+    TERMINAL_EXECUTION_STATUSES.has(data.status)
+  );
 }
 
 // Optional scripted transcripts: ATRIUM_DEMO_SCRIPT_PATH points at a JSON file

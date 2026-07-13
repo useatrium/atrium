@@ -71,7 +71,9 @@
               "type": "tool_use",
               "id": "toolu_rg",
               "name": "Bash",
-              "input": { "command": "rg -n \"backoff|retry\" services/ingest/worker.py" }
+              "input": {
+                "command": "rg -n \"backoff|retry\" services/ingest/worker.py"
+              }
             }
           ]
         }
@@ -108,7 +110,9 @@
               "type": "tool_use",
               "id": "toolu_sed",
               "name": "Bash",
-              "input": { "command": "sed -n '130,175p' services/ingest/worker.py" }
+              "input": {
+                "command": "sed -n '130,175p' services/ingest/worker.py"
+              }
             }
           ]
         }
@@ -175,7 +179,13 @@
       "delay_ms": 1400,
       "data": {
         "type": "tool",
-        "content": [{ "tool_use_id": "toolu_edit1", "is_error": false, "content": "Edited services/ingest/worker.py" }]
+        "content": [
+          {
+            "tool_use_id": "toolu_edit1",
+            "is_error": false,
+            "content": "Edited services/ingest/worker.py"
+          }
+        ]
       }
     },
     {
@@ -210,7 +220,13 @@
       "delay_ms": 1200,
       "data": {
         "type": "tool",
-        "content": [{ "tool_use_id": "toolu_edit2", "is_error": false, "content": "Edited services/ingest/worker.py" }]
+        "content": [
+          {
+            "tool_use_id": "toolu_edit2",
+            "is_error": false,
+            "content": "Edited services/ingest/worker.py"
+          }
+        ]
       }
     },
     {
@@ -229,7 +245,9 @@
               "type": "tool_use",
               "id": "toolu_pytest",
               "name": "Bash",
-              "input": { "command": "pytest services/ingest/tests/test_retry.py -q" }
+              "input": {
+                "command": "pytest services/ingest/tests/test_retry.py -q"
+              }
             }
           ]
         }
@@ -274,7 +292,14 @@
       "delay_ms": 2500,
       "data": {
         "type": "assistant",
-        "message": { "content": [{ "type": "text", "text": "The backoff fix is in on `fix/ingest-backoff`.\n\n" }] }
+        "message": {
+          "content": [
+            {
+              "type": "text",
+              "text": "The backoff fix is in on `fix/ingest-backoff`.\n\n"
+            }
+          ]
+        }
       }
     },
     {
@@ -332,7 +357,12 @@
       "data": {
         "type": "assistant",
         "message": {
-          "content": [{ "type": "text", "text": "- raised the ceiling to 300s with full jitter (`worker.py:141`)\n" }]
+          "content": [
+            {
+              "type": "text",
+              "text": "- raised the ceiling to 300s with full jitter (`worker.py:141`)\n"
+            }
+          ]
         }
       }
     },
@@ -344,7 +374,10 @@
         "type": "assistant",
         "message": {
           "content": [
-            { "type": "text", "text": "- every retry now logs `queue_depth` and `attempt` for the latency analysis\n" }
+            {
+              "type": "text",
+              "text": "- every retry now logs `queue_depth` and `attempt` for the latency analysis\n"
+            }
           ]
         }
       }
@@ -371,7 +404,14 @@
       "delay_ms": 7000,
       "data": {
         "type": "assistant",
-        "message": { "content": [{ "type": "text", "text": "All 4 retry tests pass. " }] }
+        "message": {
+          "content": [
+            {
+              "type": "text",
+              "text": "All 4 retry tests pass. "
+            }
+          ]
+        }
       }
     },
     {
@@ -398,7 +438,10 @@
         "type": "assistant",
         "message": {
           "content": [
-            { "type": "text", "text": "and that path still assumes the 30s ceiling in its alert threshold. " }
+            {
+              "type": "text",
+              "text": "and that path still assumes the 30s ceiling in its alert threshold. "
+            }
           ]
         }
       }
@@ -410,7 +453,12 @@
       "data": {
         "type": "assistant",
         "message": {
-          "content": [{ "type": "text", "text": "I left it untouched but flagged it in the PR description." }]
+          "content": [
+            {
+              "type": "text",
+              "text": "I left it untouched but flagged it in the PR description."
+            }
+          ]
         }
       }
     },
@@ -472,9 +520,290 @@
         "result_text": "Fixed the retry ceiling: 30s → 300s with full jitter, queue-depth logged on every retry, cold-start regression test added. 4/4 tests pass on fix/ingest-backoff.",
         "terminal_reason": "completed"
       }
+    },
+    {
+      "event": "execution_state",
+      "event_id": 1000,
+      "delay_ms": 300,
+      "data": {
+        "type": "execution.state",
+        "status": "running",
+        "thread_key": "__THREAD_KEY__",
+        "execution_id": "__EXECUTION_ID__"
+      }
+    },
+    {
+      "event": "amp_raw_event",
+      "event_id": 1001,
+      "delay_ms": 400,
+      "data": {
+        "type": "item.completed",
+        "item": {
+          "id": "task-2",
+          "type": "userMessage",
+          "text": "good catch — bring the sweeper's alert threshold in line with the new ceiling too"
+        }
+      }
+    },
+    {
+      "event": "amp_raw_event",
+      "event_id": 1002,
+      "delay_ms": 1400,
+      "data": {
+        "type": "item.completed",
+        "item": {
+          "id": "reason-t2-1",
+          "type": "reasoning",
+          "summary": "The sweeper's alert math is stale, as flagged",
+          "text": "I flagged this in the last turn: the DLQ sweeper alerts on batches older than 30s of retry budget, which is wrong now that the ceiling is 300s with jitter. The alert threshold should derive from the ceiling rather than restating it."
+        }
+      }
+    },
+    {
+      "event": "amp_raw_event",
+      "event_id": 1003,
+      "delay_ms": 700,
+      "data": {
+        "type": "assistant",
+        "uuid": "tc-t2-rg",
+        "message": {
+          "id": "msg_t2_rg",
+          "role": "assistant",
+          "type": "message",
+          "content": [
+            {
+              "type": "tool_use",
+              "id": "toolu_t2_rg",
+              "name": "Bash",
+              "input": {
+                "command": "rg -n \"ALERT_AFTER|alert\" services/ingest/sweeper.py"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "event": "amp_raw_event",
+      "event_id": 1004,
+      "delay_ms": 1200,
+      "data": {
+        "type": "tool",
+        "content": [
+          {
+            "tool_use_id": "toolu_t2_rg",
+            "is_error": false,
+            "content": "22:ALERT_AFTER_S = 30.0  # keep in sync with worker retry ceiling\n84:        if batch.stalled_for() > ALERT_AFTER_S:\n85:            alerts.page(\"ingest_stalled_batch\", batch_id=batch.id)"
+          }
+        ]
+      }
+    },
+    {
+      "event": "amp_raw_event",
+      "event_id": 1005,
+      "delay_ms": 900,
+      "data": {
+        "type": "assistant",
+        "uuid": "tc-t2-edit",
+        "message": {
+          "id": "msg_t2_edit",
+          "role": "assistant",
+          "type": "message",
+          "content": [
+            {
+              "type": "tool_use",
+              "id": "toolu_t2_edit",
+              "name": "Edit",
+              "input": {
+                "file_path": "services/ingest/sweeper.py",
+                "old_string": "ALERT_AFTER_S = 30.0  # keep in sync with worker retry ceiling",
+                "new_string": "# Alert only past the worst-case backoff, and never drift from the worker\n# again: derive the threshold from the shared ceiling.\nALERT_AFTER_S = worker.RETRY_CEILING_S * 1.5"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "event": "amp_raw_event",
+      "event_id": 1006,
+      "delay_ms": 1100,
+      "data": {
+        "type": "tool",
+        "content": [
+          {
+            "tool_use_id": "toolu_t2_edit",
+            "is_error": false,
+            "content": "Edited services/ingest/sweeper.py"
+          }
+        ]
+      }
+    },
+    {
+      "event": "amp_raw_event",
+      "event_id": 1007,
+      "delay_ms": 800,
+      "data": {
+        "type": "assistant",
+        "uuid": "tc-t2-pytest",
+        "message": {
+          "id": "msg_t2_pytest",
+          "role": "assistant",
+          "type": "message",
+          "content": [
+            {
+              "type": "tool_use",
+              "id": "toolu_t2_pytest",
+              "name": "Bash",
+              "input": {
+                "command": "pytest services/ingest/tests -q"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "event": "amp_raw_event",
+      "event_id": 1008,
+      "delay_ms": 26000,
+      "data": {
+        "type": "tool",
+        "content": [
+          {
+            "tool_use_id": "toolu_t2_pytest",
+            "is_error": false,
+            "content": "......                                                  [100%]\n6 passed in 8.94s"
+          }
+        ]
+      }
+    },
+    {
+      "event": "usage_observed",
+      "event_id": 1009,
+      "delay_ms": 600,
+      "data": {
+        "type": "obs.usage",
+        "engine": "demo",
+        "harness": "demo",
+        "thread_key": "__THREAD_KEY__",
+        "execution_id": "__EXECUTION_ID__",
+        "model": "claude-fable-5",
+        "cost_usd": 0.09,
+        "input_tokens": 12405,
+        "output_tokens": 4118,
+        "total_tokens": 16523,
+        "authoritative": true
+      }
+    },
+    {
+      "event": "amp_raw_event",
+      "event_id": 1010,
+      "delay_ms": 2500,
+      "data": {
+        "type": "assistant",
+        "message": {
+          "content": [
+            {
+              "type": "text",
+              "text": "Done — the sweeper no longer hardcodes the old ceiling.\n\n"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "event": "amp_raw_event",
+      "event_id": 1011,
+      "delay_ms": 6000,
+      "data": {
+        "type": "assistant",
+        "message": {
+          "content": [
+            {
+              "type": "text",
+              "text": "`ALERT_AFTER_S` now derives from `worker.RETRY_CEILING_S` (×1.5 headroom), so the alert can't silently drift from the worker's backoff again. "
+            }
+          ]
+        }
+      }
+    },
+    {
+      "event": "amp_raw_event",
+      "event_id": 1012,
+      "delay_ms": 6000,
+      "data": {
+        "type": "assistant",
+        "message": {
+          "content": [
+            {
+              "type": "text",
+              "text": "All 6 ingest tests pass, including the cold-start regression test from the last turn."
+            }
+          ]
+        }
+      }
+    },
+    {
+      "event": "amp_raw_event",
+      "event_id": 1980,
+      "delay_ms": 7000,
+      "data": {
+        "type": "assistant",
+        "uuid": "final-t2",
+        "message": {
+          "id": "msg_final_t2",
+          "role": "assistant",
+          "type": "message",
+          "content": [
+            {
+              "type": "text",
+              "text": "Done — the sweeper no longer hardcodes the old ceiling.\n\n`ALERT_AFTER_S` now derives from `worker.RETRY_CEILING_S` (×1.5 headroom), so the alert can't silently drift from the worker's backoff again. All 6 ingest tests pass, including the cold-start regression test from the last turn."
+            }
+          ]
+        }
+      }
+    },
+    {
+      "event": "amp_raw_event",
+      "event_id": 1981,
+      "delay_ms": 400,
+      "data": {
+        "type": "result",
+        "text": "DLQ sweeper alert threshold now derives from the retry ceiling instead of hardcoding 30s. 6/6 ingest tests pass on fix/ingest-backoff."
+      }
+    },
+    {
+      "event": "execution_summary",
+      "event_id": 1982,
+      "delay_ms": 300,
+      "data": {
+        "type": "obs.execution_summary",
+        "engine": "demo",
+        "harness": "demo",
+        "thread_key": "__THREAD_KEY__",
+        "execution_id": "__EXECUTION_ID__",
+        "models": ["claude-fable-5"],
+        "status": "completed",
+        "cost_usd": 0.09,
+        "duration_s": 58.3,
+        "terminal_reason": "completed"
+      }
+    },
+    {
+      "event": "execution_state",
+      "event_id": 1983,
+      "delay_ms": 200,
+      "data": {
+        "type": "execution.state",
+        "status": "completed",
+        "thread_key": "__THREAD_KEY__",
+        "execution_id": "__EXECUTION_ID__",
+        "result_text": "DLQ sweeper alert threshold now derives from the retry ceiling instead of hardcoding 30s. 6/6 ingest tests pass on fix/ingest-backoff.",
+        "terminal_reason": "completed"
+      }
     }
   ],
-
   "eval regression": [
     {
       "event": "execution_state",
@@ -547,7 +876,9 @@
               "type": "tool_use",
               "id": "toolu_fetch",
               "name": "Bash",
-              "input": { "command": "atlas evals fetch --runs v0.12,v0.13 --split scanned-docs --pin corpus@7f3d21" }
+              "input": {
+                "command": "atlas evals fetch --runs v0.12,v0.13 --split scanned-docs --pin corpus@7f3d21"
+              }
             }
           ]
         }
@@ -637,7 +968,9 @@
               "type": "tool_use",
               "id": "toolu_rerun",
               "name": "Bash",
-              "input": { "command": "atlas evals rerun --pages worst50 --pipeline v0.13 --disable deskew" }
+              "input": {
+                "command": "atlas evals rerun --pages worst50 --pipeline v0.13 --disable deskew"
+              }
             }
           ]
         }
@@ -689,7 +1022,13 @@
       "delay_ms": 40,
       "data": {
         "type": "tool",
-        "content": [{ "tool_use_id": "toolu_report", "is_error": false, "content": "Wrote report.md" }]
+        "content": [
+          {
+            "tool_use_id": "toolu_report",
+            "is_error": false,
+            "content": "Wrote report.md"
+          }
+        ]
       }
     },
     {
@@ -723,7 +1062,11 @@
       "data": {
         "type": "tool",
         "content": [
-          { "tool_use_id": "toolu_plot", "is_error": false, "content": "wrote f1-by-rotation.png (1200×675)" }
+          {
+            "tool_use_id": "toolu_plot",
+            "is_error": false,
+            "content": "wrote f1-by-rotation.png (1200×675)"
+          }
         ]
       }
     },
@@ -743,7 +1086,9 @@
               "type": "tool_use",
               "id": "toolu_app",
               "name": "Bash",
-              "input": { "command": "atlas apps publish eval-dashboard/ --entry index.html" }
+              "input": {
+                "command": "atlas apps publish eval-dashboard/ --entry index.html"
+              }
             }
           ]
         }
@@ -842,7 +1187,6 @@
       }
     }
   ],
-
   "backfill embeddings": [
     {
       "event": "execution_state",
@@ -915,7 +1259,9 @@
               "type": "tool_use",
               "id": "toolu_stats",
               "name": "Bash",
-              "input": { "command": "atlas corpus stats --quarter Q2 --estimate embed" }
+              "input": {
+                "command": "atlas corpus stats --quarter Q2 --estimate embed"
+              }
             }
           ]
         }
@@ -971,7 +1317,6 @@
       }
     }
   ],
-
   "thumbnail derivatives": [
     {
       "event": "execution_state",
