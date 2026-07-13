@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type MouseEvent } from 'react';
 import { formatTime } from '@atrium/surface-client';
 import { formatCost, isPendingSessionId, isStalledSessionStatus, isTerminalSessionStatus, type Session } from './types';
 import { GlanceChip } from './GlanceChip';
+import { InlineQuestionAnswer } from './InlineQuestionAnswer';
 import { SessionAppPresentationCards } from './AppPresentationCard';
 import { SessionPresenceTicker } from './SessionPresenceTicker';
 
@@ -40,12 +41,15 @@ export function SessionCard({
   session,
   spectators,
   spawnFailed,
+  meId,
   onOpenPane,
 }: {
   session: Session;
   spectators: number;
   /** The optimistic POST failed — render a dead card (retry lives on the row). */
   spawnFailed?: boolean;
+  /** Enables answering a live question straight from the card. */
+  meId?: string;
   onOpenPane: (sessionId: string) => void;
 }) {
   const terminal = isTerminalSessionStatus(session.status);
@@ -95,6 +99,17 @@ export function SessionCard({
       </div>
 
       {!spawnFailed && <SessionPresenceTicker session={session} className="mt-1 pl-0.5" />}
+
+      {/* The card IS the channel's view of a live question — it flips to
+          answerable in place instead of posting a second channel message. */}
+      {!spawnFailed && !terminal && session.pendingQuestion?.questions[0] && (
+        <div className="mt-1.5 rounded-md border border-warning-border/40 bg-warning-tint/10 px-2 py-1.5 text-xs">
+          <div className="whitespace-pre-wrap break-words text-fg-body">
+            {session.pendingQuestion.questions[0].question}
+          </div>
+          <InlineQuestionAnswer session={session} meId={meId} />
+        </div>
+      )}
 
       <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-2xs text-fg-muted">
         <span className="truncate">{session.spawnerName ?? session.spawnedBy}</span>

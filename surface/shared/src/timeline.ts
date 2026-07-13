@@ -292,7 +292,9 @@ export function messageFromEvent(ev: WireEvent): ChatMessage {
     ...(voice !== undefined ? { voice } : {}),
     author:
       ev.author ??
-      (ev.type === 'session.replied'
+      // Agent utterances fall back to the agent persona, never "Unknown" —
+      // the row renderer replaces this with the session title + AGENT chip.
+      (ev.type === 'session.replied' || ev.type === 'session.question_requested'
         ? { id: sessionId ? `agent:${sessionId}` : 'agent', handle: 'agent', displayName: 'Agent' }
         : { id: ev.actorId ?? 'unknown', handle: 'unknown', displayName: 'Unknown' }),
     createdAt: ev.createdAt,

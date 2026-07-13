@@ -11,6 +11,8 @@ import {
   type WireEvent,
 } from '@atrium/surface-client';
 import { api } from '../api';
+import { InlineQuestionAnswer } from '../sessions/InlineQuestionAnswer';
+import type { Session } from '../sessions/types';
 import { Menu, MenuContent, MenuItem, MenuTrigger } from './a11y';
 import { CompactMarkdownText } from './MessageText';
 
@@ -122,6 +124,8 @@ function ActivityRow({
   item,
   attention,
   unread,
+  answerSession,
+  meId,
   onActivate,
   onMarkRead,
   onMarkUnread,
@@ -129,6 +133,9 @@ function ActivityRow({
   item: ActivityItem;
   attention: boolean;
   unread: boolean;
+  /** Live session whose pending question this row is about — makes the row answerable in place. */
+  answerSession?: Session;
+  meId?: string;
   onActivate: (item: ActivityItem) => void;
   onMarkRead: (item: ActivityItem) => void;
   onMarkUnread: (item: ActivityItem) => void;
@@ -204,6 +211,11 @@ function ActivityRow({
           </MenuContent>
         </Menu>
       </div>
+      {answerSession?.pendingQuestion && (
+        <div className="px-4 pb-3 pl-14">
+          <InlineQuestionAnswer session={answerSession} meId={meId} />
+        </div>
+      )}
     </li>
   );
 }
@@ -214,6 +226,8 @@ export function ActivityView({
   liveEvent = null,
   refreshKey = 0,
   liveAttention = [],
+  sessions = {},
+  meId,
   onCountsChange,
 }: {
   onSelectChannel: (channelId: string) => void;
@@ -229,6 +243,9 @@ export function ActivityView({
    * Synthetic eventIds ("live:…") don't parse, so read-state ops no-op.
    */
   liveAttention?: ActivityItem[];
+  /** Live session entities — lets needs-attention question rows answer in place. */
+  sessions?: Record<string, Session>;
+  meId?: string;
   onCountsChange?: (counts: ActivityCounts) => void;
 }) {
   const [items, setItems] = useState<ActivityItem[]>([]);
@@ -558,6 +575,10 @@ export function ActivityView({
                     item={item}
                     attention
                     unread={isActivityUnread(item, lastReadEventId, exceptionSet)}
+                    answerSession={
+                      item.kind === 'agent_question' && item.sessionId ? sessions[item.sessionId] : undefined
+                    }
+                    meId={meId}
                     onActivate={(target) => void activate(target)}
                     onMarkRead={(target) => void markItemRead(target)}
                     onMarkUnread={(target) => void markItemUnread(target)}

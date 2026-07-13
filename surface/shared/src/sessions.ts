@@ -1148,7 +1148,12 @@ export function applySessionEvent(sessions: Record<string, Session>, ev: Session
   if (ev.type === 'session.question_requested') {
     const questionId = typeof p.questionId === 'string' ? p.questionId : null;
     if (!questionId) return sessions;
-    const questions = parseQuestionPrompts(p.questions);
+    const parsed = parseQuestionPrompts(p.questions);
+    // Skew guard: an event payload that decodes to nothing must never shadow
+    // a richer copy of the SAME question already on the entity (e.g. from the
+    // REST session fetch, whose prompts carry ids and options).
+    const questions =
+      parsed.length === 0 && prev.pendingQuestion?.questionId === questionId ? prev.pendingQuestion.questions : parsed;
     const turnId = typeof p.turnId === 'string' ? p.turnId : undefined;
     const entry = questionEventFromPayload(ev, questionId, 'requested', {
       questions,
