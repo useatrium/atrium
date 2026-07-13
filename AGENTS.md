@@ -97,6 +97,7 @@ Fuller local bar (matches more of Surface static):
 
 ```bash
 pnpm check         # lint + migration filenames + typecheck + unit tests
+pnpm e2e           # Playwright (~3.5 min) — CI gates on this; run it before the PR
 pnpm --filter @atrium/mobile lint:a11y
 pnpm --filter @atrium/centaur-client build
 pnpm --filter @atrium/web build:ci
@@ -107,6 +108,10 @@ Notes:
 - `pnpm lint` is **`biome check`**, not `biome lint`. Format drift fails CI the same as rule
   errors. If static fails with "Formatter would have printed…", run `pnpm lint:fix`,
   commit, and push.
+- Run the e2e suite as **`pnpm e2e`** (from `surface/`). The e2e package's script is named
+  `e2e`, not `test` — so `pnpm --filter @atrium/e2e test` matches nothing and **exits 0 with no
+  output**, which reads exactly like a pass. If an "e2e run" finished in under a second, it
+  didn't run.
 - Typecheck/tests alone are not enough; subagent "lanes" that only typecheck still need a
   final `pnpm lint` (or `lint:fix`) before the PR.
 - There is no repo-enforced pre-commit hook. Local format-on-save (Biome) helps humans;
