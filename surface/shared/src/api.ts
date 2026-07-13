@@ -490,10 +490,10 @@ export function createApi(opts: ApiOptions = {}) {
         method: 'PATCH',
         body: JSON.stringify({ ...patch, ...(op.opId ? { opId: op.opId } : {}) }),
       }),
-    setDraft: (draftKey: string, text: string, op: OpOptions = {}) =>
+    setDraft: (draftKey: string, text: string, agentIntent = false, op: OpOptions = {}) =>
       req<{ ok: true }>(`/api/me/drafts/${encodeURIComponent(draftKey)}`, {
         method: 'PUT',
-        body: JSON.stringify({ text, ...(op.opId ? { opId: op.opId } : {}) }),
+        body: JSON.stringify({ text, agentIntent, ...(op.opId ? { opId: op.opId } : {}) }),
       }),
     logout: () => req<{ ok: true }>('/auth/logout', { method: 'POST', body: '{}' }),
     workspaces: () => req<{ workspaces: Workspace[] }>('/api/workspaces'),

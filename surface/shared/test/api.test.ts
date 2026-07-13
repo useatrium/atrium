@@ -118,7 +118,8 @@ function syncResponse(overrides: Partial<SyncResponse> = {}): SyncResponse {
         notifications: { messages: 'dm_mention', sessions: true, calls: true },
       },
       drafts: {
-        'ch-1': { text: 'Draft text', updatedAt: '2026-07-04T12:01:00.000Z' },
+        'ch-1': { text: 'Draft text', updatedAt: '2026-07-04T12:01:00.000Z', agentIntent: false },
+        'ch-2': { text: 'fix the build', updatedAt: '2026-07-04T12:03:00.000Z', agentIntent: true },
       },
       draftDeletions: {
         'ch-2': '2026-07-04T12:02:00.000Z',
@@ -290,6 +291,17 @@ describe('wire event response decoding', () => {
 
   it('decodes valid sync response payloads', () => {
     expect(decodeSyncResponse(syncResponse())).toEqual(syncResponse());
+  });
+
+  it('carries the draft agent intent through the wire, defaulting to chat when absent', () => {
+    const wire = syncResponse();
+    // Deploy skew / pre-076 server: no flag at all. It must decode as chat, not vanish.
+    delete (wire.state.drafts['ch-1'] as { agentIntent?: boolean }).agentIntent;
+
+    const decoded = decodeSyncResponse(wire);
+
+    expect(decoded.state.drafts['ch-1']?.agentIntent).toBe(false);
+    expect(decoded.state.drafts['ch-2']?.agentIntent).toBe(true);
   });
 
   it('rejects malformed sync event envelopes from createApi', async () => {

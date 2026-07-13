@@ -118,7 +118,7 @@ describe('ThreadPanel delegate to agent', () => {
     const actionMenu = screen.getByRole('dialog', { name: 'Message actions' });
     fireEvent.click(within(actionMenu).getByRole('button', { name: 'Delegate to agent…' }));
 
-    expect(screen.getAllByRole('button', { name: 'Exit agent mode' }).length).toBeGreaterThan(0);
+    expect(screen.getByTestId('composer-audience-pill').textContent).toContain('New agent · this thread');
     expect(screen.getAllByText(`/e/${encodeEventHandle(reply.id!)}`).length).toBeGreaterThan(0);
   });
 });

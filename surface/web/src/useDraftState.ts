@@ -22,6 +22,10 @@ export function useDraftState({
   threadDraftKey: string;
 }) {
   const [drafts, setDrafts] = useState<Record<string, string>>({});
+  // A draft written in agent mode stays marked as such — including across a
+  // cross-device restore — so the composer can re-show the "draft kept" strip
+  // instead of handing back an innocent-looking chat draft.
+  const [draftAgentIntents, setDraftAgentIntents] = useState<Record<string, boolean>>({});
   const touchedDraftKeysRef = useRef<Set<string>>(new Set());
   const activeDraftKeysRef = useRef<ReadonlySet<string>>(new Set());
 
@@ -41,7 +45,9 @@ export function useDraftState({
         const entries = Object.entries(hydrate);
         await Promise.all(
           entries
-            .map(([draftKey, draft]) => eventCache.setDraft(draftKey, draft.text, draft.updatedAt))
+            .map(([draftKey, draft]) =>
+              eventCache.setDraft(draftKey, draft.text, draft.updatedAt, draft.agentIntent === true),
+            )
             .concat(remove.map((draftKey) => eventCache.setDraft(draftKey, ''))),
         );
         if (entries.length === 0 && remove.length === 0) return;
@@ -59,6 +65,12 @@ export function useDraftState({
           }
           return next;
         });
+        setDraftAgentIntents((prev) => {
+          const next = { ...prev };
+          for (const [draftKey, draft] of entries) next[draftKey] = draft.agentIntent === true;
+          for (const draftKey of remove) next[draftKey] = false;
+          return next;
+        });
       })
       .catch((err: unknown) => {
         console.warn('failed to reconcile draft snapshot', err);
@@ -68,10 +80,13 @@ export function useDraftState({
   const loadDraft = useCallback((key: string, label: string) => {
     let disposed = false;
     setDrafts((prev) => ({ ...prev, [key]: '' }));
+    setDraftAgentIntents((prev) => ({ ...prev, [key]: false }));
     void eventCache
-      .getDraft(key)
+      .getDraftEntry(key)
       .then((draft) => {
-        if (!disposed) setDrafts((prev) => ({ ...prev, [key]: draft ?? '' }));
+        if (disposed) return;
+        setDrafts((prev) => ({ ...prev, [key]: draft?.text ?? '' }));
+        setDraftAgentIntents((prev) => ({ ...prev, [key]: draft?.agentIntent === true }));
       })
       .catch((err: unknown) => {
         console.warn(`failed to load ${label} draft`, err);
@@ -91,7 +106,10 @@ export function useDraftState({
     return loadDraft(threadDraftKey, 'thread');
   }, [loadDraft, threadDraftKey]);
 
-  const saveDraft = useCallback((key: string, text: string) => eventCache.setDraft(key, text), []);
+  const saveDraft = useCallback(
+    (key: string, text: string, agentIntent = false) => eventCache.setDraft(key, text, undefined, agentIntent),
+    [],
+  );
 
   const markDraftTouched = useCallback((key: string) => {
     touchedDraftKeysRef.current.add(key);
@@ -117,12 +135,12 @@ export function useDraftState({
   );
 
   const enqueueDraft = useCallback(
-    (key: string, text: string) => {
+    (key: string, text: string, agentIntent = false) => {
       markDraftTouched(key);
       void enqueueOp({
         opId: randomId(),
         opType: 'draft.set',
-        payload: { draftKey: key, text },
+        payload: { draftKey: key, text, agentIntent },
       }).catch((err: unknown) => {
         console.warn('failed to queue draft sync', err);
       });
@@ -132,6 +150,7 @@ export function useDraftState({
 
   return {
     drafts,
+    draftAgentIntents,
     enqueueDraft,
     markDraftTouched,
     putTextInComposer,

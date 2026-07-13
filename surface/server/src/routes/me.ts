@@ -126,6 +126,7 @@ const DraftParamsSchema = Schema.Struct({
 
 const DraftBodySchema = Schema.Struct({
   text: Schema.optional(Schema.Unknown),
+  agentIntent: Schema.optional(Schema.Unknown),
   opId: Schema.optional(Schema.Unknown),
 });
 
@@ -735,27 +736,32 @@ export function registerMeRoutes(app: FastifyInstance, deps: MeRouteDeps): void 
     if (typeof body.text !== 'string') {
       return reply.code(400).send({ error: 'bad_request', message: 'text is required' });
     }
+    // The draft carries its audience: a draft written in agent mode stays
+    // marked as such across devices so the restoring composer can say so
+    // instead of handing back a naked chat draft.
+    const agentIntent = body.agentIntent === true;
+    const text = body.text;
     return runMutation({
       userId: user.id,
       opId,
       opType: 'draft.set',
-      body: { draftKey, text: body.text },
+      body: { draftKey, text, agentIntent },
       fn: async (client) => {
-        if (body.text === '') {
+        if (text === '') {
           await client.query(
             `UPDATE user_drafts
-             SET text = '', deleted_at = now(), updated_at = now()
+             SET text = '', agent_intent = false, deleted_at = now(), updated_at = now()
              WHERE user_id = $1 AND draft_key = $2`,
             [user.id, draftKey],
           );
           return { ok: true as const };
         }
         await client.query(
-          `INSERT INTO user_drafts (user_id, draft_key, text, updated_at)
-           VALUES ($1, $2, $3, now())
+          `INSERT INTO user_drafts (user_id, draft_key, text, agent_intent, updated_at)
+           VALUES ($1, $2, $3, $4, now())
            ON CONFLICT (user_id, draft_key)
-           DO UPDATE SET text = EXCLUDED.text, updated_at = now(), deleted_at = NULL`,
-          [user.id, draftKey, body.text],
+           DO UPDATE SET text = EXCLUDED.text, agent_intent = EXCLUDED.agent_intent, updated_at = now(), deleted_at = NULL`,
+          [user.id, draftKey, text, agentIntent],
         );
         return { ok: true as const };
       },

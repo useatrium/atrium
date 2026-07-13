@@ -2559,7 +2559,9 @@ export function SessionPane({
                 session.threadRootEventId != null
                   ? {
                       mode: paneSendMode,
-                      agentLabel: isDriver ? 'agent' : 'suggest',
+                      // Same grammar as the channel and thread composers: the pill
+                      // names the real target, not just the mode.
+                      agentLabel: `${isDriver ? 'Steer' : 'Suggest'} · “${session.title}”`,
                       threadLabel: 'this thread',
                       onModeChange: setPaneSendMode,
                       agentSendLabel: isDriver ? 'Steer' : 'Suggest',

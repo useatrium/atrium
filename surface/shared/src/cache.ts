@@ -30,7 +30,7 @@ export interface CacheStorage {
   getDraft: (key: string) => Promise<string | null>;
   getDraftEntry: (key: string) => Promise<DraftSnapshotEntry | null>;
   listDrafts: () => Promise<DraftSnapshot>;
-  setDraft: (key: string, text: string, updatedAt?: string) => Promise<void>;
+  setDraft: (key: string, text: string, updatedAt?: string, agentIntent?: boolean) => Promise<void>;
   clearCache: () => Promise<void>;
 }
 
@@ -46,7 +46,7 @@ export interface EventCache {
   getDraft: (key: string) => Promise<string | null>;
   getDraftEntry: (key: string) => Promise<DraftSnapshotEntry | null>;
   listDrafts: () => Promise<DraftSnapshot>;
-  setDraft: (key: string, text: string, updatedAt?: string) => Promise<void>;
+  setDraft: (key: string, text: string, updatedAt?: string, agentIntent?: boolean) => Promise<void>;
   flushChannel: (channelId: string) => Promise<void>;
   flushAll: () => Promise<void>;
   clearCache: () => Promise<void>;
@@ -178,9 +178,9 @@ export function createEventCache(storage: CacheStorage, flushMs = DEFAULT_CACHE_
 
     listDrafts: () => (invalidated ? Promise.resolve({}) : storage.listDrafts()),
 
-    setDraft: (key, text, updatedAt) => {
+    setDraft: (key, text, updatedAt, agentIntent) => {
       if (invalidated) return Promise.resolve();
-      return storage.setDraft(key, text, updatedAt);
+      return storage.setDraft(key, text, updatedAt, agentIntent);
     },
 
     flushChannel,

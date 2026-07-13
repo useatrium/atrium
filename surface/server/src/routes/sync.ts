@@ -38,10 +38,11 @@ async function syncStateSnapshot(client: DbClient, userId: string) {
   const draftRows = await client.query<{
     draft_key: string;
     text: string;
+    agent_intent: boolean;
     updated_at: Date;
     deleted_at: Date | null;
   }>(
-    `SELECT draft_key, text, updated_at, deleted_at
+    `SELECT draft_key, text, agent_intent, updated_at, deleted_at
      FROM user_drafts
      WHERE user_id = $1
      ORDER BY draft_key ASC`,
@@ -49,14 +50,18 @@ async function syncStateSnapshot(client: DbClient, userId: string) {
   );
   const readCursors: Record<string, number> = {};
   for (const row of readRows.rows) readCursors[row.channel_id] = Number(row.last_read_event_id);
-  const drafts: Record<string, { text: string; updatedAt: string }> = {};
+  const drafts: Record<string, { text: string; updatedAt: string; agentIntent: boolean }> = {};
   const draftDeletions: Record<string, string> = {};
   for (const row of draftRows.rows) {
     if (row.deleted_at) {
       draftDeletions[row.draft_key] = row.deleted_at.toISOString();
       continue;
     }
-    drafts[row.draft_key] = { text: row.text, updatedAt: row.updated_at.toISOString() };
+    drafts[row.draft_key] = {
+      text: row.text,
+      updatedAt: row.updated_at.toISOString(),
+      agentIntent: row.agent_intent === true,
+    };
   }
   return {
     readCursors,

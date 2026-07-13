@@ -22,6 +22,7 @@ interface JsonRow {
 interface DraftRow {
   draft_key: string;
   text: string;
+  agent_intent: number | null;
   updated_at: number;
 }
 
@@ -85,10 +86,27 @@ async function db() {
         updated_at INTEGER NOT NULL
       );
     `);
+    await migrateComposerDrafts(database);
     await migrateSendOutbox(database);
     return database;
   });
   return dbPromise;
+}
+
+/** `CREATE TABLE IF NOT EXISTS` above is a no-op on installs that already have
+ *  the table — the agent-intent column has to be added separately. */
+async function migrateComposerDrafts(database: SQLite.SQLiteDatabase): Promise<void> {
+  const columns = await database.getAllAsync<{ name: string }>('PRAGMA table_info(composer_drafts)');
+  if (columns.some((column) => column.name === 'agent_intent')) return;
+  await database.execAsync('ALTER TABLE composer_drafts ADD COLUMN agent_intent INTEGER NOT NULL DEFAULT 0');
+}
+
+function draftEntry(row: DraftRow): DraftSnapshotEntry {
+  return {
+    text: row.text,
+    updatedAt: new Date(row.updated_at).toISOString(),
+    agentIntent: row.agent_intent === 1,
+  };
 }
 
 async function migrateSendOutbox(database: SQLite.SQLiteDatabase): Promise<void> {
@@ -264,21 +282,21 @@ const storage: CacheStorage = {
   getDraftEntry: async (key): Promise<DraftSnapshotEntry | null> => {
     const database = await db();
     const row = await database.getFirstAsync<DraftRow>(
-      'SELECT draft_key, text, updated_at FROM composer_drafts WHERE draft_key = ?',
+      'SELECT draft_key, text, agent_intent, updated_at FROM composer_drafts WHERE draft_key = ?',
       key,
     );
-    return row ? { text: row.text, updatedAt: new Date(row.updated_at).toISOString() } : null;
+    return row ? draftEntry(row) : null;
   },
 
   listDrafts: async (): Promise<DraftSnapshot> => {
     const database = await db();
-    const rows = await database.getAllAsync<DraftRow>('SELECT draft_key, text, updated_at FROM composer_drafts');
-    return Object.fromEntries(
-      rows.map((row) => [row.draft_key, { text: row.text, updatedAt: new Date(row.updated_at).toISOString() }]),
+    const rows = await database.getAllAsync<DraftRow>(
+      'SELECT draft_key, text, agent_intent, updated_at FROM composer_drafts',
     );
+    return Object.fromEntries(rows.map((row) => [row.draft_key, draftEntry(row)]));
   },
 
-  setDraft: async (key, text, updatedAt) => {
+  setDraft: async (key, text, updatedAt, agentIntent) => {
     const database = await db();
     if (text.length === 0) {
       await database.runAsync('DELETE FROM composer_drafts WHERE draft_key = ?', key);
@@ -286,10 +304,11 @@ const storage: CacheStorage = {
     }
     const parsed = updatedAt ? Date.parse(updatedAt) : Date.now();
     await database.runAsync(
-      `INSERT OR REPLACE INTO composer_drafts (draft_key, text, updated_at)
-        VALUES (?, ?, ?)`,
+      `INSERT OR REPLACE INTO composer_drafts (draft_key, text, agent_intent, updated_at)
+        VALUES (?, ?, ?, ?)`,
       key,
       text,
+      agentIntent === true ? 1 : 0,
       Number.isFinite(parsed) ? parsed : Date.now(),
     );
   },

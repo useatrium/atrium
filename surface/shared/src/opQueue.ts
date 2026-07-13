@@ -215,6 +215,8 @@ export type PrefsSetPayload = Partial<UserPrefs>;
 export interface DraftSetPayload {
   draftKey: string;
   text: string;
+  /** The draft was composed for an agent — see DraftSnapshotEntry.agentIntent. */
+  agentIntent?: boolean;
 }
 
 export interface ChannelJoinPayload {
@@ -1131,7 +1133,8 @@ export function createDefaultOpRegistry(): OpRegistry {
       onRejected: () => {},
     },
     'draft.set': {
-      execute: (api, payload, op) => api.setDraft(payload.draftKey, payload.text, { opId: op.opId }),
+      execute: (api, payload, op) =>
+        api.setDraft(payload.draftKey, payload.text, payload.agentIntent ?? false, { opId: op.opId }),
       onConfirmed: () => {},
       onRejected: () => {},
     },

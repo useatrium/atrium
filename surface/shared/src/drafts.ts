@@ -1,6 +1,13 @@
 export interface DraftSnapshotEntry {
   text: string;
   updatedAt: string;
+  /**
+   * The draft was written *for an agent* (agent mode / the ⚡ audience pill).
+   * It rides with the text so an exit-and-restore — including on another
+   * device — can't quietly turn an agent command into an ordinary chat message
+   * that no agent will ever read.
+   */
+  agentIntent?: boolean;
 }
 
 export type DraftSnapshot = Record<string, DraftSnapshotEntry>;
@@ -52,15 +59,15 @@ export function reconcileDraftSnapshot(args: {
 }
 
 export function createDraftChangeDebouncer(
-  save: (key: string, text: string) => void | Promise<void>,
+  save: (key: string, text: string, agentIntent: boolean) => void | Promise<void>,
   delayMs = 400,
-  afterSave?: (key: string, text: string) => void | Promise<void>,
+  afterSave?: (key: string, text: string, agentIntent: boolean) => void | Promise<void>,
 ) {
   const timers = new Map<string, ReturnType<typeof setTimeout>>();
 
-  const persist = (key: string, text: string) => {
-    void Promise.resolve(save(key, text))
-      .then(() => afterSave?.(key, text))
+  const persist = (key: string, text: string, agentIntent: boolean) => {
+    void Promise.resolve(save(key, text, agentIntent))
+      .then(() => afterSave?.(key, text, agentIntent))
       .catch((err: unknown) => {
         console.warn('failed to persist draft', err);
       });
@@ -73,19 +80,19 @@ export function createDraftChangeDebouncer(
   };
 
   return {
-    schedule(key: string, text: string) {
+    schedule(key: string, text: string, agentIntent = false) {
       clear(key);
       timers.set(
         key,
         setTimeout(() => {
           timers.delete(key);
-          persist(key, text);
+          persist(key, text, agentIntent);
         }, delayMs),
       );
     },
-    saveNow(key: string, text: string) {
+    saveNow(key: string, text: string, agentIntent = false) {
       clear(key);
-      persist(key, text);
+      persist(key, text, agentIntent);
     },
     cancel(key?: string) {
       if (key) {

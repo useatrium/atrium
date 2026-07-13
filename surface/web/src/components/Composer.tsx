@@ -89,8 +89,10 @@ type ComposerProps = {
   footer?: ReactNode;
   draftKey?: string;
   initialDraft?: string;
-  onDraftChange?: (key: string, text: string) => void | Promise<void>;
-  onDraftPersisted?: (key: string, text: string) => void | Promise<void>;
+  /** The restored draft was written for an agent — re-show the "draft kept" strip. */
+  initialDraftAgentIntent?: boolean;
+  onDraftChange?: (key: string, text: string, agentIntent: boolean) => void | Promise<void>;
+  onDraftPersisted?: (key: string, text: string, agentIntent: boolean) => void | Promise<void>;
   onDraftTouched?: (key: string) => void;
   previewEntryLinks?: boolean;
   /** Enables the first-class summon/steer UI for channel and thread composers. */
@@ -106,13 +108,13 @@ type ComposerProps = {
   /** Observes agent-mode entry/exit (e.g. the thread panel hides its broadcast checkbox). */
   onAgentModeChange?: (active: boolean) => void;
   /**
-   * Session-pane audience control: a pill docked inside the input frame that
-   * IS the send mode. Tap flips it, typing !! flips to agent, Esc flips back
-   * to thread. The Send button speaks the mode's verb.
+   * Session-pane audience control: the pane owns the send mode, so it drives
+   * the in-input pill from outside. Channel and thread composers get the same
+   * pill for free from `agentMode` — they just own the state internally.
    */
   audiencePill?: {
     mode: 'agent' | 'thread';
-    /** Pill text in agent mode (e.g. "agent" / "suggest"). */
+    /** Pill text in agent mode (e.g. "Steer · “Fix tests”"). */
     agentLabel: string;
     /** Pill text in thread mode (e.g. "this thread"). */
     threadLabel: string;
@@ -140,6 +142,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     footer,
     draftKey,
     initialDraft,
+    initialDraftAgentIntent,
     onDraftChange,
     onDraftPersisted,
     onDraftTouched,
@@ -161,22 +164,10 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const [agentAnchor, setAgentAnchor] = useState<AgentComposerMode['initialAnchor']>();
   const [agentEffort, setAgentEffort] = useState<string>('');
   const [agentOptionsOpen, setAgentOptionsOpen] = useState(false);
-  // One-time coach mark on first agent-mode entry; device-local like the theme pref.
-  const [agentCoachSeen, setAgentCoachSeen] = useState(() => {
-    try {
-      return localStorage.getItem('atrium.agentCoachSeen') === '1';
-    } catch {
-      return true;
-    }
-  });
-  const dismissAgentCoach = () => {
-    setAgentCoachSeen(true);
-    try {
-      localStorage.setItem('atrium.agentCoachSeen', '1');
-    } catch {
-      // storage unavailable — session-only dismissal
-    }
-  };
+  // The draft was typed for an agent. Survives leaving agent mode (and a
+  // cross-device restore) so an agent command can never quietly become chat.
+  const [draftAgentIntent, setDraftAgentIntent] = useState(false);
+  const [agentIntentSeen, setAgentIntentSeen] = useState(false);
   const [agentTargetOpen, setAgentTargetOpen] = useState(false);
   const [files, setFiles] = useState<PendingFile[]>([]);
   const [attachmentNotice, setAttachmentNotice] = useState<string | null>(null);
@@ -188,9 +179,9 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const draftWriter = useMemo(
     () =>
       createDraftChangeDebouncer(
-        (key, value) => onDraftChange?.(key, value),
+        (key, value, agentIntent) => onDraftChange?.(key, value, agentIntent),
         400,
-        (key, value) => onDraftPersisted?.(key, value),
+        (key, value, agentIntent) => onDraftPersisted?.(key, value, agentIntent),
       ),
     [onDraftChange, onDraftPersisted],
   );
@@ -223,6 +214,20 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
         ? 'New agent · this thread'
         : `${effectiveAgentTarget === 'steer' ? 'Steer' : 'Suggest'} · “${attachedSession?.title ?? 'agent'}”`;
   const anchorLabel = agentAnchor?.label ?? (agentModeContext?.scope === 'thread' ? 'this thread' : 'latest message');
+  // One audience grammar for every composer. The pane hands its mode in from
+  // outside (it owns the send route); channel and thread composers own it here.
+  // Either way the pill below is the single place the audience is named or changed.
+  const audienceAvailable = !!agentModeContext || !!audiencePill;
+  const agentAudience = audiencePill ? audiencePill.mode === 'agent' : agentMode;
+  const pillAgentLabel = audiencePill ? audiencePill.agentLabel : targetLabel;
+  const pillChatLabel = audiencePill ? audiencePill.threadLabel : (agentModeContext?.channelLabel ?? 'this thread');
+  const setAgentAudience = useCallback(
+    (next: boolean) => {
+      if (audiencePill) audiencePill.onModeChange(next ? 'agent' : 'thread');
+      else setAgentMode(next);
+    },
+    [audiencePill],
+  );
   const sendTooltip = disabled
     ? (disabledHint ?? 'Message composer unavailable')
     : uploading
@@ -239,8 +244,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   }, [files]);
 
   useEffect(() => {
-    onAgentModeChange?.(agentMode);
-  }, [agentMode, onAgentModeChange]);
+    onAgentModeChange?.(agentAudience);
+  }, [agentAudience, onAgentModeChange]);
 
   useEffect(
     () => () => {
@@ -258,6 +263,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   useEffect(() => {
     setText('');
     mentions.clear();
+    setDraftAgentIntent(false);
+    setAgentIntentSeen(false);
     setFiles((prev) => {
       for (const file of prev) URL.revokeObjectURL(file.localUri);
       return [];
@@ -270,6 +277,14 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     setText((prev) => (prev === '' ? initialDraft : prev));
   }, [initialDraft]);
 
+  // A restored draft brings its audience with it: an agent-intent draft comes
+  // back wearing the "draft kept" strip, never as an innocent chat draft.
+  useEffect(() => {
+    if (!initialDraftAgentIntent || !initialDraft) return;
+    setDraftAgentIntent(true);
+    setAgentIntentSeen(false);
+  }, [initialDraft, initialDraftAgentIntent]);
+
   useEffect(() => {
     setAgentTarget('session');
     setAgentAnchor(agentModeContext?.initialAnchor);
@@ -281,13 +296,46 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   }, [autoFocus]);
 
   const persistDraftValue = useCallback(
-    (value: string) => {
+    (value: string, agentIntent = false) => {
       if (!draftKey) return;
       onDraftTouched?.(draftKey);
-      draftWriter.saveNow(draftKey, value);
+      draftWriter.saveNow(draftKey, value, agentIntent);
     },
     [draftKey, draftWriter, onDraftTouched],
   );
+
+  /** Leaving agent mode with text still in the input: the draft keeps its
+   *  audience and says so, rather than silently becoming an ordinary message. */
+  const leaveAgentAudience = useCallback(() => {
+    setAgentAudience(false);
+    const kept = text.trim().length > 0;
+    setDraftAgentIntent(kept);
+    setAgentIntentSeen(false);
+    persistDraftValue(text, kept);
+  }, [persistDraftValue, setAgentAudience, text]);
+
+  const clearAgentIntentDraft = useCallback(() => {
+    setText('');
+    mentions.clear();
+    setDraftAgentIntent(false);
+    setAgentIntentSeen(false);
+    setAgentNeedsTask(false);
+    persistDraftValue('');
+    if (ref.current) ref.current.style.height = 'auto';
+    requestAnimationFrame(() => ref.current?.focus());
+  }, [mentions.clear, persistDraftValue]);
+
+  const resumeAgentAudience = useCallback(() => {
+    setAgentAudience(true);
+    persistDraftValue(text, true);
+    requestAnimationFrame(() => ref.current?.focus());
+  }, [persistDraftValue, setAgentAudience, text]);
+
+  const showAgentIntentStrip = draftAgentIntent && !agentAudience && text.trim().length > 0 && !disabled;
+
+  useEffect(() => {
+    if (showAgentIntentStrip) setAgentIntentSeen(true);
+  }, [showAgentIntentStrip]);
 
   useImperativeHandle(
     imperativeRef,
@@ -304,6 +352,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
         setText('');
         mentions.clear();
         setAgentNeedsTask(false);
+        setDraftAgentIntent(false);
+        setAgentIntentSeen(false);
         persistDraftValue('');
         if (ref.current) ref.current.style.height = 'auto';
         return captured;
@@ -404,6 +454,12 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       setAgentNeedsTask(true);
       return;
     }
+    // An agent-intent draft cannot be Enter'd into chat before its strip has
+    // been on screen — that strip is the whole point of remembering the audience.
+    if (!agentAudience && draftAgentIntent && !agentIntentSeen) {
+      setAgentIntentSeen(true);
+      return;
+    }
     const attachments =
       readyFiles.length > 0
         ? readyFiles.map((f) => ({
@@ -416,7 +472,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           }))
         : undefined;
     const attachmentRefs = readyFiles.length > 0 ? readyFiles.map((f) => ({ uploadKey: f.uploadKey })) : undefined;
-    if (agentMode && agentModeContext && onAgentSend) {
+    if (agentAudience && agentModeContext && onAgentSend) {
       onAgentSend(
         {
           target: effectiveAgentTarget,
@@ -433,7 +489,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       // the follow-ups (Esc exits). Spawn targets still exit — the message
       // after "start an agent" is normally chat, not another spawn.
       if (effectiveAgentTarget !== 'steer' && effectiveAgentTarget !== 'suggest') {
-        setAgentMode(false);
+        setAgentAudience(false);
       }
     } else {
       onSend(mentions.serialize(text).trim(), attachments, attachmentRefs);
@@ -444,6 +500,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     }
     setText('');
     mentions.clear();
+    setDraftAgentIntent(false);
+    setAgentIntentSeen(false);
     setFiles((prev) => {
       for (const file of prev) URL.revokeObjectURL(file.localUri);
       return [];
@@ -486,21 +544,18 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (mentions.onKeyDown(e)) return;
-    if (agentModeContext && matchesChord(e.nativeEvent, SHORTCUTS.toggleAgentMode.keys)) {
+    if (audienceAvailable && matchesChord(e.nativeEvent, SHORTCUTS.toggleAgentMode.keys)) {
       e.preventDefault();
-      setAgentMode((value) => !value);
-    } else if (e.key === 'Escape' && agentMode) {
+      if (agentAudience) leaveAgentAudience();
+      else setAgentAudience(true);
+    } else if (e.key === 'Escape' && agentAudience) {
       // stopPropagation too: the window-level Escape handler closes the
       // thread/pane, and exiting a composer mode must not also close the room.
       e.preventDefault();
       e.stopPropagation();
       setAgentOptionsOpen(false);
       setAgentTargetOpen(false);
-      setAgentMode(false);
-    } else if (e.key === 'Escape' && audiencePill && audiencePill.mode === 'agent') {
-      e.preventDefault();
-      e.stopPropagation();
-      audiencePill.onModeChange('thread');
+      leaveAgentAudience();
     } else if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
       send();
@@ -510,56 +565,59 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     }
   };
 
-  const agentTinted = agentMode || audiencePill?.mode === 'agent';
+  const agentTinted = agentAudience;
   return (
     <div className={`border-t bg-surface p-3 ${agentTinted ? 'border-accent/60 bg-accent/5' : 'border-edge'}`}>
-      {agentMode && agentModeContext && (
+      {agentAudience && agentModeContext && (
         <div className="mb-2 hidden min-w-0 flex-wrap items-center gap-1.5 px-1 min-[431px]:flex">
-          <div className="relative min-w-0">
-            <button
-              type="button"
-              onClick={() => setAgentTargetOpen((value) => !value)}
-              aria-expanded={agentTargetOpen}
-              aria-haspopup="menu"
-              className="flex min-w-0 max-w-[22rem] items-center gap-1 rounded-full border border-accent/35 bg-accent/10 px-2 py-1 text-xs font-medium text-accent-text-strong hover:bg-accent/15"
-            >
-              <span aria-hidden>⚡</span>
-              <span className="truncate">{targetLabel}</span>
-              <span aria-hidden>▾</span>
-            </button>
-            {agentTargetOpen && canTargetSession && (
-              <div
-                role="menu"
-                className="absolute bottom-full left-0 z-dropdown mb-1 w-64 rounded-md border border-edge-strong bg-surface-overlay p-1 shadow-lg"
+          {/* The pill in the input frame already names the target — this row is
+              only the options that change it. */}
+          {canTargetSession && (
+            <div className="relative min-w-0">
+              <button
+                type="button"
+                onClick={() => setAgentTargetOpen((value) => !value)}
+                aria-expanded={agentTargetOpen}
+                aria-haspopup="menu"
+                className="flex min-w-0 items-center gap-1 rounded-full border border-accent/35 bg-accent/10 px-2 py-1 text-xs font-medium text-accent-text-strong hover:bg-accent/15"
               >
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    setAgentTarget('session');
-                    setAgentTargetOpen(false);
-                  }}
-                  className="flex w-full rounded px-2 py-1.5 text-left text-xs text-fg-secondary hover:bg-edge-strong hover:text-fg"
+                <span className="truncate">Change target</span>
+                <span aria-hidden>▾</span>
+              </button>
+              {agentTargetOpen && (
+                <div
+                  role="menu"
+                  className="absolute bottom-full left-0 z-dropdown mb-1 w-64 rounded-md border border-edge-strong bg-surface-overlay p-1 shadow-lg"
                 >
-                  {isDriver ? 'Steer this session' : 'Suggest to this session'}
-                </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    setAgentTarget('thread');
-                    setAgentTargetOpen(false);
-                  }}
-                  className="flex w-full rounded px-2 py-1.5 text-left text-xs text-fg-secondary hover:bg-edge-strong hover:text-fg"
-                >
-                  New session in this thread
-                </button>
-                <div className="px-2 pb-1 pt-1.5 text-3xs leading-4 text-fg-muted">
-                  The agent reads this conversation before starting (⚓ anchor).
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setAgentTarget('session');
+                      setAgentTargetOpen(false);
+                    }}
+                    className="flex w-full rounded px-2 py-1.5 text-left text-xs text-fg-secondary hover:bg-edge-strong hover:text-fg"
+                  >
+                    {isDriver ? 'Steer this session' : 'Suggest to this session'}
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setAgentTarget('thread');
+                      setAgentTargetOpen(false);
+                    }}
+                    className="flex w-full rounded px-2 py-1.5 text-left text-xs text-fg-secondary hover:bg-edge-strong hover:text-fg"
+                  >
+                    New session in this thread
+                  </button>
+                  <div className="px-2 pb-1 pt-1.5 text-3xs leading-4 text-fg-muted">
+                    The agent reads this conversation before starting (⚓ anchor).
+                  </div>
                 </div>
-              </div>
-            )}
-          </div>
+              )}
+            </div>
+          )}
           <button
             type="button"
             onClick={() => setAgentAnchor(undefined)}
@@ -590,40 +648,41 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           </label>
         </div>
       )}
-      {agentMode && agentModeContext && (
+      {agentAudience && agentModeContext && (
         <div className="mb-2 flex min-w-0 items-center gap-1 rounded-md border border-accent/30 bg-accent/10 px-2 py-1 text-xs text-accent-text-strong min-[431px]:hidden">
           <button
             type="button"
             onClick={() => setAgentOptionsOpen(true)}
+            aria-label="Agent mode options"
             className="min-w-0 flex-1 truncate text-left font-medium"
           >
-            <span aria-hidden>⚡ </span>
-            {targetLabel} · <span aria-hidden>⚓ </span>
-            {anchorLabel}
-          </button>
-          <button
-            type="button"
-            onClick={() => setAgentMode(false)}
-            aria-label="Exit agent mode"
-            className="shrink-0 rounded px-1 hover:bg-accent/15"
-          >
-            ✕
+            <span aria-hidden>⚓ </span>
+            {anchorLabel} · Options ▾
           </button>
         </div>
       )}
-      {agentMode && agentModeContext && !agentCoachSeen && (
-        <div className="mb-2 flex items-start gap-2 rounded-md border border-edge-strong bg-surface-overlay px-2 py-1.5 text-xs text-fg-secondary">
+      {showAgentIntentStrip && (
+        <div
+          data-testid="composer-agent-intent-strip"
+          role="status"
+          className="mb-2 flex flex-wrap items-center gap-2 rounded-md border border-accent/40 bg-accent/10 px-2 py-1 text-xs text-accent-text-strong"
+        >
           <span className="min-w-0 flex-1">
-            Summon an agent with <span className="font-semibold">!!</span>, the ⚡ button, or right-click a message →
-            “Delegate to agent…”. It reads this conversation before starting. Esc exits.
+            <span aria-hidden>⚡ </span>Agent mode off — draft kept
           </span>
           <button
             type="button"
-            onClick={dismissAgentCoach}
-            aria-label="Dismiss agent mode tip"
-            className="shrink-0 rounded px-1 text-fg-muted hover:bg-surface-raised hover:text-fg"
+            onClick={resumeAgentAudience}
+            className="shrink-0 rounded-full bg-accent px-2 py-0.5 font-semibold text-on-accent hover:bg-accent-hover"
           >
-            ✕
+            Resume ⚡
+          </button>
+          <button
+            type="button"
+            onClick={clearAgentIntentDraft}
+            className="shrink-0 rounded-full border border-edge-strong px-2 py-0.5 font-medium text-fg-secondary hover:bg-surface-overlay hover:text-fg"
+          >
+            Clear draft
           </button>
         </div>
       )}
@@ -719,7 +778,11 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           </div>
         )}
         {attachmentNotice && <div className="mb-2 px-1 text-xs font-medium text-danger-text">{attachmentNotice}</div>}
-        <div className="flex items-end gap-2">
+        {/* flex-wrap + a real min-width on the textarea is the contract that keeps the
+            pill from starving the input: in a narrow frame (a dragged-in thread pane)
+            the textarea drops to its own line under the pill instead of being squeezed
+            to zero width. A flex child with flex-basis:0 will happily shrink to nothing. */}
+        <div className="flex flex-wrap items-end gap-2">
           {allowAttachments && !disabled && (
             <>
               <Tooltip content="Attach a file">
@@ -751,51 +814,64 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               onActiveChange={setVoiceActive}
             />
           )}
-          {!voiceActive && audiencePill && !disabled && (
-            <button
-              type="button"
-              data-testid="composer-audience-pill"
-              aria-pressed={audiencePill.mode === 'agent'}
-              onClick={() => audiencePill.onModeChange(audiencePill.mode === 'agent' ? 'thread' : 'agent')}
-              title={
-                audiencePill.mode === 'agent'
+          {/* One audience grammar, every composer: a persistent pill inside the
+              input frame that names who the message is for. Tap flips it; !!
+              flips it to the agent; Esc flips it back. There is no other door. */}
+          {!voiceActive && audienceAvailable && !disabled && (
+            <Tooltip
+              content={
+                agentAudience
                   ? 'Talking to the agent — tap to reply to people instead (Esc)'
                   : 'Talking to people — tap to address the agent (or type !!)'
               }
-              className={`inline-flex shrink-0 items-center gap-1 self-center whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-semibold transition-colors [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:px-3 ${
-                audiencePill.mode === 'agent'
-                  ? 'bg-accent text-on-accent hover:bg-accent-hover'
-                  : 'border border-edge-strong bg-surface-overlay text-fg-secondary hover:bg-surface-raised hover:text-fg'
-              }`}
+              shortcut={SHORTCUTS.toggleAgentMode.keys}
             >
-              <span aria-hidden>{audiencePill.mode === 'agent' ? '⚡' : '💬'}</span>
-              {audiencePill.mode === 'agent' ? audiencePill.agentLabel : audiencePill.threadLabel}
-            </button>
+              <button
+                type="button"
+                data-testid="composer-audience-pill"
+                aria-pressed={agentAudience}
+                // Named explicitly, not by its own text: the chat label is literally
+                // "#channel", which would give this button the same accessible name as
+                // the channel's sidebar button.
+                aria-label={
+                  agentAudience
+                    ? `Sending to the agent: ${pillAgentLabel}. Switch to the conversation`
+                    : `Sending to people: ${pillChatLabel}. Switch to the agent`
+                }
+                onClick={() => {
+                  if (agentAudience) leaveAgentAudience();
+                  else setAgentAudience(true);
+                }}
+                className={`inline-flex min-w-0 max-w-[45%] shrink basis-auto items-center gap-1 self-center whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-semibold transition-colors [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:px-3 ${
+                  agentAudience
+                    ? 'bg-accent text-on-accent hover:bg-accent-hover'
+                    : 'border border-edge-strong bg-surface-overlay text-fg-secondary hover:bg-surface-raised hover:text-fg'
+                }`}
+              >
+                <span aria-hidden>{agentAudience ? '⚡' : '💬'}</span>
+                <span aria-hidden className="truncate">
+                  {agentAudience ? pillAgentLabel : pillChatLabel}
+                </span>
+              </button>
+            </Tooltip>
           )}
           {!voiceActive && (
             <>
-              {agentModeContext && !disabled && (
-                <Tooltip
-                  content={agentMode ? 'Exit agent mode' : 'Agent mode'}
-                  shortcut={SHORTCUTS.toggleAgentMode.keys}
-                >
-                  <button
-                    type="button"
-                    onClick={() => setAgentMode((value) => !value)}
-                    aria-label={agentMode ? 'Exit agent mode' : 'Enter agent mode'}
-                    aria-pressed={agentMode}
-                    className={`rounded-md px-1.5 py-1 text-sm ${agentMode ? 'bg-accent/15 text-accent-text-strong' : 'text-fg-muted hover:bg-surface-overlay hover:text-fg-body'}`}
-                  >
-                    ⚡
-                  </button>
-                </Tooltip>
-              )}
               <textarea
                 ref={ref}
                 rows={1}
                 value={text}
                 disabled={disabled}
-                placeholder={disabled ? (disabledHint ?? placeholder) : agentMode ? 'Describe the task…' : placeholder}
+                placeholder={
+                  disabled
+                    ? (disabledHint ?? placeholder)
+                    : // The pane supplies its own audience-aware placeholder ("Steer the
+                      // agent…" / "Reply in the thread…"); only the composers that own
+                      // agent mode internally get the generic task prompt.
+                      agentAudience && agentModeContext
+                      ? 'Describe the task…'
+                      : placeholder
+                }
                 aria-label="Message input"
                 aria-expanded={mentions.open}
                 aria-controls={mentions.open ? mentions.listboxId : undefined}
@@ -806,33 +882,36 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                   const next = e.target.value;
                   const summonSource = next.trimStart();
                   const summon =
-                    ((agentModeContext && !agentMode) || audiencePill?.mode === 'thread') &&
-                    looksLikeSummonSigil(summonSource)
+                    audienceAvailable && !agentAudience && looksLikeSummonSigil(summonSource)
                       ? parseSummonSigil(summonSource)
                       : null;
-                  if (agentModeContext && !agentMode && (summonSource === '!!' || summon != null)) {
-                    setAgentMode(true);
-                    const task = summon?.task ?? '';
-                    e.target.value = task;
-                    mentions.onValueChange(task, task.length);
-                  } else if (
-                    audiencePill &&
-                    audiencePill.mode === 'thread' &&
-                    (summonSource === '!!' || summon != null)
-                  ) {
-                    audiencePill.onModeChange('agent');
-                    const task = summon?.task ?? '';
-                    e.target.value = task;
-                    mentions.onValueChange(task, task.length);
+                  const entering = audienceAvailable && !agentAudience && (summonSource === '!!' || summon != null);
+                  let value = next;
+                  if (entering) {
+                    setAgentAudience(true);
+                    value = summon?.task ?? '';
+                    e.target.value = value;
+                    mentions.onValueChange(value, value.length);
+                  } else if ((entering || agentAudience) && text === '' && value !== value.trimStart()) {
+                    // Typing "!!" swallows the sigil and empties the input, so the space
+                    // in "!! task" lands as a leading space on an empty agent draft.
+                    value = value.trimStart();
+                    e.target.value = value;
+                    mentions.onValueChange(value, value.length);
                   } else {
                     mentions.onValueChange(next, e.target.selectionStart ?? next.length);
                   }
+                  // The draft carries its audience from the first keystroke, so a
+                  // reload (or another device) restores it as an agent draft.
+                  const nextAgentAudience = entering || agentAudience;
+                  const nextIntent = value.trim().length > 0 && (nextAgentAudience || draftAgentIntent);
+                  setDraftAgentIntent(nextIntent);
                   if (draftKey) {
                     onDraftTouched?.(draftKey);
-                    draftWriter.schedule(draftKey, summon?.task ?? (summonSource === '!!' ? '' : next));
+                    draftWriter.schedule(draftKey, value, nextIntent);
                   }
                   setAgentNeedsTask(false);
-                  if (e.target.value.trim()) onTyping?.();
+                  if (value.trim()) onTyping?.();
                   e.target.style.height = 'auto';
                   e.target.style.height = `${Math.min(e.target.scrollHeight, 160)}px`;
                 }}
@@ -846,7 +925,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                     addFiles(e.clipboardData.files);
                   }
                 }}
-                className="max-h-40 flex-1 resize-none bg-transparent text-sm leading-relaxed text-fg placeholder-fg-muted outline-none disabled:cursor-not-allowed disabled:placeholder-fg-faint"
+                className="max-h-40 min-w-40 flex-1 resize-none bg-transparent text-sm leading-relaxed text-fg placeholder-fg-muted outline-none disabled:cursor-not-allowed disabled:placeholder-fg-faint"
               />
               <Tooltip content={sendTooltip} shortcut={SHORTCUTS.sendMessage.keys}>
                 <button
@@ -910,8 +989,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           <span>
             {disabled
               ? (disabledHint ?? '')
-              : agentModeContext
-                ? 'Enter to send · Shift+Enter for a new line · !! or ⚡ for an agent'
+              : audienceAvailable
+                ? 'Enter to send · Shift+Enter for a new line · !! or the ⚡ pill for an agent'
                 : agentAware
                   ? 'Enter to send · Shift+Enter for a new line · !!<task> spawns an agent'
                   : 'Enter to send · Shift+Enter for a new line'}
