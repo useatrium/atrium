@@ -98,7 +98,7 @@ pub const ATRIUM_CHANNEL_DOCS: &[(&str, &str)] = &[("channel", "channel.md"), ("
 
 /// Poll one page of the Atrium change-feed and materialize each changed session's
 /// docs under `{atrium_root}/sessions/<id>/`. Writes are atomic per file.
-pub fn materialize_once<C: AtriumClient + ?Sized>(
+pub fn materialize_once<C: AtriumClient + ?Sized + Sync>(
     client: &C,
     atrium_root: &Path,
     since: &str,
@@ -108,7 +108,7 @@ pub fn materialize_once<C: AtriumClient + ?Sized>(
     materialize_changed_sessions(client, atrium_root, since, session_ids, next_cursor, state)
 }
 
-pub fn materialize_changed_sessions<C: AtriumClient + ?Sized>(
+pub fn materialize_changed_sessions<C: AtriumClient + ?Sized + Sync>(
     client: &C,
     atrium_root: &Path,
     since: &str,
@@ -127,43 +127,53 @@ pub fn materialize_changed_sessions<C: AtriumClient + ?Sized>(
         return Ok(since.to_string());
     }
 
-    for session_id in session_ids {
-        let session_dir = atrium_root.join("sessions").join(&session_id);
+    let plans: Vec<(String, Vec<DocPlan>)> = session_ids
+        .into_iter()
+        .map(|session_id| {
+            let session_dir = atrium_root.join("sessions").join(&session_id);
+            let docs = plan_docs(&state.atrium_docs, &session_dir, &session_id, ATRIUM_DOCS);
+            (session_id, docs)
+        })
+        .collect();
+    let outcomes = fetch_in_parallel(&plans, materialize_concurrency(), |(session_id, docs)| {
         let mut cold_start_bytes = 0u64;
-        for (doc, filename) in ATRIUM_DOCS {
-            let dst = session_dir.join(filename);
-            let proven = state
-                .atrium_docs
-                .get(&session_id)
-                .and_then(|docs| docs.get(*doc))
-                .filter(|_| dst.is_file())
-                .cloned();
-            let request = proven.as_ref().map(delta_request);
-            match fetch_and_apply_session_doc(
-                client,
-                atrium_root,
-                &session_id,
-                doc,
-                &dst,
-                request.as_ref(),
-                &mut cold_start_bytes,
-            ) {
-                Ok(next) => update_doc_state(&mut state.atrium_docs, &session_id, doc, next),
+        let results: Vec<_> = docs
+            .iter()
+            .map(|plan| {
+                fetch_and_apply_session_doc(
+                    client,
+                    atrium_root,
+                    session_id,
+                    plan.doc,
+                    &plan.dst,
+                    plan.request.as_ref(),
+                    &mut cold_start_bytes,
+                )
+            })
+            .collect();
+        (results, cold_start_bytes)
+    });
+    for ((session_id, docs), (results, cold_start_bytes)) in plans.iter().zip(outcomes) {
+        for (plan, result) in docs.iter().zip(results) {
+            match result {
+                Ok(next) => update_doc_state(&mut state.atrium_docs, session_id, plan.doc, next),
                 Err(error) => {
                     // A 403 on full/events is the EXPECTED full-view gate response
                     // when the viewer lacks raw access — the agent simply gets
                     // lean-only context. Don't log it as an error (it would spam
                     // every tick whenever the gate is off, which is the default).
                     if !error.contains("status code 403") {
-                        eprintln!("atrium materializer fetch {session_id}/{doc}: {error}");
+                        eprintln!(
+                            "atrium materializer fetch {session_id}/{}: {error}",
+                            plan.doc
+                        );
                     }
                 }
             }
         }
         if cold_start_bytes > 0 {
             println!(
-                "event=node_sync_context_cold_start session={} bytes_fetched={cold_start_bytes}",
-                session_id
+                "event=node_sync_context_cold_start session={session_id} bytes_fetched={cold_start_bytes}"
             );
         }
     }
@@ -375,7 +385,7 @@ fn markdown_cell(value: &str) -> String {
     value.replace('|', "\\|").replace('\n', " ")
 }
 
-pub fn materialize_channel_docs<C: AtriumClient + ?Sized>(
+pub fn materialize_channel_docs<C: AtriumClient + ?Sized + Sync>(
     client: &C,
     atrium_root: &Path,
     only_channel_ids: Option<&[String]>,
@@ -397,7 +407,7 @@ pub fn materialize_channel_docs<C: AtriumClient + ?Sized>(
     if let Some(active) = active.filter(|channel| {
         marker_missing || (active_selected && channel_needs_refresh(atrium_root, state, channel))
     }) {
-        materialize_one_channel(client, atrium_root, active, true, state)?;
+        materialize_active_channel(client, atrium_root, active, state)?;
         update_active_channel_symlink(atrium_root, Some(active))?;
         write_mount_readme(atrium_root)?;
         write_atomic(
@@ -418,17 +428,145 @@ pub fn materialize_channel_docs<C: AtriumClient + ?Sized>(
             None => true,
         }
     };
-    for channel in &channels {
-        if channel.active
-            || !selected(channel)
-            || !channel_needs_refresh(atrium_root, state, channel)
-        {
-            continue;
+    let plans: Vec<(&AtriumChannel, Vec<DocPlan>)> = channels
+        .iter()
+        .filter(|channel| {
+            !channel.active
+                && selected(channel)
+                && channel_needs_refresh(atrium_root, state, channel)
+        })
+        .map(|channel| {
+            (
+                channel,
+                plan_docs(
+                    &state.atrium_channel_docs,
+                    &channels_dir.join(&channel.id),
+                    &channel.id,
+                    ATRIUM_CHANNEL_DOCS,
+                ),
+            )
+        })
+        .collect();
+    let outcomes = fetch_in_parallel(&plans, materialize_concurrency(), |(channel, docs)| {
+        docs.iter()
+            .map(|plan| {
+                fetch_and_apply_channel_doc(
+                    client,
+                    atrium_root,
+                    &channel.id,
+                    plan.doc,
+                    &plan.dst,
+                    plan.request.as_ref(),
+                )
+            })
+            .collect::<Vec<_>>()
+    });
+    for ((channel, docs), results) in plans.iter().zip(outcomes) {
+        let mut all_succeeded = true;
+        for (plan, result) in docs.iter().zip(results) {
+            match result {
+                Ok(next) => {
+                    update_doc_state(&mut state.atrium_channel_docs, &channel.id, plan.doc, next);
+                }
+                Err(error) => {
+                    all_succeeded = false;
+                    if !error.contains("status code 403") && !error.contains("status code 404") {
+                        eprintln!(
+                            "atrium channel materializer fetch/write {}/{}: {error}",
+                            channel.id, plan.doc
+                        );
+                    }
+                }
+            }
         }
-        materialize_one_channel(client, atrium_root, channel, false, state)?;
+        if all_succeeded {
+            state
+                .atrium_channel_watermarks
+                .insert(channel.id.clone(), channel.last_event_id);
+        }
     }
     maybe_report_context_io();
     Ok(())
+}
+
+/// A pre-planned doc fetch: everything a worker needs, snapshotted from
+/// `DaemonState` before the fan-out so workers never touch shared state.
+struct DocPlan {
+    doc: &'static str,
+    dst: PathBuf,
+    request: Option<ContextDeltaRequest>,
+}
+
+fn plan_docs(
+    doc_states: &std::collections::HashMap<
+        String,
+        std::collections::HashMap<String, ContextDocState>,
+    >,
+    target_dir: &Path,
+    target_id: &str,
+    docs: &'static [(&'static str, &'static str)],
+) -> Vec<DocPlan> {
+    docs.iter()
+        .map(|(doc, filename)| {
+            let dst = target_dir.join(filename);
+            let proven = doc_states
+                .get(target_id)
+                .and_then(|docs| docs.get(*doc))
+                .filter(|_| dst.is_file())
+                .cloned();
+            let request = proven.as_ref().map(delta_request);
+            DocPlan { doc, dst, request }
+        })
+        .collect()
+}
+
+/// Bulk-fetch concurrency (`NODE_SYNC_MATERIALIZE_CONCURRENCY`, default 8,
+/// clamped 1..=16). A fresh context tree fetches two docs per readable channel
+/// plus per-session docs, each one internal-API round trip — run sequentially
+/// they dominate claim→context latency. 1 restores fully sequential fetches.
+fn materialize_concurrency() -> usize {
+    std::env::var("NODE_SYNC_MATERIALIZE_CONCURRENCY")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .map(|value| value.clamp(1, 16))
+        .unwrap_or(8)
+}
+
+/// Run `fetch` over `jobs` on up to `concurrency` scoped threads. Results come
+/// back in job order. Workers only fetch and write their own doc files; every
+/// `DaemonState` read happens before the fan-out and every commit after it.
+fn fetch_in_parallel<J: Sync, R: Send>(
+    jobs: &[J],
+    concurrency: usize,
+    fetch: impl Fn(&J) -> R + Sync,
+) -> Vec<R> {
+    if jobs.len() <= 1 || concurrency <= 1 {
+        return jobs.iter().map(&fetch).collect();
+    }
+    let next = AtomicU64::new(0);
+    let slots: Vec<Mutex<Option<R>>> = jobs.iter().map(|_| Mutex::new(None)).collect();
+    std::thread::scope(|scope| {
+        for _ in 0..concurrency.min(jobs.len()) {
+            scope.spawn(|| {
+                loop {
+                    let index = next.fetch_add(1, Ordering::Relaxed) as usize;
+                    let Some(job) = jobs.get(index) else { break };
+                    let result = fetch(job);
+                    *slots[index]
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(result);
+                }
+            });
+        }
+    });
+    slots
+        .into_iter()
+        .map(|slot| {
+            slot.into_inner()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .expect("scoped workers fill every job slot before the scope exits")
+        })
+        .collect()
 }
 
 fn channel_needs_refresh(atrium_root: &Path, state: &DaemonState, channel: &AtriumChannel) -> bool {
@@ -442,58 +580,36 @@ fn channel_needs_refresh(atrium_root: &Path, state: &DaemonState, channel: &Atri
         })
 }
 
-fn materialize_one_channel<C: AtriumClient + ?Sized>(
+/// Materialize the ACTIVE channel's docs. Sequential and fail-fast: the
+/// readiness marker depends on this channel, so the first error aborts the
+/// whole pass and the caller retries next tick.
+fn materialize_active_channel<C: AtriumClient + ?Sized>(
     client: &C,
     atrium_root: &Path,
     channel: &AtriumChannel,
-    required: bool,
     state: &mut DaemonState,
 ) -> Result<(), String> {
     let channel_dir = atrium_root.join("channels").join(&channel.id);
-    let mut all_succeeded = true;
-    for (doc, filename) in ATRIUM_CHANNEL_DOCS {
-        let dst = channel_dir.join(filename);
-        let proven = state
-            .atrium_channel_docs
-            .get(&channel.id)
-            .and_then(|docs| docs.get(*doc))
-            .filter(|_| dst.is_file())
-            .cloned();
-        let request = proven.as_ref().map(delta_request);
-        let result = fetch_and_apply_channel_doc(
+    for plan in plan_docs(
+        &state.atrium_channel_docs,
+        &channel_dir,
+        &channel.id,
+        ATRIUM_CHANNEL_DOCS,
+    ) {
+        let next = fetch_and_apply_channel_doc(
             client,
             atrium_root,
             &channel.id,
-            doc,
-            &dst,
-            request.as_ref(),
-        );
-        if let Ok(next) = &result {
-            update_doc_state(
-                &mut state.atrium_channel_docs,
-                &channel.id,
-                doc,
-                next.clone(),
-            );
-        }
-        if let Err(error) = result {
-            all_succeeded = false;
-            if required {
-                return Err(format!("active channel {}/{}: {error}", channel.id, doc));
-            }
-            if !error.contains("status code 403") && !error.contains("status code 404") {
-                eprintln!(
-                    "atrium channel materializer fetch/write {}/{}: {error}",
-                    channel.id, doc
-                );
-            }
-        }
+            plan.doc,
+            &plan.dst,
+            plan.request.as_ref(),
+        )
+        .map_err(|error| format!("active channel {}/{}: {error}", channel.id, plan.doc))?;
+        update_doc_state(&mut state.atrium_channel_docs, &channel.id, plan.doc, next);
     }
-    if all_succeeded {
-        state
-            .atrium_channel_watermarks
-            .insert(channel.id.clone(), channel.last_event_id);
-    }
+    state
+        .atrium_channel_watermarks
+        .insert(channel.id.clone(), channel.last_event_id);
     Ok(())
 }
 
@@ -842,6 +958,112 @@ mod tests {
                 expected_doc_bytes("good", doc)
             );
         }
+    }
+
+    /// Tracks the number of concurrently in-flight doc fetches so tests can
+    /// prove the bulk path actually overlaps requests.
+    struct InFlightClient {
+        channels: Vec<AtriumChannel>,
+        current: std::sync::atomic::AtomicUsize,
+        peak: std::sync::atomic::AtomicUsize,
+    }
+
+    impl InFlightClient {
+        fn with_channels(channels: Vec<AtriumChannel>) -> Self {
+            Self {
+                channels,
+                current: std::sync::atomic::AtomicUsize::new(0),
+                peak: std::sync::atomic::AtomicUsize::new(0),
+            }
+        }
+    }
+
+    impl AtriumClient for InFlightClient {
+        fn post_capture(&mut self, _: &str, _: u64, _: &[u8]) -> Result<u64, String> {
+            unreachable!("not exercised")
+        }
+        fn post_delete(&mut self, _: &str, _: u64) -> Result<u64, String> {
+            unreachable!("not exercised")
+        }
+        fn fetch_bytes(&mut self, _: &str, _: u64) -> Result<Vec<u8>, String> {
+            unreachable!("not exercised")
+        }
+        fn atrium_changes(&self, _since: &str) -> Result<(Vec<String>, String), String> {
+            Ok((Vec::new(), String::new()))
+        }
+        fn atrium_doc(&self, _target_id: &str, _doc: &str) -> Result<Vec<u8>, String> {
+            Ok(b"doc".to_vec())
+        }
+        fn atrium_channels(&self) -> Result<Vec<AtriumChannel>, String> {
+            Ok(self.channels.clone())
+        }
+        fn atrium_channel_doc(&self, _channel_id: &str, _doc: &str) -> Result<Vec<u8>, String> {
+            let now = self.current.fetch_add(1, Ordering::SeqCst) + 1;
+            self.peak.fetch_max(now, Ordering::SeqCst);
+            std::thread::sleep(Duration::from_millis(25));
+            self.current.fetch_sub(1, Ordering::SeqCst);
+            Ok(b"channel doc".to_vec())
+        }
+    }
+
+    #[test]
+    fn bulk_channel_fetches_overlap_and_commit_all_watermarks() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut channels = vec![AtriumChannel {
+            id: "chan-active".to_string(),
+            name: "general".to_string(),
+            kind: "public".to_string(),
+            active: true,
+            last_event_id: 1,
+        }];
+        for n in 0..6 {
+            channels.push(AtriumChannel {
+                id: format!("chan-{n}"),
+                name: format!("c{n}"),
+                kind: "public".to_string(),
+                active: false,
+                last_event_id: 10 + n,
+            });
+        }
+        let client = InFlightClient::with_channels(channels);
+
+        let mut state = DaemonState::default();
+        materialize_channel_docs(&client, temp.path(), None, &mut state).unwrap();
+
+        // Every channel materialized and committed its watermark, exactly as
+        // the sequential path did.
+        for n in 0..6 {
+            let dir = temp.path().join("channels").join(format!("chan-{n}"));
+            assert!(dir.join("channel.md").is_file());
+            assert!(dir.join("chat.md").is_file());
+            assert_eq!(
+                state.atrium_channel_watermarks.get(&format!("chan-{n}")),
+                Some(&(10 + n))
+            );
+        }
+        assert!(temp.path().join(CONTEXT_READY_MARKER).is_file());
+        // The point of the change: the six non-active channels' fetches ran
+        // concurrently, not one-at-a-time.
+        assert!(
+            client.peak.load(Ordering::SeqCst) >= 2,
+            "bulk channel fetches never overlapped (peak in-flight = {})",
+            client.peak.load(Ordering::SeqCst)
+        );
+    }
+
+    #[test]
+    fn fetch_in_parallel_preserves_job_order_and_handles_sequential_fallback() {
+        let jobs: Vec<u64> = (0..10).collect();
+        // Later jobs finish first (inverse sleep) — results must still line up.
+        let parallel = fetch_in_parallel(&jobs, 4, |job| {
+            std::thread::sleep(Duration::from_millis(20 - job));
+            job * 2
+        });
+        assert_eq!(parallel, (0..10).map(|j| j * 2).collect::<Vec<_>>());
+        let sequential = fetch_in_parallel(&jobs, 1, |job| job * 2);
+        assert_eq!(sequential, parallel);
+        let empty: Vec<u64> = fetch_in_parallel(&[], 4, |job: &u64| *job);
+        assert!(empty.is_empty());
     }
 
     #[test]
