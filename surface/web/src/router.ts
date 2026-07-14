@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from 'react';
+import { agentPathFromLocationPath, type AgentPathRef } from '@atrium/surface-client/agent-paths';
 
 export type MainSurface = 'chat' | 'files' | 'activity' | 'agents' | 'settings';
 
@@ -171,7 +172,13 @@ export function parseInAppRoute(pathname: string): InAppRoute | null {
 }
 
 export function initialInAppRoute(pathname: string): InAppRoute {
+  if (filePathRefFromPath(pathname)) return { ...DEFAULT_ROUTE, surface: 'files' };
   return parseInAppRoute(pathname) ?? DEFAULT_ROUTE;
+}
+
+export function filePathRefFromPath(pathname: string): Exclude<AgentPathRef, { kind: 'workspace-relative' }> | null {
+  const ref = agentPathFromLocationPath(pathname);
+  return ref?.kind === 'workspace-relative' ? null : ref;
 }
 
 export function routePath(route: InAppRoute): string {

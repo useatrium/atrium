@@ -2,6 +2,7 @@ import { type ReactNode, useEffect, useState } from 'react';
 import { ApiError, api, type Workspace } from './api';
 import { Chat } from './Chat';
 import { EntryLinkRoute, entryHandleFromPath } from './EntryLinkRoute';
+import { FileLinkRoute } from './FileLinkRoute';
 import { Login } from './Login';
 import { isMarkupShellRoute, MarkupShellPage } from './MarkupShellPage';
 import { Toasts } from './components/Toasts';
@@ -10,7 +11,7 @@ import { adoptPrefs } from './theme';
 import type { UserRef } from '@atrium/surface-client';
 import { clearCache, loadBootSnapshot, saveBootSnapshot } from './cacheIdb';
 import { clearDesktopSession, onDesktopNavigate } from './desktop';
-import { initialInAppRoute, navigate } from './router';
+import { filePathRefFromPath, initialInAppRoute, navigate } from './router';
 import { SessionPanePage } from './sessions/SessionPanePage';
 import { SessionWorkPage } from './sessions/SessionWorkPage';
 import { SLUG_TAB, type ActiveWorkTab } from './sessions/WorkDrawer';
@@ -35,6 +36,7 @@ export function App() {
   const [markupShellRoute] = useState(() => isMarkupShellRoute(location.pathname));
   const [workRoute] = useState(() => workRouteFromPath(location.pathname));
   const [entryRouteHandle] = useState(() => entryHandleFromPath(location.pathname));
+  const [fileRouteRef] = useState(() => filePathRefFromPath(location.pathname));
   const [initialRoute] = useState(() => initialInAppRoute(location.pathname));
   const [me, setMe] = useState<UserRef | null>(null);
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
@@ -194,6 +196,30 @@ export function App() {
           />
         )}
       </EntryLinkRoute>
+    );
+  else if (fileRouteRef)
+    body = (
+      <FileLinkRoute refInfo={fileRouteRef}>
+        {() => (
+          <Chat
+            me={me}
+            workspace={workspace}
+            initialSessionId={null}
+            initialChannelId={null}
+            initialMainSurface="files"
+            onLogout={() => {
+              api
+                .logout()
+                .catch(() => {})
+                .finally(() => {
+                  void clearDesktopSession().finally(() => {
+                    clearCache().finally(() => location.reload());
+                  });
+                });
+            }}
+          />
+        )}
+      </FileLinkRoute>
     );
   else
     body = (

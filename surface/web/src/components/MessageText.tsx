@@ -1,13 +1,16 @@
 import { isValidElement, memo, useMemo, useState, type ReactNode } from 'react';
 import { compactMarkdownSource } from '@atrium/surface-client';
+import { parseAgentPathHref } from '@atrium/surface-client/agent-paths';
 import ReactMarkdown, { defaultUrlTransform, type Components } from 'react-markdown';
 import rehypeHighlight from 'rehype-highlight';
 import remarkGfm from 'remark-gfm';
 import { findEntryLinkCandidates } from '../lib/entryLinks';
 import { EntryInlineChip, EntryQuoteCards } from './EntryQuoteCard';
+import { FilePathChip } from './FilePathChip';
 import { TimelineImage } from './TimelineImage';
 import '../sessions/Markdown.css';
 import { useUserDirectory } from '../userDirectory';
+import { parseInAppRoute, useLocation } from '../router';
 
 type MarkdownMode = 'message' | 'compact';
 
@@ -285,6 +288,8 @@ function componentsFor(
   meHandle: string | undefined,
   meId: string | undefined,
   resolveUser: (id: string) => { displayName: string } | null,
+  channelId: string | null,
+  sessionId: string | null,
 ): Components {
   const compact = mode === 'compact';
   return {
@@ -348,6 +353,10 @@ function componentsFor(
       }
       if (href?.startsWith(ENTRY_URL_PREFIX)) {
         return <EntryInlineChip handle={href.slice(ENTRY_URL_PREFIX.length)} compact={compact} />;
+      }
+      const refInfo = href ? parseAgentPathHref(href) : null;
+      if (refInfo) {
+        return <FilePathChip refInfo={refInfo} channelId={channelId} sessionId={sessionId} compact={compact} />;
       }
       if (compact) {
         return (
@@ -457,15 +466,26 @@ function MarkdownContent({
   mode,
   meHandle,
   meId,
+  channelId,
+  sessionId,
 }: {
   text: string;
   mode: MarkdownMode;
   meHandle?: string;
   meId?: string;
+  channelId?: string | null;
+  sessionId?: string | null;
 }) {
   const source = mode === 'compact' ? compactMarkdownSource(text) : text;
   const { resolve } = useUserDirectory(text);
-  const components = useMemo(() => componentsFor(mode, meHandle, meId, resolve), [meHandle, meId, mode, resolve]);
+  const location = useLocation();
+  const route = useMemo(() => parseInAppRoute(location.pathname), [location.pathname]);
+  const effectiveChannelId = channelId ?? route?.channelId ?? null;
+  const effectiveSessionId = sessionId ?? route?.sessionId ?? null;
+  const components = useMemo(
+    () => componentsFor(mode, meHandle, meId, resolve, effectiveChannelId, effectiveSessionId),
+    [effectiveChannelId, effectiveSessionId, meHandle, meId, mode, resolve],
+  );
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm, remarkMentions, remarkEntryRefs]}
@@ -495,12 +515,33 @@ export const CompactMarkdownText = memo(function CompactMarkdownText({
   );
 });
 
-export function MessageText({ text, meHandle, meId }: { text: string; meHandle?: string; meId?: string }) {
+export function MessageText({
+  text,
+  meHandle,
+  meId,
+  channelId,
+  sessionId,
+}: {
+  text: string;
+  meHandle?: string;
+  meId?: string;
+  channelId?: string | null;
+  sessionId?: string | null;
+}) {
   const { bodyText, standaloneHandles } = partitionEntryLinks(text);
   const shouldCollapse =
     bodyText.length > COLLAPSE_CHAR_THRESHOLD || bodyText.split(/\r\n|\r|\n/).length > COLLAPSE_LINE_THRESHOLD;
   const [expanded, setExpanded] = useState(!shouldCollapse);
-  const content: ReactNode = <MarkdownContent text={bodyText} mode="message" meHandle={meHandle} meId={meId} />;
+  const content: ReactNode = (
+    <MarkdownContent
+      text={bodyText}
+      mode="message"
+      meHandle={meHandle}
+      meId={meId}
+      channelId={channelId}
+      sessionId={sessionId}
+    />
+  );
 
   return (
     <>
