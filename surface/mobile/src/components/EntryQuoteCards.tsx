@@ -1,11 +1,20 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Alert, Pressable, Text, View, type GestureResponderEvent } from 'react-native';
+import { Alert, Linking, Pressable, Text, View, type GestureResponderEvent } from 'react-native';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
-import { containsCriticMarkup, parseCriticMarkup, type Api, type AttachmentMeta } from '@atrium/surface-client';
+import {
+  containsCriticMarkup,
+  parseCriticMarkup,
+  unfurlImageProxyUrl,
+  type Api,
+  type AttachmentMeta,
+  type UnfurlResult,
+} from '@atrium/surface-client';
 import { font, radius, space, useTheme } from '../lib/theme';
 import { extractEntryLinkHandles } from '../lib/entryLinks';
 import type { ArtifactContentResolver, EntryResolver, ResolvedEntry } from '../lib/entryResolve';
+import type { UnfurlResolver } from '../lib/unfurlResolve';
+import { unfurlPreviewArtifactId } from '../lib/unfurlPreview';
 import { loadCollapsedUnfurls, persistCollapsedUnfurl } from '../lib/prefsStorage';
 import { CriticMarkupBlocks, countCriticMarkupChanges } from './CriticMarkupText';
 
@@ -17,6 +26,8 @@ const CARD_LIMIT = 3;
 const THUMBNAIL_SIZE = 96;
 const MAX_IMAGE_THUMBNAILS = 4;
 const IMAGE_ARTIFACT_RE = /\.(?:png|jpe?g|gif|webp|svg|avif)$/i;
+
+type ResolvedLinkUnfurl = { key: string; result: UnfurlResult };
 
 export interface UnfurlManagement {
   messageEventId?: number | null;
@@ -565,13 +576,228 @@ function EntryQuoteCard({
   );
 }
 
+function absoluteServerPath(serverUrl: string, path: string): string {
+  return `${serverUrl.replace(/\/+$/, '')}${path}`;
+}
+
+function siteLabel(result: UnfurlResult): string {
+  if (result.siteName?.trim()) return result.siteName.trim();
+  try {
+    return new URL(result.url).hostname;
+  } catch {
+    return result.url;
+  }
+}
+
+function imageFilename(url: string): string {
+  try {
+    const filename = new URL(url).pathname.split('/').filter(Boolean).at(-1);
+    return filename || 'Link preview image';
+  } catch {
+    return 'Link preview image';
+  }
+}
+
+function LinkUnfurlCard({
+  unfurl,
+  serverUrl,
+  fileHeaders,
+  messageEventId,
+  canManage,
+  onRemove,
+  onOpenAttachments,
+}: {
+  unfurl: ResolvedLinkUnfurl;
+  serverUrl: string;
+  fileHeaders?: Record<string, string>;
+  messageEventId?: number | null;
+  canManage: boolean;
+  onRemove: (key: string) => void;
+  onOpenAttachments?: (attachments: AttachmentMeta[], index: number) => void;
+}) {
+  const { colors } = useTheme();
+  const { key, result } = unfurl;
+  const [collapsed, setCollapsed] = useState(false);
+  const collapseKey = messageEventId != null ? `${messageEventId}:${key}` : null;
+  const imageUrl = result.kind === 'image' ? (result.imageUrl ?? result.url) : result.imageUrl;
+  const proxiedImageUrl = imageUrl ? absoluteServerPath(serverUrl, unfurlImageProxyUrl(imageUrl)) : null;
+  const site = siteLabel(result);
+
+  useEffect(() => {
+    let cancelled = false;
+    setCollapsed(false);
+    if (!collapseKey) return;
+    void loadCollapsedUnfurls().then((stored) => {
+      if (!cancelled) setCollapsed(stored.includes(collapseKey));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [collapseKey]);
+
+  const toggleCollapsed = (event: GestureResponderEvent) => {
+    event.stopPropagation();
+    const next = !collapsed;
+    setCollapsed(next);
+    if (collapseKey) void persistCollapsedUnfurl(collapseKey, next);
+  };
+  const remove = (event: GestureResponderEvent) => {
+    event.stopPropagation();
+    onRemove(key);
+  };
+  const openImage = (event: GestureResponderEvent) => {
+    event.stopPropagation();
+    if (!imageUrl || !onOpenAttachments) return;
+    onOpenAttachments(
+      [
+        {
+          id: unfurlPreviewArtifactId(imageUrl, result.url),
+          filename: imageFilename(imageUrl),
+          contentType: 'image/*',
+          size: 0,
+          width: result.width,
+          height: result.height,
+        },
+      ],
+      0,
+    );
+  };
+
+  return (
+    <View
+      testID={`link-unfurl-${result.kind}`}
+      style={{
+        borderWidth: 1,
+        borderColor: colors.border,
+        backgroundColor: colors.bgElevated,
+        borderRadius: radius.md,
+        padding: collapsed ? 0 : space.sm,
+        paddingHorizontal: collapsed ? space.xxs : space.sm,
+        gap: 6,
+        overflow: 'hidden',
+      }}
+    >
+      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={collapsed ? 'Expand preview' : 'Collapse preview'}
+          accessibilityState={{ expanded: !collapsed }}
+          onPress={toggleCollapsed}
+          style={({ pressed }) => ({
+            width: 44,
+            minHeight: 44,
+            alignItems: 'center',
+            justifyContent: 'center',
+            borderRadius: radius.sm,
+            backgroundColor: pressed ? colors.bgPressed : 'transparent',
+          })}
+        >
+          <Ionicons name={collapsed ? 'chevron-forward' : 'chevron-down'} size={16} color={colors.textMuted} />
+        </Pressable>
+        <Text
+          accessibilityRole="text"
+          style={{ flex: 1, color: colors.textMuted, fontSize: font.xs, fontWeight: '800' }}
+          numberOfLines={1}
+        >
+          {site}
+        </Text>
+        {canManage ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Remove preview"
+            onPress={remove}
+            style={({ pressed }) => ({
+              width: 44,
+              minHeight: 44,
+              alignItems: 'center',
+              justifyContent: 'center',
+              borderRadius: radius.sm,
+              backgroundColor: pressed ? colors.bgPressed : 'transparent',
+            })}
+          >
+            <Ionicons name="close" size={18} color={colors.textMuted} />
+          </Pressable>
+        ) : null}
+      </View>
+      {!collapsed ? (
+        result.kind === 'image' ? (
+          proxiedImageUrl ? (
+            <Pressable
+              accessibilityRole="imagebutton"
+              accessibilityLabel={`Open image from ${site}`}
+              onPress={openImage}
+              disabled={!onOpenAttachments}
+            >
+              <Image
+                testID="external-unfurl-image"
+                source={{ uri: proxiedImageUrl, headers: fileHeaders }}
+                style={{ width: '100%', height: 160, borderRadius: radius.sm, backgroundColor: colors.bgPressed }}
+                contentFit="cover"
+              />
+            </Pressable>
+          ) : null
+        ) : (
+          <View style={{ flexDirection: 'row', gap: space.sm }}>
+            <Pressable
+              accessibilityRole="link"
+              accessibilityLabel={`Open ${result.title ?? result.url}`}
+              onPress={(event) => {
+                event.stopPropagation();
+                void Linking.openURL(result.url);
+              }}
+              style={({ pressed }) => ({
+                flex: 1,
+                minHeight: 44,
+                gap: space.xxs,
+                borderRadius: radius.sm,
+                backgroundColor: pressed ? colors.bgPressed : 'transparent',
+              })}
+            >
+              {result.title ? (
+                <Text
+                  style={{ color: colors.text, fontSize: font.sm, lineHeight: 19, fontWeight: '800' }}
+                  numberOfLines={2}
+                >
+                  {result.title}
+                </Text>
+              ) : null}
+              {result.description ? (
+                <Text style={{ color: colors.textSecondary, fontSize: font.xs, lineHeight: 17 }} numberOfLines={3}>
+                  {result.description}
+                </Text>
+              ) : null}
+            </Pressable>
+            {proxiedImageUrl ? (
+              <Pressable
+                accessibilityRole="imagebutton"
+                accessibilityLabel={`Open preview image for ${result.title ?? site}`}
+                onPress={openImage}
+                disabled={!onOpenAttachments}
+              >
+                <Image
+                  testID="external-unfurl-thumbnail"
+                  source={{ uri: proxiedImageUrl, headers: fileHeaders }}
+                  style={{ width: THUMBNAIL_SIZE, height: THUMBNAIL_SIZE, borderRadius: radius.sm }}
+                  contentFit="cover"
+                />
+              </Pressable>
+            ) : null}
+          </View>
+        )
+      ) : null}
+    </View>
+  );
+}
+
 export { EntryInlineChip } from './EntryInlineChip';
 
 export function EntryQuoteCards({
   text,
   serverUrl,
   handles: providedHandles,
+  externalUrls = [],
   resolveEntry,
+  resolveUnfurls,
   resolveArtifactContent,
   api,
   fileHeaders,
@@ -583,7 +809,9 @@ export function EntryQuoteCards({
   text: string;
   serverUrl: string;
   handles?: string[];
+  externalUrls?: string[];
   resolveEntry: EntryResolver;
+  resolveUnfurls?: UnfurlResolver;
   resolveArtifactContent?: ArtifactContentResolver;
   api?: Pick<Api, 'suppressMessageUnfurls'>;
   fileHeaders?: Record<string, string>;
@@ -598,7 +826,9 @@ export function EntryQuoteCards({
   const handlesKey = (providedHandles ?? extractedHandles)
     .filter((handle) => !(unfurlManagement?.suppressed ?? []).includes(handle))
     .join('\n');
+  const externalUrlsKey = externalUrls.filter((url) => !(unfurlManagement?.suppressed ?? []).includes(url)).join('\n');
   const [entries, setEntries] = useState<ResolvedEntry[]>([]);
+  const [linkUnfurls, setLinkUnfurls] = useState<ResolvedLinkUnfurl[]>([]);
   const [expanded, setExpanded] = useState(false);
   const [optimisticallyHidden, setOptimisticallyHidden] = useState<string[]>([]);
 
@@ -608,7 +838,7 @@ export function EntryQuoteCards({
 
   useEffect(() => {
     setExpanded(false);
-  }, [handlesKey]);
+  }, [handlesKey, externalUrlsKey]);
 
   useEffect(() => {
     let cancelled = false;
@@ -626,11 +856,37 @@ export function EntryQuoteCards({
     };
   }, [handlesKey, resolveEntry]);
 
-  const visibleEntries = entries.filter((entry) => !optimisticallyHidden.includes(entry.handle));
-  if (visibleEntries.length === 0) return null;
+  useEffect(() => {
+    let cancelled = false;
+    setLinkUnfurls([]);
+    const urls = externalUrlsKey ? externalUrlsKey.split('\n') : [];
+    if (urls.length === 0 || !resolveUnfurls) return;
 
-  const shownEntries = expanded ? visibleEntries : visibleEntries.slice(0, CARD_LIMIT);
-  const hiddenCount = visibleEntries.length - CARD_LIMIT;
+    void resolveUnfurls(urls).then((resolved) => {
+      if (cancelled) return;
+      setLinkUnfurls(
+        urls.flatMap((url) => {
+          const result = resolved[url];
+          return result ? [{ key: url, result }] : [];
+        }),
+      );
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [externalUrlsKey, resolveUnfurls]);
+
+  const visibleEntries = entries.filter((entry) => !optimisticallyHidden.includes(entry.handle));
+  const visibleLinkUnfurls = linkUnfurls.filter((unfurl) => !optimisticallyHidden.includes(unfurl.key));
+  const visibleCards = [
+    ...visibleEntries.map((entry) => ({ kind: 'entry' as const, key: entry.handle, entry })),
+    ...visibleLinkUnfurls.map((unfurl) => ({ kind: 'link' as const, key: unfurl.key, unfurl })),
+  ];
+  if (visibleCards.length === 0) return null;
+
+  const shownCards = expanded ? visibleCards : visibleCards.slice(0, CARD_LIMIT);
+  const hiddenCount = visibleCards.length - CARD_LIMIT;
   const messageEventId = unfurlManagement?.messageEventId;
   const canManage =
     unfurlManagement?.canManage === true && messageEventId != null && api?.suppressMessageUnfurls != null;
@@ -647,21 +903,34 @@ export function EntryQuoteCards({
 
   return (
     <View style={{ alignSelf: 'stretch', gap: 6, marginTop: 6 }}>
-      {shownEntries.map((entry) => (
-        <EntryQuoteCard
-          key={entry.handle}
-          entry={entry}
-          serverUrl={serverUrl}
-          resolveArtifactContent={resolveArtifactContent}
-          fileHeaders={fileHeaders}
-          messageEventId={messageEventId}
-          canManage={canManage}
-          onRemove={removePreview}
-          onOpenAttachments={onOpenAttachments}
-          onOpenChannel={onOpenChannel}
-          onOpenSession={onOpenSession}
-        />
-      ))}
+      {shownCards.map((card) =>
+        card.kind === 'entry' ? (
+          <EntryQuoteCard
+            key={card.key}
+            entry={card.entry}
+            serverUrl={serverUrl}
+            resolveArtifactContent={resolveArtifactContent}
+            fileHeaders={fileHeaders}
+            messageEventId={messageEventId}
+            canManage={canManage}
+            onRemove={removePreview}
+            onOpenAttachments={onOpenAttachments}
+            onOpenChannel={onOpenChannel}
+            onOpenSession={onOpenSession}
+          />
+        ) : (
+          <LinkUnfurlCard
+            key={card.key}
+            unfurl={card.unfurl}
+            serverUrl={serverUrl}
+            fileHeaders={fileHeaders}
+            messageEventId={messageEventId}
+            canManage={canManage}
+            onRemove={removePreview}
+            onOpenAttachments={onOpenAttachments}
+          />
+        ),
+      )}
       {hiddenCount > 0 ? (
         <Pressable
           accessibilityRole="button"

@@ -13,6 +13,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useChat } from '../../../src/lib/chat';
 import { font, space, useTheme } from '../../../src/lib/theme';
+import { parseUnfurlPreviewArtifactId, unfurlPreviewContentUrl } from '../../../src/lib/unfurlPreview';
 import { attachmentToHubFile } from '../../../src/components/attachmentPreview';
 import { ConnectionBanner, TypingLine } from '../../../src/components/bits';
 import { Composer, type ComposerHandle } from '../../../src/components/Composer';
@@ -210,6 +211,11 @@ export default function ChannelScreen() {
 
   const openExternal = useCallback(
     async (file: HubFile) => {
+      const preview = parseUnfurlPreviewArtifactId(file.artifactId);
+      if (preview) {
+        await Linking.openURL(preview.targetUrl);
+        return;
+      }
       const { url } = await chat.api.fileSignedUrl(file.artifactId);
       const absoluteUrl = /^https?:\/\//i.test(url)
         ? url
@@ -457,6 +463,7 @@ export default function ChannelScreen() {
             serverUrl={chat.serverUrl}
             resolveEntry={chat.resolveEntry}
             resolveArtifactContent={chat.resolveArtifactContent}
+            resolveUnfurls={chat.resolveUnfurls}
             resolveUser={chat.resolveUser}
             fileHeaders={chat.fileHeaders}
             onLoadEarlier={() => chat.loadEarlier(id)}
@@ -574,7 +581,9 @@ export default function ChannelScreen() {
         visible={attachmentLightbox != null}
         files={attachmentLightbox?.files ?? []}
         initialIndex={attachmentLightbox?.initialIndex ?? 0}
-        fileContentUrl={chat.api.fileUrl}
+        fileContentUrl={(artifactId) =>
+          unfurlPreviewContentUrl(artifactId, chat.serverUrl) ?? chat.api.fileUrl(artifactId)
+        }
         fileHeaders={chat.fileHeaders}
         onClose={() => setAttachmentLightbox(null)}
         onOpenExternal={openExternal}

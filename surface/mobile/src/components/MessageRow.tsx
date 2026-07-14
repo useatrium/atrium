@@ -47,6 +47,7 @@ import { MessageText } from './MessageText';
 import { TimestampText } from './TimestampText';
 import { VoiceMessage } from './VoiceMessage';
 import type { ArtifactContentResolver, EntryResolver } from '../lib/entryResolve';
+import type { UnfurlResolver } from '../lib/unfurlResolve';
 import { glanceColor } from '../lib/sessionGlance';
 
 const IMAGE_MAX_W = 240;
@@ -170,6 +171,7 @@ export interface MessageRowProps {
   serverUrl: string;
   resolveEntry: EntryResolver;
   resolveArtifactContent?: ArtifactContentResolver;
+  resolveUnfurls?: UnfurlResolver;
   resolveUser?: UserResolver;
   /** Auth headers for in-app image loads. */
   fileHeaders?: Record<string, string>;
@@ -1070,6 +1072,7 @@ export const MessageRow = memo(function MessageRow({
   serverUrl,
   resolveEntry,
   resolveArtifactContent,
+  resolveUnfurls,
   resolveUser,
   fileHeaders,
   onLongPress,
@@ -1119,6 +1122,10 @@ export const MessageRow = memo(function MessageRow({
   const unfurlHandles = useMemo(
     () => unsuppressedEntryHandles(partitionedEntryLinks.allHandles, m.suppressedUnfurls),
     [m.suppressedUnfurls, partitionedEntryLinks.allHandles],
+  );
+  const externalUnfurlUrls = useMemo(
+    () => unsuppressedEntryHandles(partitionedEntryLinks.externalUrls, m.suppressedUnfurls),
+    [m.suppressedUnfurls, partitionedEntryLinks.externalUrls],
   );
   const entryReferenceMarkdown = useMemo(
     () => ({ resolveEntry, onOpenChannel, onOpenSession }),
@@ -1492,12 +1499,14 @@ export const MessageRow = memo(function MessageRow({
               {body}
               {editedNote}
             </Pressable>
-            {unfurlHandles.length > 0 ? (
+            {unfurlHandles.length > 0 || externalUnfurlUrls.length > 0 ? (
               <EntryQuoteCards
                 text={m.text}
                 serverUrl={serverUrl}
                 handles={unfurlHandles}
+                externalUrls={externalUnfurlUrls}
                 resolveEntry={resolveEntry}
+                resolveUnfurls={resolveUnfurls}
                 resolveArtifactContent={resolveArtifactContent}
                 api={api}
                 fileHeaders={fileHeaders}

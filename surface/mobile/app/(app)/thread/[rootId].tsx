@@ -5,6 +5,7 @@ import { useHeaderHeight } from 'expo-router/react-navigation';
 import { emptyTimeline, sessionDriverId, type ChatMessage, type HubFile } from '@atrium/surface-client';
 import { useChat } from '../../../src/lib/chat';
 import { font, space, useTheme } from '../../../src/lib/theme';
+import { parseUnfurlPreviewArtifactId, unfurlPreviewContentUrl } from '../../../src/lib/unfurlPreview';
 import { attachmentToHubFile } from '../../../src/components/attachmentPreview';
 import { Composer, type ComposerHandle } from '../../../src/components/Composer';
 import { MediaLightbox } from '../../../src/components/MediaLightbox';
@@ -112,6 +113,11 @@ export default function ThreadScreen() {
 
   const openExternal = useCallback(
     async (file: HubFile) => {
+      const preview = parseUnfurlPreviewArtifactId(file.artifactId);
+      if (preview) {
+        await Linking.openURL(preview.targetUrl);
+        return;
+      }
       const { url } = await chat.api.fileSignedUrl(file.artifactId);
       const absoluteUrl = /^https?:\/\//i.test(url)
         ? url
@@ -165,6 +171,7 @@ export default function ThreadScreen() {
               serverUrl={chat.serverUrl}
               resolveEntry={chat.resolveEntry}
               resolveArtifactContent={chat.resolveArtifactContent}
+              resolveUnfurls={chat.resolveUnfurls}
               resolveUser={chat.resolveUser}
               fileHeaders={chat.fileHeaders}
               onLoadEarlier={() => Promise.resolve()}
@@ -278,7 +285,9 @@ export default function ThreadScreen() {
         visible={attachmentLightbox != null}
         files={attachmentLightbox?.files ?? []}
         initialIndex={attachmentLightbox?.initialIndex ?? 0}
-        fileContentUrl={chat.api.fileUrl}
+        fileContentUrl={(artifactId) =>
+          unfurlPreviewContentUrl(artifactId, chat.serverUrl) ?? chat.api.fileUrl(artifactId)
+        }
         fileHeaders={chat.fileHeaders}
         onClose={() => setAttachmentLightbox(null)}
         onOpenExternal={openExternal}

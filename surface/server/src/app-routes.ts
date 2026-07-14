@@ -32,6 +32,7 @@ import { registerSessionRoutes } from './routes/sessions.js';
 import { registerSessionInteractionRoutes } from './routes/session-interactions.js';
 import { registerSyncRoutes } from './routes/sync.js';
 import { registerUploadRoutes } from './routes/uploads.js';
+import { registerUnfurlRoutes } from './routes/unfurl.js';
 import { registerWebsocketRoutes } from './routes/websocket.js';
 import { registerWorkspaceRoutes } from './routes/workspaces.js';
 
@@ -128,6 +129,7 @@ export async function registerAppRoutes(deps: AppRouteDeps): Promise<void> {
     runMutation,
   });
   registerMessageRoutes(app, { pool, hub, stt, requireUser, optionalOpId, runMutation });
+  registerUnfurlRoutes(app, { pool, requireUser });
   // === mentions-activity additions ===
   registerActivityRoutes(app, { pool, requireUser });
   registerEntryRoutes(app, {

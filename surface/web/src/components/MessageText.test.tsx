@@ -3,16 +3,19 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { clearEntryResolveCacheForTests, type ResolvedEntryQuote } from '../lib/entryLinks';
+import { clearUnfurlResolveCacheForTests } from '../lib/unfurls';
 import { CompactMarkdownText, MessageText } from './MessageText';
 import { clearUserDirectoryForTests } from '../userDirectory';
 
 const resolveEntryMock = vi.hoisted(() => vi.fn());
+const resolveUnfurlsMock = vi.hoisted(() => vi.fn());
 const usersMock = vi.hoisted(() => vi.fn());
 const suppressMessageUnfurlsMock = vi.hoisted(() => vi.fn());
 
 vi.mock('../api', () => ({
   api: {
     resolveEntry: resolveEntryMock,
+    resolveUnfurls: resolveUnfurlsMock,
     users: usersMock,
     suppressMessageUnfurls: suppressMessageUnfurlsMock,
   },
@@ -41,8 +44,10 @@ function entry(overrides: Partial<ResolvedEntryQuote> = {}): ResolvedEntryQuote 
 
 beforeEach(() => {
   clearEntryResolveCacheForTests();
+  clearUnfurlResolveCacheForTests();
   clearUserDirectoryForTests();
   resolveEntryMock.mockReset();
+  resolveUnfurlsMock.mockReset().mockResolvedValue({ results: {} });
   usersMock.mockReset().mockResolvedValue({
     users: [
       {
@@ -54,6 +59,111 @@ beforeEach(() => {
   });
   suppressMessageUnfurlsMock.mockReset().mockResolvedValue({ event: {} });
   localStorage.clear();
+});
+
+describe('MessageText external link unfurls', () => {
+  it('renders an OG card for an external page', async () => {
+    const url = 'https://example.com/story';
+    resolveUnfurlsMock.mockResolvedValue({
+      results: {
+        [url]: {
+          url,
+          kind: 'og',
+          title: 'A useful story',
+          description: 'A concise description of the page.',
+          siteName: 'Example',
+        },
+      },
+    });
+
+    render(<MessageText text={`Read ${url}`} />);
+
+    const title = await screen.findByRole('link', { name: 'A useful story' });
+    expect(title.getAttribute('href')).toBe(url);
+    expect(screen.getByText('A concise description of the page.')).toBeTruthy();
+  });
+
+  it('renders direct images through the image proxy', async () => {
+    const url = 'https://cdn.example/photo.png';
+    resolveUnfurlsMock.mockResolvedValue({
+      results: { [url]: { url, kind: 'image', imageUrl: url, width: 320, height: 200 } },
+    });
+
+    render(<MessageText text={url} />);
+
+    const image = await screen.findByRole('img', { name: 'photo.png' });
+    expect(image.getAttribute('src')).toBe(`/api/unfurl/image?url=${encodeURIComponent(url)}`);
+  });
+
+  it('leaves a null result as only the plain message anchor', async () => {
+    const url = 'https://example.com/no-preview';
+    resolveUnfurlsMock.mockResolvedValue({ results: { [url]: null } });
+
+    render(<MessageText text={url} />);
+
+    await waitFor(() => expect(resolveUnfurlsMock).toHaveBeenCalledWith([url]));
+    expect(screen.getAllByRole('link')).toHaveLength(1);
+    expect(screen.getByRole('link').getAttribute('href')).toBe(url);
+    expect(screen.queryByRole('article')).toBeNull();
+  });
+
+  it('counts entry and link cards in one cap with entries first', async () => {
+    const firstUrl = 'https://example.com/first';
+    const secondUrl = 'https://example.com/second';
+    resolveEntryMock.mockImplementation((handle: string) =>
+      Promise.resolve(entry({ handle, text: `Quote for ${handle}` })),
+    );
+    resolveUnfurlsMock.mockResolvedValue({
+      results: {
+        [firstUrl]: { url: firstUrl, kind: 'og', title: 'First page' },
+        [secondUrl]: { url: secondUrl, kind: 'og', title: 'Second page' },
+      },
+    });
+
+    render(<MessageText text={`/e/evt_1 /e/evt_2 ${firstUrl} ${secondUrl}`} />);
+
+    await screen.findByText('First page');
+    expect(screen.getByText('Quote for evt_1')).toBeTruthy();
+    expect(screen.getByText('Quote for evt_2')).toBeTruthy();
+    expect(screen.queryByText('Second page')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Show 1 more' }));
+    expect(await screen.findByText('Second page')).toBeTruthy();
+  });
+
+  it('excludes a link card suppressed by its exact URL', async () => {
+    const hidden = 'https://example.com/hidden';
+    const visible = 'https://example.com/visible';
+    resolveUnfurlsMock.mockResolvedValue({
+      results: {
+        [visible]: { url: visible, kind: 'og', title: 'Visible page' },
+      },
+    });
+
+    render(
+      <MessageText
+        text={`${hidden} ${visible}`}
+        unfurls={{ messageEventId: 41, suppressed: [hidden], canManage: false }}
+      />,
+    );
+
+    expect(await screen.findByText('Visible page')).toBeTruthy();
+    expect(resolveUnfurlsMock).toHaveBeenCalledWith([visible]);
+    expect(screen.queryByText('Hidden page')).toBeNull();
+  });
+
+  it('adds the link URL to the full suppression set when the author removes it', async () => {
+    const url = 'https://example.com/removable';
+    resolveUnfurlsMock.mockResolvedValue({
+      results: { [url]: { url, kind: 'og', title: 'Removable page' } },
+    });
+
+    render(<MessageText text={url} unfurls={{ messageEventId: 42, suppressed: ['evt_previous'], canManage: true }} />);
+
+    await screen.findByText('Removable page');
+    fireEvent.click(screen.getByRole('button', { name: 'Remove preview' }));
+    expect(screen.queryByText('Removable page')).toBeNull();
+    expect(suppressMessageUnfurlsMock).toHaveBeenCalledWith(42, ['evt_previous', url]);
+  });
 });
 
 afterEach(() => {

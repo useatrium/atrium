@@ -279,7 +279,7 @@ export function EntryInlineChip({ handle, compact = false }: { handle: string; c
   );
 }
 
-function collapsedStorageKeys(): string[] {
+export function collapsedUnfurlStorageKeys(): string[] {
   if (typeof localStorage === 'undefined') return [];
   try {
     const value: unknown = JSON.parse(localStorage.getItem(COLLAPSED_STORAGE_KEY) ?? '[]');
@@ -289,9 +289,9 @@ function collapsedStorageKeys(): string[] {
   }
 }
 
-function updateCollapsedStorage(key: string, collapsed: boolean): void {
+export function updateCollapsedUnfurlStorage(key: string, collapsed: boolean): void {
   if (typeof localStorage === 'undefined') return;
-  const keys = collapsedStorageKeys().filter((stored) => stored !== key);
+  const keys = collapsedUnfurlStorageKeys().filter((stored) => stored !== key);
   if (collapsed) keys.push(key);
   try {
     localStorage.setItem(COLLAPSED_STORAGE_KEY, JSON.stringify(keys.slice(-MAX_COLLAPSED_KEYS)));
@@ -409,7 +409,7 @@ function EntryMedia({ entry }: { entry: ResolvedEntryQuote }) {
   );
 }
 
-function CardControls({
+export function CardControls({
   collapsed,
   onCollapsedChange,
   onSuppress,
@@ -461,7 +461,9 @@ export function EntryQuoteCard({
   const markup = useMarkupArtifact(entry);
   const [expanded, setExpanded] = useState(false);
   const storageKey = messageEventId != null ? `${messageEventId}:${entry.handle}` : null;
-  const [collapsed, setCollapsed] = useState(() => storageKey != null && collapsedStorageKeys().includes(storageKey));
+  const [collapsed, setCollapsed] = useState(
+    () => storageKey != null && collapsedUnfurlStorageKeys().includes(storageKey),
+  );
   const title = entry.tombstoned
     ? 'deleted entry'
     : markup?.title ||
@@ -470,7 +472,7 @@ export function EntryQuoteCard({
         : entry.actorLabel || targetLabel(entry.targetType));
   const setCardCollapsed = (next: boolean) => {
     setCollapsed(next);
-    if (storageKey) updateCollapsedStorage(storageKey, next);
+    if (storageKey) updateCollapsedUnfurlStorage(storageKey, next);
   };
 
   const header = (

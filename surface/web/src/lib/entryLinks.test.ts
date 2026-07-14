@@ -33,6 +33,15 @@ describe('entryLinks', () => {
     });
   });
 
+  it('exposes external HTTP candidates without treating them as entry refs', () => {
+    expect(findEntryLinkCandidates('read https://example.com/story.')[0]).toMatchObject({
+      candidate: 'https://example.com/story',
+      trailing: '.',
+      handle: null,
+      index: 5,
+    });
+  });
+
   it('resolves absolute entry links without enforcing origin equality', () => {
     expect(handleFromEntryUrl('https://elsewhere.example/e/evt_42', 'https://app.example')).toBe('evt_42');
   });

@@ -59,6 +59,7 @@ import {
   type ArtifactContentResolver,
   type EntryResolver,
 } from './entryResolve';
+import { createUnfurlResolver, type UnfurlResolver } from './unfurlResolve';
 import { useTheme } from './theme';
 import { useCall } from './useCall';
 import type { VoiceSendMeta } from './voice';
@@ -104,6 +105,7 @@ interface ChatContextValue {
   api: Api;
   resolveEntry: EntryResolver;
   resolveArtifactContent: ArtifactContentResolver;
+  resolveUnfurls: UnfurlResolver;
   calls: ReturnType<typeof useCall>;
   channelsLoaded: boolean;
   channelsError: string | null;
@@ -250,6 +252,7 @@ export function ChatProvider({ session, children }: { session: Session; children
   const api = useMemo(() => createApi({ baseUrl: serverUrl, getToken: () => token }), [serverUrl, token]);
   const resolveEntry = useMemo(() => createEntryResolver(session), [session]);
   const resolveArtifactContent = useMemo(() => createArtifactContentResolver(session), [session]);
+  const resolveUnfurls = useMemo(() => createUnfurlResolver(api), [api]);
 
   const [state, dispatch] = useReducer(appReducer, initialAppState);
   const mountedRef = useRef(false);
@@ -1836,6 +1839,7 @@ export function ChatProvider({ session, children }: { session: Session; children
       api,
       resolveEntry,
       resolveArtifactContent,
+      resolveUnfurls,
       calls,
       channelsLoaded,
       channelsError,
@@ -1904,6 +1908,7 @@ export function ChatProvider({ session, children }: { session: Session; children
       api,
       resolveEntry,
       resolveArtifactContent,
+      resolveUnfurls,
       calls,
       channelsLoaded,
       channelsError,

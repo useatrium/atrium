@@ -1,4 +1,5 @@
 import { tryDecodeHandle } from '@atrium/surface-client/handle';
+import { isUnfurlableUrl } from '@atrium/surface-client';
 
 const MAX_ENTRY_LINKS = 3;
 const ENTRY_LINK_RE = /https?:\/\/[^\s<>()]+|\/e\/[^\s<>()]+/gi;
@@ -17,6 +18,7 @@ export interface PartitionedEntryLinks {
   bodyText: string;
   standaloneHandles: string[];
   allHandles: string[];
+  externalUrls: string[];
 }
 
 export function isEntryHandle(handle: string): boolean {
@@ -93,12 +95,22 @@ export function extractEntryLinkHandles(text: string, _serverUrl: string, limit 
 }
 
 export function partitionEntryLinks(text: string, _serverUrl: string, limit = MAX_ENTRY_LINKS): PartitionedEntryLinks {
-  if (!text) return { bodyText: '', standaloneHandles: [], allHandles: [] };
+  if (!text) return { bodyText: '', standaloneHandles: [], allHandles: [], externalUrls: [] };
 
   const bodyLines: string[] = [];
   const standaloneHandles: string[] = [];
   const seen = new Set<string>();
   const allHandles: string[] = [];
+  const externalUrls: string[] = [];
+  const seenExternalUrls = new Set<string>();
+
+  for (const rawMatch of text.matchAll(ENTRY_LINK_RE)) {
+    const candidate = stripTrailingPunctuation(rawMatch[0] ?? '');
+    if (entryHandleFromLinkCandidate(candidate) != null || !isUnfurlableUrl(candidate)) continue;
+    if (seenExternalUrls.has(candidate)) continue;
+    seenExternalUrls.add(candidate);
+    externalUrls.push(candidate);
+  }
 
   for (const { handle } of findEntryLinkMatches(text)) {
     if (seen.has(handle)) continue;
@@ -130,7 +142,7 @@ export function partitionEntryLinks(text: string, _serverUrl: string, limit = MA
     }
   }
 
-  return { bodyText: bodyLines.join('\n'), standaloneHandles, allHandles };
+  return { bodyText: bodyLines.join('\n'), standaloneHandles, allHandles, externalUrls };
 }
 
 export function unsuppressedEntryHandles(handles: readonly string[], suppressed: readonly string[] = []): string[] {
