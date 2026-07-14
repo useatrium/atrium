@@ -309,6 +309,19 @@ export S3_SECRET_KEY=...
 Run `deploy/preview/fly/previewctl.sh s3-smoke` before creating a preview; it
 uses Atrium's current `us-east-1` S3 signing behavior.
 
+Provider credential storage, GitHub connections, and live-agent credential
+grants require a reachable iron-control service. When these values are present
+in `.env`, `create-surface` injects them as Fly secrets:
+
+```sh
+export IRON_CONTROL_BASE_URL=https://<iron-control-host>
+export IRON_CONTROL_API_KEY=iak_...
+export IRON_CONTROL_NAMESPACE=default
+```
+
+Without those values, the Surface preview can serve the UI and API, but flows
+that save provider credentials return `iron_control_unconfigured`.
+
 Local commands:
 
 ```sh

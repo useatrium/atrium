@@ -187,6 +187,7 @@ cmd_doctor() {
   echo "env file:       $([ -f "$ENV_FILE" ] && echo present || echo missing)"
   echo "s3 bucket:      ${S3_BUCKET:-unset}"
   echo "s3 endpoint:    ${S3_ENDPOINT:-unset}"
+  echo "iron-control:   $([ -n "${IRON_CONTROL_BASE_URL:-}" ] && [ -n "${IRON_CONTROL_API_KEY:-}" ] && echo configured || echo unset)"
   if flyctl auth whoami >/dev/null 2>&1; then
     echo "fly auth:       ok ($(flyctl auth whoami 2>/dev/null | head -1))"
   else
@@ -357,6 +358,13 @@ EOF
     EMAIL_MODE=log \
     CENTAUR_BASE_URL="" \
     CENTAUR_API_KEY=""
+
+  if [ -n "${IRON_CONTROL_BASE_URL:-}" ] && [ -n "${IRON_CONTROL_API_KEY:-}" ]; then
+    flyctl secrets set --app "$app" --stage \
+      IRON_CONTROL_BASE_URL="$IRON_CONTROL_BASE_URL" \
+      IRON_CONTROL_API_KEY="$IRON_CONTROL_API_KEY" \
+      IRON_CONTROL_NAMESPACE="${IRON_CONTROL_NAMESPACE:-default}"
+  fi
 
   flyctl deploy "$worktree" \
     --app "$app" \
