@@ -165,6 +165,30 @@ describe('fresh optimistic reply counting', () => {
   });
 });
 
+describe('message unfurl suppression', () => {
+  it('folds a live suppression event into the target message', () => {
+    const timeline = mergeHistory(emptyTimeline, [postedEvent(10, 'linked entry')], { hasMoreBefore: false });
+    const next = applyEvent(timeline, {
+      ...postedEvent(11, ''),
+      type: 'message.unfurls_suppressed',
+      payload: { target: 'evt_10', suppressed: ['evt_123', 'https://example.com'] },
+    });
+
+    expect(rootRow(next, 10).suppressedUnfurls).toEqual(['evt_123', 'https://example.com']);
+  });
+
+  it('degrades malformed suppression payloads to undefined', () => {
+    const timeline = mergeHistory(emptyTimeline, [postedEvent(10, 'linked entry')], { hasMoreBefore: false });
+    const next = applyEvent(timeline, {
+      ...postedEvent(11, ''),
+      type: 'message.unfurls_suppressed',
+      payload: { target: 'evt_10', suppressed: ['evt_123', 42] },
+    });
+
+    expect(rootRow(next, 10).suppressedUnfurls).toBeUndefined();
+  });
+});
+
 describe('mergeHistory refreshes materialized rows already seen from the raw cache', () => {
   it('refreshes a stale cached reply watermark from the server row', () => {
     const cached = applyEvent(emptyTimeline, postedEvent(10, 'stale root'));

@@ -29,6 +29,8 @@ export interface ChannelChatMessage {
   text: string;
   createdAt: Date;
   threadRootEventId: number | null;
+  /** Complete latest set of unfurl keys hidden by the message author. */
+  suppressedUnfurls?: string[];
   /** Persisted `session.replied` events are authored by the session, not a user. */
   isAgent?: boolean;
 }
@@ -176,6 +178,7 @@ export async function loadChannelChatProjection(
     payload_text: string | null;
     payload_title: string | null;
     edited_text: string | null;
+    suppressed_unfurls: unknown;
     is_deleted: boolean;
     created_at: Date;
     author_handle: string | null;
@@ -189,6 +192,7 @@ export async function loadChannelChatProjection(
             e.payload->>'text' AS payload_text,
             e.payload->>'title' AS payload_title,
             edit.text AS edited_text,
+            suppression.suppressed_unfurls,
             (del.id IS NOT NULL) AS is_deleted,
             e.created_at,
             u.handle AS author_handle,
@@ -206,6 +210,14 @@ export async function loadChannelChatProjection(
           LIMIT 1
        ) edit ON true
        LEFT JOIN LATERAL (
+         SELECT x.payload->'suppressed' AS suppressed_unfurls
+           FROM events x
+          WHERE x.type = 'message.unfurls_suppressed'
+            AND x.payload->>'target' = ('evt_' || e.id::text)
+          ORDER BY x.id DESC
+          LIMIT 1
+       ) suppression ON true
+       LEFT JOIN LATERAL (
          SELECT x.id
            FROM events x
           WHERE x.type = 'message.deleted'
@@ -213,7 +225,7 @@ export async function loadChannelChatProjection(
           LIMIT 1
        ) del ON true
       WHERE e.channel_id = $1::uuid
-        AND e.type IN ('message.posted', 'message.edited', 'message.deleted', 'session.spawned', 'session.replied')
+        AND e.type IN ('message.posted', 'message.edited', 'message.unfurls_suppressed', 'message.deleted', 'session.spawned', 'session.replied')
       ORDER BY e.id ASC`,
     [channelId],
   );
@@ -221,7 +233,10 @@ export async function loadChannelChatProjection(
     sinceEventId != null &&
     res.rows.some(
       (row) =>
-        Number(row.id) > sinceEventId && (row.event_type === 'message.edited' || row.event_type === 'message.deleted'),
+        Number(row.id) > sinceEventId &&
+        (row.event_type === 'message.edited' ||
+          row.event_type === 'message.unfurls_suppressed' ||
+          row.event_type === 'message.deleted'),
     );
   const messages = res.rows
     .filter(
@@ -248,6 +263,10 @@ export async function loadChannelChatProjection(
             : (row.edited_text ?? row.payload_text ?? ''),
         createdAt: new Date(row.created_at),
         threadRootEventId: row.thread_root_event_id == null ? null : Number(row.thread_root_event_id),
+        ...(Array.isArray(row.suppressed_unfurls) &&
+        row.suppressed_unfurls.every((key): key is string => typeof key === 'string')
+          ? { suppressedUnfurls: row.suppressed_unfurls }
+          : {}),
         ...(isAgent ? { isAgent: true } : {}),
       };
     });

@@ -4,7 +4,8 @@ import { parseAgentPathHref } from '@atrium/surface-client/agent-paths';
 import ReactMarkdown, { defaultUrlTransform, type Components } from 'react-markdown';
 import rehypeHighlight from 'rehype-highlight';
 import remarkGfm from 'remark-gfm';
-import { findEntryLinkCandidates } from '../lib/entryLinks';
+import { extractEntryHandles, findEntryLinkCandidates } from '../lib/entryLinks';
+import { api } from '../api';
 import { EntryInlineChip, EntryQuoteCards } from './EntryQuoteCard';
 import { FilePathChip } from './FilePathChip';
 import { TimelineImage } from './TimelineImage';
@@ -515,20 +516,34 @@ export const CompactMarkdownText = memo(function CompactMarkdownText({
   );
 });
 
+export interface MessageUnfurlOptions {
+  messageEventId: number | null;
+  suppressed: string[];
+  canManage: boolean;
+}
+
 export function MessageText({
   text,
   meHandle,
   meId,
+  unfurls,
   channelId,
   sessionId,
 }: {
   text: string;
   meHandle?: string;
   meId?: string;
+  unfurls?: MessageUnfurlOptions;
   channelId?: string | null;
   sessionId?: string | null;
 }) {
-  const { bodyText, standaloneHandles } = partitionEntryLinks(text);
+  const { bodyText } = partitionEntryLinks(text);
+  const allHandles = extractEntryHandles(text);
+  const [optimisticallySuppressed, setOptimisticallySuppressed] = useState<Set<string>>(() => new Set());
+  const [unfurlError, setUnfurlError] = useState(false);
+  const suppressed = new Set(unfurls?.suppressed ?? []);
+  for (const handle of optimisticallySuppressed) suppressed.add(handle);
+  const visibleHandles = allHandles.filter((handle) => !suppressed.has(handle));
   const shouldCollapse =
     bodyText.length > COLLAPSE_CHAR_THRESHOLD || bodyText.split(/\r\n|\r|\n/).length > COLLAPSE_LINE_THRESHOLD;
   const [expanded, setExpanded] = useState(!shouldCollapse);
@@ -563,7 +578,31 @@ export function MessageText({
           {expanded ? 'Show less' : 'Show more'}
         </button>
       )}
-      <EntryQuoteCards handles={standaloneHandles.slice(0, 3)} />
+      <EntryQuoteCards
+        handles={visibleHandles}
+        messageEventId={unfurls?.messageEventId}
+        canManage={unfurls?.canManage}
+        onSuppress={
+          unfurls?.canManage && unfurls.messageEventId != null
+            ? (handle) => {
+                const next = new Set(unfurls.suppressed);
+                for (const hidden of optimisticallySuppressed) next.add(hidden);
+                next.add(handle);
+                setOptimisticallySuppressed(next);
+                setUnfurlError(false);
+                void api.suppressMessageUnfurls(unfurls.messageEventId!, [...next]).catch(() => {
+                  setOptimisticallySuppressed((current) => {
+                    const restored = new Set(current);
+                    restored.delete(handle);
+                    return restored;
+                  });
+                  setUnfurlError(true);
+                });
+              }
+            : undefined
+        }
+      />
+      {unfurlError ? <div className="mt-1 text-xs text-danger">Couldn't remove preview — try again.</div> : null}
     </>
   );
 }

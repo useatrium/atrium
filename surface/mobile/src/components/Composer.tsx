@@ -46,7 +46,7 @@ import { font, radius, space, useTheme } from '../lib/theme';
 import { useAccessibilityAnnouncement } from '../lib/accessibility';
 import { createDraftChangeDebouncer } from '../lib/outbox';
 import { Avatar } from './Avatar';
-import { EntryInlineChip } from './EntryQuoteCards';
+import { EntryInlineChip } from './EntryInlineChip';
 import { lightImpactHaptic } from '../lib/haptics';
 import { downsamplePeaks, formatVoiceDuration, normalizeMetering, type VoiceSendMeta } from '../lib/voice';
 import {

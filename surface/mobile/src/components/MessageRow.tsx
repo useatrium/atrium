@@ -38,7 +38,7 @@ import { encodeEventHandle } from '@atrium/surface-client/handle';
 import { font, radius, space, useTheme } from '../lib/theme';
 import { useAccessibilityAnnouncement } from '../lib/accessibility';
 import { lightImpactHaptic, selectionHaptic } from '../lib/haptics';
-import { partitionEntryLinks } from '../lib/entryLinks';
+import { partitionEntryLinks, unsuppressedEntryHandles } from '../lib/entryLinks';
 import { AnsweredQuestionTrace } from './AnsweredQuestionTrace';
 import { Avatar } from './Avatar';
 import { EntryQuoteCards } from './EntryQuoteCards';
@@ -1116,6 +1116,10 @@ export const MessageRow = memo(function MessageRow({
   const entryHandle = entryHandleForAction(m);
   const copyLink = entryHandle ? `${serverUrl.replace(/\/+$/, '')}/e/${encodeURIComponent(entryHandle)}` : null;
   const partitionedEntryLinks = useMemo(() => partitionEntryLinks(m.text, serverUrl), [m.text, serverUrl]);
+  const unfurlHandles = useMemo(
+    () => unsuppressedEntryHandles(partitionedEntryLinks.allHandles, m.suppressedUnfurls),
+    [m.suppressedUnfurls, partitionedEntryLinks.allHandles],
+  );
   const entryReferenceMarkdown = useMemo(
     () => ({ resolveEntry, onOpenChannel, onOpenSession }),
     [resolveEntry, onOpenChannel, onOpenSession],
@@ -1488,13 +1492,17 @@ export const MessageRow = memo(function MessageRow({
               {body}
               {editedNote}
             </Pressable>
-            {partitionedEntryLinks.standaloneHandles.length > 0 ? (
+            {unfurlHandles.length > 0 ? (
               <EntryQuoteCards
                 text={m.text}
                 serverUrl={serverUrl}
-                handles={partitionedEntryLinks.standaloneHandles}
+                handles={unfurlHandles}
                 resolveEntry={resolveEntry}
                 resolveArtifactContent={resolveArtifactContent}
+                api={api}
+                fileHeaders={fileHeaders}
+                onOpenAttachments={(attachments, index) => onOpenAttachment({ ...m, attachments }, index)}
+                unfurlManagement={{ messageEventId: m.id, suppressed: m.suppressedUnfurls, canManage: own }}
                 onOpenChannel={onOpenChannel}
                 onOpenSession={onOpenSession}
               />

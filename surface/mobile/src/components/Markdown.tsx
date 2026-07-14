@@ -26,7 +26,7 @@ import { selectionHaptic } from '../lib/haptics';
 import { entryHandleFromLinkCandidate, findEntryLinkMatches, isEntryHandle } from '../lib/entryLinks';
 import type { EntryResolver } from '../lib/entryResolve';
 import { font, radius, space, useTheme, type Colors } from '../lib/theme';
-import { EntryInlineChip } from './EntryQuoteCards';
+import { EntryInlineChip } from './EntryInlineChip';
 import { FilePathChip } from './FilePathChip';
 
 const monoFont = Platform.select({ ios: 'Menlo', android: 'monospace', default: 'monospace' });

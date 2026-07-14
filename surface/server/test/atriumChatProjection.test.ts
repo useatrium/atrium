@@ -2,7 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type pg from 'pg';
 import { buildApp } from '../src/app.js';
-import { deleteMessage, editMessage, postMessage } from '../src/events.js';
+import { loadChannelChatProjection } from '../src/atrium-channel-projection.js';
+import { deleteMessage, editMessage, postMessage, suppressUnfurls } from '../src/events.js';
 import { addWorkspaceMember } from '../src/membership.js';
 import { createTestPool, seedFixture, truncateAll, type Fixture } from './helpers.js';
 
@@ -60,10 +61,15 @@ describe('GET /api/sessions/:id/atrium/chat', () => {
       actorId: userId,
       text: 'original text',
     });
-    await editMessage(pool, {
+    const edit = await editMessage(pool, {
       targetEventId: edited.id,
       actorId: userId,
       text: 'edited text',
+    });
+    await suppressUnfurls(pool, {
+      targetEventId: edited.id,
+      actorId: userId,
+      suppressed: ['evt_123'],
     });
     const deleted = await postMessage(pool, {
       workspaceId: fx.workspaceId,
@@ -85,5 +91,9 @@ describe('GET /api/sessions/:id/atrium/chat', () => {
     expect(body.markdown).toContain('edited text');
     expect(body.markdown).not.toContain('original text');
     expect(body.markdown).not.toContain('deleted secret text');
+
+    const projection = await loadChannelChatProjection(pool, fx.channelId, edit.id);
+    expect(projection.historyMutated).toBe(true);
+    expect(projection.messages[0]?.suppressedUnfurls).toEqual(['evt_123']);
   });
 });

@@ -5,11 +5,13 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type pg from 'pg';
 import { buildApp } from '../src/app.js';
+import { WsHub, type HubSocket } from '../src/hub.js';
 import { createTestPool, seedFixture, truncateAll, type Fixture } from './helpers.js';
 
 let pool: pg.Pool;
 let fx: Fixture;
 let app: Awaited<ReturnType<typeof buildApp>>;
+let hub: WsHub;
 
 beforeAll(async () => {
   pool = await createTestPool();
@@ -20,13 +22,26 @@ afterAll(async () => {
 beforeEach(async () => {
   await truncateAll(pool);
   fx = await seedFixture(pool);
+  hub = new WsHub();
   app = await buildApp({
     pool,
+    hub,
     // Never reached by these tests; autoResume off keeps boot DB-only.
     sessionRuns: { baseUrl: 'http://127.0.0.1:1', apiKey: 'test', autoResume: false },
   });
   await app.ready();
 });
+
+function fakeSocket(): HubSocket & { received: any[] } {
+  const received: any[] = [];
+  return {
+    readyState: 1,
+    received,
+    send(data: string) {
+      received.push(JSON.parse(data));
+    },
+  };
+}
 afterEach(async () => {
   await app.close();
 });
@@ -120,6 +135,89 @@ describe('PATCH /api/messages/:id (edit)', () => {
       payload: { text: '   ' },
     });
     expect(empty.statusCode).toBe(400);
+  });
+});
+
+describe('PUT /api/messages/:id/unfurls-suppressed', () => {
+  it('lets the author replace the suppression set and fans out the live event', async () => {
+    const { cookie, user } = await login('alice', 'Alice');
+    const socket = fakeSocket();
+    const client = hub.addClient(socket, user);
+    hub.subscribe(client, [fx.channelId]);
+    socket.received.length = 0;
+    const msg = await post(cookie, 'links');
+
+    const first = await app.inject({
+      method: 'PUT',
+      url: `/api/messages/${msg.id}/unfurls-suppressed`,
+      headers: { cookie },
+      payload: { suppressed: ['evt_123', 'art_00000000-0000-0000-0000-000000000001'] },
+    });
+    expect(first.statusCode).toBe(200);
+    expect(first.json().event).toMatchObject({
+      type: 'message.unfurls_suppressed',
+      payload: { target: `evt_${msg.id}`, suppressed: ['evt_123', 'art_00000000-0000-0000-0000-000000000001'] },
+    });
+
+    const second = await app.inject({
+      method: 'PUT',
+      url: `/api/messages/${msg.id}/unfurls-suppressed`,
+      headers: { cookie },
+      payload: { suppressed: ['evt_123'] },
+    });
+    expect(second.statusCode).toBe(200);
+
+    const read = await app.inject({
+      method: 'GET',
+      url: `/api/channels/${fx.channelId}/messages`,
+      headers: { cookie },
+    });
+    const row = read.json().events.find((event: any) => event.id === msg.id);
+    expect(row.payload.suppressed_unfurls).toEqual(['evt_123']);
+
+    const liveEvents = socket.received.filter((message) => message.type === 'event').map((message) => message.event);
+    expect(liveEvents.filter((event) => event.type === 'message.unfurls_suppressed')).toHaveLength(2);
+    expect(liveEvents.at(-1)).toMatchObject({
+      type: 'message.unfurls_suppressed',
+      payload: { target: `evt_${msg.id}`, suppressed: ['evt_123'] },
+    });
+  });
+
+  it('rejects non-authors, missing messages, and invalid suppression sets', async () => {
+    const { cookie: aliceCookie } = await login('alice', 'Alice');
+    const { cookie: benCookie } = await login('ben', 'Ben');
+    const msg = await post(aliceCookie, 'mine');
+
+    const forbidden = await app.inject({
+      method: 'PUT',
+      url: `/api/messages/${msg.id}/unfurls-suppressed`,
+      headers: { cookie: benCookie },
+      payload: { suppressed: ['evt_123'] },
+    });
+    expect(forbidden.statusCode).toBe(403);
+
+    const missing = await app.inject({
+      method: 'PUT',
+      url: '/api/messages/999999/unfurls-suppressed',
+      headers: { cookie: aliceCookie },
+      payload: { suppressed: [] },
+    });
+    expect(missing.statusCode).toBe(404);
+
+    for (const suppressed of [
+      'evt_123',
+      [''],
+      ['evt_123', 'evt_123'],
+      Array.from({ length: 101 }, (_, i) => `evt_${i}`),
+    ]) {
+      const invalid = await app.inject({
+        method: 'PUT',
+        url: `/api/messages/${msg.id}/unfurls-suppressed`,
+        headers: { cookie: aliceCookie },
+        payload: { suppressed },
+      });
+      expect(invalid.statusCode).toBe(400);
+    }
   });
 });
 

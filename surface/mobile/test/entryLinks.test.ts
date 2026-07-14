@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { extractEntryLinkHandles, isEntryHandle, partitionEntryLinks } from '../src/lib/entryLinks';
+import {
+  extractEntryLinkHandles,
+  isEntryHandle,
+  partitionEntryLinks,
+  unsuppressedEntryHandles,
+} from '../src/lib/entryLinks';
 
 const SERVER_URL = 'https://atrium.example.test:3001';
 
@@ -44,7 +49,18 @@ describe('entry link extraction', () => {
     expect(partitionEntryLinks(text, SERVER_URL)).toEqual({
       bodyText: ['See /e/evt_12 inline.', 'Keep this line.'].join('\n'),
       standaloneHandles: ['evt_13', 'rec_alpha-123'],
+      allHandles: ['evt_12', 'evt_13', 'rec_alpha-123'],
     });
+  });
+
+  it('collects inline and standalone handles in first-seen order and excludes suppressed previews', () => {
+    const partitioned = partitionEntryLinks(
+      ['Inline /e/evt_21 and /e/evt_22', '/e/evt_21', '/e/rec_alpha-123', 'Again /e/evt_22'].join('\n'),
+      SERVER_URL,
+    );
+
+    expect(partitioned.allHandles).toEqual(['evt_21', 'evt_22', 'rec_alpha-123']);
+    expect(unsuppressedEntryHandles(partitioned.allHandles, ['evt_22'])).toEqual(['evt_21', 'rec_alpha-123']);
   });
 
   it('validates shared handles plus mobile-local artifact handles', () => {

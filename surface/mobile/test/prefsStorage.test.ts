@@ -1,8 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_PREFS } from '@atrium/surface-client';
 import {
+  COLLAPSED_UNFURLS_STORAGE_KEY,
+  loadCollapsedUnfurls,
   loadStoredPrefs,
   loadTranscriptView,
+  persistCollapsedUnfurl,
   persistPrefs,
   persistTranscriptView,
   PREFS_STORAGE_KEY,
@@ -73,5 +76,21 @@ describe('prefs storage', () => {
     await persistTranscriptView('full');
     expect(store.get(TRANSCRIPT_VIEW_STORAGE_KEY)).toBe('full');
     await expect(loadTranscriptView()).resolves.toBe('full');
+  });
+
+  it('persists a bounded oldest-first list of collapsed unfurls', async () => {
+    store.set(
+      COLLAPSED_UNFURLS_STORAGE_KEY,
+      JSON.stringify(Array.from({ length: 500 }, (_, index) => `1:evt_${index}`)),
+    );
+
+    await persistCollapsedUnfurl('1:evt_500', true);
+    const stored = await loadCollapsedUnfurls();
+    expect(stored).toHaveLength(500);
+    expect(stored[0]).toBe('1:evt_1');
+    expect(stored.at(-1)).toBe('1:evt_500');
+
+    await persistCollapsedUnfurl('1:evt_250', false);
+    await expect(loadCollapsedUnfurls()).resolves.not.toContain('1:evt_250');
   });
 });

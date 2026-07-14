@@ -104,8 +104,12 @@ describe('MarkupSteerCard', () => {
     render(<MarkupSteerCard text="Please inspect /e/art_00000000-0000-0000-0000-000000000001 before continuing." />);
 
     expect(screen.getByText('entry')).toBeTruthy();
-    expect(await screen.findByText('memo.md')).toBeTruthy();
-    expect(screen.getByRole('link').getAttribute('href')).toBe('/e/art_00000000-0000-0000-0000-000000000001');
+    expect((await screen.findAllByText('memo.md')).length).toBeGreaterThan(0);
+    expect(
+      screen
+        .getAllByRole('link')
+        .every((link) => link.getAttribute('href') === '/e/art_00000000-0000-0000-0000-000000000001'),
+    ).toBe(true);
   });
 
   it('shows the truncated footer for hunk-mode steers', () => {

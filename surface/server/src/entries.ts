@@ -73,6 +73,7 @@ interface EventResolveRow {
   actor_display_name: string | null;
   payload: unknown;
   edited_text: string | null;
+  suppressed_unfurls: unknown;
   is_deleted: boolean;
 }
 
@@ -140,6 +141,7 @@ async function resolveEventEntry(db: Db, eventId: number, userId: string): Promi
             u.display_name AS actor_display_name,
             e.payload,
             edit.text AS edited_text,
+            suppression.suppressed_unfurls,
             (del.id IS NOT NULL) AS is_deleted
        FROM events e
        LEFT JOIN channels c ON c.id = e.channel_id
@@ -152,6 +154,14 @@ async function resolveEventEntry(db: Db, eventId: number, userId: string): Promi
           ORDER BY x.id DESC
           LIMIT 1
        ) edit ON e.type = 'message.posted'
+       LEFT JOIN LATERAL (
+         SELECT x.payload->'suppressed' AS suppressed_unfurls
+          FROM events x
+          WHERE x.type = 'message.unfurls_suppressed'
+            AND x.payload->>'target' = ('evt_' || e.id::text)
+          ORDER BY x.id DESC
+          LIMIT 1
+       ) suppression ON e.type = 'message.posted'
        LEFT JOIN LATERAL (
          SELECT x.id
           FROM events x
@@ -167,6 +177,12 @@ async function resolveEventEntry(db: Db, eventId: number, userId: string): Promi
   if (!(await canAccessChannel(db, userId, row.channel_id))) return null;
 
   const meta = normalizeObject(row.payload);
+  if (
+    Array.isArray(row.suppressed_unfurls) &&
+    row.suppressed_unfurls.every((key): key is string => typeof key === 'string')
+  ) {
+    meta.suppressed_unfurls = row.suppressed_unfurls;
+  }
   const tombstoned = row.type === 'message.deleted' || meta.deleted === true || row.is_deleted;
   return {
     handle: encodeEventHandle(row.id),
