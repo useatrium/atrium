@@ -547,6 +547,7 @@ deploy/preview/fly/previewctl.sh destroy atrium-prev-...
 - [ ] Run Helm secret preflight before deploy.
 - [ ] Deploy Centaur with warm pool disabled.
 - [ ] Inject `CENTAUR_BASE_URL` and `CENTAUR_API_KEY` into a Surface preview.
+- [x] Validate against an existing local kind Centaur that `agent-k8s` + `codex-app-server` can start a sandbox and complete a `PONG` turn.
 - [ ] Start a no-op agent session.
 - [ ] Start an artifact-producing agent session.
 - [ ] Verify node-sync artifact capture from Centaur to Surface.

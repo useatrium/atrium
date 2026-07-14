@@ -124,6 +124,12 @@ $DC curl -fsS -X POST 'http://localhost:8080/api/session/cli%3Asmoke/execute' \
 kubectl get pods -n centaur | grep asbx
 ```
 
+This direct Centaur smoke validates api-rs, k8s sandbox creation, harness auth,
+and basic model execution. It does not validate Atrium artifact capture by
+itself, because a `cli:*` session created directly in Centaur is not necessarily
+present in the Surface database. For artifact capture, start the session from
+Atrium with `@agent`.
+
 Atrium smoke:
 
 - open the Fly Surface preview;
