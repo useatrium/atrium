@@ -1,0 +1,20 @@
+:8080 {
+	encode zstd gzip
+
+	@server path /api/* /auth/* /ws /healthz /metrics
+	handle @server {
+		reverse_proxy 127.0.0.1:3001
+	}
+
+	@apps path /apps/*
+	handle @apps {
+		reverse_proxy 127.0.0.1:3002
+	}
+
+	handle {
+		root * /srv
+		try_files {path} /index.html
+		file_server
+	}
+}
+

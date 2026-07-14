@@ -7,8 +7,10 @@ app = "{{FLY_APP_NAME}}"
 primary_region = "{{FLY_REGION}}"
 
 [env]
-  HOST = "0.0.0.0"
+  HOST = "127.0.0.1"
   PORT = "3001"
+  APPS_HOST = "127.0.0.1"
+  APPS_PORT = "3002"
   AUTH_OPEN = "1"
   AUTH_DEV_CODES = "1"
   EMAIL_MODE = "log"
@@ -18,7 +20,7 @@ primary_region = "{{FLY_REGION}}"
   ATRIUM_RATE_LIMIT = "0"
 
 [http_service]
-  internal_port = 3001
+  internal_port = 8080
   force_https = true
   auto_stop_machines = false
   auto_start_machines = true
@@ -33,4 +35,3 @@ primary_region = "{{FLY_REGION}}"
   cpu_kind = "shared"
   cpus = 1
   memory_mb = 1024
-

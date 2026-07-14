@@ -6,6 +6,8 @@ ENV_FILE="$ROOT/deploy/preview/fly/.env"
 DEFAULT_REGION="${ATRIUM_PREVIEW_REGION:-iad}"
 DEFAULT_TTL_HOURS="${ATRIUM_PREVIEW_TTL_HOURS:-24}"
 DEFAULT_ORG="${FLY_ORG:-personal}"
+PREVIEW_TMP=""
+PREVIEW_WORKTREE=""
 
 usage() {
   cat <<'USAGE'
@@ -133,9 +135,27 @@ make_worktree() {
   git -C "$ROOT" worktree add --detach "$dir" "$ref" >/dev/null
 }
 
+install_preview_build_files() {
+  local dir="$1"
+  mkdir -p "$dir/deploy/preview/fly/.generated"
+  cp "$ROOT/deploy/preview/fly/templates/preview-surface-web.Dockerfile" \
+    "$dir/deploy/preview/fly/.generated/Dockerfile"
+  cp "$ROOT/deploy/preview/fly/templates/preview.Caddyfile" \
+    "$dir/deploy/preview/fly/.generated/Caddyfile"
+}
+
 remove_worktree() {
   local dir="$1"
   git -C "$ROOT" worktree remove --force "$dir" >/dev/null 2>&1 || rm -rf "$dir"
+}
+
+cleanup_preview_worktree() {
+  if [ -n "${PREVIEW_WORKTREE:-}" ]; then
+    remove_worktree "$PREVIEW_WORKTREE"
+  fi
+  if [ -n "${PREVIEW_TMP:-}" ]; then
+    rm -rf "$PREVIEW_TMP"
+  fi
 }
 
 wait_for_health() {
@@ -282,15 +302,14 @@ cmd_create_surface() {
   worktree="$tmp/repo"
   config="$tmp/fly.toml"
   url="https://$app.fly.dev"
+  PREVIEW_TMP="$tmp"
+  PREVIEW_WORKTREE="$worktree"
 
   make_worktree "$sha" "$worktree"
+  install_preview_build_files "$worktree"
   render_surface_source_config "$app" >"$config"
 
-  cleanup() {
-    remove_worktree "$worktree"
-    rm -rf "$tmp"
-  }
-  trap cleanup EXIT
+  trap cleanup_preview_worktree EXIT
 
   cat <<EOF
 Creating Surface preview
@@ -331,6 +350,8 @@ EOF
     S3_ACCESS_KEY="$S3_ACCESS_KEY" \
     S3_SECRET_KEY="$S3_SECRET_KEY" \
     APPS_ORIGIN="$url" \
+    APPS_HOST=127.0.0.1 \
+    APPS_PORT=3002 \
     AUTH_OPEN=1 \
     AUTH_DEV_CODES=1 \
     EMAIL_MODE=log \
@@ -340,7 +361,7 @@ EOF
   flyctl deploy "$worktree" \
     --app "$app" \
     --config "$config" \
-    --dockerfile "$worktree/surface/deploy/Dockerfile.server" \
+    --dockerfile "$worktree/deploy/preview/fly/.generated/Dockerfile" \
     --image-label "$sha" \
     --remote-only \
     --ha=false \
@@ -359,6 +380,11 @@ Preview ready
 Destroy with:
   deploy/preview/fly/previewctl.sh destroy $app
 EOF
+
+  trap - EXIT
+  cleanup_preview_worktree
+  PREVIEW_TMP=""
+  PREVIEW_WORKTREE=""
 }
 
 cmd_destroy() {
