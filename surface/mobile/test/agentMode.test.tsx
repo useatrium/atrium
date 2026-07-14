@@ -20,7 +20,10 @@ vi.mock('expo-audio', () => ({
   useAudioRecorder: () => ({}),
   useAudioRecorderState: () => ({ isRecording: false, metering: null, durationMillis: 0 }),
 }));
-vi.mock('@expo/vector-icons', () => ({ Ionicons: ({ name }: { name: string }) => <Text>{name}</Text> }));
+vi.mock('@expo/vector-icons', () => ({
+  Ionicons: ({ name }: { name: string }) => <Text>{name}</Text>,
+  MaterialCommunityIcons: ({ name }: { name: string }) => <Text>{name}</Text>,
+}));
 vi.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ bottom: 0 }) }));
 vi.mock('expo-haptics', () => ({ ImpactFeedbackStyle: { Light: 'light' }, impactAsync: vi.fn(async () => {}) }));
 vi.mock('../src/components/Markdown', () => ({
@@ -161,7 +164,8 @@ describe('agent-mode composer', () => {
     expect(screen.getByTestId('agent-reply-row')).toBeInTheDocument();
     expect(screen.getByText('Agent')).toBeInTheDocument();
     expect(screen.queryByText('Release fixes')).not.toBeInTheDocument();
-    expect(screen.getAllByText('hardware-chip-outline')).toHaveLength(2);
+    // AgentChip is gone; the row carries the AgentMark's robot glyph instead.
+    expect(screen.getAllByText('robot').length).toBeGreaterThanOrEqual(1);
     rerender(<View />);
   });
 });

@@ -8,6 +8,7 @@ import { renderWithTheme as renderUI } from './rnTestUtils';
 
 vi.mock('@expo/vector-icons', () => ({
   Ionicons: () => null,
+  MaterialCommunityIcons: () => null,
 }));
 
 afterEach(cleanup);

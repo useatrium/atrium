@@ -630,11 +630,6 @@ export const MessageRow = memo(function MessageRow({
         {(!grouped || isAgentVoice) && (
           <div className="flex items-baseline gap-2">
             <span className="text-sm font-semibold text-fg">{authorName}</span>
-            {isAgentVoice && (
-              <span className="rounded-full bg-accent-hover/15 px-1.5 py-px text-3xs font-semibold text-accent-text-strong">
-                AGENT
-              </span>
-            )}
             <TimestampDisclosure
               iso={m.createdAt}
               label={formatTime(m.createdAt)}

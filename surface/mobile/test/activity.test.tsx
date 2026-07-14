@@ -12,6 +12,7 @@ import { Text } from 'react-native';
 // doesn't resolve under vitest, so mock it like the other component tests do.
 vi.mock('@expo/vector-icons', () => ({
   Ionicons: () => null,
+  MaterialCommunityIcons: () => null,
 }));
 
 const routerMock = vi.hoisted(() => ({

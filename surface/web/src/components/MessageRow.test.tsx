@@ -274,7 +274,9 @@ describe('MessageRow web presence', () => {
     expect(screen.getByText('Agent')).toBeTruthy();
     expect(screen.queryByText('A task-shaped session title')).toBeNull();
     expect(screen.queryByText('Harness persona')).toBeNull();
-    expect(screen.getByText('AGENT')).toBeTruthy();
+    // The pill is gone — the AgentMark (role=img, label "Agent") is the only marker.
+    expect(screen.queryByText('AGENT')).toBeNull();
+    expect(screen.getByRole('img', { name: 'Agent' })).toBeTruthy();
     expect(screen.getByRole('link', { name: 'timeline' })).toBeTruthy();
     expect(screen.getByText('Shipped')).toBeTruthy();
     expect(screen.queryByRole('button', { name: '↳ replied to a thread' })).toBeNull();

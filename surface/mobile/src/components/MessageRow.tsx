@@ -40,6 +40,7 @@ import { useAccessibilityAnnouncement } from '../lib/accessibility';
 import { lightImpactHaptic, selectionHaptic } from '../lib/haptics';
 import { partitionEntryLinks, unsuppressedEntryHandles } from '../lib/entryLinks';
 import { AnsweredQuestionTrace } from './AnsweredQuestionTrace';
+import { AgentMark } from './AgentMark';
 import { Avatar } from './Avatar';
 import { EntryQuoteCards } from './EntryQuoteCards';
 import { EntryReferenceMarkdownProvider, MarkdownText } from './Markdown';
@@ -459,27 +460,6 @@ function Attachments({
   );
 }
 
-function AgentChip() {
-  const { colors } = useTheme();
-  return (
-    <View
-      style={{
-        alignSelf: 'flex-start',
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: space.xxs,
-        borderRadius: radius.pill,
-        backgroundColor: colors.accentBg,
-        paddingHorizontal: 6,
-        paddingVertical: space.xxs,
-      }}
-    >
-      <Ionicons name="hardware-chip-outline" size={12} color={colors.accent} />
-      <Text style={{ color: colors.accent, fontSize: font.xs, fontWeight: '800' }}>AGENT</Text>
-    </View>
-  );
-}
-
 function SessionMetadata({ session }: { session: Session }) {
   const { colors } = useTheme();
   const repo = session.repo ? `${session.repo}${session.branch ? ` · ${session.branch}` : ''}` : null;
@@ -613,7 +593,7 @@ function SessionCard({
           marginTop: space.xxs,
         }}
       >
-        <AgentChip />
+        <AgentMark size={16} />
         {/* A finished session is still steerable — tapping the strip opens the
             conversation, same as the live card. Without this the only route off
             a done card is the read-only pane. */}
@@ -681,7 +661,7 @@ function SessionCard({
         marginTop: space.xxs,
       }}
     >
-      <AgentChip />
+      <AgentMark size={16} />
       <Pressable
         accessibilityRole="button"
         accessibilityLabel="Open agent conversation"
@@ -739,7 +719,7 @@ function AgentReplyRow({ message }: { message: ChatMessage }) {
         <Text numberOfLines={1} style={{ color: colors.text, flexShrink: 1, fontSize: font.md, fontWeight: '700' }}>
           Agent
         </Text>
-        <AgentChip />
+        <AgentMark size={16} />
       </View>
       <MarkdownText text={message.text} />
     </View>
@@ -795,7 +775,7 @@ function SessionEventLine({
           <Text numberOfLines={1} style={{ color: colors.text, flexShrink: 1, fontSize: font.md, fontWeight: '700' }}>
             Agent
           </Text>
-          <AgentChip />
+          <AgentMark size={16} />
         </View>
       )}
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 6 }}>

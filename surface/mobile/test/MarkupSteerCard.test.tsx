@@ -7,6 +7,7 @@ import { renderWithTheme } from './rnTestUtils';
 
 vi.mock('@expo/vector-icons', () => ({
   Ionicons: ({ name }: { name: string }) => <Text>{name}</Text>,
+  MaterialCommunityIcons: ({ name }: { name: string }) => <Text>{name}</Text>,
 }));
 
 vi.mock('expo-clipboard', () => ({

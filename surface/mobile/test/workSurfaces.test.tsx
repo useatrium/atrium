@@ -9,7 +9,7 @@ import { WorkStrips } from '../src/components/work/WorkStrips';
 import { MobileWorkSheet, type WorkSurfaceTab } from '../src/components/work/MobileWorkSheet';
 import { Text } from 'react-native';
 
-vi.mock('@expo/vector-icons', () => ({ Ionicons: () => null }));
+vi.mock('@expo/vector-icons', () => ({ Ionicons: () => null, MaterialCommunityIcons: () => null }));
 
 afterEach(cleanup);
 

@@ -347,8 +347,9 @@ describe('session question events', () => {
 
     expect(screen.getByText('Agent')).toBeTruthy();
     expect(screen.queryByText('Backfill Q2 corpus embeddings')).toBeNull();
-    expect(screen.getByText('AGENT')).toBeTruthy();
-    expect(screen.queryByText('Maya Chen')).toBeNull();
+    // The pill is gone — the AgentMark (role=img, label "Agent") is the only marker.
+    expect(screen.queryByText('AGENT')).toBeNull();
+    expect(screen.getByRole('img', { name: 'Agent' })).toBeTruthy();
   });
 
   it('renders answered questions with answer summaries', () => {

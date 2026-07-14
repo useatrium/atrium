@@ -21,6 +21,7 @@ vi.mock('expo-image', () => ({
 
 vi.mock('@expo/vector-icons', () => ({
   Ionicons: ({ name }: { name: string }) => <Text>{name}</Text>,
+  MaterialCommunityIcons: ({ name }: { name: string }) => <Text>{name}</Text>,
 }));
 
 vi.mock('react-native-safe-area-context', () => ({
