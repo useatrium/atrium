@@ -25,6 +25,16 @@ export interface WireEvent {
   replyCount?: number;
   /** Highest reply event id counted in replyCount (0 if none). */
   lastReplyId?: number;
+  /** Newest visible reply, materialized for collapsed feed clusters. */
+  lastReply?: {
+    id: number;
+    authorId: string;
+    authorDisplayName: string;
+    text: string;
+    createdAt: string;
+    agentVoice: boolean;
+    eventType: string;
+  };
   /** Thread reply should also be shown in the channel timeline. */
   broadcast?: boolean;
 }
@@ -52,6 +62,13 @@ interface EventDbRow {
   author_display_name?: string | null;
   reply_count?: number;
   last_reply_id?: number;
+  last_reply_preview_id?: number | null;
+  last_reply_author_id?: string | null;
+  last_reply_author_display_name?: string | null;
+  last_reply_text?: string | null;
+  last_reply_created_at?: Date | null;
+  last_reply_agent_voice?: boolean | null;
+  last_reply_event_type?: string | null;
   broadcast?: boolean | null;
   transcript_status?: string | null;
   transcript_text?: string | null;
@@ -80,6 +97,17 @@ function toWireEvent(row: EventDbRow): WireEvent {
   };
   if (row.reply_count !== undefined) ev.replyCount = Number(row.reply_count);
   if (row.last_reply_id !== undefined) ev.lastReplyId = Number(row.last_reply_id);
+  if (row.last_reply_preview_id != null && row.last_reply_created_at != null) {
+    ev.lastReply = {
+      id: Number(row.last_reply_preview_id),
+      authorId: row.last_reply_author_id ?? 'unknown',
+      authorDisplayName: row.last_reply_author_display_name ?? 'Unknown',
+      text: row.last_reply_text ?? '',
+      createdAt: new Date(row.last_reply_created_at).toISOString(),
+      agentVoice: row.last_reply_agent_voice === true,
+      eventType: row.last_reply_event_type ?? 'message.posted',
+    };
+  }
   if (row.broadcast === true || row.payload?.broadcast === true) ev.broadcast = true;
   return ev;
 }
@@ -839,6 +867,21 @@ const MESSAGE_SELECT = `
          u.display_name AS author_display_name,
          coalesce(r.reply_count, 0)::int AS reply_count,
          coalesce(r.last_reply_id, 0)::bigint AS last_reply_id,
+         lr.id AS last_reply_preview_id,
+         CASE
+           WHEN lr.type IN ('session.replied', 'session.question_requested')
+             THEN 'agent:' || coalesce(lr.payload->>'sessionId', lr.payload->>'session_id', 'unknown')
+           ELSE lr.actor_id::text
+         END AS last_reply_author_id,
+         CASE
+           WHEN lr.type IN ('session.replied', 'session.question_requested') THEN 'Agent'
+           ELSE coalesce(lru.display_name, lru.handle)
+         END AS last_reply_author_display_name,
+         left(coalesce(lr_edit.text, lr.payload->>'text', lr.payload->>'question', lr.payload->>'title', ''), 200)
+           AS last_reply_text,
+         lr.created_at AS last_reply_created_at,
+         (lr.type IN ('session.replied', 'session.question_requested')) AS last_reply_agent_voice,
+         lr.type AS last_reply_event_type,
          (e.payload->>'broadcast')::boolean AS broadcast,
          edit.text AS edited_text,
          suppression.suppressed_unfurls,
@@ -860,6 +903,16 @@ const MESSAGE_SELECT = `
           AND d.payload->>'target' = ('evt_' || x.id::text)
       )
   ) r ON e.thread_root_event_id IS NULL
+  LEFT JOIN events lr ON lr.id = r.last_reply_id
+  LEFT JOIN users lru ON lru.id = lr.actor_id
+  LEFT JOIN LATERAL (
+    SELECT x.payload->>'text' AS text
+    FROM events x
+    WHERE x.type = 'message.edited'
+      AND x.payload->>'target' = ('evt_' || lr.id::text)
+    ORDER BY x.id DESC
+    LIMIT 1
+  ) lr_edit ON true
   LEFT JOIN LATERAL (
     SELECT x.payload->>'text' AS text
     FROM events x

@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { Pool } from 'pg';
-import { channelId, createTestChannel, login, openChannel, unique } from './helpers.js';
+import { channelId, createTestChannel, login, messageRow, openChannel, unique } from './helpers.js';
 
 const e2eDatabaseUrl = process.env.E2E_DATABASE_URL ?? 'postgres://atrium:atrium@localhost:5433/atrium_e2e';
 
@@ -106,14 +106,10 @@ test('opening a session updates the URL and Back closes it without a document re
   await page.evaluate(() => {
     (window as Window & { __urlRoutingMarker?: string }).__urlRoutingMarker = 'kept';
   });
-  // Card activation is thread-first now; the pane (this spec's subject) is
-  // reached through the card's explicit "Show the work" affordance.
-  //
-  // Located by session id, not by the task text: the ask is now the spawner's
-  // own message ABOVE the card, so the card itself no longer contains it.
-  await page
-    .locator(`[data-testid="session-card"][data-session-id="${sessionId}"]`)
-    .getByText('Show the work →')
+  // The channel owns a compact annotation slot; its quiet session link opens
+  // the same pane without rendering the rail's SessionCard in the feed.
+  await messageRow(page, task)
+    .getByRole('button', { name: /view session|open session/ })
     .first()
     .click();
   await expect(page).toHaveURL(new RegExp(`/c/${roomId}/s/${sessionId}$`));

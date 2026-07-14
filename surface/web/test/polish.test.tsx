@@ -519,8 +519,9 @@ describe('message delete', () => {
     expect(screen.getByText('Message deleted')).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Delete message' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Edit message' })).toBeNull();
-    // The replies link survives so the thread stays reachable.
-    expect(screen.getByText(/1 reply/)).toBeTruthy();
+    // The collapsed cluster survives so the thread stays reachable.
+    expect(screen.getByText(/1 earlier reply/)).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Open thread →' })).toBeTruthy();
   });
 });
 

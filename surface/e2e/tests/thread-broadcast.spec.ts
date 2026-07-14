@@ -58,7 +58,7 @@ test('broadcast reply lands confirmed in the channel and survives reload', async
   await expect(reloadedReplyRow.getByRole('button', { name: /replied to a thread/ })).toBeVisible();
 
   const reloadedRootRow = confirmedRowsWithText(page, root).first();
-  await expect(reloadedRootRow.getByRole('button', { name: '1 reply →' })).toBeVisible();
+  await expect(reloadedRootRow.getByRole('button', { name: 'Open thread →' })).toBeVisible();
 });
 
 test('non-broadcast thread reply stays out of the channel', async ({ page }) => {

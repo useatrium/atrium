@@ -426,4 +426,37 @@ describe('the final agent reply reaches the channel', () => {
     expect(main[0]!.text).toBe('Done — shipped the dashboard.');
     expect(main[0]!.sessionEventType).toBe('replied');
   });
+
+  it('folds the newest live reply into the root preview', () => {
+    let timeline = applyEvent(emptyTimeline, postedEvent(7, 'Root'));
+    timeline = applyEvent(timeline, {
+      id: 9,
+      workspaceId: 'w1',
+      channelId: 'c1',
+      threadRootEventId: 7,
+      type: 'message.posted',
+      actorId: 'u2',
+      payload: { text: 'Newest reply' },
+      createdAt: '2026-07-13T00:01:00.000Z',
+      author: { id: 'u2', handle: 'bea', displayName: 'Bea' },
+    });
+
+    expect(rootRow(timeline, 7).lastReply).toMatchObject({ id: 9, text: 'Newest reply' });
+  });
+
+  it('parses the server-materialized last reply preview on a cold feed row', () => {
+    const root = postedEvent(7, 'Root', { replyCount: 1, lastReplyId: 9 });
+    root.lastReply = {
+      id: 9,
+      authorId: 'agent:s1',
+      authorDisplayName: 'Agent',
+      text: 'Finished.',
+      createdAt: '2026-07-13T00:01:00.000Z',
+      agentVoice: true,
+      eventType: 'session.replied',
+    };
+
+    const parsed = messageFromEvent(root);
+    expect(parsed.lastReply).toMatchObject({ id: 9, text: 'Finished.', sessionEventType: 'replied' });
+  });
 });

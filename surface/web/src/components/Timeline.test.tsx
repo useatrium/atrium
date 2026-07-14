@@ -4,6 +4,7 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import type { ChatMessage, UserRef } from '@atrium/surface-client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ThemeProvider } from '../theme';
+import type { Session } from '../sessions/types';
 import { Timeline } from './Timeline';
 
 const ada: UserRef = {
@@ -47,6 +48,34 @@ function message(overrides: Partial<ChatMessage> = {}): ChatMessage {
   };
 }
 
+function session(overrides: Partial<Session> = {}): Session {
+  return {
+    id: 's-1',
+    workspaceId: 'ws-1',
+    channelId: 'ch-1',
+    threadRootEventId: 1,
+    title: 'Session',
+    status: 'running',
+    harness: 'codex',
+    spawnedBy: 'u-1',
+    driverId: 'u-1',
+    pendingSeatRequests: [],
+    suggestions: [],
+    answerProposals: [],
+    pendingQuestion: null,
+    seatEvents: [],
+    costUsd: 0,
+    resultText: null,
+    createdAt: '2026-07-05T12:00:00.000Z',
+    completedAt: null,
+    archivedAt: null,
+    pinned: false,
+    lastEventId: 0,
+    permalink: '/s/s-1',
+    ...overrides,
+  };
+}
+
 function renderTimeline({
   messages = [
     message({ id: 1, text: 'Message 1' }),
@@ -55,18 +84,20 @@ function renderTimeline({
   ],
   unreadDividerAfterId = 1,
   onReachBottom,
+  sessions = {},
 }: {
   messages?: ChatMessage[];
   unreadDividerAfterId?: number | null;
   onReachBottom?: () => void;
+  sessions?: Record<string, Session>;
 } = {}) {
-  render(
+  const renderElement = (nextMessages: ChatMessage[]) => (
     <ThemeProvider>
       <Timeline
-        messages={messages}
+        messages={nextMessages}
         loaded
         hasMoreBefore={false}
-        sessions={{}}
+        sessions={sessions}
         spectators={{}}
         meId="u-1"
         meHandle="ada"
@@ -78,8 +109,10 @@ function renderTimeline({
         dividerReady
         onReachBottom={onReachBottom}
       />
-    </ThemeProvider>,
+    </ThemeProvider>
   );
+  const view = render(renderElement(messages));
+  return { ...view, rerenderMessages: (nextMessages: ChatMessage[]) => view.rerender(renderElement(nextMessages)) };
 }
 
 function setScrollMetrics(
@@ -285,4 +318,90 @@ describe('Timeline unread divider', () => {
     expect(scrollIntoView).toHaveBeenCalledTimes(1);
     rect.mockRestore();
   }, 15_000);
+});
+
+describe('Timeline anchored agent answers', () => {
+  const answer = () =>
+    message({
+      id: 9,
+      threadRootEventId: 1,
+      text: 'Shipped the channel grammar.',
+      sessionId: 's-1',
+      sessionEventType: 'replied',
+      broadcast: true,
+      author: { id: 'agent:s-1', handle: 'agent', displayName: 'Agent' },
+      createdAt: '2026-07-05T12:01:00.000Z',
+    });
+
+  it('anchors and suppresses a broadcast answer when the root is loaded', () => {
+    renderTimeline({
+      messages: [message({ id: 1, text: 'Please ship it', replyCount: 1, lastReplyId: 9 }), answer()],
+      unreadDividerAfterId: null,
+    });
+
+    expect(screen.getAllByText('Shipped the channel grammar.')).toHaveLength(1);
+    expect(screen.getByTestId('channel-annotation-cluster')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: '↳ replied to a thread' })).toBeNull();
+  });
+
+  it('keeps the standalone answer when its root is outside the loaded window', () => {
+    renderTimeline({ messages: [answer()], unreadDividerAfterId: null });
+
+    expect(screen.getByText('Shipped the channel grammar.')).toBeTruthy();
+    expect(screen.getByRole('img', { name: 'Agent' })).toBeTruthy();
+  });
+
+  it('suppresses thread-rooted spawn rows and stacks their sessions on the trigger', () => {
+    const first = session({ id: 's-1' });
+    const second = session({ id: 's-2', createdAt: '2026-07-05T12:00:02.000Z' });
+    renderTimeline({
+      messages: [
+        message({ id: 1, text: 'Trigger both agents' }),
+        message({
+          id: 8,
+          threadRootEventId: 1,
+          sessionId: 's-1',
+          sessionTask: 'Duplicate spawn row one',
+          broadcast: true,
+        }),
+        message({
+          id: 9,
+          threadRootEventId: 1,
+          sessionId: 's-2',
+          sessionTask: 'Duplicate spawn row two',
+          broadcast: true,
+        }),
+      ],
+      sessions: { 's-1': first, 's-2': second },
+      unreadDividerAfterId: null,
+    });
+
+    expect(screen.getAllByTestId('session-slot-working')).toHaveLength(2);
+    expect(screen.queryByText('Duplicate spawn row one')).toBeNull();
+    expect(screen.queryByText('Duplicate spawn row two')).toBeNull();
+  });
+
+  it('shows the latest-answer jump chip for an offscreen root and dismisses it on click', async () => {
+    const rect = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      if (this.getAttribute('role') === 'log') {
+        return { top: 0, bottom: 200, left: 0, right: 300, width: 300, height: 200, x: 0, y: 0, toJSON: vi.fn() };
+      }
+      if (this.getAttribute('data-eid') === '1') {
+        return { top: -120, bottom: -80, left: 0, right: 300, width: 300, height: 40, x: 0, y: -120, toJSON: vi.fn() };
+      }
+      return { top: 20, bottom: 60, left: 0, right: 300, width: 300, height: 40, x: 0, y: 20, toJSON: vi.fn() };
+    });
+    const root = message({ id: 1, text: 'Please ship this carefully' });
+    const view = renderTimeline({ messages: [root], unreadDividerAfterId: null });
+
+    view.rerenderMessages([{ ...root, replyCount: 1, lastReplyId: 9 }, answer()]);
+    const chip = await screen.findByTestId('agent-answer-jump-chip');
+    expect(chip.textContent).toContain('Please ship this carefully');
+    fireEvent.click(chip);
+    expect(screen.queryByTestId('agent-answer-jump-chip')).toBeNull();
+    expect(HTMLElement.prototype.scrollIntoView).toHaveBeenCalled();
+    rect.mockRestore();
+  });
 });
