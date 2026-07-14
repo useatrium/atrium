@@ -1,4 +1,5 @@
 import { basename } from 'node:path';
+import { parseAgentPathHref } from '@atrium/surface-client/agent-paths';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { ArtifactLedger, type VersionKind, type VersionRef, type VersionStatus } from '../artifact-ledger.js';
 import { loadConflictDetailById } from '../artifact-conflict.js';
@@ -224,6 +225,73 @@ export async function registerFilesHubRoutes(app: FastifyInstance, deps: FilesHu
     if (!workspaceId) return reply.code(404).send({ error: 'channel_not_found', message: 'channel not found' });
     const query = parseListQuery((req.query ?? {}) as Record<string, unknown>);
     return ledger.listChannelFiles({ workspaceId, channelId, userId: user.id, query });
+  });
+
+  app.get('/api/files/by-path', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    const path = (req.query as { path?: unknown }).path;
+    const ref = typeof path === 'string' ? parseAgentPathHref(path) : null;
+    if (!ref || ref.kind === 'workspace-relative' || ref.canonicalPath !== path) {
+      return reply.code(400).send({ error: 'bad_request', message: 'path must be a canonical artifact path' });
+    }
+
+    let workspaceId: string | null = null;
+    let listUserId = user.id;
+    if (ref.kind === 'shared-channel') {
+      const channel = await pool.query<{ workspace_id: string }>('SELECT workspace_id FROM channels WHERE id = $1', [
+        ref.channelId,
+      ]);
+      workspaceId = channel.rows[0]?.workspace_id ?? null;
+      if (!workspaceId) return reply.code(404).send({ error: 'file_not_found', message: 'file not found' });
+      if (!(await canAccessChannel(pool, user.id, ref.channelId))) {
+        return reply.code(403).send({ error: 'forbidden' });
+      }
+    } else if (ref.kind === 'scratch') {
+      const session = await pool.query<{ workspace_id: string; channel_id: string; spawned_by: string }>(
+        `SELECT workspace_id, channel_id, spawned_by
+           FROM sessions
+          WHERE id = $1`,
+        [ref.sessionId],
+      );
+      const sessionRow = session.rows[0];
+      if (!sessionRow || !(await canAccessChannel(pool, user.id, sessionRow.channel_id))) {
+        return reply.code(403).send({ error: 'forbidden' });
+      }
+      workspaceId = sessionRow.workspace_id;
+      // Hub browsing intentionally limits scratch to a session's owner/driver.
+      // Resolve with the owner solely to reuse its row mapper after the broader
+      // session-read ACL above, then restore requester-specific fields below.
+      listUserId = sessionRow.spawned_by;
+    } else {
+      const workspace = await pool.query<{ workspace_id: string }>(
+        `SELECT a.workspace_id
+           FROM artifacts a
+           JOIN workspace_members wm ON wm.workspace_id = a.workspace_id AND wm.user_id = $2
+          WHERE a.path = $1
+          ORDER BY a.created_at DESC
+          LIMIT 1`,
+        [ref.canonicalPath, user.id],
+      );
+      workspaceId = workspace.rows[0]?.workspace_id ?? null;
+      if (!workspaceId) return reply.code(404).send({ error: 'file_not_found', message: 'file not found' });
+    }
+
+    const result = await ledger.listWorkspaceFiles({
+      workspaceId,
+      userId: listUserId,
+      query: { q: ref.canonicalPath, includeDeleted: true, includeScratch: true, limit: 200 },
+    });
+    let file = result.files.find((candidate) => candidate.path === ref.canonicalPath);
+    if (!file) return reply.code(404).send({ error: 'file_not_found', message: 'file not found' });
+    if (listUserId !== user.id) {
+      const starred = await pool.query('SELECT 1 FROM artifact_stars WHERE artifact_id = $1 AND user_id = $2', [
+        file.artifactId,
+        user.id,
+      ]);
+      file = { ...file, starred: (starred.rowCount ?? 0) > 0 };
+    }
+    return file;
   });
 
   app.get('/api/files/:artifactId/versions', async (req, reply) => {

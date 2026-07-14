@@ -134,6 +134,70 @@ async function commitArtifact(params: {
 }
 
 describe('Files Hub artifact versions and preview routes', () => {
+  it('resolves a canonical artifact path to the Files Hub shape', async () => {
+    const { cookie } = await loginCookie();
+    const sid = await session();
+    const committed = await commitArtifact({
+      sessionId: sid,
+      path: 'shared/global/path-linked.md',
+      bytes: '# Linked',
+      mime: 'text/markdown',
+    });
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/files/by-path?path=${encodeURIComponent('shared/global/path-linked.md')}`,
+      headers: { cookie },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({
+      artifactId: committed.artifactId,
+      workspaceId: fx.workspaceId,
+      path: 'shared/global/path-linked.md',
+      name: 'path-linked.md',
+      versionSeq: committed.seq,
+      tombstoned: false,
+    });
+  });
+
+  it('rejects malformed and unknown canonical paths', async () => {
+    const { cookie } = await loginCookie();
+    const malformed = await app.inject({
+      method: 'GET',
+      url: '/api/files/by-path?path=notes.md',
+      headers: { cookie },
+    });
+    expect(malformed.statusCode).toBe(400);
+
+    const unknown = await app.inject({
+      method: 'GET',
+      url: `/api/files/by-path?path=${encodeURIComponent('shared/global/missing.md')}`,
+      headers: { cookie },
+    });
+    expect(unknown.statusCode).toBe(404);
+  });
+
+  it('forbids path resolution in an unreadable channel', async () => {
+    const { cookie } = await loginCookie();
+    await pool.query("UPDATE channels SET kind = 'private' WHERE id = $1", [fx.otherChannelId]);
+    const sid = await session(fx.otherChannelId);
+    await commitArtifact({
+      sessionId: sid,
+      channelId: fx.otherChannelId,
+      path: `shared/channels/${fx.otherChannelId}/private.md`,
+      bytes: 'private',
+      mime: 'text/markdown',
+    });
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/files/by-path?path=${encodeURIComponent(`shared/channels/${fx.otherChannelId}/private.md`)}`,
+      headers: { cookie },
+    });
+    expect(res.statusCode).toBe(403);
+  });
+
   it('returns artifact versions newest-first for a reader', async () => {
     const { cookie } = await loginCookie();
     const sid = await session();

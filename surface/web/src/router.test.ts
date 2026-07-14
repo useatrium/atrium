@@ -3,7 +3,7 @@
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import { createElement } from 'react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { navigate, parseInAppRoute, routePath, useLocation } from './router';
+import { filePathRefFromPath, initialInAppRoute, navigate, parseInAppRoute, routePath, useLocation } from './router';
 
 function LocationProbe() {
   const location = useLocation();
@@ -103,6 +103,18 @@ describe('router', () => {
         focusSession: false,
       }),
     ).toBe('/c/ch_1/s/sess_1');
+  });
+
+  it('recognizes canonical file links and raw self-describing sandbox paths', () => {
+    const channelId = '121a247c-e270-4783-a9d4-cb80ec984188';
+    expect(filePathRefFromPath(`/f/shared/channels/${channelId}/notes%20v2.md`)).toEqual(
+      expect.objectContaining({ kind: 'shared-channel', relPath: 'notes v2.md' }),
+    );
+    expect(filePathRefFromPath(`/home/agent/shared/channels/${channelId}/notes.md`)).toEqual(
+      expect.objectContaining({ kind: 'shared-channel' }),
+    );
+    expect(filePathRefFromPath('/home/agent/notes.md')).toBeNull();
+    expect(initialInAppRoute(`/f/shared/channels/${channelId}/notes.md`)).toMatchObject({ surface: 'files' });
   });
 
   it('notifies useLocation for navigate and popstate changes', async () => {

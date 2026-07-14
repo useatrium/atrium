@@ -8,6 +8,7 @@ import { font, space, useTheme } from '../../../src/lib/theme';
 import { attachmentToHubFile } from '../../../src/components/attachmentPreview';
 import { Composer, type ComposerHandle } from '../../../src/components/Composer';
 import { MediaLightbox } from '../../../src/components/MediaLightbox';
+import { AgentFileMarkdownProvider } from '../../../src/components/FilePathChip';
 import { MessageActions, MessageActionSheet } from '../../../src/components/MessageActions';
 import { AgentModeConfig, type AgentEffort, type AgentModeTarget } from '../../../src/components/AgentModeConfig';
 import { Timeline } from '../../../src/components/Timeline';
@@ -141,33 +142,42 @@ export default function ThreadScreen() {
             </Pressable>
           </View>
         ) : (
-          <Timeline
-            messages={messages}
-            loaded={replies !== undefined}
-            hasMoreBefore={false}
-            sessions={state.sessions}
-            meId={me.id}
-            meHandle={state.meHandle}
-            highlightId={null}
-            inThread
-            emptyLabel="No replies yet."
-            fileUrl={chat.fileUrl}
-            api={chat.api}
-            serverUrl={chat.serverUrl}
-            resolveEntry={chat.resolveEntry}
-            resolveArtifactContent={chat.resolveArtifactContent}
-            resolveUser={chat.resolveUser}
-            fileHeaders={chat.fileHeaders}
-            onLoadEarlier={() => Promise.resolve()}
-            onLongPress={setActionsTarget}
-            onToggleReaction={(m, e) => void chat.react(m, e)}
-            onRetry={chat.retry}
-            onOpenAttachment={openAttachment}
-            onOpenChannel={(channelId) => router.push(`/channel/${channelId}`)}
-            onOpenSession={(sessionId) => router.push(`/session/${sessionId}`)}
-            onAnswerSessionQuestion={chat.answerSessionQuestion}
-            onSuggestSessionAnswer={chat.suggestToSession}
-          />
+          <AgentFileMarkdownProvider
+            value={{
+              serverUrl: chat.serverUrl,
+              fileHeaders: chat.fileHeaders,
+              channelId,
+              onOpenFile: (file) => setAttachmentLightbox({ files: [file], initialIndex: 0 }),
+            }}
+          >
+            <Timeline
+              messages={messages}
+              loaded={replies !== undefined}
+              hasMoreBefore={false}
+              sessions={state.sessions}
+              meId={me.id}
+              meHandle={state.meHandle}
+              highlightId={null}
+              inThread
+              emptyLabel="No replies yet."
+              fileUrl={chat.fileUrl}
+              api={chat.api}
+              serverUrl={chat.serverUrl}
+              resolveEntry={chat.resolveEntry}
+              resolveArtifactContent={chat.resolveArtifactContent}
+              resolveUser={chat.resolveUser}
+              fileHeaders={chat.fileHeaders}
+              onLoadEarlier={() => Promise.resolve()}
+              onLongPress={setActionsTarget}
+              onToggleReaction={(m, e) => void chat.react(m, e)}
+              onRetry={chat.retry}
+              onOpenAttachment={openAttachment}
+              onOpenChannel={(channelId) => router.push(`/channel/${channelId}`)}
+              onOpenSession={(sessionId) => router.push(`/session/${sessionId}`)}
+              onAnswerSessionQuestion={chat.answerSessionQuestion}
+              onSuggestSessionAnswer={chat.suggestToSession}
+            />
+          </AgentFileMarkdownProvider>
         )}
         <Composer
           ref={composerRef}
