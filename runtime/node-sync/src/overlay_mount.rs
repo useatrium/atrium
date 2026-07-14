@@ -659,13 +659,16 @@ fn prepare_lower_source(plan: &OverlayMountPlan, agent_uid: Option<u32>) -> Resu
         seed_fixture_lower(&plan.lower.path, agent_uid)?;
     }
     if plan.lower.kind == LowerKind::ComposedRepos {
-        materialize_composed_lower(plan)?;
+        materialize_composed_lower(plan, agent_uid)?;
     }
     Ok(())
 }
 
 #[cfg(target_os = "linux")]
-fn materialize_composed_lower(plan: &OverlayMountPlan) -> Result<(), String> {
+fn materialize_composed_lower(
+    plan: &OverlayMountPlan,
+    agent_uid: Option<u32>,
+) -> Result<(), String> {
     let started = Instant::now();
     let compose =
         plan_repo_composition(&plan.lower.path, &plan.repo_cache_root, &plan.repo_mounts)?;
@@ -684,7 +687,7 @@ fn materialize_composed_lower(plan: &OverlayMountPlan) -> Result<(), String> {
     for entry in &compose.entries {
         materialize_repo_entry(entry)?;
     }
-    remove_write_permissions(&compose.lower)?;
+    finalize_lower_permissions(&compose.lower, agent_uid)?;
     eprintln!(
         "event=overlay_compose_lower_completed lower={} entries={} duration_ms={}",
         compose.lower.display(),
@@ -1026,11 +1029,19 @@ fn git_verify_ref(repo_dir: &Path, git_ref: &str) -> Result<bool, String> {
     Ok(status.success())
 }
 
-#[cfg(target_os = "linux")]
-fn remove_write_permissions(root: &Path) -> Result<(), String> {
+/// Makes a per-session composed lower usable by the sandbox agent.
+///
+/// Overlayfs checks an existing lower inode's permissions before copying it up.
+/// A root-owned `0444` file therefore rejects a write-open from the agent with
+/// `EACCES`, before copy-up can happen. Giving the agent ownership and preserving
+/// owner-write permission lets copy-up proceed; the write still lands in the
+/// overlay upper and never mutates this per-session lower.
+#[cfg(all(unix, any(target_os = "linux", test)))]
+fn finalize_lower_permissions(root: &Path, agent_uid: Option<u32>) -> Result<(), String> {
+    use std::os::unix::fs::chown;
     use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 
-    fn visit(path: &Path) -> Result<(), String> {
+    fn visit(path: &Path, agent_uid: Option<u32>) -> Result<(), String> {
         let metadata =
             std::fs::symlink_metadata(path).map_err(|e| format!("stat {}: {e}", path.display()))?;
         let file_type = metadata.file_type();
@@ -1042,24 +1053,32 @@ fn remove_write_permissions(root: &Path) -> Result<(), String> {
                 std::fs::read_dir(path).map_err(|e| format!("read dir {}: {e}", path.display()))?
             {
                 let entry = entry.map_err(|e| format!("read dir entry {}: {e}", path.display()))?;
-                visit(&entry.path())?;
+                visit(&entry.path(), agent_uid)?;
             }
             // Directories stay world-writable so the hardened non-root agent can
             // create files in repo subdirs through overlay copy-up. The lower itself
             // is never mutated -- new files and edits land in the overlay upper.
-            return std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o777))
-                .map_err(|e| format!("chmod composed dir {}: {e}", path.display()));
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o777))
+                .map_err(|e| format!("chmod composed dir {}: {e}", path.display()))?;
         } else if !file_type.is_file() && !file_type.is_fifo() && !file_type.is_socket() {
             return Ok(());
+        } else {
+            let mut perms = metadata.permissions();
+            // Preserve every existing bit, especially executability, while ensuring
+            // the owner can write-open the lower inode and trigger overlay copy-up.
+            perms.set_mode(perms.mode() | 0o200);
+            std::fs::set_permissions(path, perms)
+                .map_err(|e| format!("chmod owner-writable {}: {e}", path.display()))?;
         }
 
-        let mut perms = metadata.permissions();
-        perms.set_mode(perms.mode() & !0o222);
-        std::fs::set_permissions(path, perms)
-            .map_err(|e| format!("chmod read-only {}: {e}", path.display()))
+        if let Some(uid) = agent_uid {
+            chown(path, Some(uid), Some(uid))
+                .map_err(|e| format!("chown composed lower {} to {uid}: {e}", path.display()))?;
+        }
+        Ok(())
     }
 
-    visit(root)
+    visit(root, agent_uid)
 }
 
 #[cfg(target_os = "linux")]
@@ -1443,6 +1462,119 @@ mod tests {
         assert_eq!(
             plan.entries[0].cache_path,
             PathBuf::from("/cache/.snapshots/acme/widget/abc123")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn finalizing_composed_lower_adds_owner_write_and_preserves_execute() {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+        let tmp = tempfile::tempdir().unwrap();
+        let nested = tmp.path().join("repo/.git");
+        std::fs::create_dir_all(&nested).unwrap();
+        let regular = nested.join("FETCH_HEAD");
+        let executable = tmp.path().join("repo/run.sh");
+        std::fs::write(&regular, "ref").unwrap();
+        std::fs::write(&executable, "#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(&regular, std::fs::Permissions::from_mode(0o444)).unwrap();
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o555)).unwrap();
+
+        // Arbitrary uid/gid ownership changes require root. Mode behavior remains
+        // covered on unprivileged macOS and Linux test hosts.
+        let requested_uid = (std::fs::metadata(tmp.path()).unwrap().uid() == 0).then_some(4242);
+        finalize_lower_permissions(tmp.path(), requested_uid).unwrap();
+
+        assert_eq!(std::fs::metadata(&regular).unwrap().mode() & 0o777, 0o644);
+        assert_eq!(
+            std::fs::metadata(&executable).unwrap().mode() & 0o777,
+            0o755
+        );
+        assert_eq!(std::fs::metadata(&nested).unwrap().mode() & 0o777, 0o777);
+        if let Some(uid) = requested_uid {
+            for path in [
+                tmp.path(),
+                nested.as_path(),
+                regular.as_path(),
+                executable.as_path(),
+            ] {
+                let metadata = std::fs::metadata(path).unwrap();
+                assert_eq!(metadata.uid(), uid, "wrong owner for {}", path.display());
+                assert_eq!(metadata.gid(), uid, "wrong group for {}", path.display());
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn materialized_composed_lower_is_agent_owned_and_writable() {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+        let tmp = tempfile::tempdir().unwrap();
+        let cache_root = tmp.path().join("cache");
+        let cache_repo = cache_root.join("acme/widget");
+        std::fs::create_dir_all(cache_repo.join(".git")).unwrap();
+        let cached_fetch_head = cache_repo.join(".git/FETCH_HEAD");
+        let cached_executable = cache_repo.join("run.sh");
+        std::fs::write(&cached_fetch_head, "ref").unwrap();
+        std::fs::write(&cached_executable, "#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(&cached_fetch_head, std::fs::Permissions::from_mode(0o444))
+            .unwrap();
+        std::fs::set_permissions(&cached_executable, std::fs::Permissions::from_mode(0o555))
+            .unwrap();
+
+        let lower = tmp.path().join("session.repos");
+        let plan = OverlayMountPlan {
+            session: "session".to_string(),
+            upper: tmp.path().join("upper"),
+            merged: tmp.path().join("merged"),
+            work: tmp.path().join("work"),
+            lower: LowerSource {
+                path: lower.clone(),
+                kind: LowerKind::ComposedRepos,
+            },
+            extra_lowers: Vec::new(),
+            context_source: None,
+            repo_mounts: vec![RepoMount {
+                repo: "acme/widget".to_string(),
+                r#ref: None,
+                subdir: None,
+                resolved_sha: None,
+                cache_path: None,
+                private: false,
+                cache_scope: None,
+            }],
+            repo_cache_root: cache_root,
+        };
+        let requested_uid = (std::fs::metadata(tmp.path()).unwrap().uid() == 0).then_some(4242);
+
+        materialize_composed_lower(&plan, requested_uid).unwrap();
+
+        let fetch_head = lower.join("repos/acme/widget/.git/FETCH_HEAD");
+        let executable = lower.join("repos/acme/widget/run.sh");
+        assert_eq!(
+            std::fs::metadata(&fetch_head).unwrap().mode() & 0o777,
+            0o644
+        );
+        assert_eq!(
+            std::fs::metadata(&executable).unwrap().mode() & 0o777,
+            0o755
+        );
+        if let Some(uid) = requested_uid {
+            for path in [lower.as_path(), fetch_head.as_path(), executable.as_path()] {
+                let metadata = std::fs::metadata(path).unwrap();
+                assert_eq!(metadata.uid(), uid, "wrong owner for {}", path.display());
+                assert_eq!(metadata.gid(), uid, "wrong group for {}", path.display());
+            }
+        }
+        // Finalizing the reflinked per-session copy must not alter cache metadata.
+        assert_eq!(
+            std::fs::metadata(cached_fetch_head).unwrap().mode() & 0o777,
+            0o444
+        );
+        assert_eq!(
+            std::fs::metadata(cached_executable).unwrap().mode() & 0o777,
+            0o555
         );
     }
 

@@ -625,11 +625,15 @@ echo "--- DIAG: multi node view (cache, lower, upper, merged on ${KIND_CLUSTER}-
 docker exec "${KIND_CLUSTER}-control-plane" sh -c \
   'echo "repo-cache:"; find "/var/lib/centaur/repos/acme" -maxdepth 3 -mindepth 1 -print 2>&1 || true; echo "manifest:"; cat "/var/lib/centaur/overlays/.sessions/'"${MULTI_REPO_SESSION}"'.json" 2>&1 || true; echo "composed lower:"; find "/var/lib/centaur/overlay-lower/'"${MULTI_REPO_SESSION}"'.repos" -maxdepth 3 -mindepth 1 -print 2>&1 || true; echo "upper:"; find "/var/lib/centaur/overlays/'"${MULTI_REPO_SESSION}"'" -maxdepth 3 -mindepth 1 -print 2>&1 || true; echo "merged:"; ls -la "/run/centaur/merged/'"${MULTI_REPO_SESSION}"'" 2>&1 || true' || true
 
+# Base files are agent-owned and owner-writable so a write-open of an EXISTING
+# file (git fetch appending .git/FETCH_HEAD) triggers overlay copy-up instead of
+# EACCES against the root-owned lower inode. Unmodified bases still must not
+# appear in the upper.
 kubectl -n "${NS}" exec "${MULTI_REPO_AGENT_POD}" -c agent -- /bin/sh -ceu '
   grep -q "foo repo base" /workspace/repos/acme/foo/foo.txt
   grep -q "bar repo base" /workspace/repos/acme/bar/bar.txt
-  test ! -w /workspace/repos/acme/foo/foo.txt
-  test ! -w /workspace/repos/acme/bar/bar.txt
+  test -w /workspace/repos/acme/foo/foo.txt
+  test -w /workspace/repos/acme/bar/bar.txt
 '
 docker exec "${KIND_CLUSTER}-control-plane" sh -ceu \
   'test ! -e "/var/lib/centaur/overlays/'"${MULTI_REPO_SESSION}"'/repos/acme/foo/foo.txt";
@@ -638,14 +642,20 @@ docker exec "${KIND_CLUSTER}-control-plane" sh -ceu \
 kubectl -n "${NS}" exec "${MULTI_REPO_AGENT_POD}" -c agent -- /bin/sh -ceu '
   echo "created outside composed repos" > /workspace/outside-deliverable.txt
   echo "created through multi repo lower session" > /workspace/repos/acme/foo/agent-created.txt
+  echo "agent appended to bar base" >> /workspace/repos/acme/bar/bar.txt
   test -f /workspace/outside-deliverable.txt
   test -f /workspace/repos/acme/foo/agent-created.txt
+  grep -q "agent appended to bar base" /workspace/repos/acme/bar/bar.txt
 '
+# The bar.txt append copies up: the upper holds the modified copy, the untouched
+# foo.txt stays out of the upper, and the composed lower keeps the pristine base.
 docker exec "${KIND_CLUSTER}-control-plane" sh -ceu \
   'test -f "/var/lib/centaur/overlays/'"${MULTI_REPO_SESSION}"'/outside-deliverable.txt";
    test -f "/var/lib/centaur/overlays/'"${MULTI_REPO_SESSION}"'/repos/acme/foo/agent-created.txt";
    test ! -e "/var/lib/centaur/overlays/'"${MULTI_REPO_SESSION}"'/repos/acme/foo/foo.txt";
-   test ! -e "/var/lib/centaur/overlays/'"${MULTI_REPO_SESSION}"'/repos/acme/bar/bar.txt"'
+   grep -q "agent appended to bar base" "/var/lib/centaur/overlays/'"${MULTI_REPO_SESSION}"'/repos/acme/bar/bar.txt";
+   grep -q "bar repo base" "/var/lib/centaur/overlay-lower/'"${MULTI_REPO_SESSION}"'.repos/repos/acme/bar/bar.txt";
+   ! grep -q "agent appended to bar base" "/var/lib/centaur/overlay-lower/'"${MULTI_REPO_SESSION}"'.repos/repos/acme/bar/bar.txt"'
 echo "--- DIAG: multi node upper after nested write on ${KIND_CLUSTER}-control-plane ---"
 docker exec "${KIND_CLUSTER}-control-plane" sh -c \
   'echo "upper after nested write:"; find "/var/lib/centaur/overlays/'"${MULTI_REPO_SESSION}"'" -maxdepth 6 -mindepth 1 -print 2>&1 || true; echo "upper/repos/acme/foo:"; ls -la "/var/lib/centaur/overlays/'"${MULTI_REPO_SESSION}"'/repos/acme/foo" 2>&1 || true' || true
