@@ -156,9 +156,8 @@ export const MessageRow = memo(function MessageRow({
   const threadTargetEventId = isBroadcastReplyInMain ? m.threadRootEventId : m.id;
   const canThread = !inThread && threadTargetEventId != null && onOpenThread && !deleted;
   const isAgentReply = m.sessionEventType === 'replied';
-  // Utterances the SESSION itself makes (turn recaps, questions) wear the
-  // session's persona — title, session-seeded avatar, AGENT chip — never a
-  // human's name and never "Unknown". Humans keep their own rows.
+  // Utterances the agent makes share one product persona. Humans keep their
+  // own names and avatars.
   const isAgentVoice = isAgentReply || m.sessionEventType === 'question_requested';
   const isSessionRow = m.sessionId != null && session != null && !isAgentReply;
   const isSessionEventRow = m.sessionEventType != null && !isAgentReply;
@@ -194,7 +193,7 @@ export const MessageRow = memo(function MessageRow({
     entryHandle != null &&
     isStructuredTextForMarkup(m.text) &&
     !!onMarkupEntry;
-  const authorName = isAgentVoice ? (session?.title ?? m.author.displayName) : m.author.displayName;
+  const authorName = isAgentVoice ? 'Agent' : m.author.displayName;
   const [pickerOpen, setPickerOpen] = useState(false);
   const [openReactionEmoji, setOpenReactionEmoji] = useState<string | null>(null);
   const reactionPopoverBaseId = useId();
@@ -589,7 +588,7 @@ export const MessageRow = memo(function MessageRow({
     >
       <div className="w-8 shrink-0">
         {(!grouped || isAgentVoice) && (
-          <Avatar name={authorName} seed={isAgentVoice ? (m.sessionId ?? m.author.id) : m.author.id} />
+          <Avatar name={authorName} seed={m.author.id} variant={isAgentVoice ? 'agent' : 'human'} />
         )}
         {grouped && (
           <TimestampDisclosure
@@ -647,7 +646,7 @@ export const MessageRow = memo(function MessageRow({
             </TimestampDisclosure>
           </div>
         )}
-        {isBroadcastReplyInMain && (
+        {isBroadcastReplyInMain && !isAgentVoice && (
           <button
             type="button"
             onClick={() => onOpenThread?.(m.threadRootEventId!)}
@@ -659,18 +658,23 @@ export const MessageRow = memo(function MessageRow({
         {isSessionEventRow ? (
           <SessionEventCard message={m} session={session} onOpenSession={onOpenSession} />
         ) : isSessionRow ? (
-          <SessionCard
-            session={session}
-            spectators={spectators}
-            spawnFailed={failed}
-            meId={meId}
-            onOpen={
-              // Primary click lands on the conversation: the card's thread
-              // (turns, questions, steers). The pane is "Show the work".
-              !inThread && onOpenThread && m.id != null ? () => onOpenThread(m.id!) : undefined
-            }
-            onOpenPane={(id) => onOpenSession?.(id)}
-          />
+          <>
+            <div className="whitespace-pre-wrap break-words text-sm leading-relaxed text-fg-body">
+              <MessageText text={m.sessionTask ?? ''} meId={meId} meHandle={meHandle} />
+            </div>
+            <SessionCard
+              session={session}
+              spectators={spectators}
+              spawnFailed={failed}
+              meId={meId}
+              onOpen={
+                // Primary click lands on the conversation: the card's thread
+                // (turns, questions, steers). The pane is "Show the work".
+                !inThread && onOpenThread && m.id != null ? () => onOpenThread(m.id!) : undefined
+              }
+              onOpenPane={(id) => onOpenSession?.(id)}
+            />
+          </>
         ) : editing ? (
           <div className="relative py-0.5">
             {editMentions.open && (

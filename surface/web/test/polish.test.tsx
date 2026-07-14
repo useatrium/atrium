@@ -318,7 +318,7 @@ describe('session question events', () => {
     expect(screen.getByText('Agent asked a question')).toBeTruthy();
   });
 
-  it('question rows speak as the session persona, never a human or Unknown', () => {
+  it('question rows speak as Agent, never a session title, human, or Unknown', () => {
     renderThemed(
       <MessageRow
         message={sessionEvent({
@@ -345,7 +345,8 @@ describe('session question events', () => {
       />,
     );
 
-    expect(screen.getByText('Backfill Q2 corpus embeddings')).toBeTruthy();
+    expect(screen.getByText('Agent')).toBeTruthy();
+    expect(screen.queryByText('Backfill Q2 corpus embeddings')).toBeNull();
     expect(screen.getByText('AGENT')).toBeTruthy();
     expect(screen.queryByText('Maya Chen')).toBeNull();
   });

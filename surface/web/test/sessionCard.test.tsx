@@ -69,7 +69,7 @@ function chipText(): string {
 }
 
 describe('session card transitions across session.* events', () => {
-  it('spawned → status_changed → completed updates chip, excerpt, permalink', () => {
+  it('spawned → status_changed → completed updates chip and permalink without echoed content', () => {
     let s = spawned(loadedState());
 
     // The spawned event placed a card row in the timeline like a message.
@@ -78,7 +78,7 @@ describe('session card transitions across session.* events', () => {
 
     const { rerender } = render(cardFor(s));
     expect(chipText()).toContain('starting');
-    expect(screen.getByText('fix the flaky build')).toBeTruthy();
+    expect(screen.queryByText('fix the flaky build')).toBeNull();
 
     s = appReducer(s, {
       type: 'server-event',
@@ -108,7 +108,8 @@ describe('session card transitions across session.* events', () => {
     });
     rerender(cardFor(s));
     expect(chipText()).toContain('Done');
-    expect(screen.getByText(/All green: 12 tests passed/)).toBeTruthy();
+    expect(screen.queryByText(/All green: 12 tests passed/)).toBeNull();
+    expect(screen.getByText(/Agent worked/)).toBeTruthy();
     expect(screen.getByText('Show the work →').getAttribute('href')).toBe('/s/sess-1');
   });
 
@@ -125,7 +126,10 @@ describe('session card transitions across session.* events', () => {
     });
     render(cardFor(s));
     expect(chipText()).toContain('Failed');
-    expect(screen.getByText(/harness crashed/)).toBeTruthy();
+    // The failure text rides in on the broadcast reply message, so the card
+    // neither duplicates it nor pretends the run said nothing.
+    expect(screen.queryByText(/harness crashed/)).toBeNull();
+    expect(screen.queryByText('The run ended before reporting a result.')).toBeNull();
   });
 
   it('shows needs auth when Claude auth is required', () => {
@@ -216,6 +220,7 @@ describe('session card transitions across session.* events', () => {
     const bob = { id: 'u-bob', handle: 'bob', displayName: 'Bob' };
     let s = spawned(loadedState());
     const { rerender } = render(cardFor(s));
+    fireEvent.click(screen.getByRole('button', { name: 'Session details' }));
     // Driver defaults to the spawner → no separate driver chip.
     expect(screen.queryByText(/driver:/)).toBeNull();
 
@@ -278,6 +283,11 @@ describe('session card transitions across session.* events', () => {
   it('reads the meta row as a sentence on one non-wrapping line', () => {
     const s = spawned(loadedState());
     render(cardFor(s));
+    const disclosure = screen.getByRole('button', { name: 'Session details' });
+    expect(disclosure.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByText('by Kay')).toBeNull();
+    fireEvent.click(disclosure);
+    expect(disclosure.getAttribute('aria-expanded')).toBe('true');
 
     // Every token names itself — "Kay · claude-code · 8:35 AM" was token soup.
     expect(screen.getByText('by Kay')).toBeTruthy();
@@ -300,6 +310,7 @@ describe('session card transitions across session.* events', () => {
   it('sheds the meta row by importance: repo first, then boilerplate, never the author', () => {
     const s = spawned(loadedState());
     render(cardFor(s));
+    fireEvent.click(screen.getByRole('button', { name: 'Session details' }));
 
     // The author is the headline. It must be structurally incapable of truncating.
     const author = screen.getByText('by Kay');
@@ -334,6 +345,7 @@ describe('session card transitions across session.* events', () => {
     const session = s.sessions['sess-2']!;
     expect(session.repo).toBe('meridian/atlas-infra');
     render(<SessionCard session={session} spectators={0} onOpenPane={() => {}} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Session details' }));
 
     // "meri…" is pure noise — it's on the card's other rows and in the pane.
     // Below sm the repo is gone entirely, not ellipsized to a stub.

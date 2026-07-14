@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type MouseEvent } from 'react';
 import { formatTime } from '@atrium/surface-client';
 import {
   formatCost,
+  formatDurationUnits,
   isPendingSessionId,
   isStalledSessionStatus,
   isTerminalSessionStatus,
@@ -228,10 +229,11 @@ export function SessionCard({
   };
   const livePending = !terminal && session.pendingQuestion?.questions[0] ? session.pendingQuestion : null;
   const answered = sessionAnsweredQuestion(session);
+  const [detailsOpen, setDetailsOpen] = useState(false);
 
   return (
-    // biome-ignore lint/a11y/noStaticElementInteractions: card click mirrors the nested title button; keyboard users use that button.
-    // biome-ignore lint/a11y/useKeyWithClickEvents: card click mirrors the nested title button; keyboard users use that button.
+    // biome-ignore lint/a11y/noStaticElementInteractions: card click mirrors the nested status button; keyboard users use that button.
+    // biome-ignore lint/a11y/useKeyWithClickEvents: card click mirrors the nested status button; keyboard users use that button.
     <div
       data-testid="session-card"
       onClick={onCardClick}
@@ -240,11 +242,13 @@ export function SessionCard({
       }`}
     >
       {/* The identity row + meta line are the SHARED header (see
-          ConversationHeader): the same chip · title · meta the thread and the
-          pane pin to the top of the right panel. Zooming in never renames the
-          thing you're looking at. */}
+          ConversationHeader): the same chip · meta the thread and the pane pin
+          to the top of the right panel. The card alone hides the title — the
+          spawner's ask is rendered as their own message directly above it, so
+          repeating it here is an echo, not an identity. */}
       <ConversationHeader
         variant="card"
+        hideTitle
         identity={{
           kind: 'session',
           session,
@@ -252,9 +256,46 @@ export function SessionCard({
           ...(spawnFailed ? { glanceOverride: { kind: 'failed' as const, label: 'spawn failed' } } : {}),
         }}
         onOpenTitle={openable ? open : undefined}
-        meta={<SessionMetaLine session={session} spectators={spectators} />}
+        actions={
+          <>
+            {terminal && (
+              <span className="min-w-0 flex-1 text-xs text-fg-secondary">
+                Agent worked {formatDurationUnits(Math.max(0, sessionElapsedMs(session, now)))}
+              </span>
+            )}
+            <button
+              type="button"
+              data-testid="card-details-toggle"
+              aria-expanded={detailsOpen}
+              onClick={(e) => {
+                e.stopPropagation();
+                setDetailsOpen((v) => !v);
+              }}
+              className={`shrink-0 text-2xs text-fg-muted hover:text-fg-secondary hover:underline ${TOUCH_TARGET}`}
+            >
+              {detailsOpen ? 'Hide details' : 'Details'}
+            </button>
+            {openable && (
+              <a
+                href={session.permalink}
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  openPane();
+                }}
+                className={`shrink-0 text-2xs font-medium text-fg-tertiary hover:text-fg-body hover:underline ${TOUCH_TARGET}`}
+              >
+                Show the work →
+              </a>
+            )}
+          </>
+        }
+        meta={detailsOpen ? <SessionMetaLine session={session} spectators={spectators} /> : undefined}
       >
-        {!spawnFailed && <SessionPresenceTicker session={session} className="mt-1 pl-0.5" />}
+        {/* A finished run says what it did in its own reply message below, so a
+            terminal card carries no ticker and no result excerpt — only how long
+            it took and the way back in. */}
+        {!spawnFailed && !terminal && <SessionPresenceTicker session={session} className="mt-1 pl-0.5" />}
 
         {/* The card IS the channel's view of a live question — it flips to the
             canonical answerable QuestionCard in place instead of posting a
@@ -291,13 +332,13 @@ export function SessionCard({
       {/* Failed cards render this block even with NO result text — recovery
           must not be gated on the presence of the very output whose absence
           defines the worst failures. */}
-      {terminal && (session.resultText || session.status === 'failed') && (
+      {terminal && session.status === 'failed' && (
         <div className="mt-1.5 border-l-2 border-edge-strong pl-2 text-xs leading-relaxed text-fg-secondary">
-          {session.resultText ? (
-            <span className="line-clamp-3 whitespace-pre-wrap break-words">{session.resultText}</span>
-          ) : (
-            <span className="text-fg-muted">The run ended before reporting a result.</span>
-          )}
+          {/* A failed run CAN still report why it failed, and when it does the
+              server broadcasts that text as a reply message — so the card must
+              not repeat it, and must not claim silence that didn't happen.
+              Only genuine silence gets the silence line. */}
+          {!session.resultText && <span className="text-fg-muted">The run ended before reporting a result.</span>}
           {/* sessionDriverId, not raw driverId: feed folds create terminal
               entities with driverId null (no heal), and the seat model's
               canonical fallback is the spawner. */}
@@ -308,19 +349,6 @@ export function SessionCard({
             </span>
           )}
         </div>
-      )}
-      {openable && (
-        <a
-          href={session.permalink}
-          onClick={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            openPane();
-          }}
-          className={`mt-1 inline-block text-2xs font-medium text-fg-tertiary hover:text-fg-body hover:underline ${TOUCH_TARGET}`}
-        >
-          Show the work →
-        </a>
       )}
       {openable && <SessionAppPresentationCards session={session} surface="timeline" />}
     </div>

@@ -182,21 +182,42 @@ describe('MessageRow broadcast replies', () => {
 });
 
 describe('MessageRow web presence', () => {
-  it('renders an agent reply with the session author and normal markdown body', () => {
+  it('renders an agent reply with the fixed Agent identity and normal markdown body', () => {
     renderRow({
-      session: session(),
+      session: session({ title: 'A task-shaped session title' }),
       row: message({
         sessionId: 's-1',
         sessionEventType: 'replied',
+        threadRootEventId: 42,
         text: '**Shipped** the [timeline](https://example.com).',
-        author: { id: 'agent:s-1', handle: 'agent', displayName: 'Agent' },
+        author: { id: 'agent:s-1', handle: 'agent', displayName: 'Harness persona' },
       }),
     });
 
-    expect(screen.getByText('Timeline migration')).toBeTruthy();
+    expect(screen.getByText('Agent')).toBeTruthy();
+    expect(screen.queryByText('A task-shaped session title')).toBeNull();
+    expect(screen.queryByText('Harness persona')).toBeNull();
     expect(screen.getByText('AGENT')).toBeTruthy();
     expect(screen.getByRole('link', { name: 'timeline' })).toBeTruthy();
     expect(screen.getByText('Shipped')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: '↳ replied to a thread' })).toBeNull();
+  });
+
+  it('renders a spawn task once as the spawner message and never echoes its title', () => {
+    const task = 'Refactor the timeline without losing accessibility.';
+    renderRow({
+      session: session({ title: 'Refactor the timeline' }),
+      row: message({
+        sessionId: 's-1',
+        sessionTask: task,
+        text: 'Refactor the timeline',
+        reactions: [],
+      }),
+    });
+
+    expect(screen.getAllByText(task)).toHaveLength(1);
+    expect(screen.queryByText('Refactor the timeline')).toBeNull();
+    expect(screen.getByText('Ada Lovelace')).toBeTruthy();
   });
 
   it('points the live question row at the canonical card instead of a second form', () => {

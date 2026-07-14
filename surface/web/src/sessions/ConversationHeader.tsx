@@ -46,6 +46,7 @@ export function ConversationHeader({
   variant = 'panel',
   onOpenTitle,
   openTitleHint,
+  hideTitle = false,
   actions,
   crumbs = [],
   crumbNote,
@@ -58,6 +59,15 @@ export function ConversationHeader({
   /** Title becomes a button that zooms in one level (card → thread → work). */
   onOpenTitle?: () => void;
   openTitleHint?: string;
+  /**
+   * Feed cards only. A session's title IS its first prompt, and on the card the
+   * spawner's ask is already rendered as their own message directly above —
+   * so printing it again as a title is a pure echo. The thread and the pane
+   * keep the title: there, nothing sits above it and it's what names the
+   * conversation. The identity is still the same object at every zoom; the card
+   * just doesn't re-say what the message above it already said.
+   */
+  hideTitle?: boolean;
   /** Trailing controls for this zoom state (close, stop, overflow…). */
   actions?: ReactNode;
   crumbs?: IdentityCrumb[];
@@ -99,6 +109,33 @@ export function ConversationHeader({
     </span>
   );
 
+  // With the title hidden the chip inherits its job as the row's keyboard path
+  // into the conversation — otherwise suppressing the title would silently take
+  // the only focusable "open" affordance off the card.
+  const chipNode =
+    identity.kind === 'session' ? (
+      <GlanceChip
+        session={identity.session}
+        now={identity.now}
+        stuck={identity.stuck}
+        override={identity.glanceOverride}
+      />
+    ) : null;
+  const chip =
+    hideTitle && onOpenTitle && chipNode ? (
+      <button
+        type="button"
+        data-testid="conversation-title"
+        onClick={onOpenTitle}
+        aria-label={openTitleHint ?? `Open agent conversation: ${title}`}
+        className="rounded-full focus-visible:underline"
+      >
+        {chipNode}
+      </button>
+    ) : (
+      chipNode
+    );
+
   const Container = panel ? 'header' : 'div';
 
   return (
@@ -117,17 +154,8 @@ export function ConversationHeader({
             : `flex items-start gap-2 ${className}`
         }
       >
-        {identity.kind === 'session' ? (
-          <GlanceChip
-            session={identity.session}
-            now={identity.now}
-            stuck={identity.stuck}
-            override={identity.glanceOverride}
-          />
-        ) : (
-          <Avatar name={identity.authorName} seed={identity.authorId} size={20} />
-        )}
-        {panel ? (
+        {identity.kind === 'session' ? chip : <Avatar name={identity.authorName} seed={identity.authorId} size={20} />}
+        {hideTitle ? null : panel ? (
           <h2 className="flex min-w-0 flex-1 items-center text-sm font-semibold text-fg">{titleNode}</h2>
         ) : (
           titleNode

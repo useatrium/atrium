@@ -140,17 +140,23 @@ describe('session projection triggers', () => {
 
     await runPrivateTailer(runs, sessionId);
 
-    const replies = await pool.query<{ thread_root_event_id: number; payload: { session_id: string; text: string } }>(
+    const replies = await pool.query<{
+      thread_root_event_id: number;
+      payload: { session_id: string; text: string; broadcast: boolean };
+    }>(
       `SELECT thread_root_event_id, payload
          FROM events
         WHERE type = 'session.replied'
           AND payload->>'session_id' = $1`,
       [sessionId],
     );
+    // The reply is rooted in the session conversation AND broadcast, so the
+    // answer surfaces in the channel feed as an agent message rather than
+    // staying buried in the thread. Both facts are load-bearing.
     expect(replies.rows).toEqual([
       {
         thread_root_event_id: rootId,
-        payload: { session_id: sessionId, text: 'done' },
+        payload: { session_id: sessionId, text: 'done', broadcast: true },
       },
     ]);
   });

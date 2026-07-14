@@ -3,7 +3,7 @@
 import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
 import { Text, View } from 'react-native';
-import type { ChatMessage } from '@atrium/surface-client';
+import type { ChatMessage, Session } from '@atrium/surface-client';
 import type { ComponentProps, ReactNode } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { MessageRow } from '../src/components/MessageRow';
@@ -53,6 +53,39 @@ function message(overrides: Partial<ChatMessage> = {}): ChatMessage {
   };
 }
 
+function session(overrides: Partial<Session> = {}): Session {
+  return {
+    id: 's-1',
+    workspaceId: 'w-1',
+    channelId: 'c-1',
+    threadRootEventId: 99,
+    title: 'Old truncated title',
+    status: 'running',
+    harness: 'codex',
+    repo: 'atrium/mobile',
+    branch: 'agent-card',
+    repos: null,
+    spawnedBy: 'u-1',
+    spawnerName: 'Riley',
+    driverId: 'u-1',
+    driverName: 'Riley',
+    pendingSeatRequests: [],
+    suggestions: [],
+    answerProposals: [],
+    pendingQuestion: null,
+    seatEvents: [],
+    costUsd: 0,
+    resultText: null,
+    createdAt: '2026-07-13T11:00:00.000Z',
+    completedAt: null,
+    archivedAt: null,
+    pinned: false,
+    lastEventId: 99,
+    permalink: '/sessions/s-1',
+    ...overrides,
+  };
+}
+
 function renderRow(overrides: Partial<ChatMessage> = {}, props: Partial<ComponentProps<typeof MessageRow>> = {}) {
   const rowMessage = message(overrides);
   const onOpenThread = vi.fn();
@@ -80,6 +113,67 @@ function renderRow(overrides: Partial<ChatMessage> = {}, props: Partial<Componen
 afterEach(cleanup);
 
 describe('MessageRow', () => {
+  it('renders the verbatim spawn task as Riley message and never repeats the session title in the card', () => {
+    renderRow(
+      {
+        text: 'Old truncated title',
+        sessionId: 's-1',
+        sessionTask: 'Investigate the mobile race\nand preserve this second line.',
+      },
+      {
+        session: session({ latestActivity: { summary: 'Reading MessageRow.tsx', at: '2026-07-13T11:01:00.000Z' } }),
+      },
+    );
+
+    expect(screen.getByText(/Investigate the mobile race\s+and preserve this second line\./)).toBeInTheDocument();
+    expect(screen.getByText('Riley')).toBeInTheDocument();
+    expect(screen.queryByText('Old truncated title')).not.toBeInTheDocument();
+    expect(screen.getByText('Reading MessageRow.tsx')).toBeInTheDocument();
+  });
+
+  it('keeps session metadata collapsed behind an accessible disclosure', () => {
+    renderRow({ sessionId: 's-1', sessionTask: 'Check the release.' }, { session: session({ costUsd: 1.25 }) });
+
+    const disclosure = screen.getByRole('button', { name: 'Show session details' });
+    expect(screen.queryByTestId('session-metadata')).not.toBeInTheDocument();
+
+    fireEvent.click(disclosure);
+
+    expect(screen.getByRole('button', { name: 'Hide session details' })).toBeInTheDocument();
+    expect(screen.getByTestId('session-metadata')).toHaveTextContent('atrium/mobile · agent-card');
+    expect(screen.getByTestId('session-metadata')).toHaveTextContent('$1.25');
+  });
+
+  it('collapses a completed session to elapsed work and omits the duplicated result excerpt', () => {
+    renderRow(
+      { sessionId: 's-1', sessionTask: 'Finish the release.' },
+      {
+        session: session({
+          status: 'completed',
+          resultText: 'This answer belongs in the broadcast reply.',
+          createdAt: '2026-07-13T11:00:00.000Z',
+          completedAt: '2026-07-13T11:04:00.000Z',
+        }),
+      },
+    );
+
+    expect(screen.getByText('worked 4m')).toBeInTheDocument();
+    expect(screen.getByText('Show the work →')).toBeInTheDocument();
+    expect(screen.queryByText('This answer belongs in the broadcast reply.')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Show session details' })).not.toBeInTheDocument();
+  });
+
+  it('keeps failed-session recovery text and the work link reachable', () => {
+    renderRow(
+      { sessionId: 's-1', sessionTask: 'Find the failing migration.' },
+      { session: session({ status: 'failed', resultText: 'Migration 42 failed before a reply was posted.' }) },
+    );
+
+    expect(screen.getByText('Migration 42 failed before a reply was posted.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Show the work — full transcript' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Show session details' })).toBeInTheDocument();
+  });
+
   it('shows a parent-thread affordance for broadcast replies in the channel timeline', () => {
     const { rowMessage, onOpenThread } = renderRow({ threadRootEventId: 42, broadcast: true });
 

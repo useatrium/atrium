@@ -5,6 +5,7 @@ import {
   emptyTimeline,
   mergeHistory,
   mergeThread,
+  messageFromEvent,
   type ChannelTimeline,
   type ChatMessage,
   type WireEvent,
@@ -186,5 +187,65 @@ describe('mergeThread count authority', () => {
       }),
     );
     expect(rootRow(confirmed, 10).replyCount).toBe(1);
+  });
+});
+
+// === agent-identity seam ===
+// The spawn event carries the ask verbatim so the feed can render it as the
+// spawner's own message and the card never has to echo it back. Sessions
+// spawned before `task` existed must keep working off the 80-char title.
+describe('spawn rows carry the verbatim ask', () => {
+  function spawnEvent(payload: Record<string, unknown>): WireEvent {
+    return {
+      id: 7,
+      workspaceId: 'w1',
+      channelId: 'c1',
+      threadRootEventId: null,
+      type: 'session.spawned',
+      actorId: me.id,
+      payload: { sessionId: 's1', ...payload },
+      createdAt: '2026-07-13T00:00:00.000Z',
+      author: me,
+    };
+  }
+
+  it('prefers the full task over the truncated title', () => {
+    const task = 'Build a weather dashboard, and make the alerts pane collapsible.';
+    const msg = messageFromEvent(spawnEvent({ task, title: task.slice(0, 20) }));
+    expect(msg.sessionTask).toBe(task);
+  });
+
+  it('falls back to the title for events written before `task` existed', () => {
+    const msg = messageFromEvent(spawnEvent({ title: 'Build a weather dash' }));
+    expect(msg.sessionTask).toBe('Build a weather dash');
+  });
+
+  it('ignores an empty task rather than rendering a blank ask', () => {
+    const msg = messageFromEvent(spawnEvent({ task: '   ', title: 'Build a weather dash' }));
+    expect(msg.sessionTask).toBe('Build a weather dash');
+  });
+});
+
+// The answer is the point of the run: a broadcast session.replied has to reach
+// the main channel timeline, not stay buried in the session thread.
+describe('the final agent reply reaches the channel', () => {
+  it('puts a broadcast reply on the main timeline', () => {
+    const reply: WireEvent = {
+      id: 9,
+      workspaceId: 'w1',
+      channelId: 'c1',
+      threadRootEventId: 7,
+      type: 'session.replied',
+      actorId: null,
+      payload: { session_id: 's1', text: 'Done — shipped the dashboard.', broadcast: true },
+      createdAt: '2026-07-13T00:01:00.000Z',
+      author: { id: 'agent:s1', handle: 'agent', displayName: 'Agent' },
+      broadcast: true,
+    };
+    const t = applyEvent(emptyTimeline, reply);
+    const main = t.main.filter((m) => m.id === 9);
+    expect(main).toHaveLength(1);
+    expect(main[0]!.text).toBe('Done — shipped the dashboard.');
+    expect(main[0]!.sessionEventType).toBe('replied');
   });
 });
