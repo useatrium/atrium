@@ -52,11 +52,14 @@ import { showErrorToast } from './components/Toasts';
 import { QuickSwitcher, type QuickSwitcherCommand } from './components/QuickSwitcher';
 import { SettingsSurface } from './components/SettingsSurface';
 import { Sidebar } from './components/Sidebar';
-import { ThreadPanel } from './components/ThreadPanel';
+// === spine additions === Thread strips can open the pane directly on a work tab.
+import { ThreadPanel, type SpineOpenSessionOptions } from './components/ThreadPanel';
 import { Timeline } from './components/Timeline';
 import { sessionsApi } from './sessions/api';
 import { Gallery } from './sessions/Gallery';
 import { SessionPane, type TranscriptDiscussPayload } from './sessions/SessionPane';
+// === spine additions === Reuse SessionPane's canonical work-tab URL grammar.
+import { TAB_SLUG } from './sessions/WorkDrawer';
 import { loadSessionPaneWidth, sessionPaneSizing } from './sessions/useSessionPaneWidth';
 import { SessionsRail } from './sessions/SessionsRail';
 import { SpawnDialog } from './sessions/SpawnDialog';
@@ -1493,12 +1496,25 @@ export function Chat({
   );
 
   const openSession = useCallback(
-    (sessionId: string, channelId = stateRef.current.activeChannelId) => {
+    (sessionId: string, options?: SpineOpenSessionOptions) => {
       if (isPendingSessionId(sessionId)) return;
-      const sessionChannelId = stateRef.current.sessions[sessionId]?.channelId ?? channelId;
-      goToRoute({ surface: 'chat', channelId: sessionChannelId, sessionId, focusSession: false });
+      const sessionChannelId = stateRef.current.sessions[sessionId]?.channelId ?? stateRef.current.activeChannelId;
+      const route: InAppRoute = {
+        surface: 'chat',
+        channelId: sessionChannelId,
+        sessionId,
+        focusSession: false,
+      };
+      // === spine additions === The pane already consumes ?work= into its tab state.
+      if (options?.workTab) {
+        const params = new URLSearchParams(locationState.search);
+        params.set(URL_PARAMS.work, TAB_SLUG[options.workTab]);
+        navigate(routePathWithSearch(route, `?${params.toString()}`, locationState.hash));
+        return;
+      }
+      goToRoute(route);
     },
-    [goToRoute],
+    [goToRoute, locationState.hash, locationState.search],
   );
 
   const closeSession = useCallback(() => {

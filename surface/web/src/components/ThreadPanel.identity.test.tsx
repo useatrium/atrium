@@ -7,6 +7,18 @@ import { ThemeProvider } from '../theme';
 import type { Session } from '../sessions/types';
 import { ThreadPanel } from './ThreadPanel';
 
+vi.mock('../sessions/useSessionStream', async () => {
+  const { initialSessionState } = await import('@atrium/centaur-client');
+  return {
+    useSessionStream: () => ({
+      stream: initialSessionState(),
+      connected: false,
+      lastFrameAt: null,
+      clockSkewMs: null,
+    }),
+  };
+});
+
 afterEach(cleanup);
 
 const ada: UserRef = { id: 'u-1', handle: 'ada', displayName: 'Ada Lovelace' };

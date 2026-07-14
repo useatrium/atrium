@@ -1,4 +1,4 @@
-import type { SessionItem, ToolCallItem } from './reducer.js';
+import type { ReasoningItem, SessionItem, ToolCallItem } from './reducer.js';
 
 export function toolDefaultOpen(item: ToolCallItem): boolean {
   return item.result === undefined;
@@ -8,6 +8,105 @@ export type TranscriptRow<TChange> =
   | { kind: 'item'; item: SessionItem; index: number }
   | { kind: 'change'; change: TChange; index: number }
   | { kind: 'hidden'; count: number; key: string; startIndex: number; endIndex: number };
+
+export type TurnWorkItem = ReasoningItem | ToolCallItem;
+
+/** The work hidden between one human input and that turn's final answer. */
+export interface FoldedTurnRow {
+  kind: 'fold';
+  key: string;
+  turn: number;
+  /** Zero-based position among completed assistant replies; null for a live turn. */
+  replyOrdinal: number | null;
+  items: TurnWorkItem[];
+  toolNames: string[];
+  startIndex: number;
+  endIndex: number;
+  triggerIndex: number | null;
+  /** Zero-based `user_message` position; null when the harness omitted the initial echo. */
+  triggerOrdinal: number | null;
+  replyIndex: number | null;
+  durationMs?: number;
+  completed: boolean;
+}
+
+function isWorkItem(item: SessionItem): item is TurnWorkItem {
+  return item.type === 'reasoning' || item.type === 'tool_call';
+}
+
+function elapsedMs(first: SessionItem | undefined, last: SessionItem | undefined): number | undefined {
+  if (!first?.ts || !last?.ts) return undefined;
+  const start = Date.parse(first.ts);
+  const end = Date.parse(last.ts);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return undefined;
+  return end - start;
+}
+
+/**
+ * Projects the transcript into turn-scoped work folds. A turn is the segment
+ * after a `user_message` (or the initial pre-user segment) and before the next
+ * `user_message`; its fold contains only reasoning/tool items before the
+ * segment's final assistant `text` item.
+ */
+export function foldedTurnRows(items: readonly SessionItem[]): FoldedTurnRow[] {
+  const folds: FoldedTurnRow[] = [];
+  let segmentStart = 0;
+  let triggerIndex: number | null = null;
+  let triggerOrdinal: number | null = null;
+  let nextTriggerOrdinal = 0;
+  let turn = 0;
+  let replyOrdinal = 0;
+
+  const flush = (segmentEnd: number) => {
+    let replyIndex: number | null = null;
+    for (let index = segmentEnd - 1; index >= segmentStart; index -= 1) {
+      if (items[index]?.type === 'text') {
+        replyIndex = index;
+        break;
+      }
+    }
+    const workEnd = replyIndex ?? segmentEnd;
+    const indexedWork = items
+      .slice(segmentStart, workEnd)
+      .map((item, offset) => ({ item, index: segmentStart + offset }))
+      .filter((entry): entry is { item: TurnWorkItem; index: number } => isWorkItem(entry.item));
+    if (indexedWork.length > 0) {
+      const workItems = indexedWork.map(({ item }) => item);
+      const toolNames = [...new Set(workItems.flatMap((item) => (item.type === 'tool_call' ? [item.name] : [])))];
+      const first = indexedWork[0]!;
+      const lastIndex = replyIndex ?? indexedWork[indexedWork.length - 1]!.index;
+      const durationMs = elapsedMs(first.item, items[lastIndex]);
+      folds.push({
+        kind: 'fold',
+        key: `turn-${turn}-${first.item.id}`,
+        turn,
+        replyOrdinal: replyIndex === null ? null : replyOrdinal,
+        items: workItems,
+        toolNames,
+        startIndex: first.index,
+        endIndex: indexedWork[indexedWork.length - 1]!.index,
+        triggerIndex,
+        triggerOrdinal,
+        replyIndex,
+        ...(durationMs !== undefined ? { durationMs } : {}),
+        completed: replyIndex !== null,
+      });
+    }
+    if (replyIndex !== null) replyOrdinal += 1;
+    turn += 1;
+  };
+
+  items.forEach((item, index) => {
+    if (item.type !== 'user_message') return;
+    flush(index);
+    triggerIndex = index;
+    triggerOrdinal = nextTriggerOrdinal;
+    nextTriggerOrdinal += 1;
+    segmentStart = index + 1;
+  });
+  flush(items.length);
+  return folds;
+}
 
 export function fullTranscriptRows<TChange>(
   items: readonly SessionItem[],
@@ -56,7 +155,7 @@ export function focusTranscriptRows<TChange>(
 
   items.forEach((item, index) => {
     for (const _change of changesAt(index)) hide(`change-${index}`, index);
-    if (item.type === 'reasoning' || item.type === 'tool_call') {
+    if (isWorkItem(item)) {
       hide(item.id, index);
       return;
     }
