@@ -6,6 +6,8 @@ ENV_FILE="$ROOT/deploy/preview/fly/.env"
 DEFAULT_REGION="${ATRIUM_PREVIEW_REGION:-iad}"
 DEFAULT_TTL_HOURS="${ATRIUM_PREVIEW_TTL_HOURS:-24}"
 DEFAULT_ORG="${FLY_ORG:-personal}"
+DEFAULT_IRON_CONTROL_APP="${ATRIUM_PREVIEW_IRON_CONTROL_APP:-atrium-preview-iron-control}"
+DEFAULT_IRON_CONTROL_PG_APP="${ATRIUM_PREVIEW_IRON_CONTROL_PG_APP:-atrium-preview-iron-control-pg}"
 PREVIEW_TMP=""
 PREVIEW_WORKTREE=""
 
@@ -20,6 +22,8 @@ Usage:
   previewctl.sh plan [branch-or-ref]
   previewctl.sh image-ref <fly-app> [branch-or-ref]
   previewctl.sh render-config <fly-app> <image-ref>
+  previewctl.sh create-iron-control
+  previewctl.sh wire-surface-iron-control <surface-fly-app> [namespace]
   previewctl.sh create-surface [branch-or-ref]
   previewctl.sh destroy <fly-app>
 
@@ -39,6 +43,8 @@ load_env() {
   DEFAULT_REGION="${ATRIUM_PREVIEW_REGION:-${DEFAULT_REGION:-iad}}"
   DEFAULT_TTL_HOURS="${ATRIUM_PREVIEW_TTL_HOURS:-${DEFAULT_TTL_HOURS:-24}}"
   DEFAULT_ORG="${FLY_ORG:-${DEFAULT_ORG:-personal}}"
+  DEFAULT_IRON_CONTROL_APP="${ATRIUM_PREVIEW_IRON_CONTROL_APP:-${DEFAULT_IRON_CONTROL_APP:-atrium-preview-iron-control}}"
+  DEFAULT_IRON_CONTROL_PG_APP="${ATRIUM_PREVIEW_IRON_CONTROL_PG_APP:-${DEFAULT_IRON_CONTROL_PG_APP:-atrium-preview-iron-control-pg}}"
 }
 
 require_cmd() {
@@ -129,6 +135,25 @@ random_hex() {
   openssl rand -hex "$bytes"
 }
 
+random_iron_api_key() {
+  printf 'iak_%s' "$(random_hex 32)"
+}
+
+fly_app_exists() {
+  local app="$1"
+  flyctl status --app "$app" >/dev/null 2>&1
+}
+
+append_env_value() {
+  local key="$1"
+  local value="$2"
+  touch "$ENV_FILE"
+  {
+    printf '\n'
+    printf '%s=%s\n' "$key" "$value"
+  } >>"$ENV_FILE"
+}
+
 make_worktree() {
   local ref="$1"
   local dir="$2"
@@ -160,17 +185,23 @@ cleanup_preview_worktree() {
 
 wait_for_health() {
   local url="$1"
-  local attempts="${2:-60}"
-  local delay="${3:-5}"
+  wait_for_path "$url" "/healthz" "${2:-60}" "${3:-5}"
+}
+
+wait_for_path() {
+  local url="$1"
+  local path="$2"
+  local attempts="${3:-60}"
+  local delay="${4:-5}"
   local i
   for i in $(seq 1 "$attempts"); do
-    if curl -fsS "$url/healthz" >/dev/null 2>&1; then
-      echo "health:         ok ($url/healthz)"
+    if curl -fsS "$url$path" >/dev/null 2>&1; then
+      echo "health:         ok ($url$path)"
       return 0
     fi
     sleep "$delay"
   done
-  echo "health:         failed after $((attempts * delay))s ($url/healthz)" >&2
+  echo "health:         failed after $((attempts * delay))s ($url$path)" >&2
   return 1
 }
 
@@ -187,6 +218,7 @@ cmd_doctor() {
   echo "env file:       $([ -f "$ENV_FILE" ] && echo present || echo missing)"
   echo "s3 bucket:      ${S3_BUCKET:-unset}"
   echo "s3 endpoint:    ${S3_ENDPOINT:-unset}"
+  echo "iron app:       $DEFAULT_IRON_CONTROL_APP"
   echo "iron-control:   $([ -n "${IRON_CONTROL_BASE_URL:-}" ] && [ -n "${IRON_CONTROL_API_KEY:-}" ] && echo configured || echo unset)"
   if flyctl auth whoami >/dev/null 2>&1; then
     echo "fly auth:       ok ($(flyctl auth whoami 2>/dev/null | head -1))"
@@ -280,6 +312,181 @@ cmd_render_config() {
     exit 2
   fi
   render_preview_app_config "$app" "$image"
+}
+
+cmd_create_iron_control() {
+  load_env
+  require_cmd flyctl
+  require_cmd openssl
+  require_cmd curl
+
+  local app="$DEFAULT_IRON_CONTROL_APP"
+  local pg="$DEFAULT_IRON_CONTROL_PG_APP"
+  local url="https://$app.fly.dev"
+  local had_iron_env=0
+  if [ -n "${IRON_CONTROL_BASE_URL:-}" ] && [ -n "${IRON_CONTROL_API_KEY:-}" ]; then
+    had_iron_env=1
+  fi
+  local api_key="${IRON_CONTROL_API_KEY:-$(random_iron_api_key)}"
+  local tmp config secret_names
+  tmp="$(mktemp -d)"
+  config="$tmp/fly.toml"
+  trap 'rm -rf "$tmp"' EXIT
+
+  cat >"$config" <<EOF
+app = "$app"
+primary_region = "$DEFAULT_REGION"
+
+[processes]
+  app = "bash -lc './bin/rails db:prepare && exec ./bin/rails server -b 0.0.0.0'"
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+  processes = ["app"]
+
+  [[http_service.checks]]
+    interval = "15s"
+    timeout = "5s"
+    grace_period = "30s"
+    method = "GET"
+    path = "/up"
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory = "1gb"
+EOF
+
+  cat <<EOF
+Creating shared preview iron-control
+  fly app:    $app
+  pg app:     $pg
+  url:        $url
+EOF
+
+  if fly_app_exists "$app"; then
+    echo "fly app:        exists"
+  else
+    flyctl apps create "$app" --org "$DEFAULT_ORG" --yes
+    flyctl ips allocate-v6 --app "$app" --region "$DEFAULT_REGION" || true
+    flyctl ips allocate-v4 --app "$app" --region "$DEFAULT_REGION" --shared --yes || true
+  fi
+
+  if fly_app_exists "$pg"; then
+    echo "postgres app:   exists"
+  else
+    flyctl postgres create \
+      --name "$pg" \
+      --org "$DEFAULT_ORG" \
+      --region "$DEFAULT_REGION" \
+      --initial-cluster-size 1 \
+      --vm-cpu-kind shared \
+      --vm-cpus 1 \
+      --vm-memory 512 \
+      --volume-size 1
+  fi
+
+  if flyctl secrets list --app "$app" 2>/dev/null | awk '{print $1}' | grep -qx CENTAUR_CONSOLE_DATABASE_URL; then
+    echo "database:       already attached"
+  else
+    flyctl postgres attach "$pg" \
+      --app "$app" \
+      --database-name iron_control \
+      --database-user iron_control \
+      --variable-name CENTAUR_CONSOLE_DATABASE_URL \
+      --yes
+  fi
+
+  secret_names="$(flyctl secrets list --app "$app" 2>/dev/null | awk '{print $1}')"
+  if printf '%s\n' "$secret_names" | grep -qx CENTAUR_CONSOLE_INITIAL_API_KEY; then
+    if [ "$had_iron_env" -ne 1 ]; then
+      echo "iron-control already has an API key, but IRON_CONTROL_API_KEY is missing from $ENV_FILE" >&2
+      echo "Fly secrets cannot be read back; restore the local .env value or create a new control-plane app." >&2
+      exit 2
+    fi
+    echo "bootstrap:      existing secrets kept"
+    flyctl secrets set --app "$app" --stage \
+      CENTAUR_CONSOLE_PUBLIC_URL="$url" \
+      RAILS_LOG_TO_STDOUT=1 \
+      RAILS_MAX_THREADS=3 \
+      PORT=3000
+  else
+    flyctl secrets set --app "$app" --stage \
+      SECRET_KEY_BASE="$(random_hex 64)" \
+      CENTAUR_CONSOLE_AR_ENCRYPTION_PRIMARY_KEY="$(random_hex 32)" \
+      CENTAUR_CONSOLE_AR_ENCRYPTION_DETERMINISTIC_KEY="$(random_hex 32)" \
+      CENTAUR_CONSOLE_AR_ENCRYPTION_KEY_DERIVATION_SALT="$(random_hex 32)" \
+      CENTAUR_CONSOLE_INITIAL_USER_EMAIL="${CENTAUR_CONSOLE_INITIAL_USER_EMAIL:-preview-operator@example.invalid}" \
+      CENTAUR_CONSOLE_INITIAL_USER_PASSWORD="${CENTAUR_CONSOLE_INITIAL_USER_PASSWORD:-$(random_hex 24)}" \
+      CENTAUR_CONSOLE_INITIAL_API_KEY="$api_key" \
+      CENTAUR_CONSOLE_PUBLIC_URL="$url" \
+      RAILS_LOG_TO_STDOUT=1 \
+      RAILS_MAX_THREADS=3 \
+      PORT=3000
+  fi
+
+  flyctl deploy "$ROOT/centaur/services/console" \
+    --app "$app" \
+    --config "$config" \
+    --dockerfile "$ROOT/centaur/services/console/Dockerfile" \
+    --remote-only \
+    --ha=false \
+    --yes \
+    --wait-timeout 15m
+
+  wait_for_path "$url" "/up" 80 5
+
+  if [ "$had_iron_env" -ne 1 ]; then
+    append_env_value ATRIUM_PREVIEW_IRON_CONTROL_APP "$app"
+    append_env_value ATRIUM_PREVIEW_IRON_CONTROL_PG_APP "$pg"
+    append_env_value IRON_CONTROL_BASE_URL "$url"
+    append_env_value IRON_CONTROL_API_KEY "$api_key"
+    append_env_value IRON_CONTROL_NAMESPACE "${IRON_CONTROL_NAMESPACE:-default}"
+  fi
+
+  cat <<EOF
+Shared preview iron-control ready
+  url:        $url
+  app:        $app
+  postgres:   $pg
+
+Local gitignored env file:
+  deploy/preview/fly/.env
+EOF
+
+  trap - EXIT
+  rm -rf "$tmp"
+}
+
+cmd_wire_surface_iron_control() {
+  load_env
+  require_cmd flyctl
+  local app="${1:-}"
+  local namespace="${2:-}"
+  if [ -z "$app" ]; then
+    echo "usage: previewctl.sh wire-surface-iron-control <surface-fly-app> [namespace]" >&2
+    exit 2
+  fi
+  case "$app" in
+    atrium-prev-*) ;;
+    *)
+      echo "refusing to wire non-preview app: $app" >&2
+      exit 2
+      ;;
+  esac
+  require_env IRON_CONTROL_BASE_URL IRON_CONTROL_API_KEY
+  if [ -z "$namespace" ]; then
+    namespace="prev-${app#atrium-prev-}"
+  fi
+  flyctl secrets set --app "$app" \
+    IRON_CONTROL_BASE_URL="$IRON_CONTROL_BASE_URL" \
+    IRON_CONTROL_API_KEY="$IRON_CONTROL_API_KEY" \
+    IRON_CONTROL_NAMESPACE="$namespace"
+  echo "wired $app to iron-control namespace $namespace"
 }
 
 cmd_create_surface() {
@@ -437,6 +644,13 @@ case "${1:-}" in
   render-config)
     shift
     cmd_render_config "$@"
+    ;;
+  create-iron-control)
+    cmd_create_iron_control
+    ;;
+  wire-surface-iron-control)
+    shift
+    cmd_wire_surface_iron_control "$@"
     ;;
   create-surface)
     shift

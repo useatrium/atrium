@@ -55,9 +55,24 @@ Fly preview app
         +--> Postgres
         +--> object storage config
         +--> Centaur/runtime support
+        +--> preview iron-control for provider credential grants
 ```
 
 The launcher owns Fly credentials. Production Atrium should not.
+
+`iron-control` is part of the preview control plane, not just an optional
+setting. Surface can boot without it, but provider credential storage, GitHub
+connections, and live-agent credential grants return
+`iron_control_unconfigured`. For the spike, use one shared preview
+`iron-control` Fly app with a separate Postgres database. Each Surface preview
+uses a distinct `IRON_CONTROL_NAMESPACE`, so the control plane is shared while
+preview records remain logically scoped.
+
+Longer term, a per-preview `iron-control` app is cleaner isolation because it
+puts encrypted credentials, API keys, and grants inside the same TTL boundary as
+the preview. It also adds another Fly app, another Postgres instance, more
+startup time, and more cost to every preview. The shared preview control plane
+is the pragmatic first step.
 
 ## Preview Lifecycle
 
@@ -322,13 +337,48 @@ export IRON_CONTROL_NAMESPACE=default
 Without those values, the Surface preview can serve the UI and API, but flows
 that save provider credentials return `iron_control_unconfigured`.
 
+Create or verify the shared preview `iron-control`:
+
+```sh
+deploy/preview/fly/previewctl.sh create-iron-control
+```
+
+This command creates:
+
+- Fly app `atrium-preview-iron-control` by default.
+- Fly Postgres app `atrium-preview-iron-control-pg` by default.
+- Rails encryption and bootstrap secrets.
+- A bootstrap API key for Surface to call `/api/v1`.
+
+It appends the resulting `IRON_CONTROL_BASE_URL`, `IRON_CONTROL_API_KEY`, and
+default namespace values to the local gitignored `.env`. Existing values are not
+printed.
+
+Do not rotate the generated Rails encryption keys or initial API key for an
+existing preview `iron-control` database unless you intend to invalidate stored
+credentials. The helper keeps existing bootstrap secrets in place on reruns. If
+the Fly app already has an API key but the local `.env` lost
+`IRON_CONTROL_API_KEY`, recreate the shared control-plane app or restore the
+local secret from your password manager.
+
+Wire an already-running Surface preview to the shared control plane:
+
+```sh
+deploy/preview/fly/previewctl.sh wire-surface-iron-control atrium-prev-...
+```
+
+The default namespace is derived from the Surface preview app name. You can pass
+an explicit namespace as the second argument.
+
 Local commands:
 
 ```sh
 deploy/preview/fly/previewctl.sh doctor
 deploy/preview/fly/previewctl.sh s3-smoke
+deploy/preview/fly/previewctl.sh create-iron-control
 deploy/preview/fly/previewctl.sh plan origin/master
 deploy/preview/fly/previewctl.sh create-surface origin/master
+deploy/preview/fly/previewctl.sh wire-surface-iron-control atrium-prev-...
 deploy/preview/fly/previewctl.sh destroy atrium-prev-...
 ```
 
@@ -339,6 +389,8 @@ deploy/preview/fly/previewctl.sh destroy atrium-prev-...
 - [ ] Provision Postgres for the preview.
 - [ ] Generate and set preview secrets.
 - [ ] Boot Surface and pass `/healthz`.
+- [ ] Create shared preview `iron-control` and pass `/up`.
+- [ ] Wire Surface previews to `iron-control` with per-preview namespaces.
 - [x] Decide object storage for spike: shared AWS S3 preview bucket injected through existing `S3_*` env vars.
 - [ ] Use a `us-east-1` bucket or compatible endpoint so arbitrary current branches pass the S3 smoke check.
 - [ ] Add Centaur with warm pool disabled.
