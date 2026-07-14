@@ -385,11 +385,18 @@ mod tests {
 
     use super::*;
 
+    /// The DB-backed tests here share the `session_warm_sandboxes` table, and
+    /// `replenish_once` prunes every ready row whose sandbox its own backend
+    /// does not observe — so two of these tests running concurrently prune
+    /// each other's rows. Serialize them.
+    static DB_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
     #[tokio::test]
     async fn replenisher_prunes_missing_ready_rows_before_counting() {
         let Some(store) = test_store().await else {
             return;
         };
+        let _serial = DB_TEST_LOCK.lock().await;
         let suffix = unique_suffix();
         let workload_key = format!("test-prune-{suffix}");
         let old_workload_key = format!("test-prune-old-{suffix}");
@@ -472,6 +479,7 @@ mod tests {
         let Some(store) = test_store().await else {
             return;
         };
+        let _serial = DB_TEST_LOCK.lock().await;
         let suffix = unique_suffix();
         let workload_key = format!("test-drained-{suffix}");
         let stale_sandbox = format!("stale-drained-{suffix}");
