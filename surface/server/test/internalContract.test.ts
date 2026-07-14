@@ -235,6 +235,15 @@ describe('node-sync wire contract (fixtures)', () => {
     });
     expect(channels.statusCode).toBe(200);
     expectShape(channels.json(), loadFixture('atrium-channels.json'));
+    // Exact key match, not just shape: node-sync maps `lastEventId` and
+    // `last_event_id` to the same struct field, so an extra alias spelling in
+    // one row is a duplicate field that poisons the entire channels parse
+    // (this halted context materialization for every session on 2026-07-14).
+    const [fixtureRow] = loadFixture('atrium-channels.json') as Record<string, unknown>[];
+    const fixtureKeys = Object.keys(fixtureRow ?? {}).sort();
+    for (const row of channels.json() as Record<string, unknown>[]) {
+      expect(Object.keys(row).sort()).toEqual(fixtureKeys);
+    }
 
     const sessionDoc = await app.inject({
       method: 'GET',

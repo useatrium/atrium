@@ -199,15 +199,67 @@ pub struct ContextDocResponse {
     pub next_watermark: Option<u64>,
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+#[derive(Debug, Clone, Eq, PartialEq, serde::Serialize)]
 pub struct AtriumChannel {
     pub id: String,
     pub name: String,
     pub kind: String,
-    #[serde(default)]
     pub active: bool,
-    #[serde(default, alias = "lastEventId")]
     pub last_event_id: u64,
+}
+
+/// Manual impl instead of `#[derive(Deserialize)]` with an alias: the server
+/// once emitted both `lastEventId` and `last_event_id` in the same object, and
+/// a derived deserializer treats an alias pair as a duplicate field — rejecting
+/// the whole payload and halting channel materialization for every session
+/// (2026-07-14). Repeated spellings carry the same value, so last-wins is safe.
+impl<'de> serde::Deserialize<'de> for AtriumChannel {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct ChannelVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for ChannelVisitor {
+            type Value = AtriumChannel;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("an atrium channel object")
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: serde::de::MapAccess<'de>,
+            {
+                let mut id = None;
+                let mut name = None;
+                let mut kind = None;
+                let mut active = false;
+                let mut last_event_id = 0u64;
+                while let Some(key) = map.next_key::<String>()? {
+                    match key.as_str() {
+                        "id" => id = Some(map.next_value()?),
+                        "name" => name = Some(map.next_value()?),
+                        "kind" => kind = Some(map.next_value()?),
+                        "active" => active = map.next_value()?,
+                        "last_event_id" | "lastEventId" => last_event_id = map.next_value()?,
+                        _ => {
+                            map.next_value::<serde::de::IgnoredAny>()?;
+                        }
+                    }
+                }
+                Ok(AtriumChannel {
+                    id: id.ok_or_else(|| serde::de::Error::missing_field("id"))?,
+                    name: name.ok_or_else(|| serde::de::Error::missing_field("name"))?,
+                    kind: kind.ok_or_else(|| serde::de::Error::missing_field("kind"))?,
+                    active,
+                    last_event_id,
+                })
+            }
+        }
+
+        deserializer.deserialize_map(ChannelVisitor)
+    }
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
