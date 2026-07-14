@@ -115,7 +115,15 @@ export function registerInternalAtriumRoutes(app: FastifyInstance, deps: Interna
       userId: viewer.id,
       activeChannelId: viewer.activeChannelId,
     });
-    return reply.send(channels.map((channel) => ({ ...channel, last_event_id: channel.lastEventId })));
+    return reply.send(
+      channels.map((channel) => ({
+        id: channel.id,
+        name: channel.name,
+        kind: channel.kind,
+        active: channel.active,
+        last_event_id: channel.lastEventId,
+      })),
+    );
   });
 
   app.get('/api/internal/sessions/:viewerId/atrium/channels/:channelId/:doc', async (req, reply) => {

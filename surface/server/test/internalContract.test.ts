@@ -235,6 +235,10 @@ describe('node-sync wire contract (fixtures)', () => {
     });
     expect(channels.statusCode).toBe(200);
     expectShape(channels.json(), loadFixture('atrium-channels.json'));
+    for (const channel of channels.json<Record<string, unknown>[]>()) {
+      expect(channel).toHaveProperty('last_event_id');
+      expect(channel).not.toHaveProperty('lastEventId');
+    }
 
     const sessionDoc = await app.inject({
       method: 'GET',
