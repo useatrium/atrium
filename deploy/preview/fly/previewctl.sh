@@ -220,6 +220,7 @@ cmd_doctor() {
   echo "s3 endpoint:    ${S3_ENDPOINT:-unset}"
   echo "iron app:       $DEFAULT_IRON_CONTROL_APP"
   echo "iron-control:   $([ -n "${IRON_CONTROL_BASE_URL:-}" ] && [ -n "${IRON_CONTROL_API_KEY:-}" ] && echo configured || echo unset)"
+  echo "centaur:        $([ -n "${CENTAUR_BASE_URL:-}" ] && [ -n "${CENTAUR_API_KEY:-}" ] && echo configured || echo unset)"
   if flyctl auth whoami >/dev/null 2>&1; then
     echo "fly auth:       ok ($(flyctl auth whoami 2>/dev/null | head -1))"
   else
@@ -563,8 +564,8 @@ EOF
     AUTH_OPEN=1 \
     AUTH_DEV_CODES=1 \
     EMAIL_MODE=log \
-    CENTAUR_BASE_URL="" \
-    CENTAUR_API_KEY=""
+    CENTAUR_BASE_URL="${CENTAUR_BASE_URL:-}" \
+    CENTAUR_API_KEY="${CENTAUR_API_KEY:-}"
 
   if [ -n "${IRON_CONTROL_BASE_URL:-}" ] && [ -n "${IRON_CONTROL_API_KEY:-}" ]; then
     flyctl secrets set --app "$app" --stage \

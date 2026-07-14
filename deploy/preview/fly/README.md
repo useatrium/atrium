@@ -246,6 +246,114 @@ V1 requires live agents, so the first real spike must answer:
 Can Atrium + Centaur, including sandbox execution and node-sync/artifact capture,
 run on Fly reliably enough under the preview cost target?
 
+### What the OVH deploy actually runs
+
+The production OVH script is not just wiring Surface to one HTTP sidecar. It
+deploys two different runtime layers:
+
+- Surface runs with Docker Compose.
+- Centaur runs in single-node k3s through the Helm chart.
+
+The Centaur deploy builds and deploys these images together:
+
+- `centaur-api-rs`
+- `centaur-iron-proxy`
+- `centaur-agent` / sandbox
+- `centaur-node-sync`
+- `centaur-console`
+
+It then renders the Helm chart with:
+
+- `centaur/contrib/chart/values.dev.yaml`
+- `infra/values.local.yaml`
+- `deploy/values.box.yaml`
+
+Before doing the long image build/rollout path, the production script templates
+the Helm chart and checks every referenced Kubernetes secret/key exists. Keep
+that preflight behavior for any preview Centaur automation; missing keys such as
+`ARTIFACT_CAPTURE_API_KEY` or `CENTAUR_JWT_SIGNING_SECRET` otherwise show up late
+as `CreateContainerConfigError`.
+
+### Why api-rs alone is not enough
+
+Centaur's `local` sandbox backend is for development and manager validation. The
+real `codex-app-server` workload refuses to run unless
+`SESSION_SANDBOX_BACKEND=agent-k8s`. That means a Fly preview cannot get real
+`@agent` behavior by starting `api-rs` in local mode.
+
+For live agents, the preview must provide one of:
+
+1. A Kubernetes-backed Centaur runtime, using `agent-k8s`.
+2. A shared preview/staging Centaur runtime running somewhere Kubernetes works,
+   with each Fly Surface preview wired to a distinct namespace/config scope.
+3. A deliberately reduced mock/local Centaur mode for UI plumbing only. This is
+   not acceptance for live agents.
+
+### Surface-to-Centaur wiring
+
+Once a Centaur API is running, Surface needs:
+
+- `CENTAUR_BASE_URL`
+- `CENTAUR_API_KEY`
+
+On OVH, the API is exposed with a k3s NodePort and Surface receives the
+`LOCAL_DEV_API_KEY` value from the `centaur-infra-env` Kubernetes secret. For Fly
+previews, the equivalent should be injected as Fly secrets into each Surface
+preview. Current `create-surface` intentionally leaves these empty until a real
+preview Centaur endpoint exists.
+
+### Required Centaur secrets/config
+
+The Helm chart expects a Kubernetes secret named `centaur-infra-env` by default.
+Preview automation must create or top up at least:
+
+- `DATABASE_URL`
+- `LOCAL_DEV_API_KEY`
+- `CENTAUR_JWT_SIGNING_SECRET`
+- `ARTIFACT_CAPTURE_API_KEY`
+- iron-control keys when `console.enabled=true`
+
+The preview must also create the chart-required firewall CA secrets, or reuse
+the existing bootstrap helper that creates them.
+
+Provider auth has two possible V1 modes:
+
+- Production-like: `console.enabled=true`, `apiRs.ironProxy.mode=enabled`,
+  `apiRs.ironProxy.perUserSubscription=true`, and sandbox auth modes
+  `access_token`. Users connect their own Codex/Claude credentials through
+  iron-control.
+- Simpler preview-only: set sandbox auth to API-key mode and inject
+  preview-scoped provider API keys. This is easier to automate but less like
+  production and must not use production keys.
+
+### Repo overlays and arbitrary branches
+
+`deploy/values.box.yaml` points the repo-cache overlay at `useatrium/atrium` with
+`ref: master`. That is wrong for arbitrary branch previews if the agent skill,
+tool, or workflow changes are part of the branch being tested.
+
+Preview Centaur must either:
+
+- set the overlay source ref to the target commit SHA, or
+- build an image from the target commit that already contains the desired tools,
+  workflows, and `.agents/skills`.
+
+The preview URL should still be tied to an immutable commit SHA, not a mutable
+branch name.
+
+### Node-sync and artifact capture
+
+Artifact capture requires more than an agent response. The `node-sync`
+DaemonSet must be enabled, and Centaur must be able to reach Surface at
+`nodeSync.atriumBaseUrl` with the same `ARTIFACT_CAPTURE_API_KEY` that Surface
+has.
+
+On OVH this address is a topology-specific internal host IP
+(`http://10.42.0.1:3001`). For Fly previews the simplest shared-runtime path is
+to point node-sync at the public Fly Surface URL over HTTPS and use the preview's
+capture API key. A per-preview Centaur appliance could use private networking
+instead, but that depends on the final Fly/k8s shape.
+
 Known risk areas:
 
 - Centaur currently relies on Kubernetes/Helm in the OVH box shape.
@@ -266,6 +374,19 @@ Fallbacks if full Centaur on Fly is not viable:
 - Fly Surface preview + shared staging Centaur.
 - Fly Surface preview + Fly Machines-based sandbox runtime.
 - AWS/EC2 full appliance previews for stronger VM parity.
+
+Recommended next implementation step:
+
+1. Stand up a shared preview Centaur runtime on a VM/k3s environment, because it
+   matches the OVH deploy most closely and avoids proving nested k3s on Fly
+   before we can test product behavior.
+2. Wire one existing Fly Surface preview to that runtime with `CENTAUR_BASE_URL`
+   and `CENTAUR_API_KEY`.
+3. Run the no-op `@agent` smoke.
+4. Run an artifact-producing session and verify node-sync capture renders the
+   generated app inside Atrium.
+5. Only after that works, decide whether per-preview Centaur belongs on Fly,
+   Fly Machines, or AWS/EC2.
 
 ## Health Checks
 
@@ -384,18 +505,26 @@ deploy/preview/fly/previewctl.sh destroy atrium-prev-...
 
 ## First Spike Checklist
 
-- [ ] Create a Fly app with a generated name.
-- [ ] Build one Surface image from a commit SHA and push to Fly registry.
-- [ ] Provision Postgres for the preview.
-- [ ] Generate and set preview secrets.
-- [ ] Boot Surface and pass `/healthz`.
-- [ ] Create shared preview `iron-control` and pass `/up`.
-- [ ] Wire Surface previews to `iron-control` with per-preview namespaces.
+- [x] Create a Fly app with a generated name.
+- [x] Build one Surface image from a commit SHA and push to Fly registry.
+- [x] Provision Postgres for the preview.
+- [x] Generate and set preview secrets.
+- [x] Boot Surface and pass `/healthz`.
+- [x] Create shared preview `iron-control` and pass `/up`.
+- [x] Wire Surface previews to `iron-control` with per-preview namespaces.
 - [x] Decide object storage for spike: shared AWS S3 preview bucket injected through existing `S3_*` env vars.
-- [ ] Use a `us-east-1` bucket or compatible endpoint so arbitrary current branches pass the S3 smoke check.
-- [ ] Add Centaur with warm pool disabled.
+- [x] Use a `us-east-1` bucket or compatible endpoint so arbitrary current branches pass the S3 smoke check.
+- [ ] Choose shared preview Centaur vs per-preview Centaur appliance for the next spike.
+- [ ] Provision a Centaur k3s runtime or prove Fly can host the required `agent-k8s` shape.
+- [ ] Build/publish Centaur images for `api-rs`, `iron-proxy`, `sandbox`, `node-sync`, and `console`.
+- [ ] Bootstrap `centaur-infra-env` and chart-required CA/firewall secrets.
+- [ ] Run Helm secret preflight before deploy.
+- [ ] Deploy Centaur with warm pool disabled.
+- [ ] Inject `CENTAUR_BASE_URL` and `CENTAUR_API_KEY` into a Surface preview.
 - [ ] Start a no-op agent session.
 - [ ] Start an artifact-producing agent session.
+- [ ] Verify node-sync artifact capture from Centaur to Surface.
+- [ ] Verify the captured app renders inside the Atrium thread and full app view.
 - [ ] Document measured startup time and cost.
 - [ ] Add `previewctl destroy`.
 - [ ] Add TTL cleanup.
