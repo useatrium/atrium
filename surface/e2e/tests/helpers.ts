@@ -1,4 +1,4 @@
-import { expect, request, type APIRequestContext, type Page } from '@playwright/test';
+import { expect, request, type APIRequestContext, type BrowserContext, type Page } from '@playwright/test';
 import { Pool } from 'pg';
 
 export const baseURL = `http://127.0.0.1:${Number(process.env.E2E_WEB_PORT ?? 5273)}`;
@@ -54,6 +54,31 @@ export async function warmOfflineShell(page: Page): Promise<void> {
   await page.reload({ waitUntil: 'domcontentloaded' });
   await expect(page.getByRole('heading', { name: '# general' })).toBeVisible();
   await expect(page.getByRole('status', { name: 'connection: open' })).toBeVisible();
+}
+
+/**
+ * Cut the network only once the client is genuinely connected.
+ *
+ * Every offline test assumes the app is online before it goes offline, but none
+ * of them used to prove it — and losing that race is silent. The app registers
+ * its `offline` listener inside the useWs effect, so if the network is cut
+ * before that effect mounts: the dispatched `offline` event fires into the void
+ * (DOM events are not replayed), and Playwright's `setOffline` blocks traffic
+ * without closing an already-open socket. The client therefore keeps believing
+ * it is connected — no Reconnecting banner, no queue drain — until an idle timer
+ * eventually notices, well past any assertion budget.
+ *
+ * On an idle box the effect has always mounted by now and the race is invisible.
+ * Under CPU contention it is easy to lose, which is what made these tests look
+ * flaky. Waiting for `connection: open` proves the socket opened, which proves
+ * the effect ran, which proves the listener is registered.
+ */
+export async function goOffline(page: Page, context: BrowserContext, { signal = false } = {}): Promise<void> {
+  await expect(page.getByRole('status', { name: 'connection: open' })).toBeVisible();
+  await context.setOffline(true);
+  // Chromium's Playwright offline emulation blocks traffic but does not fire the
+  // page-level event the app receives from a real browser.
+  if (signal) await page.evaluate(() => window.dispatchEvent(new Event('offline')));
 }
 
 export function mainComposer(page: Page, channelName = 'general') {
