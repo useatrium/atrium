@@ -52,8 +52,8 @@ export function FilePathChip({ pathRef, compact = false }: { pathRef: AgentPathR
         return;
       }
       if (!response.ok) return;
-      const payload = (await response.json()) as { file?: HubFile };
-      if (payload.file) onOpenFile(payload.file);
+      const file = (await response.json()) as HubFile;
+      if (file?.artifactId) onOpenFile(file);
     } catch {
       // A transient network failure should remain retryable.
     } finally {

@@ -51,7 +51,7 @@ describe('FilePathChip', () => {
 
   it('resolves the canonical path and opens the existing file preview', async () => {
     const onOpenFile = vi.fn();
-    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ file }) });
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => file });
     vi.stubGlobal('fetch', fetchMock);
     renderWithTheme(
       <AgentFileMarkdownProvider
@@ -85,7 +85,7 @@ describe('FilePathChip', () => {
 
   it('resolves workspace-relative paths through the message channel', async () => {
     const workspaceRef = parseAgentPathHref('/home/agent/reports/local.md')!;
-    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ file }) });
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => file });
     vi.stubGlobal('fetch', fetchMock);
     renderWithTheme(
       <AgentFileMarkdownProvider value={{ serverUrl: 'https://atrium.test', channelId, onOpenFile: vi.fn() }}>
