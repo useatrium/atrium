@@ -72,6 +72,11 @@ The launcher owns Fly credentials. Production Atrium should not.
 9. Launcher returns the public URL and expiry.
 10. Cleanup destroys expired previews and all scoped state.
 
+The local spike CLI deploys from a temporary detached git worktree for the
+requested ref. That keeps this preview machinery separate from the target
+branch: an arbitrary existing branch can be deployed without already containing
+these files.
+
 ## API Contract
 
 The launcher should expose a small authenticated API:
@@ -185,8 +190,15 @@ This does not need productized launcher functionality for the first spike.
 
 Use preview-scoped object storage:
 
-- Long-term preference: Tigris/S3 prefix per preview.
-- Spike fallback: local MinIO if it makes the full appliance easier.
+- For branch previews as-is, inject Atrium's existing `S3_ENDPOINT`,
+  `S3_BUCKET`, `S3_ACCESS_KEY`, and `S3_SECRET_KEY` env vars.
+- The current Atrium S3 client signs requests with `us-east-1`, so AWS S3
+  buckets used by arbitrary existing branches should be in `us-east-1`.
+- A shared preview bucket is acceptable for the first spike because the database
+  is isolated per preview. Object-key prefix isolation needs app support before
+  it can be guaranteed for arbitrary branches.
+- Long-term preference: add explicit app support for an object prefix or use a
+  launcher-managed bucket/prefix strategy once the target runtime supports it.
 
 Never use production buckets or production credentials.
 
@@ -287,6 +299,24 @@ Required env for local spike scripts:
 export FLY_ORG=personal
 export ATRIUM_PREVIEW_REGION=iad
 export ATRIUM_PREVIEW_TTL_HOURS=24
+export S3_ENDPOINT=https://s3.us-east-1.amazonaws.com
+export S3_BUCKET=atrium-preview-files-shared
+export S3_ACCESS_KEY=...
+export S3_SECRET_KEY=...
+```
+
+`deploy/preview/fly/.env` is gitignored and can hold the same values locally.
+Run `deploy/preview/fly/previewctl.sh s3-smoke` before creating a preview; it
+uses Atrium's current `us-east-1` S3 signing behavior.
+
+Local commands:
+
+```sh
+deploy/preview/fly/previewctl.sh doctor
+deploy/preview/fly/previewctl.sh s3-smoke
+deploy/preview/fly/previewctl.sh plan origin/master
+deploy/preview/fly/previewctl.sh create-surface origin/master
+deploy/preview/fly/previewctl.sh destroy atrium-prev-...
 ```
 
 ## First Spike Checklist
@@ -296,7 +326,8 @@ export ATRIUM_PREVIEW_TTL_HOURS=24
 - [ ] Provision Postgres for the preview.
 - [ ] Generate and set preview secrets.
 - [ ] Boot Surface and pass `/healthz`.
-- [ ] Decide object storage: Tigris/S3 prefix or local MinIO.
+- [x] Decide object storage for spike: shared AWS S3 preview bucket injected through existing `S3_*` env vars.
+- [ ] Use a `us-east-1` bucket or compatible endpoint so arbitrary current branches pass the S3 smoke check.
 - [ ] Add Centaur with warm pool disabled.
 - [ ] Start a no-op agent session.
 - [ ] Start an artifact-producing agent session.
@@ -308,5 +339,6 @@ export ATRIUM_PREVIEW_TTL_HOURS=24
 
 - `README.md` - architecture and spike plan.
 - `env.example` - local/operator environment values.
-- `previewctl.sh` - first local operator CLI skeleton for naming, planning, image refs, and config rendering.
-- `templates/` - config templates for the Fly preview spike.
+- `previewctl.sh` - local operator CLI for naming, planning, S3 smoke checks, Surface preview creation, and destroy.
+- `s3_smoke.py` - no-dependency S3 PUT/GET/DELETE compatibility check.
+- `templates/` - config templates for image-based and source-build Fly preview spikes.
