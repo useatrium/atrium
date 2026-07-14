@@ -15,6 +15,15 @@ pub struct PrepareClaimedOverlayHome<'a> {
     pub harness_home: Option<&'a str>,
 }
 
+#[derive(Clone, Copy)]
+pub struct FinalizeClaimedSession<'a> {
+    pub thread_key: &'a str,
+    pub execution_id: &'a str,
+    pub harness: Option<&'a str>,
+    pub harness_thread_id: Option<&'a str>,
+    pub harness_home: Option<&'a str>,
+}
+
 #[async_trait]
 /// Backend-neutral lifecycle and byte-I/O operations for one sandbox runtime.
 ///
@@ -109,6 +118,21 @@ pub trait SandboxBackend: Send + Sync {
             backend: self.name(),
             operation: "prepare_claimed_overlay_home",
         })
+    }
+
+    /// Stamp a claimed warm sandbox's session identity into whatever runtime
+    /// metadata the backend maintains for it (for Kubernetes, the node-sync
+    /// overlay manifest), independent of any repo-home preparation. Runs on
+    /// every warm claim that does not go through
+    /// [`SandboxBackend::prepare_claimed_overlay_home`], which stamps the same
+    /// identity as part of its home rewrite. Backends that keep no such
+    /// metadata have nothing to finalize and inherit this no-op.
+    async fn finalize_claimed_session(
+        &self,
+        _id: &SandboxId,
+        _request: FinalizeClaimedSession<'_>,
+    ) -> SandboxResult<()> {
+        Ok(())
     }
 
     /// Ensure a running sandbox's managed iron-proxy resources are present and
