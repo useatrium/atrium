@@ -24,6 +24,8 @@ Usage:
   previewctl.sh render-config <fly-app> <image-ref>
   previewctl.sh create-iron-control
   previewctl.sh wire-surface-iron-control <surface-fly-app> [namespace]
+  previewctl.sh wire-surface-centaur <surface-fly-app> <centaur-base-url> [centaur-api-key]
+  previewctl.sh set-surface-capture-key <surface-fly-app> [artifact-capture-api-key]
   previewctl.sh create-surface [branch-or-ref]
   previewctl.sh destroy <fly-app>
 
@@ -490,6 +492,55 @@ cmd_wire_surface_iron_control() {
   echo "wired $app to iron-control namespace $namespace"
 }
 
+cmd_wire_surface_centaur() {
+  load_env
+  require_cmd flyctl
+  require_cmd curl
+  local app="${1:-}"
+  local base_url="${2:-${CENTAUR_BASE_URL:-}}"
+  local api_key="${3:-${CENTAUR_API_KEY:-}}"
+  if [ -z "$app" ] || [ -z "$base_url" ] || [ -z "$api_key" ]; then
+    echo "usage: previewctl.sh wire-surface-centaur <surface-fly-app> <centaur-base-url> [centaur-api-key]" >&2
+    echo "       CENTAUR_API_KEY may also be provided from deploy/preview/fly/.env" >&2
+    exit 2
+  fi
+  case "$app" in
+    atrium-prev-*) ;;
+    *)
+      echo "refusing to wire non-preview app: $app" >&2
+      exit 2
+      ;;
+  esac
+  flyctl secrets set --app "$app" \
+    CENTAUR_BASE_URL="$base_url" \
+    CENTAUR_API_KEY="$api_key"
+  wait_for_health "https://${app}.fly.dev"
+  echo "wired $app to Centaur"
+}
+
+cmd_set_surface_capture_key() {
+  load_env
+  require_cmd flyctl
+  require_cmd curl
+  local app="${1:-}"
+  local key="${2:-${ARTIFACT_CAPTURE_API_KEY:-}}"
+  if [ -z "$app" ] || [ -z "$key" ]; then
+    echo "usage: previewctl.sh set-surface-capture-key <surface-fly-app> [artifact-capture-api-key]" >&2
+    echo "       ARTIFACT_CAPTURE_API_KEY may also be provided from the environment" >&2
+    exit 2
+  fi
+  case "$app" in
+    atrium-prev-*) ;;
+    *)
+      echo "refusing to modify non-preview app: $app" >&2
+      exit 2
+      ;;
+  esac
+  flyctl secrets set --app "$app" ARTIFACT_CAPTURE_API_KEY="$key"
+  wait_for_health "https://${app}.fly.dev"
+  echo "set artifact capture key for $app"
+}
+
 cmd_create_surface() {
   load_env
   require_cmd git
@@ -652,6 +703,14 @@ case "${1:-}" in
   wire-surface-iron-control)
     shift
     cmd_wire_surface_iron_control "$@"
+    ;;
+  wire-surface-centaur)
+    shift
+    cmd_wire_surface_centaur "$@"
+    ;;
+  set-surface-capture-key)
+    shift
+    cmd_set_surface_capture_key "$@"
     ;;
   create-surface)
     shift

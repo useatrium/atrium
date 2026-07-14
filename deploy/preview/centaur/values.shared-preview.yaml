@@ -1,0 +1,62 @@
+# Shared preview Centaur overrides.
+#
+# Layer this after:
+#   centaur/contrib/chart/values.dev.yaml
+#   infra/values.local.yaml
+#
+# Secrets and topology-specific values are passed by deploy-shared-runtime.sh.
+
+secretManager:
+  backend: env
+  existingSecretName: centaur-infra-env
+
+networkPolicy:
+  enabled: false
+
+console:
+  # Use the shared preview iron-control app that Surface also talks to. Running
+  # an in-cluster console here would create a second credential control plane.
+  enabled: false
+
+apiRs:
+  sandboxWarmPoolSize: 0
+  ironProxy:
+    mode: enabled
+    perUserSubscription: true
+  image:
+    repository: localhost:5000/library/centaur-api-rs
+
+ironProxy:
+  image:
+    repository: localhost:5000/library/centaur-iron-proxy
+
+sandbox:
+  image:
+    repository: localhost:5000/library/centaur-agent
+  codexAuthMode: access_token
+  claudeCodeAuthMode: access_token
+
+nodeSync:
+  enabled: true
+  overlayProvisioning:
+    enabled: true
+    flatHome: true
+  image:
+    repository: localhost:5000/library/centaur-node-sync
+  apiKeySecret:
+    name: centaur-infra-env
+    key: ARTIFACT_CAPTURE_API_KEY
+
+repoCache:
+  enabled: true
+  githubToken:
+    existingSecretName: centaur-repo-cache-github-token
+    secretKey: token
+
+overlays:
+  sources:
+    - repo: useatrium/atrium
+      ref: master
+      toolsSubdir: centaur/tools
+      workflowsSubdir: centaur/workflows
+      skillsSubdir: centaur/.agents/skills

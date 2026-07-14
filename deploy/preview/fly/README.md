@@ -354,6 +354,25 @@ to point node-sync at the public Fly Surface URL over HTTPS and use the preview'
 capture API key. A per-preview Centaur appliance could use private networking
 instead, but that depends on the final Fly/k8s shape.
 
+Current limitation: `node-sync` reads `ATRIUM_BASE_URL` and
+`ATRIUM_CAPTURE_API_KEY` from pod env. In the shared-runtime shape, artifact
+capture is therefore attached to one active Surface preview at a time. Multiple
+simultaneous Surface previews can share the same Centaur for basic API traffic
+only if artifact capture is disabled or accepted as pointing at the currently
+configured Surface. Full multi-preview artifact capture requires per-preview
+Centaur, per-tenant node-sync, or dynamic capture routing.
+
+### Iron-control alignment
+
+Surface and Centaur must use the same iron-control service. If Surface saves a
+provider credential grant into the shared preview `iron-control` Fly app while
+api-rs/iron-proxy points at an in-cluster Centaur console, agents will still fail
+authentication because the credential state is split.
+
+The shared preview Centaur spike in `deploy/preview/centaur/` disables the
+in-cluster console and passes the shared preview `IRON_CONTROL_BASE_URL` /
+`IRON_CONTROL_API_KEY` into api-rs.
+
 Known risk areas:
 
 - Centaur currently relies on Kubernetes/Helm in the OVH box shape.
@@ -387,6 +406,12 @@ Recommended next implementation step:
    generated app inside Atrium.
 5. Only after that works, decide whether per-preview Centaur belongs on Fly,
    Fly Machines, or AWS/EC2.
+
+Implementation starter:
+
+- `deploy/preview/centaur/deploy-shared-runtime.sh`
+- `deploy/preview/centaur/values.shared-preview.yaml`
+- `deploy/preview/centaur/README.md`
 
 ## Health Checks
 
@@ -515,6 +540,7 @@ deploy/preview/fly/previewctl.sh destroy atrium-prev-...
 - [x] Decide object storage for spike: shared AWS S3 preview bucket injected through existing `S3_*` env vars.
 - [x] Use a `us-east-1` bucket or compatible endpoint so arbitrary current branches pass the S3 smoke check.
 - [ ] Choose shared preview Centaur vs per-preview Centaur appliance for the next spike.
+- [x] Add shared preview Centaur runtime script/values for a k3s VM.
 - [ ] Provision a Centaur k3s runtime or prove Fly can host the required `agent-k8s` shape.
 - [ ] Build/publish Centaur images for `api-rs`, `iron-proxy`, `sandbox`, `node-sync`, and `console`.
 - [ ] Bootstrap `centaur-infra-env` and chart-required CA/firewall secrets.
