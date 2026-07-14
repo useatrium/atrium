@@ -744,6 +744,11 @@ export function createApi(opts: ApiOptions = {}) {
         method: 'PATCH',
         body: JSON.stringify({ text, ...(op.opId ? { opId: op.opId } : {}) }),
       }),
+    suppressMessageUnfurls: (eventId: number, suppressed: string[]) =>
+      req<{ event: WireEvent }>(`/api/messages/${eventId}/unfurls-suppressed`, {
+        method: 'PUT',
+        body: JSON.stringify({ suppressed }),
+      }),
     deleteMessage: (eventId: number, op: OpOptions = {}) =>
       req<{ event: WireEvent }>(`/api/messages/${eventId}`, {
         method: 'DELETE',

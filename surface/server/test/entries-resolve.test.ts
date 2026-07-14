@@ -6,7 +6,7 @@ import { ArtifactLedger } from '../src/artifact-ledger.js';
 import { config } from '../src/config.js';
 import { signSession } from '../src/cookie.js';
 import { encodeArtifactHandle, encodeEventHandle, encodeRecordHandle } from '../src/entries.js';
-import { createChannel, postMessage } from '../src/events.js';
+import { createChannel, postMessage, suppressUnfurls } from '../src/events.js';
 import { addWorkspaceMember } from '../src/membership.js';
 import { createTestPool, seedFixture, truncateAll, type Fixture } from './helpers.js';
 
@@ -130,6 +130,11 @@ describe('GET /api/entries/:handle', () => {
       actorId: fx.userId,
       text: 'chat entry text',
     });
+    await suppressUnfurls(pool, {
+      targetEventId: event.id,
+      actorId: fx.userId,
+      suppressed: ['evt_123'],
+    });
     const handle = encodeEventHandle(event.id);
     expect(event.handle).toBe(handle);
 
@@ -144,7 +149,7 @@ describe('GET /api/entries/:handle', () => {
       kind: 'message.posted',
       actor: fx.userId,
       text: 'chat entry text',
-      meta: { text: 'chat entry text' },
+      meta: { text: 'chat entry text', suppressed_unfurls: ['evt_123'] },
       targetType: 'event',
       sourceRefs: [],
       tombstoned: false,

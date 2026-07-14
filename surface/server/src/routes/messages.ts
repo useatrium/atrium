@@ -15,6 +15,7 @@ import {
   listThreadMessages,
   postMessage,
   setReactionTx,
+  suppressUnfurlsTx,
   type AttachmentMeta,
   type UserRef,
   type WireEvent,
@@ -62,6 +63,11 @@ const PostMessageBodySchema = Schema.Struct({
 
 const EditMessageBodySchema = Schema.Struct({
   text: Schema.optional(Schema.Unknown),
+  opId: Schema.optional(Schema.Unknown),
+});
+
+const SuppressMessageUnfurlsBodySchema = Schema.Struct({
+  suppressed: Schema.optional(Schema.Unknown),
   opId: Schema.optional(Schema.Unknown),
 });
 
@@ -334,6 +340,44 @@ export function registerMessageRoutes(app: FastifyInstance, deps: MessageRouteDe
       body: { targetEventId, text },
       fn: async (client) => {
         const event = await editMessageTx(client, { targetEventId, actorId: user.id, text });
+        return { event };
+      },
+      onApplied: (response) => {
+        hub.publishEvent(response.event);
+        nudgeChannelDocs(app, pool, response.event);
+      },
+    });
+  });
+
+  app.put('/api/messages/:id/unfurls-suppressed', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    const params = decodeRouteParams(MessageIdParamsSchema, req.params);
+    const targetEventId = Number(params.id);
+    if (!Number.isFinite(targetEventId)) {
+      return reply.code(400).send({ error: 'bad_request', message: 'numeric message id expected' });
+    }
+    const body = decodeRouteBody(SuppressMessageUnfurlsBodySchema, req.body);
+    const opId = optionalOpId(body);
+    const suppressed = body.suppressed;
+    if (
+      !Array.isArray(suppressed) ||
+      suppressed.length > 100 ||
+      suppressed.some((key) => typeof key !== 'string' || key.length === 0 || key.length > 2048) ||
+      new Set(suppressed).size !== suppressed.length
+    ) {
+      return reply.code(400).send({
+        error: 'bad_request',
+        message: 'suppressed must be a deduped array of at most 100 non-empty strings up to 2048 characters',
+      });
+    }
+    return runMutation({
+      userId: user.id,
+      opId,
+      opType: 'message.unfurls_suppress',
+      body: { targetEventId, suppressed },
+      fn: async (client) => {
+        const event = await suppressUnfurlsTx(client, { targetEventId, actorId: user.id, suppressed });
         return { event };
       },
       onApplied: (response) => {

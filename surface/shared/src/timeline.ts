@@ -130,6 +130,8 @@ export interface ChatMessage {
   deleted?: boolean;
   /** Local delete queued but not yet confirmed by message.deleted. */
   pendingDelete?: boolean;
+  /** Complete set of unfurl keys hidden by the message author for everyone. */
+  suppressedUnfurls?: string[];
   reactions?: MessageReaction[];
   attachments?: AttachmentMeta[];
   /** Present on voice messages; transcript fills in asynchronously. */
@@ -236,6 +238,7 @@ function isRowEvent(type: string): boolean {
 function isModifierEvent(type: string): boolean {
   return (
     type === 'message.edited' ||
+    type === 'message.unfurls_suppressed' ||
     type === 'message.deleted' ||
     type === 'reaction.added' ||
     type === 'reaction.removed' ||
@@ -289,6 +292,7 @@ export function messageFromEvent(ev: WireEvent): ChatMessage {
   const voice = parseVoice(payload.voice);
   const reactions = parseReactions(payload.reactions);
   const attachments = parseAttachments(payload.attachments);
+  const suppressedUnfurls = parseSuppressedUnfurls(payload.suppressed_unfurls);
   const broadcast = ev.broadcast === true || payload.broadcast === true;
   return {
     id: ev.id,
@@ -298,6 +302,7 @@ export function messageFromEvent(ev: WireEvent): ChatMessage {
     text,
     edited: payload.edited === true,
     deleted: payload.deleted === true,
+    ...(suppressedUnfurls !== undefined ? { suppressedUnfurls } : {}),
     ...(reactions !== undefined ? { reactions } : {}),
     ...(attachments !== undefined ? { attachments } : {}),
     ...(voice !== undefined ? { voice } : {}),
@@ -340,6 +345,14 @@ export function parseAttachments(v: unknown): AttachmentMeta[] | undefined {
     }
   }
   return out.length > 0 ? out : undefined;
+}
+
+/** Decode-with-default: malformed suppression payloads are ignored. */
+function parseSuppressedUnfurls(v: unknown): string[] | undefined {
+  if (!Array.isArray(v) || v.length > 100) return undefined;
+  if (v.some((key) => typeof key !== 'string' || key.length === 0 || key.length > 2048)) return undefined;
+  const keys = v as string[];
+  return new Set(keys).size === keys.length ? keys : undefined;
 }
 
 function parseTranscript(v: unknown): VoiceTranscript | undefined {
@@ -795,7 +808,7 @@ export function applyEvent(t: ChannelTimeline, ev: WireEvent): ChannelTimeline {
     return bumpLastEvent(t, ev.id);
   }
 
-  if (ev.type === 'message.edited' || ev.type === 'message.deleted') {
+  if (ev.type === 'message.edited' || ev.type === 'message.unfurls_suppressed' || ev.type === 'message.deleted') {
     const p = ev.payload ?? {};
     const targetId = typeof p.target === 'string' ? eventIdFromTarget(p.target) : null;
     const seenIds = new Set(t.seenIds).add(ev.id);
@@ -806,6 +819,12 @@ export function applyEvent(t: ChannelTimeline, ev: WireEvent): ChannelTimeline {
       list.map((m) => {
         if (m.id !== targetId) return m;
         if (ev.type === 'message.deleted') return { ...m, text: '', deleted: true };
+        if (ev.type === 'message.unfurls_suppressed') {
+          const suppressedUnfurls = parseSuppressedUnfurls(p.suppressed);
+          if (suppressedUnfurls !== undefined) return { ...m, suppressedUnfurls };
+          const { suppressedUnfurls: _malformed, ...withoutSuppression } = m;
+          return withoutSuppression;
+        }
         return { ...m, text: String((ev.payload ?? {}).text ?? m.text), edited: true };
       });
     const threads: Record<number, ChatMessage[]> = {};

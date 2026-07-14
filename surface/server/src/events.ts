@@ -423,7 +423,7 @@ async function ownedMessageTarget(
   client: DbClient,
   targetEventId: number,
   actorId: string,
-  action: 'edit' | 'delete',
+  action: 'edit' | 'delete' | 'suppress unfurls on',
 ): Promise<OwnedMessageTarget> {
   const target = await client.query<OwnedMessageTarget & { type: string }>(
     'SELECT workspace_id, channel_id, thread_root_event_id, type, actor_id FROM events WHERE id = $1',
@@ -454,6 +454,30 @@ export async function editMessageTx(
     type: 'message.edited',
     actorId: args.actorId,
     payload,
+  });
+  return toWireEvent(await attachAuthor(client, ev));
+}
+
+/** Append the complete current unfurl suppression set for a message. */
+export async function suppressUnfurls(
+  pool: Db,
+  args: { targetEventId: number; actorId: string; suppressed: string[] },
+): Promise<WireEvent> {
+  return withTx(pool, (client) => suppressUnfurlsTx(client, args));
+}
+
+export async function suppressUnfurlsTx(
+  client: DbClient,
+  args: { targetEventId: number; actorId: string; suppressed: string[] },
+): Promise<WireEvent> {
+  const t = await ownedMessageTarget(client, args.targetEventId, args.actorId, 'suppress unfurls on');
+  const ev = await insertEvent(client, {
+    workspaceId: t.workspace_id,
+    channelId: t.channel_id,
+    threadRootEventId: t.thread_root_event_id,
+    type: 'message.unfurls_suppressed',
+    actorId: args.actorId,
+    payload: { target: encodeEventHandle(args.targetEventId), suppressed: args.suppressed },
   });
   return toWireEvent(await attachAuthor(client, ev));
 }
@@ -817,6 +841,7 @@ const MESSAGE_SELECT = `
          coalesce(r.last_reply_id, 0)::bigint AS last_reply_id,
          (e.payload->>'broadcast')::boolean AS broadcast,
          edit.text AS edited_text,
+         suppression.suppressed_unfurls,
          (del.id IS NOT NULL) AS is_deleted,
          rx.reactions AS reactions,
          vt.status AS transcript_status,
@@ -843,6 +868,14 @@ const MESSAGE_SELECT = `
     ORDER BY x.id DESC
     LIMIT 1
   ) edit ON true
+  LEFT JOIN LATERAL (
+    SELECT x.payload->'suppressed' AS suppressed_unfurls
+    FROM events x
+    WHERE x.type = 'message.unfurls_suppressed'
+      AND x.payload->>'target' = ('evt_' || e.id::text)
+    ORDER BY x.id DESC
+    LIMIT 1
+  ) suppression ON true
   LEFT JOIN LATERAL (
     SELECT x.id
     FROM events x
@@ -871,11 +904,11 @@ const MESSAGE_SELECT = `
   LEFT JOIN transcripts vt ON vt.event_id = e.id
 `;
 
-// message.edited / message.deleted / reaction.* are included so after_id
+// Message modifier events are included so after_id
 // catch-up heals changes made while a client was disconnected (live clients
 // fold the same events from WS fanout).
 const TIMELINE_EVENT_TYPES =
-  "('message.posted', 'message.edited', 'message.deleted', 'reaction.added', 'reaction.removed', 'voice.transcribed', 'session.spawned', 'session.replied', 'session.status_changed', 'session.effort_changed', 'session.completed', 'session.archived', 'session.unarchived', 'session.seat_requested', 'session.seat_changed', 'session.question_requested', 'session.question_answered', 'session.question_resolved', 'session.provider_auth_required', 'session.github_auth_required', 'session.provider_auth_resolved')";
+  "('message.posted', 'message.edited', 'message.unfurls_suppressed', 'message.deleted', 'reaction.added', 'reaction.removed', 'voice.transcribed', 'session.spawned', 'session.replied', 'session.status_changed', 'session.effort_changed', 'session.completed', 'session.archived', 'session.unarchived', 'session.seat_requested', 'session.seat_changed', 'session.question_requested', 'session.question_answered', 'session.question_resolved', 'session.provider_auth_required', 'session.github_auth_required', 'session.provider_auth_resolved')";
 // `session.replied` is here because the agent's ANSWER is a first-class channel
 // message: it is thread-rooted, so the `broadcast` predicate below still gates
 // it, but the type has to be admitted first or the answer is filtered out of
@@ -884,7 +917,12 @@ const TIMELINE_ROOT_EVENT_TYPES =
   "('message.posted', 'session.spawned', 'session.replied', 'session.question_requested', 'session.question_answered', 'session.question_resolved')";
 
 function foldEdit(
-  row: EventDbRow & { edited_text?: string | null; is_deleted?: boolean; reactions?: unknown },
+  row: EventDbRow & {
+    edited_text?: string | null;
+    suppressed_unfurls?: unknown;
+    is_deleted?: boolean;
+    reactions?: unknown;
+  },
 ): EventDbRow {
   if (row.type !== 'message.posted') return row;
   if (row.is_deleted) {
@@ -895,6 +933,9 @@ function foldEdit(
   }
   if (row.edited_text != null) {
     row.payload = { ...row.payload, text: row.edited_text, edited: true };
+  }
+  if (Array.isArray(row.suppressed_unfurls)) {
+    row.payload = { ...row.payload, suppressed_unfurls: row.suppressed_unfurls };
   }
   if (row.reactions != null) {
     row.payload = { ...row.payload, reactions: row.reactions };
@@ -985,7 +1026,7 @@ export async function listThreadMessages(pool: Db, args: { rootEventId: number }
 // workspace.created is intentionally excluded: there is no live fanout today
 // and no client reducer consumes it.
 const SYNC_EVENT_TYPES =
-  "('message.posted', 'message.edited', 'message.deleted', 'reaction.added', 'reaction.removed', 'voice.transcribed', 'session.spawned', 'session.replied', 'session.status_changed', 'session.effort_changed', 'session.completed', 'session.archived', 'session.unarchived', 'session.seat_requested', 'session.seat_changed', 'session.question_requested', 'session.question_answered', 'session.question_resolved', 'session.provider_auth_required', 'session.github_auth_required', 'session.provider_auth_resolved', 'channel.created', 'channel.archived', 'channel.unarchived', 'channel.member_joined', 'channel.member_left', 'call.ended')";
+  "('message.posted', 'message.edited', 'message.unfurls_suppressed', 'message.deleted', 'reaction.added', 'reaction.removed', 'voice.transcribed', 'session.spawned', 'session.replied', 'session.status_changed', 'session.effort_changed', 'session.completed', 'session.archived', 'session.unarchived', 'session.seat_requested', 'session.seat_changed', 'session.question_requested', 'session.question_answered', 'session.question_resolved', 'session.provider_auth_required', 'session.github_auth_required', 'session.provider_auth_resolved', 'channel.created', 'channel.archived', 'channel.unarchived', 'channel.member_joined', 'channel.member_left', 'call.ended')";
 
 function syncVisibleCte(userUuidParam: string, userTextParam: string): string {
   const workspaceMember = workspaceMemberExists('e.workspace_id', userUuidParam);
