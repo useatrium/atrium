@@ -634,12 +634,15 @@ export const MarkdownText = memo(function MarkdownText({
   meHandle,
   meId,
   resolveUser,
+  numberOfLines,
 }: {
   text: string;
   variant?: 'session' | 'message' | 'compact';
   meHandle?: string | null;
   meId?: string | null;
   resolveUser?: (id: string) => UserRef | undefined;
+  /** Approximate native line clamp for compact previews. */
+  numberOfLines?: number;
 }) {
   const { colors } = useTheme();
   const entryReferences = useContext(EntryReferenceMarkdownContext);
@@ -650,11 +653,13 @@ export const MarkdownText = memo(function MarkdownText({
   );
   const source = variant === 'compact' ? compactMarkdownSource(text) : text;
 
-  return (
+  const content = (
     <MarkdownBoundary fallback={plainTextFallback(text, colors)} resetKey={text}>
       <MarkdownDisplay markdownit={markdownIt} style={styles} rules={rules} onLinkPress={openExternalLink}>
         {source}
       </MarkdownDisplay>
     </MarkdownBoundary>
   );
+  if (!numberOfLines) return content;
+  return <View style={{ maxHeight: numberOfLines * 22, overflow: 'hidden' }}>{content}</View>;
 });

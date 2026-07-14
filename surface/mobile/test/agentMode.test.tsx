@@ -35,6 +35,23 @@ vi.mock('../src/components/VoiceMessage', () => ({ VoiceMessage: () => <Text>Voi
 afterEach(cleanup);
 
 describe('agent-mode composer', () => {
+  it('defaults an attached thread to steer and flips explicitly to an aside', () => {
+    renderWithTheme(
+      <Composer
+        placeholder="Reply in thread"
+        onSend={vi.fn()}
+        onTyping={vi.fn()}
+        onAgentSend={vi.fn()}
+        initialAgentMode
+        agentTargetLabel="Steer · Release fixes"
+        chatTargetLabel="this thread"
+      />,
+    );
+    expect(screen.getByTestId('composer-audience-pill')).toHaveTextContent('⚡ Steer · Release fixes');
+    fireEvent.click(screen.getByTestId('composer-audience-pill'));
+    expect(screen.getByTestId('composer-audience-pill')).toHaveTextContent('💬 this thread');
+  });
+
   it('flips on !!, swallows the sigil, and sends through the agent route', () => {
     const onAgentSend = vi.fn();
     renderWithTheme(

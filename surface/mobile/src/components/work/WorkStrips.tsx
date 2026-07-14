@@ -34,6 +34,7 @@ export function WorkStrips({ items, onOpen }: { items: WorkStripItem[]; onOpen: 
           accessibilityRole="button"
           accessibilityLabel={`${item.label}: ${item.count}`}
           style={{
+            minHeight: 44,
             flexDirection: 'row',
             alignItems: 'center',
             gap: 5,

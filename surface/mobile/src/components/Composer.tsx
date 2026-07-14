@@ -111,6 +111,8 @@ export interface ComposerProps {
   onConfigureAgent?: (fullText: string) => void;
   /** Agent mode owns the normal text input but dispatches through session ops. */
   onAgentSend?: (text: string, anchorEventId?: number) => void;
+  /** Attached-session threads start with the agent audience selected. */
+  initialAgentMode?: boolean;
   /** Audience pill in agent mode, e.g. "New agent · #engineering" / "Steer · “Fix tests”". */
   agentTargetLabel?: string;
   /** Audience pill in chat mode, e.g. "#engineering" / "this thread". */
@@ -171,6 +173,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     uploadFile,
     onConfigureAgent,
     onAgentSend,
+    initialAgentMode = false,
     agentTargetLabel,
     chatTargetLabel,
     onConfigureAgentMode,
@@ -189,7 +192,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const [alsoSendToChannel, setAlsoSendToChannel] = useState(false);
   const [recordingBusy, setRecordingBusy] = useState(false);
   const [recordingError, setRecordingError] = useState<string | null>(null);
-  const [agentMode, setAgentMode] = useState(false);
+  const [agentMode, setAgentMode] = useState(initialAgentMode);
   // The draft was typed for an agent. Survives leaving agent mode (and a
   // cross-device restore) so an agent command can never quietly become chat.
   const [draftAgentIntent, setDraftAgentIntent] = useState(false);
@@ -218,6 +221,10 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   );
 
   useEffect(() => () => draftWriter.cancel(), [draftWriter]);
+
+  useEffect(() => {
+    if (initialAgentMode && !editing && textRef.current.trim().length === 0) setAgentMode(true);
+  }, [editing, initialAgentMode]);
 
   useEffect(() => {
     const show = Keyboard.addListener('keyboardDidShow', () => setKeyboardVisible(true));
