@@ -444,6 +444,36 @@ function upsertConfirmed(list: ChatMessage[], msg: ChatMessage): ChatMessage[] {
   return resort([...list, msg]);
 }
 
+/** Refresh a confirmed row's reply watermark from a materialized history
+ * snapshot. ONLY the (replyCount, lastReplyId) pair moves: the snapshot's
+ * text/reactions/voice are as of the fetch, and an acked modifier (an offline
+ * edit that flushed on reconnect, say) can fold into the row between the fetch
+ * and this merge — its event id is already seen, so the modifier replay below
+ * would never heal a clobber. Modifier state has no watermark to race on;
+ * leave it to the events that own it. */
+function refreshConfirmedFromHistory(
+  list: ChatMessage[],
+  msg: ChatMessage,
+): { list: ChatMessage[]; serverReplyWatermarkWon: boolean } {
+  const i = list.findIndex((m) => m.status === 'confirmed' && m.id === msg.id);
+  // Seen but not confirmed in main: something local removed it on purpose (a
+  // folded delete, a snapshot reset). Re-inserting the fetch-time row would
+  // resurrect it; the unseen path already covers genuinely-new rows.
+  if (i < 0) return { list, serverReplyWatermarkWon: false };
+
+  const current = list[i]!;
+  // A WS reply can land after the history fetch but before this merge. Keep
+  // whichever complete (replyCount, lastReplyId) pair has the newer
+  // watermark; mixing the fields would violate applyEvent's count invariant.
+  const serverReplyWatermarkWon = msg.lastReplyId >= current.lastReplyId;
+  if (!serverReplyWatermarkWon || (msg.replyCount === current.replyCount && msg.lastReplyId === current.lastReplyId)) {
+    return { list, serverReplyWatermarkWon };
+  }
+  const copy = [...list];
+  copy[i] = { ...current, replyCount: msg.replyCount, lastReplyId: msg.lastReplyId };
+  return { list: copy, serverReplyWatermarkWon };
+}
+
 function upsertPending(list: ChatMessage[], msg: ChatMessage): ChatMessage[] {
   const i = list.findIndex(
     (m) => msg.clientMsgId != null && m.status !== 'confirmed' && m.clientMsgId === msg.clientMsgId,
@@ -913,6 +943,7 @@ export function mergeHistory(
   opts: { hasMoreBefore: boolean },
 ): ChannelTimeline {
   let main = t.main;
+  let threads = t.threads;
   const seenIds = new Set(t.seenIds);
   // Server history pages materialize edits/deletes/reactions into the row
   // payloads, so they carry row events only. The IndexedDB cache instead
@@ -922,19 +953,46 @@ export function mergeHistory(
   // reload.
   const modifiers: WireEvent[] = [];
   for (const ev of events) {
-    if (seenIds.has(ev.id)) continue;
+    const alreadySeen = seenIds.has(ev.id);
+    // Preserve modifier dedupe exactly: unlike row events, a modifier must
+    // never replay on top of a server-materialized row that already includes
+    // it.
+    if (alreadySeen && !isRowEvent(ev.type)) continue;
     if (isModifierEvent(ev.type)) {
       modifiers.push(ev);
       continue;
     }
     if (!isRowEvent(ev.type) || (ev.threadRootEventId != null && ev.broadcast !== true)) continue;
+    const msg = messageFromEvent(ev);
+    if (alreadySeen) {
+      const refreshed = refreshConfirmedFromHistory(main, msg);
+      main = refreshed.list;
+      if (msg.threadRootEventId == null && refreshed.serverReplyWatermarkWon) {
+        // Replacing the root's count with a server snapshot removes the local
+        // origin of any optimistic +1s. Clear their claims (as resetToLatest
+        // does) so a later confirmation at/below the server watermark cannot
+        // subtract from the authoritative count.
+        const clearCountedInRoot = (m: ChatMessage): ChatMessage =>
+          m.status !== 'confirmed' && m.threadRootEventId === msg.id && m.countedInRoot === true
+            ? { ...m, countedInRoot: false }
+            : m;
+        main = main.map(clearCountedInRoot);
+        const refreshedThreads: Record<number, ChatMessage[]> = {};
+        for (const [k, rows] of Object.entries(threads)) {
+          refreshedThreads[Number(k)] = rows.map(clearCountedInRoot);
+        }
+        threads = refreshedThreads;
+      }
+      continue;
+    }
     seenIds.add(ev.id);
-    main = upsertConfirmed(main, messageFromEvent(ev));
+    main = upsertConfirmed(main, msg);
   }
   const maxId = events.reduce((acc, e) => Math.max(acc, e.id), t.lastEventId);
   let next = rematerializeAll({
     ...t,
     main,
+    threads,
     seenIds,
     lastEventId: maxId,
     hasMoreBefore: opts.hasMoreBefore,

@@ -38,6 +38,16 @@ sandbox:
   extraEnv:
     DISABLE_TELEMETRY: "1"
     DISABLE_ERROR_REPORTING: "1"
+    # Hide the ~78 upstream tool plugins (crypto/business/comms/observability)
+    # from `centaur-tools list`. None of them work in Atrium sandboxes today:
+    # their CLIs are uvx scripts that resolve deps from pypi.org at first run,
+    # which the egress proxy blocks, and no tool credentials are granted — so
+    # the catalog only baits agents into dead ends (observed: a session burned
+    # turns on `vmetrics`/`cloudwatch`). An EMPTY value means "install all"
+    # (upstream backward compat), so use a no-match placeholder. When a tool is
+    # actually wired up (creds granted + deps installable), list its package
+    # name here, comma-separated.
+    TOOL_ALLOWLIST: "none"
     # To surface Codex's live "thinking" in the transcript, set
     # CODEX_MODEL_REASONING_SUMMARY: "auto" here (Codex >= 0.139 emits no summaries
     # by default; consumed by services/sandbox/entrypoint.sh). Left off for now — the

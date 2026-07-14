@@ -40,6 +40,14 @@ const LOCAL_ATTACHMENT_POLL_MS: u64 = 100;
 const ATRIUM_CONTEXT_READY_TIMEOUT_ENV: &str = "ATRIUM_CONTEXT_READY_TIMEOUT_MS";
 const DEFAULT_ATRIUM_CONTEXT_READY_TIMEOUT_MS: u64 = 10_000;
 const ATRIUM_CONTEXT_READY_POLL_MS: u64 = 250;
+const ATRIUM_CONTEXT_TIMEOUT_NOTE: &str = "NOTE: the Atrium context mount (~/context) did not become ready before this turn (materializer may be down). Do not wait for or retry ~/context reads; answer from the repo, tools, and the conversation instead.";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ContextReadiness {
+    Ready,
+    TimedOut,
+    Skipped,
+}
 
 pub fn server_for(kind: HarnessKind) -> Box<dyn AppServerRuntime> {
     match kind {
@@ -292,6 +300,7 @@ pub(crate) struct BlocksState {
     uploads: HashMap<String, StagedAttachment>,
     staged: HashMap<String, StagedAttachment>,
     pending_questions: HashMap<String, PendingQuestion>,
+    context_readiness_checked: bool,
     /// Reasoning effort from a steer that landed MID-turn (the running child
     /// can't be re-parameterized). Consumed between turns so the change
     /// applies from the next turn instead of being dropped.
@@ -517,6 +526,14 @@ pub(crate) fn parse_blocks_line_with_state(
                     })
                     .unwrap_or_default(),
             };
+            if !state.context_readiness_checked {
+                state.context_readiness_checked = true;
+                if wait_for_atrium_context_if_first_turn(true) == ContextReadiness::TimedOut {
+                    parsed_content
+                        .context
+                        .insert(0, ATRIUM_CONTEXT_TIMEOUT_NOTE.to_string());
+                }
+            }
             if parsed_content.input.is_empty() {
                 parsed_content.input.push(UserInput::Text {
                     text: "continue".to_string(),
@@ -1261,7 +1278,13 @@ fn run_normalized_turn<H: HarnessServer, W: Write>(
     state: &mut ThreadState,
     mut ctx: TurnRunContext<'_, W>,
 ) -> Result<()> {
-    wait_for_atrium_context_if_first_turn(!state.thread_started_sent);
+    let context_readiness = if input_contains_context_timeout_note(ctx.harness_input) {
+        ContextReadiness::TimedOut
+    } else {
+        wait_for_atrium_context_if_first_turn(!state.thread_started_sent)
+    };
+    let harness_input =
+        prepend_context_readiness_note(context_readiness, ctx.harness_input.to_vec());
     for notification in ctx
         .normalizer
         .start_notifications(!state.thread_started_sent)?
@@ -1278,7 +1301,7 @@ fn run_normalized_turn<H: HarnessServer, W: Write>(
         write_value(ctx.stdout, &notification_to_wire_value(&notification)?)?;
     }
 
-    match run_harness_turn(harness, state, &mut ctx) {
+    match run_harness_turn(harness, state, &mut ctx, &harness_input) {
         Ok(Some(turn)) => state.completed_turns.push(turn),
         Ok(None) => {}
         Err(HarnessServerError::TurnInterrupted { .. }) => {
@@ -1290,9 +1313,9 @@ fn run_normalized_turn<H: HarnessServer, W: Write>(
     Ok(())
 }
 
-fn wait_for_atrium_context_if_first_turn(first_turn: bool) {
+fn wait_for_atrium_context_if_first_turn(first_turn: bool) -> ContextReadiness {
     if !first_turn {
-        return;
+        return ContextReadiness::Skipped;
     }
     let timeout = env::var(ATRIUM_CONTEXT_READY_TIMEOUT_ENV)
         .ok()
@@ -1302,20 +1325,24 @@ fn wait_for_atrium_context_if_first_turn(first_turn: bool) {
             DEFAULT_ATRIUM_CONTEXT_READY_TIMEOUT_MS,
         ));
     if timeout.is_zero() {
-        return;
+        return ContextReadiness::Skipped;
     }
     let Some(home) = env::var_os("HOME") else {
-        return;
+        return ContextReadiness::Skipped;
     };
-    wait_for_atrium_context_path(first_turn, &PathBuf::from(home).join("context"), timeout);
+    wait_for_atrium_context_path(first_turn, &PathBuf::from(home).join("context"), timeout)
 }
 
-fn wait_for_atrium_context_path(first_turn: bool, context_dir: &Path, timeout: Duration) {
+fn wait_for_atrium_context_path(
+    first_turn: bool,
+    context_dir: &Path,
+    timeout: Duration,
+) -> ContextReadiness {
     if !first_turn || timeout.is_zero() {
-        return;
+        return ContextReadiness::Skipped;
     }
     if !context_dir.is_dir() {
-        return;
+        return ContextReadiness::Skipped;
     }
     let marker = context_dir.join(".atrium-context-ready");
     let start = Instant::now();
@@ -1329,7 +1356,34 @@ fn wait_for_atrium_context_path(first_turn: bool, context_dir: &Path, timeout: D
             marker.display(),
             timeout.as_millis()
         );
+        return ContextReadiness::TimedOut;
     }
+    ContextReadiness::Ready
+}
+
+fn prepend_context_readiness_note(
+    readiness: ContextReadiness,
+    input: Vec<UserInput>,
+) -> Vec<UserInput> {
+    if readiness != ContextReadiness::TimedOut || input_contains_context_timeout_note(&input) {
+        return input;
+    }
+    let mut with_note = Vec::with_capacity(input.len() + 1);
+    with_note.push(UserInput::Text {
+        text: ATRIUM_CONTEXT_TIMEOUT_NOTE.to_string(),
+        text_elements: Vec::new(),
+    });
+    with_note.extend(input);
+    with_note
+}
+
+fn input_contains_context_timeout_note(input: &[UserInput]) -> bool {
+    input.iter().any(|item| {
+        matches!(
+            item,
+            UserInput::Text { text, .. } if text.contains(ATRIUM_CONTEXT_TIMEOUT_NOTE)
+        )
+    })
 }
 
 fn finish_turn_interrupted<W: Write>(
@@ -1372,12 +1426,13 @@ fn run_harness_turn<H: HarnessServer, W: Write>(
     harness: &H,
     state: &mut ThreadState,
     ctx: &mut TurnRunContext<'_, W>,
+    harness_input: &[UserInput],
 ) -> Result<Option<codex_app_server_protocol::Turn>> {
     let usage_span_start = otel::unix_time_nanos();
     let usage_span_model = state.model.clone();
     let usage_span_model_provider = state.model_provider.clone();
     let usage_span_turn_id = ctx.normalizer.turn_id().to_string();
-    let usage_span_input = usage_span_input_value(ctx.harness_input);
+    let usage_span_input = usage_span_input_value(harness_input);
     let mut usage_span_output = UsageSpanOutput::default();
     ensure_harness_process(harness, state)?;
     {
@@ -1392,7 +1447,7 @@ fn run_harness_turn<H: HarnessServer, W: Write>(
         while process.stdout.try_recv().is_ok() {}
         process
             .stdin
-            .write_all(&harness.stdin_for_turn(ctx.harness_input)?)?;
+            .write_all(&harness.stdin_for_turn(harness_input)?)?;
         process.stdin.flush()?;
     }
 
@@ -2217,34 +2272,56 @@ mod tests {
             std::fs::write(marker, b"ready\n").unwrap();
         });
 
-        wait_for_atrium_context_path(true, &context, Duration::from_secs(1));
+        let readiness = wait_for_atrium_context_path(true, &context, Duration::from_secs(1));
 
         writer.join().unwrap();
         assert!(context.join(".atrium-context-ready").is_file());
+        assert_eq!(readiness, ContextReadiness::Ready);
     }
 
     #[test]
     fn context_gate_skips_absent_mount() {
         let context = temp_context_dir(false);
         let start = Instant::now();
-        wait_for_atrium_context_path(true, &context, Duration::from_secs(1));
+        let readiness = wait_for_atrium_context_path(true, &context, Duration::from_secs(1));
         assert!(start.elapsed() < Duration::from_millis(100));
+        assert_eq!(readiness, ContextReadiness::Skipped);
     }
 
     #[test]
     fn context_gate_timeout_proceeds() {
         let context = temp_context_dir(true);
         let start = Instant::now();
-        wait_for_atrium_context_path(true, &context, Duration::from_millis(20));
+        let readiness = wait_for_atrium_context_path(true, &context, Duration::from_millis(20));
         assert!(start.elapsed() >= Duration::from_millis(20));
+        assert_eq!(readiness, ContextReadiness::TimedOut);
     }
 
     #[test]
     fn context_gate_never_waits_after_first_turn() {
         let context = temp_context_dir(true);
         let start = Instant::now();
-        wait_for_atrium_context_path(false, &context, Duration::from_secs(1));
+        let readiness = wait_for_atrium_context_path(false, &context, Duration::from_secs(1));
         assert!(start.elapsed() < Duration::from_millis(100));
+        assert_eq!(readiness, ContextReadiness::Skipped);
+    }
+
+    #[test]
+    fn context_gate_timeout_note_is_prepended_only_after_timeout() {
+        let input = vec![UserInput::Text {
+            text: "hello".to_string(),
+            text_elements: Vec::new(),
+        }];
+
+        let delivered = prepend_context_readiness_note(ContextReadiness::TimedOut, input.clone());
+        assert_eq!(delivered.len(), 2);
+        assert_eq!(text_input(&delivered[0]), ATRIUM_CONTEXT_TIMEOUT_NOTE);
+        assert_eq!(text_input(&delivered[1]), "hello");
+
+        assert_eq!(
+            prepend_context_readiness_note(ContextReadiness::Ready, input.clone()),
+            input
+        );
     }
 
     #[test]

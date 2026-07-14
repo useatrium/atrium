@@ -45,9 +45,19 @@ vi.mock('react-native-markdown-display', () => {
     if (!match) {
       const inline = new Token('inline');
       const codeMatch = /^`([\s\S]*)`$/.exec(children);
-      const child = new Token(codeMatch ? 'code_inline' : 'text');
-      child.content = codeMatch?.[1] ?? children;
-      inline.children = [child] as never;
+      const linkMatch = /^\[([^\]]+)\]\(([^)]+)\)$/.exec(children);
+      if (linkMatch) {
+        const open = new Token('link_open');
+        open.attrs = [['href', linkMatch[2] ?? '']];
+        const label = new Token('text');
+        label.content = linkMatch[1] ?? '';
+        const close = new Token('link_close');
+        inline.children = [open, label, close] as never;
+      } else {
+        const child = new Token(codeMatch ? 'code_inline' : 'text');
+        child.content = codeMatch?.[1] ?? children;
+        inline.children = [child] as never;
+      }
       const state = { tokens: [inline], Token };
       for (const rule of coreRules) rule(state);
       const rendered: unknown[] = [];
@@ -103,6 +113,14 @@ vi.mock('react-native-syntax-highlighter', () => ({
 }));
 
 describe('mobile MarkdownText', () => {
+  it('renders an agent sandbox markdown link as a file chip', () => {
+    const channelId = '121a247c-e270-4783-a9d4-cb80ec984188';
+    renderWithTheme(<MarkdownText text={`[full path](/home/agent/shared/channels/${channelId}/reports/notes.md)`} />);
+
+    expect(screen.getByText('notes.md')).toBeInTheDocument();
+    expect(screen.queryByText('full path')).not.toBeInTheDocument();
+  });
+
   it('copies fenced code blocks from the copy control', async () => {
     renderWithTheme(<MarkdownText text={['```ts', 'const x = 1;', '```'].join('\n')} />);
 
@@ -133,5 +151,12 @@ describe('mobile MarkdownText', () => {
   it('renders unresolved stable IDs as @unknown', () => {
     renderWithTheme(<MarkdownText text="<@123e4567-e89b-12d3-a456-426614174099>" resolveUser={() => undefined} />);
     expect(screen.getByText('@unknown')).toBeInTheDocument();
+  });
+
+  it('leaves ordinary https markdown links unchanged', () => {
+    renderWithTheme(<MarkdownText text="[Expo docs](https://docs.expo.dev/)" />);
+
+    expect(screen.getByText('Expo docs')).toBeInTheDocument();
+    expect(screen.queryByLabelText(/file/i)).not.toBeInTheDocument();
   });
 });

@@ -164,15 +164,40 @@ describe('MessageRow', () => {
     expect(screen.queryByRole('button', { name: 'Show session details' })).not.toBeInTheDocument();
   });
 
-  it('keeps failed-session recovery text and the work link reachable', () => {
+  it('collapses a failed session with inline recovery actions for the driver', async () => {
+    const steerSession = vi.fn(async () => ({ ok: true as const }));
     renderRow(
       { sessionId: 's-1', sessionTask: 'Find the failing migration.' },
-      { session: session({ status: 'failed', resultText: 'Migration 42 failed before a reply was posted.' }) },
+      {
+        meId: 'u-1',
+        api: { steerSession } as never,
+        session: session({
+          status: 'failed',
+          resultText: 'Migration 42 failed before a reply was posted.',
+          createdAt: '2026-07-13T11:00:00.000Z',
+          completedAt: '2026-07-13T11:04:00.000Z',
+        }),
+      },
     );
 
-    expect(screen.getByText('Migration 42 failed before a reply was posted.')).toBeInTheDocument();
+    expect(screen.getByTestId('session-card')).toHaveTextContent('Failed · after 4m');
+    expect(screen.queryByText('Migration 42 failed before a reply was posted.')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Show session details' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry failed turn' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Ask why the agent failed' }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Retrying…')).toBeInTheDocument();
+      expect(screen.getByText('Asked — check the thread')).toBeInTheDocument();
+    });
+    expect(steerSession).toHaveBeenCalledWith('s-1', 'Retry the failed turn.', {}, { postToThread: true });
+    expect(steerSession).toHaveBeenCalledWith(
+      's-1',
+      "The last turn failed — explain what went wrong and what you'd try differently, then wait for my go-ahead.",
+      {},
+      { postToThread: true },
+    );
     expect(screen.getByRole('button', { name: 'Show the work — full transcript' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Show session details' })).toBeInTheDocument();
   });
 
   it('shows a parent-thread affordance for broadcast replies in the channel timeline', () => {

@@ -61,6 +61,19 @@ afterEach(() => {
 });
 
 describe('MessageText entry links', () => {
+  it('renders sandbox file links as chips without changing ordinary links', () => {
+    const channelId = '121a247c-e270-4783-a9d4-cb80ec984188';
+    render(
+      <MessageText
+        text={`[report](/home/agent/shared/channels/${channelId}/reports/notes.md) [site](https://example.com) [local](notes.md)`}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: 'notes.md' })).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'site' }).getAttribute('href')).toBe('https://example.com');
+    expect(screen.getByRole('link', { name: 'local' }).getAttribute('href')).toBe('notes.md');
+  });
+
   it('renders a compact entry ref as plain accent text, not the bordered pill', async () => {
     resolveEntryMock.mockResolvedValue(entry());
 

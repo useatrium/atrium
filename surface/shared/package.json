@@ -15,6 +15,7 @@
     "./sessions": "./src/sessions.ts",
     "./agentProfiles": "./src/agentProfiles.ts",
     "./effort": "./src/effort.ts",
+    "./agent-paths": "./src/agent-paths.ts",
     "./entry-contracts": "./src/entry-contracts.ts",
     "./session-capabilities": "./src/sessionCapabilities.ts"
   },

@@ -17,6 +17,7 @@ import { attachmentToHubFile } from '../../../src/components/attachmentPreview';
 import { ConnectionBanner, TypingLine } from '../../../src/components/bits';
 import { Composer, type ComposerHandle } from '../../../src/components/Composer';
 import { MediaLightbox } from '../../../src/components/MediaLightbox';
+import { AgentFileMarkdownProvider } from '../../../src/components/FilePathChip';
 import { MessageActions } from '../../../src/components/MessageActions';
 import { MessageActionSheet } from '../../../src/components/MessageActions';
 import { AgentModeConfig, type AgentEffort } from '../../../src/components/AgentModeConfig';
@@ -433,37 +434,46 @@ export default function ChannelScreen() {
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         keyboardVerticalOffset={headerHeight}
       >
-        <Timeline
-          key={id}
-          messages={timeline.main}
-          emptyLabel="No messages yet. Say hello — or use ⚡ to delegate work."
-          loaded={timeline.loaded}
-          hasMoreBefore={timeline.hasMoreBefore}
-          sessions={state.sessions}
-          meId={me.id}
-          meHandle={state.meHandle}
-          highlightId={chat.highlightId}
-          fileUrl={chat.fileUrl}
-          api={chat.api}
-          serverUrl={chat.serverUrl}
-          resolveEntry={chat.resolveEntry}
-          resolveArtifactContent={chat.resolveArtifactContent}
-          resolveUser={chat.resolveUser}
-          fileHeaders={chat.fileHeaders}
-          onLoadEarlier={() => chat.loadEarlier(id)}
-          onLongPress={setActionsTarget}
-          onOpenThread={openThread}
-          onToggleReaction={(m, e) => void chat.react(m, e)}
-          onRetry={chat.retry}
-          onOpenAttachment={openAttachment}
-          onOpenChannel={(channelId) => router.push(`/channel/${channelId}`)}
-          onOpenSession={(sessionId) => router.push(`/session/${sessionId}`)}
-          onAnswerSessionQuestion={chat.answerSessionQuestion}
-          onSuggestSessionAnswer={chat.suggestToSession}
-          unreadDividerAfterId={activeUnreadDividerSnapshot?.value ?? null}
-          dividerReady={activeUnreadDividerSnapshot?.ready === true}
-          onReachBottom={markReadAtBottom}
-        />
+        <AgentFileMarkdownProvider
+          value={{
+            serverUrl: chat.serverUrl,
+            fileHeaders: chat.fileHeaders,
+            channelId: id,
+            onOpenFile: (file) => setAttachmentLightbox({ files: [file], initialIndex: 0 }),
+          }}
+        >
+          <Timeline
+            key={id}
+            messages={timeline.main}
+            emptyLabel="No messages yet. Say hello — or use ⚡ to delegate work."
+            loaded={timeline.loaded}
+            hasMoreBefore={timeline.hasMoreBefore}
+            sessions={state.sessions}
+            meId={me.id}
+            meHandle={state.meHandle}
+            highlightId={chat.highlightId}
+            fileUrl={chat.fileUrl}
+            api={chat.api}
+            serverUrl={chat.serverUrl}
+            resolveEntry={chat.resolveEntry}
+            resolveArtifactContent={chat.resolveArtifactContent}
+            resolveUser={chat.resolveUser}
+            fileHeaders={chat.fileHeaders}
+            onLoadEarlier={() => chat.loadEarlier(id)}
+            onLongPress={setActionsTarget}
+            onOpenThread={openThread}
+            onToggleReaction={(m, e) => void chat.react(m, e)}
+            onRetry={chat.retry}
+            onOpenAttachment={openAttachment}
+            onOpenChannel={(channelId) => router.push(`/channel/${channelId}`)}
+            onOpenSession={(sessionId) => router.push(`/session/${sessionId}`)}
+            onAnswerSessionQuestion={chat.answerSessionQuestion}
+            onSuggestSessionAnswer={chat.suggestToSession}
+            unreadDividerAfterId={activeUnreadDividerSnapshot?.value ?? null}
+            dividerReady={activeUnreadDividerSnapshot?.ready === true}
+            onReachBottom={markReadAtBottom}
+          />
+        </AgentFileMarkdownProvider>
         <TypingLine typing={chat.typing} />
         <Composer
           ref={composerRef}

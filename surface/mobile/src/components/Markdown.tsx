@@ -1,5 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { compactMarkdownSource, createHljsStyle, syntaxTheme, type UserRef } from '@atrium/surface-client';
+import { parseAgentPathHref } from '@atrium/surface-client/agent-paths';
 import * as Clipboard from 'expo-clipboard';
 import {
   Component,
@@ -26,6 +27,7 @@ import { entryHandleFromLinkCandidate, findEntryLinkMatches, isEntryHandle } fro
 import type { EntryResolver } from '../lib/entryResolve';
 import { font, radius, space, useTheme, type Colors } from '../lib/theme';
 import { EntryInlineChip } from './EntryInlineChip';
+import { FilePathChip } from './FilePathChip';
 
 const monoFont = Platform.select({ ios: 'Menlo', android: 'monospace', default: 'monospace' });
 
@@ -480,6 +482,10 @@ function makeRules(
   return {
     link: (node, children) => {
       const href = typeof node.attributes.href === 'string' ? node.attributes.href : '';
+      const agentPath = parseAgentPathHref(href);
+      if (agentPath) {
+        return <FilePathChip key={node.key} pathRef={agentPath} compact={variant === 'compact'} />;
+      }
       if (href.startsWith(entryHrefPrefix)) {
         const handle = href.slice(entryHrefPrefix.length);
         if (isEntryHandle(handle)) {
