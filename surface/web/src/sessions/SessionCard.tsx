@@ -236,6 +236,9 @@ export function SessionCard({
     // biome-ignore lint/a11y/useKeyWithClickEvents: card click mirrors the nested status button; keyboard users use that button.
     <div
       data-testid="session-card"
+      // The card no longer prints the task, so it can't be found by its text.
+      // This is the stable handle for "the card for THIS session".
+      data-session-id={session.id}
       onClick={onCardClick}
       className={`group/card mt-1 max-w-2xl rounded-lg border border-edge bg-surface-raised/70 px-3 py-2 ${
         openable ? 'cursor-pointer hover:border-edge-strong' : ''
@@ -273,7 +276,7 @@ export function SessionCard({
               }}
               className={`shrink-0 text-2xs text-fg-muted hover:text-fg-secondary hover:underline ${TOUCH_TARGET}`}
             >
-              {detailsOpen ? 'Hide details' : 'Details'}
+              {detailsOpen ? 'Hide details' : 'Session details'}
             </button>
             {openable && (
               <a

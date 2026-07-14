@@ -63,7 +63,7 @@ describe('SessionCard terminal states', () => {
     expect(screen.getByRole('link', { name: 'Show the work →' })).toBeTruthy();
     expect(screen.queryByText('This task must not appear on the card')).toBeNull();
     expect(screen.queryByText('The complete agent answer used to be duplicated here.')).toBeNull();
-    expect(screen.getByRole('button', { name: 'Details' }).getAttribute('aria-expanded')).toBe('false');
+    expect(screen.getByRole('button', { name: 'Session details' }).getAttribute('aria-expanded')).toBe('false');
     expect(screen.queryByText('Ada Lovelace')).toBeNull();
   });
 

@@ -108,7 +108,14 @@ test('opening a session updates the URL and Back closes it without a document re
   });
   // Card activation is thread-first now; the pane (this spec's subject) is
   // reached through the card's explicit "Show the work" affordance.
-  await page.getByTestId('session-card').filter({ hasText: title }).getByText('Show the work →').first().click();
+  //
+  // Located by session id, not by the task text: the ask is now the spawner's
+  // own message ABOVE the card, so the card itself no longer contains it.
+  await page
+    .locator(`[data-testid="session-card"][data-session-id="${sessionId}"]`)
+    .getByText('Show the work →')
+    .first()
+    .click();
   await expect(page).toHaveURL(new RegExp(`/c/${roomId}/s/${sessionId}$`));
   await expect(page.getByRole('button', { name: 'Close session details' })).toBeVisible();
 

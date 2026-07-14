@@ -127,7 +127,7 @@ export function ConversationHeader({
         type="button"
         data-testid="conversation-title"
         onClick={onOpenTitle}
-        aria-label={openTitleHint ?? `Open agent conversation: ${title}`}
+        aria-label={openTitleHint ?? 'Open agent session'}
         className="rounded-full focus-visible:underline"
       >
         {chipNode}
