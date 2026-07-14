@@ -99,6 +99,14 @@ interface SessionParticipantRow {
   handle: string | null;
 }
 
+export interface SessionDeltaState {
+  epoch: string;
+  nextSeq: number;
+}
+
+// Bump this in the same commit as any session renderer format change.
+export const RENDER_VERSION = '1';
+
 export async function loadSessionRecords(
   pool: Db,
   sessionId: string,
@@ -127,6 +135,87 @@ export async function loadSessionRecords(
   const meta = await buildSessionMeta(pool, sessionId).catch(() => null);
   if (meta) attachSessionMeta(records, meta);
   return records;
+}
+
+export async function loadSessionRecordsAfter(
+  pool: Db,
+  sessionId: string,
+  tier: SessionProjectionTier,
+  sinceSeq: number,
+): Promise<SessionRecord[]> {
+  const tierWhere = tier === 'lean' ? "AND view_tier = 'lean'" : '';
+  const res = await pool.query<SessionRecordRow>(
+    `SELECT session_id,
+            event_id,
+            seq,
+            entry_uid,
+            kind,
+            actor,
+            driver,
+            view_tier,
+            text,
+            meta,
+            ts
+       FROM session_records
+      WHERE session_id = $1
+        AND seq > $2
+        ${tierWhere}
+      ORDER BY seq ASC`,
+    [sessionId, sinceSeq],
+  );
+  return res.rows.map(toSessionRecord);
+}
+
+export async function loadSessionDeltaState(pool: Db, sessionId: string): Promise<SessionDeltaState> {
+  const res = await pool.query<{ generation: string | number; next_seq: string | number }>(
+    `SELECT COALESCE(state.generation, 1) AS generation,
+            COALESCE(records.next_seq, 0) AS next_seq
+       FROM sessions s
+       LEFT JOIN session_projection_state state ON state.session_id = s.id
+       LEFT JOIN LATERAL (
+         SELECT MAX(seq) AS next_seq
+           FROM session_records
+          WHERE session_id = s.id
+       ) records ON true
+      WHERE s.id = $1`,
+    [sessionId],
+  );
+  const row = res.rows[0];
+  if (!row) throw new Error('session not found');
+  return {
+    epoch: `${row.generation}:${RENDER_VERSION}`,
+    nextSeq: Number(row.next_seq),
+  };
+}
+
+export async function sessionDocHadContent(
+  pool: Db,
+  sessionId: string,
+  doc: string,
+  throughSeq: number,
+): Promise<boolean> {
+  if (doc === 'events') return true;
+  const docWhere =
+    doc === 'transcript'
+      ? "AND view_tier = 'lean'"
+      : doc === 'tools'
+        ? "AND kind IN ('command', 'tool_call')"
+        : doc === 'artifacts'
+          ? "AND kind = 'artifact'"
+          : doc === 'changes-doc'
+            ? "AND kind = 'file_change'"
+            : '';
+  const res = await pool.query<{ present: boolean }>(
+    `SELECT EXISTS (
+       SELECT 1
+         FROM session_records
+        WHERE session_id = $1
+          AND seq <= $2
+          ${docWhere}
+     ) AS present`,
+    [sessionId, throughSeq],
+  );
+  return res.rows[0]?.present ?? false;
 }
 
 export async function buildSessionMeta(pool: Db, sessionId: string): Promise<SessionMeta> {
@@ -247,10 +336,34 @@ export function renderTranscriptMarkdown(
   return finalize(lines);
 }
 
+export function renderTranscriptMarkdownAppend(records: SessionRecord[]): string {
+  const lines: string[] = [];
+  // Filter the tier here, exactly as renderTranscriptMarkdown does. The route
+  // already asks the DB for lean rows, so this is redundant today — but the two
+  // renderers must stay byte-for-byte composable (full(prefix) + append(suffix)
+  // === full(all)), and an append that trusts its caller would silently splice
+  // full-tier rows into the lean transcript with nothing to ever rewrite them.
+  for (const record of records.filter((record) => record.viewTier === 'lean')) {
+    renderLeanRecord(lines, record);
+  }
+  return prefixBlockAppend(finalizeAppend(lines));
+}
+
 export function renderFullMarkdown(records: SessionRecord[]): string {
   const lines = ['# Full Transcript', ''];
   if (records.length === 0) return `${lines.join('\n')}No session records.\n`;
 
+  appendFullRecords(lines, records);
+  return finalize(lines);
+}
+
+export function renderFullMarkdownAppend(records: SessionRecord[]): string {
+  const lines: string[] = [];
+  appendFullRecords(lines, records);
+  return prefixBlockAppend(finalizeAppend(lines));
+}
+
+function appendFullRecords(lines: string[], records: SessionRecord[]): void {
   for (const record of records) {
     lines.push(`## ${record.seq}. ${titleCase(record.kind)} - ${labelRecordActor(record)}`);
     lines.push(`Event: ${record.eventId}`);
@@ -261,7 +374,6 @@ export function renderFullMarkdown(records: SessionRecord[]): string {
     lines.push(record.text || '[empty]');
     lines.push('');
   }
-  return finalize(lines);
 }
 
 export function renderSummaryMarkdown(records: SessionRecord[], meta: SessionMeta | Record<string, unknown>): string {
@@ -383,6 +495,20 @@ export function renderChangesMarkdown(records: SessionRecord[]): string {
   return finalize(lines);
 }
 
+export function renderChangesMarkdownAppend(records: SessionRecord[]): string {
+  const lines: string[] = [];
+  appendChanges(lines, records);
+  return finalizeAppend(lines);
+}
+
+function appendChanges(lines: string[], records: SessionRecord[]): void {
+  for (const record of records.filter((candidate) => candidate.kind === 'file_change')) {
+    const path = stringFrom(record.meta, 'path') ?? firstLine(record.text).replace(/^File [^:]+:\s*/, '');
+    const kind = stringFrom(record.meta, 'kind') ?? 'update';
+    lines.push(`- ${kind}: ${path}`);
+  }
+}
+
 export function renderToolsMarkdown(records: SessionRecord[]): string {
   const tools = records.filter((record) => record.kind === 'command' || record.kind === 'tool_call');
   const lines = ['# Tools', ''];
@@ -413,6 +539,27 @@ export function renderToolsMarkdown(records: SessionRecord[]): string {
   return finalize(lines);
 }
 
+export function renderToolsMarkdownAppend(records: SessionRecord[]): string {
+  const lines: string[] = [];
+  appendTools(lines, records);
+  return prefixBlockAppend(finalizeAppend(lines));
+}
+
+function appendTools(lines: string[], records: SessionRecord[]): void {
+  for (const record of records.filter((candidate) => candidate.kind === 'command' || candidate.kind === 'tool_call')) {
+    if (record.kind === 'command') {
+      const command = stringFrom(record.meta, 'command') ?? commandFromText(record.text) ?? 'command';
+      lines.push(`## Command ${record.seq}`, '', '```console', `$ ${command}`);
+      const output = outputFromText(record.text);
+      if (output) lines.push(output);
+      lines.push('```', '');
+    } else {
+      const toolName = stringFrom(record.meta, 'toolName') ?? 'tool';
+      lines.push(`## Tool Call ${record.seq}: ${toolName}`, '', record.text || '[empty]', '');
+    }
+  }
+}
+
 export function renderArtifactsMarkdown(records: SessionRecord[]): string {
   const artifacts = records.filter((record) => record.kind === 'artifact');
   const lines = ['# Artifacts', ''];
@@ -429,6 +576,18 @@ export function renderArtifactsMarkdown(records: SessionRecord[]): string {
     lines.push(`- ${path}${detail ? ` (${detail})` : ''}`);
   }
   return finalize(lines);
+}
+
+export function renderArtifactsMarkdownAppend(records: SessionRecord[]): string {
+  const lines: string[] = [];
+  for (const record of records.filter((candidate) => candidate.kind === 'artifact')) {
+    const path = stringFrom(record.meta, 'path') ?? firstLine(record.text);
+    const kind = stringFrom(record.meta, 'kind');
+    const mime = stringFrom(record.meta, 'mime');
+    const detail = [kind, mime].filter((part): part is string => Boolean(part)).join(', ');
+    lines.push(`- ${path}${detail ? ` (${detail})` : ''}`);
+  }
+  return finalizeAppend(lines);
 }
 
 export function renderEventsJsonl(records: SessionRecord[]): string {
@@ -628,4 +787,13 @@ function driverFromHarness(harness: string): string | null {
 function finalize(lines: string[]): string {
   while (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
   return `${lines.join('\n')}\n`;
+}
+
+function finalizeAppend(lines: string[]): string {
+  if (lines.length === 0) return '';
+  return finalize(lines);
+}
+
+function prefixBlockAppend(rendered: string): string {
+  return rendered ? `\n${rendered}` : '';
 }

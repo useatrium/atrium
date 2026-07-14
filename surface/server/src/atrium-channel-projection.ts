@@ -33,7 +33,15 @@ export interface ChannelChatMessage {
   isAgent?: boolean;
 }
 
+export interface ChannelChatProjection {
+  messages: ChannelChatMessage[];
+  historyMutated: boolean;
+}
+
 export const CHANNEL_CHAT_MAX_BYTES = 2_000_000;
+// Bump this in the same commit as any channel renderer format change.
+export const CHANNEL_RENDER_VERSION = '1';
+export const CHANNEL_EPOCH = `channel:${CHANNEL_RENDER_VERSION}`;
 
 function readableChannelWhere(userExpr: string, activeChannelExpr: string): string {
   return `(
@@ -152,6 +160,14 @@ async function loadChannelMembers(
 }
 
 export async function loadChannelChatMessages(pool: Db, channelId: string): Promise<ChannelChatMessage[]> {
+  return (await loadChannelChatProjection(pool, channelId)).messages;
+}
+
+export async function loadChannelChatProjection(
+  pool: Db,
+  channelId: string,
+  sinceEventId?: number,
+): Promise<ChannelChatProjection> {
   const res = await pool.query<{
     id: string | number;
     thread_root_event_id: string | number | null;
@@ -197,12 +213,24 @@ export async function loadChannelChatMessages(pool: Db, channelId: string): Prom
           LIMIT 1
        ) del ON true
       WHERE e.channel_id = $1::uuid
-        AND e.type IN ('message.posted', 'session.spawned', 'session.replied')
+        AND e.type IN ('message.posted', 'message.edited', 'message.deleted', 'session.spawned', 'session.replied')
       ORDER BY e.id ASC`,
     [channelId],
   );
-  return res.rows
-    .filter((row) => !row.is_deleted)
+  const historyMutated =
+    sinceEventId != null &&
+    res.rows.some(
+      (row) =>
+        Number(row.id) > sinceEventId && (row.event_type === 'message.edited' || row.event_type === 'message.deleted'),
+    );
+  const messages = res.rows
+    .filter(
+      (row) =>
+        !row.is_deleted &&
+        (row.event_type === 'message.posted' ||
+          row.event_type === 'session.spawned' ||
+          row.event_type === 'session.replied'),
+    )
     .map((row) => {
       const id = Number(row.id);
       const isAgent = row.event_type === 'session.replied';
@@ -223,6 +251,7 @@ export async function loadChannelChatMessages(pool: Db, channelId: string): Prom
         ...(isAgent ? { isAgent: true } : {}),
       };
     });
+  return { messages, historyMutated };
 }
 
 export function renderChannelMarkdown(info: ChannelDocInfo): string {
@@ -263,6 +292,23 @@ export function renderChannelChatMarkdown(messages: ChannelChatMessage[], maxByt
     included.unshift(`...older messages elided (${omitted})...\n\n`);
   }
   return included.join('');
+}
+
+export function renderChannelChatDelta(
+  messages: ChannelChatMessage[],
+  sinceEventId: number,
+  maxBytes = CHANNEL_CHAT_MAX_BYTES,
+): { body: string; preservesHistory: boolean } {
+  const previous = renderChannelChatMarkdown(
+    messages.filter((message) => message.id <= sinceEventId),
+    maxBytes,
+  );
+  const body = renderChannelChatMarkdown(
+    messages.filter((message) => message.id > sinceEventId),
+    Number.POSITIVE_INFINITY,
+  );
+  const current = renderChannelChatMarkdown(messages, maxBytes);
+  return { body, preservesHistory: current === previous + body };
 }
 
 function groupThreadedMessages(messages: ChannelChatMessage[]): ChannelChatMessage[][] {

@@ -28,7 +28,7 @@ import { config } from './config.js';
 import type { Db, DbClient } from './db.js';
 import { withTx } from './db.js';
 import { projectSessionIncremental, releaseSessionProjectionState } from './session-records.js';
-import { projectIncrementalAndEmit } from './session-record-changefeed.js';
+import { emitChannelChange, projectIncrementalAndEmit } from './session-record-changefeed.js';
 import { ArtifactLedger, type VersionRef } from './artifact-ledger.js';
 import { InvalidArtifactPathError } from './artifact-path.js';
 import { presignGet as s3PresignGet } from './s3.js';
@@ -2641,6 +2641,12 @@ export class SessionRuns {
     });
     this.clearSessionActivity(id);
     for (const event of events) this.hub.publishEvent(event);
+    const replyEvent = events.find((event) => event.type === 'session.replied');
+    if (replyEvent?.channelId) {
+      void emitChannelChange(this.pool, replyEvent.channelId).catch((err) =>
+        console.warn('session reply channel nudge failed', { id, err }),
+      );
+    }
     if (events.some((event) => event.type === 'session.question_resolved')) {
       this.cancelScheduledQuestionRenotify(id);
     }

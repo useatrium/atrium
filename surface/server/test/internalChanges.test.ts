@@ -313,7 +313,7 @@ describe('GET /api/internal/changes/stream', () => {
     }
   });
 
-  it('publishes debounced files.changed nudges for artifact notifications only', async () => {
+  it('publishes debounced files.changed nudges for artifact and atrium notifications', async () => {
     const known = await session();
     const publishToUsers = vi.fn();
     const hub = { publishToUsers } as unknown as WsHub;
@@ -335,15 +335,40 @@ describe('GET /api/internal/changes/stream', () => {
         payload: { workspaceId: fx.workspaceId },
       });
 
+      await emitSessionRecordChange(pool, known.id, 1);
+      await stream.waitForChanged('atrium', known.key);
+      await vi.waitFor(() => expect(publishToUsers).toHaveBeenCalledTimes(2), { timeout: 3000 });
+
       await bindProfileWithBundle(known);
       await stream.waitForChanged('profile', known.key);
       // Negative debounce assertion: a correctly filtered profile change emits
       // no completion signal, so wait beyond the one-second debounce window.
       await new Promise((resolve) => setTimeout(resolve, 1600));
-      expect(publishToUsers).toHaveBeenCalledTimes(1);
+      expect(publishToUsers).toHaveBeenCalledTimes(2);
     } finally {
       await stream.close();
       await streamApp.close();
+    }
+  });
+
+  it('bounds channel fan-out to live sessions when a workspace has many dead sessions', async () => {
+    const known = await session();
+    await pool.query(
+      `INSERT INTO sessions
+         (workspace_id, channel_id, centaur_thread_key, harness, title, status, spawned_by)
+       SELECT $1, $2, 'dead-' || n::text, 'codex', 'dead session ' || n::text, 'completed', $3
+         FROM generate_series(1, 1100) n`,
+      [fx.workspaceId, fx.channelId, fx.userId],
+    );
+    const stream = await openSse(app);
+    try {
+      await stream.waitFor((frame) => frame.event === 'hello');
+      await emitChannelChange(pool, fx.channelId);
+      await stream.waitForChanged('atrium', known.key);
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      expect(stream.changedForFeed('atrium')).toHaveLength(1);
+    } finally {
+      await stream.close();
     }
   });
 
@@ -477,6 +502,12 @@ async function openSse(appToListen: FastifyInstance) {
 
   return {
     waitFor,
+    changedForFeed(feed: string): SseFrame[] {
+      return frames.filter((frame) => {
+        if (frame.event !== 'changed' || !frame.data) return false;
+        return (JSON.parse(frame.data) as { feed?: string }).feed === feed;
+      });
+    },
     async waitForChanged(
       feed: string,
       key: string,

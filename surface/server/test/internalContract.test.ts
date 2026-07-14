@@ -225,6 +225,42 @@ describe('node-sync wire contract (fixtures)', () => {
     expectShape(res.json(), loadFixture('atrium-changes.json'));
   });
 
+  it('atrium channels and context-doc delta headers carry the contract shape', async () => {
+    const viewer = await session();
+    const target = await session();
+    const channels = await app.inject({
+      method: 'GET',
+      url: `/api/internal/sessions/${viewer}/atrium/channels`,
+      headers: { 'x-api-key': KEY },
+    });
+    expect(channels.statusCode).toBe(200);
+    expectShape(channels.json(), loadFixture('atrium-channels.json'));
+
+    const sessionDoc = await app.inject({
+      method: 'GET',
+      url: `/api/internal/sessions/${viewer}/atrium/sessions/${target}/transcript`,
+      headers: { 'x-api-key': KEY },
+    });
+    expect(sessionDoc.statusCode).toBe(200);
+    expect(sessionDoc.headers).toMatchObject({
+      'x-atrium-delta': 'full',
+      'x-atrium-next-seq': expect.any(String),
+      'x-atrium-epoch': expect.any(String),
+    });
+
+    const chatDoc = await app.inject({
+      method: 'GET',
+      url: `/api/internal/sessions/${viewer}/atrium/channels/${fx.channelId}/chat`,
+      headers: { 'x-api-key': KEY },
+    });
+    expect(chatDoc.statusCode).toBe(200);
+    expect(chatDoc.headers).toMatchObject({
+      'x-atrium-delta': 'full',
+      'x-atrium-next-event-id': expect.any(String),
+      'x-atrium-epoch': expect.any(String),
+    });
+  });
+
   // The bundles ELEMENT shape is pinned daemon-side (the fixture parses via
   // parse_profile_bundles); seeding a real bundle here would drag in the whole
   // profile-writeback pipeline, so the live check pins the envelope only.
