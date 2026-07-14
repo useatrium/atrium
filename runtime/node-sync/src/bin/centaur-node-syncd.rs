@@ -392,6 +392,14 @@ fn profile_harness_for_discovered(
 }
 
 #[cfg(any(target_os = "linux", test))]
+fn should_eager_poll_atrium(session: &SessionConfig, atrium_root: &std::path::Path) -> bool {
+    !session.manifest_atrium_session_empty
+        && !atrium_root
+            .join(centaur_node_sync::materializer::CONTEXT_READY_MARKER)
+            .is_file()
+}
+
+#[cfg(any(target_os = "linux", test))]
 fn probe_unclaimed_session_if_due(
     discovered: &centaur_node_sync::session_manifest::DiscoveredSession,
     eviction: &mut centaur_node_sync::eviction::SessionEvictionState,
@@ -419,6 +427,7 @@ fn select_poll_targets(
     probe_sessions: &[ProbeSession],
     states: &std::collections::HashMap<String, centaur_node_sync::state::DaemonState>,
     dirty_by_key: &std::collections::HashMap<String, centaur_node_sync::sse::DirtyFeeds>,
+    eager_sessions: &std::collections::HashSet<String>,
     full_remote_poll: bool,
 ) -> Vec<PollTarget> {
     let mut out = Vec::new();
@@ -427,7 +436,10 @@ fn select_poll_targets(
         if session.manifest_atrium_session_empty {
             continue;
         }
-        if !full_remote_poll && !dirty_by_key.contains_key(&session.atrium_session) {
+        if !full_remote_poll
+            && !dirty_by_key.contains_key(&session.atrium_session)
+            && !eager_sessions.contains(&session.session)
+        {
             continue;
         }
         let Some(state) = states.get(&session.session) else {
@@ -467,7 +479,7 @@ mod linux_daemon {
         ActiveSession, PollTarget, ProbeSession, SessionConfig, hydrate_state_if_needed,
         normalized_harness_home, probe_unclaimed_session_if_due, profile_harness_for_discovered,
         repo_worktrees, select_poll_targets, session_config_from_discovered,
-        warmcache_capture_if_needed,
+        should_eager_poll_atrium, warmcache_capture_if_needed,
     };
     use centaur_node_sync::backpressure;
     use centaur_node_sync::backpressure::Budget;
@@ -490,7 +502,8 @@ mod linux_daemon {
     use centaur_node_sync::fs_linux;
     use centaur_node_sync::http_client::HttpAtriumClient;
     use centaur_node_sync::materializer::{
-        materialize_changed_sessions, materialize_channel_docs, write_mount_readme,
+        CONTEXT_READY_MARKER, materialize_changed_sessions, materialize_channel_docs,
+        write_mount_readme,
     };
     use centaur_node_sync::overlay::RawEntry;
     use centaur_node_sync::overlay_mount::{
@@ -940,6 +953,7 @@ mod linux_daemon {
             let mut active_sessions = Vec::new();
             let mut probe_sessions = Vec::new();
             let mut current_atrium_keys = HashSet::new();
+            let mut eager_poll_sessions = HashSet::new();
             just_attached_sessions.clear();
 
             match discover_sessions(&overlays_root) {
@@ -1098,15 +1112,16 @@ mod linux_daemon {
                         let session = session_config_from_discovered(&discovered, &mounted);
                         mounted_overlays.insert(discovered.session.clone(), mounted);
                         let first_seen = !states.contains_key(&session.session);
-                        if first_seen {
-                            let atrium_root =
-                                super::scoped_atrium_root(&global.atrium_root, &session.session);
-                            if let Err(error) = write_mount_readme(&atrium_root) {
-                                eprintln!(
-                                    "session {}: seed Atrium context README: {error}",
-                                    session.session
-                                );
-                            }
+                        let atrium_root =
+                            super::scoped_atrium_root(&global.atrium_root, &session.session);
+                        if should_eager_poll_atrium(&session, &atrium_root) {
+                            eager_poll_sessions.insert(session.session.clone());
+                        }
+                        if first_seen && let Err(error) = write_mount_readme(&atrium_root) {
+                            eprintln!(
+                                "session {}: seed Atrium context README: {error}",
+                                session.session
+                            );
                         }
                         if watcher.is_enabled()
                             && (wip_remounted || !watched_sessions.contains(&session.session))
@@ -1175,6 +1190,7 @@ mod linux_daemon {
                 &probe_sessions,
                 &states,
                 &dirty_by_key,
+                &eager_poll_sessions,
                 full_remote_poll,
             );
             let remote_outcomes = poll_remote_targets(
@@ -1417,6 +1433,8 @@ mod linux_daemon {
         refresh_all_channels: bool,
     ) {
         let atrium_root = super::scoped_atrium_root(&global.atrium_root, &session.session);
+        let refresh_all_channels =
+            refresh_all_channels || !atrium_root.join(CONTEXT_READY_MARKER).is_file();
         if refresh_all_channels || !dirty_channel_ids.is_empty() {
             let only = if refresh_all_channels {
                 None
@@ -2908,10 +2926,61 @@ mod tests {
             &[],
             &states,
             &std::collections::HashMap::new(),
+            &std::collections::HashSet::new(),
             true,
         );
 
         assert!(targets.is_empty());
+    }
+
+    #[test]
+    fn context_not_ready_session_is_polled_without_reconcile_or_sse_dirty_mark() {
+        let session = warmcache_test_session();
+        let active_sessions = vec![ActiveSession {
+            config: session.clone(),
+            wip_remounted: false,
+            wip_restored: false,
+        }];
+        let mut states = std::collections::HashMap::new();
+        states.insert(session.session.clone(), state_with_cursors("7.1", "8.2"));
+        let eager_sessions = std::collections::HashSet::from([session.session.clone()]);
+
+        let targets = select_poll_targets(
+            &active_sessions,
+            &[],
+            &states,
+            &std::collections::HashMap::new(),
+            &eager_sessions,
+            false,
+        );
+
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0].session, session.session);
+        assert_eq!(targets[0].atrium_session, session.atrium_session);
+    }
+
+    #[test]
+    fn eager_atrium_poll_tracks_claim_and_context_readiness() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut session = warmcache_test_session();
+
+        assert!(should_eager_poll_atrium(&session, temp.path()));
+
+        std::fs::write(
+            temp.path()
+                .join(centaur_node_sync::materializer::CONTEXT_READY_MARKER),
+            b"ready\n",
+        )
+        .unwrap();
+        assert!(!should_eager_poll_atrium(&session, temp.path()));
+
+        std::fs::remove_file(
+            temp.path()
+                .join(centaur_node_sync::materializer::CONTEXT_READY_MARKER),
+        )
+        .unwrap();
+        session.manifest_atrium_session_empty = true;
+        assert!(!should_eager_poll_atrium(&session, temp.path()));
     }
 
     #[test]
@@ -2964,6 +3033,7 @@ mod tests {
             &[due],
             &states,
             &std::collections::HashMap::new(),
+            &std::collections::HashSet::new(),
             true,
         );
 

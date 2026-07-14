@@ -592,6 +592,66 @@ fn fake_codex_blocks_mode_spawns_app_server_and_translates_user_blocks() {
 }
 
 #[test]
+fn fake_codex_blocks_mode_waits_for_context_only_on_first_turn() {
+    let fake_codex = temp_path("fake-codex-context-gate.sh");
+    let fake_codex_log = temp_path("fake-codex-context-gate-requests.jsonl");
+    let home = temp_path("fake-codex-context-gate-home");
+    let context = home.join("context");
+    let marker = context.join(".atrium-context-ready");
+    std::fs::create_dir_all(&context).expect("create fake context mount");
+    let script = fake_codex_app_server_script(&fake_codex_log);
+    std::fs::write(&fake_codex, script).expect("write fake codex script");
+    let mut permissions = std::fs::metadata(&fake_codex)
+        .expect("fake codex metadata")
+        .permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&fake_codex, permissions).expect("chmod fake codex script");
+
+    let marker_writer = marker.clone();
+    let writer = thread::spawn(move || {
+        thread::sleep(Duration::from_millis(50));
+        std::fs::write(marker_writer, b"ready\n").expect("write context marker");
+    });
+    let mut bridge = BridgeProcess::spawn_harness_blocks_envs(
+        Harness::Codex,
+        None,
+        Some((
+            "CODEX_BIN",
+            fake_codex.to_str().expect("utf-8 fake codex path"),
+        )),
+        &[
+            ("HOME", home.to_str().expect("utf-8 fake home path")),
+            ("ATRIUM_CONTEXT_READY_TIMEOUT_MS", "1000"),
+        ],
+    );
+
+    let first_started = Instant::now();
+    let first = bridge.run_blocks_user_turn("first", Duration::from_secs(10));
+    let first_elapsed = first_started.elapsed();
+    writer.join().expect("join context marker writer");
+    assert_completed_turn(&first);
+    assert!(
+        first_elapsed >= Duration::from_millis(40),
+        "first Codex turn did not wait for context readiness: {first_elapsed:?}"
+    );
+
+    std::fs::remove_file(&marker).expect("remove context marker before second turn");
+    let second_started = Instant::now();
+    let second = bridge.run_blocks_user_turn("second", Duration::from_secs(10));
+    let second_elapsed = second_started.elapsed();
+    let _ = bridge.finish_successfully();
+    assert_completed_turn(&second);
+    assert!(
+        second_elapsed < Duration::from_millis(500),
+        "later Codex turn unexpectedly waited for context readiness: {second_elapsed:?}"
+    );
+
+    let _ = std::fs::remove_file(fake_codex);
+    let _ = std::fs::remove_file(fake_codex_log);
+    let _ = std::fs::remove_dir_all(home);
+}
+
+#[test]
 fn fake_codex_blocks_mode_relays_request_user_input_answers() {
     let fake_codex = temp_path("fake-codex-hitl.sh");
     let fake_codex_log = temp_path("fake-codex-hitl-requests.jsonl");
