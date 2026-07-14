@@ -16,6 +16,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   deriveSessionGlance,
+  formatDurationUnits,
   formatExactTimestamp,
   formatTime,
   formatBytes,
@@ -499,15 +500,62 @@ function SessionMetadata({ session }: { session: Session }) {
   );
 }
 
+function SessionSteerAction({
+  api,
+  sessionId,
+  prompt,
+  label,
+  sentLabel,
+  accessibilityLabel,
+}: {
+  api: Api;
+  sessionId: string;
+  prompt: string;
+  label: string;
+  sentLabel: string;
+  accessibilityLabel: string;
+}) {
+  const { colors } = useTheme();
+  const [sending, setSending] = useState(false);
+  const [sent, setSent] = useState(false);
+  const [error, setError] = useState(false);
+  const visibleLabel = error ? `${label} didn't send — try again` : sent ? sentLabel : label;
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={error ? visibleLabel : sent ? sentLabel : accessibilityLabel}
+      accessibilityState={{ disabled: sending || sent }}
+      disabled={sending || sent}
+      onPress={() => {
+        setSending(true);
+        setError(false);
+        api
+          .steerSession(sessionId, prompt, {}, { postToThread: true })
+          .then(() => setSent(true))
+          .catch(() => setError(true))
+          .finally(() => setSending(false));
+      }}
+      style={{ minHeight: 44, justifyContent: 'center' }}
+    >
+      <Text style={{ color: colors.danger, fontSize: font.xs, fontWeight: '700' }}>{visibleLabel}</Text>
+    </Pressable>
+  );
+}
+
 /** Agent-session rows render as a compact status card; tap through to the mobile viewer. */
 function SessionCard({
   message,
   session,
+  api,
+  meId,
   onOpen,
   onOpenPane,
 }: {
   message: ChatMessage;
   session?: Session;
+  api: Api;
+  meId: string;
   /** Primary tap — the conversation (thread) when the caller can open one. */
   onOpen?: (sessionId: string) => void;
   /** The workbench ("Show the work") — full transcript screen. */
@@ -532,9 +580,15 @@ function SessionCard({
     ' · ',
   );
   const terminal = session?.status === 'completed' || session?.status === 'failed' || session?.status === 'cancelled';
-  const collapsedTerminal = terminal && session?.status !== 'failed';
+  const collapsedTerminal = terminal;
+  const terminalClock =
+    clock ??
+    (terminal && session?.completedAt
+      ? formatDurationUnits(new Date(session.completedAt).getTime() - new Date(session.createdAt).getTime())
+      : null);
   const canOpenConversation = Boolean(message.sessionId && onOpen);
   const canOpenWork = Boolean(message.sessionId && (onOpenPane ?? onOpen));
+  const canRecover = session?.status === 'failed' && sessionDriverId(session) === meId;
 
   if (collapsedTerminal) {
     // One status voice: the collapsed strip still NAMES the state ("Done",
@@ -543,8 +597,8 @@ function SessionCard({
     // said "Done · Agent worked 7s".
     const terminalLine =
       session?.status === 'completed'
-        ? `${glance.label} · worked${clock ? ` ${clock}` : ''}`
-        : `${glance.label}${clock ? ` · after ${clock}` : ''}`;
+        ? `${glance.label} · worked${terminalClock ? ` ${terminalClock}` : ''}`
+        : `${glance.label}${terminalClock ? ` · after ${terminalClock}` : ''}`;
     return (
       <View
         testID="session-card"
@@ -573,6 +627,28 @@ function SessionCard({
         >
           <Text style={{ color: statusColor, fontSize: font.xs, fontWeight: '700' }}>{terminalLine}</Text>
         </Pressable>
+        {canRecover && message.sessionId ? (
+          <>
+            <Text style={{ color: colors.textFaint, fontSize: font.xs }}>·</Text>
+            <SessionSteerAction
+              api={api}
+              sessionId={message.sessionId}
+              prompt="Retry the failed turn."
+              label="Retry turn"
+              sentLabel="Retrying…"
+              accessibilityLabel="Retry failed turn"
+            />
+            <Text style={{ color: colors.textFaint, fontSize: font.xs }}>·</Text>
+            <SessionSteerAction
+              api={api}
+              sessionId={message.sessionId}
+              prompt="The last turn failed — explain what went wrong and what you'd try differently, then wait for my go-ahead."
+              label="Ask why"
+              sentLabel="Asked — check the thread"
+              accessibilityLabel="Ask why the agent failed"
+            />
+          </>
+        ) : null}
         <Text style={{ color: colors.textFaint, fontSize: font.xs }}>·</Text>
         <Pressable
           accessibilityRole="button"
@@ -621,11 +697,6 @@ function SessionCard({
           </Text>
         ) : null}
       </Pressable>
-      {session?.status === 'failed' ? (
-        <Text style={{ color: colors.textSecondary, fontSize: font.xs, lineHeight: 18 }}>
-          {session.resultText || 'The run ended before reporting a result.'}
-        </Text>
-      ) : null}
       {session ? (
         <>
           <Pressable
@@ -1145,6 +1216,8 @@ export const MessageRow = memo(function MessageRow({
       <SessionCard
         message={m}
         session={session}
+        api={api}
+        meId={meId}
         // Primary tap lands on the conversation (the card's thread); the full
         // transcript stays one tap away via "Show the work".
         onOpen={!inThread && onOpenThread ? () => onOpenThread(m) : onOpenSession}

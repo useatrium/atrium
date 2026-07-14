@@ -272,15 +272,27 @@ export function SessionCard({
           compact ? (
             terminal ? (
               <span className="min-w-0 flex-1 text-xs text-fg-secondary">
-                Agent worked {formatDurationUnits(Math.max(0, sessionElapsedMs(session, now)))}
+                {session.status === 'failed' ? 'Agent failed after' : 'Agent worked'}{' '}
+                {formatDurationUnits(Math.max(0, sessionElapsedMs(session, now)))}
               </span>
             ) : null
           ) : (
-            <>
+            // Its own wrappable row: `flex-1` on a bare span means flex-basis 0,
+            // and once the recovery links joined the strip the elapsed text
+            // collapsed to width 0 at phone widths and overprinted them. Grow
+            // from the natural width instead, and let the links wrap under.
+            <span className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-0.5">
               {terminal && (
-                <span className="min-w-0 flex-1 text-xs text-fg-secondary">
-                  Agent worked {formatDurationUnits(Math.max(0, sessionElapsedMs(session, now)))}
+                <span className="grow whitespace-nowrap text-xs text-fg-secondary">
+                  {session.status === 'failed' ? 'Agent failed after' : 'Agent worked'}{' '}
+                  {formatDurationUnits(Math.max(0, sessionElapsedMs(session, now)))}
                 </span>
+              )}
+              {terminal && session.status === 'failed' && meId != null && sessionDriverId(session) === meId && (
+                <>
+                  <RetryTurnAction sessionId={session.id} />
+                  <AskWhyAction sessionId={session.id} />
+                </>
               )}
               <button
                 type="button"
@@ -307,7 +319,7 @@ export function SessionCard({
                   Show the work →
                 </a>
               )}
-            </>
+            </span>
           )
         }
         meta={detailsOpen && !compact ? <SessionMetaLine session={session} spectators={spectators} /> : undefined}
@@ -348,28 +360,6 @@ export function SessionCard({
             />
           ) : null)}
       </ConversationHeader>
-
-      {/* Failed cards render this block even with NO result text — recovery
-          must not be gated on the presence of the very output whose absence
-          defines the worst failures. */}
-      {terminal && session.status === 'failed' && (
-        <div className="mt-1.5 border-l-2 border-edge-strong pl-2 text-xs leading-relaxed text-fg-secondary">
-          {/* A failed run CAN still report why it failed, and when it does the
-              server broadcasts that text as a reply message — so the card must
-              not repeat it, and must not claim silence that didn't happen.
-              Only genuine silence gets the silence line. */}
-          {!session.resultText && <span className="text-fg-muted">The run ended before reporting a result.</span>}
-          {/* sessionDriverId, not raw driverId: feed folds create terminal
-              entities with driverId null (no heal), and the seat model's
-              canonical fallback is the spawner. */}
-          {session.status === 'failed' && meId != null && sessionDriverId(session) === meId && (
-            <span className="mt-0.5 flex items-center gap-2.5">
-              <RetryTurnAction sessionId={session.id} />
-              <AskWhyAction sessionId={session.id} />
-            </span>
-          )}
-        </div>
-      )}
       {openable && <SessionAppPresentationCards session={session} surface="timeline" />}
     </div>
   );

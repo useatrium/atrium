@@ -67,23 +67,33 @@ describe('SessionCard terminal states', () => {
     expect(screen.queryByText('Ada Lovelace')).toBeNull();
   });
 
-  // A failed run that DID say why it failed has that text broadcast as a reply
-  // message. The card must neither repeat it nor claim a silence that didn't
-  // happen — but the recovery actions have to survive either way.
-  it('keeps both recovery actions on a failure that reported why, and claims no silence', () => {
+  it('collapses a failed run with inline recovery actions for the driver', () => {
     renderCard(session({ status: 'failed' }));
 
+    expect(screen.getByText('Agent failed after 4m')).toBeTruthy();
     expect(screen.queryByText('The run ended before reporting a result.')).toBeNull();
     expect(screen.queryByText('The complete agent answer used to be duplicated here.')).toBeNull();
     expect(screen.getByRole('button', { name: 'Retry turn' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Ask why' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Session details' })).toBeTruthy();
   });
 
-  it('names the silence, with both recovery actions, when a failure reported nothing at all', () => {
-    renderCard(session({ status: 'failed', resultText: null }));
+  it('omits recovery actions for a non-driver without restoring the failure block', () => {
+    render(
+      <ThemeProvider>
+        <SessionCard
+          session={session({ status: 'failed', resultText: null })}
+          spectators={2}
+          meId="u-2"
+          onOpen={vi.fn()}
+          onOpenPane={vi.fn()}
+        />
+      </ThemeProvider>,
+    );
 
-    expect(screen.getByText('The run ended before reporting a result.')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Retry turn' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Ask why' })).toBeTruthy();
+    expect(screen.getByText('Agent failed after 4m')).toBeTruthy();
+    expect(screen.queryByText('The run ended before reporting a result.')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Retry turn' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Ask why' })).toBeNull();
   });
 });
