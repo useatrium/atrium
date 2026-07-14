@@ -8,6 +8,7 @@ import {
   e2eDatabaseUrl,
   expectRead,
   expectUnread,
+  goOffline,
   injectQuestionRequested,
   login,
   loginViaForm,
@@ -362,7 +363,7 @@ test('offline send survives reload and confirms once', async ({ page, context })
   await openChannel(page, room);
 
   const text = unique('offline-survives');
-  await context.setOffline(true);
+  await goOffline(page, context);
   await mainComposer(page, room).fill(text);
   await mainComposer(page, room).press('Enter');
   await expect(timelineText(page, text)).toBeVisible();
@@ -448,7 +449,7 @@ test('offline edit and reaction land and survive reload', async ({ page, context
   await expect(messageRow(page, original)).toBeVisible();
   await expect(confirmedRowsWithText(page, original)).toHaveCount(1);
 
-  await context.setOffline(true);
+  await goOffline(page, context);
   const originalRow = messageRow(page, original);
   await originalRow.scrollIntoViewIfNeeded();
   await originalRow.hover();
@@ -497,7 +498,7 @@ test('disconnect burst heals through sync without reload', async ({ browser }) =
   await openChannel(alicePage, room);
   await openChannel(bobPage, room);
 
-  await alice.setOffline(true);
+  await goOffline(alicePage, alice);
   const first = unique('burst-first');
   const editedFirst = unique('burst-first-edited');
   const second = unique('burst-second');
@@ -538,10 +539,7 @@ test('session question requested while disconnected heals without reload', async
   await openChannel(page, room);
   const roomId = await channelId(page.context().request, room);
 
-  await context.setOffline(true);
-  // Chromium's Playwright offline emulation blocks traffic but does not fire
-  // the page-level event the app receives from a real browser.
-  await page.evaluate(() => window.dispatchEvent(new Event('offline')));
+  await goOffline(page, context, { signal: true });
   await expect(page.getByText(/Reconnecting/)).toBeVisible();
   const title = unique('offline-question-session');
   const injected = await injectQuestionRequested({ handle, channelId: roomId, title });
