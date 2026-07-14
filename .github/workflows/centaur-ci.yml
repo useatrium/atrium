@@ -205,6 +205,13 @@ jobs:
         working-directory: centaur/services/api-rs
         env:
           SESSION_SQLX_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:15433/sqlx_test?sslmode=disable
+          # The session-runtime DB-backed suite (warm-pool claims, orphan
+          # adoption, startup reconciliation) skips silently when this is
+          # unset — it had never run in CI before this was added. It shares
+          # the sqlx database: the embedded migration set manages cluster
+          # roles, so two migrated databases on one cluster conflict, and
+          # cargo runs test binaries sequentially so the suites never overlap.
+          SESSION_RUNTIME_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:15433/sqlx_test?sslmode=disable
         run: cargo test --workspace
 
       - name: Start API integration test dependencies
