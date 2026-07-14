@@ -248,6 +248,41 @@ describe('mergeHistory refreshes materialized rows already seen from the raw cac
     expect(rootRow(refreshed, 10).lastReplyId).toBe(20);
   });
 
+  // The warm-reload path: a healthy IndexedDB cache is replayed through
+  // mergeHistory and hydration never refetches a history page, so the raw
+  // root (cached before its replies existed) is the only root row available.
+  // The replies in the same replay must move its watermark themselves.
+  it('folds cached thread replies into the raw root on a warm reload', () => {
+    const refreshed = mergeHistory(
+      emptyTimeline,
+      [postedEvent(4, 'root'), postedEvent(5, 'reply from cache', { threadRootEventId: 4 })],
+      { hasMoreBefore: false },
+    );
+
+    expect(rootRow(refreshed, 4).replyCount).toBe(1);
+    expect(rootRow(refreshed, 4).lastReplyId).toBe(5);
+    // …without leaking the non-broadcast reply into the main feed.
+    expect(refreshed.main.some((m) => m.id === 5)).toBe(false);
+
+    const again = mergeHistory(
+      refreshed,
+      [postedEvent(4, 'root'), postedEvent(5, 'reply from cache', { threadRootEventId: 4 })],
+      { hasMoreBefore: false },
+    );
+    expect(rootRow(again, 4).replyCount).toBe(1);
+  });
+
+  it('does not double count a reply a materialized root already covers', () => {
+    const refreshed = mergeHistory(
+      emptyTimeline,
+      [postedEvent(4, 'root', { replyCount: 1, lastReplyId: 5 }), postedEvent(5, 'reply', { threadRootEventId: 4 })],
+      { hasMoreBefore: false },
+    );
+
+    expect(rootRow(refreshed, 4).replyCount).toBe(1);
+    expect(rootRow(refreshed, 4).lastReplyId).toBe(5);
+  });
+
   it('is idempotent when the same server page is merged twice', () => {
     const cached = applyEvent(emptyTimeline, postedEvent(10, 'stale root'));
     const page = [postedEvent(10, 'fresh root', { replyCount: 2, lastReplyId: 12 })];

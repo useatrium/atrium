@@ -943,7 +943,23 @@ export function mergeHistory(
       modifiers.push(ev);
       continue;
     }
-    if (!isRowEvent(ev.type) || (ev.threadRootEventId != null && ev.broadcast !== true)) continue;
+    if (!isRowEvent(ev.type)) continue;
+    if (ev.threadRootEventId != null) {
+      // A thread reply in the page still moves its root's watermark, exactly
+      // as applyEvent would have. This is what keeps a WARM reload honest: a
+      // healthy cache is replayed through here and never triggers a history
+      // refetch (hydration repairs only broken caches), so the raw root — from
+      // before its replies existed — is the only root row this fold will ever
+      // see. The id guard makes re-merges and materialized server roots (whose
+      // pair already covers this reply) no-ops.
+      main = main.map((m) =>
+        m.id === ev.threadRootEventId && ev.id > m.lastReplyId
+          ? { ...m, replyCount: m.replyCount + 1, lastReplyId: ev.id }
+          : m,
+      );
+      // Non-broadcast replies still stay out of the main feed.
+      if (ev.broadcast !== true) continue;
+    }
     const msg = messageFromEvent(ev);
     if (alreadySeen) {
       const refreshed = refreshConfirmedFromHistory(main, msg);
