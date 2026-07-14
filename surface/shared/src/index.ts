@@ -23,6 +23,7 @@ export * from './prefs';
 export * from './handle';
 export * from './reactions';
 export * from './entry-contracts';
+export * from './unfurl-contracts';
 export * from './useWs';
 export * from './util';
 export * from './agentProfiles';
