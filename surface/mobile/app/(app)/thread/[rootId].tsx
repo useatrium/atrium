@@ -437,7 +437,9 @@ export default function ThreadScreen() {
           }}
           onCancelEdit={() => setEditing(null)}
           allowAttachments
-          showBroadcastToggle
+          // Asides are thread-only by design: a session-attached thread never
+          // offers "Also send to channel" (the terminal answer broadcasts itself).
+          showBroadcastToggle={attachedSession == null}
           previewEntryLinks
           serverUrl={chat.serverUrl}
           resolveEntry={chat.resolveEntry}

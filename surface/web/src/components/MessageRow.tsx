@@ -1135,8 +1135,24 @@ function ChannelAnnotationCluster({
     const answer = answers.find((candidate) => candidate.sessionId === session.id);
     if (answer?.id != null) claimedAnswerIds.add(answer.id);
   }
-  const latest = answers.at(-1) ?? root.lastReply;
-  const latestIsAnchored = latest?.id != null && answers.some((answer) => answer.id === latest.id);
+  // Anchored rows always render through the full MessageRow machinery. The
+  // compact preview renders ONLY when the newest reply is not anchored (a
+  // plain thread reply) — matching by id OR clientMsgId so an optimistic
+  // broadcast echo can never double-render next to its confirmed row.
+  const anchoredMaxId = answers.reduce((acc, answer) => Math.max(acc, answer.id ?? 0), 0);
+  const previewCandidate = root.lastReply;
+  const previewIsAnchored =
+    previewCandidate != null &&
+    answers.some(
+      (answer) =>
+        (answer.id != null && answer.id === previewCandidate.id) ||
+        (answer.clientMsgId != null && answer.clientMsgId === previewCandidate.clientMsgId),
+    );
+  const latest =
+    previewCandidate != null && !previewIsAnchored && (previewCandidate.id ?? 0) > anchoredMaxId
+      ? previewCandidate
+      : (answers.at(-1) ?? previewCandidate);
+  const latestIsAnchored = latest != null && (answers.includes(latest) || previewIsAnchored);
   const latestIsQuestionSlot =
     latest?.sessionEventType === 'question_requested' &&
     latest.sessionId != null &&
@@ -1167,11 +1183,33 @@ function ChannelAnnotationCluster({
         aria-hidden="true"
         className="absolute -left-[27px] top-0 h-[14px] w-[13px] rounded-bl-md border-b border-l border-edge-strong"
       />
+      {/* Reading order is chronological: the collapsed middle first, then the
+          freshest content (latest reply / answer / live strip) bottom-most. */}
+      {earlierCount > 0 && (
+        <button
+          type="button"
+          onClick={toggleEarlier}
+          className="block text-xs font-medium text-fg-muted hover:text-fg-secondary hover:underline"
+        >
+          {expanded ? '▼' : '▶'} {earlierCount} earlier {earlierCount === 1 ? 'reply' : 'replies'}
+        </button>
+      )}
+      {expanded && (
+        <div className="space-y-2 border-l border-edge-strong pl-3">
+          {loading ? (
+            <div className="text-xs text-fg-muted">Loading replies…</div>
+          ) : (
+            shownEarlier.map((reply) => <CompactReply key={reply.id ?? reply.clientMsgId} message={reply} />)
+          )}
+        </div>
+      )}
       {sessions.map((slotSession) => (
         <AgentSessionSlot
           key={slotSession.id}
           session={slotSession}
-          answer={answers.find((candidate) => candidate.sessionId === slotSession.id)}
+          answer={answers.find(
+            (candidate) => candidate.sessionId === slotSession.id && candidate.sessionEventType === 'replied',
+          )}
           meId={meId}
           meHandle={meHandle}
           rootId={root.id!}
@@ -1199,24 +1237,6 @@ function ChannelAnnotationCluster({
             onMarkupEntry={onMarkupEntry}
           />
         ))}
-      {earlierCount > 0 && (
-        <button
-          type="button"
-          onClick={toggleEarlier}
-          className="block text-xs font-medium text-fg-muted hover:text-fg-secondary hover:underline"
-        >
-          {expanded ? '▼' : '▶'} {earlierCount} earlier {earlierCount === 1 ? 'reply' : 'replies'}
-        </button>
-      )}
-      {expanded && (
-        <div className="space-y-2 border-l border-edge-strong pl-3">
-          {loading ? (
-            <div className="text-xs text-fg-muted">Loading replies…</div>
-          ) : (
-            shownEarlier.map((reply) => <CompactReply key={reply.id ?? reply.clientMsgId} message={reply} />)
-          )}
-        </div>
-      )}
       {latest && !latestIsAnchored && !latestIsQuestionSlot && <CompactReply message={latest} />}
       <button
         type="button"

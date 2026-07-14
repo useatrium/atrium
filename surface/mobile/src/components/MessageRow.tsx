@@ -742,7 +742,6 @@ function AgentReplyRow({ message }: { message: ChatMessage }) {
         <Text numberOfLines={1} style={{ color: colors.text, flexShrink: 1, fontSize: font.md, fontWeight: '700' }}>
           Agent
         </Text>
-        <AgentMark size={16} />
       </View>
       <MarkdownText text={message.text} />
     </View>
@@ -798,7 +797,6 @@ function SessionEventLine({
           <Text numberOfLines={1} style={{ color: colors.text, flexShrink: 1, fontSize: font.md, fontWeight: '700' }}>
             Agent
           </Text>
-          <AgentMark size={16} />
         </View>
       )}
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 6 }}>

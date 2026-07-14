@@ -98,9 +98,12 @@ export function Timeline({
     );
     const answers = new Map<number, ChatMessage[]>();
     for (const message of messages) {
+      // EVERY broadcast thread reply anchors under its loaded root — agent
+      // answers and human "also send to channel" replies alike. Rendering it
+      // twice (cluster preview + standalone row) is the failure mode.
       if (
         message.broadcast === true &&
-        message.sessionEventType === 'replied' &&
+        message.sessionEventType !== 'question_requested' &&
         message.threadRootEventId != null &&
         rootIds.has(message.threadRootEventId)
       ) {
@@ -110,12 +113,7 @@ export function Timeline({
       }
     }
     const isAnchoredAnnotationEvent = (message: ChatMessage) =>
-      message.broadcast === true &&
-      message.threadRootEventId != null &&
-      rootIds.has(message.threadRootEventId) &&
-      (message.sessionEventType === 'replied' ||
-        message.sessionEventType === 'question_requested' ||
-        (message.sessionId != null && message.sessionTask != null));
+      message.broadcast === true && message.threadRootEventId != null && rootIds.has(message.threadRootEventId);
     return {
       visibleMessages: messages.filter((message) => !isAnchoredAnnotationEvent(message)),
       answersByRoot: answers,

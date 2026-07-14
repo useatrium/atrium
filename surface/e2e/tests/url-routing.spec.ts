@@ -108,7 +108,7 @@ test('opening a session updates the URL and Back closes it without a document re
   });
   // The channel owns a compact annotation slot; its quiet session link opens
   // the same pane without rendering the rail's SessionCard in the feed.
-  await messageRow(page, task)
+  await messageRow(page, title)
     .getByRole('button', { name: /view session|open session/ })
     .first()
     .click();
