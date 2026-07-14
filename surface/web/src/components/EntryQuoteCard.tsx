@@ -3,14 +3,23 @@ import {
   containsCriticMarkup,
   splitMarkdownFrontmatter,
   parseCriticMarkup,
+  type AttachmentMeta,
   type CriticBlock,
 } from '@atrium/surface-client';
 import { resolveEntryQuote, type ResolvedEntryQuote } from '../lib/entryLinks';
+import { attachmentMetaToPreviewFile } from '../lib/previewFiles';
 import { ApplyMarkupMenu } from './ApplyMarkupMenu';
 import { CriticMarkupView } from './CriticMarkupView';
+import { FileIcon } from './icons';
+import { Lightbox, type PreviewFile } from './media';
+import { TimelineImage } from './TimelineImage';
 
 const MAX_EXCERPT_LENGTH = 200;
 const MAX_MARKUP_CARD_BYTES = 64 * 1024;
+const MAX_VISIBLE_CARDS = 3;
+const MAX_THUMBNAILS = 4;
+const COLLAPSED_STORAGE_KEY = 'atrium.unfurl.collapsed';
+const MAX_COLLAPSED_KEYS = 500;
 
 export interface EntryQuoteApplyContext {
   channelId: string;
@@ -270,46 +279,235 @@ export function EntryInlineChip({ handle, compact = false }: { handle: string; c
   );
 }
 
+function collapsedStorageKeys(): string[] {
+  if (typeof localStorage === 'undefined') return [];
+  try {
+    const value: unknown = JSON.parse(localStorage.getItem(COLLAPSED_STORAGE_KEY) ?? '[]');
+    return Array.isArray(value) ? value.filter((key): key is string => typeof key === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+function updateCollapsedStorage(key: string, collapsed: boolean): void {
+  if (typeof localStorage === 'undefined') return;
+  const keys = collapsedStorageKeys().filter((stored) => stored !== key);
+  if (collapsed) keys.push(key);
+  try {
+    localStorage.setItem(COLLAPSED_STORAGE_KEY, JSON.stringify(keys.slice(-MAX_COLLAPSED_KEYS)));
+  } catch {
+    // Storage can be disabled or full. Collapse still works for this render.
+  }
+}
+
+function isAttachmentMeta(value: unknown): value is AttachmentMeta {
+  if (value == null || typeof value !== 'object') return false;
+  const attachment = value as Record<string, unknown>;
+  return (
+    typeof attachment.id === 'string' &&
+    attachment.id.length > 0 &&
+    typeof attachment.filename === 'string' &&
+    typeof attachment.contentType === 'string' &&
+    typeof attachment.size === 'number' &&
+    Number.isFinite(attachment.size) &&
+    attachment.size >= 0 &&
+    (attachment.width === undefined ||
+      (typeof attachment.width === 'number' && Number.isFinite(attachment.width) && attachment.width > 0)) &&
+    (attachment.height === undefined ||
+      (typeof attachment.height === 'number' && Number.isFinite(attachment.height) && attachment.height > 0))
+  );
+}
+
+function entryAttachments(entry: ResolvedEntryQuote): AttachmentMeta[] {
+  return Array.isArray(entry.meta.attachments) ? entry.meta.attachments.filter(isAttachmentMeta) : [];
+}
+
+function artifactImagePreview(entry: ResolvedEntryQuote): PreviewFile | null {
+  if (entry.targetType !== 'artifact' || typeof entry.meta.path !== 'string') return null;
+  const extension = entry.meta.path.split('.').at(-1)?.toLowerCase();
+  if (!extension || !['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'avif'].includes(extension)) return null;
+  const artifactId =
+    typeof entry.meta.artifactId === 'string' ? entry.meta.artifactId : artifactIdFromHandle(entry.handle);
+  if (!artifactId) return null;
+  const mimeExtension = extension === 'jpg' ? 'jpeg' : extension === 'svg' ? 'svg+xml' : extension;
+  return {
+    id: artifactId,
+    name: basename(entry.meta.path),
+    mime: `image/${mimeExtension}`,
+    mediaKind: 'image',
+    contentUrl: `/api/files/artifact/${encodeURIComponent(artifactId)}/content`,
+    path: entry.meta.path,
+  };
+}
+
+function EntryMedia({ entry }: { entry: ResolvedEntryQuote }) {
+  const attachments = entryAttachments(entry);
+  const attachmentImages = attachments.filter((attachment) => attachment.contentType.startsWith('image/'));
+  const nonImages = attachments.filter((attachment) => !attachment.contentType.startsWith('image/'));
+  const artifactImage = artifactImagePreview(entry);
+  const previewFiles = [
+    ...(artifactImage ? [artifactImage] : []),
+    ...attachmentImages.map((attachment) => attachmentMetaToPreviewFile(attachment)),
+  ];
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
+
+  if (previewFiles.length === 0 && nonImages.length === 0) return null;
+
+  return (
+    <>
+      {previewFiles.length > 0 ? (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {previewFiles.slice(0, MAX_THUMBNAILS).map((file, index) => (
+            <button
+              key={`${file.contentUrl}:${file.id}`}
+              type="button"
+              title={file.name}
+              aria-label={`Open ${file.name}`}
+              onClick={() => setLightboxIndex(index)}
+              className="block min-w-0 rounded-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+            >
+              <TimelineImage
+                src={file.contentUrl}
+                alt={file.name}
+                width={file.width}
+                height={file.height}
+                loading="lazy"
+                className="max-h-28 w-auto rounded-md border border-edge object-cover"
+              />
+            </button>
+          ))}
+          {previewFiles.length > MAX_THUMBNAILS ? (
+            <div className="flex min-h-16 min-w-16 items-center justify-center rounded-md border border-edge bg-surface-overlay px-2 text-xs font-medium text-fg-muted">
+              +{previewFiles.length - MAX_THUMBNAILS}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+      {nonImages.length > 0 ? (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {nonImages.map((attachment) => (
+            <span
+              key={attachment.id}
+              className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-edge bg-surface-overlay px-2 py-1 text-xs text-fg-secondary"
+              title={attachment.filename}
+            >
+              <FileIcon />
+              <span className="max-w-48 truncate">{attachment.filename}</span>
+            </span>
+          ))}
+        </div>
+      ) : null}
+      {lightboxIndex != null && previewFiles.length > 0 ? (
+        <Lightbox
+          files={previewFiles}
+          index={Math.min(lightboxIndex, previewFiles.length - 1)}
+          onIndexChange={setLightboxIndex}
+          onClose={() => setLightboxIndex(null)}
+        />
+      ) : null}
+    </>
+  );
+}
+
+function CardControls({
+  collapsed,
+  onCollapsedChange,
+  onSuppress,
+}: {
+  collapsed: boolean;
+  onCollapsedChange: (collapsed: boolean) => void;
+  onSuppress?: () => void;
+}) {
+  return (
+    <div className="ml-auto flex shrink-0 items-center gap-0.5">
+      <button
+        type="button"
+        title={collapsed ? 'Expand preview' : 'Collapse preview'}
+        aria-label={collapsed ? 'Expand preview' : 'Collapse preview'}
+        onClick={() => onCollapsedChange(!collapsed)}
+        className="flex h-6 w-6 items-center justify-center rounded text-xs text-fg-muted hover:bg-surface-overlay hover:text-fg"
+      >
+        <span aria-hidden="true">{collapsed ? '▸' : '▾'}</span>
+      </button>
+      {onSuppress ? (
+        <button
+          type="button"
+          title="Remove preview"
+          aria-label="Remove preview"
+          onClick={onSuppress}
+          className="flex h-6 w-6 items-center justify-center rounded text-base leading-none text-fg-muted hover:bg-surface-overlay hover:text-danger-text"
+        >
+          <span aria-hidden="true">×</span>
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
 export function EntryQuoteCard({
   entry,
   applyContext,
+  messageEventId,
+  onSuppress,
 }: {
   entry: ResolvedEntryQuote;
   applyContext?: EntryQuoteApplyContext | null;
+  messageEventId?: number | null;
+  onSuppress?: () => void;
 }) {
   const context = contextLine(entry);
   const contextApply = useContext(EntryQuoteApplyContext);
   const effectiveApplyContext = applyContext === undefined ? contextApply : applyContext;
   const markup = useMarkupArtifact(entry);
   const [expanded, setExpanded] = useState(false);
+  const storageKey = messageEventId != null ? `${messageEventId}:${entry.handle}` : null;
+  const [collapsed, setCollapsed] = useState(() => storageKey != null && collapsedStorageKeys().includes(storageKey));
+  const title = entry.tombstoned
+    ? 'deleted entry'
+    : markup?.title ||
+      (entry.targetType === 'artifact' && typeof entry.meta.path === 'string'
+        ? basename(entry.meta.path)
+        : entry.actorLabel || targetLabel(entry.targetType));
+  const setCardCollapsed = (next: boolean) => {
+    setCollapsed(next);
+    if (storageKey) updateCollapsedStorage(storageKey, next);
+  };
+
+  const header = (
+    <div className="flex min-w-0 items-center gap-2 text-xs text-fg-secondary">
+      <span className={entry.tombstoned ? 'text-fg-muted' : 'text-accent-text'}>
+        <TargetIcon targetType={entry.targetType} />
+      </span>
+      <a href={`/e/${entry.handle}`} className="min-w-0 truncate font-medium text-fg no-underline hover:underline">
+        {title}
+      </a>
+      {!collapsed ? <span className="shrink-0 text-fg-muted">{targetLabel(entry.targetType)}</span> : null}
+      <CardControls collapsed={collapsed} onCollapsedChange={setCardCollapsed} onSuppress={onSuppress} />
+    </div>
+  );
+
+  if (collapsed) {
+    return (
+      <article className="rounded-md border border-edge bg-surface-raised/55 px-2 py-1.5 text-fg-body">
+        {header}
+      </article>
+    );
+  }
 
   if (entry.tombstoned) {
     return (
-      <a
-        href={`/e/${entry.handle}`}
-        className="block rounded-md border border-edge bg-surface-raised/45 px-3 py-2 text-fg-muted no-underline hover:border-edge-strong hover:bg-surface-raised/65"
-      >
-        <div className="flex items-center gap-2 text-xs">
-          <span className="text-fg-muted">
-            <TargetIcon targetType={entry.targetType} />
-          </span>
-          <span className="font-medium">deleted entry</span>
-          {context ? <span className="truncate text-fg-muted">{context}</span> : null}
-        </div>
-      </a>
+      <article className="rounded-md border border-edge bg-surface-raised/45 px-3 py-2 text-fg-muted">
+        {header}
+        {context ? <div className="mt-1 truncate text-xs text-fg-muted">{context}</div> : null}
+      </article>
     );
   }
 
   if (markup) {
     return (
       <article className="block rounded-md border border-edge bg-surface-raised/55 px-3 py-2 text-fg-body">
-        <div className="flex items-center gap-2 text-xs text-fg-secondary">
-          <span className="text-accent-text">
-            <ArtifactIcon />
-          </span>
-          <a href={`/e/${entry.handle}`} className="min-w-0 truncate font-medium text-fg no-underline hover:underline">
-            {markup.title}
-          </a>
+        {header}
+        <div className="mt-1 flex items-center gap-2 text-xs">
           <span className="rounded border border-edge-strong bg-surface-overlay px-1.5 py-0.5 text-3xs font-semibold uppercase tracking-wide text-fg-muted">
             markup
           </span>
@@ -321,12 +519,12 @@ export function EntryQuoteCard({
           <div className={expanded ? '' : 'max-h-[19.6rem] overflow-hidden'}>
             <CriticMarkupView text={markup.body} blocks={markup.blocks} className="text-[0.82rem]" />
           </div>
-          {!expanded && (
+          {!expanded ? (
             <div
               aria-hidden="true"
               className="pointer-events-none absolute inset-x-0 bottom-0 h-12 bg-gradient-to-b from-transparent to-surface-raised"
             />
-          )}
+          ) : null}
         </div>
         <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
           <button
@@ -352,41 +550,43 @@ export function EntryQuoteCard({
   }
 
   return (
-    <a
-      href={`/e/${entry.handle}`}
-      className="block rounded-md border border-edge bg-surface-raised/55 px-3 py-2 text-fg-body no-underline hover:border-accent-hover/70 hover:bg-surface-raised"
-    >
-      <div className="flex items-center gap-2 text-xs text-fg-secondary">
-        <span className="text-accent-text">
-          <TargetIcon targetType={entry.targetType} />
-        </span>
-        <span className="font-medium text-fg">{entry.actorLabel || targetLabel(entry.targetType)}</span>
-        <span className="text-fg-muted">{targetLabel(entry.targetType)}</span>
-      </div>
-      <blockquote className="mt-1 border-l-2 border-edge-strong pl-2 text-sm leading-relaxed text-fg-body">
-        {excerpt(entry.text)}
-      </blockquote>
-      {context ? <div className="mt-1 text-xs text-fg-muted">{context}</div> : null}
-    </a>
+    <article className="rounded-md border border-edge bg-surface-raised/55 px-3 py-2 text-fg-body hover:border-accent-hover/70 hover:bg-surface-raised">
+      {header}
+      <a href={`/e/${entry.handle}`} className="block text-fg-body no-underline">
+        <blockquote className="mt-1 border-l-2 border-edge-strong pl-2 text-sm leading-relaxed">
+          {excerpt(entry.text)}
+        </blockquote>
+        {context ? <div className="mt-1 text-xs text-fg-muted">{context}</div> : null}
+      </a>
+      <EntryMedia entry={entry} />
+    </article>
   );
 }
 
 export function EntryQuoteCards({
   handles,
   applyContext,
+  messageEventId,
+  canManage = false,
+  onSuppress,
 }: {
   handles: string[];
   applyContext?: EntryQuoteApplyContext | null;
+  messageEventId?: number | null;
+  canManage?: boolean;
+  onSuppress?: (handle: string) => void;
 }) {
-  const key = handles.join('\n');
+  const [showAll, setShowAll] = useState(false);
+  const visibleHandles = showAll ? handles : handles.slice(0, MAX_VISIBLE_CARDS);
+  const key = visibleHandles.join('\n');
   const [entries, setEntries] = useState<ResolvedEntryQuote[]>([]);
 
   useEffect(() => {
     let active = true;
     setEntries([]);
-    if (handles.length === 0) return undefined;
+    if (visibleHandles.length === 0) return undefined;
 
-    void Promise.all(handles.map((handle) => resolveEntryQuote(handle))).then((resolved) => {
+    void Promise.all(visibleHandles.map((handle) => resolveEntryQuote(handle))).then((resolved) => {
       if (!active) return;
       setEntries(resolved.filter((entry): entry is ResolvedEntryQuote => entry != null));
     });
@@ -396,13 +596,28 @@ export function EntryQuoteCards({
     };
   }, [key]);
 
-  if (entries.length === 0) return null;
+  if (handles.length === 0) return null;
 
   return (
     <div className="mt-2 flex flex-col gap-1.5 whitespace-normal">
       {entries.map((entry) => (
-        <EntryQuoteCard key={entry.handle} entry={entry} applyContext={applyContext} />
+        <EntryQuoteCard
+          key={entry.handle}
+          entry={entry}
+          applyContext={applyContext}
+          messageEventId={messageEventId}
+          onSuppress={canManage && onSuppress ? () => onSuppress(entry.handle) : undefined}
+        />
       ))}
+      {handles.length > MAX_VISIBLE_CARDS ? (
+        <button
+          type="button"
+          onClick={() => setShowAll((value) => !value)}
+          className="self-start text-xs font-medium text-accent-text hover:underline"
+        >
+          {showAll ? 'Show fewer' : `Show ${handles.length - MAX_VISIBLE_CARDS} more`}
+        </button>
+      ) : null}
     </div>
   );
 }

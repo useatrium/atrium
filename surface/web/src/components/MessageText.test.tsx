@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { clearEntryResolveCacheForTests, type ResolvedEntryQuote } from '../lib/entryLinks';
 import { CompactMarkdownText, MessageText } from './MessageText';
@@ -8,11 +8,13 @@ import { clearUserDirectoryForTests } from '../userDirectory';
 
 const resolveEntryMock = vi.hoisted(() => vi.fn());
 const usersMock = vi.hoisted(() => vi.fn());
+const suppressMessageUnfurlsMock = vi.hoisted(() => vi.fn());
 
 vi.mock('../api', () => ({
   api: {
     resolveEntry: resolveEntryMock,
     users: usersMock,
+    suppressMessageUnfurls: suppressMessageUnfurlsMock,
   },
 }));
 
@@ -50,6 +52,8 @@ beforeEach(() => {
       },
     ],
   });
+  suppressMessageUnfurlsMock.mockReset().mockResolvedValue({ event: {} });
+  localStorage.clear();
 });
 
 afterEach(() => {
@@ -77,8 +81,9 @@ describe('MessageText entry links', () => {
 
     expect(screen.queryByText('/e/evt_1')).toBeNull();
     expect(await screen.findByText('Ada: “Inline quote body”')).toBeTruthy();
-    expect(screen.getByRole('link', { name: /Ada:/ }).getAttribute('href')).toBe('/e/evt_1');
+    expect(screen.getAllByRole('link').some((link) => link.getAttribute('href') === '/e/evt_1')).toBe(true);
     expect(container.textContent).toContain('Please review Ada: “Inline quote body”.');
+    expect(await screen.findByText('Inline quote body')).toBeTruthy();
   });
 
   it('drops standalone refs from the body and renders quote cards below', async () => {
@@ -101,7 +106,18 @@ describe('MessageText entry links', () => {
     expect(resolveEntryMock).toHaveBeenCalledWith('evt_1');
   });
 
-  it('dedupes standalone handles and renders at most three quote cards per message', async () => {
+  it('dedupes inline and standalone handles in first-seen order', async () => {
+    resolveEntryMock.mockImplementation((handle: string) =>
+      Promise.resolve(entry({ handle, text: `Quote for ${handle}` })),
+    );
+
+    render(<MessageText text={'inline /e/evt_2 and /e/evt_1\n/e/evt_2\n/e/evt_3'} />);
+
+    await screen.findByText('Quote for evt_3');
+    expect(resolveEntryMock.mock.calls.map(([handle]) => handle)).toEqual(['evt_2', 'evt_1', 'evt_3']);
+  });
+
+  it('caps cards at three and expands the rest', async () => {
     resolveEntryMock.mockImplementation((handle: string) =>
       Promise.resolve(
         entry({
@@ -118,10 +134,64 @@ describe('MessageText entry links', () => {
     expect(screen.getByText('Quote for evt_1')).toBeTruthy();
     expect(screen.getByText('Quote for evt_2')).toBeTruthy();
     expect(screen.queryByText('Quote for evt_4')).toBeNull();
-    expect(resolveEntryMock).toHaveBeenCalledTimes(3);
-    expect(resolveEntryMock).toHaveBeenNthCalledWith(1, 'evt_1');
-    expect(resolveEntryMock).toHaveBeenNthCalledWith(2, 'evt_2');
-    expect(resolveEntryMock).toHaveBeenNthCalledWith(3, 'evt_3');
+    fireEvent.click(screen.getByRole('button', { name: 'Show 1 more' }));
+    expect(await screen.findByText('Quote for evt_4')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Show fewer' })).toBeTruthy();
+  });
+
+  it('excludes suppressed handles', async () => {
+    resolveEntryMock.mockImplementation((handle: string) =>
+      Promise.resolve(entry({ handle, text: `Quote for ${handle}` })),
+    );
+
+    render(
+      <MessageText
+        text="/e/evt_1 /e/evt_2"
+        unfurls={{ messageEventId: 40, suppressed: ['evt_1'], canManage: false }}
+      />,
+    );
+
+    expect(await screen.findByText('Quote for evt_2')).toBeTruthy();
+    expect(screen.queryByText('Quote for evt_1')).toBeNull();
+    expect(resolveEntryMock).toHaveBeenCalledWith('evt_2');
+  });
+
+  it('shows remove preview only to the author and suppresses optimistically', async () => {
+    resolveEntryMock.mockResolvedValue(entry());
+    const { rerender } = render(
+      <MessageText text="/e/evt_1" unfurls={{ messageEventId: 40, suppressed: [], canManage: false }} />,
+    );
+
+    await screen.findByText('Inline quote body');
+    expect(screen.queryByRole('button', { name: 'Remove preview' })).toBeNull();
+
+    rerender(<MessageText text="/e/evt_1" unfurls={{ messageEventId: 40, suppressed: [], canManage: true }} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Remove preview' }));
+    expect(screen.queryByText('Inline quote body')).toBeNull();
+    expect(suppressMessageUnfurlsMock).toHaveBeenCalledWith(40, ['evt_1']);
+  });
+
+  it('renders image thumbnails and non-image file chips without thumbnail navigation', async () => {
+    resolveEntryMock.mockResolvedValue(
+      entry({
+        meta: {
+          attachments: [
+            { id: 'image-1', filename: 'screen.png', contentType: 'image/png', size: 123, width: 320, height: 200 },
+            { id: 'pdf-1', filename: 'notes.pdf', contentType: 'application/pdf', size: 456 },
+          ],
+        },
+      }),
+    );
+
+    render(<MessageText text="/e/evt_1" />);
+
+    const thumbnail = await screen.findByRole('img', { name: 'screen.png' });
+    expect(thumbnail.getAttribute('src')).toBe('/api/files/image-1');
+    expect(screen.getByText('notes.pdf')).toBeTruthy();
+    const locationBefore = window.location.href;
+    fireEvent.click(thumbnail);
+    expect(window.location.href).toBe(locationBefore);
+    expect(screen.getByRole('dialog')).toBeTruthy();
   });
 
   it('does not restore a raw standalone ref when resolving fails', async () => {

@@ -47,6 +47,7 @@ import { TimelineImage } from './TimelineImage';
 import { useLongPress } from './useLongPress';
 import { VoiceMessage } from '../VoiceMessage';
 import { entryShareUrl, fileShareUrl } from '../lib/publicUrl';
+import { attachmentMetaToPreviewFile } from '../lib/previewFiles';
 import { sessionsApi } from '../sessions/api';
 import { useUserDirectory } from '../userDirectory';
 import { MentionSuggestions } from './MentionSuggestions';
@@ -258,17 +259,7 @@ export const MessageRow = memo(function MessageRow({
     };
   }, []);
   const attachments = m.attachments ?? [];
-  const previewFiles: PreviewFile[] = attachments.map((a) => ({
-    id: a.id,
-    name: a.filename,
-    mime: a.contentType,
-    mediaKind: mediaKindForContentType(a.contentType),
-    sizeBytes: a.size,
-    width: a.width,
-    height: a.height,
-    contentUrl: `/api/files/${a.id}`,
-    ...(m.id != null ? { source: { kind: 'message' as const, id: String(m.id) } } : {}),
-  }));
+  const previewFiles: PreviewFile[] = attachments.map((attachment) => attachmentMetaToPreviewFile(attachment, m.id));
   const openAttachment = (index: number) => {
     setLightboxIndex(index);
   };
@@ -724,7 +715,16 @@ export const MessageRow = memo(function MessageRow({
           <VoiceMessage voice={m.voice} />
         ) : (
           <div className="whitespace-pre-wrap break-words text-sm leading-relaxed text-fg-body">
-            <MessageText text={m.text} meId={meId} meHandle={meHandle} />
+            <MessageText
+              text={m.text}
+              meId={meId}
+              meHandle={meHandle}
+              unfurls={{
+                messageEventId: m.id,
+                suppressed: m.suppressedUnfurls ?? [],
+                canManage: m.id != null && meId === m.author.id,
+              }}
+            />
             {m.pendingEdit ? (
               <span className="ml-1 text-2xs text-warning-text">(saving edit)</span>
             ) : m.edited ? (
@@ -1025,15 +1025,6 @@ export const MessageRow = memo(function MessageRow({
     </div>
   );
 });
-
-function mediaKindForContentType(contentType: string): PreviewFile['mediaKind'] {
-  if (contentType.startsWith('image/')) return 'image';
-  if (contentType.startsWith('video/')) return 'video';
-  if (contentType.startsWith('audio/')) return 'audio';
-  if (contentType === 'application/pdf') return 'document';
-  if (contentType.startsWith('text/')) return 'text';
-  return 'opaque';
-}
 
 function isInteractiveTarget(target: EventTarget): boolean {
   return (

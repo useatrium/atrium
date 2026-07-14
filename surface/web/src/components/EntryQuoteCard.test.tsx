@@ -57,7 +57,7 @@ describe('entry links', () => {
 
     expect(screen.getByText(/^A{197}\.\.\.$/)).toBeTruthy();
     expect(screen.getByText('#general - Planning session')).toBeTruthy();
-    expect(screen.getByRole('link').getAttribute('href')).toBe('/e/evt_1');
+    expect(screen.getAllByRole('link').every((link) => link.getAttribute('href') === '/e/evt_1')).toBe(true);
     expect(screen.getByText('Transcript record')).toBeTruthy();
   });
 
@@ -144,7 +144,7 @@ describe('entry links', () => {
       />,
     );
 
-    expect(screen.getByText('memo.md')).toBeTruthy();
+    expect(screen.getAllByText('memo.md').length).toBeGreaterThan(0);
     expect(await screen.findByText('Edited memo')).toBeTruthy();
     expect(screen.getByText('markup')).toBeTruthy();
     expect(screen.getByText('Show all changes (2)')).toBeTruthy();

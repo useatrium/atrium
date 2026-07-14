@@ -16,6 +16,7 @@ export interface EntryLinkMatch {
 export interface PartitionedEntryLinks {
   bodyText: string;
   standaloneHandles: string[];
+  allHandles: string[];
 }
 
 export function isEntryHandle(handle: string): boolean {
@@ -92,11 +93,20 @@ export function extractEntryLinkHandles(text: string, _serverUrl: string, limit 
 }
 
 export function partitionEntryLinks(text: string, _serverUrl: string, limit = MAX_ENTRY_LINKS): PartitionedEntryLinks {
-  if (!text) return { bodyText: '', standaloneHandles: [] };
+  if (!text) return { bodyText: '', standaloneHandles: [], allHandles: [] };
 
   const bodyLines: string[] = [];
   const standaloneHandles: string[] = [];
   const seen = new Set<string>();
+  const allHandles: string[] = [];
+
+  for (const { handle } of findEntryLinkMatches(text)) {
+    if (seen.has(handle)) continue;
+    seen.add(handle);
+    allHandles.push(handle);
+  }
+
+  seen.clear();
 
   for (const line of text.split(/\r\n|\r|\n/)) {
     const trimmed = line.trim();
@@ -120,5 +130,11 @@ export function partitionEntryLinks(text: string, _serverUrl: string, limit = MA
     }
   }
 
-  return { bodyText: bodyLines.join('\n'), standaloneHandles };
+  return { bodyText: bodyLines.join('\n'), standaloneHandles, allHandles };
+}
+
+export function unsuppressedEntryHandles(handles: readonly string[], suppressed: readonly string[] = []): string[] {
+  if (suppressed.length === 0) return [...handles];
+  const hidden = new Set(suppressed);
+  return handles.filter((handle) => !hidden.has(handle));
 }
