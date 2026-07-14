@@ -15,9 +15,9 @@ use std::{
 
 use centaur_iron_control::SessionRegistrar;
 use centaur_sandbox_core::{
-    Mount, MountKind, PrepareClaimedOverlayHome, RepoCacheAccess, SandboxBackend,
-    SandboxCapabilities as BackendSandboxCapabilities, SandboxError, SandboxId, SandboxIoGuard,
-    SandboxRead, SandboxSpec, SandboxStatus, SandboxWrite,
+    FinalizeClaimedSession, Mount, MountKind, PrepareClaimedOverlayHome, RepoCacheAccess,
+    SandboxBackend, SandboxCapabilities as BackendSandboxCapabilities, SandboxError, SandboxId,
+    SandboxIoGuard, SandboxRead, SandboxSpec, SandboxStatus, SandboxWrite,
 };
 use centaur_sandbox_manager::{
     SandboxManager, SandboxReaper, SandboxReaperConfig, WarmPoolConfig, WarmPoolError,
@@ -3408,15 +3408,39 @@ impl SessionRuntime {
                                 return Ok(sandbox_id);
                             }
                         } else {
-                            if let Err(error) = self
-                                .assign_claimed_warm_proxy(
-                                    &id,
-                                    thread_key,
-                                    execution_id,
-                                    iron_control_principal,
-                                )
-                                .await
-                            {
+                            // Repo-less claim: no overlay home to compose, but
+                            // the warm pod's manifest still carries no session
+                            // identity. Finalize it so node-sync can
+                            // materialize ~/context for the claimed session —
+                            // otherwise the sandbox runs with the identity-less
+                            // warm manifest and never receives context docs.
+                            let proxy_future = self.assign_claimed_warm_proxy(
+                                &id,
+                                thread_key,
+                                execution_id,
+                                iron_control_principal,
+                            );
+                            let finalize_future = async {
+                                let finalize_started = Instant::now();
+                                let result = self
+                                    .sandbox_runtime
+                                    .manager
+                                    .finalize_claimed_session(
+                                        &id,
+                                        FinalizeClaimedSession {
+                                            thread_key: thread_key.as_str(),
+                                            execution_id,
+                                            harness: Some(harness_server_subcommand(harness_type)),
+                                            harness_thread_id: resume_thread_id,
+                                            harness_home: harness_home_for_spec(harness_type),
+                                        },
+                                    )
+                                    .await;
+                                (result, finalize_started.elapsed())
+                            };
+                            let (proxy_result, (finalize_result, finalize_duration)) =
+                                tokio::join!(proxy_future, finalize_future);
+                            if let Err(error) = proxy_result {
                                 let error_text = error.to_string();
                                 record_sandbox_warm_pool_claim("proxy_assign_error");
                                 self.retire_claimed_warm_sandbox(
@@ -3443,23 +3467,63 @@ impl SessionRuntime {
                                     .await?;
                                 return Err(SessionRuntimeError::Sandbox(error));
                             }
-                            record_sandbox_warm_pool_claim("hit");
-                            span.record("centaur.sandbox_id", sandbox_id.as_str());
-                            span.record("sandbox_id", sandbox_id.as_str());
-                            let ready_duration = ensure_started.elapsed();
-                            self.record_claimed_warm_sandbox(ClaimedWarmSandboxObservation {
-                                thread_key,
-                                execution_id,
-                                sandbox_id: sandbox_id.as_str(),
-                                harness_type,
-                                workload_key: workload_key.as_str(),
-                                iron_control_principal,
-                                desired_capabilities,
-                                ready_duration,
-                                post_claim_overlay_home: false,
-                            })
-                            .await?;
-                            return Ok(sandbox_id);
+                            if let Err(error) = finalize_result {
+                                record_sandbox_warm_pool_claim("manifest_finalize_error");
+                                let error_text = error.to_string();
+                                warn!(
+                                    component = COMPONENT_SESSION_RUNTIME,
+                                    event = "sandbox_ensure_warm_manifest_finalize_failed",
+                                    thread_key = %thread_key,
+                                    execution_id,
+                                    sandbox_id = %sandbox_id,
+                                    manifest_finalize_duration_ms = duration_millis_u64(finalize_duration),
+                                    error = %error_text,
+                                    "retiring claimed warm sandbox after session manifest finalize failed"
+                                );
+                                self.retire_claimed_warm_sandbox(
+                                    thread_key,
+                                    execution_id,
+                                    &sandbox_id,
+                                    &id,
+                                    &error_text,
+                                    "claimed session manifest finalize failed",
+                                )
+                                .await;
+                                self.store
+                                    .append_event(
+                                        thread_key,
+                                        Some(execution_id),
+                                        "session.warm_sandbox_manifest_finalize_failed",
+                                        json!({
+                                            "execution_id": execution_id,
+                                            "thread_key": thread_key.as_str(),
+                                            "sandbox_id": sandbox_id.as_str(),
+                                            "error": error_text,
+                                            "fallback": "cold_create",
+                                        }),
+                                    )
+                                    .await?;
+                                // Fall through to cold creation below, mirroring
+                                // the post-claim overlay preparation failure path.
+                            } else {
+                                record_sandbox_warm_pool_claim("hit");
+                                span.record("centaur.sandbox_id", sandbox_id.as_str());
+                                span.record("sandbox_id", sandbox_id.as_str());
+                                let ready_duration = ensure_started.elapsed();
+                                self.record_claimed_warm_sandbox(ClaimedWarmSandboxObservation {
+                                    thread_key,
+                                    execution_id,
+                                    sandbox_id: sandbox_id.as_str(),
+                                    harness_type,
+                                    workload_key: workload_key.as_str(),
+                                    iron_control_principal,
+                                    desired_capabilities,
+                                    ready_duration,
+                                    post_claim_overlay_home: false,
+                                })
+                                .await?;
+                                return Ok(sandbox_id);
+                            }
                         }
                     }
                     Ok(None) => record_sandbox_warm_pool_claim("miss"),
@@ -10120,6 +10184,8 @@ mod adoption_tests {
         created_specs: std::sync::Mutex<Vec<SandboxSpec>>,
         prepared_homes: std::sync::Mutex<Vec<PreparedHomeCall>>,
         prepare_home_error: std::sync::Mutex<Option<String>>,
+        finalized_sessions: std::sync::Mutex<Vec<FinalizedSessionCall>>,
+        finalize_session_error: std::sync::Mutex<Option<String>>,
         supports_prepare_home: AtomicBool,
         open_count: AtomicUsize,
         stop_count: AtomicUsize,
@@ -10141,6 +10207,14 @@ mod adoption_tests {
         execution_id: String,
         repos_json: String,
         precomposed: bool,
+    }
+
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    struct FinalizedSessionCall {
+        sandbox_id: String,
+        thread_key: String,
+        execution_id: String,
+        harness: Option<String>,
     }
 
     struct CreateGate {
@@ -10165,6 +10239,8 @@ mod adoption_tests {
                 created_specs: std::sync::Mutex::new(Vec::new()),
                 prepared_homes: std::sync::Mutex::new(Vec::new()),
                 prepare_home_error: std::sync::Mutex::new(None),
+                finalized_sessions: std::sync::Mutex::new(Vec::new()),
+                finalize_session_error: std::sync::Mutex::new(None),
                 supports_prepare_home: AtomicBool::new(false),
                 open_count: AtomicUsize::new(0),
                 stop_count: AtomicUsize::new(0),
@@ -10206,6 +10282,14 @@ mod adoption_tests {
 
         fn fail_prepare_home(&self, error: impl Into<String>) {
             *self.prepare_home_error.lock().unwrap() = Some(error.into());
+        }
+
+        fn finalized_sessions(&self) -> Vec<FinalizedSessionCall> {
+            self.finalized_sessions.lock().unwrap().clone()
+        }
+
+        fn fail_finalize_session(&self, error: impl Into<String>) {
+            *self.finalize_session_error.lock().unwrap() = Some(error.into());
         }
 
         fn fail_stop(&self, error: impl Into<String>) {
@@ -10352,6 +10436,26 @@ mod adoption_tests {
                 precomposed: request.precomposed,
             });
             if let Some(error) = self.prepare_home_error.lock().unwrap().clone() {
+                return Err(SandboxError::backend(error));
+            }
+            Ok(())
+        }
+
+        async fn finalize_claimed_session(
+            &self,
+            id: &SandboxId,
+            request: FinalizeClaimedSession<'_>,
+        ) -> SandboxResult<()> {
+            self.finalized_sessions
+                .lock()
+                .unwrap()
+                .push(FinalizedSessionCall {
+                    sandbox_id: id.as_str().to_owned(),
+                    thread_key: request.thread_key.to_owned(),
+                    execution_id: request.execution_id.to_owned(),
+                    harness: request.harness.map(str::to_owned),
+                });
+            if let Some(error) = self.finalize_session_error.lock().unwrap().clone() {
                 return Err(SandboxError::backend(error));
             }
             Ok(())
@@ -11401,6 +11505,111 @@ mod adoption_tests {
         assert!(all.iter().any(|event| {
             event.event_type == "session.warm_sandbox_post_claim_bind_failed"
                 && event.payload["sandbox_id"] == json!("warm-bind-fails")
+                && event.payload["fallback"] == json!("cold_create")
+        }));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn repoless_warm_claim_finalizes_session_manifest() {
+        let Some(store) = test_store().await else {
+            return;
+        };
+        let _serial = lock_clean_slate().await;
+        let thread_key =
+            ThreadKey::parse(format!("test:warm-repoless-hit-{}", uuid::Uuid::new_v4())).unwrap();
+        create_test_session(&store, &thread_key, json!({})).await;
+        let execution_id = create_test_execution(&store, &thread_key).await;
+        let backend = Arc::new(MockBackend::new(SandboxStatus::Running, Vec::new()));
+        let runtime = runtime_with_warm_pool(&store, backend.clone(), SandboxSpec::new("mock"));
+        insert_ready_warm_for_runtime(&store, &runtime, "warm-repoless-hit").await;
+
+        let sandbox_id = runtime
+            .ensure_session_sandbox(EnsureSessionSandboxInput {
+                thread_key: &thread_key,
+                harness_type: &HarnessType::Codex,
+                persona_id: None,
+                existing_sandbox_id: None,
+                existing_sandbox_capabilities: None,
+                desired_capabilities: &SessionSandboxCapabilities::default_enabled(),
+                iron_control_principal: None,
+                resume_thread_id: None,
+                session_repos_json: None,
+                execution_id: &execution_id,
+                environment: &[],
+            })
+            .await
+            .expect("ensure sandbox");
+
+        assert_eq!(sandbox_id, "warm-repoless-hit");
+        assert!(backend.created_specs().is_empty());
+        assert!(backend.prepared_homes().is_empty());
+        assert_eq!(
+            backend.finalized_sessions(),
+            vec![FinalizedSessionCall {
+                sandbox_id: "warm-repoless-hit".to_owned(),
+                thread_key: thread_key.as_str().to_owned(),
+                execution_id: execution_id.clone(),
+                harness: Some("codex".to_owned()),
+            }]
+        );
+        assert_eq!(
+            store.get_session(&thread_key).await.unwrap().sandbox_id,
+            Some("warm-repoless-hit".to_owned())
+        );
+        let all = events(&store, &thread_key).await;
+        assert!(all.iter().any(|event| {
+            event.event_type == "session.warm_sandbox_claimed"
+                && event.payload["post_claim_overlay_home"] == json!(false)
+        }));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn repoless_finalize_failure_retires_warm_and_cold_spawns() {
+        let Some(store) = test_store().await else {
+            return;
+        };
+        let _serial = lock_clean_slate().await;
+        let thread_key = ThreadKey::parse(format!(
+            "test:warm-repoless-fallback-{}",
+            uuid::Uuid::new_v4()
+        ))
+        .unwrap();
+        create_test_session(&store, &thread_key, json!({})).await;
+        let execution_id = create_test_execution(&store, &thread_key).await;
+        let backend = Arc::new(MockBackend::new(SandboxStatus::Running, Vec::new()));
+        backend.fail_finalize_session("manifest write failed");
+        let runtime = runtime_with_warm_pool(&store, backend.clone(), SandboxSpec::new("mock"));
+        insert_ready_warm_for_runtime(&store, &runtime, "warm-finalize-fails").await;
+
+        let sandbox_id = runtime
+            .ensure_session_sandbox(EnsureSessionSandboxInput {
+                thread_key: &thread_key,
+                harness_type: &HarnessType::Codex,
+                persona_id: None,
+                existing_sandbox_id: None,
+                existing_sandbox_capabilities: None,
+                desired_capabilities: &SessionSandboxCapabilities::default_enabled(),
+                iron_control_principal: None,
+                resume_thread_id: None,
+                session_repos_json: None,
+                execution_id: &execution_id,
+                environment: &[],
+            })
+            .await
+            .expect("ensure sandbox");
+
+        assert_eq!(sandbox_id, "mock-sbx");
+        assert_eq!(backend.finalized_sessions().len(), 1);
+        assert_eq!(backend.stopped(), vec!["warm-finalize-fails".to_owned()]);
+        assert_eq!(backend.created_specs().len(), 1);
+        assert_eq!(
+            store.get_session(&thread_key).await.unwrap().sandbox_id,
+            Some("mock-sbx".to_owned())
+        );
+        let all = events(&store, &thread_key).await;
+        assert!(all.iter().any(|event| {
+            event.event_type == "session.warm_sandbox_manifest_finalize_failed"
+                && event.payload["sandbox_id"] == json!("warm-finalize-fails")
                 && event.payload["fallback"] == json!("cold_create")
         }));
     }

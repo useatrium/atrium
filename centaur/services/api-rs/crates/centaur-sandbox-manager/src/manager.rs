@@ -1,8 +1,8 @@
 use std::{sync::Arc, time::Duration};
 
 use centaur_sandbox_core::{
-    DesiredSandboxState, ObservedSandbox, PrepareClaimedOverlayHome, SandboxBackend, SandboxHandle,
-    SandboxId, SandboxIo, SandboxResult, SandboxSpec, SandboxStatus,
+    DesiredSandboxState, FinalizeClaimedSession, ObservedSandbox, PrepareClaimedOverlayHome,
+    SandboxBackend, SandboxHandle, SandboxId, SandboxIo, SandboxResult, SandboxSpec, SandboxStatus,
 };
 use centaur_telemetry::{record_sandbox_operation, record_sandbox_startup_duration};
 use tokio::time::Instant;
@@ -173,6 +173,14 @@ where
         request: PrepareClaimedOverlayHome<'_>,
     ) -> SandboxResult<()> {
         self.backend.prepare_claimed_overlay_home(id, request).await
+    }
+
+    pub async fn finalize_claimed_session(
+        &self,
+        id: &SandboxId,
+        request: FinalizeClaimedSession<'_>,
+    ) -> SandboxResult<()> {
+        self.backend.finalize_claimed_session(id, request).await
     }
 
     pub async fn observe(&self, id: &SandboxId) -> SandboxResult<ObservedSandbox> {

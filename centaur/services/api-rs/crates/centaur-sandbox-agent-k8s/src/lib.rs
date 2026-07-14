@@ -13,8 +13,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use async_trait::async_trait;
 use centaur_iron_control::IronControlClient;
 use centaur_sandbox_core::{
-    MountKind, ObservedSandbox, PrepareClaimedOverlayHome, SandboxBackend, SandboxError,
-    SandboxHandle, SandboxId, SandboxIo, SandboxResult, SandboxSpec, SandboxStatus,
+    FinalizeClaimedSession, MountKind, ObservedSandbox, PrepareClaimedOverlayHome, SandboxBackend,
+    SandboxError, SandboxHandle, SandboxId, SandboxIo, SandboxResult, SandboxSpec, SandboxStatus,
 };
 use k8s_openapi::api::core::v1::{ContainerStatus, PersistentVolumeClaim, Pod};
 use kube::api::{
@@ -274,26 +274,32 @@ impl AgentSandboxBackend {
         }
     }
 
-    async fn run_claimed_overlay_home_helper(
-        &self,
-        id: &SandboxId,
-        request: PrepareClaimedOverlayHome<'_>,
-    ) -> SandboxResult<()> {
-        let total_started = Instant::now();
+    fn claim_overlay_config(&self, operation: &'static str) -> SandboxResult<&OverlayConfig> {
         let overlay = self
             .config
             .overlay
             .as_ref()
-            .ok_or_else(|| SandboxError::Unsupported {
+            .ok_or(SandboxError::Unsupported {
                 backend: BACKEND_NAME,
-                operation: "prepare_claimed_overlay_home",
+                operation,
             })?;
         if !overlay.flat_home {
             return Err(SandboxError::Unsupported {
                 backend: BACKEND_NAME,
-                operation: "prepare_claimed_overlay_home",
+                operation,
             });
         }
+        Ok(overlay)
+    }
+
+    async fn run_claim_provision_helper(
+        &self,
+        id: &SandboxId,
+        overlay: &OverlayConfig,
+        script: &str,
+        ctx: ClaimProvisionContext<'_>,
+    ) -> SandboxResult<()> {
+        let total_started = Instant::now();
         let pod = self
             .get_pod(id)
             .await?
@@ -313,10 +319,11 @@ impl AgentSandboxBackend {
             node_name,
             overlay,
             &self.config,
-            request,
+            script,
+            ctx,
         )?;
         match self
-            .run_claimed_overlay_home_in_node_sync(id, node_name, request, overlay)
+            .run_claimed_overlay_home_in_node_sync(id, node_name, script, ctx)
             .await
         {
             Ok(true) => return Ok(()),
@@ -372,18 +379,18 @@ impl AgentSandboxBackend {
         &self,
         id: &SandboxId,
         node_name: &str,
-        request: PrepareClaimedOverlayHome<'_>,
-        overlay: &OverlayConfig,
+        script: &str,
+        ctx: ClaimProvisionContext<'_>,
     ) -> SandboxResult<bool> {
         let Some(pod_name) = self.node_sync_pod_on_node(node_name).await? else {
             tracing::info!(
                 sandbox_id = id.as_str(),
                 node_name,
+                operation = ctx.operation,
                 "node-sync pod not found on sandbox node; falling back to claimed overlay helper pod"
             );
             return Ok(false);
         };
-        let script = claimed_overlay_home_script(id, overlay, &self.config, request);
         let started = Instant::now();
         let params = AttachParams::default()
             .container(NODE_SYNC_CONTAINER_NAME)
@@ -392,7 +399,7 @@ impl AgentSandboxBackend {
             .stderr(true);
         let mut attached = match self
             .pods()
-            .exec(&pod_name, ["/bin/sh", "-ceu", script.as_str()], &params)
+            .exec(&pod_name, ["/bin/sh", "-ceu", script], &params)
             .await
         {
             Ok(attached) => attached,
@@ -401,8 +408,9 @@ impl AgentSandboxBackend {
                     sandbox_id = id.as_str(),
                     node_name,
                     node_sync_pod = %pod_name,
+                    operation = ctx.operation,
                     error = %error,
-                    "failed to exec claimed overlay preparation in node-sync; falling back to helper pod"
+                    "failed to exec claimed overlay provisioning in node-sync; falling back to helper pod"
                 );
                 return Ok(false);
             }
@@ -447,7 +455,8 @@ impl AgentSandboxBackend {
             .is_none_or(|status| status.eq_ignore_ascii_case("success"));
         if !status_ok {
             return Err(SandboxError::backend(format!(
-                "claimed overlay preparation in node-sync pod {pod_name} failed: status={status:?} stdout={} stderr={}",
+                "{} in node-sync pod {pod_name} failed: status={status:?} stdout={} stderr={}",
+                ctx.operation,
                 stdout.trim(),
                 stderr.trim()
             )));
@@ -456,10 +465,11 @@ impl AgentSandboxBackend {
             sandbox_id = id.as_str(),
             node_name,
             node_sync_pod = %pod_name,
+            operation = ctx.operation,
             duration_ms = started.elapsed().as_millis() as u64,
             stdout = %stdout.trim(),
             stderr = %stderr.trim(),
-            "claimed overlay home prepared via node-sync exec"
+            "claimed overlay provisioning completed via node-sync exec"
         );
         Ok(true)
     }
@@ -830,7 +840,44 @@ impl SandboxBackend for AgentSandboxBackend {
         id: &SandboxId,
         request: PrepareClaimedOverlayHome<'_>,
     ) -> SandboxResult<()> {
-        self.run_claimed_overlay_home_helper(id, request).await
+        let overlay = self.claim_overlay_config("prepare_claimed_overlay_home")?;
+        let script = claimed_overlay_home_script(id, overlay, &self.config, request);
+        self.run_claim_provision_helper(
+            id,
+            overlay,
+            &script,
+            ClaimProvisionContext {
+                operation: "prepare_claimed_overlay_home",
+                thread_key: request.thread_key,
+                execution_id: request.execution_id,
+            },
+        )
+        .await
+    }
+
+    async fn finalize_claimed_session(
+        &self,
+        id: &SandboxId,
+        request: FinalizeClaimedSession<'_>,
+    ) -> SandboxResult<()> {
+        // Without overlay provisioning there is no manifest carrying session
+        // identity, so there is nothing to finalize. Legacy non-flat-home
+        // overlays have no warm claim slot either.
+        let Ok(overlay) = self.claim_overlay_config("finalize_claimed_session") else {
+            return Ok(());
+        };
+        let script = finalize_claimed_session_script(id, overlay, &self.config, request);
+        self.run_claim_provision_helper(
+            id,
+            overlay,
+            &script,
+            ClaimProvisionContext {
+                operation: "finalize_claimed_session",
+                thread_key: request.thread_key,
+                execution_id: request.execution_id,
+            },
+        )
+        .await
     }
 
     async fn ensure_iron_control_proxy_resources(
@@ -1381,15 +1428,24 @@ fn build_agent_sandbox(
     Ok(sandbox)
 }
 
+/// Identifying context shared by the claim-time provisioning operations that
+/// run through the node-sync exec / helper-pod machinery.
+#[derive(Clone, Copy)]
+struct ClaimProvisionContext<'a> {
+    operation: &'static str,
+    thread_key: &'a str,
+    execution_id: &'a str,
+}
+
 fn build_claimed_overlay_home_helper_pod(
     name: &str,
     id: &SandboxId,
     node_name: &str,
     overlay: &OverlayConfig,
     config: &AgentSandboxConfig,
-    request: PrepareClaimedOverlayHome<'_>,
+    script: &str,
+    ctx: ClaimProvisionContext<'_>,
 ) -> SandboxResult<Pod> {
-    let script = claimed_overlay_home_script(id, overlay, config, request);
     let merged_slot = overlay.merged_root.join(id.as_str());
 
     let mut pod_spec = json!({
@@ -1459,8 +1515,8 @@ fn build_claimed_overlay_home_helper_pod(
                 "app.kubernetes.io/name": "centaur-sandbox-claim-home",
             },
             "annotations": {
-                RUNTIME_THREAD_KEY_ANNOTATION: request.thread_key,
-                RUNTIME_EXECUTION_ID_ANNOTATION: request.execution_id,
+                RUNTIME_THREAD_KEY_ANNOTATION: ctx.thread_key,
+                RUNTIME_EXECUTION_ID_ANNOTATION: ctx.execution_id,
             },
         },
         "spec": pod_spec,
@@ -1468,6 +1524,62 @@ fn build_claimed_overlay_home_helper_pod(
     .map_err(|err| {
         SandboxError::InvalidSpec(format!("invalid claimed overlay home helper pod: {err}"))
     })
+}
+
+/// Session-identity and harness fields the claim-time manifest rewrite stamps
+/// into the overlay manifest. This is the single arg-builder both claim
+/// provisioning scripts go through, so the manifest can never gain a second,
+/// diverging identity-write path.
+struct ClaimManifestIdentity<'a> {
+    thread_key: &'a str,
+    harness: Option<&'a str>,
+    harness_thread_id: Option<&'a str>,
+    harness_home: Option<&'a str>,
+}
+
+fn claim_manifest_provision_args(
+    id: &SandboxId,
+    overlay: &OverlayConfig,
+    merged_home: &Path,
+    identity: ClaimManifestIdentity<'_>,
+    repos_json: Option<&str>,
+    generic_home_lower: Option<&Path>,
+) -> Vec<String> {
+    let context_source = overlay::atrium_context_host_path(id.as_str());
+    let mut provision_args = vec![
+        "--manifest-only".to_owned(),
+        "--session".to_owned(),
+        id.as_str().to_owned(),
+        "--atrium-session".to_owned(),
+        identity.thread_key.to_owned(),
+        "--overlays-root".to_owned(),
+        path_string(&overlay.overlays_root),
+        "--merged-root".to_owned(),
+        path_string(&overlay.merged_root),
+        "--merged-path".to_owned(),
+        path_string(merged_home),
+        "--agent-uid".to_owned(),
+        overlay.agent_uid.to_string(),
+        "--flat-home".to_owned(),
+        "--context-source".to_owned(),
+        context_source,
+    ];
+    if let Some(repos_json) = repos_json {
+        provision_args.push("--repos-json".to_owned());
+        provision_args.push(repos_json.to_owned());
+    }
+    if let Some(generic_home_lower) = generic_home_lower {
+        provision_args.push("--generic-home-lower".to_owned());
+        provision_args.push(path_string(generic_home_lower));
+    }
+    push_optional_arg(&mut provision_args, "--harness", identity.harness);
+    push_optional_arg(
+        &mut provision_args,
+        "--harness-thread-id",
+        identity.harness_thread_id,
+    );
+    push_optional_arg(&mut provision_args, "--harness-home", identity.harness_home);
+    provision_args
 }
 
 fn claimed_overlay_home_script(
@@ -1478,49 +1590,30 @@ fn claimed_overlay_home_script(
 ) -> String {
     let merged_slot = overlay.merged_root.join(id.as_str());
     let merged_home = merged_slot.join("agent");
-    let context_source = overlay::atrium_context_host_path(id.as_str());
     let ready_marker = merged_home.join(overlay::READY_MARKER_FILE);
     let manifest_path = overlay
         .overlays_root
         .join(overlay::SESSIONS_DIR)
         .join(format!("{}.json", id.as_str()));
-    let mut provision_args = vec![
-        "--manifest-only".to_owned(),
-        "--session".to_owned(),
-        id.as_str().to_owned(),
-        "--atrium-session".to_owned(),
-        request.thread_key.to_owned(),
-        "--overlays-root".to_owned(),
-        path_string(&overlay.overlays_root),
-        "--merged-root".to_owned(),
-        path_string(&overlay.merged_root),
-        "--merged-path".to_owned(),
-        path_string(&merged_home),
-        "--agent-uid".to_owned(),
-        overlay.agent_uid.to_string(),
-        "--flat-home".to_owned(),
-        "--context-source".to_owned(),
-        context_source.clone(),
-        "--repos-json".to_owned(),
-        request.repos_json.to_owned(),
-    ];
     let generic_home_lower = (!request.precomposed).then(|| {
         overlay
             .overlays_root
             .join(overlay::WARM_HOME_LOWER_DIR)
             .join(id.as_str())
     });
-    if let Some(generic_home_lower) = &generic_home_lower {
-        provision_args.push("--generic-home-lower".to_owned());
-        provision_args.push(path_string(generic_home_lower));
-    }
-    push_optional_arg(&mut provision_args, "--harness", request.harness);
-    push_optional_arg(
-        &mut provision_args,
-        "--harness-thread-id",
-        request.harness_thread_id,
+    let provision_args = claim_manifest_provision_args(
+        id,
+        overlay,
+        &merged_home,
+        ClaimManifestIdentity {
+            thread_key: request.thread_key,
+            harness: request.harness,
+            harness_thread_id: request.harness_thread_id,
+            harness_home: request.harness_home,
+        },
+        Some(request.repos_json),
+        generic_home_lower.as_deref(),
     );
-    push_optional_arg(&mut provision_args, "--harness-home", request.harness_home);
 
     let mut parts = Vec::new();
     if let Some(generic_home_lower) = &generic_home_lower {
@@ -1536,6 +1629,48 @@ fn claimed_overlay_home_script(
         Some(&path_string(&manifest_path)),
     ));
     parts.join("\n")
+}
+
+/// Manifest-only rewrite for a repo-less warm claim: stamp the claimed
+/// session's identity into the warm pod's overlay manifest without touching
+/// its already-mounted flat home. The node-sync daemon picks up the new
+/// `atrium_session` and materializes `~/context` for it; without this rewrite
+/// a repo-less claim would keep the identity-less warm manifest and the
+/// sandbox would never receive context documents.
+fn finalize_claimed_session_script(
+    id: &SandboxId,
+    overlay: &OverlayConfig,
+    config: &AgentSandboxConfig,
+    request: FinalizeClaimedSession<'_>,
+) -> String {
+    let merged_home = overlay.merged_root.join(id.as_str()).join("agent");
+    let ready_marker = merged_home.join(overlay::READY_MARKER_FILE);
+    let manifest_path = overlay
+        .overlays_root
+        .join(overlay::SESSIONS_DIR)
+        .join(format!("{}.json", id.as_str()));
+    let provision_args = claim_manifest_provision_args(
+        id,
+        overlay,
+        &merged_home,
+        ClaimManifestIdentity {
+            thread_key: request.thread_key,
+            harness: request.harness,
+            harness_thread_id: request.harness_thread_id,
+            harness_home: request.harness_home,
+        },
+        None,
+        None,
+    );
+    [
+        shell_join_provision_overlay(&provision_args),
+        readiness_wait_script(
+            &path_string(&ready_marker),
+            config.ready_timeout,
+            Some(&path_string(&manifest_path)),
+        ),
+    ]
+    .join("\n")
 }
 
 fn snapshot_generic_home_script(source_home: &Path, generic_home_lower: &Path) -> String {
@@ -2567,6 +2702,82 @@ mod tests {
     }
 
     #[test]
+    fn finalize_claimed_session_script_rewrites_manifest_without_repos_or_snapshot() {
+        let mut overlay = OverlayConfig::new("centaur-node-sync:test");
+        overlay.flat_home = true;
+        let config = AgentSandboxConfig::new("centaur").overlay(overlay.clone());
+
+        let script = finalize_claimed_session_script(
+            &SandboxId::new("asbx-test"),
+            &overlay,
+            &config,
+            FinalizeClaimedSession {
+                thread_key: "thread-1",
+                execution_id: "exec-1",
+                harness: Some("codex"),
+                harness_thread_id: None,
+                harness_home: Some("/home/agent/.codex"),
+            },
+        );
+
+        assert!(script.contains("'--manifest-only'"));
+        assert!(script.contains("'--atrium-session' 'thread-1'"));
+        assert!(script.contains("'--merged-path' '/run/centaur/merged/asbx-test/agent'"));
+        assert!(script.contains("'--flat-home'"));
+        assert!(script.contains("'--context-source' '/var/lib/centaur/atrium/asbx-test'"));
+        assert!(script.contains("'--harness' 'codex'"));
+        assert!(script.contains("'--harness-home' '/home/agent/.codex'"));
+        assert!(!script.contains("--repos-json"));
+        assert!(!script.contains("--generic-home-lower"));
+        assert!(!script.contains("rm -rf \"$dst\""));
+        assert!(script.contains("/run/centaur/merged/asbx-test/agent/.centaur-workspace-ready"));
+    }
+
+    #[test]
+    fn prepare_and_finalize_share_one_manifest_identity_arg_path() {
+        let mut overlay = OverlayConfig::new("centaur-node-sync:test");
+        overlay.flat_home = true;
+        let config = AgentSandboxConfig::new("centaur").overlay(overlay.clone());
+        let id = SandboxId::new("asbx-test");
+
+        let prepare = claimed_overlay_home_script(
+            &id,
+            &overlay,
+            &config,
+            PrepareClaimedOverlayHome {
+                thread_key: "thread-1",
+                execution_id: "exec-1",
+                repos_json: r#"[{"repo":"acme/widget","ref":"main"}]"#,
+                precomposed: true,
+                harness: Some("codex"),
+                harness_thread_id: Some("t-abc"),
+                harness_home: Some("/home/agent/.codex"),
+            },
+        );
+        let finalize = finalize_claimed_session_script(
+            &id,
+            &overlay,
+            &config,
+            FinalizeClaimedSession {
+                thread_key: "thread-1",
+                execution_id: "exec-1",
+                harness: Some("codex"),
+                harness_thread_id: Some("t-abc"),
+                harness_home: Some("/home/agent/.codex"),
+            },
+        );
+
+        // Removing the repos pair from the precomposed prepare invocation must
+        // yield exactly the finalize invocation — the identity args cannot
+        // drift between the two claim paths.
+        let stripped = prepare.replace(
+            " '--repos-json' '[{\"repo\":\"acme/widget\",\"ref\":\"main\"}]'",
+            "",
+        );
+        assert_eq!(stripped, finalize);
+    }
+
+    #[test]
     fn claimed_overlay_home_helper_rewrites_manifest_and_waits_for_remount() {
         let mut overlay = OverlayConfig::new("centaur-node-sync:test");
         overlay.flat_home = true;
@@ -2581,14 +2792,24 @@ mod tests {
             "node-a",
             &overlay,
             &config,
-            PrepareClaimedOverlayHome {
+            &claimed_overlay_home_script(
+                &SandboxId::new("asbx-test"),
+                &overlay,
+                &config,
+                PrepareClaimedOverlayHome {
+                    thread_key: "thread-1",
+                    execution_id: "exec-1",
+                    repos_json: r#"[{"repo":"acme/widget","ref":"main"}]"#,
+                    precomposed: false,
+                    harness: Some("codex"),
+                    harness_thread_id: Some("codex-thread"),
+                    harness_home: Some("/home/agent/.codex"),
+                },
+            ),
+            ClaimProvisionContext {
+                operation: "prepare_claimed_overlay_home",
                 thread_key: "thread-1",
                 execution_id: "exec-1",
-                repos_json: r#"[{"repo":"acme/widget","ref":"main"}]"#,
-                precomposed: false,
-                harness: Some("codex"),
-                harness_thread_id: Some("codex-thread"),
-                harness_home: Some("/home/agent/.codex"),
             },
         )
         .unwrap();
