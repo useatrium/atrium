@@ -336,3 +336,18 @@ export function ExternalLinkIcon(props: IconProps) {
     </Icon>
   );
 }
+
+/* === web lane additions === */
+
+/** Fixed product persona for agent-authored timeline rows. */
+export function BotIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect x="4" y="7" width="16" height="12" rx="3" />
+      <path d="M12 3v4" />
+      <path d="M8 12h.01" />
+      <path d="M16 12h.01" />
+      <path d="M9 16h6" />
+    </Icon>
+  );
+}

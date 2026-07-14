@@ -352,7 +352,9 @@ async function unreadChannelCountFor(pool: Db, userId: string): Promise<number> 
        SELECT MAX(e.id) AS latest_event_id
        FROM events e
        WHERE e.channel_id = c.id
-         AND e.type IN ('message.posted', 'session.spawned')
+         -- Matches the unread rule in events.ts: an agent's answer is a real
+         -- channel message and counts toward the badge like one.
+         AND e.type IN ('message.posted', 'session.spawned', 'session.replied')
      ) latest ON true
      WHERE mute.user_id IS NULL
        AND COALESCE(latest.latest_event_id, 0) > COALESCE(rc.last_read_event_id, 0)

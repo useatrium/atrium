@@ -876,8 +876,12 @@ const MESSAGE_SELECT = `
 // fold the same events from WS fanout).
 const TIMELINE_EVENT_TYPES =
   "('message.posted', 'message.edited', 'message.deleted', 'reaction.added', 'reaction.removed', 'voice.transcribed', 'session.spawned', 'session.replied', 'session.status_changed', 'session.effort_changed', 'session.completed', 'session.archived', 'session.unarchived', 'session.seat_requested', 'session.seat_changed', 'session.question_requested', 'session.question_answered', 'session.question_resolved', 'session.provider_auth_required', 'session.github_auth_required', 'session.provider_auth_resolved')";
+// `session.replied` is here because the agent's ANSWER is a first-class channel
+// message: it is thread-rooted, so the `broadcast` predicate below still gates
+// it, but the type has to be admitted first or the answer is filtered out of
+// the feed before the flag is ever read.
 const TIMELINE_ROOT_EVENT_TYPES =
-  "('message.posted', 'session.spawned', 'session.question_requested', 'session.question_answered', 'session.question_resolved')";
+  "('message.posted', 'session.spawned', 'session.replied', 'session.question_requested', 'session.question_answered', 'session.question_resolved')";
 
 function foldEdit(
   row: EventDbRow & { edited_text?: string | null; is_deleted?: boolean; reactions?: unknown },
@@ -1188,7 +1192,10 @@ export async function listChannelsFor(pool: Db | DbClient, userId: string): Prom
        SELECT MAX(e.id) AS latest_event_id
        FROM events e
        WHERE e.channel_id = c.id
-         AND e.type IN ('message.posted', 'session.spawned')
+         -- The agent's answer is an ordinary channel message, so it marks the
+         -- channel unread like one. Leaving it out would land the very thing
+         -- you asked for below the fold with nothing to say it had arrived.
+         AND e.type IN ('message.posted', 'session.spawned', 'session.replied')
          AND (e.thread_root_event_id IS NULL OR (e.payload->>'broadcast')::boolean IS TRUE)
      ) latest ON true
      -- === mentions-activity additions ===

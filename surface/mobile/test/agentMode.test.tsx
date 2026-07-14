@@ -159,7 +159,9 @@ describe('agent-mode composer', () => {
       />,
     );
     expect(screen.getByTestId('agent-reply-row')).toBeInTheDocument();
-    expect(screen.getByText('Release fixes')).toBeInTheDocument();
+    expect(screen.getByText('Agent')).toBeInTheDocument();
+    expect(screen.queryByText('Release fixes')).not.toBeInTheDocument();
+    expect(screen.getAllByText('hardware-chip-outline')).toHaveLength(2);
     rerender(<View />);
   });
 });

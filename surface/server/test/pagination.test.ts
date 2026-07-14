@@ -157,3 +157,42 @@ describe('channel message pagination', () => {
     expect(row.payload.edited).toBe(true);
   });
 });
+
+// The agent's ANSWER is a first-class channel message: `session.replied` is
+// thread-rooted, so it needs BOTH the broadcast flag and a place in the feed
+// query's type whitelist. It had the flag and not the whitelist, and the answer
+// silently never reached the channel — green unit tests and all.
+describe('the agent answer reaches the channel feed', () => {
+  async function appendReply(threadRootEventId: number, text: string, broadcast: boolean) {
+    const { rows } = await pool.query<{ id: number }>(
+      `INSERT INTO events (workspace_id, channel_id, thread_root_event_id, type, actor_id, payload)
+       VALUES ($1, $2, $3, 'session.replied', NULL, $4::jsonb)
+       RETURNING id`,
+      [
+        fx.workspaceId,
+        fx.channelId,
+        threadRootEventId,
+        JSON.stringify({ session_id: 's-1', text, ...(broadcast ? { broadcast: true } : {}) }),
+      ],
+    );
+    return rows[0]!.id;
+  }
+
+  it('includes a broadcast session.replied in the channel feed', async () => {
+    const root = await post('kick off the agent');
+    const replyId = await appendReply(root.id, 'Done — shipped the dashboard.', true);
+
+    const { events } = await listChannelMessages(pool, { channelId: fx.channelId, limit: 50 });
+    const reply = events.find((e) => e.id === replyId);
+    expect(reply, 'the answer must appear in the channel, not only in the thread').toBeTruthy();
+    expect(reply?.type).toBe('session.replied');
+  });
+
+  it('still keeps a NON-broadcast session.replied out of the channel feed', async () => {
+    const root = await post('kick off a quiet agent');
+    const replyId = await appendReply(root.id, 'internal turn recap', false);
+
+    const { events } = await listChannelMessages(pool, { channelId: fx.channelId, limit: 50 });
+    expect(events.some((e) => e.id === replyId)).toBe(false);
+  });
+});

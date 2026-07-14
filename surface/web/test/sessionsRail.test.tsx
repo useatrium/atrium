@@ -62,10 +62,10 @@ describe('SessionsRail', () => {
     expect(screen.getAllByText('Needs you').length).toBeGreaterThanOrEqual(2);
     expect(screen.getByText('Active')).toBeTruthy();
     expect(screen.getByText('Recent')).toBeTruthy();
-    expect(screen.getByText('awaiting answer')).toBeTruthy();
-    expect(screen.getByText('still working')).toBeTruthy();
-    expect(screen.getByText('finished up')).toBeTruthy();
-    // Other channel's session is excluded.
+    expect(screen.getAllByTestId('session-card')).toHaveLength(3);
+    expect(screen.queryByText('awaiting answer')).toBeNull();
+    expect(screen.queryByText('still working')).toBeNull();
+    expect(screen.queryByText('finished up')).toBeNull();
     expect(screen.queryByText('other channel')).toBeNull();
     // Total count badge.
     expect(screen.getByText('3')).toBeTruthy();
@@ -81,7 +81,8 @@ describe('SessionsRail', () => {
 
     render(<SessionsRail channelId="ch-1" sessions={asMap(live, archived)} onOpenSession={() => {}} />);
 
-    expect(screen.getByText('still working')).toBeTruthy();
+    expect(screen.getAllByTestId('session-card')).toHaveLength(1);
+    expect(screen.queryByText('still working')).toBeNull();
     expect(screen.queryByText('tucked away')).toBeNull();
   });
 
@@ -95,7 +96,7 @@ describe('SessionsRail', () => {
     const onOpen = vi.fn();
     const s = session({ title: 'open me' });
     render(<SessionsRail channelId="ch-1" sessions={asMap(s)} onOpenSession={onOpen} />);
-    fireEvent.click(screen.getByText('open me'));
+    fireEvent.click(screen.getByRole('button', { name: 'Open agent session' }));
     expect(onOpen).toHaveBeenCalledWith(s.id);
   });
 });

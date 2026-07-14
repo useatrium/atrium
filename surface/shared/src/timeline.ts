@@ -151,6 +151,9 @@ export interface ChatMessage {
   /** Set for agent-session rows (type session.spawned / optimistic spawns):
    * the row renders as a SessionCard looked up by this id. */
   sessionId?: string;
+  /** Spawn rows only: the ask, verbatim, rendered as the spawner's own message
+   * above the card. Falls back to the 80-char title on pre-`task` events. */
+  sessionTask?: string;
   sessionEventType?: SessionEventRowType;
   sessionEventPayload?: Record<string, unknown>;
   /** Thread-visible steer/suggestion provenance for future chips. */
@@ -251,6 +254,14 @@ export function messageFromEvent(ev: WireEvent): ChatMessage {
     : undefined;
   const spawnClientId =
     ev.type === 'session.spawned' && typeof payload.client_spawn_id === 'string' ? payload.client_spawn_id : undefined;
+  const sessionTask =
+    ev.type === 'session.spawned'
+      ? typeof payload.task === 'string' && payload.task.trim()
+        ? payload.task
+        : typeof payload.title === 'string'
+          ? payload.title
+          : undefined
+      : undefined;
   const text =
     typeof payload.text === 'string'
       ? payload.text
@@ -303,6 +314,7 @@ export function messageFromEvent(ev: WireEvent): ChatMessage {
     ...(broadcast ? { broadcast: true } : {}),
     status: 'confirmed',
     ...(sessionId !== undefined ? { sessionId } : {}),
+    ...(sessionTask !== undefined ? { sessionTask } : {}),
     ...(sessionEventType !== undefined ? { sessionEventType, sessionEventPayload: payload } : {}),
     ...(typeof payload.steered_session_id === 'string' ? { steeredSessionId: payload.steered_session_id } : {}),
     ...(typeof payload.suggested_session_id === 'string' ? { suggestedSessionId: payload.suggested_session_id } : {}),

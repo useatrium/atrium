@@ -456,6 +456,49 @@ function Attachments({
   );
 }
 
+function AgentChip() {
+  const { colors } = useTheme();
+  return (
+    <View
+      style={{
+        alignSelf: 'flex-start',
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: space.xxs,
+        borderRadius: radius.pill,
+        backgroundColor: colors.accentBg,
+        paddingHorizontal: 6,
+        paddingVertical: space.xxs,
+      }}
+    >
+      <Ionicons name="hardware-chip-outline" size={12} color={colors.accent} />
+      <Text style={{ color: colors.accent, fontSize: font.xs, fontWeight: '800' }}>AGENT</Text>
+    </View>
+  );
+}
+
+function SessionMetadata({ session }: { session: Session }) {
+  const { colors } = useTheme();
+  const repo = session.repo ? `${session.repo}${session.branch ? ` · ${session.branch}` : ''}` : null;
+  const metadata = [
+    `Started ${formatTime(session.createdAt)}`,
+    session.spawnerName ? `Started by ${session.spawnerName}` : null,
+    session.driverName && session.driverId !== session.spawnedBy ? `Driver ${session.driverName}` : null,
+    repo,
+    session.costUsd > 0 ? `$${session.costUsd.toFixed(2)}` : null,
+  ].filter((item): item is string => item != null);
+
+  return (
+    <View testID="session-metadata" style={{ gap: space.xxs }}>
+      {metadata.map((item) => (
+        <Text key={item} style={{ color: colors.textMuted, fontSize: font.xs }}>
+          {item}
+        </Text>
+      ))}
+    </View>
+  );
+}
+
 /** Agent-session rows render as a compact status card; tap through to the mobile viewer. */
 function SessionCard({
   message,
@@ -471,6 +514,7 @@ function SessionCard({
   onOpenPane?: (sessionId: string) => void;
 }) {
   const { colors } = useTheme();
+  const [detailsExpanded, setDetailsExpanded] = useState(false);
   const now = Date.now();
   // One status voice — the same six-word glance every other surface speaks.
   const glance = deriveSessionGlance(
@@ -487,15 +531,68 @@ function SessionCard({
   const stateLine = [`● ${glance.label}${glance.detail ? ` · ${glance.detail}` : ''}`, ...(clock ? [clock] : [])].join(
     ' · ',
   );
+  const terminal = session?.status === 'completed' || session?.status === 'failed' || session?.status === 'cancelled';
+  const collapsedTerminal = terminal && session?.status !== 'failed';
+  const canOpenConversation = Boolean(message.sessionId && onOpen);
+  const canOpenWork = Boolean(message.sessionId && (onOpenPane ?? onOpen));
+
+  if (collapsedTerminal) {
+    // One status voice: the collapsed strip still NAMES the state ("Done",
+    // "Stopped") the way every other surface does, then says how long it took.
+    // Dropping the label left mobile saying only "worked 7s" while the web card
+    // said "Done · Agent worked 7s".
+    const terminalLine =
+      session?.status === 'completed'
+        ? `${glance.label} · worked${clock ? ` ${clock}` : ''}`
+        : `${glance.label}${clock ? ` · after ${clock}` : ''}`;
+    return (
+      <View
+        testID="session-card"
+        style={{
+          minHeight: 44,
+          flexDirection: 'row',
+          flexWrap: 'wrap',
+          alignItems: 'center',
+          gap: space.xs,
+          marginTop: space.xxs,
+        }}
+      >
+        <AgentChip />
+        {/* A finished session is still steerable — tapping the strip opens the
+            conversation, same as the live card. Without this the only route off
+            a done card is the read-only pane. */}
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Open agent conversation"
+          accessibilityState={{ disabled: !canOpenConversation }}
+          disabled={!canOpenConversation}
+          onPress={() => {
+            if (message.sessionId) onOpen?.(message.sessionId);
+          }}
+          style={{ minHeight: 44, justifyContent: 'center' }}
+        >
+          <Text style={{ color: statusColor, fontSize: font.xs, fontWeight: '700' }}>{terminalLine}</Text>
+        </Pressable>
+        <Text style={{ color: colors.textFaint, fontSize: font.xs }}>·</Text>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Show the work — full transcript"
+          accessibilityState={{ disabled: !canOpenWork }}
+          disabled={!canOpenWork}
+          onPress={() => {
+            if (message.sessionId) (onOpenPane ?? onOpen)?.(message.sessionId);
+          }}
+          style={{ minHeight: 44, justifyContent: 'center' }}
+        >
+          <Text style={{ color: colors.textMuted, fontSize: font.xs, fontWeight: '700' }}>Show the work →</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
   return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={`Open agent conversation: ${session?.title ?? message.text}`}
-      accessibilityState={{ disabled: !message.sessionId || !onOpen }}
-      disabled={!message.sessionId || !onOpen}
-      onPress={() => {
-        if (message.sessionId) onOpen?.(message.sessionId);
-      }}
+    <View
+      testID="session-card"
       style={{
         borderWidth: 1,
         borderColor: colors.border,
@@ -506,47 +603,70 @@ function SessionCard({
         marginTop: space.xxs,
       }}
     >
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-        <Ionicons name="hardware-chip-outline" size={13} color={colors.textMuted} />
-        <Text style={{ fontSize: font.xs, color: colors.textMuted, fontWeight: '700' }}>AGENT</Text>
-      </View>
-      <Text style={{ color: colors.text, fontSize: font.sm, lineHeight: 20 }}>{session?.title ?? message.text}</Text>
-      <View testID="session-presence-ticker" style={{ gap: space.xxs }}>
+      <AgentChip />
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Open agent conversation"
+        accessibilityState={{ disabled: !canOpenConversation }}
+        disabled={!canOpenConversation}
+        onPress={() => {
+          if (message.sessionId) onOpen?.(message.sessionId);
+        }}
+        style={{ minHeight: 44, justifyContent: 'center', gap: space.xxs }}
+      >
         <Text style={{ color: statusColor, fontSize: font.xs, fontWeight: '700' }}>{stateLine}</Text>
         {session?.latestActivity?.summary ? (
           <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: font.xs }}>
             {session.latestActivity.summary}
           </Text>
         ) : null}
-      </View>
-      {session?.resultText ? (
-        <Text style={{ color: colors.textSecondary, fontSize: font.xs, lineHeight: 18 }}>{session.resultText}</Text>
+      </Pressable>
+      {session?.status === 'failed' ? (
+        <Text style={{ color: colors.textSecondary, fontSize: font.xs, lineHeight: 18 }}>
+          {session.resultText || 'The run ended before reporting a result.'}
+        </Text>
+      ) : null}
+      {session ? (
+        <>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={detailsExpanded ? 'Hide session details' : 'Show session details'}
+            accessibilityState={{ expanded: detailsExpanded }}
+            onPress={() => setDetailsExpanded((expanded) => !expanded)}
+            style={{ alignSelf: 'flex-start', minHeight: 44, justifyContent: 'center' }}
+          >
+            <Text style={{ color: colors.textMuted, fontSize: font.xs, fontWeight: '700' }}>
+              {detailsExpanded ? 'Hide details' : 'Details'}
+            </Text>
+          </Pressable>
+          {detailsExpanded ? <SessionMetadata session={session} /> : null}
+        </>
       ) : null}
       <Pressable
         accessibilityRole="button"
         accessibilityLabel="Show the work — full transcript"
-        disabled={!message.sessionId || !(onOpenPane ?? onOpen)}
+        accessibilityState={{ disabled: !canOpenWork }}
+        disabled={!canOpenWork}
         onPress={() => {
           if (message.sessionId) (onOpenPane ?? onOpen)?.(message.sessionId);
         }}
-        hitSlop={8}
-        style={{ alignSelf: 'flex-start', minHeight: 36, justifyContent: 'center' }}
+        style={{ alignSelf: 'flex-start', minHeight: 44, justifyContent: 'center' }}
       >
         <Text style={{ color: colors.textMuted, fontSize: font.xs, fontWeight: '700' }}>Show the work →</Text>
       </Pressable>
-    </Pressable>
+    </View>
   );
 }
 
-function AgentReplyRow({ message, session }: { message: ChatMessage; session?: Session }) {
+function AgentReplyRow({ message }: { message: ChatMessage }) {
   const { colors } = useTheme();
   return (
     <View testID="agent-reply-row" style={{ gap: space.xs }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
         <Text numberOfLines={1} style={{ color: colors.text, flexShrink: 1, fontSize: font.md, fontWeight: '700' }}>
-          {session?.title ?? message.author.displayName}
+          Agent
         </Text>
-        <Text style={{ color: colors.accent, fontSize: font.xs, fontWeight: '800' }}>AGENT</Text>
+        <AgentChip />
       </View>
       <MarkdownText text={message.text} />
     </View>
@@ -597,12 +717,12 @@ function SessionEventLine({
         marginTop: space.xs,
       }}
     >
-      {message.sessionEventType === 'question_requested' && session != null && (
+      {message.sessionEventType === 'question_requested' && (
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
           <Text numberOfLines={1} style={{ color: colors.text, flexShrink: 1, fontSize: font.md, fontWeight: '700' }}>
-            {session.title}
+            Agent
           </Text>
-          <Text style={{ color: colors.accent, fontSize: font.xs, fontWeight: '800' }}>AGENT</Text>
+          <AgentChip />
         </View>
       )}
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 6 }}>
@@ -837,16 +957,14 @@ function sessionEventVisibleText(message: ChatMessage): string {
   return compactLines(lines);
 }
 
-function sessionCardVisibleText(message: ChatMessage, session?: Session): string {
-  const title = (typeof session?.title === 'string' ? session.title : message.text).trim() || 'Agent session';
-  const resultText = typeof session?.resultText === 'string' ? session.resultText : '';
-  return compactLines([title, resultText]);
+function sessionSpawnVisibleText(message: ChatMessage): string {
+  return message.sessionTask?.trim() || 'Agent session';
 }
 
-function actionCopyTextForMessage(message: ChatMessage, session: Session | undefined, rowText: string): string | null {
+function actionCopyTextForMessage(message: ChatMessage, rowText: string): string | null {
   if (message.deleted === true) return null;
   if (message.sessionEventType != null) return sessionEventVisibleText(message) || rowText;
-  if (message.sessionId != null) return sessionCardVisibleText(message, session) || rowText;
+  if (message.sessionId != null) return sessionSpawnVisibleText(message) || rowText;
   return message.text.trim() ? message.text : null;
 }
 
@@ -900,6 +1018,7 @@ export const MessageRow = memo(function MessageRow({
   useAccessibilityAnnouncement(failed ? 'Message failed to send. Tap to retry.' : null);
   const tombstone = m.deleted === true;
   const isAgentReply = m.sessionEventType === 'replied';
+  const isAgentVoice = isAgentReply || m.sessionEventType === 'question_requested';
   const sessionBlock = (m.sessionId != null || m.sessionEventType != null) && !isAgentReply;
   const hasInlineQuestionControls =
     m.sessionEventType === 'question_requested' &&
@@ -911,11 +1030,7 @@ export const MessageRow = memo(function MessageRow({
     ? m.attachments.map((a) => `attachment ${a.filename}`).join(', ')
     : '';
   const blockRowText =
-    m.sessionEventType != null
-      ? sessionEventVisibleText(m)
-      : m.sessionId != null
-        ? sessionCardVisibleText(m, session)
-        : '';
+    m.sessionEventType != null ? sessionEventVisibleText(m) : m.sessionId != null ? sessionSpawnVisibleText(m) : '';
   const rowText = tombstone
     ? 'Message deleted'
     : (sessionBlock ? blockRowText : m.text.trim()) ||
@@ -923,10 +1038,10 @@ export const MessageRow = memo(function MessageRow({
       (m.voice ? 'Voice message' : attachmentDescription) ||
       (m.sessionId ? 'Agent session' : 'Message');
   const exactCreatedAt = formatExactTimestamp(m.createdAt);
-  const rowLabel = `${m.author.displayName}, ${exactCreatedAt || formatTime(m.createdAt)}: ${rowText}`;
+  const rowLabel = `${isAgentVoice ? 'Agent' : m.author.displayName}, ${exactCreatedAt || formatTime(m.createdAt)}: ${rowText}`;
   const own = m.author.id === meId;
   const mentionedMe = !tombstone && mentionsUser(m.text, { id: meId, handle: meHandle });
-  const copyText = actionCopyTextForMessage(m, session, rowText);
+  const copyText = actionCopyTextForMessage(m, rowText);
   const entryHandle = entryHandleForAction(m);
   const copyLink = entryHandle ? `${serverUrl.replace(/\/+$/, '')}/e/${encodeURIComponent(entryHandle)}` : null;
   const partitionedEntryLinks = useMemo(() => partitionEntryLinks(m.text, serverUrl), [m.text, serverUrl]);
@@ -1019,10 +1134,28 @@ export const MessageRow = memo(function MessageRow({
     }
   };
 
+  const sessionTaskBody = m.sessionTask ? (
+    <EntryReferenceMarkdownProvider value={entryReferenceMarkdown}>
+      <MessageText text={m.sessionTask} meHandle={meHandle} meId={meId} resolveUser={resolveUser} muted={pending} />
+    </EntryReferenceMarkdownProvider>
+  ) : null;
+
+  const sessionCard =
+    m.sessionId != null && m.sessionEventType == null ? (
+      <SessionCard
+        message={m}
+        session={session}
+        // Primary tap lands on the conversation (the card's thread); the full
+        // transcript stays one tap away via "Show the work".
+        onOpen={!inThread && onOpenThread ? () => onOpenThread(m) : onOpenSession}
+        onOpenPane={onOpenSession}
+      />
+    ) : null;
+
   const body = tombstone ? (
     <Text style={{ color: colors.textFaint, fontSize: font.md, fontStyle: 'italic' }}>Message deleted</Text>
   ) : isAgentReply ? (
-    <AgentReplyRow message={m} session={session} />
+    <AgentReplyRow message={m} />
   ) : m.sessionEventType != null ? (
     <SessionEventLine
       message={m}
@@ -1033,14 +1166,10 @@ export const MessageRow = memo(function MessageRow({
       onSuggestSessionAnswer={onSuggestSessionAnswer}
     />
   ) : m.sessionId != null ? (
-    <SessionCard
-      message={m}
-      session={session}
-      // Primary tap lands on the conversation (the card's thread); the full
-      // transcript stays one tap away via "Show the work".
-      onOpen={!inThread && onOpenThread ? () => onOpenThread(m) : onOpenSession}
-      onOpenPane={onOpenSession}
-    />
+    <>
+      {sessionTaskBody}
+      {sessionCard}
+    </>
   ) : (
     <>
       {partitionedEntryLinks.bodyText ? (
@@ -1092,12 +1221,19 @@ export const MessageRow = memo(function MessageRow({
 
   const avatar = (
     <View style={{ width: 36, alignItems: 'center' }}>
-      {!grouped && <Avatar name={m.author.displayName} seed={m.author.id} size={36} />}
+      {(!grouped || isAgentVoice) && (
+        <Avatar
+          name={isAgentVoice ? 'Agent' : m.author.displayName}
+          seed={m.author.id}
+          size={36}
+          variant={isAgentVoice ? 'agent' : 'human'}
+        />
+      )}
     </View>
   );
 
   const header =
-    !grouped && !isAgentReply ? (
+    !grouped && !isAgentVoice ? (
       <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: space.sm, minWidth: 0 }}>
         <Text style={{ flexShrink: 1, color: colors.text, fontSize: font.md, fontWeight: '700' }} numberOfLines={1}>
           {m.author.displayName}
@@ -1129,6 +1265,41 @@ export const MessageRow = memo(function MessageRow({
 
   // Pending question controls must not live inside a row-level Pressable: native
   // touch bubbling can fire the row action and unmount the button being pressed.
+  if (m.sessionId != null && m.sessionEventType == null) {
+    return (
+      <View
+        style={{
+          ...containerStyle,
+          backgroundColor: highlighted ? colors.accentBg : 'transparent',
+        }}
+      >
+        {avatar}
+        <View style={{ flex: 1, minWidth: 0 }}>
+          {header}
+          <Pressable
+            accessibilityRole="text"
+            accessibilityLabel={rowLabel}
+            accessibilityActions={accessibilityActions}
+            onAccessibilityAction={onAccessibilityAction}
+            onLongPress={() => {
+              if (!canOpenActionMenu) return;
+              lightImpactHaptic();
+              onLongPress(actionTargetForMessage(m, copyText, copyLink));
+            }}
+            delayLongPress={250}
+            style={({ pressed }) => ({
+              backgroundColor: pressed ? colors.borderSoft : 'transparent',
+            })}
+          >
+            {sessionTaskBody}
+          </Pressable>
+          {editedNote}
+          {sessionCard}
+        </View>
+      </View>
+    );
+  }
+
   if (hasInlineQuestionControls) {
     return (
       <View
