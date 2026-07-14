@@ -27,7 +27,7 @@ from botocore.exceptions import ClientError
 ROOT = Path(__file__).resolve().parents[3]
 STATE_DIR = ROOT / "deploy" / "preview" / "aws" / ".state"
 DEFAULT_REGION = "us-east-1"
-DEFAULT_INSTANCE_TYPE = "t4g.xlarge"
+DEFAULT_INSTANCE_TYPE = "t3a.xlarge"
 DEFAULT_VOLUME_GB = 160
 ROLE_NAME = "atrium-preview-appliance-role"
 PROFILE_NAME = "atrium-preview-appliance-profile"
@@ -369,8 +369,21 @@ def bootstrap_script(params: dict[str, str]) -> str:
         status packages
         export DEBIAN_FRONTEND=noninteractive
         apt-get update
-        apt-get install -y ca-certificates curl git jq openssl awscli docker.io docker-compose-v2 build-essential pkg-config libssl-dev clang protobuf-compiler
+        apt-get install -y ca-certificates curl unzip git jq openssl docker.io docker-buildx docker-compose-v2 build-essential pkg-config libssl-dev clang protobuf-compiler
         systemctl enable --now docker
+
+        if ! command -v aws >/dev/null 2>&1; then
+          aws_arch="$(uname -m)"
+          case "$aws_arch" in
+            aarch64|arm64) aws_pkg=aarch64 ;;
+            x86_64|amd64) aws_pkg=x86_64 ;;
+            *) echo "unsupported arch for awscli: $aws_arch" >&2; exit 1 ;;
+          esac
+          curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-${{aws_pkg}}.zip" -o /tmp/awscliv2.zip
+          rm -rf /tmp/aws
+          unzip -q /tmp/awscliv2.zip -d /tmp
+          /tmp/aws/install
+        fi
 
         if ! command -v helm >/dev/null 2>&1; then
           curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
@@ -391,6 +404,8 @@ def bootstrap_script(params: dict[str, str]) -> str:
         fi
 
         status source
+        cd /
+        rm -rf /opt/atrium
         mkdir -p /opt/atrium
         aws s3 cp "s3://$CONTROL_BUCKET/$CONTROL_PREFIX/source.tar.gz" /tmp/atrium-source.tar.gz
         tar -xzf /tmp/atrium-source.tar.gz -C /opt/atrium
@@ -446,7 +461,6 @@ def bootstrap_script(params: dict[str, str]) -> str:
         cd /opt/atrium/surface/deploy
         cat >.env <<EOF
         DB_PASSWORD=$(openssl rand -hex 24)
-        MINIO_PASSWORD=$(openssl rand -hex 24)
         SESSION_SECRET=$(openssl rand -hex 32)
         PROVIDER_CREDENTIAL_SECRET=$(openssl rand -hex 32)
         APP_SIGNING_SECRET=$(openssl rand -hex 32)
@@ -461,6 +475,8 @@ def bootstrap_script(params: dict[str, str]) -> str:
         S3_BUCKET=$STORAGE_BUCKET
         S3_ACCESS_KEY=$S3_ACCESS_KEY
         S3_SECRET_KEY=$S3_SECRET_KEY
+        MINIO_ACCESS_KEY=$S3_ACCESS_KEY
+        MINIO_PASSWORD=$S3_SECRET_KEY
         AUTH_OPEN=1
         AUTH_DEV_CODES=1
         EMAIL_MODE=log
@@ -513,9 +529,10 @@ def bootstrap_script(params: dict[str, str]) -> str:
               - caddy_config:/config
         EOF
 
+        docker compose --profile caddy -f docker-compose.prod.yml -f docker-compose.aws-preview.yml down -v || true
         docker compose --profile caddy -f docker-compose.prod.yml -f docker-compose.aws-preview.yml up -d --build
         for i in $(seq 1 80); do
-          curl -fsS http://127.0.0.1:3001/healthz && break
+          curl -fsS http://10.42.0.1:3001/healthz && break
           sleep 5
         done
 
@@ -568,7 +585,7 @@ def bootstrap_script(params: dict[str, str]) -> str:
         sed -i "s|^IRON_CONTROL_API_KEY=.*|IRON_CONTROL_API_KEY=$IRON_KEY|" .env
         docker compose --profile caddy -f docker-compose.prod.yml -f docker-compose.aws-preview.yml up -d server caddy
         for i in $(seq 1 80); do
-          curl -fsS http://127.0.0.1:3001/healthz && break
+          curl -fsS http://10.42.0.1:3001/healthz && break
           sleep 5
         done
 
@@ -593,8 +610,20 @@ def cloud_init(control_bucket: str, control_prefix: str) -> str:
         #cloud-config
         package_update: true
         packages:
-          - awscli
+          - curl
+          - unzip
         runcmd:
+          - |
+            aws_arch="$(uname -m)"
+            case "$aws_arch" in
+              aarch64|arm64) aws_pkg=aarch64 ;;
+              x86_64|amd64) aws_pkg=x86_64 ;;
+              *) echo "unsupported arch for awscli: $aws_arch" >&2; exit 1 ;;
+            esac
+            curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-${aws_pkg}.zip" -o /tmp/awscliv2.zip
+          - rm -rf /tmp/aws
+          - unzip -q /tmp/awscliv2.zip -d /tmp
+          - /tmp/aws/install
           - mkdir -p /opt/atrium-preview
           - aws s3 cp s3://{control_bucket}/{control_prefix}/bootstrap.sh /opt/atrium-preview/bootstrap.sh
           - chmod +x /opt/atrium-preview/bootstrap.sh
@@ -606,7 +635,7 @@ def cloud_init(control_bucket: str, control_prefix: str) -> str:
 def latest_ubuntu_ami(session: boto3.Session, region: str) -> str:
     ssm = session.client("ssm", region_name=region)
     return ssm.get_parameter(
-        Name="/aws/service/canonical/ubuntu/server/24.04/stable/current/arm64/hvm/ebs-gp3/ami-id"
+        Name="/aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id"
     )["Parameter"]["Value"]
 
 

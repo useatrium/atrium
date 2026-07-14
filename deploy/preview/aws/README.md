@@ -35,7 +35,7 @@ deploy/preview/aws/.venv/bin/python deploy/preview/aws/previewctl.py create HEAD
 Defaults:
 
 - region: `us-east-1`
-- instance: `t4g.xlarge`
+- instance: `t3a.xlarge`
 - root EBS: `160` GB gp3
 - TTL tag: 24 hours
 
