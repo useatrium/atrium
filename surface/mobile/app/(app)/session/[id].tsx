@@ -4,6 +4,7 @@ import {
   Alert,
   KeyboardAvoidingView,
   Modal,
+  Linking,
   Platform,
   Pressable,
   ScrollView,
@@ -35,6 +36,7 @@ import {
   sessionFromWire,
   steerProvenanceKey,
   type QuestionPrompt,
+  type HubFile,
   type Session,
   type SessionQuestionAnswerSummary,
   type SessionQuestionEvent,
@@ -91,6 +93,8 @@ import { PlanPanel } from '../../../src/components/PlanPanel';
 import { ReasoningBlock } from '../../../src/components/ReasoningBlock';
 import { TurnStatusLine } from '../../../src/components/TurnStatusLine';
 import { HiddenWorkChip } from '../../../src/components/HiddenWorkChip';
+import { AgentFileMarkdownProvider } from '../../../src/components/FilePathChip';
+import { MediaLightbox } from '../../../src/components/MediaLightbox';
 import { MessageActionSheet, type MessageActionListItem } from '../../../src/components/MessageActions';
 import {
   createEntryReferenceQuery,
@@ -720,6 +724,7 @@ export default function SessionScreen() {
   const [transcriptCopied, setTranscriptCopied] = useState<'text' | 'link' | null>(null);
   const [transcriptView, setTranscriptViewState] = useState<TranscriptView>('focus');
   const [sessionLinkCopied, setSessionLinkCopied] = useState(false);
+  const [filePreview, setFilePreview] = useState<HubFile | null>(null);
   const referenceCache = useRef<Record<string, EntryReferenceMap>>({});
   const referenceFetchKeys = useRef<Set<string>>(new Set());
   const sessionLinkResetRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -748,6 +753,17 @@ export default function SessionScreen() {
       console.warn('failed to persist transcript view', err);
     });
   }, []);
+
+  const openFileExternal = useCallback(
+    async (file: HubFile) => {
+      const { url } = await chat.api.fileSignedUrl(file.artifactId);
+      const absoluteUrl = /^https?:\/\//i.test(url)
+        ? url
+        : `${new URL(chat.api.fileUrl(file.artifactId)).origin}${url}`;
+      await Linking.openURL(absoluteUrl);
+    },
+    [chat.api],
+  );
 
   useFocusEffect(
     useCallback(() => {
@@ -1441,6 +1457,15 @@ export default function SessionScreen() {
 
   const sessionChannelId = session?.channelId ?? null;
   const sessionThreadRootEventId = session?.threadRootEventId ?? null;
+  const agentFileMarkdown = useMemo(
+    () => ({
+      serverUrl: chat.serverUrl,
+      fileHeaders: chat.fileHeaders,
+      channelId: sessionChannelId,
+      onOpenFile: setFilePreview,
+    }),
+    [chat.fileHeaders, chat.serverUrl, sessionChannelId],
+  );
 
   const discussInThread = useCallback(
     (handle: string) => {
@@ -1864,6 +1889,12 @@ export default function SessionScreen() {
             const handle = transcriptEntryHandle(item);
             const reference = handle ? (references[handle] ?? null) : null;
             const hasActions = handle != null;
+            const textBlock =
+              item.type === 'text' ? (
+                <AgentFileMarkdownProvider value={agentFileMarkdown}>
+                  <TextBlock item={item} />
+                </AgentFileMarkdownProvider>
+              ) : null;
             const revealActions = item.type === 'text' || item.type === 'reasoning' || item.type === 'user_message';
             const showReveal = revealActions && hasActions && activeTranscriptEntryId === item.id;
             const openActionsWithHaptic = () => {
@@ -1898,10 +1929,10 @@ export default function SessionScreen() {
                             onLongPress={openActionsWithHaptic}
                             delayLongPress={250}
                           >
-                            <TextBlock item={item} />
+                            {textBlock}
                           </Pressable>
                         ) : (
-                          <TextBlock item={item} />
+                          textBlock
                         )
                       ) : item.type === 'user_message' ? (
                         <SteerRow
@@ -2319,6 +2350,15 @@ export default function SessionScreen() {
         title={session?.title}
         actions={headerActions}
         onClose={() => setHeaderActionsOpen(false)}
+      />
+      <MediaLightbox
+        visible={filePreview != null}
+        files={filePreview ? [filePreview] : []}
+        initialIndex={0}
+        fileContentUrl={chat.api.fileUrl}
+        fileHeaders={chat.fileHeaders}
+        onClose={() => setFilePreview(null)}
+        onOpenExternal={openFileExternal}
       />
     </View>
   );
