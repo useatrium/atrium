@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { defineConfig, devices } from '@playwright/test';
+import { acquireMachineLock } from './machine-lock.js';
 
 // Playwright/pnpm force color in spawned Node processes; inheriting NO_COLOR at
 // the same time makes Node 24 warn before every worker and webServer process.
@@ -74,6 +75,13 @@ const databaseUrl = process.env.E2E_DATABASE_URL ?? `postgres://atrium:atrium@lo
 process.env.E2E_DATABASE_URL = databaseUrl;
 const baseURL = `http://127.0.0.1:${webPort}`;
 const apiTarget = `http://127.0.0.1:${serverPort}`;
+
+// One e2e suite at a time per machine. Awaited here, at config scope, because
+// this is the only hook every entry point shares AND it runs before `webServer`:
+// an npm-script wrapper only guarded `pnpm e2e`, so `pnpm exec playwright test
+// <spec>` — which is how agents run targeted specs — walked straight past it and
+// starved whoever held the machine. No-ops in workers and on CI (see the module).
+await acquireMachineLock();
 
 export default defineConfig({
   testDir: './tests',
