@@ -10,6 +10,7 @@ import {
   type ChatMessage,
   type WireEvent,
 } from './timeline';
+import { encodeEventHandle } from './handle';
 
 const me = { id: 'u1', handle: 'tester', displayName: 'Tester' };
 
@@ -157,6 +158,124 @@ describe('fresh optimistic reply counting', () => {
       t,
       postedEvent(12, 'someone else', {
         clientMsgId: 'cm-3',
+        threadRootEventId: 10,
+      }),
+    );
+    expect(rootRow(confirmed, 10).replyCount).toBe(1);
+  });
+});
+
+describe('mergeHistory refreshes materialized rows already seen from the raw cache', () => {
+  it('refreshes a stale cached reply watermark from the server row', () => {
+    const cached = applyEvent(emptyTimeline, postedEvent(10, 'stale root'));
+    const refreshed = mergeHistory(
+      cached,
+      [postedEvent(10, 'server-materialized root', { replyCount: 2, lastReplyId: 12 })],
+      { hasMoreBefore: false },
+    );
+
+    expect(rootRow(refreshed, 10).replyCount).toBe(2);
+    expect(rootRow(refreshed, 10).lastReplyId).toBe(12);
+    // ONLY the watermark pair refreshes — modifier state (text, reactions)
+    // belongs to the events that own it; see the offline-edit race below.
+    expect(rootRow(refreshed, 10).text).toBe('stale root');
+    expect(refreshed.main.filter((m) => m.id === 10)).toHaveLength(1);
+  });
+
+  // The reload race that broke `offline edit … survive reload` in e2e: an
+  // offline edit flushes on reconnect and folds into the cached row via its
+  // acked modifier event, while a history fetch started earlier still carries
+  // the pre-edit snapshot. The modifier's id is already seen, so if the merge
+  // replaced the row wholesale nothing would ever put the edit back.
+  it('never clobbers a modifier that folded in after the history fetch', () => {
+    let cached = applyEvent(emptyTimeline, postedEvent(10, 'original text'));
+    cached = applyEvent(cached, {
+      id: 11,
+      workspaceId: 'w1',
+      channelId: 'c1',
+      threadRootEventId: null,
+      type: 'message.edited',
+      actorId: me.id,
+      payload: { target: encodeEventHandle(10), text: 'edited after fetch' },
+      createdAt: '2026-07-12T00:00:01.000Z',
+      author: me,
+    });
+    expect(rootRow(cached, 10).text).toBe('edited after fetch');
+
+    const refreshed = mergeHistory(cached, [postedEvent(10, 'original text', { replyCount: 3, lastReplyId: 9 })], {
+      hasMoreBefore: false,
+    });
+
+    expect(rootRow(refreshed, 10).text).toBe('edited after fetch');
+    expect(rootRow(refreshed, 10).replyCount).toBe(3);
+  });
+
+  it('does not resurrect a locally deleted row from a fetch-time snapshot', () => {
+    let cached = applyEvent(emptyTimeline, postedEvent(10, 'root'));
+    cached = applyEvent(cached, {
+      id: 11,
+      workspaceId: 'w1',
+      channelId: 'c1',
+      threadRootEventId: null,
+      type: 'message.deleted',
+      actorId: me.id,
+      payload: { target: encodeEventHandle(10) },
+      createdAt: '2026-07-12T00:00:01.000Z',
+      author: me,
+    });
+    const deletedBefore = refreshedRow(cached);
+
+    const refreshed = mergeHistory(cached, [postedEvent(10, 'root', { replyCount: 1, lastReplyId: 12 })], {
+      hasMoreBefore: false,
+    });
+    expect(refreshedRow(refreshed)).toEqual(deletedBefore);
+
+    function refreshedRow(t: ChannelTimeline) {
+      const m = t.main.find((row) => row.id === 10);
+      return m ? { text: m.text, deleted: m.deleted } : null;
+    }
+  });
+
+  it('keeps a cached watermark that already includes a newer WS reply', () => {
+    let cached = applyEvent(emptyTimeline, postedEvent(10, 'root'));
+    cached = applyEvent(cached, postedEvent(20, 'newer reply', { threadRootEventId: 10 }));
+
+    const refreshed = mergeHistory(cached, [postedEvent(10, 'root', { replyCount: 0, lastReplyId: 15 })], {
+      hasMoreBefore: false,
+    });
+
+    expect(rootRow(refreshed, 10).replyCount).toBe(1);
+    expect(rootRow(refreshed, 10).lastReplyId).toBe(20);
+  });
+
+  it('is idempotent when the same server page is merged twice', () => {
+    const cached = applyEvent(emptyTimeline, postedEvent(10, 'stale root'));
+    const page = [postedEvent(10, 'fresh root', { replyCount: 2, lastReplyId: 12 })];
+
+    const once = mergeHistory(cached, page, { hasMoreBefore: false });
+    const twice = mergeHistory(once, page, { hasMoreBefore: false });
+
+    expect(twice).toEqual(once);
+  });
+
+  it('does not double count a pending reply already covered by the server watermark', () => {
+    let cached = applyEvent(emptyTimeline, postedEvent(10, 'root'));
+    cached = addPending(cached, pendingReply('cm-covered', 10));
+    expect(rootRow(cached, 10).replyCount).toBe(1);
+
+    const refreshed = mergeHistory(cached, [postedEvent(10, 'root', { replyCount: 1, lastReplyId: 11 })], {
+      hasMoreBefore: false,
+    });
+    expect(rootRow(refreshed, 10).replyCount).toBe(1);
+    const pending = rowsWithClientMsgId(refreshed, 'cm-covered');
+    expect(pending).toHaveLength(1);
+    expect(pending[0]!.status).toBe('pending');
+    expect(pending[0]!.countedInRoot).toBe(false);
+
+    const confirmed = applyEvent(
+      refreshed,
+      postedEvent(11, 'pending cm-covered', {
+        clientMsgId: 'cm-covered',
         threadRootEventId: 10,
       }),
     );
