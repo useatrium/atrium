@@ -50,6 +50,55 @@ describe('cached timeline hydration', () => {
     expect(onRepaired).toHaveBeenCalledWith('ch-1', latest);
   });
 
+  it('falls back to the cached events when the repair refetch fails', async () => {
+    // Regression: this branch used to dispatch NOTHING and never retry, so a
+    // failed repair left the channel with no history at all — a blank channel,
+    // and a deep-linked thread whose root could never be resolved, until the
+    // user reloaded again. It failed silently (a console.warn). Degraded beats
+    // blank: the stale cache is strictly more than nothing, and the live stream
+    // reconciles from there.
+    const dispatch = vi.fn<(action: AppAction) => void>();
+    const cached = { events: [wire(4)], hasMore: false };
+    const fetchLatest = vi.fn(async () => {
+      throw new Error('Could not reach the server');
+    });
+    const onRepairFailed = vi.fn();
+
+    await hydrateCachedTimelines({
+      timelines: { 'ch-1': cached },
+      syncCursor: 8, // ahead of the cache, so a repair is attempted
+      dispatch,
+      fetchLatest,
+      onRepairFailed,
+    });
+
+    expect(fetchLatest).toHaveBeenCalledWith('ch-1');
+    expect(dispatch).toHaveBeenCalledWith({
+      type: 'history-loaded',
+      channelId: 'ch-1',
+      events: cached.events,
+      hasMore: cached.hasMore,
+    });
+    expect(onRepairFailed).toHaveBeenCalledWith('ch-1', expect.any(Error));
+  });
+
+  it('dispatches nothing when the repair fails after the view is disposed', async () => {
+    const dispatch = vi.fn<(action: AppAction) => void>();
+    const fetchLatest = vi.fn(async () => {
+      throw new Error('Could not reach the server');
+    });
+
+    await hydrateCachedTimelines({
+      timelines: { 'ch-1': { events: [wire(4)], hasMore: false } },
+      syncCursor: 8,
+      dispatch,
+      fetchLatest,
+      isDisposed: () => true,
+    });
+
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
   it('hydrates cached timelines directly when they are not behind the cursor', async () => {
     const dispatch = vi.fn<(action: AppAction) => void>();
     const fetchLatest = vi.fn();

@@ -82,6 +82,24 @@ export async function hydrateCachedTimelines({
       });
       onRepaired?.(channelId, latest);
     } catch (err) {
+      if (isDisposed?.()) return;
+      // The refetch failed — a cold or briefly-slow server, a network blip. Do
+      // NOT leave the channel with no history at all: this branch used to
+      // dispatch nothing and never retry, so a failed repair rendered a blank
+      // channel (and a deep-linked thread whose root was never found) until the
+      // user reloaded again. That is strictly worse than the stale cache we
+      // already hold, and it failed silently.
+      //
+      // Fall back to the cached events. They are stale or structurally imperfect
+      // — that is why repair was attempted — but they are the same events the
+      // no-repair-needed path above dispatches, and the live WS/sync stream
+      // reconciles from here. Degraded beats blank.
+      dispatch({
+        type: 'history-loaded',
+        channelId,
+        events: timeline.events,
+        hasMore: timeline.hasMore,
+      });
       onRepairFailed?.(channelId, err);
     }
   }
