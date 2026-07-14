@@ -69,7 +69,7 @@ function Tab({
   return (
     <TabsTrigger
       value={value}
-      className="flex items-center gap-1.5 rounded-none border-b-2 border-transparent bg-transparent px-2.5 py-2 text-xs font-semibold text-fg-muted hover:text-fg-secondary data-[state=active]:border-accent-border-strong data-[state=active]:bg-transparent data-[state=active]:text-fg max-md:min-h-11 max-md:shrink-0 max-md:whitespace-nowrap [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:whitespace-nowrap"
+      className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-none border-b-2 border-transparent bg-transparent px-2.5 py-2 text-xs font-semibold text-fg-muted hover:text-fg-secondary data-[state=active]:border-accent-border-strong data-[state=active]:bg-transparent data-[state=active]:text-fg max-md:min-h-11 [@media(pointer:coarse)]:min-h-11"
     >
       <span>{label}</span>
       {count != null && (
@@ -301,7 +301,10 @@ export function WorkDrawer({
       }
     >
       <header className="flex h-10 min-w-0 shrink-0 items-center border-b border-edge pr-2 max-md:h-11 [@media(pointer:coarse)]:h-11">
-        <div className="min-w-0 flex-1 max-md:overflow-x-auto max-md:[scrollbar-width:none] max-md:[&::-webkit-scrollbar]:hidden [@media(pointer:coarse)]:overflow-x-auto">
+        {/* Scroll at EVERY width, not just mobile/coarse: a pinned drawer beside
+            the spine can be narrower than its tab row, and without overflow the
+            tabs slide under the pin/detach/close buttons. */}
+        <div className="min-w-0 flex-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           <TabsList aria-label="Work surfaces" className="w-max min-w-full flex-nowrap gap-0 px-1">
             {available.map((t) => (
               <Tab key={t.key} value={t.key} label={t.label} count={t.count} danger={t.danger} />
