@@ -27,6 +27,12 @@ export type ConversationIdentity =
       stuck?: boolean;
       /** Rare display exception, e.g. a dead optimistic card's "spawn failed". */
       glanceOverride?: { kind: SessionGlanceKind; label: string };
+      /**
+       * One clock per row. A terminal card already says "Agent worked 4m" next
+       * to the chip, so the chip drops its own clock rather than printing the
+       * same duration twice.
+       */
+      showClock?: boolean;
     }
   | { kind: 'thread'; authorId: string; authorName: string; snippet: string };
 
@@ -119,6 +125,7 @@ export function ConversationHeader({
         now={identity.now}
         stuck={identity.stuck}
         override={identity.glanceOverride}
+        {...(identity.showClock === false ? { showClock: false } : {})}
       />
     ) : null;
   const chip =

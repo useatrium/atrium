@@ -230,6 +230,9 @@ export function SessionCard({
   const livePending = !terminal && session.pendingQuestion?.questions[0] ? session.pendingQuestion : null;
   const answered = sessionAnsweredQuestion(session);
   const [detailsOpen, setDetailsOpen] = useState(false);
+  // The same surfaces that can't host a live answer form (the rail) can't host
+  // the card's trailing controls either — both are "this is a peek" surfaces.
+  const compact = questionDisplay === 'pointer';
 
   return (
     // biome-ignore lint/a11y/noStaticElementInteractions: card click mirrors the nested status button; keyboard users use that button.
@@ -256,44 +259,58 @@ export function SessionCard({
           kind: 'session',
           session,
           now,
+          // One clock: the terminal strip next to the chip already says how long
+          // the run took.
+          ...(terminal ? { showClock: false } : {}),
           ...(spawnFailed ? { glanceOverride: { kind: 'failed' as const, label: 'spawn failed' } } : {}),
         }}
         onOpenTitle={openable ? open : undefined}
+        // The rail is a peek, not a workbench: it gets the chip and the elapsed
+        // line, and clicking it opens the session. Hanging "Session details" and
+        // "Show the work" off a 200px-wide card just collides them.
         actions={
-          <>
-            {terminal && (
+          compact ? (
+            terminal ? (
               <span className="min-w-0 flex-1 text-xs text-fg-secondary">
                 Agent worked {formatDurationUnits(Math.max(0, sessionElapsedMs(session, now)))}
               </span>
-            )}
-            <button
-              type="button"
-              data-testid="card-details-toggle"
-              aria-expanded={detailsOpen}
-              onClick={(e) => {
-                e.stopPropagation();
-                setDetailsOpen((v) => !v);
-              }}
-              className={`shrink-0 text-2xs text-fg-muted hover:text-fg-secondary hover:underline ${TOUCH_TARGET}`}
-            >
-              {detailsOpen ? 'Hide details' : 'Session details'}
-            </button>
-            {openable && (
-              <a
-                href={session.permalink}
+            ) : null
+          ) : (
+            <>
+              {terminal && (
+                <span className="min-w-0 flex-1 text-xs text-fg-secondary">
+                  Agent worked {formatDurationUnits(Math.max(0, sessionElapsedMs(session, now)))}
+                </span>
+              )}
+              <button
+                type="button"
+                data-testid="card-details-toggle"
+                aria-expanded={detailsOpen}
                 onClick={(e) => {
-                  e.preventDefault();
                   e.stopPropagation();
-                  openPane();
+                  setDetailsOpen((v) => !v);
                 }}
-                className={`shrink-0 text-2xs font-medium text-fg-tertiary hover:text-fg-body hover:underline ${TOUCH_TARGET}`}
+                className={`shrink-0 text-2xs text-fg-muted hover:text-fg-secondary hover:underline ${TOUCH_TARGET}`}
               >
-                Show the work →
-              </a>
-            )}
-          </>
+                {detailsOpen ? 'Hide details' : 'Session details'}
+              </button>
+              {openable && (
+                <a
+                  href={session.permalink}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    openPane();
+                  }}
+                  className={`shrink-0 text-2xs font-medium text-fg-tertiary hover:text-fg-body hover:underline ${TOUCH_TARGET}`}
+                >
+                  Show the work →
+                </a>
+              )}
+            </>
+          )
         }
-        meta={detailsOpen ? <SessionMetaLine session={session} spectators={spectators} /> : undefined}
+        meta={detailsOpen && !compact ? <SessionMetaLine session={session} spectators={spectators} /> : undefined}
       >
         {/* A finished run says what it did in its own reply message below, so a
             terminal card carries no ticker and no result excerpt — only how long
