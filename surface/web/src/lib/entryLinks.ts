@@ -30,7 +30,7 @@ export interface EntryLinkCandidate {
   original: string;
   candidate: string;
   trailing: string;
-  handle: string;
+  handle: string | null;
   index: number;
 }
 
@@ -84,13 +84,11 @@ export function findEntryLinkCandidates(text: string, origin = currentOrigin()):
     const original = match[0];
     const index = match.index ?? 0;
     const split = splitLinkCandidate(original);
-    const handle = handleFromEntryUrl(split.candidate, origin);
-    if (!handle) continue;
     candidates.push({
       original,
       candidate: split.candidate,
       trailing: split.trailing,
-      handle,
+      handle: handleFromEntryUrl(split.candidate, origin),
       index,
     });
   }
@@ -103,6 +101,7 @@ export function extractEntryHandles(text: string, origin = currentOrigin()): str
   const seen = new Set<string>();
 
   for (const { handle } of findEntryLinkCandidates(text, origin)) {
+    if (!handle) continue;
     if (seen.has(handle)) continue;
     seen.add(handle);
     handles.push(handle);

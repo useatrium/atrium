@@ -142,6 +142,7 @@ export default defineConfig({
         CENTAUR_API_KEY: 'e2e-centaur-key',
         LOG_LEVEL: process.env.LOG_LEVEL ?? 'error',
         ATRIUM_RATE_LIMIT: '0',
+        ATRIUM_UNFURL_ALLOW_PRIVATE: '1',
         ARTIFACT_CAPTURE_API_KEY: 'e2e-capture-key',
       },
     },

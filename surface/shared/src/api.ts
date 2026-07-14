@@ -749,6 +749,11 @@ export function createApi(opts: ApiOptions = {}) {
         method: 'PUT',
         body: JSON.stringify({ suppressed }),
       }),
+    resolveUnfurls: (urls: string[]) =>
+      req<import('./unfurl-contracts').UnfurlResolveResponse>('/api/unfurl/resolve', {
+        method: 'POST',
+        body: JSON.stringify({ urls }),
+      }),
     deleteMessage: (eventId: number, op: OpOptions = {}) =>
       req<{ event: WireEvent }>(`/api/messages/${eventId}`, {
         method: 'DELETE',

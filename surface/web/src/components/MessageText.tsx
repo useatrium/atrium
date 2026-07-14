@@ -1,13 +1,20 @@
-import { isValidElement, memo, useMemo, useState, type ReactNode } from 'react';
-import { compactMarkdownSource } from '@atrium/surface-client';
+import { isValidElement, memo, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { compactMarkdownSource, isUnfurlableUrl, type UnfurlResult } from '@atrium/surface-client';
 import { parseAgentPathHref } from '@atrium/surface-client/agent-paths';
 import ReactMarkdown, { defaultUrlTransform, type Components } from 'react-markdown';
 import rehypeHighlight from 'rehype-highlight';
 import remarkGfm from 'remark-gfm';
-import { extractEntryHandles, findEntryLinkCandidates } from '../lib/entryLinks';
+import {
+  extractEntryHandles,
+  findEntryLinkCandidates,
+  resolveEntryQuote,
+  type ResolvedEntryQuote,
+} from '../lib/entryLinks';
+import { resolveUnfurls } from '../lib/unfurls';
 import { api } from '../api';
-import { EntryInlineChip, EntryQuoteCards } from './EntryQuoteCard';
+import { EntryInlineChip, EntryQuoteCard } from './EntryQuoteCard';
 import { FilePathChip } from './FilePathChip';
+import { LinkUnfurlCard } from './LinkUnfurlCard';
 import { TimelineImage } from './TimelineImage';
 import '../sessions/Markdown.css';
 import { useUserDirectory } from '../userDirectory';
@@ -23,6 +30,7 @@ const UUID_SOURCE = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
 const MENTION_RE = new RegExp(`<@(${UUID_SOURCE})>|<!(channel|here)>|(^|[\\s(["'{<])@([a-z0-9][a-z0-9_-]{1,31})`, 'gi');
 const COLLAPSE_LINE_THRESHOLD = 16;
 const COLLAPSE_CHAR_THRESHOLD = 1800;
+const MAX_VISIBLE_UNFURL_CARDS = 3;
 
 function remarkMentions() {
   return (tree: unknown) => {
@@ -120,6 +128,7 @@ function splitEntryRefText(text: string): MutableNode[] {
   let last = 0;
 
   for (const match of findEntryLinkCandidates(text)) {
+    if (!match.handle) continue;
     if (match.index > last) out.push({ type: 'text', value: text.slice(last, match.index) });
     out.push({
       type: 'link',
@@ -175,6 +184,29 @@ function partitionEntryLinks(text: string): { bodyText: string; standaloneHandle
   }
 
   return { bodyText: bodyLines.join('\n'), standaloneHandles };
+}
+
+function hasEntryLinkPath(url: string): boolean {
+  try {
+    const parts = new URL(url).pathname.split('/').filter(Boolean);
+    return parts.length === 2 && parts[0] === 'e';
+  } catch {
+    return false;
+  }
+}
+
+export function extractExternalUnfurlUrls(text: string): string[] {
+  const urls: string[] = [];
+  const seen = new Set<string>();
+
+  for (const match of findEntryLinkCandidates(text)) {
+    if (match.handle || !isUnfurlableUrl(match.candidate) || hasEntryLinkPath(match.candidate)) continue;
+    if (seen.has(match.candidate)) continue;
+    seen.add(match.candidate);
+    urls.push(match.candidate);
+  }
+
+  return urls;
 }
 
 function mentionSpan(handle: string, meHandle?: string) {
@@ -522,6 +554,99 @@ export interface MessageUnfurlOptions {
   canManage: boolean;
 }
 
+type UnfurlCardDescriptor = { kind: 'entry'; handle: string } | { kind: 'link'; url: string };
+
+function MessageUnfurlCards({
+  descriptors,
+  messageEventId,
+  canManage = false,
+  onSuppress,
+}: {
+  descriptors: UnfurlCardDescriptor[];
+  messageEventId?: number | null;
+  canManage?: boolean;
+  onSuppress?: (key: string) => void;
+}) {
+  const handles = descriptors
+    .filter((item): item is Extract<UnfurlCardDescriptor, { kind: 'entry' }> => item.kind === 'entry')
+    .map((item) => item.handle);
+  const urls = descriptors
+    .filter((item): item is Extract<UnfurlCardDescriptor, { kind: 'link' }> => item.kind === 'link')
+    .map((item) => item.url);
+  const [entries, setEntries] = useState<Record<string, ResolvedEntryQuote | null>>({});
+  const [links, setLinks] = useState<Record<string, UnfurlResult | null>>({});
+  const [showAll, setShowAll] = useState(false);
+  const handlesKey = handles.join('\n');
+  const urlsKey = urls.join('\n');
+
+  useEffect(() => {
+    let active = true;
+    if (handles.length === 0) return undefined;
+    void Promise.all(handles.map(async (handle) => [handle, await resolveEntryQuote(handle)] as const)).then(
+      (resolved) => {
+        if (active) setEntries((current) => ({ ...current, ...Object.fromEntries(resolved) }));
+      },
+    );
+    return () => {
+      active = false;
+    };
+  }, [handlesKey]);
+
+  useEffect(() => {
+    let active = true;
+    if (urls.length === 0) return undefined;
+    void resolveUnfurls(urls).then((resolved) => {
+      if (active) setLinks((current) => ({ ...current, ...resolved }));
+    });
+    return () => {
+      active = false;
+    };
+  }, [urlsKey]);
+
+  const resolvedDescriptors = descriptors.filter((item) =>
+    item.kind === 'entry' ? Boolean(entries[item.handle]) : Boolean(links[item.url]),
+  );
+  const visible = showAll ? resolvedDescriptors : resolvedDescriptors.slice(0, MAX_VISIBLE_UNFURL_CARDS);
+
+  if (resolvedDescriptors.length === 0) return null;
+
+  return (
+    <div className="mt-2 flex flex-col gap-1.5 whitespace-normal">
+      {visible.map((item) => {
+        if (item.kind === 'entry') {
+          const entry = entries[item.handle];
+          return entry ? (
+            <EntryQuoteCard
+              key={`entry:${item.handle}`}
+              entry={entry}
+              messageEventId={messageEventId}
+              onSuppress={canManage && onSuppress ? () => onSuppress(item.handle) : undefined}
+            />
+          ) : null;
+        }
+        const result = links[item.url];
+        return result ? (
+          <LinkUnfurlCard
+            key={`link:${item.url}`}
+            result={result}
+            messageEventId={messageEventId}
+            onSuppress={canManage && onSuppress ? () => onSuppress(item.url) : undefined}
+          />
+        ) : null;
+      })}
+      {resolvedDescriptors.length > MAX_VISIBLE_UNFURL_CARDS ? (
+        <button
+          type="button"
+          onClick={() => setShowAll((value) => !value)}
+          className="self-start text-xs font-medium text-accent-text hover:underline"
+        >
+          {showAll ? 'Show fewer' : `Show ${resolvedDescriptors.length - MAX_VISIBLE_UNFURL_CARDS} more`}
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
 export function MessageText({
   text,
   meHandle,
@@ -539,11 +664,17 @@ export function MessageText({
 }) {
   const { bodyText } = partitionEntryLinks(text);
   const allHandles = extractEntryHandles(text);
+  const allUrls = extractExternalUnfurlUrls(text);
   const [optimisticallySuppressed, setOptimisticallySuppressed] = useState<Set<string>>(() => new Set());
   const [unfurlError, setUnfurlError] = useState(false);
   const suppressed = new Set(unfurls?.suppressed ?? []);
   for (const handle of optimisticallySuppressed) suppressed.add(handle);
-  const visibleHandles = allHandles.filter((handle) => !suppressed.has(handle));
+  const cardDescriptors: UnfurlCardDescriptor[] = [
+    ...allHandles
+      .filter((handle) => !suppressed.has(handle))
+      .map((handle): UnfurlCardDescriptor => ({ kind: 'entry', handle })),
+    ...allUrls.filter((url) => !suppressed.has(url)).map((url): UnfurlCardDescriptor => ({ kind: 'link', url })),
+  ];
   const shouldCollapse =
     bodyText.length > COLLAPSE_CHAR_THRESHOLD || bodyText.split(/\r\n|\r|\n/).length > COLLAPSE_LINE_THRESHOLD;
   const [expanded, setExpanded] = useState(!shouldCollapse);
@@ -578,22 +709,22 @@ export function MessageText({
           {expanded ? 'Show less' : 'Show more'}
         </button>
       )}
-      <EntryQuoteCards
-        handles={visibleHandles}
+      <MessageUnfurlCards
+        descriptors={cardDescriptors}
         messageEventId={unfurls?.messageEventId}
         canManage={unfurls?.canManage}
         onSuppress={
           unfurls?.canManage && unfurls.messageEventId != null
-            ? (handle) => {
+            ? (key) => {
                 const next = new Set(unfurls.suppressed);
                 for (const hidden of optimisticallySuppressed) next.add(hidden);
-                next.add(handle);
+                next.add(key);
                 setOptimisticallySuppressed(next);
                 setUnfurlError(false);
                 void api.suppressMessageUnfurls(unfurls.messageEventId!, [...next]).catch(() => {
                   setOptimisticallySuppressed((current) => {
                     const restored = new Set(current);
-                    restored.delete(handle);
+                    restored.delete(key);
                     return restored;
                   });
                   setUnfurlError(true);

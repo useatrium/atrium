@@ -17,6 +17,7 @@
     "./effort": "./src/effort.ts",
     "./agent-paths": "./src/agent-paths.ts",
     "./entry-contracts": "./src/entry-contracts.ts",
+    "./unfurl-contracts": "./src/unfurl-contracts.ts",
     "./session-capabilities": "./src/sessionCapabilities.ts"
   },
   "scripts": {

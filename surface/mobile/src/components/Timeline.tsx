@@ -25,6 +25,7 @@ import { useReactionUserResolver } from '../lib/chat';
 import { DayDivider } from './bits';
 import { MessageRow } from './MessageRow';
 import type { ArtifactContentResolver, EntryResolver } from '../lib/entryResolve';
+import type { UnfurlResolver } from '../lib/unfurlResolve';
 
 export interface TimelineProps {
   messages: ChatMessage[];
@@ -41,6 +42,7 @@ export interface TimelineProps {
   serverUrl: string;
   resolveEntry: EntryResolver;
   resolveArtifactContent?: ArtifactContentResolver;
+  resolveUnfurls?: UnfurlResolver;
   resolveUser?: (id: string) => UserRef | undefined;
   fileHeaders?: Record<string, string>;
   onLoadEarlier: () => Promise<void>;
@@ -166,6 +168,7 @@ export function Timeline({
   serverUrl,
   resolveEntry,
   resolveArtifactContent,
+  resolveUnfurls,
   resolveUser,
   fileHeaders,
   onLoadEarlier,
@@ -345,6 +348,7 @@ export function Timeline({
           serverUrl={serverUrl}
           resolveEntry={resolveEntry}
           resolveArtifactContent={resolveArtifactContent}
+          resolveUnfurls={resolveUnfurls}
           resolveUser={reactionUserResolver}
           fileHeaders={fileHeaders}
           onLongPress={onLongPress}
@@ -378,6 +382,7 @@ export function Timeline({
       serverUrl,
       resolveEntry,
       resolveArtifactContent,
+      resolveUnfurls,
       reactionUserResolver,
       fileHeaders,
       onLongPress,

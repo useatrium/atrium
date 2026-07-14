@@ -50,7 +50,22 @@ describe('entry link extraction', () => {
       bodyText: ['See /e/evt_12 inline.', 'Keep this line.'].join('\n'),
       standaloneHandles: ['evt_13', 'rec_alpha-123'],
       allHandles: ['evt_12', 'evt_13', 'rec_alpha-123'],
+      externalUrls: [],
     });
+  });
+
+  it('collects external URLs in first-seen order without double-matching entry links', () => {
+    const text = [
+      'Entry https://atrium.example.test/e/evt_12 and page https://example.com/story.',
+      'Image https://cdn.example.com/photo.png then https://example.com/story',
+      'Foreign entry https://other.example/e/rec_alpha-123 and https://example.net/docs?q=1.',
+    ].join('\n');
+
+    expect(partitionEntryLinks(text, SERVER_URL).externalUrls).toEqual([
+      'https://example.com/story',
+      'https://cdn.example.com/photo.png',
+      'https://example.net/docs?q=1',
+    ]);
   });
 
   it('collects inline and standalone handles in first-seen order and excludes suppressed previews', () => {
