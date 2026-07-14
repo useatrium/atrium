@@ -14,7 +14,7 @@
 //
 // Usage: node e2e/with-lock.mjs <command> [args...]
 import { spawn } from 'node:child_process';
-import { openSync, closeSync, readFileSync, unlinkSync, writeSync } from 'node:fs';
+import { linkSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -44,15 +44,28 @@ function holderIsAlive(pid) {
   }
 }
 
+// The lockfile must never be observable in a half-written state. Creating it with
+// O_CREAT|O_EXCL and *then* writing the pid is not good enough: a racing process
+// can read it in the gap, see "", parse NaN, conclude the holder is dead, and
+// delete a LIVE lock — which is exactly how an earlier version of this let two
+// suites run at once. So write the pid into a private temp file first and link()
+// it into place: link fails with EEXIST if the lock is held, and the file is
+// already complete the instant it becomes visible.
+const SCRATCH = `${LOCK_PATH}.${process.pid}`;
+
 function tryAcquire() {
   try {
-    // 'wx' is O_CREAT|O_EXCL — atomic, so two racing runs cannot both win.
-    const fd = openSync(LOCK_PATH, 'wx');
-    writeSync(fd, `${process.pid}\n`);
-    closeSync(fd);
+    writeFileSync(SCRATCH, `${process.pid}\n`);
+    linkSync(SCRATCH, LOCK_PATH);
     return true;
   } catch (err) {
     if (err?.code !== 'EEXIST') throw err;
+  } finally {
+    try {
+      unlinkSync(SCRATCH);
+    } catch {
+      /* already gone */
+    }
   }
 
   // Someone holds it — or crashed while holding it. A run killed with SIGKILL
@@ -64,6 +77,9 @@ function tryAcquire() {
   } catch {
     return false; // vanished under us; next poll will retry cleanly
   }
+  // An unparseable lockfile is NOT proof of a dead holder — never treat it as
+  // stale, or we are back to deleting live locks.
+  if (!Number.isInteger(holder) || holder <= 0) return false;
   if (holderIsAlive(holder)) return false;
 
   console.error(`[e2e-lock] clearing stale lock from dead pid ${holder}`);
