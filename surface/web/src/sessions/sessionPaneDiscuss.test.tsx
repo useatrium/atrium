@@ -237,14 +237,41 @@ describe('AnnotatedTranscriptRow Discuss affordance', () => {
     }
   });
 
-  it('opens a transcript action popover on desktop right-click', () => {
-    render(<TouchTranscriptHarness />);
+  it('leaves desktop right-click to the browser without opening transcript actions', () => {
+    render(
+      <AnnotatedTranscriptRow handle="rec_1">
+        <div>Transcript text</div>
+      </AnnotatedTranscriptRow>,
+    );
+    const contextMenuEvent = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
 
-    fireEvent.contextMenu(screen.getByText('Transcript text'), { clientX: 64, clientY: 96 });
+    fireEvent(screen.getByText('Transcript text'), contextMenuEvent);
+
+    expect(contextMenuEvent.defaultPrevented).toBe(false);
+    expect(screen.queryByRole('dialog', { name: 'Message actions' })).toBeNull();
+  });
+
+  it('opens the complete transcript action popover from the toolbar overflow button', async () => {
+    render(
+      <AnnotatedTranscriptRow
+        handle="rec_1"
+        discussContext={{ channelId: 'ch_1', threadRootEventId: 123 }}
+        onDiscussEntry={vi.fn()}
+        onMarkupEntry={vi.fn()}
+      >
+        <div>Transcript text</div>
+      </AnnotatedTranscriptRow>,
+    );
+
+    const actionBar = screen.getByTestId('transcript-entry-action-bar');
+    fireEvent.click(await within(actionBar).findByRole('button', { name: 'More transcript actions' }));
 
     const dialog = screen.getByRole('dialog', { name: 'Message actions' });
-    expect(dialog).toBeTruthy();
     expect(within(dialog).getByRole('button', { name: 'Copy entry link' })).toBeTruthy();
+    expect(within(dialog).getByRole('button', { name: 'Copy block text' })).toBeTruthy();
+    expect(within(dialog).getByRole('button', { name: 'Select text…' })).toBeTruthy();
+    expect(within(dialog).getByRole('button', { name: 'Discuss in thread' })).toBeTruthy();
+    expect(within(dialog).getByRole('button', { name: 'Mark up & reply' })).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull();
   });
 

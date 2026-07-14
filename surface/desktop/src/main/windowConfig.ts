@@ -38,6 +38,7 @@ export function mainWindowOptions(
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
+      spellcheck: true,
     },
   };
 }
@@ -60,6 +61,7 @@ export function popoutWindowOptions(
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
+      spellcheck: true,
     },
   };
 }

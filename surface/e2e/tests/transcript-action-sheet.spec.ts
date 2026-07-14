@@ -221,3 +221,47 @@ test('Select text opens a selectable sheet with the transcript entry text', asyn
   await sheet.getByRole('button', { name: 'Done' }).tap();
   await expect(sheet).toHaveCount(0);
 });
+
+// Transcript entries used to preventDefault() right-click to show our own menu,
+// swallowing the browser's (Copy on a selection, Open link in new tab, …). The
+// action list now lives behind a visible ⋯ button, so right-click is the
+// browser's again. Playwright cannot see the native menu, so assert the cause:
+// the contextmenu event must reach the document uncancelled.
+test.describe('pointer devices', () => {
+  test.use({ hasTouch: false, isMobile: false, viewport: { width: 1280, height: 800 } });
+
+  test('right-click on a transcript entry leaves the native menu to the browser', async ({ page }) => {
+    const { entryHandle } = await gotoInjectedTranscript(page);
+
+    await page.evaluate(() => {
+      const w = window as typeof window & { __ctxPrevented?: boolean };
+      delete w.__ctxPrevented;
+      document.addEventListener(
+        'contextmenu',
+        (event) => {
+          w.__ctxPrevented = event.defaultPrevented;
+        },
+        { once: true },
+      );
+    });
+    await page.locator(`[data-entry-handle="${entryHandle}"]`).click({ button: 'right' });
+
+    await expect
+      .poll(() => page.evaluate(() => (window as typeof window & { __ctxPrevented?: boolean }).__ctxPrevented))
+      .toBe(false);
+    await expect(page.getByRole('dialog', { name: 'Message actions' })).toHaveCount(0);
+  });
+
+  test('the transcript overflow button still exposes every entry action', async ({ page }) => {
+    const { entryHandle } = await gotoInjectedTranscript(page);
+    const row = page.locator(`[data-entry-handle="${entryHandle}"]`);
+    await row.hover();
+    await row.getByRole('button', { name: 'More transcript actions' }).click();
+
+    const menu = page.getByRole('dialog', { name: 'Message actions' });
+    await expect(menu).toBeVisible();
+    await expect(menu.getByRole('button', { name: 'Copy entry link' })).toBeVisible();
+    await expect(menu.getByRole('button', { name: 'Select text…' })).toBeVisible();
+    await expect(menu.getByRole('button', { name: 'Discuss in thread' })).toBeVisible();
+  });
+});

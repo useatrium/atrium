@@ -21,6 +21,7 @@ import { DEEP_LINK_SCHEME, deepLinkToRoute } from './deepLink.js';
 import { setupAutoUpdate } from './updater.js';
 import { resolveSessionPopoutOpen, resolveWindowOpen, sessionIdFromPanePath } from './windowOpenPolicy.js';
 import { launchBackgroundColor, mainWindowOptions, popoutWindowOptions } from './windowConfig.js';
+import { installContextMenu } from './contextMenu.js';
 
 // Must run before app `ready`: marks `app://` as a standard, secure origin so
 // the bundled UI gets a secure context (required for getUserMedia / WebRTC).
@@ -111,6 +112,7 @@ function createWindow(): BrowserWindow {
   );
   mainWindow = main;
   mainWindows.add(main);
+  installContextMenu(main.webContents, { isDev: !app.isPackaged });
 
   // Close-to-tray: the app stays alive in the background (always-on, warm WS)
   // so re-opening is instant. Quit only via the tray menu / Cmd-Q.
@@ -205,6 +207,7 @@ function registerPopoutWindow(
   devOrigin: string | null,
 ): void {
   popoutWindows.set(sessionId, popoutWindow);
+  installContextMenu(popoutWindow.webContents, { isDev: !app.isPackaged });
   const popoutUrl = sessionPopoutUrl(sessionId);
   popoutWindow.once('closed', () => {
     if (popoutWindows.get(sessionId) === popoutWindow) {
@@ -308,6 +311,7 @@ function flushPendingDeepLinks(): void {
  * default `allow` and external links open inside the shell. */
 function attachWindowOpenPolicy(contents: Electron.WebContents, preload: string, devOrigin: string | null): void {
   contents.on('did-create-window', (childWindow, details) => {
+    installContextMenu(childWindow.webContents, { isDev: !app.isPackaged });
     const sessionId = sessionIdFromWindowOpenUrl(details.url);
     if (sessionId) {
       registerPopoutWindow(sessionId, childWindow, preload, devOrigin);

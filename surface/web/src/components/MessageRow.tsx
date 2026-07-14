@@ -7,7 +7,6 @@ import {
   useRef,
   useState,
   type KeyboardEvent,
-  type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
   type SVGProps,
 } from 'react';
@@ -25,6 +24,7 @@ import {
   mentionsUser,
 } from '@atrium/surface-client';
 import { encodeEventHandle } from '@atrium/surface-client/handle';
+import { useIsHoverNone } from '../lib/useIsHoverNone';
 import { SessionCard } from '../sessions/SessionCard';
 import type { Session } from '../sessions/types';
 import { formatBytes, formatGutterTime, formatTime } from '@atrium/surface-client';
@@ -33,7 +33,12 @@ import { Tooltip } from './a11y';
 import { CornerUpLeftIcon, FileIcon, SmilePlusIcon } from './icons';
 import { Lightbox } from './media';
 import type { PreviewFile } from './media';
-import { MessageActionMenu, type MessageActionMenuAction, type MessageActionMenuState } from './MessageActionMenu';
+import {
+  MessageActionMenu,
+  POPOVER_WIDTH,
+  type MessageActionMenuAction,
+  type MessageActionMenuState,
+} from './MessageActionMenu';
 import { SelectTextSheet } from './SelectTextSheet';
 import { CompactMarkdownText, MessageText } from './MessageText';
 import { ReactionPicker } from './ReactionPicker';
@@ -200,7 +205,9 @@ export const MessageRow = memo(function MessageRow({
   const reactionPopoverBaseId = useId();
   const rowRef = useRef<HTMLDivElement | null>(null);
   const reactionButtonRef = useRef<HTMLButtonElement | null>(null);
+  const moreActionsButtonRef = useRef<HTMLButtonElement | null>(null);
   const mouseOpenedPickerRef = useRef(false);
+  const isHoverNone = useIsHoverNone();
   const [actionMenu, setActionMenu] = useState<MessageActionMenuState | null>(null);
   const [selectTextOpen, setSelectTextOpen] = useState(false);
   const closeSelectText = useCallback(() => setSelectTextOpen(false), []);
@@ -358,6 +365,7 @@ export const MessageRow = memo(function MessageRow({
     setDeleteAsk(false);
     onDelete!(m).catch(() => {});
   };
+  const canDelegate = !!onDelegateToAgent && m.id != null && m.sessionId == null && m.sessionEventType == null;
   const actionMenuActions = useMemo<MessageActionMenuAction[]>(() => {
     const actions: MessageActionMenuAction[] = [];
     if (canThread) {
@@ -367,13 +375,13 @@ export const MessageRow = memo(function MessageRow({
         onSelect: () => onOpenThread!(threadTargetEventId!),
       });
     }
-    if (onDelegateToAgent && m.id != null && m.sessionId == null && m.sessionEventType == null) {
+    if (canDelegate) {
       actions.push({
         key: 'delegate-agent',
         label: 'Delegate to agent…',
         onSelect: () => {
           setPickerOpen(false);
-          onDelegateToAgent(m);
+          onDelegateToAgent?.(m);
         },
       });
     }
@@ -432,6 +440,7 @@ export const MessageRow = memo(function MessageRow({
     return actions;
   }, [
     onDelegateToAgent,
+    canDelegate,
     canAnnotate,
     canCopyMessageText,
     canDelete,
@@ -451,27 +460,26 @@ export const MessageRow = memo(function MessageRow({
   ]);
 
   const actionMenuAllowed =
-    (canThread || canEdit || canDelete || canReact || canAnnotate || canMarkupReply) && !editing;
+    (canThread || canDelegate || canEdit || canDelete || canReact || canAnnotate || canMarkupReply) && !editing;
   const closeActionMenu = useCallback(() => setActionMenu(null), []);
   const openSheetMenu = useCallback(() => {
     if (!actionMenuAllowed) return;
     setPickerOpen(false);
     setActionMenu({ mode: 'sheet' });
   }, [actionMenuAllowed]);
-  const onRowContextMenu = useCallback(
-    (event: ReactMouseEvent<HTMLDivElement>) => {
-      if (event.defaultPrevented) return;
-      if (!actionMenuAllowed) return;
-      if (isTouchContextMenu(event.nativeEvent)) {
-        event.preventDefault();
-        return;
-      }
-      event.preventDefault();
-      setPickerOpen(false);
-      setActionMenu({ mode: 'popover', anchor: { x: event.clientX, y: event.clientY } });
-    },
-    [actionMenuAllowed],
-  );
+  const openMoreActions = useCallback(() => {
+    if (!actionMenuAllowed) return;
+    setPickerOpen(false);
+    if (isHoverNone) {
+      setActionMenu({ mode: 'sheet' });
+      return;
+    }
+    const rect = moreActionsButtonRef.current?.getBoundingClientRect();
+    setActionMenu({
+      mode: 'popover',
+      anchor: { x: (rect?.right ?? POPOVER_WIDTH) - POPOVER_WIDTH, y: (rect?.bottom ?? 0) + 4 },
+    });
+  }, [actionMenuAllowed, isHoverNone]);
   const longPress = useLongPress({
     disabled: !actionMenuAllowed,
     onLongPress: openSheetMenu,
@@ -569,13 +577,12 @@ export const MessageRow = memo(function MessageRow({
   );
 
   return (
-    // biome-ignore lint/a11y/noStaticElementInteractions: pointer/context handlers expose existing message actions without changing keyboard access.
+    // biome-ignore lint/a11y/noStaticElementInteractions: pointer handlers expose existing message actions without changing keyboard access.
     <div
       ref={rowRef}
       data-eid={m.id ?? undefined}
       data-entry-handle={entryHandle ?? undefined}
       tabIndex={-1}
-      onContextMenu={onRowContextMenu}
       onMouseLeave={() => {
         if (mouseOpenedPickerRef.current) setPickerOpen(false);
       }}
@@ -855,7 +862,22 @@ export const MessageRow = memo(function MessageRow({
           invokerRef={reactionButtonRef}
           className="absolute bottom-full right-0 z-dropdown mb-1 w-72"
         />
-        {(canThread || canEdit || canDelete || canReact || canAnnotate || canMarkupReply) && !editing && (
+        {actionMenuAllowed && isHoverNone && (
+          <Tooltip content="More message actions">
+            <button
+              ref={moreActionsButtonRef}
+              type="button"
+              onClick={openMoreActions}
+              aria-label="More message actions"
+              aria-haspopup="dialog"
+              aria-expanded={actionMenu != null}
+              className="pointer-events-auto absolute -top-3 right-0 inline-flex size-11 items-center justify-center rounded-md border border-edge-strong bg-surface-overlay text-lg leading-none text-fg-secondary shadow-sm transition-colors hover:bg-edge-strong hover:text-fg"
+            >
+              ⋯
+            </button>
+          </Tooltip>
+        )}
+        {actionMenuAllowed && !isHoverNone && (
           <div className="pointer-events-none absolute -top-3 right-0 flex gap-1 opacity-0 focus-within:pointer-events-auto focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100">
             {canReact && (
               <Tooltip content="Add reaction">
@@ -970,13 +992,26 @@ export const MessageRow = memo(function MessageRow({
                 </button>
               </Tooltip>
             )}
+            <Tooltip content="More message actions">
+              <button
+                ref={moreActionsButtonRef}
+                type="button"
+                onClick={openMoreActions}
+                aria-label="More message actions"
+                aria-haspopup="dialog"
+                aria-expanded={actionMenu != null}
+                className="inline-flex h-7 w-8 items-center justify-center rounded-md border border-edge-strong bg-surface-overlay text-base leading-none text-fg-secondary shadow-sm transition-colors hover:bg-edge-strong hover:text-fg"
+              >
+                ⋯
+              </button>
+            </Tooltip>
           </div>
         )}
       </div>
       <MessageActionMenu
         state={actionMenu}
         onClose={closeActionMenu}
-        restoreFocusRef={rowRef}
+        restoreFocusRef={moreActionsButtonRef}
         actions={actionMenuActions}
         reactions={canReact ? { onSelect: react } : undefined}
       />
@@ -994,10 +1029,6 @@ function mediaKindForContentType(contentType: string): PreviewFile['mediaKind'] 
   if (contentType === 'application/pdf') return 'document';
   if (contentType.startsWith('text/')) return 'text';
   return 'opaque';
-}
-
-function isTouchContextMenu(event: MouseEvent): boolean {
-  return 'pointerType' in event && event.pointerType === 'touch';
 }
 
 function isInteractiveTarget(target: EventTarget): boolean {
