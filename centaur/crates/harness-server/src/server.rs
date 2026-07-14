@@ -38,7 +38,7 @@ const LOCAL_ATTACHMENT_WAIT_ENV: &str = "CENTAUR_LOCAL_ATTACHMENT_WAIT_MS";
 const DEFAULT_LOCAL_ATTACHMENT_WAIT_MS: u64 = 30_000;
 const LOCAL_ATTACHMENT_POLL_MS: u64 = 100;
 const ATRIUM_CONTEXT_READY_TIMEOUT_ENV: &str = "ATRIUM_CONTEXT_READY_TIMEOUT_MS";
-const DEFAULT_ATRIUM_CONTEXT_READY_TIMEOUT_MS: u64 = 10_000;
+const DEFAULT_ATRIUM_CONTEXT_READY_TIMEOUT_MS: u64 = 30_000;
 const ATRIUM_CONTEXT_READY_POLL_MS: u64 = 250;
 const ATRIUM_CONTEXT_TIMEOUT_NOTE: &str = "NOTE: the Atrium context mount (~/context) did not become ready before this turn (materializer may be down). Do not wait for or retry ~/context reads; answer from the repo, tools, and the conversation instead.";
 
