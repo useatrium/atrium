@@ -44,17 +44,25 @@ process.env.E2E_WEB_PORT = String(webPort);
 process.env.E2E_CENTAUR_PORT = String(centaurPort);
 
 const webServerTimeout = Number(process.env.E2E_WEBSERVER_TIMEOUT ?? 60_000);
-// CI serves the web app as a static development-mode build (`vite build
-// --mode development` + `vite preview`) instead of the dev server. The dev
-// server's on-demand transforms + dep optimizer eat a 2-vCPU runner for the
-// first minute — the alphabetically-first spec lands on that cold path and
-// blew its 60s test timeout in 3 of 3 recent runs — and every later page load
-// keeps competing with tests for CPU. `--mode development` (not a prod build)
-// keeps import.meta.env.DEV true, which the markup specs' editor hook needs;
-// `vite preview` inherits server.proxy, so /api, /auth and /ws keep working.
-// Local runs keep the dev server for fast iteration; override either way with
-// E2E_WEB_SERVE=built|dev.
-const builtWeb = (process.env.E2E_WEB_SERVE ?? (process.env.CI ? 'built' : 'dev')) === 'built';
+// The suite serves the web app as a static development-mode build (`vite build
+// --mode development` + `vite preview`) rather than from the dev server. The dev
+// server's on-demand transforms + dep optimizer compete with the tests for CPU on
+// every page load, and that cost is what made the suite load-sensitive: measured
+// under 4 concurrent suites, page-loading specs took 38-56s on the dev server and
+// 4-5s built (API-only specs were fast either way — a clean fingerprint for who
+// was to blame). Built is faster even on an idle box *including* the one-time
+// build (2.4m vs 2.6m), so there is no iteration argument for keeping dev as the
+// default.
+//
+// This used to be CI-only, which is backwards: CI is the *less* contended
+// machine. A dev box also runs an agent fleet, so it needed the cheaper serving
+// path more, not less.
+//
+// `--mode development` (not a prod build) keeps import.meta.env.DEV true, which
+// the markup specs' editor hook needs; `vite preview` inherits server.proxy, so
+// /api, /auth and /ws keep working. Set E2E_WEB_SERVE=dev to get the dev server
+// back (HMR while iterating on a single spec).
+const builtWeb = (process.env.E2E_WEB_SERVE ?? 'built') === 'built';
 // Per-checkout database, for the same reason as the ports above: db-reset.mjs
 // TRUNCATEs every table it owns, so a shared database means a concurrent run in
 // another worktree wipes this one's data mid-test. Reused across runs of the
