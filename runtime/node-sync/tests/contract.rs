@@ -196,6 +196,24 @@ fn atrium_channels_fixture_parses_with_event_watermark() {
     assert_eq!(channels[0].last_event_id, 8842);
 }
 
+/// The server must emit exactly one spelling of the watermark, but the parser
+/// must survive a server that emits both — a derived-serde alias treated that
+/// as a duplicate field and halted channel materialization for every session
+/// (2026-07-14). Guard both spellings and the duplicate-pair case.
+#[test]
+fn atrium_channels_parse_tolerates_watermark_spellings_and_duplicates() {
+    let cases = [
+        r#"[{"id":"chan-1","name":"eng","kind":"public","active":true,"last_event_id":8842}]"#,
+        r#"[{"id":"chan-1","name":"eng","kind":"public","active":true,"lastEventId":8842}]"#,
+        r#"[{"id":"chan-1","name":"eng","kind":"public","active":true,"lastEventId":8842,"last_event_id":8842}]"#,
+    ];
+    for case in cases {
+        let channels: Vec<AtriumChannel> = serde_json::from_str(case)
+            .unwrap_or_else(|e| panic!("channel payload must parse: {e}: {case}"));
+        assert_eq!(channels[0].last_event_id, 8842, "case: {case}");
+    }
+}
+
 #[test]
 fn profile_bundles_fixture_parses() {
     let fixture: serde_json::Value =
