@@ -126,10 +126,12 @@ describe('session card transitions across session.* events', () => {
     });
     render(cardFor(s));
     expect(chipText()).toContain('Failed');
+    expect(screen.getByText(/Agent failed after/)).toBeTruthy();
     // The failure text rides in on the broadcast reply message, so the card
     // neither duplicates it nor pretends the run said nothing.
     expect(screen.queryByText(/harness crashed/)).toBeNull();
     expect(screen.queryByText('The run ended before reporting a result.')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Session details' })).toBeTruthy();
   });
 
   it('shows needs auth when Claude auth is required', () => {
