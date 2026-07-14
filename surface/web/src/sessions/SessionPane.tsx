@@ -20,15 +20,13 @@ import {
   collectFileChanges,
   collectSideEffects,
   deriveTurnStatus,
-  fileChangeFromToolCall,
-  focusTranscriptRows,
-  fullTranscriptRows,
+  foldedTurnRows,
   turnStatusLabel,
   isTerminalExecutionStatus,
   sideEffectCount,
-  toolDisplay,
+  type FoldedTurnRow,
+  type SessionItem,
   type TextItem,
-  type ToolCallItem,
   type UserMessageItem,
 } from '@atrium/centaur-client';
 import { isMacDesktop } from '../desktop';
@@ -57,7 +55,7 @@ import { parseAttachments, splitMarkdownFrontmatter } from '@atrium/surface-clie
 import { MarkupPane, type MarkupPaneSource } from '../components/MarkupPane';
 import { MarkupSteerCard } from '../components/MarkupSteerCard';
 import { Tooltip } from '../components/a11y';
-import { ChevronDownIcon, ChevronRightIcon, CornerUpLeftIcon, GearIcon, XIcon } from '../components/icons';
+import { CornerUpLeftIcon, XIcon } from '../components/icons';
 import type {
   AttachmentMeta,
   AttachmentRef,
@@ -82,7 +80,6 @@ import { ConversationHeader } from './ConversationHeader';
 import {
   HARNESS_EFFORT_PICKER_OPTIONS,
   formatCost,
-  formatElapsed,
   isPendingSessionId,
   isStalledSessionStatus,
   isTerminalSessionStatus,
@@ -101,12 +98,11 @@ import {
   sessionPaneSizing,
   useSessionPaneWidth,
 } from './useSessionPaneWidth';
-import { Spinner, TurnStatusLine } from './TurnStatus';
+import { TurnStatusLine } from './TurnStatus';
 import { useArtifactPresentations } from './useArtifactPresentations';
 import { AppPresentationCards } from './AppPresentationCard';
 import { SessionCapabilitiesPopover } from './SessionCapabilitiesPopover';
 import { SessionMarkdown } from './Markdown';
-import { ReasoningBlock } from './ReasoningBlock';
 import { SeatAuditLine, SessionTypingLine, TurnRail } from './SessionActivity';
 import { ProfileChangesBanner, ProviderAuthBanner, QuestionCard, profileProviderLabel } from './SessionBanners';
 import { groupQuestionEventsByQuestion, QuestionTranscriptCard } from './SessionQuestionTranscript';
@@ -125,26 +121,13 @@ import { entryParamFromSearch, stripEntryParamFromLocation } from '../EntryLinkR
 import { useIsHoverNone } from '../lib/useIsHoverNone';
 import { entryShareUrl, sessionShareUrl } from '../lib/publicUrl';
 import { navigate, URL_PARAMS, useLocation } from '../router';
-import { useTranscriptView } from './useTranscriptView';
+import { useExpandAllWork } from './useTranscriptView';
+import { WorkFold } from './WorkFold';
 
 // Skip offscreen rendering work so 500+ item transcripts scroll smoothly.
 const ITEM_VIS: CSSProperties = { contentVisibility: 'auto', containIntrinsicSize: 'auto 32px' };
 const ENTRY_REFERENCES_REFETCH_MS = 60_000;
 const MOBILE_MEDIA_QUERY = '(max-width: 767px)';
-
-function HiddenWorkChip({ count, onClick }: { count: number; onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      data-testid="hidden-work-chip"
-      onClick={onClick}
-      className="my-1 flex items-center gap-1 pl-3.5 text-2xs text-fg-faint hover:text-fg-muted"
-    >
-      <GearIcon size={11} />
-      {count} work {count === 1 ? 'step' : 'steps'}
-    </button>
-  );
-}
 
 function isMobileViewportNow(): boolean {
   return typeof window !== 'undefined' && typeof window.matchMedia === 'function'
@@ -200,6 +183,11 @@ export function isTranscriptEntryHandle(handle: string | null): handle is string
 
 type OutputSurface = 'conflicts' | 'changes' | 'sideEffects' | 'artifacts';
 type OutputCounts = Record<OutputSurface, number>;
+type InlineCodexChange = ReturnType<typeof codexInlineFileChanges>[number];
+type PaneSpineRow =
+  | { kind: 'item'; item: SessionItem; index: number }
+  | { kind: 'change'; change: InlineCodexChange; index: number }
+  | { kind: 'fold'; fold: FoldedTurnRow; index: number; endIndex: number; live: boolean };
 type PendingSteer = {
   id: string;
   clientMsgId?: string;
@@ -358,39 +346,12 @@ export interface TranscriptDiscussPayload {
   draft: string;
 }
 
-function outputStripClass({ danger = false, unseen = false }: { danger?: boolean; unseen?: boolean }): string {
-  if (danger) {
-    return `flex shrink-0 items-center gap-2 border-b px-3 py-1.5 text-left text-2xs text-danger-text hover:opacity-90 ${
-      unseen
-        ? 'border-danger-border-strong bg-danger-surface/90 ring-1 ring-inset ring-danger-border/70'
-        : 'border-danger-edge bg-danger-surface'
-    }`;
-  }
-  return `flex shrink-0 items-center gap-2 border-b px-3 py-1.5 text-left text-2xs hover:bg-surface-overlay ${
-    unseen
-      ? 'border-accent-border-muted bg-accent-tint text-fg-body ring-1 ring-inset ring-accent-border-muted'
-      : 'border-edge bg-surface-raised text-fg-secondary'
-  }`;
-}
-
-function OutputLabel({ children, unseen, danger = false }: { children: ReactNode; unseen: boolean; danger?: boolean }) {
-  return (
-    <span className="flex min-w-0 items-center gap-1.5">
-      {unseen && (
-        <span
-          aria-hidden="true"
-          className={`size-1.5 shrink-0 rounded-full ${danger ? 'bg-danger-text-strong' : 'bg-accent-text-strong'}`}
-        />
-      )}
-      <span
-        className={`font-semibold ${
-          unseen ? (danger ? 'text-danger-text-strong' : 'text-accent-text-strong') : 'text-fg-muted'
-        }`}
-      >
-        {children}
-      </span>
-    </span>
-  );
+function spineStripClass({ danger = false, unseen = false }: { danger?: boolean; unseen?: boolean } = {}): string {
+  return `rounded-full border px-2 py-0.5 text-xs transition-colors ${
+    danger
+      ? 'border-danger-border/60 bg-danger-tint/25 text-danger-text hover:border-danger-border'
+      : 'border-edge text-fg-muted hover:border-edge-strong hover:text-fg-secondary'
+  } ${unseen ? 'ring-1 ring-accent-border-muted' : ''}`;
 }
 
 export function SessionPane({
@@ -501,8 +462,7 @@ export function SessionPane({
   onApiError?: (err: unknown) => void;
 }) {
   const locationState = useLocation();
-  const [transcriptView, setTranscriptView] = useTranscriptView();
-  const showAgentWork = transcriptView === 'full';
+  const [expandAllWork, setExpandAllWork] = useExpandAllWork();
   // `active` re-opens the SSE the server closes after a terminal session's
   // replay, so a follow-up steer (which flips the session back to running over
   // WS) streams live instead of appearing only on the next pane mount.
@@ -522,6 +482,7 @@ export function SessionPane({
   const artifacts = useMemo(() => collectArtifacts(stream), [stream.artifacts]);
   const artifactPresentations = useArtifactPresentations(session.id, stream);
   const artifactsN = useMemo(() => artifactCount(artifacts), [artifacts]);
+  const changedWorkCount = changedFileCount + artifactsN;
   // Live conflict feed (A3): polls the ledger change-feed for status=conflict
   // versions and hydrates their both-sides detail for the Conflicts tab.
   // Inert under unit tests (which assert exact global-fetch call counts); fully
@@ -1320,17 +1281,34 @@ export function SessionPane({
     (i: number) => inlineCodexChanges.filter((a) => a.index === i),
     [inlineCodexChanges],
   );
-  const rows = useMemo(
-    () =>
-      showAgentWork
-        ? fullTranscriptRows(stream.items, codexChangesAt)
-        : focusTranscriptRows(stream.items, codexChangesAt),
-    [codexChangesAt, showAgentWork, stream.items],
-  );
+  const workFolds = useMemo(() => foldedTurnRows(stream.items), [stream.items]);
+  const rows = useMemo(() => {
+    const next: PaneSpineRow[] = [];
+    const foldsByStart = new Map(workFolds.map((fold) => [fold.startIndex, fold]));
+    const foldedWorkIds = new Set(workFolds.flatMap((fold) => fold.items.map((item) => item.id)));
 
-  // The pane is the thread with the work unfolded: plain chat stays an aside,
-  // while linked steers are first-class user turns even when Centaur never
-  // echoes a matching user_message.
+    for (let index = 0; index <= stream.items.length; index += 1) {
+      for (const change of codexChangesAt(index)) next.push({ kind: 'change', change, index });
+      const item = stream.items[index];
+      if (!item) continue;
+      const fold = foldsByStart.get(index);
+      if (fold) {
+        next.push({
+          kind: 'fold',
+          fold,
+          index,
+          endIndex: fold.endIndex,
+          live: activeTurn && !fold.completed && workFolds.at(-1)?.key === fold.key,
+        });
+      }
+      if (!foldedWorkIds.has(item.id)) next.push({ kind: 'item', item, index });
+    }
+    return next;
+  }, [activeTurn, codexChangesAt, stream.items, workFolds]);
+
+  // The pane and thread share one conversation spine: plain chat stays an
+  // aside, while linked steers are first-class user turns even when Centaur
+  // never echoes a matching user_message.
   const [asides, setAsides] = useState<PaneAside[]>([]);
   const [linkedSteers, setLinkedSteers] = useState<LinkedSteer[]>([]);
   useEffect(() => {
@@ -1542,21 +1520,6 @@ export function SessionPane({
     [userMessages, visibleLinkedSteers],
   );
 
-  // Manual expand/collapse overrides; default = open while running. When the
-  // result arrives the card auto-collapses only if the view is pinned to the
-  // bottom — if the user scrolled up to read it, it stays open under them.
-  const [toolOpen, setToolOpen] = useState<Record<string, boolean>>({});
-  const toolDefaultsRef = useRef(new Map<string, boolean>());
-  const toolDefaultOpen = (item: ToolCallItem): boolean => {
-    if (item.result === undefined) return true;
-    let d = toolDefaultsRef.current.get(item.id);
-    if (d === undefined) {
-      d = !stickRef.current;
-      toolDefaultsRef.current.set(item.id, d);
-    }
-    return d;
-  };
-
   // Autoscroll while pinned to the bottom (same pattern as Timeline).
   const scrollRef = useRef<HTMLDivElement>(null);
   const stickRef = useRef(true);
@@ -1695,9 +1658,9 @@ export function SessionPane({
   }, []);
   const headerMenuActions: MessageActionMenuAction[] = [
     {
-      key: 'work',
-      label: showAgentWork ? 'Hide agent work' : 'Show agent work',
-      onSelect: () => setTranscriptView(showAgentWork ? 'focus' : 'full'),
+      key: 'expand-work',
+      label: expandAllWork ? 'Collapse all work' : 'Expand all work',
+      onSelect: () => setExpandAllWork(!expandAllWork),
     },
     ...(onToggleFocus
       ? [
@@ -1940,6 +1903,51 @@ export function SessionPane({
         }
       />
 
+      <div data-testid="spine-work-strips" className="flex shrink-0 flex-wrap gap-1 border-b border-edge px-3 py-1.5">
+        {conflictsN > 0 && (
+          <button
+            type="button"
+            data-testid="conflicts-strip"
+            onClick={() => onStrip('conflicts')}
+            aria-expanded={workTab === 'conflicts'}
+            className={spineStripClass({ danger: true, unseen: unseenOutputs.conflicts })}
+          >
+            ⚠ Conflicts · {conflictsN}
+          </button>
+        )}
+        {changedWorkCount > 0 && (
+          <button
+            type="button"
+            data-testid="changes-strip"
+            onClick={() => onStrip('changes')}
+            aria-expanded={workTab === 'changes' || workTab === 'artifacts'}
+            className={spineStripClass({ unseen: unseenOutputs.changes || unseenOutputs.artifacts })}
+          >
+            ≡ What changed · {changedWorkCount}
+          </button>
+        )}
+        {sideEffectsN > 0 && (
+          <button
+            type="button"
+            data-testid="sideeffects-strip"
+            onClick={() => onStrip('sideEffects')}
+            aria-expanded={workTab === 'sideEffects'}
+            className={spineStripClass({ unseen: unseenOutputs.sideEffects })}
+          >
+            ⚙ What it ran · {sideEffectsN}
+          </button>
+        )}
+        <button
+          type="button"
+          data-testid="output-strip"
+          onClick={onOutputHubStrip}
+          aria-expanded={outputHubOpen}
+          className={spineStripClass()}
+        >
+          ▣ Files
+        </button>
+      </div>
+
       {session.archivedAt != null && (
         <div
           data-testid="archived-banner"
@@ -2079,71 +2087,6 @@ export function SessionPane({
         </section>
       )}
 
-      <button
-        type="button"
-        data-testid="output-strip"
-        onClick={onOutputHubStrip}
-        aria-expanded={outputHubOpen}
-        className={outputStripClass({})}
-      >
-        <OutputLabel unseen={false}>Files</OutputLabel>
-        <span className="ml-auto text-fg-tertiary">{outputHubOpen ? 'Hide' : 'Open'}</span>
-      </button>
-      {conflictsN > 0 && (
-        <button
-          type="button"
-          data-testid="conflicts-strip"
-          onClick={() => onStrip('conflicts')}
-          aria-expanded={workTab === 'conflicts'}
-          className={outputStripClass({ danger: true, unseen: unseenOutputs.conflicts })}
-        >
-          <OutputLabel unseen={unseenOutputs.conflicts} danger>
-            Conflicts
-          </OutputLabel>
-          <span className="tabular-nums">· {conflictsN}</span>
-          <span className="ml-auto opacity-80">{workTab === 'conflicts' ? 'Hide' : 'Resolve'}</span>
-        </button>
-      )}
-      {changedFileCount > 0 && (
-        <button
-          type="button"
-          data-testid="changes-strip"
-          onClick={() => onStrip('changes')}
-          aria-expanded={workTab === 'changes'}
-          className={outputStripClass({ unseen: unseenOutputs.changes })}
-        >
-          <OutputLabel unseen={unseenOutputs.changes}>Changes</OutputLabel>
-          <span className="tabular-nums">· {changedFileCount}</span>
-          <span className="ml-auto text-fg-tertiary">{workTab === 'changes' ? 'Hide' : 'View'}</span>
-        </button>
-      )}
-      {sideEffectsN > 0 && (
-        <button
-          type="button"
-          data-testid="sideeffects-strip"
-          onClick={() => onStrip('sideEffects')}
-          aria-expanded={workTab === 'sideEffects'}
-          className={outputStripClass({ unseen: unseenOutputs.sideEffects })}
-        >
-          <OutputLabel unseen={unseenOutputs.sideEffects}>Actions</OutputLabel>
-          <span className={`tabular-nums ${sideEffectsDanger ? 'text-danger-text' : ''}`}>· {sideEffectsN}</span>
-          <span className="ml-auto text-fg-tertiary">{workTab === 'sideEffects' ? 'Hide' : 'View'}</span>
-        </button>
-      )}
-      {artifactsN > 0 && (
-        <button
-          type="button"
-          data-testid="artifacts-strip"
-          onClick={() => onStrip('artifacts')}
-          aria-expanded={workTab === 'artifacts'}
-          className={outputStripClass({ unseen: unseenOutputs.artifacts })}
-        >
-          <OutputLabel unseen={unseenOutputs.artifacts}>Artifacts</OutputLabel>
-          <span className="tabular-nums">· {artifactsN}</span>
-          <span className="ml-auto text-fg-tertiary">{workTab === 'artifacts' ? 'Hide' : 'View'}</span>
-        </button>
-      )}
-
       <div className={`flex min-h-0 flex-1 ${workTab && workPinnedEffective ? 'flex-row' : 'flex-col'}`}>
         <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
           {workTab && !workPinnedEffective && (
@@ -2218,9 +2161,8 @@ export function SessionPane({
               return (
                 <>
                   {rows.map((row) => {
-                    const rowStartIndex = row.kind === 'hidden' ? row.startIndex : row.index;
-                    const seatLinesBefore = flushSeatLinesThrough(rowStartIndex);
-                    const threadRowsBefore = flushThreadRowsThrough(rowStartIndex);
+                    const seatLinesBefore = flushSeatLinesThrough(row.index);
+                    const threadRowsBefore = flushThreadRowsThrough(row.index);
 
                     if (row.kind === 'change') {
                       return (
@@ -2234,12 +2176,33 @@ export function SessionPane({
                       );
                     }
 
-                    if (row.kind === 'hidden') {
+                    if (row.kind === 'fold') {
                       return (
-                        <Fragment key={row.key}>
+                        <Fragment key={row.fold.key}>
                           {seatLinesBefore}
                           {threadRowsBefore}
-                          <HiddenWorkChip count={row.count} onClick={() => setTranscriptView('full')} />
+                          <WorkFold
+                            fold={row.fold}
+                            live={row.live}
+                            expandAll={expandAllWork}
+                            revealStepHandle={pendingEntryHandle}
+                            highlightedStepHandle={flashEntryHandle}
+                            onOpenWork={() => onStrip('sideEffects')}
+                            onDiscussStep={
+                              discussContext && onDiscussEntry
+                                ? (item) => {
+                                    const handle = item.handle ?? null;
+                                    if (!isTranscriptEntryHandle(handle)) return;
+                                    onDiscussEntry({
+                                      handle,
+                                      channelId: discussContext.channelId,
+                                      threadRootEventId: discussContext.threadRootEventId,
+                                      draft: `/e/${handle} `,
+                                    });
+                                  }
+                                : undefined
+                            }
+                          />
                           {flushSeatLinesThrough(row.endIndex)}
                           {flushThreadRowsThrough(row.endIndex)}
                         </Fragment>
@@ -2286,24 +2249,6 @@ export function SessionPane({
                                 <QuestionTranscriptCard
                                   item={item}
                                   events={questionEventsByQuestion.get(item.questionId) ?? []}
-                                />
-                              </div>
-                            ) : item.type === 'reasoning' ? (
-                              <div className="pl-3.5">
-                                <ReasoningBlock item={item} />
-                              </div>
-                            ) : item.type === 'tool_call' ? (
-                              <div className="pl-3.5">
-                                <TranscriptTool
-                                  item={item}
-                                  expanded={toolOpen[item.id] ?? toolDefaultOpen(item)}
-                                  onToggle={() =>
-                                    setToolOpen((prev) => ({
-                                      ...prev,
-                                      [item.id]: !(prev[item.id] ?? toolDefaultOpen(item)),
-                                    }))
-                                  }
-                                  clockSkewMs={clockSkewMs}
                                 />
                               </div>
                             ) : null}
@@ -3153,131 +3098,6 @@ const TextBlock = memo(
     );
   },
   (prev, next) => prev.item.text === next.item.text,
-);
-
-/** A transcript tool call: file edits (Edit/Write/MultiEdit/NotebookEdit) render
- * as an inline diff card — the actual change where it happened, not raw JSON —
- * and everything else as the generic tool card. Codex edits arrive as state, not
- * positioned items, so they stay drawer-only. */
-function TranscriptTool({
-  item,
-  expanded,
-  onToggle,
-  clockSkewMs,
-}: {
-  item: ToolCallItem;
-  expanded: boolean;
-  onToggle: () => void;
-  clockSkewMs?: number | null;
-}) {
-  const fileChange = fileChangeFromToolCall(item);
-  if (fileChange) {
-    const status = item.result === undefined ? 'running' : item.result.is_error ? 'error' : 'done';
-    return <InlineFileChange change={fileChange} status={status} />;
-  }
-  return <ToolCard item={item} expanded={expanded} onToggle={onToggle} clockSkewMs={clockSkewMs} />;
-}
-
-const ToolCard = memo(
-  function ToolCard({
-    item,
-    expanded,
-    onToggle,
-    clockSkewMs = null,
-  }: {
-    item: ToolCallItem;
-    expanded: boolean;
-    onToggle: () => void;
-    clockSkewMs?: number | null;
-  }) {
-    const running = item.result === undefined;
-    // Live "running" clock, anchored to the tool's server-stamped start when we
-    // have one (correct for a pane opened mid-run) — first render otherwise.
-    const startedRef = useRef<number>(Date.now());
-    const stampedStart = item.ts !== undefined ? Date.parse(item.ts) : NaN;
-    const startedAt =
-      !Number.isNaN(stampedStart) && clockSkewMs !== null ? stampedStart + clockSkewMs : startedRef.current;
-    const now = useNow(running);
-    const elapsedMs = running ? Math.max(0, now - startedAt) : 0;
-    const isError = item.result?.is_error === true;
-    const command = typeof item.input['command'] === 'string' ? (item.input['command'] as string) : null;
-    const rest = Object.fromEntries(Object.entries(item.input).filter(([k]) => k !== 'command'));
-    const restJson = Object.keys(rest).length > 0 ? JSON.stringify(rest, null, 2) : null;
-    const descriptor = toolDisplay(item);
-
-    return (
-      <div
-        style={ITEM_VIS}
-        data-testid="tool-card"
-        className={`my-1 rounded-md border text-xs ${
-          isError ? 'border-danger-border bg-danger-tint' : 'border-edge bg-surface-raised'
-        }`}
-      >
-        <button
-          type="button"
-          onClick={onToggle}
-          aria-expanded={expanded}
-          className="flex w-full items-center gap-2 px-2 py-1.5 text-left hover:bg-surface-overlay"
-        >
-          <span className="text-fg-muted">
-            {expanded ? <ChevronDownIcon size={12} /> : <ChevronRightIcon size={12} />}
-          </span>
-          <span className="sr-only">{item.name}</span>
-          <span className="min-w-0 shrink truncate font-mono font-semibold text-fg-body">{descriptor.title}</span>
-          {!expanded && descriptor.subtitle && (
-            <span className="min-w-0 flex-1 truncate font-mono text-fg-muted">{descriptor.subtitle}</span>
-          )}
-          <span className="ml-auto flex shrink-0 items-center gap-1.5">
-            {running ? (
-              <>
-                {elapsedMs >= 1000 && (
-                  <span className="tabular-nums text-2xs text-fg-faint">{formatElapsed(elapsedMs)}</span>
-                )}
-                <Spinner className="text-accent-text-strong" />
-              </>
-            ) : isError ? (
-              <span className="font-semibold text-danger">error</span>
-            ) : (
-              <span className="text-fg-muted">done</span>
-            )}
-          </span>
-        </button>
-        {expanded && (
-          <div className="border-t border-edge/80 px-2 py-1.5">
-            {command !== null && (
-              <pre className="overflow-x-auto whitespace-pre-wrap break-words font-mono text-2xs leading-relaxed text-fg-secondary">
-                {command}
-              </pre>
-            )}
-            {restJson && (
-              <pre className="mt-1 overflow-x-auto whitespace-pre-wrap break-words font-mono text-2xs leading-relaxed text-fg-muted">
-                {restJson}
-              </pre>
-            )}
-            {item.result && (
-              <pre
-                className={`mt-1.5 max-h-64 overflow-y-auto whitespace-pre-wrap break-words rounded border px-2 py-1.5 font-mono text-2xs leading-relaxed ${
-                  isError
-                    ? 'border-danger-border bg-danger-tint text-danger-text-strong'
-                    : 'border-edge bg-surface text-fg-secondary'
-                }`}
-              >
-                {item.result.content}
-              </pre>
-            )}
-          </div>
-        )}
-      </div>
-    );
-  },
-  // onToggle is intentionally excluded: it is a fresh closure every render but
-  // only reads stable fields (item.id) plus state via a functional update.
-  (prev, next) =>
-    prev.expanded === next.expanded &&
-    prev.item.name === next.item.name &&
-    prev.item.input === next.item.input &&
-    prev.item.result?.content === next.item.result?.content &&
-    prev.item.result?.is_error === next.item.result?.is_error,
 );
 
 /** A durable linked-thread steer promoted to the same chrome as harness turns. */

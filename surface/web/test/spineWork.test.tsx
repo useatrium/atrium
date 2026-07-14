@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import type { FoldedTurnRow, ToolCallItem } from '@atrium/centaur-client';
+import type { FoldedTurnRow, ToolCallItem, TurnWorkItem } from '@atrium/centaur-client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ThemeProvider } from '../src/theme';
 import { WorkFold } from '../src/sessions/WorkFold';
@@ -38,11 +38,25 @@ function fold(item = tool()): FoldedTurnRow {
   };
 }
 
-function renderFold(props: { live?: boolean; onOpenWork?: () => void } = {}) {
-  const renderedFold = props.live ? fold(tool({ result: undefined })) : fold();
+function renderFold(
+  props: {
+    live?: boolean;
+    expandAll?: boolean;
+    onOpenWork?: () => void;
+    onDiscussStep?: (item: TurnWorkItem) => void;
+    item?: ToolCallItem;
+  } = {},
+) {
+  const renderedFold = props.item ? fold(props.item) : props.live ? fold(tool({ result: undefined })) : fold();
   return render(
     <ThemeProvider>
-      <WorkFold fold={renderedFold} live={props.live ?? false} onOpenWork={props.onOpenWork} />
+      <WorkFold
+        fold={renderedFold}
+        live={props.live ?? false}
+        expandAll={props.expandAll}
+        onOpenWork={props.onOpenWork}
+        onDiscussStep={props.onDiscussStep}
+      />
     </ThemeProvider>,
   );
 }
@@ -67,6 +81,18 @@ describe('spine work fold disclosure', () => {
     expect(screen.getByTestId('work-fold-collapsed')).toBeTruthy();
   });
 
+  it('follows the pane-level expand-all preference while retaining per-fold disclosure', () => {
+    const view = renderFold({ expandAll: true });
+    expect(screen.getByTestId('work-fold-expanded')).toBeTruthy();
+
+    view.rerender(
+      <ThemeProvider>
+        <WorkFold fold={fold()} live={false} expandAll={false} />
+      </ThemeProvider>,
+    );
+    expect(screen.getByTestId('work-fold-collapsed')).toBeTruthy();
+  });
+
   it('expands fold, step, and clipped detail, then opens What it ran', () => {
     const onOpenWork = vi.fn();
     renderFold({ onOpenWork });
@@ -79,5 +105,16 @@ describe('spine work fold disclosure', () => {
     expect(detail.textContent).toContain('line 19');
     fireEvent.click(screen.getByRole('button', { name: 'full output → What it ran' }));
     expect(onOpenWork).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the pane discuss affordance on addressable work steps', () => {
+    const onDiscussStep = vi.fn();
+    const item = tool({ handle: 'rec_tool' });
+    renderFold({ item, onDiscussStep });
+
+    fireEvent.click(screen.getByTestId('work-fold-collapsed'));
+    fireEvent.click(screen.getByRole('button', { name: /pnpm test/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Discuss in thread' }));
+    expect(onDiscussStep).toHaveBeenCalledWith(item);
   });
 });

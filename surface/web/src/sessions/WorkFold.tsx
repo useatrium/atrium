@@ -29,16 +29,46 @@ function StepGlyph({ item }: { item: TurnWorkItem }) {
   return <span className="animate-pulse text-accent-text motion-reduce:animate-none">●</span>;
 }
 
-export function WorkFold({ fold, live, onOpenWork }: { fold: FoldedTurnRow; live: boolean; onOpenWork?: () => void }) {
-  const [open, setOpen] = useState(live);
-  const [openSteps, setOpenSteps] = useState<Record<string, boolean>>({});
+export function WorkFold({
+  fold,
+  live,
+  expandAll = false,
+  revealStepHandle = null,
+  highlightedStepHandle = null,
+  onOpenWork,
+  onDiscussStep,
+}: {
+  fold: FoldedTurnRow;
+  live: boolean;
+  /** Pane-level disclosure preference. ThreadPanel leaves this uncontrolled. */
+  expandAll?: boolean;
+  /** Opens a linked step so SessionPane entry deep-links remain addressable. */
+  revealStepHandle?: string | null;
+  highlightedStepHandle?: string | null;
+  onOpenWork?: () => void;
+  onDiscussStep?: (item: TurnWorkItem) => void;
+}) {
+  const revealedStep = fold.items.find((item) => item.handle === revealStepHandle);
+  const [open, setOpen] = useState(live || expandAll || revealedStep != null);
+  const [openSteps, setOpenSteps] = useState<Record<string, boolean>>(() =>
+    revealedStep ? { [revealedStep.id]: true } : {},
+  );
   const wasLive = useRef(live);
+  const wasExpandAll = useRef(expandAll);
 
   useEffect(() => {
-    if (live) setOpen(true);
-    else if (wasLive.current) setOpen(false);
+    if (live || expandAll) setOpen(true);
+    else if (wasLive.current || wasExpandAll.current) setOpen(false);
     wasLive.current = live;
-  }, [live]);
+    wasExpandAll.current = expandAll;
+  }, [expandAll, live]);
+
+  useEffect(() => {
+    const step = fold.items.find((item) => item.handle === revealStepHandle);
+    if (!step) return;
+    setOpen(true);
+    setOpenSteps((current) => (current[step.id] ? current : { ...current, [step.id]: true }));
+  }, [fold.items, revealStepHandle]);
 
   const duration = durationLabel(fold.durationMs, live);
   const names = fold.toolNames.slice(0, 3).join(', ');
@@ -85,7 +115,13 @@ export function WorkFold({ fold, live, onOpenWork }: { fold: FoldedTurnRow; live
         {fold.items.map((item) => {
           const stepOpen = openSteps[item.id] === true;
           return (
-            <div key={item.id} className="px-2 py-1.5 font-mono text-xs">
+            <div
+              key={item.id}
+              data-entry-handle={item.handle ?? undefined}
+              className={`px-2 py-1.5 font-mono text-xs ${
+                item.handle != null && item.handle === highlightedStepHandle ? 'entry-flash bg-accent-hover/10' : ''
+              }`}
+            >
               <button
                 type="button"
                 aria-expanded={stepOpen}
@@ -98,7 +134,13 @@ export function WorkFold({ fold, live, onOpenWork }: { fold: FoldedTurnRow; live
                   {stepOpen ? '▼' : '▶'}
                 </span>
               </button>
-              {stepOpen && <StepDetail item={item} onOpenWork={onOpenWork} />}
+              {stepOpen && (
+                <StepDetail
+                  item={item}
+                  onOpenWork={onOpenWork}
+                  onDiscuss={onDiscussStep && item.handle?.startsWith('rec_') ? () => onDiscussStep(item) : undefined}
+                />
+              )}
             </div>
           );
         })}
