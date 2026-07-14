@@ -620,7 +620,7 @@ def cloud_init(control_bucket: str, control_prefix: str) -> str:
               x86_64|amd64) aws_pkg=x86_64 ;;
               *) echo "unsupported arch for awscli: $aws_arch" >&2; exit 1 ;;
             esac
-            curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-${aws_pkg}.zip" -o /tmp/awscliv2.zip
+            curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-${{aws_pkg}}.zip" -o /tmp/awscliv2.zip
           - rm -rf /tmp/aws
           - unzip -q /tmp/awscliv2.zip -d /tmp
           - /tmp/aws/install
