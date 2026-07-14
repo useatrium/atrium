@@ -10614,9 +10614,14 @@ mod adoption_tests {
 
     /// Ages an execution row past `QUEUED_ORPHAN_GRACE` so adoption treats it
     /// as a genuine orphan instead of a young row racing a live execute.
+    /// Rewinds `started_at` too (a no-op while NULL) because `execution_age`
+    /// measures from `started_at` once the execution is running — backdating
+    /// only `created_at` leaves a running execution looking brand new.
     async fn backdate_execution(store: &PgSessionStore, execution_id: &str, seconds: f64) {
         let result = sqlx::query(
-            "update session_executions set created_at = created_at - make_interval(secs => $2) \
+            "update session_executions \
+             set created_at = created_at - make_interval(secs => $2), \
+                 started_at = started_at - make_interval(secs => $2) \
              where execution_id = $1",
         )
         .bind(execution_id)
