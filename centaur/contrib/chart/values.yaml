@@ -703,9 +703,15 @@ nodeSync:
   scanIntervalSeconds: 2
   # Raised by a privileged initContainer before node-sync starts so recursive
   # upperdir inotify watches have enough descriptors and queue depth per node.
+  # maxUserInstances matters too: every inotify_init() on the node counts
+  # against the per-uid instance budget, and most node daemons (kubelet,
+  # containerd, journald, node-sync) share uid 0 — at the kernel default of
+  # 128 the daemon's init fails with EMFILE and it silently degrades to
+  # scan-every-tick.
   inotify:
     maxUserWatches: 1048576
     maxQueuedEvents: 65536
+    maxUserInstances: 1024
   hydrateArtifacts: true
   # Atrium is reached egress-only; the node is trusted infra (not the sandbox),
   # so it bypasses the per-sandbox egress NetworkPolicy → big files go direct to S3.
