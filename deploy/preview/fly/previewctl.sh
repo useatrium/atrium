@@ -316,8 +316,7 @@ EOF
     --vm-cpu-kind shared \
     --vm-cpus 1 \
     --vm-memory 512 \
-    --volume-size 1 \
-    --yes
+    --volume-size 1
 
   flyctl postgres attach "$pg" --app "$app" --database-name atrium --database-user atrium --yes
 

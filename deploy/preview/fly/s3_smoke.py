@@ -48,9 +48,8 @@ def request(
     amz_date = now.strftime("%Y%m%dT%H%M%SZ")
     date_stamp = now.strftime("%Y%m%d")
     payload_hash = hashlib.sha256(body).hexdigest()
-    canonical_uri = "/" + "/".join(
-        urllib.parse.quote(part, safe="") for part in [bucket, *key.split("/")]
-    )
+    canonical_parts = [bucket] if key == "" else [bucket, *key.split("/")]
+    canonical_uri = "/" + "/".join(urllib.parse.quote(part, safe="") for part in canonical_parts)
     canonical_headers = (
         f"host:{parsed.netloc}\n"
         f"x-amz-content-sha256:{payload_hash}\n"
@@ -121,6 +120,16 @@ def main() -> int:
     print(f"key: {key}")
 
     status, _ = request(
+        method="HEAD",
+        endpoint=args.endpoint,
+        bucket=args.bucket,
+        key="",
+        access_key=args.access_key,
+        secret_key=args.secret_key,
+        region=args.signing_region,
+    )
+    print(f"HEAD bucket: {status}")
+    status, _ = request(
         method="PUT",
         endpoint=args.endpoint,
         bucket=args.bucket,
@@ -163,4 +172,3 @@ if __name__ == "__main__":
     except Exception as exc:
         print(f"s3 smoke: failed: {exc}", file=sys.stderr)
         raise SystemExit(1)
-
