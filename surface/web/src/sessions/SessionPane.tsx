@@ -115,12 +115,14 @@ import { showErrorToast } from '../components/Toasts';
 import { TimestampDisclosure } from '../components/TimestampDisclosure';
 import {
   MessageActionMenu,
+  POPOVER_WIDTH,
   type MessageActionMenuAction,
   type MessageActionMenuState,
 } from '../components/MessageActionMenu';
 import { SelectTextSheet } from '../components/SelectTextSheet';
 import { useLongPress } from '../components/useLongPress';
 import { entryParamFromSearch, stripEntryParamFromLocation } from '../EntryLinkRoute';
+import { useIsHoverNone } from '../lib/useIsHoverNone';
 import { entryShareUrl, sessionShareUrl } from '../lib/publicUrl';
 import { navigate, URL_PARAMS, useLocation } from '../router';
 import { useTranscriptView } from './useTranscriptView';
@@ -129,7 +131,6 @@ import { useTranscriptView } from './useTranscriptView';
 const ITEM_VIS: CSSProperties = { contentVisibility: 'auto', containIntrinsicSize: 'auto 32px' };
 const ENTRY_REFERENCES_REFETCH_MS = 60_000;
 const MOBILE_MEDIA_QUERY = '(max-width: 767px)';
-const HOVER_NONE_MEDIA_QUERY = '(hover: none)';
 
 function HiddenWorkChip({ count, onClick }: { count: number; onClick: () => void }) {
   return (
@@ -184,28 +185,7 @@ function useIsMobileViewport(): boolean {
   return isMobileViewport;
 }
 
-function isHoverNoneNow(): boolean {
-  return typeof window !== 'undefined' && typeof window.matchMedia === 'function'
-    ? window.matchMedia(HOVER_NONE_MEDIA_QUERY).matches
-    : false;
-}
-
-export function useIsHoverNone(): boolean {
-  const [isHoverNone, setIsHoverNone] = useState(isHoverNoneNow);
-  useEffect(() => {
-    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
-    const query = window.matchMedia(HOVER_NONE_MEDIA_QUERY);
-    const sync = () => setIsHoverNone(query.matches);
-    sync();
-    query.addEventListener('change', sync);
-    return () => query.removeEventListener('change', sync);
-  }, []);
-  return isHoverNone;
-}
-
-function isTouchContextMenu(event: MouseEvent): boolean {
-  return 'pointerType' in event && event.pointerType === 'touch';
-}
+export { useIsHoverNone };
 
 function isInteractiveTarget(target: EventTarget): boolean {
   return (
@@ -1711,7 +1691,7 @@ export function SessionPane({
   const [headerMenu, setHeaderMenu] = useState<MessageActionMenuState | null>(null);
   const openHeaderMenu = useCallback((event: ReactMouseEvent<HTMLButtonElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();
-    setHeaderMenu({ mode: 'popover', anchor: { x: rect.right - 240, y: rect.bottom + 4 } });
+    setHeaderMenu({ mode: 'popover', anchor: { x: rect.right - POPOVER_WIDTH, y: rect.bottom + 4 } });
   }, []);
   const headerMenuActions: MessageActionMenuAction[] = [
     {
@@ -2747,6 +2727,7 @@ export function AnnotatedTranscriptRow({
   children: ReactNode;
 }) {
   const contentRef = useRef<HTMLDivElement | null>(null);
+  const moreActionsButtonRef = useRef<HTMLButtonElement | null>(null);
   const linkCopyResetRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const textCopyResetRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [linkCopied, setLinkCopied] = useState(false);
@@ -2893,18 +2874,17 @@ export function AnnotatedTranscriptRow({
     if (!actionMenuAllowed) return;
     setActionMenu({ mode: 'sheet' });
   }, [actionMenuAllowed]);
-  const onContentContextMenu = useCallback(
-    (event: ReactMouseEvent<HTMLDivElement>) => {
-      if (event.defaultPrevented) return;
+  const openPopoverMenu = useCallback(
+    (event: ReactMouseEvent<HTMLButtonElement>) => {
       if (!actionMenuAllowed) return;
-      if (isTouchContextMenu(event.nativeEvent)) {
-        event.preventDefault();
-        return;
-      }
-      event.preventDefault();
-      setActionMenu({ mode: 'popover', anchor: { x: event.clientX, y: event.clientY } });
+      const rect = event.currentTarget.getBoundingClientRect();
+      setActionMenu({ mode: 'popover', anchor: { x: rect.right - POPOVER_WIDTH, y: rect.bottom + 4 } });
     },
     [actionMenuAllowed],
+  );
+  const popoverActions = useMemo(
+    () => transcriptActions.map((action) => ({ ...action, sheetOnly: false })),
+    [transcriptActions],
   );
   const longPress = useLongPress({
     disabled: !actionMenuAllowed,
@@ -2938,10 +2918,7 @@ export function AnnotatedTranscriptRow({
         onPointerUp={longPress.onPointerUp}
         onPointerCancel={longPress.onPointerCancel}
         onLostPointerCapture={longPress.onLostPointerCapture}
-        onContextMenu={(event) => {
-          longPress.onContextMenu(event);
-          onContentContextMenu(event);
-        }}
+        onContextMenu={longPress.onContextMenu}
         onClick={onContentClick}
         style={{ touchAction: 'pan-y pinch-zoom' }}
         className="min-w-0"
@@ -3038,14 +3015,25 @@ export function AnnotatedTranscriptRow({
                 </button>
               </Tooltip>
             )}
+            <Tooltip content="More transcript actions">
+              <button
+                ref={moreActionsButtonRef}
+                type="button"
+                onClick={openPopoverMenu}
+                aria-label="More transcript actions"
+                className="inline-flex h-7 w-8 items-center justify-center rounded-md border border-edge-strong bg-surface-overlay text-base leading-none text-fg-secondary shadow-sm transition-colors hover:bg-edge-strong hover:text-fg"
+              >
+                ⋯
+              </button>
+            </Tooltip>
           </div>
         )}
       </div>
       <MessageActionMenu
         state={actionMenu}
         onClose={closeActionMenu}
-        restoreFocusRef={contentRef}
-        actions={transcriptActions}
+        restoreFocusRef={actionMenu?.mode === 'popover' ? moreActionsButtonRef : contentRef}
+        actions={actionMenu?.mode === 'popover' ? popoverActions : transcriptActions}
       />
       <SelectTextSheet open={selectTextContent != null} onClose={closeSelectText} restoreFocusRef={contentRef}>
         <div className="whitespace-pre-wrap break-words text-sm leading-relaxed text-fg-body">{selectTextContent}</div>

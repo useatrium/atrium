@@ -114,7 +114,10 @@ describe('ThreadPanel delegate to agent', () => {
       </ThemeProvider>,
     );
 
-    fireEvent.contextMenu(screen.getByText('Reply message'), { clientX: 64, clientY: 96 });
+    // Delegate used to be right-click-only. It now lives behind the row's visible
+    // ⋯ button, which is the only keyboard-reachable route to it.
+    const row = screen.getByText('Reply message').closest('[data-eid]') as HTMLElement;
+    fireEvent.click(within(row).getByRole('button', { name: 'More message actions' }));
     const actionMenu = screen.getByRole('dialog', { name: 'Message actions' });
     fireEvent.click(within(actionMenu).getByRole('button', { name: 'Delegate to agent…' }));
 

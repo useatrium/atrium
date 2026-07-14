@@ -20,7 +20,8 @@ export type MessageActionMenuReactions = {
   onSelect: (emoji: string) => void;
 };
 
-const POPOVER_WIDTH = 240;
+/** Popover width in px; callers right-align the menu under their button with this. */
+export const POPOVER_WIDTH = 240;
 const POPOVER_MAX_HEIGHT = 360;
 const VIEWPORT_MARGIN = 8;
 

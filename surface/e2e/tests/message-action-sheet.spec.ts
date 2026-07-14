@@ -175,12 +175,14 @@ test('Select text opens a selectable sheet with the rendered message', async ({ 
 test.describe('pointer devices', () => {
   test.use({ hasTouch: false, isMobile: false, viewport: { width: 1280, height: 800 } });
 
-  test('Select text is absent from the right-click popover', async ({ page }) => {
+  test('Select text is absent from the overflow popover', async ({ page }) => {
     await login(page, unique('seltext-desk'), 'Select Desk');
     const text = unique('desktop-popover');
     await sendMessage(page, text);
 
-    await messageRow(page, text).click({ button: 'right' });
+    const row = messageRow(page, text);
+    await row.hover();
+    await row.getByRole('button', { name: 'More message actions' }).click();
     const menu = page.getByRole('dialog', { name: 'Message actions' });
     await expect(menu).toBeVisible();
     await expect(menu.getByRole('button', { name: 'Copy text' })).toBeVisible();

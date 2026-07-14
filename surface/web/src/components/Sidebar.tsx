@@ -8,6 +8,7 @@ import {
   type FormEvent,
   type MouseEvent,
 } from 'react';
+import { useIsHoverNone } from '../lib/useIsHoverNone';
 import { api, type Channel } from '../api';
 import { MessageActionMenu, type MessageActionMenuState } from './MessageActionMenu';
 import type { ActivityCounts, QueueSyncState } from '@atrium/surface-client';
@@ -124,7 +125,9 @@ export function Sidebar({
   const lastStartDmRequestSeq = useRef(startDmRequestSeq);
   const createChannelInputRef = useRef<HTMLInputElement | null>(null);
   const dmPickerInputRef = useRef<HTMLInputElement | null>(null);
+  const channelMenuButtonRef = useRef<HTMLButtonElement | null>(null);
   const createChannelErrorId = 'sidebar-create-channel-error';
+  const isHoverNone = useIsHoverNone();
 
   const activeChannels = channels.filter((c) => c.archivedAt == null);
   const pinnedChannels = activeChannels.filter((c) => c.pinned);
@@ -134,10 +137,18 @@ export function Sidebar({
   const [archivedOpen, setArchivedOpen] = useState(false);
   const [channelMenu, setChannelMenu] = useState<{ channel: Channel; state: MessageActionMenuState } | null>(null);
 
-  const openChannelMenu = useCallback((channel: Channel, event: MouseEvent) => {
-    event.preventDefault();
-    setChannelMenu({ channel, state: { mode: 'popover', anchor: { x: event.clientX, y: event.clientY } } });
-  }, []);
+  const openChannelMenu = useCallback(
+    (channel: Channel, event: MouseEvent<HTMLButtonElement>) => {
+      channelMenuButtonRef.current = event.currentTarget;
+      if (isHoverNone) {
+        setChannelMenu({ channel, state: { mode: 'sheet' } });
+        return;
+      }
+      const rect = event.currentTarget.getBoundingClientRect();
+      setChannelMenu({ channel, state: { mode: 'popover', anchor: { x: rect.left, y: rect.bottom + 4 } } });
+    },
+    [isHoverNone],
+  );
 
   const channelMenuActions = useMemo(() => {
     if (!channelMenu) return [];
@@ -240,11 +251,7 @@ export function Sidebar({
     const partner = isDm ? dmPartner(c, me.id) : null;
     const isArchived = c.archivedAt != null;
     return (
-      <li
-        key={c.id}
-        className={sidebarItemClass(active, level, c.muted)}
-        onContextMenu={(event) => openChannelMenu(c, event)}
-      >
+      <li key={c.id} className={sidebarItemClass(active, level, c.muted)}>
         <button type="button" onClick={() => onSelect(c.id)} className={SIDEBAR_ROW_BUTTON_CLASS}>
           {isDm ? (
             <Avatar name={channelAvatarName(c, me.id)} seed={partner?.id ?? c.id} size={16} />
@@ -292,6 +299,18 @@ export function Sidebar({
             }`}
           >
             {c.muted ? <BellOffIcon /> : <BellIcon />}
+          </button>
+        </Tooltip>
+        <Tooltip content={`More actions for ${isDm ? label : `#${label}`}`}>
+          <button
+            type="button"
+            onClick={(event) => openChannelMenu(c, event)}
+            aria-label={`More actions for ${isDm ? label : `#${label}`}`}
+            aria-haspopup="dialog"
+            aria-expanded={channelMenu?.channel.id === c.id}
+            className="shrink-0 rounded-md px-2 py-1 text-sm font-semibold leading-none text-fg-faint opacity-0 hover:bg-surface-overlay hover:text-fg-body group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:inline-flex [@media(hover:none)]:size-11 [@media(hover:none)]:items-center [@media(hover:none)]:justify-center [@media(hover:none)]:p-0 [@media(hover:none)]:opacity-100"
+          >
+            ⋯
           </button>
         </Tooltip>
       </li>
@@ -631,6 +650,7 @@ export function Sidebar({
       <MessageActionMenu
         state={channelMenu?.state ?? null}
         onClose={() => setChannelMenu(null)}
+        restoreFocusRef={channelMenuButtonRef}
         actions={channelMenuActions}
         label="Channel actions"
       />

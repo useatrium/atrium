@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import type { ChatMessage, UserRef } from '@atrium/surface-client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ThemeProvider } from '../theme';
@@ -79,16 +79,18 @@ function renderRow({
   resolveUser,
   onReact = vi.fn().mockResolvedValue(undefined),
   onOpenThread,
+  onDelegateToAgent,
   row = message(),
   session: rowSession,
 }: {
   resolveUser?: (id: string) => UserRef | undefined;
   onReact?: (message: ChatMessage, emoji: string) => Promise<void>;
   onOpenThread?: (rootEventId: number) => void;
+  onDelegateToAgent?: (message: ChatMessage) => void;
   row?: ChatMessage;
   session?: Session;
 } = {}) {
-  render(
+  const view = render(
     <ThemeProvider>
       <MessageRow
         message={row}
@@ -98,16 +100,19 @@ function renderRow({
         meHandle="ada"
         onRetry={vi.fn()}
         onOpenThread={onOpenThread}
+        onDelegateToAgent={onDelegateToAgent}
         onReact={onReact}
         resolveUser={resolveUser}
       />
     </ThemeProvider>,
   );
-  return { onReact };
+  return { onReact, ...view };
 }
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
 });
 
 describe('MessageRow reactions', () => {
@@ -178,6 +183,78 @@ describe('MessageRow broadcast replies', () => {
 
     expect(onOpenThread).toHaveBeenCalledWith(42);
     expect(onOpenThread).not.toHaveBeenCalledWith(99);
+  });
+});
+
+describe('MessageRow actions', () => {
+  it('leaves mouse context menus to the browser without opening message actions', () => {
+    const { container } = renderRow({ onDelegateToAgent: vi.fn() });
+    const row = container.querySelector('[data-eid="42"]');
+    expect(row).toBeTruthy();
+
+    const contextMenu = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+    fireEvent(row!, contextMenu);
+
+    expect(contextMenu.defaultPrevented).toBe(false);
+    expect(screen.queryByRole('dialog', { name: 'Message actions' })).toBeNull();
+  });
+
+  it('opens the complete action menu from the visible keyboard-focusable affordance', () => {
+    const onDelegateToAgent = vi.fn();
+    renderRow({ onDelegateToAgent });
+
+    const moreActions = screen.getByRole('button', { name: 'More message actions' });
+    moreActions.focus();
+    expect(document.activeElement).toBe(moreActions);
+    fireEvent.click(moreActions);
+
+    const menu = screen.getByRole('dialog', { name: 'Message actions' });
+    expect(within(menu).queryByRole('button', { name: 'Cancel' })).toBeNull();
+    const delegate = within(menu).getByRole('button', { name: 'Delegate to agent…' });
+    fireEvent.click(delegate);
+    expect(onDelegateToAgent).toHaveBeenCalledWith(expect.objectContaining({ id: 42 }));
+  });
+
+  it('still opens the action sheet after a touch long-press', () => {
+    vi.useFakeTimers();
+    renderRow({ onDelegateToAgent: vi.fn() });
+    const text = screen.getByText('Hello');
+    const pointerDown = new MouseEvent('pointerdown', {
+      bubbles: true,
+      cancelable: true,
+      clientX: 20,
+      clientY: 20,
+    });
+    Object.defineProperties(pointerDown, {
+      pointerId: { value: 1 },
+      pointerType: { value: 'touch' },
+    });
+
+    fireEvent(text, pointerDown);
+    act(() => vi.advanceTimersByTime(400));
+
+    const sheet = screen.getByRole('dialog', { name: 'Message actions' });
+    expect(within(sheet).getByRole('button', { name: 'Delegate to agent…' })).toBeTruthy();
+    expect(within(sheet).getByRole('button', { name: 'Cancel' })).toBeTruthy();
+  });
+
+  it('keeps a 44px more-actions target visible on hover-less devices and opens the sheet', () => {
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn().mockReturnValue({
+        matches: true,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      }),
+    );
+    renderRow({ onDelegateToAgent: vi.fn() });
+
+    const moreActions = screen.getByRole('button', { name: 'More message actions' });
+    expect(moreActions.className).toContain('size-11');
+    fireEvent.click(moreActions);
+
+    const sheet = screen.getByRole('dialog', { name: 'Message actions' });
+    expect(within(sheet).getByRole('button', { name: 'Cancel' })).toBeTruthy();
   });
 });
 
