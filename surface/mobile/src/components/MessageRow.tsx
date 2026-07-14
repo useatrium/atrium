@@ -537,10 +537,14 @@ function SessionCard({
   const canOpenWork = Boolean(message.sessionId && (onOpenPane ?? onOpen));
 
   if (collapsedTerminal) {
+    // One status voice: the collapsed strip still NAMES the state ("Done",
+    // "Stopped") the way every other surface does, then says how long it took.
+    // Dropping the label left mobile saying only "worked 7s" while the web card
+    // said "Done · Agent worked 7s".
     const terminalLine =
       session?.status === 'completed'
-        ? `worked${clock ? ` ${clock}` : ''}`
-        : `stopped${clock ? ` after ${clock}` : ''}`;
+        ? `${glance.label} · worked${clock ? ` ${clock}` : ''}`
+        : `${glance.label}${clock ? ` · after ${clock}` : ''}`;
     return (
       <View
         testID="session-card"

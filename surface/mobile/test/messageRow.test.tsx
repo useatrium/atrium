@@ -157,7 +157,8 @@ describe('MessageRow', () => {
       },
     );
 
-    expect(screen.getByText('worked 4m')).toBeInTheDocument();
+    // The collapsed strip still names the state, like every other surface.
+    expect(screen.getByText('Done · worked 4m')).toBeInTheDocument();
     expect(screen.getByText('Show the work →')).toBeInTheDocument();
     expect(screen.queryByText('This answer belongs in the broadcast reply.')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Show session details' })).not.toBeInTheDocument();
