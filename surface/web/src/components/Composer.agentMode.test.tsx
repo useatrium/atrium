@@ -42,7 +42,7 @@ describe('Composer audience pill', () => {
     expect(pill().textContent).toContain('⚡New agent · #engineering');
   });
 
-  it('resolves a non-driver thread target to Suggest', () => {
+  it('defaults an attached non-driver thread to Suggest and exposes an aside escape', () => {
     renderComposer({
       agentMode: {
         scope: 'thread',
@@ -53,9 +53,9 @@ describe('Composer audience pill', () => {
       },
     });
 
-    expect(pill().textContent).toContain('💬this thread');
-    fireEvent.click(pill());
     expect(pill().textContent).toContain('Suggest · “Fix tests”');
+    fireEvent.click(pill());
+    expect(pill().textContent).toContain('💬Aside');
   });
 
   it('shows the retired @agent guidance', () => {

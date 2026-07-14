@@ -1,5 +1,6 @@
-import { memo, useCallback, useEffect, useMemo, useState, type ComponentType, type ReactNode } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ComponentType, type ReactNode } from 'react';
 import {
+  Animated as RNAnimated,
   Modal,
   Pressable,
   ScrollView,
@@ -40,6 +41,7 @@ import { useAccessibilityAnnouncement } from '../lib/accessibility';
 import { lightImpactHaptic, selectionHaptic } from '../lib/haptics';
 import { partitionEntryLinks, unsuppressedEntryHandles } from '../lib/entryLinks';
 import { AnsweredQuestionTrace } from './AnsweredQuestionTrace';
+import { AgentMark } from './AgentMark';
 import { Avatar } from './Avatar';
 import { EntryQuoteCards } from './EntryQuoteCards';
 import { EntryReferenceMarkdownProvider, MarkdownText } from './Markdown';
@@ -164,6 +166,18 @@ export interface MessageRowProps {
   highlighted?: boolean;
   /** Agent-session entity for session.spawned rows. */
   session?: Session;
+  /** Sessions attached to this channel root, in spawn order. */
+  attachedSessions?: Session[];
+  /** Broadcast agent answers anchored into the attached sessions' slots. */
+  slotAnswers?: ChatMessage[];
+  /** Loaded thread replies used by the universal collapsed cluster. */
+  threadReplies?: ChatMessage[];
+  /** Fetch a thread without navigating so the cluster can expand inline. */
+  onExpandThread?: (m: ChatMessage) => void;
+  /** Attached-session conversation messages sent to people instead of the agent. */
+  aside?: boolean;
+  /** Session work folded after this conversation turn on the spine screen. */
+  afterContent?: ReactNode;
   /** Hide the reply-count pill (inside a thread screen). */
   inThread?: boolean;
   fileUrl: (id: string) => string;
@@ -459,49 +473,6 @@ function Attachments({
   );
 }
 
-function AgentChip() {
-  const { colors } = useTheme();
-  return (
-    <View
-      style={{
-        alignSelf: 'flex-start',
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: space.xxs,
-        borderRadius: radius.pill,
-        backgroundColor: colors.accentBg,
-        paddingHorizontal: 6,
-        paddingVertical: space.xxs,
-      }}
-    >
-      <Ionicons name="hardware-chip-outline" size={12} color={colors.accent} />
-      <Text style={{ color: colors.accent, fontSize: font.xs, fontWeight: '800' }}>AGENT</Text>
-    </View>
-  );
-}
-
-function SessionMetadata({ session }: { session: Session }) {
-  const { colors } = useTheme();
-  const repo = session.repo ? `${session.repo}${session.branch ? ` · ${session.branch}` : ''}` : null;
-  const metadata = [
-    `Started ${formatTime(session.createdAt)}`,
-    session.spawnerName ? `Started by ${session.spawnerName}` : null,
-    session.driverName && session.driverId !== session.spawnedBy ? `Driver ${session.driverName}` : null,
-    repo,
-    session.costUsd > 0 ? `$${session.costUsd.toFixed(2)}` : null,
-  ].filter((item): item is string => item != null);
-
-  return (
-    <View testID="session-metadata" style={{ gap: space.xxs }}>
-      {metadata.map((item) => (
-        <Text key={item} style={{ color: colors.textMuted, fontSize: font.xs }}>
-          {item}
-        </Text>
-      ))}
-    </View>
-  );
-}
-
 function SessionSteerAction({
   api,
   sessionId,
@@ -545,105 +516,110 @@ function SessionSteerAction({
   );
 }
 
-/** Agent-session rows render as a compact status card; tap through to the mobile viewer. */
-function SessionCard({
+function WorkingDot() {
+  const { colors, reduceMotion } = useTheme();
+  const opacity = useRef(new RNAnimated.Value(1)).current;
+
+  useEffect(() => {
+    if (reduceMotion) {
+      opacity.setValue(1);
+      return;
+    }
+    const animation = RNAnimated.loop(
+      RNAnimated.sequence([
+        RNAnimated.timing(opacity, { toValue: 0.32, duration: 650, useNativeDriver: true }),
+        RNAnimated.timing(opacity, { toValue: 1, duration: 650, useNativeDriver: true }),
+      ]),
+    );
+    animation.start();
+    return () => animation.stop();
+  }, [opacity, reduceMotion]);
+
+  return <RNAnimated.View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: colors.accent, opacity }} />;
+}
+
+function sessionDuration(session: Session): string {
+  const end = session.completedAt ? new Date(session.completedAt).getTime() : Date.now();
+  return formatDurationUnits(Math.max(0, end - new Date(session.createdAt).getTime()));
+}
+
+/** The trigger row owns this single-state annotation slot. */
+function AnnotationSlot({
   message,
   session,
+  answer,
   api,
   meId,
-  onOpen,
-  onOpenPane,
+  onOpenThread,
+  onOpenSession,
+  onLongPressAnswer,
+  onAnswerSessionQuestion,
+  onSuggestSessionAnswer,
 }: {
   message: ChatMessage;
-  session?: Session;
+  session: Session;
+  answer?: ChatMessage;
   api: Api;
   meId: string;
-  /** Primary tap — the conversation (thread) when the caller can open one. */
-  onOpen?: (sessionId: string) => void;
-  /** The workbench ("Show the work") — full transcript screen. */
-  onOpenPane?: (sessionId: string) => void;
+  onOpenThread?: () => void;
+  onOpenSession?: (sessionId: string) => void;
+  onLongPressAnswer: (answer: ChatMessage) => void;
+  onAnswerSessionQuestion?: MessageRowProps['onAnswerSessionQuestion'];
+  onSuggestSessionAnswer?: MessageRowProps['onSuggestSessionAnswer'];
 }) {
   const { colors } = useTheme();
-  const [detailsExpanded, setDetailsExpanded] = useState(false);
+  const [answerExpanded, setAnswerExpanded] = useState(false);
   const now = Date.now();
-  // One status voice — the same six-word glance every other surface speaks.
-  const glance = deriveSessionGlance(
-    session ?? {
-      status: 'spawning',
-      pendingSeatRequests: [],
-      createdAt: message.createdAt,
-      completedAt: null,
-    },
-    now,
-  );
+  const glance = deriveSessionGlance(session, now);
   const clock = sessionGlanceClockLabel(glance, now);
-  const statusColor = glanceColor(glance.kind, colors);
-  const stateLine = [`● ${glance.label}${glance.detail ? ` · ${glance.detail}` : ''}`, ...(clock ? [clock] : [])].join(
-    ' · ',
-  );
-  const terminal = session?.status === 'completed' || session?.status === 'failed' || session?.status === 'cancelled';
-  const collapsedTerminal = terminal;
-  const terminalClock =
-    clock ??
-    (terminal && session?.completedAt
-      ? formatDurationUnits(new Date(session.completedAt).getTime() - new Date(session.createdAt).getTime())
-      : null);
-  const canOpenConversation = Boolean(message.sessionId && onOpen);
-  const canOpenWork = Boolean(message.sessionId && (onOpenPane ?? onOpen));
-  const canRecover = session?.status === 'failed' && sessionDriverId(session) === meId;
+  const duration = sessionDuration(session);
+  const failed = session.status === 'failed';
+  const terminal = session.status === 'completed' || session.status === 'cancelled' || failed;
+  const canRecover = failed && sessionDriverId(session) === meId;
+  const questionMessage: ChatMessage | null = session.pendingQuestion
+    ? {
+        ...message,
+        sessionId: session.id,
+        sessionEventType: 'question_requested',
+        sessionEventPayload: {
+          questionId: session.pendingQuestion.questionId,
+          questions: session.pendingQuestion.questions,
+        },
+      }
+    : null;
 
-  if (collapsedTerminal) {
-    // One status voice: the collapsed strip still NAMES the state ("Done",
-    // "Stopped") the way every other surface does, then says how long it took.
-    // Dropping the label left mobile saying only "worked 7s" while the web card
-    // said "Done · Agent worked 7s".
-    const terminalLine =
-      session?.status === 'completed'
-        ? `${glance.label} · worked${terminalClock ? ` ${terminalClock}` : ''}`
-        : `${glance.label}${terminalClock ? ` · after ${terminalClock}` : ''}`;
-    return (
+  let content: ReactNode;
+  if (questionMessage) {
+    content = (
+      <SessionEventLine
+        message={questionMessage}
+        session={session}
+        meId={meId}
+        onOpen={onOpenSession}
+        onAnswerSessionQuestion={onAnswerSessionQuestion}
+        onSuggestSessionAnswer={onSuggestSessionAnswer}
+      />
+    );
+  } else if (failed) {
+    content = (
       <View
-        testID="session-card"
-        style={{
-          minHeight: 44,
-          flexDirection: 'row',
-          flexWrap: 'wrap',
-          alignItems: 'center',
-          gap: space.xs,
-          marginTop: space.xxs,
-        }}
+        testID="annotation-failed"
+        style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: space.xs }}
       >
-        <AgentChip />
-        {/* A finished session is still steerable — tapping the strip opens the
-            conversation, same as the live card. Without this the only route off
-            a done card is the read-only pane. */}
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Open agent conversation"
-          accessibilityState={{ disabled: !canOpenConversation }}
-          disabled={!canOpenConversation}
-          onPress={() => {
-            if (message.sessionId) onOpen?.(message.sessionId);
-          }}
-          style={{ minHeight: 44, justifyContent: 'center' }}
-        >
-          <Text style={{ color: statusColor, fontSize: font.xs, fontWeight: '700' }}>{terminalLine}</Text>
-        </Pressable>
-        {canRecover && message.sessionId ? (
+        <Text style={{ color: colors.danger, fontSize: font.xs, fontWeight: '800' }}>✕ Failed after {duration}</Text>
+        {canRecover ? (
           <>
-            <Text style={{ color: colors.textFaint, fontSize: font.xs }}>·</Text>
             <SessionSteerAction
               api={api}
-              sessionId={message.sessionId}
+              sessionId={session.id}
               prompt="Retry the failed turn."
               label="Retry turn"
               sentLabel="Retrying…"
               accessibilityLabel="Retry failed turn"
             />
-            <Text style={{ color: colors.textFaint, fontSize: font.xs }}>·</Text>
             <SessionSteerAction
               api={api}
-              sessionId={message.sessionId}
+              sessionId={session.id}
               prompt="The last turn failed — explain what went wrong and what you'd try differently, then wait for my go-ahead."
               label="Ask why"
               sentLabel="Asked — check the thread"
@@ -651,82 +627,109 @@ function SessionCard({
             />
           </>
         ) : null}
-        <Text style={{ color: colors.textFaint, fontSize: font.xs }}>·</Text>
+      </View>
+    );
+  } else if (answer) {
+    content = (
+      <View testID="annotation-answer" style={{ gap: space.xs }}>
+        <Pressable
+          accessibilityRole="text"
+          accessibilityLabel={`Agent answer: ${answer.text}`}
+          onLongPress={() => onLongPressAnswer(answer)}
+          delayLongPress={250}
+        >
+          <View
+            testID="annotation-answer-clamp"
+            style={!answerExpanded ? { maxHeight: 176, overflow: 'hidden' } : undefined}
+          >
+            <MarkdownText text={answer.text} numberOfLines={answerExpanded ? undefined : 8} />
+          </View>
+        </Pressable>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Show the work — full transcript"
-          accessibilityState={{ disabled: !canOpenWork }}
-          disabled={!canOpenWork}
-          onPress={() => {
-            if (message.sessionId) (onOpenPane ?? onOpen)?.(message.sessionId);
-          }}
-          style={{ minHeight: 44, justifyContent: 'center' }}
+          accessibilityLabel={answerExpanded ? 'Collapse agent answer' : 'Show all of agent answer'}
+          accessibilityState={{ expanded: answerExpanded }}
+          onPress={() => setAnswerExpanded((value) => !value)}
+          style={{ minHeight: 44, alignSelf: 'flex-start', justifyContent: 'center' }}
         >
-          <Text style={{ color: colors.textMuted, fontSize: font.xs, fontWeight: '700' }}>Show the work →</Text>
+          <Text style={{ color: colors.textMuted, fontSize: font.xs, fontWeight: '700' }}>
+            {answerExpanded ? 'Show less' : 'Show all'}
+          </Text>
         </Pressable>
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 4 }}>
+          <Text style={{ color: colors.online, fontSize: font.xs }}>✓</Text>
+          <Text style={{ color: colors.textMuted, fontSize: font.xs }}>worked {duration} ·</Text>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Open session"
+            onPress={() => onOpenSession?.(session.id)}
+            style={{ minHeight: 44, justifyContent: 'center' }}
+          >
+            <Text style={{ color: colors.textMuted, fontSize: font.xs, fontWeight: '700' }}>session</Text>
+          </Pressable>
+          <Text style={{ color: colors.textMuted, fontSize: font.xs }}>· {formatTime(answer.createdAt)}</Text>
+        </View>
       </View>
+    );
+  } else if (terminal) {
+    content = (
+      <Pressable
+        testID="annotation-done"
+        accessibilityRole="button"
+        accessibilityLabel="Open session"
+        onPress={() => onOpenSession?.(session.id)}
+        style={{ minHeight: 44, justifyContent: 'center' }}
+      >
+        <Text style={{ color: colors.textMuted, fontSize: font.xs }}>
+          <Text style={{ color: colors.online }}>✓</Text> done · {duration} · session
+        </Text>
+      </Pressable>
+    );
+  } else {
+    content = (
+      <Pressable
+        testID="annotation-working"
+        accessibilityRole="button"
+        accessibilityLabel={`Open agent thread. ${glance.label}`}
+        onPress={onOpenThread}
+        style={{ minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: space.xs }}
+      >
+        <WorkingDot />
+        <Text
+          numberOfLines={1}
+          style={{ flex: 1, color: glanceColor(glance.kind, colors), fontSize: font.xs, fontWeight: '700' }}
+        >
+          {session.latestActivity?.summary ?? glance.label}
+          {clock ? ` · ${clock}` : ''}
+        </Text>
+        <Text style={{ color: colors.textMuted, fontSize: font.xs }}>open →</Text>
+      </Pressable>
     );
   }
 
   return (
     <View
-      testID="session-card"
+      testID="annotation-slot"
       style={{
-        borderWidth: 1,
-        borderColor: colors.border,
-        backgroundColor: colors.bgElevated,
-        borderRadius: radius.md,
-        padding: space.md,
-        gap: space.xs,
-        marginTop: space.xxs,
+        marginLeft: 20,
+        marginTop: space.xs,
+        flexDirection: 'row',
+        alignItems: 'flex-start',
+        gap: space.sm,
       }}
     >
-      <AgentChip />
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Open agent conversation"
-        accessibilityState={{ disabled: !canOpenConversation }}
-        disabled={!canOpenConversation}
-        onPress={() => {
-          if (message.sessionId) onOpen?.(message.sessionId);
+      <View
+        style={{
+          width: 14,
+          height: 18,
+          borderLeftWidth: 1,
+          borderBottomWidth: 1,
+          borderColor: colors.border,
+          borderBottomLeftRadius: 7,
         }}
-        style={{ minHeight: 44, justifyContent: 'center', gap: space.xxs }}
-      >
-        <Text style={{ color: statusColor, fontSize: font.xs, fontWeight: '700' }}>{stateLine}</Text>
-        {session?.latestActivity?.summary ? (
-          <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: font.xs }}>
-            {session.latestActivity.summary}
-          </Text>
-        ) : null}
-      </Pressable>
-      {session ? (
-        <>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={detailsExpanded ? 'Hide session details' : 'Show session details'}
-            accessibilityState={{ expanded: detailsExpanded }}
-            onPress={() => setDetailsExpanded((expanded) => !expanded)}
-            style={{ alignSelf: 'flex-start', minHeight: 44, justifyContent: 'center' }}
-          >
-            <Text style={{ color: colors.textMuted, fontSize: font.xs, fontWeight: '700' }}>
-              {detailsExpanded ? 'Hide details' : 'Details'}
-            </Text>
-          </Pressable>
-          {detailsExpanded ? <SessionMetadata session={session} /> : null}
-        </>
-      ) : null}
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Show the work — full transcript"
-        accessibilityState={{ disabled: !canOpenWork }}
-        disabled={!canOpenWork}
-        onPress={() => {
-          if (message.sessionId) (onOpenPane ?? onOpen)?.(message.sessionId);
-        }}
-        style={{ alignSelf: 'flex-start', minHeight: 44, justifyContent: 'center' }}
-      >
-        <Text style={{ color: colors.textMuted, fontSize: font.xs, fontWeight: '700' }}>Show the work →</Text>
-      </Pressable>
+      />
+      {questionMessage ? null : <AgentMark size={20} tone={failed ? 'danger' : 'accent'} />}
+      <View style={{ flex: 1, minWidth: 0 }}>{content}</View>
     </View>
   );
 }
@@ -739,7 +742,6 @@ function AgentReplyRow({ message }: { message: ChatMessage }) {
         <Text numberOfLines={1} style={{ color: colors.text, flexShrink: 1, fontSize: font.md, fontWeight: '700' }}>
           Agent
         </Text>
-        <AgentChip />
       </View>
       <MarkdownText text={message.text} />
     </View>
@@ -795,7 +797,6 @@ function SessionEventLine({
           <Text numberOfLines={1} style={{ color: colors.text, flexShrink: 1, fontSize: font.md, fontWeight: '700' }}>
             Agent
           </Text>
-          <AgentChip />
         </View>
       )}
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 6 }}>
@@ -842,7 +843,7 @@ function SessionEventLine({
           accessibilityLabel="Open session pane for this question event"
           onPress={() => onOpen(message.sessionId!)}
           hitSlop={8}
-          style={{ alignSelf: 'flex-start', minHeight: 36, justifyContent: 'center' }}
+          style={{ alignSelf: 'flex-start', minHeight: 44, justifyContent: 'center' }}
         >
           <Text style={{ color: colors.accent, fontSize: font.xs, fontWeight: '700' }}>Show the work →</Text>
         </Pressable>
@@ -920,7 +921,7 @@ function InlineQuestionAnswer({
       style={{ borderTopWidth: 1, borderTopColor: colors.warningBorder, paddingTop: space.sm, gap: space.sm }}
     >
       {question.options?.length ? (
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space.xs }}>
+        <View style={{ gap: space.xs }}>
           {question.options.map((option) => (
             <Pressable
               key={option.label}
@@ -933,6 +934,7 @@ function InlineQuestionAnswer({
               style={({ pressed }) => ({
                 minHeight: 44,
                 justifyContent: 'center',
+                alignSelf: 'stretch',
                 borderWidth: 1,
                 borderColor: colors.warningBorder,
                 borderRadius: radius.sm,
@@ -1059,6 +1061,99 @@ function actionTargetForMessage(message: ChatMessage, copyText: string | null, c
   return { ...target, actionCopyLink: copyLink } as MessageActionTarget;
 }
 
+type MessageWithLastReply = ChatMessage & { lastReply?: ChatMessage | null };
+
+function CompactReply({ message }: { message: ChatMessage }) {
+  const { colors } = useTheme();
+  const agent = message.sessionEventType === 'replied';
+  return (
+    <View testID="cluster-mini-row" style={{ flexDirection: 'row', alignItems: 'flex-start', gap: space.sm }}>
+      {agent ? (
+        <AgentMark size={22} />
+      ) : (
+        <Avatar name={message.author.displayName} seed={message.author.id} size={22} />
+      )}
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: font.xs, fontWeight: '700' }}>
+          {agent ? 'Agent' : message.author.displayName}
+        </Text>
+        <Text numberOfLines={3} style={{ color: colors.text, fontSize: font.sm, lineHeight: 18 }}>
+          {message.text}
+        </Text>
+      </View>
+    </View>
+  );
+}
+
+function ThreadCluster({
+  root,
+  replies,
+  slotAnswers,
+  slots,
+  onExpand,
+  onOpen,
+}: {
+  root: ChatMessage;
+  replies?: ChatMessage[];
+  slotAnswers: ChatMessage[];
+  slots: ReactNode;
+  onExpand?: () => void;
+  onOpen?: () => void;
+}) {
+  const { colors } = useTheme();
+  const [expanded, setExpanded] = useState(false);
+  const answerIds = new Set(slotAnswers.map((answer) => answer.id).filter((id): id is number => id != null));
+  const loadedReplies = (replies ?? []).filter((reply) => !answerIds.has(reply.id ?? -1));
+  const payloadLatest = (root as MessageWithLastReply).lastReply ?? null;
+  const latestAnswer = slotAnswers.find((answer) => answer.id === root.lastReplyId) ?? null;
+  const latest = latestAnswer ? null : (loadedReplies.at(-1) ?? payloadLatest);
+  const earlierCount = Math.max(0, root.replyCount - (latest != null || latestAnswer != null ? 1 : 0));
+  const earlierReplies = latest ? loadedReplies.filter((reply) => reply.id !== latest.id) : loadedReplies;
+
+  if (root.replyCount === 0) return slots;
+
+  const toggleEarlier = () => {
+    const next = !expanded;
+    setExpanded(next);
+    if (next && replies === undefined) onExpand?.();
+  };
+
+  return (
+    <View testID="thread-cluster" style={{ marginTop: space.xs, gap: space.xs }}>
+      {earlierCount > 0 ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`${earlierCount} earlier ${earlierCount === 1 ? 'reply' : 'replies'}`}
+          accessibilityState={{ expanded }}
+          onPress={toggleEarlier}
+          style={{ minHeight: 44, justifyContent: 'center', alignSelf: 'flex-start' }}
+        >
+          <Text style={{ color: colors.textMuted, fontSize: font.xs }}>
+            {expanded ? '▼' : '▶'} {earlierCount} earlier {earlierCount === 1 ? 'reply' : 'replies'}
+          </Text>
+        </Pressable>
+      ) : null}
+      {expanded && earlierReplies.length > 0 ? (
+        <View style={{ borderLeftWidth: 1, borderLeftColor: colors.border, paddingLeft: space.sm, gap: space.sm }}>
+          {earlierReplies.map((reply) => (
+            <CompactReply key={reply.id ?? reply.clientMsgId} message={reply} />
+          ))}
+        </View>
+      ) : null}
+      {latest ? <CompactReply message={latest} /> : null}
+      {slots}
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Open thread"
+        onPress={onOpen}
+        style={{ minHeight: 44, justifyContent: 'center', alignSelf: 'flex-start' }}
+      >
+        <Text style={{ color: colors.textMuted, fontSize: font.xs, fontWeight: '700' }}>Open thread →</Text>
+      </Pressable>
+    </View>
+  );
+}
+
 export const MessageRow = memo(function MessageRow({
   message: m,
   grouped,
@@ -1066,6 +1161,12 @@ export const MessageRow = memo(function MessageRow({
   meHandle,
   highlighted,
   session,
+  attachedSessions = [],
+  slotAnswers = [],
+  threadReplies,
+  onExpandThread,
+  aside,
+  afterContent,
   inThread,
   fileUrl,
   api,
@@ -1222,19 +1323,39 @@ export const MessageRow = memo(function MessageRow({
     </EntryReferenceMarkdownProvider>
   ) : null;
 
-  const sessionCard =
-    m.sessionId != null && m.sessionEventType == null ? (
-      <SessionCard
-        message={m}
-        session={session}
-        api={api}
-        meId={meId}
-        // Primary tap lands on the conversation (the card's thread); the full
-        // transcript stays one tap away via "Show the work".
-        onOpen={!inThread && onOpenThread ? () => onOpenThread(m) : onOpenSession}
-        onOpenPane={onOpenSession}
-      />
-    ) : null;
+  const slotSessions =
+    attachedSessions.length > 0
+      ? attachedSessions
+      : !inThread && m.sessionId && m.sessionEventType == null && session
+        ? [session]
+        : [];
+  const annotationSlots = slotSessions.map((attached) => (
+    <AnnotationSlot
+      key={attached.id}
+      message={m}
+      session={attached}
+      answer={slotAnswers.find((answer) => answer.sessionId === attached.id)}
+      api={api}
+      meId={meId}
+      onOpenThread={onOpenThread ? () => onOpenThread(m) : undefined}
+      onOpenSession={onOpenSession}
+      onLongPressAnswer={(answer) => onLongPress(actionTargetForMessage(answer, answer.text, null))}
+      onAnswerSessionQuestion={onAnswerSessionQuestion}
+      onSuggestSessionAnswer={onSuggestSessionAnswer}
+    />
+  ));
+  const rootTail: ReactNode = !inThread ? (
+    <ThreadCluster
+      root={m}
+      replies={threadReplies}
+      slotAnswers={slotAnswers}
+      slots={annotationSlots}
+      onExpand={onExpandThread ? () => onExpandThread(m) : undefined}
+      onOpen={onOpenThread ? () => onOpenThread(m) : undefined}
+    />
+  ) : (
+    annotationSlots
+  );
 
   const body = tombstone ? (
     <Text style={{ color: colors.textFaint, fontSize: font.md, fontStyle: 'italic' }}>Message deleted</Text>
@@ -1250,10 +1371,7 @@ export const MessageRow = memo(function MessageRow({
       onSuggestSessionAnswer={onSuggestSessionAnswer}
     />
   ) : m.sessionId != null ? (
-    <>
-      {sessionTaskBody}
-      {sessionCard}
-    </>
+    sessionTaskBody
   ) : (
     <>
       {partitionedEntryLinks.bodyText ? (
@@ -1328,6 +1446,7 @@ export const MessageRow = memo(function MessageRow({
           style={{ flexShrink: 1, color: colors.textFaint, fontSize: font.xs }}
           numberOfLines={1}
         />
+        {aside ? <Text style={{ color: colors.textMuted, fontSize: font.xs, fontWeight: '800' }}>ASIDE</Text> : null}
       </View>
     ) : null;
 
@@ -1344,7 +1463,7 @@ export const MessageRow = memo(function MessageRow({
     paddingTop: grouped ? 1 : space.sm,
     paddingBottom: 1,
     gap: space.md,
-    opacity: pending ? 0.55 : 1,
+    opacity: pending ? 0.55 : aside ? 0.62 : 1,
   };
 
   // Pending question controls must not live inside a row-level Pressable: native
@@ -1378,7 +1497,8 @@ export const MessageRow = memo(function MessageRow({
             {sessionTaskBody}
           </Pressable>
           {editedNote}
-          {sessionCard}
+          {rootTail}
+          {afterContent}
         </View>
       </View>
     );
@@ -1397,6 +1517,7 @@ export const MessageRow = memo(function MessageRow({
           {header}
           {body}
           {editedNote}
+          {afterContent}
         </View>
       </View>
     );
@@ -1428,6 +1549,8 @@ export const MessageRow = memo(function MessageRow({
           {header}
           {body}
           {editedNote}
+          {rootTail}
+          {afterContent}
         </View>
       </Pressable>
     );
@@ -1556,19 +1679,8 @@ export const MessageRow = memo(function MessageRow({
                 }}
               />
             )}
-            {!inThread && m.replyCount > 0 && onOpenThread && (
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={`${m.replyCount} ${m.replyCount === 1 ? 'reply' : 'replies'}`}
-                onPress={() => onOpenThread(m)}
-                hitSlop={10}
-                style={{ marginTop: space.xs, minHeight: 44, justifyContent: 'center', alignSelf: 'flex-start' }}
-              >
-                <Text style={{ color: colors.accent, fontSize: font.sm, fontWeight: '600' }}>
-                  {m.replyCount} {m.replyCount === 1 ? 'reply' : 'replies'} →
-                </Text>
-              </Pressable>
-            )}
+            {rootTail}
+            {afterContent}
           </View>
         </Animated.View>
       </View>

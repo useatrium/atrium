@@ -26,6 +26,7 @@ vi.mock('../src/components/MessageRow', () => ({
 
 vi.mock('@expo/vector-icons', () => ({
   Ionicons: () => null,
+  MaterialCommunityIcons: () => null,
 }));
 
 function message(id: number, createdAt: string): ChatMessage {

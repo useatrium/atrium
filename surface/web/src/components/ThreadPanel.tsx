@@ -7,8 +7,18 @@ import type {
   UserRef,
   VoiceMeta,
 } from '@atrium/surface-client';
+import {
+  artifactCount,
+  changedPaths,
+  collectArtifacts,
+  collectFileChanges,
+  collectSideEffects,
+  foldedTurnRows,
+  sideEffectCount,
+  type FoldedTurnRow,
+} from '@atrium/centaur-client';
 import { isTerminalSessionStatus, type Session } from '../sessions/types';
-import { sessionDriverId, buildTimelineItems, normalizeSteerProvenanceText } from '@atrium/surface-client';
+import { sessionDriverId, buildTimelineItems, formatTime, normalizeSteerProvenanceText } from '@atrium/surface-client';
 import { encodeEventHandle } from '@atrium/surface-client/handle';
 import { Composer } from './Composer';
 import type { AgentComposerRequest, ComposerHandle } from './Composer';
@@ -17,6 +27,11 @@ import { MessageRow } from './MessageRow';
 import type { MentionContext } from './useMentionTypeahead';
 import { ConversationHeader } from '../sessions/ConversationHeader';
 import { useNow } from '../sessions/SessionCard';
+import { useSessionStream } from '../sessions/useSessionStream';
+import { useConflicts } from '../sessions/useConflicts';
+import { WorkFold } from '../sessions/WorkFold';
+import type { ActiveWorkTab } from '../sessions/WorkDrawer';
+import { Avatar } from './Avatar';
 import {
   THREAD_PANE_FALLBACK_WIDTH,
   THREAD_PANE_MAX_VW,
@@ -26,6 +41,10 @@ import {
 } from '../sessions/useSessionPaneWidth';
 
 const STEER_ECHO_WINDOW_MS = 5 * 60 * 1000;
+
+export interface SpineOpenSessionOptions {
+  workTab: ActiveWorkTab;
+}
 
 function steerFallbackMatches(pending: ChatMessage, confirmed: ChatMessage): boolean {
   if (pending.steeredSessionId == null || pending.steeredSessionId !== confirmed.steeredSessionId) return false;
@@ -123,7 +142,7 @@ export function ThreadPanel({
     broadcast?: boolean,
   ) => void;
   queueUpload?: (payload: UploadPayload) => Promise<{ fileId: string }>;
-  onOpenSession: (sessionId: string) => void;
+  onOpenSession: (sessionId: string, options?: SpineOpenSessionOptions) => void;
   onRetry: (message: ChatMessage) => void;
   onEdit?: (message: ChatMessage, text: string) => Promise<void>;
   onDelete?: (message: ChatMessage) => Promise<void>;
@@ -168,9 +187,21 @@ export function ThreadPanel({
         : Object.values(sessions).find((session) => session.threadRootEventId === root.id),
     [root.id, root.sessionId, sessions],
   );
+  const sessionLive = attachedSession != null && !isTerminalSessionStatus(attachedSession.status);
+  const { stream } = useSessionStream(attachedSession?.id ?? null, sessionLive);
+  const workFolds = useMemo(() => foldedTurnRows(stream.items), [stream.items]);
+  const fileChanges = useMemo(() => collectFileChanges(stream), [stream.items, stream.fileChanges]);
+  const changedFileCount = useMemo(() => changedPaths(fileChanges).length, [fileChanges]);
+  const sideEffects = useMemo(() => collectSideEffects(stream.items), [stream.items]);
+  const sideEffectsN = useMemo(() => sideEffectCount(sideEffects), [sideEffects]);
+  const artifacts = useMemo(() => collectArtifacts(stream), [stream.artifacts]);
+  const artifactsN = useMemo(() => artifactCount(artifacts), [artifacts]);
+  const { conflicts } = useConflicts(attachedSession?.id ?? null, { enabled: import.meta.env.MODE !== 'test' });
+  const conflictsN = conflicts.length;
+  const hasWorkStrips = conflictsN + changedFileCount + sideEffectsN + artifactsN > 0;
   // The header's glance chip carries a live clock; tick it here (as the card
   // does) so the thread's identity is as alive as the card's.
-  const now = useNow(attachedSession != null && !isTerminalSessionStatus(attachedSession.status));
+  const now = useNow(sessionLive);
   const spectatorsFor = (m: ChatMessage) => (m.sessionId != null ? (spectators[m.sessionId] ?? 0) : 0);
   const scrollRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<ComposerHandle>(null);
@@ -179,9 +210,70 @@ export function ThreadPanel({
   useLayoutEffect(() => {
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [count]);
+  }, [count, stream.lastEventId]);
 
   const items = useMemo(() => buildTimelineItems(reconciledReplies), [reconciledReplies]);
+  const spineRows = useMemo(() => {
+    const rows: Array<
+      | { kind: 'message'; key: string; message: ChatMessage; grouped: boolean; aside: boolean }
+      | { kind: 'fold'; key: string; fold: FoldedTurnRow; live: boolean }
+    > = [];
+    const usedFolds = new Set<string>();
+    let replyOrdinal = 0;
+    let triggerOrdinal = 0;
+    const pushFold = (fold: FoldedTurnRow) => {
+      const foldIndex = workFolds.indexOf(fold);
+      rows.push({
+        kind: 'fold',
+        key: fold.key,
+        fold,
+        live: sessionLive && !fold.completed && foldIndex === workFolds.length - 1,
+      });
+      usedFolds.add(fold.key);
+    };
+    // The root ask is trigger zero. Harnesses that omit its user_message echo
+    // produce a null trigger, which belongs at this same position.
+    for (const fold of workFolds) {
+      if (fold.triggerOrdinal === null || fold.triggerOrdinal === 0) pushFold(fold);
+    }
+    for (const item of items) {
+      if (item.kind === 'day' || !item.message) continue;
+      const message = item.message;
+      const agentReply =
+        attachedSession != null && message.sessionId === attachedSession.id && message.sessionEventType === 'replied';
+      if (agentReply) {
+        const fold = workFolds.find((candidate) => candidate.replyOrdinal === replyOrdinal);
+        if (fold && !usedFolds.has(fold.key)) pushFold(fold);
+        replyOrdinal += 1;
+      }
+      const aside =
+        attachedSession != null &&
+        message.sessionId == null &&
+        message.steeredSessionId == null &&
+        message.suggestedSessionId == null;
+      rows.push({
+        kind: 'message',
+        key: item.key,
+        message,
+        grouped: item.grouped ?? false,
+        aside,
+      });
+      const targetsAttachedSession =
+        attachedSession != null &&
+        (message.steeredSessionId === attachedSession.id || message.suggestedSessionId === attachedSession.id);
+      if (targetsAttachedSession) {
+        triggerOrdinal += 1;
+        for (const fold of workFolds) {
+          if (!usedFolds.has(fold.key) && fold.triggerOrdinal === triggerOrdinal) pushFold(fold);
+        }
+      }
+    }
+    for (const fold of workFolds) {
+      if (usedFolds.has(fold.key)) continue;
+      pushFold(fold);
+    }
+    return rows;
+  }, [attachedSession, items, sessionLive, workFolds]);
 
   return (
     <aside
@@ -225,7 +317,6 @@ export function ThreadPanel({
               }
         }
         onOpenTitle={attachedSession ? () => onOpenSession(attachedSession.id) : undefined}
-        openTitleHint={attachedSession ? 'Show the work' : undefined}
         crumbs={[...(channelLabel ? [{ label: channelLabel, onClick: onClose }] : []), { label: 'thread' }]}
         crumbNote={`${root.replyCount} ${root.replyCount === 1 ? 'reply' : 'replies'}`}
         actions={
@@ -240,6 +331,44 @@ export function ThreadPanel({
           </button>
         }
       />
+      {attachedSession && hasWorkStrips && (
+        <div data-testid="spine-work-strips" className="flex shrink-0 flex-wrap gap-1 border-b border-edge px-3 py-1.5">
+          {conflictsN > 0 && (
+            <button
+              type="button"
+              onClick={() => onOpenSession(attachedSession.id, { workTab: 'conflicts' })}
+              className="rounded-full border border-danger-border/60 bg-danger-tint/25 px-2 py-0.5 text-xs text-danger-text hover:border-danger-border"
+            >
+              ⚠ Conflicts · {conflictsN}
+            </button>
+          )}
+          {changedFileCount > 0 && (
+            <button
+              type="button"
+              onClick={() => onOpenSession(attachedSession.id, { workTab: 'changes' })}
+              className="rounded-full border border-edge px-2 py-0.5 text-xs text-fg-muted hover:border-edge-strong hover:text-fg-secondary"
+            >
+              ≡ What changed · {changedFileCount}
+            </button>
+          )}
+          {sideEffectsN > 0 && (
+            <button
+              type="button"
+              onClick={() => onOpenSession(attachedSession.id, { workTab: 'sideEffects' })}
+              className="rounded-full border border-edge px-2 py-0.5 text-xs text-fg-muted hover:border-edge-strong hover:text-fg-secondary"
+            >
+              ⚙ What it ran · {sideEffectsN}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => onOpenSession(attachedSession.id, { workTab: 'hubFiles' })}
+            className="rounded-full border border-edge px-2 py-0.5 text-xs text-fg-muted hover:border-edge-strong hover:text-fg-secondary"
+          >
+            ▣ Files
+          </button>
+        </div>
+      )}
       <div ref={scrollRef} className="flex-1 overflow-y-auto py-2">
         <MessageRow
           message={root}
@@ -265,20 +394,26 @@ export function ThreadPanel({
             })
           }
         />
-        <div className="my-2 flex items-center gap-2 px-4">
-          <div className="h-px flex-1 bg-surface-overlay" />
-          <span className="text-3xs uppercase tracking-wide text-fg-muted">replies</span>
-          <div className="h-px flex-1 bg-surface-overlay" />
-        </div>
-        {items.map((item) =>
-          item.kind === 'day' ? null : (
+        {spineRows.map((row) => {
+          if (row.kind === 'fold') {
+            return (
+              <WorkFold
+                key={row.key}
+                fold={row.fold}
+                live={row.live}
+                onOpenWork={
+                  attachedSession ? () => onOpenSession(attachedSession.id, { workTab: 'sideEffects' }) : undefined
+                }
+              />
+            );
+          }
+          const messageRow = (
             <MessageRow
-              key={item.key}
-              message={item.message!}
-              grouped={item.grouped ?? false}
+              message={row.message}
+              grouped={row.aside ? true : row.grouped}
               inThread
-              session={sessionFor(item.message!)}
-              spectators={spectatorsFor(item.message!)}
+              session={sessionFor(row.message)}
+              spectators={spectatorsFor(row.message)}
               meId={meId}
               meHandle={meHandle}
               mentionContext={mentionContext}
@@ -297,8 +432,28 @@ export function ThreadPanel({
                 })
               }
             />
-          ),
-        )}
+          );
+          if (!row.aside) return <div key={row.key}>{messageRow}</div>;
+          return (
+            <div key={row.key} data-testid="aside-row" className="opacity-75">
+              <div className="mt-2 flex items-center gap-3 px-4 py-0.5">
+                <div className="w-8 shrink-0">
+                  <Avatar name={row.message.author.displayName} seed={row.message.author.id} />
+                </div>
+                <div className="flex min-w-0 items-baseline gap-2">
+                  <span className="truncate text-sm font-semibold text-fg">{row.message.author.displayName}</span>
+                  <span className="rounded border border-edge-strong px-1 py-px text-3xs font-semibold uppercase tracking-wide text-fg-muted">
+                    Aside
+                  </span>
+                  <span className="shrink-0 text-2xs tabular-nums text-fg-muted">
+                    {formatTime(row.message.createdAt)}
+                  </span>
+                </div>
+              </div>
+              <div className="-mt-1">{messageRow}</div>
+            </div>
+          );
+        })}
         {reconciledReplies.length === 0 && (
           <div className="px-4 py-6 text-center text-xs text-fg-muted">
             {loaded ? 'No replies yet. Start the thread.' : 'Loading replies…'}
@@ -306,9 +461,13 @@ export function ThreadPanel({
         )}
       </div>
       <div className="border-t border-edge bg-surface px-3 pt-2">
-        {/* Agent sends ignore the broadcast flag — showing a checkable-but-inert
-            checkbox would lie, so agent mode swaps it for the reason why. */}
-        {composerAgentMode ? (
+        {attachedSession ? (
+          <p className="flex items-center gap-2 text-xs text-fg-muted">
+            {composerAgentMode
+              ? 'Goes to the agent · Esc for an aside'
+              : 'Aside — visible to people, never sent to the agent'}
+          </p>
+        ) : composerAgentMode ? (
           <p className="flex items-center gap-2 text-xs text-fg-muted">
             Goes to the agent — its card already shows this session in the channel.
           </p>
@@ -328,7 +487,7 @@ export function ThreadPanel({
       </div>
       <Composer
         ref={composerRef}
-        placeholder={attachedSession ? "Reply — the agent won't read this · !! to steer" : 'Reply…'}
+        placeholder={attachedSession ? 'Write an aside…' : 'Reply…'}
         onSend={(text, attachments, attachmentRefs, voice) => {
           onSend(text, attachments, attachmentRefs, voice, alsoSendToChannel);
           setAlsoSendToChannel(false);

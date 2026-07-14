@@ -347,8 +347,9 @@ describe('session question events', () => {
 
     expect(screen.getByText('Agent')).toBeTruthy();
     expect(screen.queryByText('Backfill Q2 corpus embeddings')).toBeNull();
-    expect(screen.getByText('AGENT')).toBeTruthy();
-    expect(screen.queryByText('Maya Chen')).toBeNull();
+    // The pill is gone — the AgentMark (role=img, label "Agent") is the only marker.
+    expect(screen.queryByText('AGENT')).toBeNull();
+    expect(screen.getByRole('img', { name: 'Agent' })).toBeTruthy();
   });
 
   it('renders answered questions with answer summaries', () => {
@@ -518,8 +519,9 @@ describe('message delete', () => {
     expect(screen.getByText('Message deleted')).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Delete message' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Edit message' })).toBeNull();
-    // The replies link survives so the thread stays reachable.
-    expect(screen.getByText(/1 reply/)).toBeTruthy();
+    // The collapsed cluster survives so the thread stays reachable.
+    expect(screen.getByText(/1 earlier reply/)).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Open thread →' })).toBeTruthy();
   });
 });
 

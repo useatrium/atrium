@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { Session } from '@atrium/surface-client';
 import { getSessionNavigationCounts } from '../app/(app)/(tabs)/_layout';
 
-vi.mock('@expo/vector-icons', () => ({ Ionicons: () => null }));
+vi.mock('@expo/vector-icons', () => ({ Ionicons: () => null, MaterialCommunityIcons: () => null }));
 vi.mock('expo-router', () => ({ Tabs: Object.assign(() => null, { Screen: () => null }) }));
 vi.mock('../src/lib/chat', () => ({ useChat: vi.fn() }));
 

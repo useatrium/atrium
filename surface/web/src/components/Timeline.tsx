@@ -1,4 +1,4 @@
-import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ChatMessage, UserRef } from '@atrium/surface-client';
 import type { Session } from '../sessions/types';
 import { buildTimelineItems } from '@atrium/surface-client';
@@ -84,14 +84,72 @@ export function Timeline({
   const unreadLandingScrollTopRef = useRef<number | null>(null);
   const [loadingEarlier, setLoadingEarlier] = useState(false);
   const [atBottom, setAtBottom] = useState(true);
+  const [answerChip, setAnswerChip] = useState<{ answerId: number; rootId: number; ask: string } | null>(null);
+  const [jumpFlashId, setJumpFlashId] = useState<number | null>(null);
+  const previousAnswerIdRef = useRef<number | null | undefined>(undefined);
+  const chipTimerRef = useRef<number | null>(null);
+  const flashTimerRef = useRef<number | null>(null);
 
-  const items = useMemo(() => buildTimelineItems(messages), [messages]);
+  const { visibleMessages, answersByRoot, loadedRootIds } = useMemo(() => {
+    const rootIds = new Set(
+      messages
+        .filter((message) => message.threadRootEventId == null && message.id != null)
+        .map((message) => message.id!),
+    );
+    const answers = new Map<number, ChatMessage[]>();
+    for (const message of messages) {
+      // EVERY broadcast thread reply anchors under its loaded root — agent
+      // answers and human "also send to channel" replies alike. Rendering it
+      // twice (cluster preview + standalone row) is the failure mode.
+      if (
+        message.broadcast === true &&
+        message.sessionEventType !== 'question_requested' &&
+        message.threadRootEventId != null &&
+        rootIds.has(message.threadRootEventId)
+      ) {
+        const current = answers.get(message.threadRootEventId) ?? [];
+        current.push(message);
+        answers.set(message.threadRootEventId, current);
+      }
+    }
+    const isAnchoredAnnotationEvent = (message: ChatMessage) =>
+      message.broadcast === true && message.threadRootEventId != null && rootIds.has(message.threadRootEventId);
+    return {
+      visibleMessages: messages.filter((message) => !isAnchoredAnnotationEvent(message)),
+      answersByRoot: answers,
+      loadedRootIds: rootIds,
+    };
+  }, [messages]);
+  const sessionsByRoot = useMemo(() => {
+    const byRoot = new Map<number, Session[]>();
+    for (const session of Object.values(sessions)) {
+      if (session.threadRootEventId == null) continue;
+      const current = byRoot.get(session.threadRootEventId) ?? [];
+      current.push(session);
+      byRoot.set(session.threadRootEventId, current);
+    }
+    for (const current of byRoot.values()) {
+      current.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+    }
+    return byRoot;
+  }, [sessions]);
+  const items = useMemo(() => buildTimelineItems(visibleMessages), [visibleMessages]);
   const lastKey = items.at(-1)?.key ?? '';
-  const lastMessageId = messages.at(-1)?.id ?? null;
+  const lastMessageId = visibleMessages.at(-1)?.id ?? null;
   const firstUnreadId = useMemo(() => {
     if (unreadDividerAfterId == null || unreadDividerAfterId <= 0) return null;
-    return messages.find((m) => (m.id ?? 0) > unreadDividerAfterId)?.id ?? null;
-  }, [messages, unreadDividerAfterId]);
+    const anchoredUnread = messages.find(
+      (message) =>
+        (message.id ?? 0) > unreadDividerAfterId &&
+        (message.sessionEventType === 'replied' ||
+          message.sessionEventType === 'question_requested' ||
+          (message.sessionId != null && message.sessionTask != null)) &&
+        message.threadRootEventId != null &&
+        loadedRootIds.has(message.threadRootEventId),
+    );
+    if (anchoredUnread?.threadRootEventId != null) return anchoredUnread.threadRootEventId;
+    return visibleMessages.find((message) => (message.id ?? 0) > unreadDividerAfterId)?.id ?? null;
+  }, [loadedRootIds, messages, unreadDividerAfterId, visibleMessages]);
   const unreadCount = useMemo(() => {
     if (unreadDividerAfterId == null || unreadDividerAfterId <= 0) return 0;
     return messages.filter((m) => (m.id ?? 0) > unreadDividerAfterId).length;
@@ -115,6 +173,49 @@ export function Timeline({
     return latestRect.bottom >= containerRect.top && latestRect.top <= containerRect.bottom;
   }, [lastMessageId]);
 
+  const isRootVisible = useCallback((rootId: number) => {
+    const container = containerRef.current;
+    const row = container?.querySelector<HTMLElement>(`[data-eid="${rootId}"]`);
+    if (!container || !row) return false;
+    const rowRect = row.getBoundingClientRect();
+    const containerRect = container.getBoundingClientRect();
+    return rowRect.bottom >= containerRect.top && rowRect.top <= containerRect.bottom;
+  }, []);
+
+  useEffect(() => {
+    const latest = messages
+      .filter(
+        (message) =>
+          message.id != null &&
+          message.broadcast === true &&
+          message.sessionEventType === 'replied' &&
+          message.threadRootEventId != null &&
+          answersByRoot.has(message.threadRootEventId),
+      )
+      .at(-1);
+    const latestId = latest?.id ?? null;
+    if (previousAnswerIdRef.current === undefined) {
+      previousAnswerIdRef.current = latestId;
+      return;
+    }
+    if (!latest || latest.id === previousAnswerIdRef.current || latest.threadRootEventId == null) return;
+    previousAnswerIdRef.current = latest.id;
+    if (isRootVisible(latest.threadRootEventId)) return;
+    const root = messages.find((message) => message.id === latest.threadRootEventId);
+    const ask = (root?.sessionTask ?? root?.text ?? '').trim().slice(0, 40);
+    setAnswerChip({ answerId: latest.id!, rootId: latest.threadRootEventId, ask });
+    if (chipTimerRef.current) window.clearTimeout(chipTimerRef.current);
+    chipTimerRef.current = window.setTimeout(() => setAnswerChip(null), 10_000);
+  }, [answersByRoot, isRootVisible, messages]);
+
+  useEffect(
+    () => () => {
+      if (chipTimerRef.current) window.clearTimeout(chipTimerRef.current);
+      if (flashTimerRef.current) window.clearTimeout(flashTimerRef.current);
+    },
+    [],
+  );
+
   const markReadIfNewestVisible = useCallback(() => {
     if (!isNewestMessageVisible()) return;
     unreadLandingScrollTopRef.current = null;
@@ -133,6 +234,7 @@ export function Timeline({
       unreadLandingScrollTopRef.current = null;
     }
     setAtBottom(bottom);
+    if (answerChip && isRootVisible(answerChip.rootId)) setAnswerChip(null);
     markReadIfNewestVisible();
   };
 
@@ -359,6 +461,16 @@ export function Timeline({
           {items.map((item) => {
             const showUnreadDivider =
               item.kind === 'message' && firstUnreadId != null && item.message!.id === firstUnreadId;
+            const rowMessage = item.message;
+            const rowSessions =
+              item.kind === 'message' && rowMessage?.id != null ? [...(sessionsByRoot.get(rowMessage.id) ?? [])] : [];
+            if (
+              rowMessage?.sessionId != null &&
+              sessions[rowMessage.sessionId] &&
+              !rowSessions.some((session) => session.id === rowMessage.sessionId)
+            ) {
+              rowSessions.push(sessions[rowMessage.sessionId]!);
+            }
             return item.kind === 'day' ? (
               <div key={item.key} className="my-3 flex items-center gap-3 px-4">
                 <div className="h-px flex-1 bg-surface-overlay" />
@@ -379,6 +491,8 @@ export function Timeline({
                 <MessageRow
                   message={item.message!}
                   grouped={item.grouped ?? false}
+                  slotSessions={rowSessions}
+                  anchoredAnswers={item.message!.id != null ? (answersByRoot.get(item.message!.id) ?? []) : []}
                   session={
                     item.message!.sessionId != null
                       ? sessions[item.message!.sessionId]
@@ -392,7 +506,10 @@ export function Timeline({
                   meId={meId}
                   meHandle={meHandle}
                   mentionContext={mentionContext}
-                  highlighted={highlightId != null && item.message!.id === highlightId}
+                  highlighted={
+                    (highlightId != null && item.message!.id === highlightId) ||
+                    (jumpFlashId != null && item.message!.id === jumpFlashId)
+                  }
                   editRequested={editRequestId != null && item.message!.id === editRequestId}
                   onEditRequestHandled={onEditRequestHandled}
                   onOpenThread={onOpenThread}
@@ -410,6 +527,25 @@ export function Timeline({
           })}
         </div>
       </div>
+      {answerChip && (
+        <button
+          type="button"
+          data-testid="agent-answer-jump-chip"
+          onClick={() => {
+            const row = containerRef.current?.querySelector<HTMLElement>(`[data-eid="${answerChip.rootId}"]`);
+            row?.scrollIntoView?.({ block: 'center' });
+            stickRef.current = false;
+            setAtBottom(false);
+            setJumpFlashId(answerChip.rootId);
+            setAnswerChip(null);
+            if (flashTimerRef.current) window.clearTimeout(flashTimerRef.current);
+            flashTimerRef.current = window.setTimeout(() => setJumpFlashId(null), 1800);
+          }}
+          className="absolute bottom-16 left-1/2 z-raised max-w-[calc(100%-2rem)] -translate-x-1/2 truncate rounded-full bg-accent px-4 py-2 text-xs font-semibold text-on-accent shadow-lg shadow-black/20"
+        >
+          ↑ Agent answered — “{answerChip.ask}”
+        </button>
+      )}
       {!atBottom && (
         <div className="absolute bottom-4 right-4 z-raised inline-flex max-w-[calc(100%-2rem)] overflow-hidden rounded-full border border-edge-strong bg-surface-raised text-xs font-semibold text-fg-secondary shadow-lg shadow-black/15">
           {firstUnreadId != null && unreadCount > 0 && (

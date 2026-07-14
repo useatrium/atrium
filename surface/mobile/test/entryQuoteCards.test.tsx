@@ -8,6 +8,7 @@ import { pressWhenReady, renderWithTheme } from './rnTestUtils';
 
 vi.mock('@expo/vector-icons', () => ({
   Ionicons: () => null,
+  MaterialCommunityIcons: () => null,
 }));
 
 vi.mock('expo-image', () => ({

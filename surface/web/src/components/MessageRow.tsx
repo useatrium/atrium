@@ -21,11 +21,18 @@ import {
   type ChatMessage,
   type UserRef,
   decodeWireToDisplay,
+  deriveSessionGlance,
+  formatDurationUnits,
+  isTerminalSessionStatus,
+  messageFromEvent,
   mentionsUser,
+  sessionAnsweredQuestion,
+  sessionGlanceClockLabel,
 } from '@atrium/surface-client';
 import { encodeEventHandle } from '@atrium/surface-client/handle';
 import { useIsHoverNone } from '../lib/useIsHoverNone';
-import { SessionCard } from '../sessions/SessionCard';
+import { AskWhyAction, RetryTurnAction, sessionElapsedMs, useNow } from '../sessions/SessionCard';
+import { QuestionCard } from '../sessions/SessionBanners';
 import type { Session } from '../sessions/types';
 import { formatBytes, formatGutterTime, formatTime } from '@atrium/surface-client';
 import { Avatar } from './Avatar';
@@ -52,6 +59,8 @@ import { sessionsApi } from '../sessions/api';
 import { useUserDirectory } from '../userDirectory';
 import { MentionSuggestions } from './MentionSuggestions';
 import { type MentionContext, useMentionTypeahead } from './useMentionTypeahead';
+import { AgentMark } from './AgentMark';
+import { api } from '../api';
 
 export { REACTION_EMOJI } from '@atrium/surface-client/reactions';
 
@@ -106,7 +115,9 @@ export const MessageRow = memo(function MessageRow({
   grouped,
   inThread,
   session,
-  spectators = 0,
+  slotSessions = [],
+  anchoredAnswers = [],
+  slotAnswer = false,
   meId,
   meHandle,
   mentionContext,
@@ -128,6 +139,10 @@ export const MessageRow = memo(function MessageRow({
   inThread?: boolean;
   /** Session entity when this row is a session card (message.sessionId set). */
   session?: Session;
+  slotSessions?: Session[];
+  anchoredAnswers?: ChatMessage[];
+  /** Internal compact presentation for an answer anchored under its trigger. */
+  slotAnswer?: boolean;
   spectators?: number;
   /** Current user id — enables Edit/Delete on own messages. */
   meId?: string;
@@ -158,14 +173,14 @@ export const MessageRow = memo(function MessageRow({
   const dim = m.status === 'pending';
   const failed = m.status === 'failed';
   const deleted = m.deleted === true;
-  const isBroadcastReplyInMain = !inThread && m.threadRootEventId != null;
+  const isBroadcastReplyInMain = !inThread && !slotAnswer && m.threadRootEventId != null;
   const threadTargetEventId = isBroadcastReplyInMain ? m.threadRootEventId : m.id;
   const canThread = !inThread && threadTargetEventId != null && onOpenThread && !deleted;
   const isAgentReply = m.sessionEventType === 'replied';
   // Utterances the agent makes share one product persona. Humans keep their
   // own names and avatars.
   const isAgentVoice = isAgentReply || m.sessionEventType === 'question_requested';
-  const isSessionRow = m.sessionId != null && session != null && !isAgentReply;
+  const isSessionRow = m.sessionId != null && !isAgentReply;
   const isSessionEventRow = m.sessionEventType != null && !isAgentReply;
   const explicitHandle = (m as MessageWithHandle).handle ?? null;
   const entryHandle = explicitHandle ?? (m.status === 'confirmed' && m.id != null ? encodeEventHandle(m.id) : null);
@@ -217,10 +232,12 @@ export const MessageRow = memo(function MessageRow({
   const [linkCopied, setLinkCopied] = useState(false);
   const [textCopied, setTextCopied] = useState(false);
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
+  const [answerExpanded, setAnswerExpanded] = useState(false);
   const [removedAttachmentIds, setRemovedAttachmentIds] = useState<Set<string>>(() => new Set());
   const linkCopyResetRef = useRef<number | null>(null);
   const textCopyResetRef = useRef<number | null>(null);
   const copyableMessageText = m.text.trim();
+  const answerNeedsClamp = m.text.length > 520 || m.text.split('\n').length > 8;
   const canCopyMessageText = !m.voice && copyableMessageText.length > 0;
   const react = (emoji: string) => {
     setPickerOpen(false);
@@ -576,19 +593,23 @@ export const MessageRow = memo(function MessageRow({
       onMouseLeave={() => {
         if (mouseOpenedPickerRef.current) setPickerOpen(false);
       }}
-      className={`group relative flex gap-3 px-4 ${
+      className={`group relative flex ${slotAnswer ? 'gap-2 py-0.5' : 'gap-3 px-4'} ${
         selfMentioned
           ? 'border-l-2 border-warning-border bg-warning-tint/20 hover:bg-warning-tint/35'
           : 'hover:bg-surface-raised/60'
       } ${
-        grouped ? 'py-0.5' : 'mt-2 py-0.5'
+        slotAnswer ? '' : grouped ? 'py-0.5' : 'mt-2 py-0.5'
       } ${dim ? 'opacity-50' : ''} ${highlighted ? 'entry-flash bg-accent-hover/10' : ''}`}
     >
-      <div className="w-8 shrink-0">
-        {(!grouped || isAgentVoice) && (
-          <Avatar name={authorName} seed={m.author.id} variant={isAgentVoice ? 'agent' : 'human'} />
+      <div className={slotAnswer ? 'w-5 shrink-0 pt-0.5' : 'w-8 shrink-0'}>
+        {slotAnswer ? (
+          <AgentMark size={20} />
+        ) : (
+          (!grouped || isAgentVoice) && (
+            <Avatar name={authorName} seed={m.author.id} variant={isAgentVoice ? 'agent' : 'human'} />
+          )
         )}
-        {grouped && (
+        {!slotAnswer && grouped && (
           <TimestampDisclosure
             iso={m.createdAt}
             label={formatGutterTime(m.createdAt)}
@@ -627,14 +648,9 @@ export const MessageRow = memo(function MessageRow({
         }}
         className={`relative min-w-0 max-w-3xl flex-1 ${swiping ? 'transition-none' : 'transition-transform duration-150 ease-out'}`}
       >
-        {(!grouped || isAgentVoice) && (
+        {!slotAnswer && (!grouped || isAgentVoice) && (
           <div className="flex items-baseline gap-2">
             <span className="text-sm font-semibold text-fg">{authorName}</span>
-            {isAgentVoice && (
-              <span className="rounded-full bg-accent-hover/15 px-1.5 py-px text-3xs font-semibold text-accent-text-strong">
-                AGENT
-              </span>
-            )}
             <TimestampDisclosure
               iso={m.createdAt}
               label={formatTime(m.createdAt)}
@@ -656,23 +672,9 @@ export const MessageRow = memo(function MessageRow({
         {isSessionEventRow ? (
           <SessionEventCard message={m} session={session} onOpenSession={onOpenSession} />
         ) : isSessionRow ? (
-          <>
-            <div className="whitespace-pre-wrap break-words text-sm leading-relaxed text-fg-body">
-              <MessageText text={m.sessionTask ?? ''} meId={meId} meHandle={meHandle} />
-            </div>
-            <SessionCard
-              session={session}
-              spectators={spectators}
-              spawnFailed={failed}
-              meId={meId}
-              onOpen={
-                // Primary click lands on the conversation: the card's thread
-                // (turns, questions, steers). The pane is "Show the work".
-                !inThread && onOpenThread && m.id != null ? () => onOpenThread(m.id!) : undefined
-              }
-              onOpenPane={(id) => onOpenSession?.(id)}
-            />
-          </>
+          <div className="whitespace-pre-wrap break-words text-sm leading-relaxed text-fg-body">
+            <MessageText text={m.sessionTask ?? ''} meId={meId} meHandle={meHandle} />
+          </div>
         ) : editing ? (
           <div className="relative py-0.5">
             {editMentions.open && (
@@ -714,22 +716,62 @@ export const MessageRow = memo(function MessageRow({
         ) : m.voice ? (
           <VoiceMessage voice={m.voice} />
         ) : (
-          <div className="whitespace-pre-wrap break-words text-sm leading-relaxed text-fg-body">
-            <MessageText
-              text={m.text}
-              meId={meId}
-              meHandle={meHandle}
-              unfurls={{
-                messageEventId: m.id,
-                suppressed: m.suppressedUnfurls ?? [],
-                canManage: m.id != null && meId === m.author.id,
-              }}
-            />
+          <div className="relative whitespace-pre-wrap break-words text-sm leading-relaxed text-fg-body">
+            <div className={slotAnswer && !answerExpanded ? 'line-clamp-[8]' : undefined}>
+              <MessageText
+                text={m.text}
+                meId={meId}
+                meHandle={meHandle}
+                unfurls={{
+                  messageEventId: m.id,
+                  suppressed: m.suppressedUnfurls ?? [],
+                  canManage: m.id != null && meId === m.author.id,
+                }}
+              />
+            </div>
+            {slotAnswer && answerNeedsClamp && !answerExpanded && (
+              <div
+                aria-hidden="true"
+                className="pointer-events-none absolute inset-x-0 bottom-0 h-8 bg-gradient-to-t from-surface to-transparent"
+              />
+            )}
             {m.pendingEdit ? (
               <span className="ml-1 text-2xs text-warning-text">(saving edit)</span>
             ) : m.edited ? (
               <span className="ml-1 text-2xs text-fg-muted">(edited)</span>
             ) : null}
+          </div>
+        )}
+        {slotAnswer && answerNeedsClamp && (
+          <button
+            type="button"
+            onClick={() => setAnswerExpanded((value) => !value)}
+            className="mt-0.5 text-xs font-medium text-accent-text hover:underline"
+          >
+            {answerExpanded ? 'Show less ↑' : 'Show all ↓'}
+          </button>
+        )}
+        {slotAnswer && session && (
+          <div className="mt-1 flex flex-wrap items-center gap-x-1 text-xs text-fg-muted">
+            <span className="text-success">✓</span>
+            <span>worked {formatDurationUnits(Math.max(0, sessionElapsedMs(session, Date.now())))}</span>
+            <span>·</span>
+            <button type="button" onClick={() => onOpenSession?.(session.id)} className="hover:underline">
+              view session
+            </button>
+            {attachments.length > 0 && (
+              <>
+                <span>·</span>
+                <button type="button" onClick={() => onOpenSession?.(session.id)} className="hover:underline">
+                  {attachments.length} {attachments.length === 1 ? 'file' : 'files'}
+                </button>
+              </>
+            )}
+            <SessionWorkProductsLink sessionId={session.id} onOpenSession={onOpenSession} />
+            <span>·</span>
+            <TimestampDisclosure iso={m.createdAt} label={formatTime(m.createdAt)}>
+              {formatTime(m.createdAt)}
+            </TimestampDisclosure>
           </div>
         )}
         {!deleted && !isSessionRow && !isSessionEventRow && !isAgentReply && (
@@ -850,14 +892,19 @@ export const MessageRow = memo(function MessageRow({
             {isSessionRow ? 'Failed to spawn — click to retry' : 'Failed to send — click to retry'}
           </button>
         )}
-        {!inThread && m.replyCount > 0 && m.id != null && (
-          <button
-            type="button"
-            onClick={() => onOpenThread?.(m.id!)}
-            className="mt-0.5 text-xs font-medium text-accent-text hover:underline"
-          >
-            {m.replyCount} {m.replyCount === 1 ? 'reply' : 'replies'} →
-          </button>
+        {!inThread && !slotAnswer && m.id != null && (slotSessions.length > 0 || m.replyCount > 0) && (
+          <ChannelAnnotationCluster
+            root={m}
+            sessions={slotSessions}
+            answers={anchoredAnswers}
+            meId={meId}
+            meHandle={meHandle}
+            onOpenThread={onOpenThread}
+            onOpenSession={onOpenSession}
+            onReact={onReact}
+            resolveUser={resolveUser}
+            onMarkupEntry={onMarkupEntry}
+          />
         )}
         <ReactionPicker
           open={pickerOpen}
@@ -1025,6 +1072,345 @@ export const MessageRow = memo(function MessageRow({
     </div>
   );
 });
+
+function SessionWorkProductsLink({
+  sessionId,
+  onOpenSession,
+}: {
+  sessionId: string;
+  onOpenSession?: (sessionId: string) => void;
+}) {
+  const [presentationCount, setPresentationCount] = useState(0);
+  useEffect(() => {
+    let disposed = false;
+    sessionsApi
+      .listPresentations(sessionId)
+      .then(({ presentations }) => {
+        if (!disposed) setPresentationCount(Array.isArray(presentations) ? presentations.length : 0);
+      })
+      .catch(() => {});
+    return () => {
+      disposed = true;
+    };
+  }, [sessionId]);
+  if (presentationCount === 0) return null;
+  return (
+    <>
+      <span>·</span>
+      <button type="button" onClick={() => onOpenSession?.(sessionId)} className="hover:underline">
+        {presentationCount} {presentationCount === 1 ? 'app' : 'apps'}
+      </button>
+    </>
+  );
+}
+
+function ChannelAnnotationCluster({
+  root,
+  sessions,
+  answers,
+  meId,
+  meHandle,
+  onOpenThread,
+  onOpenSession,
+  onReact,
+  resolveUser,
+  onMarkupEntry,
+}: {
+  root: ChatMessage;
+  sessions: Session[];
+  answers: ChatMessage[];
+  meId?: string;
+  meHandle?: string;
+  onOpenThread?: (rootEventId: number) => void;
+  onOpenSession?: (sessionId: string) => void;
+  onReact?: (message: ChatMessage, emoji: string) => Promise<void>;
+  resolveUser?: (id: string) => UserRef | undefined;
+  onMarkupEntry?: (handle: string, message: ChatMessage) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [replies, setReplies] = useState<ChatMessage[] | null>(null);
+  const claimedAnswerIds = new Set<number>();
+  for (const session of sessions) {
+    const answer = answers.find((candidate) => candidate.sessionId === session.id);
+    if (answer?.id != null) claimedAnswerIds.add(answer.id);
+  }
+  // Anchored rows always render through the full MessageRow machinery. The
+  // compact preview renders ONLY when the newest reply is not anchored (a
+  // plain thread reply) — matching by id OR clientMsgId so an optimistic
+  // broadcast echo can never double-render next to its confirmed row.
+  const anchoredMaxId = answers.reduce((acc, answer) => Math.max(acc, answer.id ?? 0), 0);
+  const previewCandidate = root.lastReply;
+  const previewIsAnchored =
+    previewCandidate != null &&
+    answers.some(
+      (answer) =>
+        (answer.id != null && answer.id === previewCandidate.id) ||
+        (answer.clientMsgId != null && answer.clientMsgId === previewCandidate.clientMsgId),
+    );
+  const latest =
+    previewCandidate != null && !previewIsAnchored && (previewCandidate.id ?? 0) > anchoredMaxId
+      ? previewCandidate
+      : (answers.at(-1) ?? previewCandidate);
+  const latestIsAnchored = latest != null && (answers.includes(latest) || previewIsAnchored);
+  const latestIsQuestionSlot =
+    latest?.sessionEventType === 'question_requested' &&
+    latest.sessionId != null &&
+    sessions.some((session) => session.id === latest.sessionId);
+  const earlierCount = Math.max(0, root.replyCount - (latest ? 1 : 0));
+  const shownEarlier = (replies ?? []).filter(
+    (reply) => reply.id !== latest?.id && (reply.id == null || !answers.some((answer) => answer.id === reply.id)),
+  );
+
+  const toggleEarlier = () => {
+    if (expanded) {
+      setExpanded(false);
+      return;
+    }
+    setExpanded(true);
+    if (replies || root.id == null) return;
+    setLoading(true);
+    api
+      .thread(root.id)
+      .then(({ events }) => setReplies(events.map(messageFromEvent)))
+      .catch(() => setReplies([]))
+      .finally(() => setLoading(false));
+  };
+
+  return (
+    <div data-testid="channel-annotation-cluster" className="relative mt-2 space-y-2 pl-1">
+      <span
+        aria-hidden="true"
+        className="absolute -left-[27px] top-0 h-[14px] w-[13px] rounded-bl-md border-b border-l border-edge-strong"
+      />
+      {/* Reading order is chronological: the collapsed middle first, then the
+          freshest content (latest reply / answer / live strip) bottom-most. */}
+      {earlierCount > 0 && (
+        <button
+          type="button"
+          onClick={toggleEarlier}
+          className="block text-xs font-medium text-fg-muted hover:text-fg-secondary hover:underline"
+        >
+          {expanded ? '▼' : '▶'} {earlierCount} earlier {earlierCount === 1 ? 'reply' : 'replies'}
+        </button>
+      )}
+      {expanded && (
+        <div className="space-y-2 border-l border-edge-strong pl-3">
+          {loading ? (
+            <div className="text-xs text-fg-muted">Loading replies…</div>
+          ) : (
+            shownEarlier.map((reply) => <CompactReply key={reply.id ?? reply.clientMsgId} message={reply} />)
+          )}
+        </div>
+      )}
+      {sessions.map((slotSession) => (
+        <AgentSessionSlot
+          key={slotSession.id}
+          session={slotSession}
+          answer={answers.find(
+            (candidate) => candidate.sessionId === slotSession.id && candidate.sessionEventType === 'replied',
+          )}
+          meId={meId}
+          meHandle={meHandle}
+          rootId={root.id!}
+          onOpenThread={onOpenThread}
+          onOpenSession={onOpenSession}
+          onReact={onReact}
+          resolveUser={resolveUser}
+          onMarkupEntry={onMarkupEntry}
+        />
+      ))}
+      {answers
+        .filter((answer) => answer.id == null || !claimedAnswerIds.has(answer.id))
+        .map((answer) => (
+          <MessageRow
+            key={answer.id ?? answer.clientMsgId}
+            message={answer}
+            grouped={false}
+            inThread
+            slotAnswer
+            meId={meId}
+            meHandle={meHandle}
+            onOpenSession={onOpenSession}
+            onReact={onReact}
+            resolveUser={resolveUser}
+            onMarkupEntry={onMarkupEntry}
+          />
+        ))}
+      {latest && !latestIsAnchored && !latestIsQuestionSlot && <CompactReply message={latest} />}
+      <button
+        type="button"
+        onClick={() => root.id != null && onOpenThread?.(root.id)}
+        className="block text-[12.5px] font-medium text-accent-text hover:underline"
+      >
+        Open thread →
+      </button>
+    </div>
+  );
+}
+
+function AgentSessionSlot({
+  session,
+  answer,
+  meId,
+  meHandle,
+  rootId,
+  onOpenThread,
+  onOpenSession,
+  onReact,
+  resolveUser,
+  onMarkupEntry,
+}: {
+  session: Session;
+  answer?: ChatMessage;
+  meId?: string;
+  meHandle?: string;
+  rootId: number;
+  onOpenThread?: (rootEventId: number) => void;
+  onOpenSession?: (sessionId: string) => void;
+  onReact?: (message: ChatMessage, emoji: string) => Promise<void>;
+  resolveUser?: (id: string) => UserRef | undefined;
+  onMarkupEntry?: (handle: string, message: ChatMessage) => void;
+}) {
+  const terminal = isTerminalSessionStatus(session.status);
+  const now = useNow(!terminal);
+  const glance = deriveSessionGlance(session, now);
+  const pending = !terminal && session.pendingQuestion?.questions[0] ? session.pendingQuestion : null;
+  const answered = sessionAnsweredQuestion(session);
+  const isDriver = meId != null && sessionDriverId(session) === meId;
+
+  if (pending || (!terminal && answered)) {
+    return (
+      <div data-testid="session-slot-needs-input" className="flex items-start gap-2">
+        <AgentMark size={20} className="mt-2" />
+        <div className="min-w-0 flex-1">
+          <QuestionCard
+            variant="card"
+            sessionId={session.id}
+            pending={pending}
+            answered={answered}
+            isDriver={isDriver}
+            driverName={session.driverName ?? session.spawnerName ?? 'the driver'}
+            proposals={(session.answerProposals ?? []).filter(
+              (proposal) => proposal.status === 'pending' && proposal.questionId === pending?.questionId,
+            )}
+          />
+        </div>
+      </div>
+    );
+  }
+
+  if (session.status === 'failed') {
+    return (
+      <div data-testid="session-slot-failed" className="flex items-center gap-2 text-xs text-danger-text">
+        <AgentMark size={20} tone="danger" />
+        <span className="min-w-0 truncate">
+          ✕ Failed after {formatDurationUnits(Math.max(0, sessionElapsedMs(session, now)))}
+          {session.resultText?.trim() ? ` — ${session.resultText.trim()}` : ''}
+        </span>
+        {isDriver && (
+          <>
+            <RetryTurnAction sessionId={session.id} />
+            <AskWhyAction sessionId={session.id} />
+          </>
+        )}
+        <button type="button" onClick={() => onOpenSession?.(session.id)} className="text-fg-muted hover:underline">
+          view session
+        </button>
+      </div>
+    );
+  }
+
+  if (terminal && answer) {
+    return (
+      <div data-testid="session-slot-answer">
+        <MessageRow
+          message={answer}
+          grouped={false}
+          inThread
+          slotAnswer
+          session={session}
+          meId={meId}
+          meHandle={meHandle}
+          onOpenSession={onOpenSession}
+          onReact={onReact}
+          resolveUser={resolveUser}
+          onMarkupEntry={onMarkupEntry}
+        />
+      </div>
+    );
+  }
+
+  if (terminal) {
+    return (
+      <div data-testid="session-slot-done" className="flex items-center gap-2 text-xs text-fg-muted">
+        <AgentMark size={20} />
+        <span className="text-success">✓</span>
+        <span>done</span>
+        <span>·</span>
+        <span>{formatDurationUnits(Math.max(0, sessionElapsedMs(session, now)))}</span>
+        <span>·</span>
+        <button type="button" onClick={() => onOpenSession?.(session.id)} className="hover:underline">
+          view session
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div data-testid="session-slot-working" className="flex min-w-0 items-center gap-2 text-xs text-fg-secondary">
+      <AgentMark size={20} />
+      <span className="size-1.5 shrink-0 animate-pulse rounded-full bg-accent motion-reduce:animate-none" />
+      <span className="min-w-0 truncate">
+        {session.latestActivity?.summary ?? [glance.label, glance.detail].filter(Boolean).join(' · ')}
+      </span>
+      {sessionGlanceClockLabel(glance, now) && (
+        <span className="shrink-0 tabular-nums text-fg-muted">{sessionGlanceClockLabel(glance, now)}</span>
+      )}
+      <button type="button" onClick={() => onOpenThread?.(rootId)} className="shrink-0 text-fg-muted hover:underline">
+        steer
+      </button>
+      <button
+        type="button"
+        onClick={() => onOpenSession?.(session.id)}
+        className="shrink-0 text-fg-muted hover:underline"
+      >
+        open session
+      </button>
+    </div>
+  );
+}
+
+function CompactReply({ message }: { message: ChatMessage }) {
+  const agent = message.sessionEventType === 'replied' || message.sessionEventType === 'question_requested';
+  return (
+    <div data-testid="thread-compact-reply" className="flex min-w-0 gap-2">
+      <Avatar
+        name={agent ? 'Agent' : message.author.displayName}
+        seed={message.author.id}
+        size={22}
+        variant={agent ? 'agent' : 'human'}
+      />
+      <div className="min-w-0 flex-1">
+        <div className="flex items-baseline gap-1.5">
+          <span className="truncate text-[12.5px] font-semibold text-fg">
+            {agent ? 'Agent' : message.author.displayName}
+          </span>
+          <TimestampDisclosure
+            iso={message.createdAt}
+            label={formatTime(message.createdAt)}
+            className="text-2xs text-fg-muted"
+          >
+            {formatTime(message.createdAt)}
+          </TimestampDisclosure>
+        </div>
+        <div className="line-clamp-3 whitespace-pre-wrap break-words text-[13px] leading-relaxed text-fg-body">
+          <MessageText text={message.text} />
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function isInteractiveTarget(target: EventTarget): boolean {
   return (

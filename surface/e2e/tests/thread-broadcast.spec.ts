@@ -45,20 +45,20 @@ test('broadcast reply lands confirmed in the channel and survives reload', async
   await page.getByRole('checkbox', { name: /also send to channel/i }).check();
   await sendThreadReply(page, reply);
 
-  const mainReplyRow = confirmedRowsWithText(page, reply).first();
-  await expect(mainReplyRow).toBeVisible();
-  await expect(mainReplyRow).not.toHaveClass(/(^|\s)opacity-50(\s|$)/);
-  await expect(mainReplyRow.getByRole('button', { name: /replied to a thread/ })).toBeVisible();
+  // The broadcast reply anchors under its root as part of the annotation
+  // cluster — no standalone channel row, no "replied to a thread" backlink.
+  const rootRow = confirmedRowsWithText(page, root).first();
+  await expect(rootRow.getByTestId('channel-annotation-cluster').getByText(reply, { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: /replied to a thread/ })).toHaveCount(0);
 
   await page.reload();
   await waitForChannel(page, room);
 
-  const reloadedReplyRow = confirmedRowsWithText(page, reply).first();
-  await expect(reloadedReplyRow).toBeVisible();
-  await expect(reloadedReplyRow.getByRole('button', { name: /replied to a thread/ })).toBeVisible();
-
   const reloadedRootRow = confirmedRowsWithText(page, root).first();
-  await expect(reloadedRootRow.getByRole('button', { name: '1 reply →' })).toBeVisible();
+  await expect(
+    reloadedRootRow.getByTestId('channel-annotation-cluster').getByText(reply, { exact: true }),
+  ).toBeVisible();
+  await expect(reloadedRootRow.getByRole('button', { name: 'Open thread →' })).toBeVisible();
 });
 
 test('non-broadcast thread reply stays out of the channel', async ({ page }) => {
@@ -76,10 +76,20 @@ test('non-broadcast thread reply stays out of the channel', async ({ page }) => 
   const confirmedThreadReply = threadPanel(page).locator('[data-eid]').filter({ hasText: reply });
   await expect(confirmedThreadReply).toBeVisible();
 
+  // A non-broadcast reply never becomes its own channel row. It IS allowed to
+  // surface as the root's collapsed-cluster preview (the universal thread
+  // cluster shows every thread's latest reply) — so assert containment, not
+  // absence: every match lives inside the root's row.
   await page.getByLabel('Close thread').click();
-  await expect(timelineText(page, reply)).toHaveCount(0);
+  const rootRow = confirmedRowsWithText(page, root).first();
+  await expect(rootRow.getByTestId('channel-annotation-cluster').getByText(reply, { exact: true })).toBeVisible();
+  await expect(confirmedRowsWithText(page, reply)).toHaveCount(1); // the root row only
 
   await page.reload();
   await waitForChannel(page, room);
-  await expect(timelineText(page, reply)).toHaveCount(0);
+  const reloadedRootRow = confirmedRowsWithText(page, root).first();
+  await expect(
+    reloadedRootRow.getByTestId('channel-annotation-cluster').getByText(reply, { exact: true }),
+  ).toBeVisible();
+  await expect(confirmedRowsWithText(page, reply)).toHaveCount(1);
 });

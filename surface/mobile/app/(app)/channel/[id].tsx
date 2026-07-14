@@ -455,6 +455,10 @@ export default function ChannelScreen() {
             loaded={timeline.loaded}
             hasMoreBefore={timeline.hasMoreBefore}
             sessions={state.sessions}
+            threadReplies={timeline.threads}
+            onExpandThread={(message) => {
+              if (message.id != null) chat.openThread(id, message.id);
+            }}
             meId={me.id}
             meHandle={state.meHandle}
             highlightId={chat.highlightId}

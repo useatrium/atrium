@@ -50,6 +50,7 @@ vi.mock('expo-router', () => ({
 
 vi.mock('@expo/vector-icons', () => ({
   Ionicons: () => null,
+  MaterialCommunityIcons: () => null,
 }));
 
 vi.mock('expo-image', () => ({

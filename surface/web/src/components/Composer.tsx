@@ -220,7 +220,12 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const audienceAvailable = !!agentModeContext || !!audiencePill;
   const agentAudience = audiencePill ? audiencePill.mode === 'agent' : agentMode;
   const pillAgentLabel = audiencePill ? audiencePill.agentLabel : targetLabel;
-  const pillChatLabel = audiencePill ? audiencePill.threadLabel : (agentModeContext?.channelLabel ?? 'this thread');
+  // === spine additions === Attached-thread chat is an explicit aside, not the default audience.
+  const pillChatLabel = audiencePill
+    ? audiencePill.threadLabel
+    : canTargetSession
+      ? 'Aside'
+      : (agentModeContext?.channelLabel ?? 'this thread');
   const setAgentAudience = useCallback(
     (next: boolean) => {
       if (audiencePill) audiencePill.onModeChange(next ? 'agent' : 'thread');
@@ -246,6 +251,12 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   useEffect(() => {
     onAgentModeChange?.(agentAudience);
   }, [agentAudience, onAgentModeChange]);
+
+  // === spine additions === An attached thread opens ready to steer/suggest; human threads stay plain chat.
+  useEffect(() => {
+    if (audiencePill) return;
+    setAgentMode(agentModeContext?.scope === 'thread' && attachedSession != null);
+  }, [agentModeContext?.scope, attachedSession?.id, audiencePill]);
 
   useEffect(
     () => () => {
@@ -308,11 +319,18 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
    *  audience and says so, rather than silently becoming an ordinary message. */
   const leaveAgentAudience = useCallback(() => {
     setAgentAudience(false);
+    // === spine additions === Esc in an attached thread deliberately changes the draft into an aside.
+    if (canTargetSession) {
+      setDraftAgentIntent(false);
+      setAgentIntentSeen(false);
+      persistDraftValue(text, false);
+      return;
+    }
     const kept = text.trim().length > 0;
     setDraftAgentIntent(kept);
     setAgentIntentSeen(false);
     persistDraftValue(text, kept);
-  }, [persistDraftValue, setAgentAudience, text]);
+  }, [canTargetSession, persistDraftValue, setAgentAudience, text]);
 
   const clearAgentIntentDraft = useCallback(() => {
     setText('');

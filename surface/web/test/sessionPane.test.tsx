@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-// (b) The pane folds the B_tooltest fixture into one Bash tool card whose
+// (b) The pane folds the B_tooltest fixture into one Bash work step whose
 // result contains atrium-roundtrip-ok, with a completed status chip.
 
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
@@ -387,51 +387,47 @@ describe('session pane folds the B_tooltest stream', () => {
     expect(within(details).getByText('App installation')).toBeTruthy();
   });
 
-  it('renders one Bash tool card with the roundtrip result, completed status', async () => {
+  it('renders one Bash step inside the completed turn fold with its roundtrip result', async () => {
     window.localStorage.setItem('atrium:transcript-view', 'full');
     await renderPaneWithB();
 
-    // exactly one tool card, named Bash
-    const cards = screen.getAllByTestId('tool-card');
-    expect(cards).toHaveLength(1);
-    const card = cards[0]!;
-    expect(within(card).getByText('Bash')).toBeTruthy();
+    const fold = screen.getByTestId('work-fold-expanded');
+    const step = within(fold).getByRole('button', { name: /echo atrium-roundtrip-ok/ });
+    expect(within(fold).queryByText(/aarch64/)).toBeNull();
 
-    // completed tool calls auto-collapse: command preview, no result yet
-    expect(within(card).getByText(/echo atrium-roundtrip-ok/)).toBeTruthy();
-    expect(within(card).queryByText(/aarch64/)).toBeNull();
-
-    // expand → full result content
-    fireEvent.click(within(card).getByRole('button'));
-    const result = within(card).getByText(/aarch64/);
+    fireEvent.click(step);
+    const result = within(fold).getByText(/aarch64/);
     expect(result.textContent).toContain('atrium-roundtrip-ok');
     expect(result.textContent).toContain('/home/agent/workspace');
 
     // status chip reached Done (from the terminal execution_state)
     expect(screen.getByTestId('glance-chip').textContent).toContain('Done');
 
-    // completed session: a subtle status line reports the turn (meta only). The
-    // roundtrip result itself lives in the tool card above — it is not re-carded.
+    // Completed session: a subtle status line reports the turn (meta only).
     expect(screen.getByTestId('turn-status').textContent).toContain('Turn complete');
     expect(screen.queryByTestId('turn-card')).toBeNull();
   });
 
-  it('defaults to focus view, groups hidden work, and reveals it from the chip', async () => {
+  it('defaults completed folds closed, supports local disclosure, and persists expand-all from the menu', async () => {
     await renderPaneWithB();
 
     expect(screen.queryByTestId('tool-card')).toBeNull();
-    const chips = screen.getAllByTestId('hidden-work-chip');
-    expect(chips).toHaveLength(1);
-    expect(chips[0]!.textContent).toContain('1 work step');
+    const fold = screen.getByTestId('work-fold-collapsed');
+    expect(fold.textContent).toContain('1 step');
 
-    fireEvent.click(chips[0]!);
-    expect(screen.getByTestId('tool-card')).toBeTruthy();
-    expect(screen.queryByTestId('hidden-work-chip')).toBeNull();
+    fireEvent.click(fold);
+    expect(screen.getByTestId('work-fold-expanded')).toBeTruthy();
+    expect(window.localStorage.getItem('atrium:transcript-view')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'collapse' }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Agent actions' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Expand all work' }));
+    expect(screen.getByTestId('work-fold-expanded')).toBeTruthy();
     expect(window.localStorage.getItem('atrium:transcript-view')).toBe('full');
 
     fireEvent.click(screen.getByRole('button', { name: 'Agent actions' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Hide agent work' }));
-    expect(screen.queryByTestId('tool-card')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse all work' }));
+    expect(screen.getByTestId('work-fold-collapsed')).toBeTruthy();
     expect(window.localStorage.getItem('atrium:transcript-view')).toBe('focus');
   });
 
@@ -1612,7 +1608,7 @@ describe('work drawer (Phase 4 consolidation)', () => {
     await renderPaneWithB();
     // The echo Bash op is classified as a side-effect → the strip appears.
     const strip = screen.getByTestId('sideeffects-strip');
-    expect(within(strip).getByText('Actions')).toBeTruthy();
+    expect(strip.textContent).toBe('⚙ What it ran · 1');
     // Drawer closed until the strip is clicked.
     expect(screen.queryByTestId('work-drawer')).toBeNull();
 
@@ -1710,14 +1706,16 @@ describe('inline file changes (Phase 4)', () => {
       await new Promise((r) => setTimeout(r, 60));
     });
 
-    // The edit shows as an inline diff card (not the generic raw-JSON tool card).
+    const fold = screen.getByTestId('work-fold-expanded');
+    fireEvent.click(within(fold).getByRole('button', { name: /app\.ts/i }));
+    // The edit detail reuses the inline diff card (not a raw JSON tool card).
     const card = screen.getByTestId('inline-file-change');
     expect(within(card).getByText('src/app.ts')).toBeTruthy();
     expect(within(card).getByText('edited')).toBeTruthy();
     expect(screen.queryByTestId('tool-card')).toBeNull();
 
     // The same edit feeds the Changes strip (one file).
-    expect(within(screen.getByTestId('changes-strip')).getByText('· 1')).toBeTruthy();
+    expect(screen.getByTestId('changes-strip').textContent).toBe('≡ What changed · 1');
 
     // Collapsed by default; expanding reveals the coloured diff.
     expect(within(card).queryByText('+ const a = 2;')).toBeNull();
@@ -1776,7 +1774,7 @@ describe('inline file changes (Phase 4)', () => {
     expect(within(card).getByText('edited')).toBeTruthy();
     expect(screen.getByText('editing the config')).toBeTruthy();
     // Still feeds the Changes strip (one file) — inline + drawer, one source.
-    expect(within(screen.getByTestId('changes-strip')).getByText('· 1')).toBeTruthy();
+    expect(screen.getByTestId('changes-strip').textContent).toBe('≡ What changed · 1');
 
     // Collapsed by default; expand reveals the codex hunk verbatim.
     expect(within(card).queryByText('+const x = 2;')).toBeNull();
@@ -1784,7 +1782,7 @@ describe('inline file changes (Phase 4)', () => {
     expect(within(card).getByText('+const x = 2;')).toBeTruthy();
   });
 
-  it('groups a codex file change anchored inside hidden work into one correctly counted chip', async () => {
+  it('keeps a codex change marker beside a correctly counted work fold', async () => {
     const frames = [
       {
         event: 'execution_state',
@@ -1794,7 +1792,10 @@ describe('inline file changes (Phase 4)', () => {
       {
         event: 'amp_raw_event',
         event_id: 2,
-        data: { type: 'item.completed', item: { id: 'before', type: 'agentMessage', text: 'before work' } },
+        data: {
+          type: 'item.completed',
+          item: { id: 'before', type: 'userMessage', content: [{ type: 'text', text: 'before work' }] },
+        },
       },
       {
         event: 'amp_raw_event',
@@ -1846,13 +1847,14 @@ describe('inline file changes (Phase 4)', () => {
       await new Promise((r) => setTimeout(r, 60));
     });
 
-    const chips = screen.getAllByTestId('hidden-work-chip');
-    expect(chips).toHaveLength(1);
-    expect(chips[0]!.textContent).toContain('4 work steps');
-
-    fireEvent.click(chips[0]!);
-    expect(screen.getAllByTestId('tool-card')).toHaveLength(2);
+    const collapsedFold = screen.queryByTestId('work-fold-collapsed');
+    const fold = collapsedFold ?? screen.getByTestId('work-fold-expanded');
+    expect(fold.textContent).toContain('3 steps');
     expect(screen.getByTestId('inline-file-change')).toBeTruthy();
+
+    if (collapsedFold) fireEvent.click(collapsedFold);
+    expect(screen.getByTestId('work-fold-expanded').querySelectorAll('button[aria-expanded]')).toHaveLength(3);
+    expect(screen.queryByTestId('tool-card')).toBeNull();
   });
 });
 
@@ -1884,7 +1886,7 @@ describe('artifacts surface (Phase 4)', () => {
     },
   ] as unknown as CentaurEventFrame[];
 
-  it('the artifacts strip opens the work drawer on the What changed tab gallery', async () => {
+  it('the absorbed What changed strip opens the artifact gallery', async () => {
     render(
       <SessionPane session={bSession()} me={me} watchers={[]} onClose={() => {}} onAnswerQuestion={async () => {}} />,
     );
@@ -1895,9 +1897,8 @@ describe('artifacts surface (Phase 4)', () => {
       await new Promise((r) => setTimeout(r, 60));
     });
 
-    const strip = screen.getByTestId('artifacts-strip');
-    expect(within(strip).getByText('Artifacts')).toBeTruthy();
-    expect(within(strip).getByText('· 1')).toBeTruthy();
+    const strip = screen.getByTestId('changes-strip');
+    expect(strip.textContent).toBe('≡ What changed · 1');
     expect(screen.queryByTestId('work-drawer')).toBeNull();
 
     fireEvent.click(strip);

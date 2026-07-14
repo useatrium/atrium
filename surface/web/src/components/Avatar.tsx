@@ -1,6 +1,6 @@
 import { initials, userColorTokens } from '@atrium/surface-client';
 import { useTheme } from '../theme';
-import { BotIcon } from './icons';
+import { AgentMark } from './AgentMark';
 
 export function Avatar({
   name,
@@ -16,15 +16,16 @@ export function Avatar({
   const { resolvedScheme } = useTheme();
   const colors = userColorTokens(seed, resolvedScheme);
   if (variant === 'agent') {
+    // Humans get the full square; the agent's circle renders slightly smaller
+    // inside the same footprint so gutters stay aligned while the mark still
+    // reads as "not a person".
     return (
       <div
-        role="img"
-        aria-label="Agent"
-        className="flex shrink-0 select-none items-center justify-center rounded-md bg-accent-hover text-surface-base"
+        className="flex shrink-0 select-none items-center justify-center"
         style={{ width: size, height: size }}
         title="Agent"
       >
-        <BotIcon size={Math.max(16, Math.floor(size * 0.62))} />
+        <AgentMark size={Math.max(16, Math.round(size * 0.75))} />
       </div>
     );
   }

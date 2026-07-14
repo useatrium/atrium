@@ -151,10 +151,11 @@ test('popout renders the lean pane, folds the stream, tracks unseen output, and 
   await expect(page.getByTestId('session-details')).toContainText('Watching');
   await page.keyboard.press('Escape');
 
-  // The replayed artifact frame is unseen output: strip accent + title ●.
-  await expect(page.getByTestId('artifacts-strip')).toBeVisible();
+  // The replayed artifact frame is unseen output. Artifacts live on the
+  // "What changed" spine strip now: unseen accent ring + title ●.
+  await expect(page.getByTestId('changes-strip')).toBeVisible();
   await expect(page).toHaveTitle(/^● .+ · running$/);
-  await page.getByTestId('artifacts-strip').click();
+  await page.getByTestId('changes-strip').click();
   await expect(page).toHaveTitle(/^(?!● ).+ · running$/);
 
   // Steer over the direct REST path; the real server forwards to Centaur.

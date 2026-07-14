@@ -1,7 +1,7 @@
 import { Text, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { initials, userColorTokens } from '@atrium/surface-client';
 import { useTheme } from '../lib/theme';
+import { AgentMark } from './AgentMark';
 
 /** Colored-initials avatar, same hash/palette as the web client. */
 export function Avatar({
@@ -15,9 +15,21 @@ export function Avatar({
   size?: number;
   variant?: 'human' | 'agent';
 }) {
-  const { colors, scheme } = useTheme();
+  const { scheme } = useTheme();
   const userColors = userColorTokens(seed, scheme);
-  const isAgent = variant === 'agent';
+  if (variant === 'agent') {
+    // Same footprint as the human square so gutters align; the mark itself is
+    // a smaller solid circle so it never reads as a person.
+    return (
+      <View
+        accessibilityElementsHidden
+        importantForAccessibility="no-hide-descendants"
+        style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}
+      >
+        <AgentMark size={Math.max(16, Math.round(size * 0.75))} />
+      </View>
+    );
+  }
   return (
     <View
       accessibilityElementsHidden
@@ -26,24 +38,20 @@ export function Avatar({
         width: size,
         height: size,
         borderRadius: Math.round(size * 0.3),
-        backgroundColor: isAgent ? colors.accentBg : userColors.bg,
+        backgroundColor: userColors.bg,
         alignItems: 'center',
         justifyContent: 'center',
       }}
     >
-      {isAgent ? (
-        <Ionicons name="hardware-chip-outline" size={Math.round(size * 0.52)} color={colors.accent} />
-      ) : (
-        <Text
-          style={{
-            color: userColors.fg,
-            fontSize: Math.round(size * 0.38),
-            fontWeight: '700',
-          }}
-        >
-          {initials(name)}
-        </Text>
-      )}
+      <Text
+        style={{
+          color: userColors.fg,
+          fontSize: Math.round(size * 0.38),
+          fontWeight: '700',
+        }}
+      >
+        {initials(name)}
+      </Text>
     </View>
   );
 }

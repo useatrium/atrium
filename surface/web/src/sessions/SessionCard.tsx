@@ -148,7 +148,7 @@ function SteerActionLink({
   );
 }
 
-function RetryTurnAction({ sessionId }: { sessionId: string }) {
+export function RetryTurnAction({ sessionId }: { sessionId: string }) {
   return (
     <SteerActionLink
       sessionId={sessionId}
@@ -160,7 +160,7 @@ function RetryTurnAction({ sessionId }: { sessionId: string }) {
   );
 }
 
-function AskWhyAction({ sessionId }: { sessionId: string }) {
+export function AskWhyAction({ sessionId }: { sessionId: string }) {
   return (
     <SteerActionLink
       sessionId={sessionId}

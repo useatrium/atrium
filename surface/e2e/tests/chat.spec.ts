@@ -179,7 +179,8 @@ test('thread: reply in thread; root shows reply count', async ({ page }) => {
 
   await expect(page.getByText(reply, { exact: true })).toBeVisible();
   await page.getByLabel('Close thread').click();
-  await expect(row.getByRole('button', { name: '1 reply →' })).toBeVisible();
+  await expect(row.getByText(reply, { exact: true })).toBeVisible();
+  await expect(row.getByRole('button', { name: 'Open thread →' })).toBeVisible();
 });
 
 test('reactions: toggle a reaction, chip count updates', async ({ page }) => {
@@ -549,8 +550,8 @@ test('session question requested while disconnected heals without reload', async
   await expect(page.getByRole('status', { name: 'connection: open' })).toBeVisible();
   const sessionRow = messageRow(page, title);
   await expect(sessionRow).toBeVisible();
-  await expect(sessionRow.getByText('Needs you')).toBeVisible();
-  await sessionRow.getByRole('button', { name: '1 reply →' }).click();
+  await expect(sessionRow.getByTestId('session-slot-needs-input')).toBeVisible();
+  await sessionRow.getByRole('button', { name: 'Open thread →' }).click();
   // The question now renders at more than one altitude by design — the feed
   // card flips to it AND the thread question card carries it. Assert at least
   // one is visible instead of strict-mode single-match.

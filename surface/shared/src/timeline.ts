@@ -34,9 +34,33 @@ export interface WireEvent {
   author: UserRef | null;
   replyCount?: number;
   lastReplyId?: number;
+  /** Materialized preview of the newest visible reply on root feed rows. */
+  lastReply?: LastReplyPreview;
   // === foundation additions: thread broadcast ===
   broadcast?: boolean;
 }
+
+export interface LastReplyPreview {
+  id: number;
+  authorId: string;
+  authorDisplayName: string;
+  text: string;
+  createdAt: string;
+  agentVoice: boolean;
+  eventType: string;
+}
+
+const LastReplyPreviewSchema = Schema.mutable(
+  Schema.Struct({
+    id: Schema.Number,
+    authorId: Schema.String,
+    authorDisplayName: Schema.String,
+    text: Schema.String,
+    createdAt: Schema.String,
+    agentVoice: Schema.Boolean,
+    eventType: Schema.String,
+  }),
+);
 
 export const WireEventSchema = Schema.mutable(
   Schema.Struct({
@@ -51,6 +75,7 @@ export const WireEventSchema = Schema.mutable(
     author: Schema.Union(UserRefSchema, Schema.Null),
     replyCount: Schema.optionalWith(Schema.Number, { exact: true }),
     lastReplyId: Schema.optionalWith(Schema.Number, { exact: true }),
+    lastReply: Schema.optionalWith(LastReplyPreviewSchema, { exact: true }),
     broadcast: Schema.optionalWith(Schema.Boolean, { exact: true }),
   }),
 );
@@ -141,6 +166,8 @@ export interface ChatMessage {
   replyCount: number;
   /** Highest reply event id already included in replyCount. */
   lastReplyId: number;
+  /** Newest reply materialized by the feed query (or folded from a live event). */
+  lastReply?: ChatMessage;
   /** Pending thread replies only: this overlay's optimistic +1 is included in
    * the root row's current replyCount. Lets the confirm (or a server count
    * that already covered the send) settle the bump exactly instead of
@@ -316,6 +343,7 @@ export function messageFromEvent(ev: WireEvent): ChatMessage {
     createdAt: ev.createdAt,
     replyCount: ev.replyCount ?? 0,
     lastReplyId: ev.lastReplyId ?? 0,
+    ...(ev.lastReply !== undefined ? { lastReply: messageFromLastReply(ev, ev.lastReply) } : {}),
     ...(broadcast ? { broadcast: true } : {}),
     status: 'confirmed',
     ...(sessionId !== undefined ? { sessionId } : {}),
@@ -325,6 +353,35 @@ export function messageFromEvent(ev: WireEvent): ChatMessage {
     ...(typeof payload.suggested_session_id === 'string' ? { suggestedSessionId: payload.suggested_session_id } : {}),
     ...(typeof payload.suggestion_id === 'string' ? { suggestionId: payload.suggestion_id } : {}),
     ...(spawnClientId !== undefined ? { spawnClientId } : {}),
+  };
+}
+
+function messageFromLastReply(root: WireEvent, preview: LastReplyPreview): ChatMessage {
+  const sessionEventType =
+    preview.eventType === 'session.replied'
+      ? ('replied' as const)
+      : preview.eventType === 'session.question_requested'
+        ? ('question_requested' as const)
+        : undefined;
+  const sessionId = preview.agentVoice && preview.authorId.startsWith('agent:') ? preview.authorId.slice(6) : undefined;
+  return {
+    id: preview.id,
+    clientMsgId: null,
+    channelId: root.channelId ?? '',
+    threadRootEventId: root.id,
+    text: preview.text,
+    edited: false,
+    author: {
+      id: preview.authorId,
+      handle: preview.agentVoice ? 'agent' : preview.authorDisplayName,
+      displayName: preview.agentVoice ? 'Agent' : preview.authorDisplayName,
+    },
+    createdAt: preview.createdAt,
+    replyCount: 0,
+    lastReplyId: 0,
+    status: 'confirmed',
+    ...(sessionEventType ? { sessionEventType } : {}),
+    ...(sessionId ? { sessionId } : {}),
   };
 }
 
@@ -466,11 +523,21 @@ function refreshConfirmedFromHistory(
   // whichever complete (replyCount, lastReplyId) pair has the newer
   // watermark; mixing the fields would violate applyEvent's count invariant.
   const serverReplyWatermarkWon = msg.lastReplyId >= current.lastReplyId;
-  if (!serverReplyWatermarkWon || (msg.replyCount === current.replyCount && msg.lastReplyId === current.lastReplyId)) {
+  if (
+    !serverReplyWatermarkWon ||
+    (msg.replyCount === current.replyCount &&
+      msg.lastReplyId === current.lastReplyId &&
+      (msg.lastReply == null || msg.lastReply.id === current.lastReply?.id))
+  ) {
     return { list, serverReplyWatermarkWon };
   }
   const copy = [...list];
-  copy[i] = { ...current, replyCount: msg.replyCount, lastReplyId: msg.lastReplyId };
+  copy[i] = {
+    ...current,
+    replyCount: msg.replyCount,
+    lastReplyId: msg.lastReplyId,
+    ...(msg.lastReply ? { lastReply: msg.lastReply } : {}),
+  };
   return { list: copy, serverReplyWatermarkWon };
 }
 
@@ -923,6 +990,7 @@ export function applyEvent(t: ChannelTimeline, ev: WireEvent): ChannelTimeline {
         ...m,
         replyCount: optimisticallyCounted ? m.replyCount : m.replyCount + 1,
         lastReplyId: ev.id,
+        lastReply: msg,
       };
     });
     const threads = { ...t.threads };
@@ -963,6 +1031,7 @@ export function mergeHistory(
       continue;
     }
     if (!isRowEvent(ev.type)) continue;
+    const msg = messageFromEvent(ev);
     if (ev.threadRootEventId != null) {
       // A thread reply in the page still moves its root's watermark, exactly
       // as applyEvent would have. This is what keeps a WARM reload honest: a
@@ -973,13 +1042,12 @@ export function mergeHistory(
       // pair already covers this reply) no-ops.
       main = main.map((m) =>
         m.id === ev.threadRootEventId && ev.id > m.lastReplyId
-          ? { ...m, replyCount: m.replyCount + 1, lastReplyId: ev.id }
+          ? { ...m, replyCount: m.replyCount + 1, lastReplyId: ev.id, lastReply: msg }
           : m,
       );
       // Non-broadcast replies still stay out of the main feed.
       if (ev.broadcast !== true) continue;
     }
-    const msg = messageFromEvent(ev);
     if (alreadySeen) {
       const refreshed = refreshConfirmedFromHistory(main, msg);
       main = refreshed.list;
@@ -1103,12 +1171,14 @@ export function mergeThread(t: ChannelTimeline, rootEventId: number, events: Wir
     m.status !== 'confirmed' && !m.deleted && m.countedInRoot !== true ? { ...m, countedInRoot: true } : m,
   );
   const maxReplyId = thread.reduce((acc, m) => Math.max(acc, m.id ?? 0), 0);
+  const newestReply = thread.at(-1);
   const main = mainRows.map((m) =>
     m.id === rootEventId
       ? {
           ...m,
           replyCount: confirmedCount + overlayCount,
           lastReplyId: Math.max(m.lastReplyId, maxReplyId),
+          ...(newestReply ? { lastReply: newestReply } : {}),
         }
       : m,
   );

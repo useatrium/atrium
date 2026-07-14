@@ -215,7 +215,9 @@ test('markup reply creates a thread card and can apply the markup with an agent'
   // The card renders the tracked change itself: struck deletion + underlined insertion.
   await expect(threadPanel.locator('.atrium-critic-view-del', { hasText: 'careful' })).toBeVisible();
   await expect(threadPanel.locator('.atrium-critic-view-ins', { hasText: 'direct' })).toBeVisible();
-  await expect(row.getByRole('button', { name: /(?:↗\s*1|1 reply)/ })).toBeVisible();
+  // The reply surfaces as the root's annotation cluster (latest reply +
+  // "Open thread →") — the bare reply-count button is gone.
+  await expect(row.getByRole('button', { name: 'Open thread →' })).toBeVisible();
 
   const seqBeforeApply = await latestSeq(page.request, artifactId);
   // extract = v1; the reply committed the markup as exactly one new version.

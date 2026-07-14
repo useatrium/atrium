@@ -100,7 +100,20 @@ async function openSeededSession(page: Page, prefix: string, includeWork = false
               atrium_ts: stamp,
             })
           : '') +
-        sseFrame('amp_raw_event', includeWork ? 3 : 2, {
+        // Close the turn with an assistant answer so the work above it is a
+        // COMPLETED fold (live turns deliberately stream open, not collapsed).
+        (includeWork
+          ? sseFrame('amp_raw_event', 3, {
+              type: 'assistant',
+              uuid: 'assistant-focus-2',
+              message: {
+                id: 'message-focus-2',
+                content: [{ type: 'text', text: 'Focus check complete.' }],
+              },
+              atrium_ts: stamp,
+            })
+          : '') +
+        sseFrame('amp_raw_event', includeWork ? 4 : 2, {
           type: 'item.completed',
           item: {
             id: 'steer-1',
@@ -115,27 +128,25 @@ async function openSeededSession(page: Page, prefix: string, includeWork = false
   await expect(page.getByTestId('user-steer')).toBeVisible();
 }
 
-test('focus mode hides agent work and the persisted toggle restores it', async ({ page }) => {
+test('work folds collapse completed turns and the persisted expand-all restores them open', async ({ page }) => {
   await openSeededSession(page, 'transcript-focus', true);
 
-  await expect(page.getByTestId('tool-card')).toHaveCount(0);
-  const chip = page.getByTestId('hidden-work-chip');
-  await expect(chip).toHaveText(/1 work step/);
+  // Completed turns fold by default; the chip opens the step rows in place.
+  const fold = page.getByTestId('work-fold-collapsed');
+  await expect(fold).toHaveText(/1 step/);
 
-  await chip.click();
-  await expect(page.getByTestId('tool-card')).toBeVisible();
+  await fold.click();
+  await expect(page.getByTestId('work-fold-expanded')).toBeVisible();
 
-  // The transcript-view toggle lives behind the header overflow menu now.
+  // Expand-all lives behind the header overflow menu and persists.
   await page.getByRole('button', { name: 'Agent actions' }).click();
-  await page.getByRole('button', { name: 'Hide agent work' }).click();
-  await page.getByRole('button', { name: 'Agent actions' }).click();
-  await page.getByRole('button', { name: 'Show agent work' }).click();
+  await page.getByRole('button', { name: 'Expand all work' }).click();
   await page.reload();
 
-  await expect(page.getByTestId('tool-card')).toBeVisible();
-  // Full view persisted: the menu offers to hide the work again.
+  await expect(page.getByTestId('work-fold-expanded')).toBeVisible();
+  // The persisted preference flips the menu action to collapse.
   await page.getByRole('button', { name: 'Agent actions' }).click();
-  await expect(page.getByRole('button', { name: 'Hide agent work' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Collapse all work' })).toBeVisible();
 });
 
 test('transcript turns show a wall-clock timestamp on hover', async ({ page }) => {

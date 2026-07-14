@@ -82,6 +82,8 @@ function renderRow({
   onDelegateToAgent,
   row = message(),
   session: rowSession,
+  slotSessions,
+  anchoredAnswers,
 }: {
   resolveUser?: (id: string) => UserRef | undefined;
   onReact?: (message: ChatMessage, emoji: string) => Promise<void>;
@@ -89,12 +91,16 @@ function renderRow({
   onDelegateToAgent?: (message: ChatMessage) => void;
   row?: ChatMessage;
   session?: Session;
+  slotSessions?: Session[];
+  anchoredAnswers?: ChatMessage[];
 } = {}) {
   const view = render(
     <ThemeProvider>
       <MessageRow
         message={row}
         session={rowSession}
+        slotSessions={slotSessions}
+        anchoredAnswers={anchoredAnswers}
         grouped={false}
         meId="u-1"
         meHandle="ada"
@@ -184,6 +190,57 @@ describe('MessageRow broadcast replies', () => {
     expect(onOpenThread).toHaveBeenCalledWith(42);
     expect(onOpenThread).not.toHaveBeenCalledWith(99);
   });
+
+  it('expands earlier replies lazily and keeps the newest compact reply collapsed', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            events: [
+              {
+                id: 50,
+                workspaceId: 'ws-1',
+                channelId: 'ch-1',
+                threadRootEventId: 42,
+                type: 'message.posted',
+                actorId: 'u-2',
+                payload: { text: 'Earlier fetched reply' },
+                createdAt: '2026-07-05T12:00:30.000Z',
+                author: bea,
+              },
+              {
+                id: 51,
+                workspaceId: 'ws-1',
+                channelId: 'ch-1',
+                threadRootEventId: 42,
+                type: 'message.posted',
+                actorId: 'u-2',
+                payload: { text: 'Newest preview reply' },
+                createdAt: '2026-07-05T12:01:00.000Z',
+                author: bea,
+              },
+            ],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        ),
+      ),
+    );
+    const latest = message({
+      id: 51,
+      threadRootEventId: 42,
+      text: 'Newest preview reply',
+      author: bea,
+      createdAt: '2026-07-05T12:01:00.000Z',
+      reactions: [],
+    });
+    renderRow({ row: message({ replyCount: 2, lastReplyId: 51, lastReply: latest, reactions: [] }) });
+
+    expect(screen.getByText('Newest preview reply')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '▶ 1 earlier reply' }));
+    expect(await screen.findByText('Earlier fetched reply')).toBeTruthy();
+    expect(fetch).toHaveBeenCalledWith('/api/threads/42/messages', expect.anything());
+  });
 });
 
 describe('MessageRow actions', () => {
@@ -259,6 +316,106 @@ describe('MessageRow actions', () => {
 });
 
 describe('MessageRow web presence', () => {
+  it('renders one working annotation slot and no feed SessionCard', () => {
+    renderRow({
+      row: message({ sessionId: 's-1', sessionTask: 'Refactor the timeline', reactions: [] }),
+      session: session(),
+      slotSessions: [session({ latestActivity: { summary: 'running timeline tests', at: '2026-07-05T12:00:01Z' } })],
+    });
+
+    expect(screen.getByTestId('session-slot-working')).toBeTruthy();
+    expect(screen.getByText('running timeline tests')).toBeTruthy();
+    expect(screen.queryByTestId('session-card')).toBeNull();
+    expect(screen.queryByTestId('session-slot-done')).toBeNull();
+    expect(screen.queryByTestId('session-slot-failed')).toBeNull();
+  });
+
+  it('renders a terminal answer once, with a clamp toggle, instead of a card', () => {
+    const answer = message({
+      id: 99,
+      threadRootEventId: 42,
+      sessionId: 's-1',
+      sessionEventType: 'replied',
+      broadcast: true,
+      text: 'A'.repeat(700),
+      reactions: [],
+      author: { id: 'agent:s-1', handle: 'agent', displayName: 'Agent' },
+    });
+    renderRow({
+      row: message({
+        sessionId: 's-1',
+        sessionTask: 'Long answer please',
+        replyCount: 1,
+        lastReplyId: 99,
+        reactions: [],
+      }),
+      session: session({ status: 'completed', completedAt: '2026-07-05T12:01:00.000Z' }),
+      slotSessions: [session({ status: 'completed', completedAt: '2026-07-05T12:01:00.000Z' })],
+      anchoredAnswers: [answer],
+    });
+
+    expect(screen.getByTestId('session-slot-answer')).toBeTruthy();
+    expect(screen.getAllByText('A'.repeat(700))).toHaveLength(1);
+    expect(screen.getByRole('button', { name: 'Show all ↓' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Show all ↓' }));
+    expect(screen.getByRole('button', { name: 'Show less ↑' })).toBeTruthy();
+    expect(screen.queryByTestId('session-card')).toBeNull();
+  });
+
+  it('uses exactly the failed terminal slot and keeps driver recovery actions', () => {
+    renderRow({
+      row: message({ sessionId: 's-1', sessionTask: 'Risky task', reactions: [] }),
+      session: session({ status: 'failed', completedAt: '2026-07-05T12:00:30.000Z' }),
+      slotSessions: [session({ status: 'failed', completedAt: '2026-07-05T12:00:30.000Z' })],
+    });
+
+    expect(screen.getByTestId('session-slot-failed')).toBeTruthy();
+    expect(screen.getByTestId('card-retry-turn')).toBeTruthy();
+    expect(screen.getByTestId('card-ask-why')).toBeTruthy();
+    expect(screen.queryByTestId('session-slot-working')).toBeNull();
+    expect(screen.queryByTestId('session-slot-done')).toBeNull();
+  });
+
+  it('moves the canonical question card into the needs-input slot', () => {
+    const needsInput = session({
+      pendingQuestion: {
+        questionId: 'q-1',
+        askedAt: '2026-07-05T12:00:05.000Z',
+        questions: [
+          {
+            id: 'scope',
+            header: 'Scope',
+            question: 'Which scope?',
+            options: [{ label: 'Small', description: 'Focused' }],
+          },
+        ],
+      },
+    });
+    renderRow({
+      row: message({ sessionId: 's-1', sessionTask: 'Pick a scope', reactions: [] }),
+      session: needsInput,
+      slotSessions: [needsInput],
+    });
+
+    expect(screen.getByTestId('session-slot-needs-input')).toBeTruthy();
+    expect(screen.getByTestId('question-banner')).toBeTruthy();
+    expect(screen.getByText('Which scope?')).toBeTruthy();
+    expect(screen.queryByTestId('session-slot-working')).toBeNull();
+  });
+
+  it('renders the minimal terminal strip when no broadcast answer exists', () => {
+    const completed = session({ status: 'completed', completedAt: '2026-07-05T12:01:00.000Z' });
+    renderRow({
+      row: message({ sessionId: 's-1', sessionTask: 'Quiet completion', reactions: [] }),
+      session: completed,
+      slotSessions: [completed],
+    });
+
+    expect(screen.getByTestId('session-slot-done')).toBeTruthy();
+    expect(screen.getByText('done')).toBeTruthy();
+    expect(screen.queryByTestId('session-slot-answer')).toBeNull();
+  });
+
   it('renders an agent reply with the fixed Agent identity and normal markdown body', () => {
     renderRow({
       session: session({ title: 'A task-shaped session title' }),
@@ -274,7 +431,9 @@ describe('MessageRow web presence', () => {
     expect(screen.getByText('Agent')).toBeTruthy();
     expect(screen.queryByText('A task-shaped session title')).toBeNull();
     expect(screen.queryByText('Harness persona')).toBeNull();
-    expect(screen.getByText('AGENT')).toBeTruthy();
+    // The pill is gone — the AgentMark (role=img, label "Agent") is the only marker.
+    expect(screen.queryByText('AGENT')).toBeNull();
+    expect(screen.getByRole('img', { name: 'Agent' })).toBeTruthy();
     expect(screen.getByRole('link', { name: 'timeline' })).toBeTruthy();
     expect(screen.getByText('Shipped')).toBeTruthy();
     expect(screen.queryByRole('button', { name: '↳ replied to a thread' })).toBeNull();

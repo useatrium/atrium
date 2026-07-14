@@ -1,7 +1,7 @@
 // Channel/thread message list: FlashList v2, chronological and not inverted,
 // older pages load as you scroll up.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -32,6 +32,12 @@ export interface TimelineProps {
   loaded: boolean;
   hasMoreBefore: boolean;
   sessions: Record<string, Session>;
+  threadReplies?: Record<number, ChatMessage[]>;
+  onExpandThread?: (m: ChatMessage) => void;
+  /** When present, ordinary human replies are asides unless they target this session. */
+  sessionSpineId?: string;
+  /** Work folds interleaved after human turns on an attached-session thread. */
+  threadWorkFolds?: ReactNode[];
   meId: string;
   meHandle: string | null;
   highlightId: number | null;
@@ -158,6 +164,10 @@ export function Timeline({
   loaded,
   hasMoreBefore,
   sessions,
+  threadReplies,
+  onExpandThread,
+  sessionSpineId,
+  threadWorkFolds,
   meId,
   meHandle,
   highlightId,
@@ -190,8 +200,74 @@ export function Timeline({
   const resolvedReactionUser = useReactionUserResolver(messages);
   const reactionUserResolver = resolveUser ?? resolvedReactionUser;
 
+  const loadedRootIds = useMemo(
+    () =>
+      new Set(
+        messages
+          .filter((message) => message.threadRootEventId == null && message.id != null)
+          .map((message) => message.id!),
+      ),
+    [messages],
+  );
+  const anchoredSessionRows = useMemo(
+    () =>
+      inThread
+        ? []
+        : messages.filter(
+            (message) =>
+              message.broadcast === true &&
+              message.sessionEventType != null &&
+              message.threadRootEventId != null &&
+              loadedRootIds.has(message.threadRootEventId),
+          ),
+    [inThread, loadedRootIds, messages],
+  );
+  const anchoredAnswers = useMemo(
+    () => anchoredSessionRows.filter((message) => message.sessionEventType === 'replied'),
+    [anchoredSessionRows],
+  );
+  const admittedMessages = useMemo(
+    () => messages.filter((message) => !anchoredSessionRows.includes(message)),
+    [anchoredSessionRows, messages],
+  );
   // Chronological (oldest-first); FlashList v2 anchors rendering at the bottom.
-  const items = useMemo(() => buildTimelineItems(messages), [messages]);
+  const items = useMemo(() => buildTimelineItems(admittedMessages), [admittedMessages]);
+  const sessionsByRoot = useMemo(() => {
+    const roots = new Map<number, Session[]>();
+    for (const candidate of Object.values(sessions)) {
+      const spawnRoot = admittedMessages.find(
+        (message) => message.sessionId === candidate.id && message.id != null,
+      )?.id;
+      const rootId = candidate.threadRootEventId ?? spawnRoot;
+      if (rootId == null || !loadedRootIds.has(rootId)) continue;
+      const list = roots.get(rootId) ?? [];
+      list.push(candidate);
+      roots.set(rootId, list);
+    }
+    for (const list of roots.values()) list.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    return roots;
+  }, [admittedMessages, loadedRootIds, sessions]);
+  const answersByRoot = useMemo(() => {
+    const roots = new Map<number, ChatMessage[]>();
+    for (const answer of anchoredAnswers) {
+      const rootId = answer.threadRootEventId;
+      if (rootId == null) continue;
+      const list = roots.get(rootId) ?? [];
+      list.push(answer);
+      roots.set(rootId, list);
+    }
+    return roots;
+  }, [anchoredAnswers]);
+  const spineTurnIds = useMemo(
+    () =>
+      inThread
+        ? admittedMessages
+            .filter((message) => message.sessionEventType == null && message.deleted !== true)
+            .map((message) => message.id)
+            .filter((id): id is number => id != null)
+        : [],
+    [admittedMessages, inThread],
+  );
   const { firstUnreadId, firstUnreadIndex, unreadCount } = useMemo(
     () => getUnreadDividerPlacement(items, unreadDividerAfterId),
     [items, unreadDividerAfterId],
@@ -210,6 +286,31 @@ export function Timeline({
   // only counts as "read" once the user has actually dragged the list. Without
   // this, opening an unread channel marks it read before landing on the divider.
   const userDraggedRef = useRef(false);
+  const visibleMessageIdsRef = useRef(new Set<number>());
+  const newestAnchoredAnswerIdRef = useRef(anchoredAnswers.at(-1)?.id ?? null);
+  const [answerJump, setAnswerJump] = useState<{ answer: ChatMessage; root: ChatMessage } | null>(null);
+  const answerJumpRef = useRef(answerJump);
+  answerJumpRef.current = answerJump;
+  const [localHighlightId, setLocalHighlightId] = useState<number | null>(null);
+
+  useEffect(() => {
+    const answer = anchoredAnswers.at(-1);
+    if (!answer?.id || answer.id === newestAnchoredAnswerIdRef.current) return;
+    newestAnchoredAnswerIdRef.current = answer.id;
+    const root = admittedMessages.find((message) => message.id === answer.threadRootEventId);
+    if (!root?.id || visibleMessageIdsRef.current.has(root.id)) return;
+    const visibleIds = [...visibleMessageIdsRef.current];
+    if (visibleIds.length > 0 && root.id >= Math.min(...visibleIds)) return;
+    setAnswerJump({ answer, root });
+    const timer = setTimeout(() => setAnswerJump(null), 10_000);
+    return () => clearTimeout(timer);
+  }, [admittedMessages, anchoredAnswers]);
+
+  useEffect(() => {
+    if (localHighlightId == null) return;
+    const timer = setTimeout(() => setLocalHighlightId(null), 1600);
+    return () => clearTimeout(timer);
+  }, [localHighlightId]);
 
   const setAtBottomValue = useCallback((next: boolean) => {
     if (atBottomRef.current === next) return;
@@ -309,6 +410,13 @@ export function Timeline({
 
   const handleViewableItemsChanged = useCallback(
     ({ viewableItems }: { viewableItems: ViewToken<TimelineItem>[] }) => {
+      visibleMessageIdsRef.current = new Set(
+        viewableItems
+          .filter((token) => token.isViewable && token.item.kind === 'message' && token.item.message?.id != null)
+          .map((token) => token.item.message!.id!),
+      );
+      const jumpRootId = answerJumpRef.current?.root.id;
+      if (jumpRootId != null && visibleMessageIdsRef.current.has(jumpRootId)) setAnswerJump(null);
       if (shouldMarkReadForVisibleLatest(viewableItems, latestMessageIdRef.current, userDraggedRef.current)) {
         setAtBottomValue(true);
         onReachBottom?.();
@@ -316,6 +424,14 @@ export function Timeline({
     },
     [onReachBottom, setAtBottomValue],
   );
+
+  const jumpToAnswerRoot = useCallback(() => {
+    if (!answerJump?.root.id) return;
+    const index = items.findIndex((item) => item.message?.id === answerJump.root.id);
+    if (index >= 0) startScrollToIndexRetry(index, 0.35, !reduceMotion);
+    setLocalHighlightId(answerJump.root.id);
+    setAnswerJump(null);
+  }, [answerJump, items, reduceMotion, startScrollToIndexRetry]);
 
   const scrollToUnreadDivider = useCallback(() => {
     if (firstUnreadIndex == null) return;
@@ -333,6 +449,15 @@ export function Timeline({
     ({ item }: { item: TimelineItem }) => {
       if (item.kind === 'day') return <DayDivider label={item.label} />;
       const m = item.message!;
+      const rowSessions = !inThread && m.id != null ? (sessionsByRoot.get(m.id) ?? []) : [];
+      const rowAnswers = m.id != null ? (answersByRoot.get(m.id) ?? []) : [];
+      const foldIndex = m.id == null ? -1 : spineTurnIds.indexOf(m.id);
+      const aside =
+        sessionSpineId != null &&
+        m.id !== spineTurnIds[0] &&
+        m.sessionEventType == null &&
+        m.steeredSessionId !== sessionSpineId &&
+        m.suggestedSessionId !== sessionSpineId;
       const showUnreadDivider = firstUnreadId != null && m.id === firstUnreadId;
       const row = (
         <MessageRow
@@ -340,8 +465,14 @@ export function Timeline({
           grouped={item.grouped === true}
           meId={meId}
           meHandle={meHandle}
-          highlighted={highlightId != null && m.id === highlightId}
+          highlighted={(highlightId != null && m.id === highlightId) || m.id === localHighlightId}
           session={m.sessionId ? sessions[m.sessionId] : undefined}
+          attachedSessions={rowSessions}
+          slotAnswers={rowAnswers}
+          threadReplies={m.id != null ? threadReplies?.[m.id] : undefined}
+          onExpandThread={onExpandThread}
+          aside={aside}
+          afterContent={foldIndex >= 0 ? threadWorkFolds?.[foldIndex] : undefined}
           inThread={inThread}
           fileUrl={fileUrl}
           api={api}
@@ -376,6 +507,14 @@ export function Timeline({
       meHandle,
       highlightId,
       sessions,
+      sessionsByRoot,
+      answersByRoot,
+      threadReplies,
+      onExpandThread,
+      sessionSpineId,
+      spineTurnIds,
+      threadWorkFolds,
+      localHighlightId,
       inThread,
       fileUrl,
       api,
@@ -449,6 +588,31 @@ export function Timeline({
           ) : null
         }
       />
+      {answerJump ? (
+        <Pressable
+          testID="agent-answer-jump"
+          accessibilityRole="button"
+          accessibilityLabel={`Agent answered. Jump to ${answerJump.root.sessionTask || answerJump.root.text}`}
+          onPress={jumpToAnswerRoot}
+          style={({ pressed }) => ({
+            position: 'absolute',
+            left: space.md,
+            right: space.md,
+            bottom: atBottom ? space.sm : 64,
+            minHeight: 44,
+            justifyContent: 'center',
+            borderRadius: radius.lg,
+            backgroundColor: colors.accent,
+            paddingHorizontal: space.md,
+            opacity: pressed ? 0.84 : 1,
+            ...shadows.overlay,
+          })}
+        >
+          <Text numberOfLines={1} style={{ color: colors.onAccent, fontSize: font.sm, fontWeight: '800' }}>
+            ↑ Agent answered — “{(answerJump.root.sessionTask || answerJump.root.text).slice(0, 72)}”
+          </Text>
+        </Pressable>
+      ) : null}
       {!atBottom ? (
         <Pressable
           accessibilityRole="button"

@@ -21,6 +21,7 @@ vi.mock('expo-image', () => ({
 
 vi.mock('@expo/vector-icons', () => ({
   Ionicons: ({ name }: { name: string }) => <Text>{name}</Text>,
+  MaterialCommunityIcons: ({ name }: { name: string }) => <Text>{name}</Text>,
 }));
 
 vi.mock('react-native-safe-area-context', () => ({
@@ -113,7 +114,7 @@ function renderRow(overrides: Partial<ChatMessage> = {}, props: Partial<Componen
 afterEach(cleanup);
 
 describe('MessageRow', () => {
-  it('renders the verbatim spawn task as Riley message and never repeats the session title in the card', () => {
+  it('renders the verbatim spawn task with exactly the working slot state', () => {
     renderRow(
       {
         text: 'Old truncated title',
@@ -128,23 +129,22 @@ describe('MessageRow', () => {
     expect(screen.getByText(/Investigate the mobile race\s+and preserve this second line\./)).toBeInTheDocument();
     expect(screen.getByText('Riley')).toBeInTheDocument();
     expect(screen.queryByText('Old truncated title')).not.toBeInTheDocument();
-    expect(screen.getByText('Reading MessageRow.tsx')).toBeInTheDocument();
+    expect(screen.getByText(/Reading MessageRow\.tsx/)).toBeInTheDocument();
+    expect(screen.getAllByTestId('annotation-slot')).toHaveLength(1);
+    expect(screen.getByTestId('annotation-working')).toBeInTheDocument();
+    expect(screen.queryByTestId('annotation-answer')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('annotation-failed')).not.toBeInTheDocument();
   });
 
-  it('keeps session metadata collapsed behind an accessible disclosure', () => {
-    renderRow({ sessionId: 's-1', sessionTask: 'Check the release.' }, { session: session({ costUsd: 1.25 }) });
-
-    const disclosure = screen.getByRole('button', { name: 'Show session details' });
-    expect(screen.queryByTestId('session-metadata')).not.toBeInTheDocument();
-
-    fireEvent.click(disclosure);
-
-    expect(screen.getByRole('button', { name: 'Hide session details' })).toBeInTheDocument();
-    expect(screen.getByTestId('session-metadata')).toHaveTextContent('atrium/mobile · agent-card');
-    expect(screen.getByTestId('session-metadata')).toHaveTextContent('$1.25');
-  });
-
-  it('collapses a completed session to elapsed work and omits the duplicated result excerpt', () => {
+  it('renders the anchored answer in the completed slot with a clamp toggle', () => {
+    const answer = message({
+      id: 101,
+      threadRootEventId: 99,
+      text: 'This answer belongs in the broadcast reply.',
+      sessionId: 's-1',
+      sessionEventType: 'replied',
+      broadcast: true,
+    });
     renderRow(
       { sessionId: 's-1', sessionTask: 'Finish the release.' },
       {
@@ -154,17 +154,19 @@ describe('MessageRow', () => {
           createdAt: '2026-07-13T11:00:00.000Z',
           completedAt: '2026-07-13T11:04:00.000Z',
         }),
+        slotAnswers: [answer],
       },
     );
 
-    // The collapsed strip still names the state, like every other surface.
-    expect(screen.getByText('Done · worked 4m')).toBeInTheDocument();
-    expect(screen.getByText('Show the work →')).toBeInTheDocument();
-    expect(screen.queryByText('This answer belongs in the broadcast reply.')).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Show session details' })).not.toBeInTheDocument();
+    expect(screen.getByTestId('annotation-answer')).toHaveTextContent('This answer belongs in the broadcast reply.');
+    expect(screen.queryByTestId('annotation-working')).not.toBeInTheDocument();
+    expect(screen.getByTestId('annotation-answer-clamp')).toHaveStyle({ maxHeight: '176px' });
+    fireEvent.click(screen.getByRole('button', { name: 'Show all of agent answer' }));
+    expect(screen.getByRole('button', { name: 'Collapse agent answer' })).toBeInTheDocument();
+    expect(screen.getByTestId('annotation-answer-clamp')).not.toHaveStyle({ maxHeight: '176px' });
   });
 
-  it('collapses a failed session with inline recovery actions for the driver', async () => {
+  it('renders only the failed slot state with driver recovery actions', async () => {
     const steerSession = vi.fn(async () => ({ ok: true as const }));
     renderRow(
       { sessionId: 's-1', sessionTask: 'Find the failing migration.' },
@@ -180,9 +182,10 @@ describe('MessageRow', () => {
       },
     );
 
-    expect(screen.getByTestId('session-card')).toHaveTextContent('Failed · after 4m');
+    expect(screen.getByTestId('annotation-failed')).toHaveTextContent('✕ Failed after 4m');
+    expect(screen.queryByTestId('annotation-working')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('annotation-answer')).not.toBeInTheDocument();
     expect(screen.queryByText('Migration 42 failed before a reply was posted.')).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Show session details' })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Retry failed turn' }));
     fireEvent.click(screen.getByRole('button', { name: 'Ask why the agent failed' }));
 
@@ -197,7 +200,62 @@ describe('MessageRow', () => {
       {},
       { postToThread: true },
     );
-    expect(screen.getByRole('button', { name: 'Show the work — full transcript' })).toBeInTheDocument();
+  });
+
+  it('renders the minimal done-without-answer slot', () => {
+    renderRow(
+      { sessionId: 's-1', sessionTask: 'Check the release.' },
+      { session: session({ status: 'completed', completedAt: '2026-07-13T11:04:00.000Z' }) },
+    );
+    expect(screen.getByTestId('annotation-done')).toHaveTextContent('✓ done · 4m · session');
+    expect(screen.queryByTestId('annotation-answer')).not.toBeInTheDocument();
+  });
+
+  it('renders only the canonical question controls when the slot needs input', () => {
+    const needsInput = session({
+      pendingQuestion: {
+        questionId: 'pending-1',
+        questions: [
+          {
+            id: 'deploy',
+            header: 'Deploy',
+            question: 'Should we deploy?',
+            options: [{ label: 'Deploy now', description: 'Ship the current build.' }],
+          },
+        ],
+      },
+    });
+    renderRow(
+      { text: 'Prepare the release.' },
+      {
+        meId: 'u-1',
+        attachedSessions: [needsInput],
+        onAnswerSessionQuestion: vi.fn(async () => {}),
+        onSuggestSessionAnswer: vi.fn(async () => {}),
+      },
+    );
+    expect(screen.getByTestId('inline-question-answer')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Deploy now' })).toBeInTheDocument();
+    expect(screen.queryByTestId('annotation-working')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('annotation-failed')).not.toBeInTheDocument();
+  });
+
+  it('orders the cluster count between the root body and latest reply, then expands inline', () => {
+    const earlier = message({ id: 100, threadRootEventId: 99, text: 'First reply' });
+    const middle = message({ id: 101, threadRootEventId: 99, text: 'Second reply' });
+    const latest = message({ id: 102, threadRootEventId: 99, text: 'Latest reply' });
+    renderRow({ text: 'Root body', replyCount: 3, lastReplyId: 102 }, { threadReplies: [earlier, middle, latest] });
+
+    const root = screen.getByText('Root body');
+    const count = screen.getByRole('button', { name: '2 earlier replies' });
+    const preview = screen.getByText('Latest reply');
+    expect(root.compareDocumentPosition(count) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(count.compareDocumentPosition(preview) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.queryByText('First reply')).not.toBeInTheDocument();
+    fireEvent.click(count);
+    expect(screen.getByText('First reply')).toBeInTheDocument();
+    expect(screen.getByText('Second reply')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Open thread' })).toBeInTheDocument();
   });
 
   it('shows a parent-thread affordance for broadcast replies in the channel timeline', () => {
