@@ -190,6 +190,88 @@ fn blocks_interrupt_mid_turn_aborts_the_turn() {
 }
 
 #[test]
+fn codex_blocks_missing_resume_rollout_starts_fresh_thread() {
+    let fake_codex = temp_path("fake-codex-missing-rollout.sh");
+    let fake_codex_log = temp_path("fake-codex-missing-rollout-requests.jsonl");
+    let script = fake_codex_missing_rollout_script(&fake_codex_log);
+    std::fs::write(&fake_codex, script).expect("write fake codex script");
+    let mut permissions = std::fs::metadata(&fake_codex)
+        .expect("fake codex metadata")
+        .permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&fake_codex, permissions).expect("chmod fake codex script");
+
+    let mut bridge = BridgeProcess::spawn_harness_blocks_envs(
+        Harness::Codex,
+        None,
+        Some((
+            "CODEX_BIN",
+            fake_codex.to_str().expect("utf-8 fake codex path"),
+        )),
+        &[("CODEX_CONTINUE_THREAD_ID", "stale-thread")],
+    );
+    bridge.send(json!({
+        "type": "user",
+        "thread_key": "slack:C123:123.456",
+        "message": {
+            "role": "user",
+            "content": [{"type": "text", "text": "force child restart"}]
+        }
+    }));
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let value = bridge.read_json(deadline);
+        if value.get("method").and_then(Value::as_str) == Some("error") {
+            break;
+        }
+    }
+
+    // The first turn error makes harness-server discard the Codex child. Its
+    // next child must resume the fresh thread returned by the fallback, not
+    // retry the stale environment value.
+    let turn = bridge.run_blocks_user_turn("recover", Duration::from_secs(10));
+    bridge.finish_successfully();
+
+    assert_completed_turn(&turn);
+    let requests = std::fs::read_to_string(&fake_codex_log).expect("read fake codex log");
+    let methods: Vec<String> = requests
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .filter_map(|value| {
+            value
+                .get("method")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        })
+        .collect();
+    assert_eq!(
+        methods,
+        vec![
+            "initialize",
+            "thread/resume",
+            "thread/start",
+            "turn/start",
+            "initialize",
+            "thread/resume",
+            "turn/start"
+        ]
+    );
+    let requests: Vec<Value> = requests
+        .lines()
+        .filter_map(|line| serde_json::from_str(line).ok())
+        .collect();
+    let resume_ids: Vec<&str> = requests
+        .iter()
+        .filter(|value| value.get("method").and_then(Value::as_str) == Some("thread/resume"))
+        .filter_map(|value| value.pointer("/params/threadId").and_then(Value::as_str))
+        .collect();
+    assert_eq!(resume_ids, vec!["stale-thread", "thread-1"]);
+
+    let _ = std::fs::remove_file(fake_codex);
+    let _ = std::fs::remove_file(fake_codex_log);
+}
+
+#[test]
 fn fake_codex_blocks_mode_uses_openrouter_provider_when_model_is_configured() {
     let fake_codex = temp_path("fake-openrouter-codex.sh");
     let fake_codex_log = temp_path("fake-openrouter-codex-requests.jsonl");
@@ -1505,6 +1587,7 @@ impl BridgeProcess {
         for env_key in [
             "CENTAUR_CLAUDE_APP_BRIDGE_COMMAND",
             "CENTAUR_AMP_APP_BRIDGE_COMMAND",
+            "CODEX_CONTINUE_THREAD_ID",
             "CODEX_MODEL",
             "CODEX_MODEL_PROVIDER",
             "OPENROUTER_MODEL",
@@ -2522,6 +2605,70 @@ done
 "#,
     );
     script
+}
+
+fn fake_codex_missing_rollout_script(log_path: &Path) -> String {
+    let log_path = serde_json::to_string(&log_path.to_string_lossy()).expect("serialize log path");
+    format!(
+        r#"#!/usr/bin/env python3
+import json
+import pathlib
+import sys
+
+log_path = pathlib.Path({log_path})
+log_path.touch()
+
+def emit(response):
+    encoded = json.dumps(response, separators=(",", ":"))
+    print(encoded, flush=True)
+
+for raw in sys.stdin:
+    raw = raw.strip()
+    if not raw:
+        continue
+    with log_path.open("a") as log:
+        log.write(raw + "\n")
+    request = json.loads(raw)
+    request_id = request.get("id")
+    method = request.get("method")
+    if method == "initialize":
+        response = {{"id": request_id, "result": {{"userAgent": "fake-codex"}}}}
+    elif method == "thread/resume":
+        thread_id = request["params"]["threadId"]
+        if thread_id == "stale-thread":
+            response = {{
+                "id": request_id,
+                "error": {{"code": -32600, "message": "no rollout found for thread id stale-thread"}},
+            }}
+        else:
+            response = {{"id": request_id, "result": {{"thread": {{"id": thread_id}}}}}}
+    elif method == "thread/start":
+        response = {{"id": request_id, "result": {{"thread": {{"id": "thread-1"}}}}}}
+    elif method == "turn/start":
+        turn_count = log_path.read_text().count('"method":"turn/start"')
+        if turn_count == 1:
+            response = {{
+                "id": request_id,
+                "error": {{"code": -32000, "message": "forced first turn failure"}},
+            }}
+            emit(response)
+            continue
+        response = {{"id": request_id, "result": {{"turn": {{"id": "turn-1"}}}}}}
+        emit(response)
+        notifications = [
+            {{"method":"turn/started","params":{{"threadId":"thread-1","turn":{{"id":"turn-1","items":[],"itemsView":"full","status":"inProgress","error":None,"startedAt":1,"completedAt":None,"durationMs":None}}}}}},
+            {{"method":"item/agentMessage/delta","params":{{"threadId":"thread-1","turnId":"turn-1","itemId":"answer-1","delta":"codex blocks"}}}},
+            {{"method":"item/completed","params":{{"threadId":"thread-1","turnId":"turn-1","item":{{"type":"agentMessage","id":"answer-1","text":"codex blocks","phase":None,"memoryCitation":None}},"completedAtMs":2}}}},
+            {{"method":"turn/completed","params":{{"threadId":"thread-1","turn":{{"id":"turn-1","items":[{{"type":"agentMessage","id":"answer-1","text":"codex blocks","phase":None,"memoryCitation":None}}],"itemsView":"full","status":"completed","error":None,"startedAt":1,"completedAt":2,"durationMs":1}}}}}},
+        ]
+        for notification in notifications:
+            emit(notification)
+        continue
+    else:
+        raise SystemExit(f"unexpected method: {{method}}")
+    emit(response)
+"#
+    )
 }
 
 /// A fake codex app-server that STARTS a turn and holds it open (no

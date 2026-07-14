@@ -2226,7 +2226,9 @@ impl SessionRuntime {
                 idempotency_key_present,
                 "starting session execution"
             );
-            let session = self.store.get_session(thread_key).await?;
+            let mut session = self.store.get_session(thread_key).await?;
+            self.replace_sandbox_after_missing_codex_rollout(&mut session)
+                .await?;
             let session_metadata = self.store.get_session_metadata(thread_key).await?;
             let session_repos_json = session_repos_json(&session_metadata);
             let resume_thread_id = session
@@ -2519,6 +2521,77 @@ impl SessionRuntime {
             Some(runtime_error_failure_class(error)),
         )
         .await;
+    }
+
+    /// A sandbox created by an older runtime can keep a stale
+    /// `CODEX_CONTINUE_THREAD_ID` in its long-lived harness-server environment.
+    /// Once that process reports that the rollout is missing, reusing it can
+    /// only repeat the same failed `thread/resume` request. Retire the poisoned
+    /// sandbox before accepting the next execution so the cold path can apply
+    /// the current restore-or-start behavior.
+    async fn replace_sandbox_after_missing_codex_rollout(
+        &self,
+        session: &mut Session,
+    ) -> Result<(), SessionRuntimeError> {
+        if session.harness_type != HarnessType::Codex || session.harness_thread_id.is_none() {
+            return Ok(());
+        }
+        let Some(sandbox_id) = session.sandbox_id.as_deref() else {
+            return Ok(());
+        };
+        let Some(failed_execution) = self
+            .store
+            .latest_execution_for_thread(&session.thread_key)
+            .await?
+            .filter(|execution| execution.status == ExecutionStatus::Failed)
+        else {
+            return Ok(());
+        };
+        let Some(failure) = failed_execution.error.as_deref() else {
+            return Ok(());
+        };
+        if !is_missing_codex_rollout_error(failure) {
+            return Ok(());
+        }
+
+        let sandbox_id = sandbox_id.to_owned();
+        self.sandbox_pipes.remove(&sandbox_id);
+        match self
+            .sandbox_runtime
+            .manager
+            .stop(&SandboxId::new(sandbox_id.as_str()))
+            .await
+        {
+            Ok(()) | Err(SandboxError::NotFound(_)) => {}
+            Err(error) => return Err(SessionRuntimeError::Sandbox(error)),
+        }
+        self.store
+            .clear_sandbox_id_if_matches(&session.thread_key, &sandbox_id)
+            .await?;
+        session.sandbox_id = None;
+        session.sandbox_capabilities = None;
+        self.store
+            .append_event(
+                &session.thread_key,
+                Some(&failed_execution.execution_id),
+                "session.sandbox_replaced_after_missing_rollout",
+                json!({
+                    "execution_id": failed_execution.execution_id,
+                    "thread_key": session.thread_key.as_str(),
+                    "sandbox_id": sandbox_id,
+                    "harness_thread_id": session.harness_thread_id,
+                }),
+            )
+            .await?;
+        info!(
+            component = COMPONENT_SESSION_RUNTIME,
+            event = "sandbox_replaced_after_missing_rollout",
+            thread_key = %session.thread_key,
+            execution_id = %failed_execution.execution_id,
+            sandbox_id,
+            "retired sandbox whose Codex resume target had no local rollout"
+        );
+        Ok(())
     }
 
     async fn inactive_execution_snapshot(
@@ -7106,6 +7179,10 @@ fn terminal_failure_class(error: &str) -> &'static str {
     "harness"
 }
 
+fn is_missing_codex_rollout_error(error: &str) -> bool {
+    error.contains("no rollout found for thread id")
+}
+
 fn should_attach_session_pipe(status: &SandboxStatus) -> bool {
     status.can_open_io()
 }
@@ -11680,6 +11757,97 @@ mod adoption_tests {
             all.iter()
                 .any(|event| event.event_type == "session.sandbox_resume_failed")
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn missing_rollout_failure_retires_reused_sandbox_before_retry() {
+        let Some(store) = test_store().await else {
+            return;
+        };
+        let _serial = TEST_LOCK.lock().await;
+        let thread_key =
+            ThreadKey::parse(format!("test:missing-rollout-{}", uuid::Uuid::new_v4())).unwrap();
+        store
+            .create_or_get_session(&thread_key, &HarnessType::Codex, None, json!({}))
+            .await
+            .expect("create session");
+        store
+            .update_sandbox_id(&thread_key, Some("sbx-stale-resume"))
+            .await
+            .expect("set sandbox id");
+        store
+            .update_harness_thread_id(&thread_key, Some("codex-thread-old"))
+            .await
+            .expect("set harness thread id");
+        let execution_id = store
+            .create_execution(&thread_key, None, json!({}))
+            .await
+            .expect("create failed execution")
+            .execution
+            .execution_id;
+        store
+            .mark_execution_running(&execution_id)
+            .await
+            .expect("mark execution running");
+        store
+            .fail_execution_if_active(
+                &execution_id,
+                "Codex app-server request failed: no rollout found for thread id codex-thread-old",
+            )
+            .await
+            .expect("record missing rollout failure");
+
+        let backend = Arc::new(MockBackend::new(SandboxStatus::Running, Vec::new()));
+        let (io, _stdout_far, stdin_far) = mock_io();
+        backend.push_io(io).await;
+        let runtime = runtime_with(&store, backend.clone());
+        let retry = runtime
+            .execute_session(
+                &thread_key,
+                ExecuteSessionInput {
+                    idempotency_key: Some("retry-after-missing-rollout".to_owned()),
+                    metadata: None,
+                    environment: BTreeMap::new(),
+                    input_lines: vec![
+                        json!({
+                            "type": "user",
+                            "message": {"content": [{"type": "text", "text": "retry"}]}
+                        })
+                        .to_string(),
+                    ],
+                    idle_timeout_ms: None,
+                    max_duration_ms: None,
+                },
+            )
+            .await
+            .expect("first retry should cold-start after retiring poisoned sandbox");
+
+        assert_eq!(retry.status, ExecutionStatus::Running);
+        assert_eq!(backend.stopped(), vec!["sbx-stale-resume".to_owned()]);
+        assert_eq!(backend.created_specs().len(), 1);
+        assert_eq!(
+            store
+                .get_session(&thread_key)
+                .await
+                .unwrap()
+                .sandbox_id
+                .as_deref(),
+            Some("mock-sbx")
+        );
+        let mut reader = BufReader::new(stdin_far);
+        let mut delivered = String::new();
+        tokio::time::timeout(Duration::from_secs(5), reader.read_line(&mut delivered))
+            .await
+            .expect("read retry input within timeout")
+            .expect("read retry input");
+        assert!(
+            delivered.contains("retry"),
+            "retry was not delivered: {delivered}"
+        );
+        assert!(events(&store, &thread_key).await.iter().any(|event| {
+            event.event_type == "session.sandbox_replaced_after_missing_rollout"
+                && event.payload["sandbox_id"] == "sbx-stale-resume"
+        }));
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
