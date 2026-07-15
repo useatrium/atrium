@@ -2,6 +2,7 @@ import { useState, type MouseEvent } from 'react';
 import { agentPathBasename, type AgentPathRef } from '@atrium/surface-client/agent-paths';
 import { navigate, URL_PARAMS } from '../router';
 import { FileIcon } from './icons';
+import { showErrorToast } from './Toasts';
 
 export interface FilePathChipProps {
   refInfo: AgentPathRef;
@@ -27,30 +28,38 @@ function fileDestination(file: ResolvedFile): string {
 }
 
 export function FilePathChip({ refInfo, channelId, compact = false }: FilePathChipProps) {
-  const [unavailable, setUnavailable] = useState(false);
+  const [resolving, setResolving] = useState(false);
   const label = agentPathBasename(refInfo);
-  const title = unavailable ? 'File not available (not captured or removed)' : label;
 
+  // Failures surface as a toast and the chip stays clickable — capture can land
+  // seconds after the message renders, so a later retry may succeed.
   const onClick = async (event: MouseEvent<HTMLButtonElement>) => {
     event.preventDefault();
-    if (unavailable) return;
+    if (resolving) return;
     const canonicalPath = canonicalPathFor(refInfo, channelId);
     if (!canonicalPath) {
-      setUnavailable(true);
+      showErrorToast(`Couldn't open ${label} — this link can't be resolved outside its session.`);
       return;
     }
+    setResolving(true);
     try {
       const response = await fetch(`/api/files/by-path?path=${encodeURIComponent(canonicalPath)}`, {
         credentials: 'same-origin',
       });
       if (!response.ok) {
-        setUnavailable(true);
+        showErrorToast(
+          response.status === 404
+            ? `Couldn't open ${label} — the file wasn't captured or was removed.`
+            : `Couldn't open ${label} — try again.`,
+        );
         return;
       }
       const file = (await response.json()) as ResolvedFile;
       navigate(fileDestination(file));
     } catch {
-      setUnavailable(true);
+      showErrorToast(`Couldn't open ${label} — try again.`);
+    } finally {
+      setResolving(false);
     }
   };
 
@@ -58,12 +67,9 @@ export function FilePathChip({ refInfo, channelId, compact = false }: FilePathCh
     return (
       <button
         type="button"
-        title={title}
-        disabled={unavailable}
+        title={label}
         onClick={onClick}
-        className={`font-medium no-underline ${
-          unavailable ? 'cursor-default text-fg-muted' : 'text-accent-text hover:underline'
-        }`}
+        className="font-medium text-accent-text no-underline hover:underline"
       >
         {label}
       </button>
@@ -73,14 +79,9 @@ export function FilePathChip({ refInfo, channelId, compact = false }: FilePathCh
   return (
     <button
       type="button"
-      title={title}
-      disabled={unavailable}
+      title={label}
       onClick={onClick}
-      className={`mx-0.5 inline-flex max-w-[18rem] items-center gap-1 rounded border border-accent-border-muted/50 bg-accent-hover/10 px-1.5 py-0.5 align-[-2px] text-[0.86em] font-medium no-underline ${
-        unavailable
-          ? 'cursor-default text-fg-muted'
-          : 'text-accent-text-strong hover:bg-accent-hover/15 hover:text-accent-text-strong'
-      }`}
+      className="mx-0.5 inline-flex max-w-[18rem] items-center gap-1 rounded border border-accent-border-muted/50 bg-accent-hover/10 px-1.5 py-0.5 align-[-2px] text-[0.86em] font-medium text-accent-text-strong no-underline hover:bg-accent-hover/15 hover:text-accent-text-strong"
     >
       <FileIcon size={14} className="shrink-0" />
       <span className="min-w-0 truncate">{label}</span>
