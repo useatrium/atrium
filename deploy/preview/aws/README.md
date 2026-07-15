@@ -109,6 +109,9 @@ Agent-facing contract:
   include `phase`, `phase_time`, `appliance_ready`, and `ready_at`.
   `status` becomes `ready` only after the appliance writes its ready marker and
   the preview URL answers `/healthz`.
+- While bootstrapping, `url` may be the initial EC2 HTTP hostname. Once ready,
+  `url` is the final appliance-provided HTTPS URL from `ready.json`; the initial
+  EC2 URL remains available as `initial_url`.
 - Previews are public HTTP URLs for now. Do not use production data or
   production secrets.
 - TTL cleanup is best-effort in the launcher process. Run an external scheduled
@@ -164,17 +167,37 @@ It also needs ECR repository create/describe/lifecycle permissions for
 
 ## Known Limitations
 
-- First boot builds Centaur images on the preview instance, so startup can be
-  slow. Repeat previews for a commit can reuse ECR cached images after one
-  successful cold build has populated the cache.
+- First boot installs base packages and builds Surface on the preview instance,
+  so startup can be slow. Centaur images are cached in ECR per service/commit
+  and reused when present; misses are built and pushed for future previews.
 - AWS previews intentionally disable Centaur `toolServer` until preview
   repo-cache/tool delivery is configured. Basic Codex execution works without
   those extra `/app/tools` shims.
 - The launcher is intentionally small: bearer-token auth, SQLite metadata, and
   local `previewctl.py` subprocesses. Put it behind TLS/auth infrastructure
   before exposing it beyond a trusted network.
-- HTTP only for the first spike. Add Route53/ACM/Caddy TLS after the full stack
-  works.
+- Preview appliances use Caddy-managed HTTPS on `sslip.io` hostnames after
+  bootstrap readiness. The launcher itself is still plain HTTP on its private
+  EC2 listener; put it behind trusted networking or TLS before production use.
 - The Surface S3 client currently requires explicit access key env vars, so the
   controller creates a per-preview IAM user instead of relying only on the EC2
   instance profile.
+
+## Production Agent Integration
+
+Recommended production shape:
+
+1. Production Atrium stores `PREVIEW_LAUNCHER_URL` and
+   `PREVIEW_LAUNCHER_TOKEN` server-side.
+2. Production Atrium exposes a narrow internal tool/API for agents:
+   - create preview for branch/ref
+   - poll preview status
+   - destroy preview
+3. Agents push their branch first, then ask the server-side preview tool to
+   deploy that ref. Agents should not receive AWS credentials or the launcher
+   bearer token.
+4. The chat response should report preview id, branch/ref, resolved commit SHA,
+   status/phase, final URL, and expiry.
+
+See `notes/aws-preview-agent-integration-plan.md` for the current integration
+plan and tradeoffs.

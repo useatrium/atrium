@@ -877,6 +877,7 @@ def cmd_status(args: argparse.Namespace) -> None:
     url = f"http://{public}" if public else None
     appliance_status = get_control_json(s3, state, "status.json")
     appliance_ready = get_control_json(s3, state, "ready.json")
+    ready_url = appliance_ready.get("url") if appliance_ready else None
     out = {
         "preview_id": state["preview_id"],
         "commit_sha": state["commit_sha"],
@@ -886,7 +887,8 @@ def cmd_status(args: argparse.Namespace) -> None:
         "phase_time": appliance_status.get("time") if appliance_status else None,
         "appliance_ready": bool(appliance_ready),
         "ready_at": appliance_ready.get("ready_at") if appliance_ready else None,
-        "url": url,
+        "url": ready_url or url,
+        "initial_url": url,
         "storage_bucket": state.get("storage_bucket"),
         "expires_at": state.get("expires_at"),
     }

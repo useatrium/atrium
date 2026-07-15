@@ -292,6 +292,7 @@ class Launcher:
                 {
                     "status": status,
                     "url": current.get("url"),
+                    "initial_url": current.get("initial_url"),
                     "commit_sha": current.get("commit_sha") or record.get("commit_sha"),
                     "phase": current.get("phase"),
                     "phase_time": current.get("phase_time"),
@@ -374,6 +375,7 @@ class Launcher:
             "commit_sha": record.get("commit_sha"),
             "status": record["status"],
             "url": record.get("url"),
+            "initial_url": record.get("initial_url"),
             "requested_by": record.get("requested_by"),
             "created_at": record["created_at"],
             "updated_at": record["updated_at"],
