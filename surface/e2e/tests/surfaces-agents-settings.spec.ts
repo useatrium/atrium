@@ -59,17 +59,15 @@ test('Agents is addressable, reload-restores, lists sessions, and Back returns t
   await page.goto('/agents');
   await expect(page).toHaveURL(/\/agents$/);
   await expect(page.getByRole('heading', { name: /^Agents$/ }).first()).toBeVisible();
-  // Scope to the Agents surface — the session title also appears in the channel's
-  // right-rail card, so an unscoped match is ambiguous (and doesn't prove the
-  // surface itself lists it).
+  // Scope to the Agents surface — the channel strip can also expose this
+  // session, so an unscoped match doesn't prove the surface lists it.
   await expect(page.getByTestId('agents-surface').getByText(title, { exact: true })).toBeVisible();
 
   await page.reload();
   await expect(page).toHaveURL(/\/agents$/);
   await expect(page.getByRole('heading', { name: /^Agents$/ }).first()).toBeVisible();
-  // Scope to the Agents surface — the session title also appears in the channel's
-  // right-rail card, so an unscoped match is ambiguous (and doesn't prove the
-  // surface itself lists it).
+  // Scope to the Agents surface — the channel strip can also expose this
+  // session, so an unscoped match doesn't prove the surface lists it.
   await expect(page.getByTestId('agents-surface').getByText(title, { exact: true })).toBeVisible();
 
   await page.goBack();

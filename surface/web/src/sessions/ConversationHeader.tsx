@@ -82,11 +82,8 @@ export function ConversationHeader({
   /** Muted tail on the crumb line, e.g. the thread's reply count. */
   crumbNote?: ReactNode;
   /**
-   * The identity's meta line, rendered whole below the row (card only — see
-   * SessionMetaLine). Passed as a NODE, not as tokens the header re-wraps: the
-   * row's shrink priority (author never truncates, boilerplate yields first)
-   * depends on its tokens being flat flex children, and wrapping each one would
-   * silently undo that.
+   * Optional identity metadata, rendered whole below the row. It is passed as
+   * a NODE so callers retain control of their own layout semantics.
    */
   meta?: ReactNode;
   /** Card body between the identity row and the meta line (presence, question). */

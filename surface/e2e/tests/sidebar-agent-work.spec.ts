@@ -56,7 +56,7 @@ test('Agent work shows live sessions, persists collapse, and opens a selected se
   await makeSessionNeedAnAnswer(needsYouId);
   await page.reload();
 
-  const agentWork = page.getByRole('button', { name: /Agent work/ });
+  const agentWork = page.getByRole('navigation').getByRole('button', { name: /^Agent work/ });
   await expect(agentWork).toHaveAttribute('aria-expanded', 'true');
   await expect(page.getByRole('button', { name: `${needsYouTitle} — needs your answer` })).toBeVisible();
   await expect(page.getByRole('button', { name: new RegExp(`${runningTitle} — running,`) })).toBeVisible();
@@ -64,9 +64,15 @@ test('Agent work shows live sessions, persists collapse, and opens a selected se
   await agentWork.click();
   await expect(agentWork).toHaveAttribute('aria-expanded', 'false');
   await page.reload();
-  await expect(page.getByRole('button', { name: /Agent work/ })).toHaveAttribute('aria-expanded', 'false');
+  await expect(page.getByRole('navigation').getByRole('button', { name: /^Agent work/ })).toHaveAttribute(
+    'aria-expanded',
+    'false',
+  );
 
-  await page.getByRole('button', { name: /Agent work/ }).click();
+  await page
+    .getByRole('navigation')
+    .getByRole('button', { name: /^Agent work/ })
+    .click();
   await page.getByRole('button', { name: new RegExp(`${runningTitle} — running,`) }).click();
   await expect(page).toHaveURL(new RegExp(`/s/${runningId}`));
 });
