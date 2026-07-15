@@ -160,12 +160,45 @@ async function upsertAtriumGitHubPrincipal(
     },
   });
   await assignInfraRole(ironControl, principal.id);
+  await assignGitHubHostsRole(ironControl, principal.id);
   return principal;
 }
 
 async function assignInfraRole(ironControl: IronControlAdminClient, principalId: string): Promise<void> {
   const role = await ironControl.lookupRole('infra');
-  await ironControl.assignRole(principalId, role.id).catch((err: unknown) => {
+  await assignRoleTolerant(ironControl, principalId, role.id);
+}
+
+/**
+ * Credential-less egress the GitHub capability needs regardless of which token
+ * flavor backs it: GitHub 302s Actions log downloads to a signed URL on
+ * `results-receiver.actions.githubusercontent.com`, and the sandbox proxy only
+ * tunnels to hosts granted to the principal. Assigned here — in the one
+ * principal-upsert path every GitHub converge flavor shares — rather than on
+ * `github-default` (the direct-grant paths unassign that role, which would
+ * silently strip the hosts from exactly the users with real tokens) or `infra`
+ * (which would leak the hosts to principals with no GitHub capability at all).
+ */
+async function assignGitHubHostsRole(ironControl: IronControlAdminClient, principalId: string): Promise<void> {
+  const role = await ironControl.upsertRole({
+    foreignId: 'github-hosts',
+    name: 'GitHub auxiliary egress hosts',
+    labels: { source: 'atrium', provider: 'github', kind: 'egress-host-set' },
+  });
+  const secret = await ironControl.upsertEgressHostSetSecret('github-actions-artifacts');
+  // Single-secret-per-role invariant (convergeGitHubRoleSecretGrant deletes
+  // sibling grants): future GitHub aux hosts extend this secret's rules in
+  // EGRESS_HOST_SETS rather than adding a second secret to the role.
+  await convergeGitHubRoleSecretGrant(ironControl, role.id, secret.id);
+  await assignRoleTolerant(ironControl, principalId, role.id);
+}
+
+async function assignRoleTolerant(
+  ironControl: IronControlAdminClient,
+  principalId: string,
+  roleId: string,
+): Promise<void> {
+  await ironControl.assignRole(principalId, roleId).catch((err: unknown) => {
     if (err instanceof IronControlRequestError && (err.status === 409 || err.status === 422)) return;
     throw err;
   });
