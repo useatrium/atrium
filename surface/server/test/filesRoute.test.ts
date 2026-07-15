@@ -180,3 +180,78 @@ describe('PUT /api/sessions/:id/files', () => {
     expect(res.headers['x-artifact-canonical-path']).toBe(`shared/channels/${fx.channelId}/images/chart.png`);
   });
 });
+
+describe('GET /api/files/:artifactId/locator', () => {
+  async function seedLedgerArtifact(sessionId: string, path: string): Promise<string> {
+    const payload = Buffer.from('locator target\n');
+    const sha = createHash('sha256').update(payload).digest('hex');
+    await seedOffloadedBlob(payload, 'text/markdown');
+    await new ArtifactLedger(pool).commitVersion({
+      sessionId,
+      channelId: fx.channelId,
+      path,
+      blobSha: sha,
+      sizeBytes: payload.byteLength,
+      mime: 'text/markdown',
+      author: 'agent:test',
+      kind: 'created',
+    });
+    const row = await pool.query<{ id: string }>('SELECT id FROM artifacts WHERE path = $1', [
+      `shared/channels/${fx.channelId}/${path}`,
+    ]);
+    return row.rows[0]!.id;
+  }
+
+  it('returns the hub row by id, tombstoned included', async () => {
+    const cookie = await loginCookie();
+    const sessionId = await insertSession();
+    const artifactId = await seedLedgerArtifact(sessionId, 'notes/locate-me.md');
+
+    const live = await app.inject({ method: 'GET', url: `/api/files/${artifactId}/locator`, headers: { cookie } });
+    expect(live.statusCode).toBe(200);
+    expect(live.json()).toMatchObject({
+      artifactId,
+      workspaceId: fx.workspaceId,
+      channelId: fx.channelId,
+      path: `shared/channels/${fx.channelId}/notes/locate-me.md`,
+      name: 'locate-me.md',
+      mediaKind: 'text',
+      tombstoned: false,
+    });
+
+    await pool.query('UPDATE artifacts SET tombstoned_at = now() WHERE id = $1', [artifactId]);
+    const gone = await app.inject({ method: 'GET', url: `/api/files/${artifactId}/locator`, headers: { cookie } });
+    expect(gone.statusCode).toBe(200);
+    expect(gone.json()).toMatchObject({ artifactId, tombstoned: true });
+  });
+
+  it('legacy /api/files/:id falls through to artifact content for ledger ids', async () => {
+    const cookie = await loginCookie();
+    const sessionId = await insertSession();
+    const artifactId = await seedLedgerArtifact(sessionId, 'notes/legacy-url.md');
+
+    const res = await app.inject({ method: 'GET', url: `/api/files/${artifactId}`, headers: { cookie } });
+    expect(res.statusCode).toBe(302);
+    expect(res.headers.location).toBe(`/api/files/artifact/${artifactId}/content`);
+  });
+
+  it('hides artifacts in channels the requester cannot access with a 404', async () => {
+    await loginCookie();
+    const sessionId = await insertSession();
+    const artifactId = await seedLedgerArtifact(sessionId, 'notes/private.md');
+    // Login auto-joins the default workspace, so gate on channel privacy.
+    await pool.query(`UPDATE channels SET kind = 'private' WHERE id = $1`, [fx.channelId]);
+
+    const outsider = await app.inject({
+      method: 'POST',
+      url: '/auth/login',
+      payload: { handle: 'mallory', displayName: 'Mallory' },
+    });
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/files/${artifactId}/locator`,
+      headers: { cookie: outsider.headers['set-cookie'] as string },
+    });
+    expect(res.statusCode).toBe(404);
+  });
+});

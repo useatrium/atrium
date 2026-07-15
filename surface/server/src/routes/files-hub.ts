@@ -310,6 +310,19 @@ export async function registerFilesHubRoutes(app: FastifyInstance, deps: FilesHu
     return file;
   });
 
+  // One hub row by artifact id, tombstoned included — the files surfaces use
+  // it to reveal a deep-linked file that the current filters/page don't load.
+  // (The bare GET /api/files/:id path belongs to the legacy uploads route.)
+  app.get('/api/files/:artifactId/locator', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    const artifactId = await requireReadableArtifact(ledger, req, reply, user);
+    if (!artifactId) return;
+    const file = await ledger.fileById({ artifactId, userId: user.id });
+    if (!file) return reply.code(404).send({ error: 'file_not_found', message: 'file not found' });
+    return file;
+  });
+
   app.get('/api/files/:artifactId/versions', async (req, reply) => {
     const user = requireUser(req, reply);
     if (!user) return;

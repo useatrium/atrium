@@ -6,16 +6,20 @@ import { parseAgentPathHref } from '@atrium/surface-client/agent-paths';
 import { FilePathChip } from './FilePathChip';
 
 const navigateMock = vi.hoisted(() => vi.fn());
+const showErrorToastMock = vi.hoisted(() => vi.fn());
 
 vi.mock('../router', async (importOriginal) => {
   const original = await importOriginal<typeof import('../router')>();
   return { ...original, navigate: navigateMock };
 });
 
+vi.mock('./Toasts', () => ({ showErrorToast: showErrorToastMock }));
+
 const CHANNEL_ID = '121a247c-e270-4783-a9d4-cb80ec984188';
 
 beforeEach(() => {
   navigateMock.mockReset();
+  showErrorToastMock.mockReset();
   vi.stubGlobal('fetch', vi.fn());
 });
 
@@ -48,16 +52,47 @@ describe('FilePathChip', () => {
     );
   });
 
-  it('keeps a failed resolution visible but non-navigating', async () => {
-    vi.mocked(fetch).mockResolvedValue(new Response(null, { status: 404 }));
+  it('toasts on a failed resolution and stays clickable for retry', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(new Response(null, { status: 404 }));
     const refInfo = parseAgentPathHref(`/home/agent/shared/channels/${CHANNEL_ID}/missing.md`)!;
     render(<FilePathChip refInfo={refInfo} />);
 
     const chip = screen.getByRole('button', { name: 'missing.md' });
     fireEvent.click(chip);
 
-    await waitFor(() => expect(chip.hasAttribute('disabled')).toBe(true));
-    expect(chip.title).toBe('File not available (not captured or removed)');
+    await waitFor(() =>
+      expect(showErrorToastMock).toHaveBeenCalledWith(
+        "Couldn't open missing.md — the file wasn't captured or was removed.",
+      ),
+    );
+    expect(chip.hasAttribute('disabled')).toBe(false);
+    expect(navigateMock).not.toHaveBeenCalled();
+
+    // Capture landed later: a retry on the same chip now resolves.
+    vi.mocked(fetch).mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          artifactId: 'artifact-2',
+          path: `shared/channels/${CHANNEL_ID}/missing.md`,
+          tombstoned: false,
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+    fireEvent.click(chip);
+    await waitFor(() =>
+      expect(navigateMock).toHaveBeenCalledWith(`/files?dir=shared%2Fchannels%2F${CHANNEL_ID}&file=artifact-2`),
+    );
+  });
+
+  it('toasts a distinct message for transient failures', async () => {
+    vi.mocked(fetch).mockRejectedValueOnce(new TypeError('network down'));
+    const refInfo = parseAgentPathHref(`/home/agent/shared/channels/${CHANNEL_ID}/flaky.md`)!;
+    render(<FilePathChip refInfo={refInfo} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'flaky.md' }));
+
+    await waitFor(() => expect(showErrorToastMock).toHaveBeenCalledWith("Couldn't open flaky.md — try again."));
     expect(navigateMock).not.toHaveBeenCalled();
   });
 });

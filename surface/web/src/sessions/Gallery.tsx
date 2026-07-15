@@ -461,6 +461,7 @@ export function Gallery({
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
   const handledLegacyInitialOpenRef = useRef<string | null>(null);
+  const revealRef = useRef<{ id: string; state: 'injecting' | 'failed' } | null>(null);
 
   const previews = useMemo(() => files.map(hubFileToPreview), [files]);
   const activeScope =
@@ -640,8 +641,50 @@ export function Gallery({
       return;
     }
     const index = files.findIndex((file) => file.artifactId === urlFileArtifactId);
+    if (index >= 0) revealRef.current = null;
     setLightboxIndex(index >= 0 ? index : null);
   }, [files, loadedOnce, urlFileArtifactId]);
+
+  // Auto-reveal: a ?file= deep link may point at a file the current
+  // filters/page don't load (restrictive filters, tombstoned, beyond the
+  // loaded page). Fetch its hub row by id and inject it so the effect above
+  // opens the lightbox. A deep link should always land on its file or say
+  // why it can't.
+  useEffect(() => {
+    if (!urlFileArtifactId) {
+      // Param gone (including after a failed reveal stripped it) — a later
+      // navigation to the same id is a fresh attempt.
+      revealRef.current = null;
+      return;
+    }
+    if (!loadedOnce) return;
+    if (files.some((file) => file.artifactId === urlFileArtifactId)) return;
+    if (revealRef.current?.id === urlFileArtifactId) return;
+    revealRef.current = { id: urlFileArtifactId, state: 'injecting' };
+    void (async () => {
+      let file: HubFile | null = null;
+      try {
+        const response = await fetch(`/api/files/${encodeURIComponent(urlFileArtifactId)}/locator`, {
+          credentials: 'same-origin',
+        });
+        if (response.ok) file = (await response.json()) as HubFile;
+      } catch {
+        // fall through to the failure toast
+      }
+      if (revealRef.current?.id !== urlFileArtifactId) return;
+      if (!file || file.artifactId !== urlFileArtifactId) {
+        revealRef.current = { id: urlFileArtifactId, state: 'failed' };
+        showErrorToast('That file is not available — it may have been removed or is not shared with you.');
+        updateLightboxSearch({ file: null }, { replace: true });
+        return;
+      }
+      const found = file;
+      revealRef.current = null;
+      setFiles((current) =>
+        current.some((item) => item.artifactId === found.artifactId) ? current : [...current, found],
+      );
+    })();
+  }, [files, loadedOnce, updateLightboxSearch, urlFileArtifactId]);
 
   useEffect(() => {
     const legacyArtifactId = cleanId(initialOpenArtifactId);

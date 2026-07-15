@@ -2,7 +2,7 @@
 
 import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
-import { Text } from 'react-native';
+import { Alert, Text } from 'react-native';
 import type { HubFile } from '@atrium/surface-client';
 import { parseAgentPathHref } from '@atrium/surface-client/agent-paths';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -71,17 +71,30 @@ describe('FilePathChip', () => {
     );
   });
 
-  it('becomes unavailable after the file lookup returns 404', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 404 }));
+  it('alerts on a 404 and stays enabled so a retry can succeed', async () => {
+    const alertSpy = vi.spyOn(Alert, 'alert').mockImplementation(() => {});
+    const onOpenFile = vi.fn();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, status: 404 })
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => file });
+    vi.stubGlobal('fetch', fetchMock);
     renderWithTheme(
-      <AgentFileMarkdownProvider value={{ serverUrl: 'https://atrium.test', onOpenFile: vi.fn() }}>
+      <AgentFileMarkdownProvider value={{ serverUrl: 'https://atrium.test', onOpenFile }}>
         <FilePathChip pathRef={pathRef} />
       </AgentFileMarkdownProvider>,
     );
 
-    fireEvent.click(screen.getByLabelText('Open file notes.md'));
+    const chip = screen.getByLabelText('Open file notes.md');
+    fireEvent.click(chip);
+    await waitFor(() =>
+      expect(alertSpy).toHaveBeenCalledWith("Couldn't open file", "notes.md wasn't captured or was removed."),
+    );
+    expect(screen.getByLabelText('Open file notes.md')).not.toBeDisabled();
 
-    expect(await screen.findByLabelText('File unavailable: notes.md')).toBeDisabled();
+    // Capture landed late — the same chip resolves on the next tap.
+    fireEvent.click(screen.getByLabelText('Open file notes.md'));
+    await waitFor(() => expect(onOpenFile).toHaveBeenCalledWith(file));
   });
 
   it('resolves workspace-relative paths through the message channel', async () => {

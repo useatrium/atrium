@@ -2,7 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import type { HubFile } from '@atrium/surface-client';
 import { agentPathBasename, type AgentPathRef } from '@atrium/surface-client/agent-paths';
 import { createContext, useContext, useMemo, useState, type ReactNode } from 'react';
-import { Pressable, Text } from 'react-native';
+import { Alert, Pressable, Text } from 'react-native';
 import { font, radius, space, useTheme } from '../lib/theme';
 
 export interface AgentFileMarkdownContextValue {
@@ -34,10 +34,11 @@ export function FilePathChip({ pathRef, compact = false }: { pathRef: AgentPathR
   const { colors } = useTheme();
   const { serverUrl, fileHeaders, channelId, onOpenFile } = useContext(AgentFileMarkdownContext);
   const [loading, setLoading] = useState(false);
-  const [missing, setMissing] = useState(false);
   const canonicalPath = useMemo(() => canonicalPathFor(pathRef, channelId), [channelId, pathRef]);
   const label = agentPathBasename(pathRef);
-  const unavailable = missing || !canonicalPath || !serverUrl || !onOpenFile;
+  // Only structural dead-ends disable the chip; resolution failures alert and
+  // stay retryable — capture can land seconds after the message renders.
+  const unavailable = !canonicalPath || !serverUrl || !onOpenFile;
 
   const open = async () => {
     if (unavailable || loading || !canonicalPath || !serverUrl || !onOpenFile) return;
@@ -48,14 +49,17 @@ export function FilePathChip({ pathRef, compact = false }: { pathRef: AgentPathR
         { headers: fileHeaders },
       );
       if (response.status === 404) {
-        setMissing(true);
+        Alert.alert("Couldn't open file", `${label} wasn't captured or was removed.`);
         return;
       }
-      if (!response.ok) return;
+      if (!response.ok) {
+        Alert.alert("Couldn't open file", `Opening ${label} failed — try again.`);
+        return;
+      }
       const file = (await response.json()) as HubFile;
       if (file?.artifactId) onOpenFile(file);
     } catch {
-      // A transient network failure should remain retryable.
+      Alert.alert("Couldn't open file", `Opening ${label} failed — try again.`);
     } finally {
       setLoading(false);
     }

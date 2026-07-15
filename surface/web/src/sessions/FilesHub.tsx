@@ -746,6 +746,7 @@ export function FilesHub({
   const scopeEffectInitializedRef = useRef(false);
   const previousScopeRef = useRef<FileHubScope | null>(null);
   const previousSearchActiveRef = useRef(searchActive);
+  const revealRef = useRef<{ id: string; state: 'injecting' | 'failed' } | null>(null);
 
   useEffect(() => {
     return () => {
@@ -1128,6 +1129,7 @@ export function FilesHub({
       setLightboxIndex(null);
       return;
     }
+    revealRef.current = null;
     if (!searchActive) {
       const targetDir = dirname(file.path);
       if (currentDir !== targetDir) {
@@ -1138,6 +1140,58 @@ export function FilesHub({
     const index = visibleFiles.findIndex((item) => item.artifactId === urlFileArtifactId);
     setLightboxIndex(index >= 0 ? index : null);
   }, [currentDir, loadedOnce, scopedFiles, searchActive, updateUrlParams, urlFileArtifactId, visibleFiles]);
+
+  // Auto-reveal: a ?file= deep link may point at a file the current
+  // scope/filters/page don't load (restrictive filters, tombstoned, beyond the
+  // loaded page). Fetch its hub row by id, inject it into the list, and let
+  // the effect above navigate to its folder and open the lightbox. A deep
+  // link should always land on its file or say why it can't.
+  useEffect(() => {
+    if (!urlFileArtifactId) {
+      // Param gone (including after a failed reveal stripped it) — a later
+      // navigation to the same id is a fresh attempt.
+      revealRef.current = null;
+      return;
+    }
+    if (!loadedOnce) return;
+    if (scopedFiles.some((item) => item.artifactId === urlFileArtifactId)) return;
+    if (files.some((item) => item.artifactId === urlFileArtifactId)) {
+      // Loaded but filtered out by the session scope's path filter — widen to
+      // workspace scope, pre-syncing the guard that would otherwise clear
+      // ?file= on the scope flip.
+      if (scope === 'session') {
+        previousScopeRef.current = 'workspace';
+        setScope('workspace');
+        setLastBrowseScope('workspace');
+      }
+      return;
+    }
+    if (revealRef.current?.id === urlFileArtifactId) return;
+    revealRef.current = { id: urlFileArtifactId, state: 'injecting' };
+    void (async () => {
+      let file: HubFile | null = null;
+      try {
+        const response = await fetch(`/api/files/${encodeURIComponent(urlFileArtifactId)}/locator`, {
+          credentials: 'same-origin',
+        });
+        if (response.ok) file = (await response.json()) as HubFile;
+      } catch {
+        // fall through to the failure toast
+      }
+      if (revealRef.current?.id !== urlFileArtifactId) return;
+      if (!file || file.artifactId !== urlFileArtifactId) {
+        revealRef.current = { id: urlFileArtifactId, state: 'failed' };
+        showErrorToast('That file is not available — it may have been removed or is not shared with you.');
+        updateUrlParams({ file: null }, { replace: true });
+        return;
+      }
+      const found = file;
+      revealRef.current = null;
+      setFiles((current) =>
+        current.some((item) => item.artifactId === found.artifactId) ? current : [...current, found],
+      );
+    })();
+  }, [files, loadedOnce, scope, scopedFiles, updateUrlParams, urlFileArtifactId]);
 
   useEffect(() => {
     const legacyArtifactId = cleanId(initialOpenArtifactId);

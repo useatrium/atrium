@@ -175,7 +175,10 @@ export function registerUploadRoutes(app: FastifyInstance, deps: UploadRouteDeps
       const user = requireUser(req, reply);
       if (!user) return;
       if (!(await canAccessFile(pool, user.id, id))) {
-        return reply.code(404).send({ error: 'file_not_found', message: 'file not found' });
+        // Not an upload this user can read. Mobile clients funnel ledger
+        // artifact ids through this URL too — hand those to the artifact
+        // content route, which re-checks ACL and 404-hides on its own.
+        return reply.redirect(`/api/files/artifact/${id}/content`, 302);
       }
     }
     const res = await pool.query<{
