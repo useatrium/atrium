@@ -622,14 +622,17 @@ mod imp {
         // Same-inode re-adds return the same wd: refresh the path mapping (this
         // is what heals stale paths after a directory rename) and don't count
         // the watch twice.
-        if state.wd_dirs.contains_key(&wd) {
-            state.wd_dirs.insert(
-                wd,
+        let already_watched = state
+            .wd_dirs
+            .insert(
+                wd.clone(),
                 WatchedDir {
                     session_id: session_id.to_string(),
                     path: dir,
                 },
-            );
+            )
+            .is_some();
+        if already_watched {
             return Ok(());
         }
         state.total_watches += 1;
@@ -637,14 +640,7 @@ mod imp {
             .session_wds
             .entry(session_id.to_string())
             .or_default()
-            .push(wd.clone());
-        state.wd_dirs.insert(
-            wd,
-            WatchedDir {
-                session_id: session_id.to_string(),
-                path: dir,
-            },
-        );
+            .push(wd);
         Ok(())
     }
 
