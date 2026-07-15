@@ -46,8 +46,73 @@ The controller:
 3. creates a per-preview IAM user/access key scoped to that storage bucket;
 4. creates/reuses an EC2 role, instance profile, key pair, and security group;
 5. uploads a `git archive` of the requested commit;
-6. launches Ubuntu 24.04 ARM64;
+6. launches Ubuntu 24.04 x86_64;
 7. bootstraps Docker, k3s, Surface, Centaur, local registry, and Caddy.
+
+## Launcher API
+
+`launcher.py` is the narrow API that a production Atrium agent should call
+instead of receiving AWS credentials. It owns the AWS profile on the launcher
+host and exposes only create/status/destroy.
+
+Run locally:
+
+```sh
+export PREVIEW_LAUNCHER_TOKEN="$(openssl rand -hex 32)"
+export AWS_PROFILE=atrium-preview
+deploy/preview/aws/.venv/bin/python deploy/preview/aws/launcher.py
+```
+
+Create a preview from a pushed branch or commit:
+
+```sh
+curl -fsS -X POST http://127.0.0.1:8787/previews \
+  -H "authorization: Bearer $PREVIEW_LAUNCHER_TOKEN" \
+  -H "content-type: application/json" \
+  -d '{
+    "repo": "useatrium/atrium",
+    "ref": "feature/my-branch",
+    "ttl_hours": 24,
+    "requested_by": "@agent"
+  }'
+```
+
+Check status:
+
+```sh
+curl -fsS http://127.0.0.1:8787/previews/prev-... \
+  -H "authorization: Bearer $PREVIEW_LAUNCHER_TOKEN"
+```
+
+Destroy:
+
+```sh
+curl -fsS -X DELETE http://127.0.0.1:8787/previews/prev-... \
+  -H "authorization: Bearer $PREVIEW_LAUNCHER_TOKEN"
+```
+
+Agent-facing contract:
+
+- The agent must push the branch before requesting a preview.
+- The launcher resolves the ref to an immutable commit SHA and deploys that SHA.
+- The response includes `id`, `status`, `url`, `commit_sha`, and `expires_at`.
+  `status` becomes `ready` once the preview URL answers `/healthz`.
+- Previews are public HTTP URLs for now. Do not use production data or
+  production secrets.
+- TTL cleanup is best-effort in the launcher process. Run an external scheduled
+  cleanup or keep the launcher running continuously before relying on it for
+  cost control.
+
+Example Atrium agent tool call shape:
+
+```json
+{
+  "repo": "useatrium/atrium",
+  "ref": "feature/foo",
+  "ttl_hours": 24,
+  "requested_by": "@allan"
+}
+```
 
 ## Status
 
@@ -83,6 +148,12 @@ security group, instance profile, role, and EC2 key pair are retained for reuse.
 
 - First boot builds Centaur images on the preview instance, so startup can be
   slow.
+- AWS previews intentionally disable Centaur `toolServer` until preview
+  repo-cache/tool delivery is configured. Basic Codex execution works without
+  those extra `/app/tools` shims.
+- The launcher is intentionally small: bearer-token auth, SQLite metadata, and
+  local `previewctl.py` subprocesses. Put it behind TLS/auth infrastructure
+  before exposing it beyond a trusted network.
 - HTTP only for the first spike. Add Route53/ACM/Caddy TLS after the full stack
   works.
 - The Surface S3 client currently requires explicit access key env vars, so the
