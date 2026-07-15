@@ -50,6 +50,13 @@ pub fn is_event_invisible_path(rel: &Path) -> bool {
     if is_mmap_pattern_path(rel) {
         return true;
     }
+    // Unwatched dep/build trees emit no events on purpose — backstop-owned.
+    if rel
+        .components()
+        .any(|component| crate::watch::is_unwatched_dir_name(component.as_os_str()))
+    {
+        return true;
+    }
     rel == Path::new(crate::overlay_mount::OVERLAY_SIGNATURE_FILE)
         || rel == Path::new(crate::overlay_mount::READY_MARKER_FILE)
 }
@@ -92,12 +99,12 @@ impl TreeState {
 
     /// Count of paths where `walked` disagrees with the belief — the canary
     /// metric compared on every backstop full scan while scoped mode is live.
-    pub fn divergence_from(&self, walked: &[RawEntry]) -> usize {
+    pub fn divergence_from(&self, walked: &[RawEntry]) -> Vec<PathBuf> {
         let walked_map: HashMap<&PathBuf, &RawEntry> = walked
             .iter()
             .map(|entry| (&entry.rel_path, entry))
             .collect();
-        let mut diverged = 0;
+        let mut diverged = Vec::new();
         for (rel, believed) in &self.entries {
             if is_event_invisible_path(rel) {
                 continue;
@@ -107,17 +114,19 @@ impl TreeState {
                     if actual.mtime_ns == believed.mtime_ns
                         && actual.size == believed.size
                         && actual.file_type == believed.file_type => {}
-                _ => diverged += 1,
+                _ => diverged.push(rel.clone()),
             }
         }
-        diverged
-            + walked
+        diverged.extend(
+            walked
                 .iter()
                 .filter(|entry| {
                     !is_event_invisible_path(&entry.rel_path)
                         && !self.entries.contains_key(&entry.rel_path)
                 })
-                .count()
+                .map(|entry| entry.rel_path.clone()),
+        );
+        diverged
     }
 
     fn remove_subtree(&mut self, rel: &Path) {
@@ -335,7 +344,7 @@ mod tests {
         let divergence = tree.divergence_from(&walked);
         assert_eq!(
             divergence,
-            0,
+            Vec::<PathBuf>::new(),
             "belief diverged from disk\nbelief: {:?}\ndisk: {:?}",
             tree.synthesized_entries()
                 .iter()

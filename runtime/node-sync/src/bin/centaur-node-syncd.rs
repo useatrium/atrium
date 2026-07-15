@@ -2461,10 +2461,17 @@ mod linux_daemon {
                 walked.retain(|entry| entry.rel_path.as_path() != Path::new(READY_MARKER_FILE));
                 if canary && tree.seeded() {
                     let divergence = tree.divergence_from(&walked);
-                    if divergence > 0 {
+                    if !divergence.is_empty() {
+                        let sample: Vec<String> = divergence
+                            .iter()
+                            .take(5)
+                            .map(|rel| rel.display().to_string())
+                            .collect();
                         println!(
-                            "event=node_sync_scoped_scan_divergence session={} count={divergence}",
-                            session.session
+                            "event=node_sync_scoped_scan_divergence session={} count={} sample={}",
+                            session.session,
+                            divergence.len(),
+                            sample.join(",")
                         );
                     }
                 }
