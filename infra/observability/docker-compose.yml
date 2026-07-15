@@ -19,6 +19,11 @@ services:
       - ./alert-rules.yml:/etc/prometheus/alert-rules.yml:ro
     ports:
       - "9090:9090"
+    # prometheus.yml scrapes atrium-server/centaur-api-rs on host.docker.internal,
+    # which Docker only provides on macOS/Windows — on the Linux box it never
+    # resolved and both targets sat health=down. host-gateway maps it to the host.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
   alertmanager:
     image: prom/alertmanager:v0.28.0
@@ -27,6 +32,10 @@ services:
       - ./alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
     ports:
       - "9093:9093"
+    # The external-fallback webhook also lives on host.docker.internal (see
+    # alertmanager.yml) — same Linux gap as the prometheus scrape targets.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
   tempo:
     image: grafana/tempo:2.7.1
