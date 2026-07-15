@@ -32,13 +32,13 @@ pub trait EntrySource {
     fn walk_subtree(&self, rel: &Path) -> io::Result<Vec<RawEntry>>;
 }
 
-/// Files written through mmap (sqlite `-shm` shared memory) generate no
+/// Files written through mmap (sqlite `-shm` shared memory, and `-wal` under PRAGMA mmap_size — both observed event-silent on prod) generate no
 /// inotify events — no watcher can see them. Shadow diffs and the divergence
 /// canary treat them as backstop-owned so real event-model gaps stand out.
 pub fn is_mmap_pattern_path(rel: &Path) -> bool {
     rel.file_name()
         .and_then(|name| name.to_str())
-        .is_some_and(|name| name.ends_with("-shm"))
+        .is_some_and(|name| name.ends_with("-shm") || name.ends_with("-wal"))
 }
 
 /// Paths whose churn is invisible to the event stream BY DESIGN: mmap files
