@@ -507,16 +507,16 @@ mod linux_daemon {
     };
     use centaur_node_sync::overlay::RawEntry;
     use centaur_node_sync::overlay_mount::{
-        OverlayMountPlan, READY_MARKER_FILE, mount_overlay, plan_overlay_mount,
-        session_sibling_dirs, unmount_overlay,
+        OVERLAY_SIGNATURE_FILE, OverlayMountPlan, READY_MARKER_FILE, mount_overlay,
+        plan_overlay_mount, session_sibling_dirs, unmount_overlay,
     };
     use centaur_node_sync::pacing::{TickPacer, TickPacerAction};
     use centaur_node_sync::quiesce::{LeaseGate, apply_quiesced_writes};
     use centaur_node_sync::runtime::{
-        AtriumClient, HarnessTranscriptKind, UpperReader, capture_sweep, credential_refresh_sweep,
-        harness_transcript_sweep, inbound_sweep, materialize_profile_bundles,
-        materialize_profile_bundles_from_refs, partition_entries_by_lane, profile_baseline_sweep,
-        profile_candidate_sweep, sha_hex,
+        AtriumClient, CaptureStamp, HarnessTranscriptKind, UpperReader, capture_sweep,
+        credential_refresh_sweep, harness_transcript_sweep, inbound_sweep,
+        materialize_profile_bundles, materialize_profile_bundles_from_refs,
+        partition_entries_by_lane, profile_baseline_sweep, profile_candidate_sweep, sha_hex,
     };
     use centaur_node_sync::seam;
     use centaur_node_sync::session_manifest::{
@@ -875,6 +875,7 @@ mod linux_daemon {
         let lease = LeaseGate::new();
         let mut echo = EchoGuard::new();
         let mut state = DaemonState::load(&session.state_file);
+        let mut capture_stamps = HashMap::new();
         let mut wip_gate = WipGateState::default();
         let mut last_forced_wip: Option<Instant> = None;
         let mut tick: u64 = 0;
@@ -885,6 +886,7 @@ mod linux_daemon {
                 &global,
                 &session,
                 &mut state,
+                &mut capture_stamps,
                 &mut echo,
                 &lease,
                 &mut wip_gate,
@@ -943,6 +945,7 @@ mod linux_daemon {
         let mut local_dirty = DirtySessions::default();
         let mut shadow_states: HashMap<String, ShadowState> = HashMap::new();
         let mut tree_states: HashMap<String, centaur_node_sync::scoped::TreeState> = HashMap::new();
+        let mut capture_stamps: HashMap<String, HashMap<String, CaptureStamp>> = HashMap::new();
         let mut watched_sessions = HashSet::new();
         let mut just_attached_sessions = HashSet::new();
         let mut last_reconcile: Option<Instant> = None;
@@ -980,6 +983,7 @@ mod linux_daemon {
                     local_dirty.retain_sessions(|session| active.contains(session));
                     shadow_states.retain(|session, _| active.contains(session));
                     tree_states.retain(|session, _| active.contains(session));
+                    capture_stamps.retain(|session, _| active.contains(session));
 
                     for discovered in discovery.sessions {
                         current_atrium_keys.insert(discovered.atrium_session.clone());
@@ -1283,6 +1287,7 @@ mod linux_daemon {
                 if should_scan {
                     let cleared_dirty = local_dirty.clear_for_scan(&session.session);
                     let tree = tree_states.entry(session.session.clone()).or_default();
+                    let stamps = capture_stamps.entry(session.session.clone()).or_default();
                     // Scoped scans need: the flag, a seeded belief, a live watch
                     // attachment, path-only dirt, and none of the full-scan
                     // triggers (backstop reconcile, attach, remount, WIP force).
@@ -1322,6 +1327,7 @@ mod linux_daemon {
                         &global,
                         &session,
                         state,
+                        stamps,
                         echo,
                         &mut client,
                         force_wip,
@@ -1412,6 +1418,7 @@ mod linux_daemon {
         global: &GlobalConfig,
         session: &SessionConfig,
         state: &mut DaemonState,
+        capture_stamps: &mut HashMap<String, CaptureStamp>,
         echo: &mut EchoGuard,
         client: &mut HttpAtriumClient,
         force_wip: bool,
@@ -1419,7 +1426,16 @@ mod linux_daemon {
         plan: &ScanPlan,
         tree: &mut centaur_node_sync::scoped::TreeState,
     ) -> Option<Vec<RawEntry>> {
-        let raw_entries = outbound(global, session, state, echo, client, plan, tree);
+        let raw_entries = outbound(
+            global,
+            session,
+            state,
+            capture_stamps,
+            echo,
+            client,
+            plan,
+            tree,
+        );
         warmcache_capture_if_needed(client, session, state, &global.depcache_root);
         capture_repo_wip(
             session,
@@ -2264,10 +2280,12 @@ mod linux_daemon {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn run_one_session(
         global: &GlobalConfig,
         session: &SessionConfig,
         state: &mut DaemonState,
+        capture_stamps: &mut HashMap<String, CaptureStamp>,
         echo: &mut EchoGuard,
         lease: &LeaseGate,
         wip_gate: &mut WipGateState,
@@ -2293,6 +2311,7 @@ mod linux_daemon {
             global,
             session,
             state,
+            capture_stamps,
             echo,
             &mut client,
             &ScanPlan::Full,
@@ -2447,6 +2466,10 @@ mod linux_daemon {
         Scoped(Vec<PathBuf>),
     }
 
+    fn is_capture_marker(path: &Path) -> bool {
+        path == Path::new(READY_MARKER_FILE) || path == Path::new(OVERLAY_SIGNATURE_FILE)
+    }
+
     /// Read this sweep's entries per the plan, keeping `tree` current. A
     /// scoped failure returns Err so the caller can degrade to full dirt.
     fn collect_entries(
@@ -2458,7 +2481,7 @@ mod linux_daemon {
         match plan {
             ScanPlan::Full => {
                 let mut walked = fs_linux::read_upper_entries(&session.upper)?;
-                walked.retain(|entry| entry.rel_path.as_path() != Path::new(READY_MARKER_FILE));
+                walked.retain(|entry| !is_capture_marker(&entry.rel_path));
                 if canary && tree.seeded() {
                     let divergence = tree.confirm_divergence(&walked);
                     if !divergence.is_empty() {
@@ -2481,15 +2504,19 @@ mod linux_daemon {
             ScanPlan::Scoped(rels) => {
                 let source = centaur_node_sync::scoped::FsEntrySource::new(&session.upper);
                 tree.apply_dirty_paths(&source, rels)?;
-                Ok(tree.synthesized_entries())
+                let mut entries = tree.synthesized_entries();
+                entries.retain(|entry| !is_capture_marker(&entry.rel_path));
+                Ok(entries)
             }
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn outbound(
         global: &GlobalConfig,
         session: &SessionConfig,
         state: &mut DaemonState,
+        capture_stamps: &mut HashMap<String, CaptureStamp>,
         echo: &mut EchoGuard,
         client: &mut HttpAtriumClient,
         plan: &ScanPlan,
@@ -2531,6 +2558,7 @@ mod linux_daemon {
                 let out = capture_sweep(
                     &partitioned.artifact_entries,
                     &base_seqs,
+                    capture_stamps,
                     &reader,
                     echo,
                     client,
