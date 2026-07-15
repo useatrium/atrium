@@ -12,6 +12,7 @@ on:
       - 'surface/**'
       - 'centaur/**'
       - 'infra/**'
+      - 'runtime/**'
       - 'deploy/**'
       - '.github/workflows/deploy.yml'
   workflow_dispatch: {}
