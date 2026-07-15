@@ -1954,7 +1954,7 @@ export function SessionPaneContent({
       {workTab && workPinnedEffective && workDockPlacement === 'top' && (
         <div
           data-testid="work-dock-top"
-          className="relative flex min-h-0 shrink-0 flex-col border-b border-edge"
+          className="relative flex min-h-0 shrink-0 flex-col overflow-hidden border-b border-edge"
           style={workDockSize.topStyle}
         >
           {renderWorkDrawer(true)}
@@ -2303,7 +2303,7 @@ export function SessionPaneContent({
         {workTab && workPinnedEffective && workDockPlacement === 'side' && (
           <div
             data-testid="work-dock-side"
-            className="relative flex min-h-0 shrink-0 flex-col border-l border-edge"
+            className="relative flex min-h-0 shrink-0 flex-col overflow-hidden border-l border-edge"
             style={workDockSize.sideStyle}
           >
             {/* biome-ignore lint/a11y/useSemanticElements: pointer-capture resize separator. */}
