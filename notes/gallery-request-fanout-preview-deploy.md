@@ -86,3 +86,25 @@ The running preview was live-patched by adding those three environment variables
 - `https://54-89-244-184.sslip.io/apps/not-real/v/1/g/1/bad/index.html` returns `401 invalid app launch signature`, proving Caddy routes `/apps/*` to the app-origin server instead of serving the SPA fallback.
 
 The generator fix is to pass `APPS_ORIGIN`, `APPS_HOST`, and `APPS_PORT` through the AWS preview Compose override for all future previews.
+
+## Follow-Up: S3 Preview Bucket CORS
+
+A second CORS issue appeared for direct browser fetches to presigned S3 object URLs, for example:
+
+`https://s3.us-east-1.amazonaws.com/atrium-prev-9687777bfed3-5bd7-381492305815/cas/...`
+
+The object request returned HTTP 200 from S3, but the browser blocked JavaScript access because the per-preview storage bucket had no CORS configuration. This is expected when the web client fetches presigned S3 URLs from the Atrium origin.
+
+Live fix applied to bucket `atrium-prev-9687777bfed3-5bd7-381492305815`:
+
+- Allowed origins: `*`
+- Allowed methods: `GET`, `HEAD`
+- Allowed headers: `*`
+- Exposed headers: `ETag`, `Content-Type`, `Content-Length`, `Content-Disposition`
+
+This does not make the bucket public; object access is still gated by presigned URL signatures. Verification against the reported CAS key with `Origin: https://54-89-244-184.sslip.io` returned:
+
+- `Access-Control-Allow-Origin: *`
+- HTTP 200
+
+The preview generator now applies this CORS policy automatically whenever it creates a preview storage bucket.

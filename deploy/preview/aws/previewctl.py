@@ -147,6 +147,25 @@ def create_bucket(s3, bucket: str, region: str) -> None:
     waiter.wait(Bucket=bucket)
 
 
+def configure_storage_bucket_cors(s3, bucket: str) -> None:
+    # Browser file previews fetch presigned S3 object URLs directly. CORS does
+    # not make objects public; the presigned URL still gates access.
+    s3.put_bucket_cors(
+        Bucket=bucket,
+        CORSConfiguration={
+            "CORSRules": [
+                {
+                    "AllowedOrigins": ["*"],
+                    "AllowedMethods": ["GET", "HEAD"],
+                    "AllowedHeaders": ["*"],
+                    "ExposeHeaders": ["ETag", "Content-Type", "Content-Length", "Content-Disposition"],
+                    "MaxAgeSeconds": 3000,
+                }
+            ]
+        },
+    )
+
+
 def ensure_ecr_repos(session: boto3.Session, region: str) -> None:
     ecr = session.client("ecr", region_name=region)
     for image in CENTAUR_CACHE_IMAGES:
@@ -765,6 +784,7 @@ def cmd_create(args: argparse.Namespace) -> None:
     print(f"creating {preview_id} from {commit_sha}")
     create_bucket(s3, control_bucket, region)
     create_bucket(s3, storage_bucket, region)
+    configure_storage_bucket_cors(s3, storage_bucket)
     ensure_ecr_repos(session, region)
     profile_name = ensure_instance_role(session, control_bucket)
     sg_id = ensure_security_group(session, region)
