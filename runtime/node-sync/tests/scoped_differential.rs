@@ -12,8 +12,9 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
+use centaur_node_sync::daemon::loop_state::DirtySessions;
 use centaur_node_sync::scoped::{EntrySource, FsEntrySource, TreeState};
-use centaur_node_sync::watch::{DirtySessions, MergedTreeWatcher, WatchMessage};
+use centaur_node_sync::watch::{MergedTreeWatcher, WatchMessage};
 
 struct Harness {
     _temp: tempfile::TempDir,
