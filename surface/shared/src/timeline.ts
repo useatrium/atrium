@@ -489,12 +489,20 @@ function resort(list: ChatMessage[]): ChatMessage[] {
 }
 
 /**
- * Insert a confirmed message: if a pending message with the same clientMsgId
- * (or, for session rows, the same sessionId) exists it is replaced in-place
- * (optimistic reconciliation — no dupes, and because pendings sit at the tail
- * and new ids are maximal, no reorder flicker).
+ * Insert a confirmed message idempotently by event id. An existing confirmed
+ * row is replaced only by an equal-or-newer materialized watermark; otherwise
+ * a pending row with the same clientMsgId (or, for session rows, sessionId) is
+ * replaced in-place (optimistic reconciliation — no dupes, and because
+ * pendings sit at the tail and new ids are maximal, no reorder flicker).
  */
 function upsertConfirmed(list: ChatMessage[], msg: ChatMessage): ChatMessage[] {
+  const confirmedIndex = list.findIndex((m) => m.status === 'confirmed' && m.id === msg.id);
+  if (confirmedIndex >= 0) {
+    if ((msg.lastModifierId ?? 0) < (list[confirmedIndex]!.lastModifierId ?? 0)) return list;
+    const copy = [...list];
+    copy[confirmedIndex] = msg;
+    return copy;
+  }
   const i = list.findIndex(
     (m) =>
       m.status !== 'confirmed' &&
