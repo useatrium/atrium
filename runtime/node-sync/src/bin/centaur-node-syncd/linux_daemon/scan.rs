@@ -105,6 +105,7 @@ pub(super) fn outbound(
         session,
         state,
         capture_stamps,
+        uploaded_profile_bundles,
         echo,
         client,
     } = ctx;
@@ -257,6 +258,7 @@ pub(super) fn outbound(
                     &partitioned.harness_entries,
                     &reader,
                     &mut **client,
+                    uploaded_profile_bundles,
                     harness,
                     &harness_home,
                 );

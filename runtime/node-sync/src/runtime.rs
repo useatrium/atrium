@@ -940,6 +940,7 @@ pub fn profile_candidate_sweep(
     entries: &[RawEntry],
     reader: &dyn UpperReader,
     client: &mut dyn AtriumClient,
+    uploaded_bundles: &mut HashMap<String, String>,
     harness: HarnessTranscriptKind,
     harness_home: &Path,
 ) -> ProfileCandidateSweepOutcome {
@@ -970,6 +971,9 @@ pub fn profile_candidate_sweep(
         };
     }
     for bundle in &report.bundles {
+        if uploaded_bundles.get(&bundle.path) == Some(&bundle.sha256) {
+            continue;
+        }
         if let Err(error) =
             client.put_profile_bundle_blob(&bundle.sha256, &bundle.path, &bundle.bytes)
         {
@@ -982,6 +986,7 @@ pub fn profile_candidate_sweep(
                 ..ProfileCandidateSweepOutcome::default()
             };
         }
+        uploaded_bundles.insert(bundle.path.clone(), bundle.sha256.clone());
     }
     let payload = report.into_payload();
     match client.put_profile_candidates(harness.atrium_harness(), &payload) {
@@ -2337,11 +2342,13 @@ mod tests {
         );
         let reader = MapReader(files);
         let mut client = FakeClient::default();
+        let mut uploaded_bundles = HashMap::new();
 
         let out = profile_candidate_sweep(
             &entries,
             &reader,
             &mut client,
+            &mut uploaded_bundles,
             HarnessTranscriptKind::Codex,
             Path::new(".codex"),
         );
@@ -2366,6 +2373,53 @@ mod tests {
         assert!(serialized.contains("\"bundles\""));
         assert!(serialized.contains(&client.profile_bundle_blobs[0].0));
         assert!(!serialized.contains("sk-secret"));
+    }
+
+    #[test]
+    fn profile_candidate_sweep_only_puts_new_bundle_content() {
+        let entries = vec![reg(".codex/skills/demo/SKILL.md")];
+        let path = PathBuf::from(".codex/skills/demo/SKILL.md");
+        let reader = MapReader(HashMap::from([(path.clone(), b"first".to_vec())]));
+        let mut client = FakeClient::default();
+        let mut uploaded_bundles = HashMap::new();
+
+        let first = profile_candidate_sweep(
+            &entries,
+            &reader,
+            &mut client,
+            &mut uploaded_bundles,
+            HarnessTranscriptKind::Codex,
+            Path::new(".codex"),
+        );
+        assert!(first.uploaded);
+        assert_eq!(client.profile_bundle_blobs.len(), 1);
+
+        let unchanged = profile_candidate_sweep(
+            &entries,
+            &reader,
+            &mut client,
+            &mut uploaded_bundles,
+            HarnessTranscriptKind::Codex,
+            Path::new(".codex"),
+        );
+        assert!(unchanged.uploaded);
+        assert_eq!(client.profile_bundle_blobs.len(), 1);
+
+        let changed_reader = MapReader(HashMap::from([(path, b"second".to_vec())]));
+        let changed = profile_candidate_sweep(
+            &entries,
+            &changed_reader,
+            &mut client,
+            &mut uploaded_bundles,
+            HarnessTranscriptKind::Codex,
+            Path::new(".codex"),
+        );
+        assert!(changed.uploaded);
+        assert_eq!(client.profile_bundle_blobs.len(), 2);
+        assert_ne!(
+            client.profile_bundle_blobs[0].0,
+            client.profile_bundle_blobs[1].0
+        );
     }
 
     #[test]

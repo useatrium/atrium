@@ -82,6 +82,7 @@ struct ScanCtx<'a> {
     session: &'a SessionConfig,
     state: &'a mut DaemonState,
     capture_stamps: &'a mut HashMap<String, CaptureStamp>,
+    uploaded_profile_bundles: &'a mut HashMap<String, String>,
     echo: &'a mut EchoGuard,
     client: &'a mut HttpAtriumClient,
 }
@@ -205,6 +206,7 @@ fn run_single_session(
     let mut echo = EchoGuard::new();
     let mut state = DaemonState::load(&session.state_file);
     let mut capture_stamps = HashMap::new();
+    let mut uploaded_profile_bundles = HashMap::new();
     let mut wip_gate = WipGateState::default();
     let mut last_forced_wip: Option<Instant> = None;
     let mut tick: u64 = 0;
@@ -218,6 +220,7 @@ fn run_single_session(
             session: &session,
             state: &mut state,
             capture_stamps: &mut capture_stamps,
+            uploaded_profile_bundles: &mut uploaded_profile_bundles,
             echo: &mut echo,
             client: &mut client,
         };
@@ -255,6 +258,7 @@ fn run_multi_session(global: GlobalConfig, overlays_root: PathBuf, once: bool, i
     let mut local_dirty = DirtySessions::default();
     let mut tree_states: HashMap<String, centaur_node_sync::scoped::TreeState> = HashMap::new();
     let mut capture_stamps: HashMap<String, HashMap<String, CaptureStamp>> = HashMap::new();
+    let mut uploaded_profile_bundles: HashMap<String, HashMap<String, String>> = HashMap::new();
     let mut watched_sessions = HashSet::new();
     let mut just_attached_sessions = HashSet::new();
     let mut last_reconcile: Option<Instant> = None;
@@ -292,6 +296,7 @@ fn run_multi_session(global: GlobalConfig, overlays_root: PathBuf, once: bool, i
                 local_dirty.retain_sessions(|session| active.contains(session));
                 tree_states.retain(|session, _| active.contains(session));
                 capture_stamps.retain(|session, _| active.contains(session));
+                uploaded_profile_bundles.retain(|session, _| active.contains(session));
 
                 for discovered in discovery.sessions {
                     current_atrium_keys.insert(discovered.atrium_session.clone());
@@ -582,6 +587,9 @@ fn run_multi_session(global: GlobalConfig, overlays_root: PathBuf, once: bool, i
                 let cleared_dirty = local_dirty.clear_for_scan(&session.session);
                 let tree = tree_states.entry(session.session.clone()).or_default();
                 let stamps = capture_stamps.entry(session.session.clone()).or_default();
+                let uploaded_bundles = uploaded_profile_bundles
+                    .entry(session.session.clone())
+                    .or_default();
                 // Scoped scans need: the flag, a seeded belief, a live watch
                 // attachment, path-only dirt, and none of the full-scan
                 // triggers (backstop reconcile, attach, remount, WIP force).
@@ -622,6 +630,7 @@ fn run_multi_session(global: GlobalConfig, overlays_root: PathBuf, once: bool, i
                     session: &session,
                     state,
                     capture_stamps: stamps,
+                    uploaded_profile_bundles: uploaded_bundles,
                     echo,
                     client: &mut client,
                 };
