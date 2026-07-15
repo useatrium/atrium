@@ -170,12 +170,32 @@ describe('Files Hub artifact versions and preview routes', () => {
     });
     expect(malformed.statusCode).toBe(400);
 
+    const leadingSlash = await app.inject({
+      method: 'GET',
+      url: `/api/files/by-path?path=${encodeURIComponent('/shared/global/notes.md')}`,
+      headers: { cookie },
+    });
+    expect(leadingSlash.statusCode).toBe(400);
+    expect(leadingSlash.json()).toEqual({
+      error: 'bad_request',
+      message: 'path must be a canonical artifact path',
+    });
+
+    const sid = await session();
+    await commitArtifact({
+      sessionId: sid,
+      path: 'shared/global/missing.md.backup',
+      bytes: 'nearby fuzzy match',
+      mime: 'text/markdown',
+    });
+
     const unknown = await app.inject({
       method: 'GET',
       url: `/api/files/by-path?path=${encodeURIComponent('shared/global/missing.md')}`,
       headers: { cookie },
     });
     expect(unknown.statusCode).toBe(404);
+    expect(unknown.json()).toEqual({ error: 'file_not_found', message: 'file not found' });
   });
 
   it('forbids path resolution in an unreadable channel', async () => {
