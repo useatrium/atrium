@@ -162,12 +162,8 @@ pub fn should_force_wip(remounted: bool, restored: bool, backstop_elapsed: bool)
 }
 
 fn git(repo: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
-    let out = Command::new("git")
-        .arg("-C")
-        .arg(repo)
-        .env("GIT_OPTIONAL_LOCKS", "0")
-        .args(args)
-        .output()
+    let out = git_command(repo, args)
+        .and_then(|mut command| command.output())
         .map_err(|e| format!("spawn git: {e}"))?;
     if !out.status.success() {
         return Err(format!(
@@ -177,6 +173,60 @@ fn git(repo: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
         ));
     }
     Ok(out.stdout)
+}
+
+fn git_command(repo: &Path, args: &[&str]) -> std::io::Result<Command> {
+    let mut command = Command::new("git");
+    command
+        .arg("-C")
+        .arg(repo)
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        .args(["-c", "core.fsmonitor="])
+        .args(args);
+
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::fs::MetadataExt;
+        use std::os::unix::process::CommandExt;
+
+        let metadata = std::fs::metadata(repo)?;
+        let owner_uid = metadata.uid();
+        let owner_gid = metadata.gid();
+        // SAFETY: geteuid has no arguments or caller-side safety requirements.
+        let effective_uid = unsafe { libc::geteuid() };
+
+        if owner_uid != 0 && owner_uid != effective_uid {
+            let owner_home = repo
+                .ancestors()
+                .find_map(|ancestor| {
+                    let home = ancestor.parent()?;
+                    (ancestor.file_name()? == "repos" && home.file_name()? == "agent")
+                        .then_some(home)
+                })
+                .unwrap_or_else(|| repo.parent().unwrap_or(repo));
+            command.env("HOME", owner_home);
+
+            // SAFETY: the closure runs after fork and calls only async-signal-safe libc
+            // functions. Supplementary groups and gid must be dropped before uid;
+            // after setuid succeeds the child cannot regain privilege to set them.
+            unsafe {
+                command.pre_exec(move || {
+                    if libc::setgroups(0, std::ptr::null()) != 0 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                    if libc::setgid(owner_gid) != 0 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                    if libc::setuid(owner_uid) != 0 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                    Ok(())
+                });
+            }
+        }
+    }
+
+    Ok(command)
 }
 
 /// Capture the repo's uncommitted working state. PURE READ — runs only `rev-parse`,
@@ -414,12 +464,8 @@ fn safe_path_segment(value: &str) -> bool {
 }
 
 fn git_status_clean(repo: &Path) -> Result<bool, String> {
-    let diff = Command::new("git")
-        .arg("-C")
-        .arg(repo)
-        .env("GIT_OPTIONAL_LOCKS", "0")
-        .args(["diff", "--quiet", "HEAD", "--"])
-        .status()
+    let diff = git_command(repo, &["diff", "--quiet", "HEAD", "--"])
+        .and_then(|mut command| command.status())
         .map_err(|e| format!("spawn git diff --quiet: {e}"))?;
     if !diff.success() {
         return Ok(false);
@@ -429,12 +475,8 @@ fn git_status_clean(repo: &Path) -> Result<bool, String> {
 }
 
 fn git_apply(repo: &Path, patch: &[u8], check: bool) -> Result<(), String> {
-    let mut cmd = Command::new("git");
-    cmd.arg("-C")
-        .arg(repo)
-        .env("GIT_OPTIONAL_LOCKS", "0")
-        .arg("apply")
-        .arg("--whitespace=nowarn");
+    let mut cmd = git_command(repo, &["apply", "--whitespace=nowarn"])
+        .map_err(|e| format!("spawn git apply: {e}"))?;
     if check {
         cmd.arg("--check");
     }
@@ -810,6 +852,55 @@ mod tests {
         let wip = capture_wip_with_limits(&repo, 6).unwrap();
         let paths: Vec<&str> = wip.untracked.iter().map(|(p, _)| p.as_str()).collect();
         assert_eq!(paths, vec!["keep.txt"]);
+        let _ = fs::remove_dir_all(&repo);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn capture_wip_disables_repo_fsmonitor() {
+        use std::os::unix::fs::PermissionsExt;
+
+        if Command::new("git").arg("--version").output().is_err() {
+            return;
+        }
+        let repo = tmp_repo("fsmonitor");
+        sh(&repo, &["init", "-q"]);
+        sh(&repo, &["config", "user.email", "t@t"]);
+        sh(&repo, &["config", "user.name", "t"]);
+        fs::write(repo.join("tracked.txt"), "v1\n").unwrap();
+        sh(&repo, &["add", "."]);
+        sh(&repo, &["commit", "-qm", "init"]);
+
+        let fsmonitor = repo.join("fsmonitor.sh");
+        fs::write(
+            &fsmonitor,
+            r#"#!/bin/sh
+: > "$(dirname "$0")/.git/fsmonitor-sentinel"
+printf '\n'
+"#,
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(&fsmonitor).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&fsmonitor, permissions).unwrap();
+        sh(
+            &repo,
+            &[
+                "config",
+                "core.fsmonitor",
+                fsmonitor.to_string_lossy().as_ref(),
+            ],
+        );
+
+        fs::write(repo.join("tracked.txt"), "v1\nWIP edit\n").unwrap();
+        let sentinel = repo.join(".git/fsmonitor-sentinel");
+        let wip = capture_wip(&repo).unwrap();
+
+        assert!(wip.diff.contains("WIP edit"));
+        assert!(
+            !sentinel.exists(),
+            "repo-configured core.fsmonitor must not run during WIP capture"
+        );
         let _ = fs::remove_dir_all(&repo);
     }
 
