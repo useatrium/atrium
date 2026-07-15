@@ -105,7 +105,6 @@ export type AppAction =
        */
       source?: 'self' | 'remote';
     }
-  | { type: 'server-read-cursor'; channelId: string; lastReadEventId: number }
   | { type: 'mute-changed'; channelId: string; muted: boolean }
   | { type: 'channel-archive-changed'; channelId: string; archivedAt: string | null }
   | { type: 'channel-pin-changed'; channelId: string; pinned: boolean }
@@ -123,10 +122,11 @@ export type AppAction =
        * healing re-ships of OLD rows and must never insert as new rows. */
       catchupCursor?: number;
       expectedTimelineEpoch?: number;
+      readCursor?: number;
       /** Per-channel after_id data must not move the workspace-wide sync cursor. */
       origin?: 'channel-delta';
     }
-  | { type: 'history-reset'; channelId: string; events: WireEvent[]; hasMore: boolean }
+  | { type: 'history-reset'; channelId: string; events: WireEvent[]; hasMore: boolean; readCursor?: number }
   | { type: 'thread-loaded'; channelId: string; rootEventId: number; events: WireEvent[] }
   | { type: 'open-thread'; rootEventId: number }
   | { type: 'close-thread' }
@@ -194,6 +194,39 @@ function timelineEpoch(state: AppState, channelId: string): number {
   return state.timelineEpochs[channelId] ?? 0;
 }
 
+function remoteCursorsAfterAdvance(
+  state: AppState,
+  channelId: string,
+  currentLastReadEventId: number,
+  lastReadEventId: number,
+): AppState['remoteReadCursors'] {
+  return currentLastReadEventId < lastReadEventId && (state.remoteReadCursors[channelId] ?? 0) < lastReadEventId
+    ? { ...state.remoteReadCursors, [channelId]: lastReadEventId }
+    : state.remoteReadCursors;
+}
+
+function applyRemoteReadCursor(state: AppState, channelId: string, lastReadEventId?: number): AppState {
+  if (lastReadEventId === undefined || lastReadEventId <= 0) return state;
+  const currentLastReadEventId = state.channels.find((channel) => channel.id === channelId)?.lastReadEventId ?? 0;
+  const channels =
+    currentLastReadEventId < lastReadEventId
+      ? state.channels.map((channel) => (channel.id === channelId ? { ...channel, lastReadEventId } : channel))
+      : state.channels;
+  const remoteReadCursors = remoteCursorsAfterAdvance(state, channelId, currentLastReadEventId, lastReadEventId);
+  return channels === state.channels && remoteReadCursors === state.remoteReadCursors
+    ? state
+    : { ...state, channels, remoteReadCursors };
+}
+
+export function newestConfirmedMainEventId(t: ChannelTimeline | undefined): number {
+  if (!t) return 0;
+  for (let index = t.main.length - 1; index >= 0; index--) {
+    const message = t.main[index];
+    if (message?.status === 'confirmed' && typeof message.id === 'number') return message.id;
+  }
+  return 0;
+}
+
 /** Does `text` @-mention the user? Handles are [a-z0-9_-], so no escaping. */
 export function mentionsHandle(text: string, handle: string | null): boolean {
   if (!handle) return false;
@@ -219,12 +252,18 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       return { ...state, meHandle: action.handle, meId: action.id ?? state.meId };
 
     case 'channels-loaded': {
+      const existingChannels = new Map(state.channels.map((channel) => [channel.id, channel]));
       const channels = action.channels
-        .map((channel) => ({
-          ...channel,
-          archivedAt: channel.archivedAt ?? null,
-          pinned: channel.pinned ?? false,
-        }))
+        .map((channel) => {
+          const existing = existingChannels.get(channel.id);
+          return {
+            ...channel,
+            archivedAt: channel.archivedAt ?? null,
+            pinned: channel.pinned ?? false,
+            lastReadEventId: Math.max(channel.lastReadEventId ?? 0, existing?.lastReadEventId ?? 0),
+            latestEventId: Math.max(channel.latestEventId ?? 0, existing?.latestEventId ?? 0),
+          };
+        })
         .sort((a, b) => a.name.localeCompare(b.name));
       const activeChannelId =
         state.activeChannelId ?? channels.find((c) => c.name === 'general')?.id ?? channels[0]?.id ?? null;
@@ -258,10 +297,8 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       // optimistically first, so only a cursor that advances past local state is
       // a true remote advance.
       const remoteReadCursors =
-        action.source === 'remote' &&
-        currentLastReadEventId < action.lastReadEventId &&
-        (state.remoteReadCursors[action.channelId] ?? 0) < action.lastReadEventId
-          ? { ...state.remoteReadCursors, [action.channelId]: action.lastReadEventId }
+        action.source === 'remote'
+          ? remoteCursorsAfterAdvance(state, action.channelId, currentLastReadEventId, action.lastReadEventId)
           : state.remoteReadCursors;
       return {
         ...state,
@@ -269,25 +306,6 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         remoteReadCursors,
         unread: { ...state.unread, [action.channelId]: false },
       };
-    }
-
-    case 'server-read-cursor': {
-      /** Does not touch unread. Callers must dispatch this before the history
-       * events from the same response so genuinely newer events can re-mark
-       * unread through their normal isNewMessage path instead of being masked
-       * by seenIds. */
-      const currentLastReadEventId = state.channels.find((c) => c.id === action.channelId)?.lastReadEventId ?? 0;
-      const channels = state.channels.map((c) =>
-        c.id === action.channelId && (c.lastReadEventId ?? 0) < action.lastReadEventId
-          ? { ...c, lastReadEventId: action.lastReadEventId }
-          : c,
-      );
-      const remoteReadCursors =
-        currentLastReadEventId < action.lastReadEventId &&
-        (state.remoteReadCursors[action.channelId] ?? 0) < action.lastReadEventId
-          ? { ...state.remoteReadCursors, [action.channelId]: action.lastReadEventId }
-          : state.remoteReadCursors;
-      return { ...state, channels, remoteReadCursors };
     }
 
     case 'mute-changed': {
@@ -371,15 +389,23 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       };
 
     case 'history-loaded': {
+      /** Apply the server cursor before folding this response's events. This
+       * preserves genuinely newer unread activity without relying on caller
+       * dispatch ordering, and intentionally never clears `unread`. */
+      const cursorState = applyRemoteReadCursor(state, action.channelId, action.readCursor);
       if (
         action.expectedTimelineEpoch !== undefined &&
         timelineEpoch(state, action.channelId) !== action.expectedTimelineEpoch
       ) {
-        return state;
+        return cursorState;
       }
-      const previousTimeline = timeline(state, action.channelId);
+      // An empty warm DELTA is a timeline no-op (the cursor still advances above):
+      // replacing a loaded timeline over zero new evidence would churn identity.
+      // An empty INITIAL load must still fold — it marks an empty channel loaded.
+      if (action.events.length === 0 && action.origin === 'channel-delta') return cursorState;
+      const previousTimeline = timeline(cursorState, action.channelId);
       let next = withTimeline(
-        foldSessionEvents(state, action.events),
+        foldSessionEvents(cursorState, action.events),
         action.channelId,
         mergeHistory(previousTimeline, action.events, {
           hasMoreBefore: action.hasMore,
@@ -425,11 +451,15 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     }
 
     case 'history-reset': {
+      /** Apply the server cursor before folding this response's events. This
+       * preserves genuinely newer unread activity without relying on caller
+       * dispatch ordering, and intentionally never clears `unread`. */
+      const cursorState = applyRemoteReadCursor(state, action.channelId, action.readCursor);
       const next = withSyncCursor(
         withTimeline(
-          foldSessionEvents(state, action.events),
+          foldSessionEvents(cursorState, action.events),
           action.channelId,
-          resetToLatest(timeline(state, action.channelId), action.events, {
+          resetToLatest(timeline(cursorState, action.channelId), action.events, {
             hasMoreBefore: action.hasMore,
           }),
         ),

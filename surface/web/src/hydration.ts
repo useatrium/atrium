@@ -82,14 +82,12 @@ export async function hydrateCachedTimelines({
       try {
         const latest = await fetchLatest(channelId);
         if (isDisposed?.()) return;
-        if (typeof latest.readCursor === 'number' && latest.readCursor > 0) {
-          dispatch({ type: 'server-read-cursor', channelId, lastReadEventId: latest.readCursor });
-        }
         dispatch({
           type: 'history-reset',
           channelId,
           events: latest.events,
           hasMore: latest.hasMore,
+          readCursor: latest.readCursor,
         });
         hydratedHasMore = latest.hasMore;
         onRepaired?.(channelId, latest);
@@ -119,12 +117,9 @@ export async function hydrateCachedTimelines({
     try {
       const delta = await fetchDelta(channelId, cachedLastEventId);
       if (isDisposed?.()) return;
-      if (typeof delta.readCursor === 'number' && delta.readCursor > 0) {
-        dispatch({ type: 'server-read-cursor', channelId, lastReadEventId: delta.readCursor });
-      }
-      // An empty delta must be a true no-op: dispatching it would allocate a
-      // replacement timeline even though no server evidence changed.
-      if (delta.events.length === 0) continue;
+      // An empty delta must be a true timeline no-op. A server cursor still
+      // travels through the composite action and advances in place.
+      if (delta.events.length === 0 && delta.readCursor === undefined) continue;
       dispatch({
         type: 'history-loaded',
         channelId,
@@ -134,6 +129,7 @@ export async function hydrateCachedTimelines({
         ...(delta.nextCursor !== undefined ? { nextCursor: delta.nextCursor } : {}),
         catchupCursor: cachedLastEventId,
         origin: 'channel-delta',
+        readCursor: delta.readCursor,
       });
       onDeltaLoaded?.(channelId, delta);
     } catch (err) {

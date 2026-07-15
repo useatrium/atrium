@@ -10,6 +10,7 @@ import {
   dispatchSyncSnapshot,
   dispatchSyncResponse,
   initialAppState,
+  newestConfirmedMainEventId,
   randomId,
   reconnectingLabel,
   type EnqueueOpInput,
@@ -809,7 +810,7 @@ export function Chat({
     const lastRead = channel?.lastReadEventId ?? 0;
     const counter = channel?.latestEventId ?? 0;
     const loadedNewest = timeline?.lastEventId ?? 0;
-    const latest = Math.max(counter, loadedNewest);
+    const newestRendered = newestConfirmedMainEventId(timeline);
     // A cold-counter repair (see the messages() effect that refetches when the server
     // counter is ahead of the loaded tail) is in flight while counter > loadedNewest.
     // Until it lands we cannot tell a real gap from a stale counter, so we must NOT
@@ -819,7 +820,7 @@ export function Chat({
     if (dividerFrozenForRef.current === cid) {
       // Frozen so the divider doesn't move as YOU read here. If another device/tab
       // caught this channel up, dissolve the now-phantom divider. Marker only; never scroll.
-      if ((state.remoteReadCursors[cid] ?? 0) >= latest && latest > 0) {
+      if ((state.remoteReadCursors[cid] ?? 0) >= newestRendered && newestRendered > 0) {
         setUnreadDividerAfterId((prev) => (prev == null ? prev : null));
       }
       return;
@@ -918,14 +919,12 @@ export function Chat({
     await Promise.all(
       loaded.map(async ([channelId]) => {
         const latest = await api.messages(channelId, { limit: PAGE_SIZE });
-        if (typeof latest.readCursor === 'number' && latest.readCursor > 0) {
-          dispatch({ type: 'server-read-cursor', channelId, lastReadEventId: latest.readCursor });
-        }
         dispatch({
           type: 'history-reset',
           channelId,
           events: latest.events,
           hasMore: latest.hasMore,
+          readCursor: latest.readCursor,
         });
         void eventCache.saveTimeline(channelId, latest.events, latest.hasMore).catch((err: unknown) => {
           console.warn('failed to cache sync repair history', err);
@@ -1125,14 +1124,12 @@ export function Chat({
         // Skip if we lost access (kicked from a private channel) while the
         // fetch was in flight — avoids a ghost timeline.
         if (!stateRef.current.channels.some((c) => c.id === channelId)) return;
-        if (typeof readCursor === 'number' && readCursor > 0) {
-          dispatch({ type: 'server-read-cursor', channelId, lastReadEventId: readCursor });
-        }
         dispatch({
           type: needsColdCounterRepair ? 'history-reset' : 'history-loaded',
           channelId,
           events,
           hasMore,
+          readCursor,
         });
         void eventCache.saveTimeline(channelId, events, hasMore).catch((err: unknown) => {
           console.warn('failed to cache history', err);
@@ -1151,10 +1148,7 @@ export function Chat({
       .messages(channelId, { beforeId: oldest.id, limit: PAGE_SIZE })
       .then(({ events, hasMore, readCursor }) => {
         if ((stateRef.current.timelineEpochs[channelId] ?? 0) !== expectedTimelineEpoch) return;
-        if (typeof readCursor === 'number' && readCursor > 0) {
-          dispatch({ type: 'server-read-cursor', channelId, lastReadEventId: readCursor });
-        }
-        dispatch({ type: 'history-loaded', channelId, events, hasMore, expectedTimelineEpoch });
+        dispatch({ type: 'history-loaded', channelId, events, hasMore, expectedTimelineEpoch, readCursor });
         void eventCache.saveTimeline(channelId, events, hasMore).catch((err: unknown) => {
           console.warn('failed to cache earlier history', err);
         });

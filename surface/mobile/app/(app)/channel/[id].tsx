@@ -8,6 +8,7 @@ import {
   emptyTimeline,
   type ChatMessage,
   type HubFile,
+  newestConfirmedMainEventId,
   parseSummonSigil,
 } from '@atrium/surface-client';
 import { Ionicons } from '@expo/vector-icons';
@@ -111,10 +112,10 @@ export default function ChannelScreen() {
     if (!id || !channel) return;
     const current = unreadDividerSnapshotRef.current;
     if (current?.channelId !== id || !current.ready || current.value == null) return;
-    if ((state.remoteReadCursors[id] ?? 0) <= current.value) return;
-    if (computeUnreadDividerAfterId(channel) != null) return;
+    const newestRendered = newestConfirmedMainEventId(timeline);
+    if (newestRendered === 0 || (state.remoteReadCursors[id] ?? 0) < newestRendered) return;
     commitUnreadDividerSnapshot({ channelId: id, value: null, ready: true });
-  }, [state.remoteReadCursors, channel, commitUnreadDividerSnapshot, id]);
+  }, [state.remoteReadCursors, channel, timeline, commitUnreadDividerSnapshot, id]);
 
   const activeUnreadDividerSnapshot = unreadDividerSnapshot?.channelId === id ? unreadDividerSnapshot : null;
 
