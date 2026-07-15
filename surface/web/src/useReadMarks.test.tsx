@@ -107,7 +107,7 @@ describe('useReadMarks read advance persistence hooks', () => {
   });
 
   it('beacons the intended cursor for each visited channel on flushBeacon', () => {
-    const sendBeacon = vi.fn(() => true);
+    const sendBeacon = vi.fn((_url: string, _body?: BodyInit) => true);
     vi.stubGlobal('navigator', { sendBeacon } as unknown as Navigator);
     const enqueueOp = vi.fn(async (_input: EnqueueOpInput<'read.mark'>) => ({ opId: 'op-1' }));
 
