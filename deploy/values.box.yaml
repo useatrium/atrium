@@ -66,6 +66,12 @@ sandbox:
 
 nodeSync:
   enabled: true
+  extraEnv:
+    # Path-scoped capture scans (#469): event-driven dirty paths patch an
+    # in-memory tree belief; backstop full scans + the divergence canary
+    # remain on. Shadow-mode soak was clean (see #471/#472 for the two
+    # instrument findings). Flip back to full scans by removing this.
+    NODE_SYNC_SCOPED_SCAN: "1"
   overlayProvisioning:
     enabled: true
     flatHome: true
