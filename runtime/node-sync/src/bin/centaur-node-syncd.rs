@@ -577,6 +577,15 @@ mod linux_daemon {
         reconcile_interval: Duration,
     }
 
+    struct ScanCtx<'a> {
+        global: &'a GlobalConfig,
+        session: &'a SessionConfig,
+        state: &'a mut DaemonState,
+        capture_stamps: &'a mut HashMap<String, CaptureStamp>,
+        echo: &'a mut EchoGuard,
+        client: &'a mut HttpAtriumClient,
+    }
+
     struct HardenedReader {
         upper: PathBuf,
     }
@@ -882,16 +891,17 @@ mod linux_daemon {
 
         loop {
             tick = tick.saturating_add(1);
-            if let Err(e) = run_one_session(
-                &global,
-                &session,
-                &mut state,
-                &mut capture_stamps,
-                &mut echo,
-                &lease,
-                &mut wip_gate,
-                &mut last_forced_wip,
-            ) {
+            let mut client =
+                HttpAtriumClient::new(&global.base_url, &global.api_key, &session.atrium_session);
+            let ctx = ScanCtx {
+                global: &global,
+                session: &session,
+                state: &mut state,
+                capture_stamps: &mut capture_stamps,
+                echo: &mut echo,
+                client: &mut client,
+            };
+            if let Err(e) = run_one_session(ctx, &lease, &mut wip_gate, &mut last_forced_wip) {
                 eprintln!("session {}: {e}", session.session);
             }
             maybe_evict_depcache(&global, tick);
@@ -1321,18 +1331,16 @@ mod linux_daemon {
                         ScanPlan::Full
                     };
                     let scan_was_full = matches!(plan, ScanPlan::Full);
-                    let scanned_entries = run_local_capture(
-                        &global,
-                        &session,
+                    let mut ctx = ScanCtx {
+                        global: &global,
+                        session: &session,
                         state,
-                        stamps,
+                        capture_stamps: stamps,
                         echo,
-                        &mut client,
-                        force_wip,
-                        &mut wip_gate,
-                        &plan,
-                        tree,
-                    );
+                        client: &mut client,
+                    };
+                    let scanned_entries =
+                        run_local_capture(&mut ctx, force_wip, &mut wip_gate, &plan, tree);
                     if scanned_entries.is_none() {
                         // Scan failed: degrade to full dirt so the next tick
                         // retries with a whole-tree walk (a scoped patch may
@@ -1402,34 +1410,24 @@ mod linux_daemon {
         restore_repo_wip(session, state)
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn run_local_capture(
-        global: &GlobalConfig,
-        session: &SessionConfig,
-        state: &mut DaemonState,
-        capture_stamps: &mut HashMap<String, CaptureStamp>,
-        echo: &mut EchoGuard,
-        client: &mut HttpAtriumClient,
+        ctx: &mut ScanCtx<'_>,
         force_wip: bool,
         wip_gate: &mut WipGateState,
         plan: &ScanPlan,
         tree: &mut centaur_node_sync::scoped::TreeState,
     ) -> Option<Vec<RawEntry>> {
-        let raw_entries = outbound(
-            global,
-            session,
-            state,
-            capture_stamps,
-            echo,
-            client,
-            plan,
-            tree,
+        let raw_entries = outbound(ctx, plan, tree);
+        warmcache_capture_if_needed(
+            ctx.client,
+            ctx.session,
+            ctx.state,
+            &ctx.global.depcache_root,
         );
-        warmcache_capture_if_needed(client, session, state, &global.depcache_root);
         capture_repo_wip(
-            session,
-            state,
-            client,
+            ctx.session,
+            ctx.state,
+            ctx.client,
             raw_entries.as_deref(),
             force_wip,
             wip_gate,
@@ -2176,52 +2174,41 @@ mod linux_daemon {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn run_one_session(
-        global: &GlobalConfig,
-        session: &SessionConfig,
-        state: &mut DaemonState,
-        capture_stamps: &mut HashMap<String, CaptureStamp>,
-        echo: &mut EchoGuard,
+        mut ctx: ScanCtx<'_>,
         lease: &LeaseGate,
         wip_gate: &mut WipGateState,
         last_forced_wip: &mut Option<Instant>,
     ) -> Result<(), String> {
         let now = Instant::now();
-        let mut client =
-            HttpAtriumClient::new(&global.base_url, &global.api_key, &session.atrium_session);
 
-        materialize_profile_bundles_for_session(session, state, &client);
-        hydrate_state_if_needed(session, state, &mut client);
-        refresh_upper_sha(session, state);
-        let wip_restored = restore_repo_wip(session, state);
+        materialize_profile_bundles_for_session(ctx.session, ctx.state, ctx.client);
+        hydrate_state_if_needed(ctx.session, ctx.state, ctx.client);
+        refresh_upper_sha(ctx.session, ctx.state);
+        let wip_restored = restore_repo_wip(ctx.session, ctx.state);
         // Inbound adoption needs seeded state: without it every remote row looks
         // like an unknown local and gets adopted (re-downloaded + copied up).
         // Outbound stays on — new-file captures are safe unseeded, and an edited
         // pre-existing path is server-guarded (409 base_required) until seeded.
-        if state.hydrated {
-            inbound(session, state, echo, lease, &mut client);
+        if ctx.state.hydrated {
+            inbound(ctx.session, ctx.state, ctx.echo, lease, ctx.client);
         }
         let mut once_tree = centaur_node_sync::scoped::TreeState::default();
-        let raw_entries = outbound(
-            global,
-            session,
-            state,
-            capture_stamps,
-            echo,
-            &mut client,
-            &ScanPlan::Full,
-            &mut once_tree,
+        let raw_entries = outbound(&mut ctx, &ScanPlan::Full, &mut once_tree);
+        warmcache_capture_if_needed(
+            ctx.client,
+            ctx.session,
+            ctx.state,
+            &ctx.global.depcache_root,
         );
-        warmcache_capture_if_needed(&mut client, session, state, &global.depcache_root);
         let wip_backstop_elapsed =
             last_forced_wip.is_none_or(|last| now.duration_since(last) >= WIP_FORCE_INTERVAL);
         let force_wip =
             centaur_node_sync::wip::should_force_wip(false, wip_restored, wip_backstop_elapsed);
         capture_repo_wip(
-            session,
-            state,
-            &mut client,
+            ctx.session,
+            ctx.state,
+            ctx.client,
             raw_entries.as_deref(),
             force_wip,
             wip_gate,
@@ -2229,10 +2216,10 @@ mod linux_daemon {
         if force_wip {
             *last_forced_wip = Some(now);
         }
-        materialize_atrium(global, session, state, &client);
-        state
-            .save(&session.state_file)
-            .map_err(|e| format!("save state {}: {e}", session.state_file.display()))
+        materialize_atrium(ctx.global, ctx.session, ctx.state, ctx.client);
+        ctx.state
+            .save(&ctx.session.state_file)
+            .map_err(|e| format!("save state {}: {e}", ctx.session.state_file.display()))
     }
 
     fn refresh_upper_sha(session: &SessionConfig, state: &mut DaemonState) {
@@ -2408,17 +2395,19 @@ mod linux_daemon {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn outbound(
-        global: &GlobalConfig,
-        session: &SessionConfig,
-        state: &mut DaemonState,
-        capture_stamps: &mut HashMap<String, CaptureStamp>,
-        echo: &mut EchoGuard,
-        client: &mut HttpAtriumClient,
+        ctx: &mut ScanCtx<'_>,
         plan: &ScanPlan,
         tree: &mut centaur_node_sync::scoped::TreeState,
     ) -> Option<Vec<RawEntry>> {
+        // Reborrow the fields so `client` is `&mut HttpAtriumClient` (a
+        // destructured `&mut &mut _` won't coerce to `&mut dyn AtriumClient`).
+        let global = ctx.global;
+        let session = ctx.session;
+        let state = &mut *ctx.state;
+        let capture_stamps = &mut *ctx.capture_stamps;
+        let echo = &mut *ctx.echo;
+        let client = &mut *ctx.client;
         match collect_entries(session, plan, tree, global.scoped_scan) {
             Ok(entries) => {
                 let reader = HardenedReader {
