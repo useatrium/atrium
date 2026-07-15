@@ -86,6 +86,6 @@ describe('TurnCard', () => {
     expect(screen.getByTestId('turn-card')).toHaveAccessibleName('Turn idle summary');
     expect(screen.getByText('RESULT')).toBeInTheDocument();
     expect(screen.getByText('All checks passed.')).toBeInTheDocument();
-    expect(screen.getByText('$0.1234')).toBeInTheDocument();
+    expect(screen.getByText('$0.12')).toBeInTheDocument();
   });
 });

@@ -131,7 +131,7 @@ describe('TurnStatusLine (mobile)', () => {
     expect(screen.getByText('6m')).toBeTruthy();
     expect(screen.queryByText('6:00')).toBeNull();
     expect(screen.getByTestId('token-count')).toHaveTextContent('≈2.4k tok');
-    expect(screen.getByText('$0.3800')).toBeTruthy();
+    expect(screen.getByText('$0.38')).toBeTruthy();
     expect(screen.getByText('gpt-5.5 xhigh')).toBeTruthy();
   });
 

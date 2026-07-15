@@ -8,10 +8,6 @@ import { MessageActionMenu, type MessageActionMenuState } from './MessageActionM
 
 const RECENT_CAP = 200;
 
-type SessionListItemAttentionFields = {
-  needsAttention?: unknown;
-};
-
 type Group = {
   key: string;
   label: string;
@@ -24,7 +20,7 @@ type SessionRowMenu = {
 };
 
 function sessionNeedsAttention(session: SessionListItem, liveSession?: Session): boolean {
-  if ((session as SessionListItem & SessionListItemAttentionFields).needsAttention === true) return true;
+  if (session.needsAttention) return true;
   return liveSession?.pendingQuestion != null || liveSession?.providerAuthRequired != null;
 }
 
@@ -353,7 +349,7 @@ function AgentSessionListButton({
 }) {
   // The REST row can flag needs-attention without carrying the live fields
   // that prove it — honor the flag so the chip never contradicts the group.
-  const flaggedOnly = !live && (session as SessionListItem & SessionListItemAttentionFields).needsAttention === true;
+  const flaggedOnly = !live && session.needsAttention;
   return (
     <div className="group/agent-row flex w-full min-w-0 items-center border-b border-edge last:border-b-0 hover:bg-accent/20">
       <button

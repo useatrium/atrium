@@ -250,6 +250,9 @@ export interface SessionListItem {
   completedAt: string | null;
   archivedAt: string | null;
   pinned: boolean;
+  needsAttention: boolean;
+  attentionReason: 'question' | 'auth' | null;
+  resultText: string | null;
 }
 
 /** The S3 surface the artifact serve path needs. Injectable in tests
@@ -380,10 +383,23 @@ interface SessionLifecycleEventRow {
 
 export type SessionListStatus = 'running' | 'recent' | 'all' | 'archived';
 
-interface SessionListRow extends SessionRow {
+interface SessionListRow {
+  id: string;
+  channel_id: string;
   channel_name: string;
+  title: string;
+  status: SessionStatus;
+  harness: string;
+  spawned_by: string;
   spawner_name: string;
+  cost_usd: string | number;
+  created_at: Date;
+  completed_at: Date | null;
+  archived_at: Date | null;
   pinned: boolean;
+  pending_question: unknown | null;
+  provider_auth_required: unknown | null;
+  result_text: string | null;
 }
 
 interface SteerContextRow {
@@ -866,9 +882,21 @@ export class SessionRuns {
            (sp.user_id IS NOT NULL) DESC,
            s.created_at DESC`;
     const res = await this.pool.query<SessionListRow>(
-      `SELECT s.*,
+      `SELECT s.id,
+              s.channel_id,
               c.name AS channel_name,
+              s.title,
+              s.status,
+              s.harness,
+              s.spawned_by,
               u.display_name AS spawner_name,
+              s.cost_usd,
+              s.created_at,
+              s.completed_at,
+              s.archived_at,
+              s.pending_question,
+              s.provider_auth_required,
+              s.result_text,
               (sp.user_id IS NOT NULL) AS pinned
        FROM sessions s
        JOIN channels c ON c.id = s.channel_id
@@ -3571,6 +3599,9 @@ function toJson(
 }
 
 function toListItem(row: SessionListRow): SessionListItem {
+  const terminal = TERMINAL_STATUSES.has(row.status);
+  const pendingQuestion = terminal ? null : parsePendingQuestion(row.pending_question);
+  const providerAuthRequired = terminal ? null : parseProviderAuthRequired(row.provider_auth_required);
   return {
     id: row.id,
     channelId: row.channel_id,
@@ -3585,7 +3616,19 @@ function toListItem(row: SessionListRow): SessionListItem {
     completedAt: row.completed_at ? new Date(row.completed_at).toISOString() : null,
     archivedAt: row.archived_at ? new Date(row.archived_at).toISOString() : null,
     pinned: row.pinned,
+    needsAttention: pendingQuestion !== null || providerAuthRequired !== null,
+    attentionReason: pendingQuestion ? 'question' : providerAuthRequired ? 'auth' : null,
+    resultText: resultExcerpt(row.result_text),
   };
+}
+
+function resultExcerpt(resultText: string | null): string | null {
+  const normalized = resultText?.trim().replace(/\s+/g, ' ');
+  if (!normalized) return null;
+  if (normalized.length <= 240) return normalized;
+  const prefix = normalized.slice(0, 240);
+  const wordBoundary = prefix.lastIndexOf(' ');
+  return `${wordBoundary > 0 ? prefix.slice(0, wordBoundary) : prefix}…`;
 }
 
 function toSessionUserJson(row: SessionUserRow): SessionUserJson {

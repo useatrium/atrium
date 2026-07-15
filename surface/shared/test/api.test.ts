@@ -54,6 +54,9 @@ function listItem(overrides: Partial<SessionListItem> = {}): SessionListItem {
     completedAt: null,
     archivedAt: null,
     pinned: false,
+    needsAttention: false,
+    attentionReason: null,
+    resultText: null,
     ...overrides,
   };
 }
