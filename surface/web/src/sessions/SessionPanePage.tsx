@@ -11,7 +11,7 @@ import { useConnections } from '../useConnections';
 import { useProviderCredentials } from '../useProviderCredentials';
 import { useTypingIndicators } from '../useTypingIndicators';
 import { sessionsApi } from './api';
-import { SessionPane } from './SessionPane';
+import { ConversationPanel } from './ConversationPanel';
 import {
   applySessionEvent,
   isPendingSessionId,
@@ -225,32 +225,35 @@ export function SessionPanePage({ sessionId, me }: { sessionId: string; me: User
   return (
     <div id="main-content" data-testid="session-pane-page" className="flex h-dvh min-w-0 bg-surface">
       {session ? (
-        <SessionPane
+        <ConversationPanel
           key={sessionId}
-          session={session}
-          me={me}
-          watchers={watchers}
-          typers={Object.values(sessionTyping[session.id] ?? {}).map((t) => t.user)}
-          onComposerTyping={notifySessionTyping}
-          onClose={() => {}}
-          onAnswerQuestion={answerQuestion}
-          onSteer={steerSession}
-          failedSteer={failedSteer}
-          onClearFailedSteer={() => setFailedSteer(null)}
-          onCancelSession={cancelSession}
-          onStopTurn={stopTurn}
-          failedCancel={failedCancel}
-          onClearFailedCancel={() => setFailedCancel(false)}
-          providerCredentials={providerCredentials}
-          githubConnection={githubConnection}
-          onConnectProvider={setProviderDialog}
-          onConnectGitHub={() => setConnectionDialog('github')}
-          agentProfiles={agentProfiles}
-          layout="focus"
-          popout
-          onUnseenOutputs={setHasUnseenOutputs}
-          filesDefaultScope="session"
-          onApiError={onApiError}
+          mode="work"
+          session={{
+            session,
+            me,
+            watchers,
+            typers: Object.values(sessionTyping[session.id] ?? {}).map((t) => t.user),
+            onComposerTyping: notifySessionTyping,
+            onClose: () => {},
+            onAnswerQuestion: answerQuestion,
+            onSteer: steerSession,
+            failedSteer,
+            onClearFailedSteer: () => setFailedSteer(null),
+            onCancelSession: cancelSession,
+            onStopTurn: stopTurn,
+            failedCancel,
+            onClearFailedCancel: () => setFailedCancel(false),
+            providerCredentials,
+            githubConnection,
+            onConnectProvider: setProviderDialog,
+            onConnectGitHub: () => setConnectionDialog('github'),
+            agentProfiles,
+            layout: 'focus',
+            popout: true,
+            onUnseenOutputs: setHasUnseenOutputs,
+            filesDefaultScope: 'session',
+            onApiError,
+          }}
         />
       ) : (
         <SessionPanePagePlaceholder notFound={loadState === 'not-found'} sessionId={sessionId} />

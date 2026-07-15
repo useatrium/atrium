@@ -455,7 +455,10 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       );
 
     case 'open-thread':
-      return { ...state, openThreadRootId: action.rootEventId, openSessionId: null };
+      // A conversation can keep its attached session selected while the route
+      // zooms out to the thread. The route, not reducer exclusivity, chooses
+      // which mode ConversationPanel displays.
+      return { ...state, openThreadRootId: action.rootEventId };
 
     case 'close-thread':
       return { ...state, openThreadRootId: null };
@@ -675,7 +678,6 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         ...state,
         openSessionId: action.sessionId,
         openSessionError: false,
-        openThreadRootId: null,
       };
 
     case 'session-load-failed':

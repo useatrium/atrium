@@ -53,11 +53,12 @@ import { QuickSwitcher, type QuickSwitcherCommand } from './components/QuickSwit
 import { SettingsSurface } from './components/SettingsSurface';
 import { Sidebar } from './components/Sidebar';
 // === spine additions === Thread strips can open the pane directly on a work tab.
-import { ThreadPanel, type SpineOpenSessionOptions } from './components/ThreadPanel';
+import type { SpineOpenSessionOptions } from './components/ThreadPanel';
 import { Timeline } from './components/Timeline';
 import { sessionsApi } from './sessions/api';
 import { Gallery } from './sessions/Gallery';
-import { SessionPane, type TranscriptDiscussPayload } from './sessions/SessionPane';
+import type { TranscriptDiscussPayload } from './sessions/SessionPane';
+import { ConversationPanel } from './sessions/ConversationPanel';
 // === spine additions === Reuse SessionPane's canonical work-tab URL grammar.
 import { TAB_SLUG } from './sessions/WorkDrawer';
 import { loadSessionPaneWidth, sessionPaneSizing } from './sessions/useSessionPaneWidth';
@@ -1177,6 +1178,15 @@ export function Chat({
     async (channelId: string, rootEventId: number): Promise<boolean> => {
       const hasRoot = await ensureTopLevelEventLoaded(channelId, rootEventId);
       if (!hasRoot) return false;
+      const current = stateRef.current;
+      const root = current.timelines[channelId]?.main.find((message) => message.id === rootEventId);
+      const attachedSessionId =
+        root?.sessionId ??
+        Object.values(current.sessions).find((session) => session.threadRootEventId === rootEventId)?.id ??
+        null;
+      if (current.openSessionId && current.openSessionId !== attachedSessionId) {
+        dispatch({ type: 'close-session' });
+      }
       dispatch({ type: 'open-thread', rootEventId });
       const { events } = await api.thread(rootEventId);
       dispatch({ type: 'thread-loaded', channelId, rootEventId, events });
@@ -1186,22 +1196,25 @@ export function Chat({
   );
 
   // ---- thread panel ----
-  const openThread = (rootEventId: number) => {
-    if (!active) return;
-    navigate(
-      routePathWithSearch(
-        {
-          surface: 'chat',
-          channelId: active.id,
-          sessionId: null,
-          threadRootId: String(rootEventId),
-          focusSession: false,
-        },
-        locationState.search,
-        locationState.hash,
-      ),
-    );
-  };
+  const openThread = useCallback(
+    (rootEventId: number) => {
+      if (!active) return;
+      navigate(
+        routePathWithSearch(
+          {
+            surface: 'chat',
+            channelId: active.id,
+            sessionId: null,
+            threadRootId: String(rootEventId),
+            focusSession: false,
+          },
+          locationState.search,
+          locationState.hash,
+        ),
+      );
+    },
+    [active, locationState.hash, locationState.search],
+  );
 
   // === web-client additions ===
   const openNotificationTarget = useCallback(
@@ -1425,7 +1438,6 @@ export function Chat({
 
       if (route.threadRootId) {
         legacyFocusedSessionIdRef.current = null;
-        if (current.openSessionId) dispatch({ type: 'close-session' });
         setFocused(false);
         const rootEventId = Number(route.threadRootId);
         if (nextChannelId && Number.isSafeInteger(rootEventId)) {
@@ -1459,6 +1471,8 @@ export function Chat({
         .get(route.sessionId)
         .then(({ session }) => {
           dispatch({ type: 'session-upsert', session: sessionFromWire(session) });
+          const openRoot = stateRef.current.openThreadRootId;
+          if (openRoot != null && session.threadRootEventId !== openRoot) dispatch({ type: 'close-thread' });
           const sessionChannelId = session.channelId || route.channelId || null;
           if (sessionChannelId) {
             if (stateRef.current.activeChannelId !== sessionChannelId) selectChannel(sessionChannelId);
@@ -2009,6 +2023,18 @@ export function Chat({
   const sidebarWsStatus =
     connectionKind === 'open' ? 'open' : connectionKind === 'connecting' ? 'connecting' : 'closed';
   const currentRoute = useMemo(() => parseInAppRoute(locationState.pathname), [locationState.pathname]);
+  const conversationMode = currentRoute?.sessionId ? 'work' : 'thread';
+  const attachedThreadSession = openThreadRoot
+    ? openThreadRoot.sessionId != null
+      ? state.sessions[openThreadRoot.sessionId]
+      : Object.values(state.sessions).find((session) => session.threadRootEventId === openThreadRoot.id)
+    : undefined;
+  // The conversation's identity must not depend on the mode: during a
+  // thread→work route flip paneSession settles a render later, and falling
+  // back to `undefined` would flip ConversationPanel's key (remount + a second
+  // SSE). The thread's attached session IS the same conversation — use it in
+  // both modes.
+  const conversationSession = paneSession ?? attachedThreadSession;
   const membersRouteOpen =
     currentRoute?.surface === 'chat' &&
     currentRoute.membersOpen === true &&
@@ -2037,6 +2063,30 @@ export function Chat({
   const activeCallChannelName = calls.activeCall
     ? labelForCallChannel(calls.activeCall.call, state.channels, me.id)
     : '';
+  const closeSidebar = useCallback(() => setIsSidebarOpen(false), []);
+  const selectFromSidebar = useCallback(
+    (channelId: string) => {
+      goToChannel(channelId);
+      setIsSidebarOpen(false);
+    },
+    [goToChannel],
+  );
+  const openFilesFromSidebar = useCallback(() => {
+    openFilesSurface();
+    setIsSidebarOpen(false);
+  }, [openFilesSurface]);
+  const openAgentsFromSidebar = useCallback(() => {
+    openAgentsSurface();
+    setIsSidebarOpen(false);
+  }, [openAgentsSurface]);
+  const openActivityFromSidebar = useCallback(() => {
+    openActivitySurface();
+    setIsSidebarOpen(false);
+  }, [openActivitySurface]);
+  const openSettingsFromSidebar = useCallback(() => {
+    openSettingsSurface();
+    setIsSidebarOpen(false);
+  }, [openSettingsSurface]);
   return (
     <div className="flex h-dvh overflow-hidden">
       <Sidebar
@@ -2047,37 +2097,22 @@ export function Chat({
         me={me}
         wsStatus={sidebarWsStatus}
         queueSync={queueSync}
-        onSelect={(channelId) => {
-          goToChannel(channelId);
-          setIsSidebarOpen(false);
-        }}
+        onSelect={selectFromSidebar}
         onSetMute={setMute}
         onSetArchived={setArchived}
         onSetPinned={setPinned}
         onCreateChannel={createChannel}
         onStartDm={startDm}
         activeSurface={mainSurface}
-        onOpenFiles={() => {
-          openFilesSurface();
-          setIsSidebarOpen(false);
-        }}
-        onOpenAgents={() => {
-          openAgentsSurface();
-          setIsSidebarOpen(false);
-        }}
+        onOpenFiles={openFilesFromSidebar}
+        onOpenAgents={openAgentsFromSidebar}
         // === mentions-activity additions ===
-        onOpenActivity={() => {
-          openActivitySurface();
-          setIsSidebarOpen(false);
-        }}
+        onOpenActivity={openActivityFromSidebar}
         activityCounts={activityCounts}
-        onOpenSettings={() => {
-          openSettingsSurface();
-          setIsSidebarOpen(false);
-        }}
+        onOpenSettings={openSettingsFromSidebar}
         onLogout={onLogout}
         isOpen={isSidebarOpen}
-        onClose={() => setIsSidebarOpen(false)}
+        onClose={closeSidebar}
         createChannelRequestSeq={createChannelRequestSeq}
         startDmRequestSeq={startDmRequestSeq}
       />
@@ -2498,60 +2533,115 @@ export function Chat({
         </main>
       )}
 
-      {paneSession ? (
-        <SessionPane
-          key={paneSession.id} // full reset (stream, seat anchors, tool state) per session
-          session={paneSession}
-          me={me}
-          layout={sessionPaneLayout}
-          onToggleFocus={toggleFocus}
-          watchers={paneWatchers}
-          typers={Object.values(sessionTyping[paneSession.id] ?? {}).map((t) => t.user)}
-          onComposerTyping={() => notifySessionTyping(paneSession.id)}
-          onClose={closeSession}
-          liveEvent={activityLiveEvent}
-          optimisticThreadSteers={paneOptimisticThreadSteers}
-          origin={
-            active && paneSession.channelId === active.id
-              ? {
-                  channelLabel:
-                    active.kind === 'dm' || active.kind === 'gdm' ? channelLabel(active, me.id) : `#${active.name}`,
-                  onOpenChannel: closeSession,
-                  ...(paneSession.threadRootEventId != null
-                    ? {
-                        onOpenThread: () => {
-                          const root = paneSession.threadRootEventId;
-                          if (root != null) openThread(root);
-                        },
-                      }
-                    : {}),
-                }
-              : undefined
+      {conversationSession || (openThreadRoot && active) ? (
+        <EntryQuoteApplyContextProvider
+          value={
+            active
+              ? { channelId: active.id, sessions: state.sessions, onSpawnNewAgent: openSpawnWithInitialTask }
+              : null
           }
-          onAnswerQuestion={answerSessionQuestion}
-          onSteer={steerSession}
-          queueUpload={queueUpload}
-          failedSteer={failedSteers[paneSession.id] ?? null}
-          onClearFailedSteer={() => clearFailedSteer(paneSession.id)}
-          onCancelSession={cancelSession}
-          onStopTurn={stopTurn}
-          failedCancel={failedCancels[paneSession.id] === true}
-          onClearFailedCancel={() => clearFailedCancel(paneSession.id)}
-          onSetArchived={(sessionId, archived, previousArchivedAt) =>
-            void setSessionArchived(sessionId, archived, previousArchivedAt).catch(() => {})
-          }
-          onSetPinned={(sessionId, pinned, previousPinned) =>
-            void setSessionPinned(sessionId, pinned, previousPinned).catch(() => {})
-          }
-          providerCredentials={providerCredentials}
-          githubConnection={githubConnection}
-          onConnectProvider={setProviderDialog}
-          onConnectGitHub={() => setConnectionDialog('github')}
-          agentProfiles={agentProfiles}
-          onDiscussEntry={openDiscussThread}
-          onApiError={onApiError}
-          initialEntryHandle={pendingEntryHandle?.startsWith('rec_') ? pendingEntryHandle : null}
-        />
+        >
+          <ConversationPanel
+            key={conversationSession?.id ?? `thread:${openThreadRoot?.id ?? 'none'}`}
+            mode={conversationMode}
+            session={
+              conversationSession
+                ? {
+                    session: conversationSession,
+                    me,
+                    layout: sessionPaneLayout,
+                    onToggleFocus: toggleFocus,
+                    watchers: state.presence[`session:${conversationSession.id}`] ?? paneWatchers,
+                    typers: Object.values(sessionTyping[conversationSession.id] ?? {}).map((t) => t.user),
+                    onComposerTyping: () => notifySessionTyping(conversationSession.id),
+                    onClose: closeSession,
+                    liveEvent: activityLiveEvent,
+                    optimisticThreadSteers: paneOptimisticThreadSteers,
+                    origin:
+                      active && conversationSession.channelId === active.id
+                        ? {
+                            channelLabel:
+                              active.kind === 'dm' || active.kind === 'gdm'
+                                ? channelLabel(active, me.id)
+                                : `#${active.name}`,
+                            onOpenChannel: closeSession,
+                            ...(conversationSession.threadRootEventId != null
+                              ? {
+                                  onOpenThread: () => {
+                                    const root = conversationSession.threadRootEventId;
+                                    if (root != null) openThread(root);
+                                  },
+                                }
+                              : {}),
+                          }
+                        : undefined,
+                    onAnswerQuestion: answerSessionQuestion,
+                    onSteer: steerSession,
+                    queueUpload,
+                    failedSteer: failedSteers[conversationSession.id] ?? null,
+                    onClearFailedSteer: () => clearFailedSteer(conversationSession.id),
+                    onCancelSession: cancelSession,
+                    onStopTurn: stopTurn,
+                    failedCancel: failedCancels[conversationSession.id] === true,
+                    onClearFailedCancel: () => clearFailedCancel(conversationSession.id),
+                    onSetArchived: (sessionId, archived, previousArchivedAt) =>
+                      void setSessionArchived(sessionId, archived, previousArchivedAt).catch(() => {}),
+                    onSetPinned: (sessionId, pinned, previousPinned) =>
+                      void setSessionPinned(sessionId, pinned, previousPinned).catch(() => {}),
+                    providerCredentials,
+                    githubConnection,
+                    onConnectProvider: setProviderDialog,
+                    onConnectGitHub: () => setConnectionDialog('github'),
+                    agentProfiles,
+                    onDiscussEntry: openDiscussThread,
+                    onApiError,
+                    initialEntryHandle: pendingEntryHandle?.startsWith('rec_') ? pendingEntryHandle : null,
+                  }
+                : undefined
+            }
+            thread={
+              openThreadRoot && active
+                ? {
+                    root: openThreadRoot,
+                    replies: threadReplies,
+                    loaded: threadLoaded,
+                    sessions: state.sessions,
+                    spectators,
+                    meId: me.id,
+                    meHandle: me.handle,
+                    mentionContext: {
+                      channelId: active.id,
+                      includeSpecials: active.kind !== 'dm' && active.kind !== 'gdm',
+                      publicChannel: active.kind === 'public',
+                    },
+                    channelLabel:
+                      active.kind === 'dm' || active.kind === 'gdm' ? channelLabel(active, me.id) : `#${active.name}`,
+                    onClose: () =>
+                      goToRoute({ surface: 'chat', channelId: active.id, sessionId: null, focusSession: false }),
+                    onSend: (text, attachments, attachmentRefs, voice, broadcast) =>
+                      send(active.id, text, openThreadRoot.id!, attachments, attachmentRefs, voice, broadcast),
+                    onAgentSend: (request, text, attachments, attachmentRefs) =>
+                      sendAgent(active.id, request, text, attachments, attachmentRefs),
+                    queueUpload,
+                    onOpenSession: openSession,
+                    onRetry: retry,
+                    onEdit: editMessage,
+                    onDelete: removeMessage,
+                    onReact: reactToMessage,
+                    resolveUser: resolveActiveUser,
+                    onMarkupEntry: (handle, message) => void openMarkupReply(handle, message),
+                    draftKey: threadDraftKey,
+                    initialDraft: drafts[threadDraftKey] ?? '',
+                    initialDraftAgentIntent: draftAgentIntents[threadDraftKey] ?? false,
+                    onDraftChange: saveDraft,
+                    onDraftPersisted: enqueueDraft,
+                    onDraftTouched: markDraftTouched,
+                    previewEntryLinks: true,
+                  }
+                : undefined
+            }
+          />
+        </EntryQuoteApplyContextProvider>
       ) : state.openSessionId ? (
         <aside
           className={`flex min-w-0 flex-col border-l border-edge bg-surface ${
@@ -2588,53 +2678,6 @@ export function Chat({
             <div className="flex flex-1 items-center justify-center text-sm text-fg-muted">Loading session…</div>
           )}
         </aside>
-      ) : openThreadRoot && active ? (
-        <div className="contents">
-          <EntryQuoteApplyContextProvider
-            value={{ channelId: active.id, sessions: state.sessions, onSpawnNewAgent: openSpawnWithInitialTask }}
-          >
-            <ThreadPanel
-              key={openThreadRoot.id ?? 'pending'}
-              root={openThreadRoot}
-              replies={threadReplies}
-              loaded={threadLoaded}
-              sessions={state.sessions}
-              spectators={spectators}
-              meId={me.id}
-              meHandle={me.handle}
-              mentionContext={{
-                channelId: active.id,
-                includeSpecials: active.kind !== 'dm' && active.kind !== 'gdm',
-                publicChannel: active.kind === 'public',
-              }}
-              channelLabel={
-                active.kind === 'dm' || active.kind === 'gdm' ? channelLabel(active, me.id) : `#${active.name}`
-              }
-              onClose={() => goToRoute({ surface: 'chat', channelId: active.id, sessionId: null, focusSession: false })}
-              onSend={(text, attachments, attachmentRefs, voice, broadcast) =>
-                send(active.id, text, openThreadRoot.id!, attachments, attachmentRefs, voice, broadcast)
-              }
-              onAgentSend={(request, text, attachments, attachmentRefs) =>
-                sendAgent(active.id, request, text, attachments, attachmentRefs)
-              }
-              queueUpload={queueUpload}
-              onOpenSession={openSession}
-              onRetry={retry}
-              onEdit={editMessage}
-              onDelete={removeMessage}
-              onReact={reactToMessage}
-              resolveUser={resolveActiveUser}
-              onMarkupEntry={(handle, message) => void openMarkupReply(handle, message)}
-              draftKey={threadDraftKey}
-              initialDraft={drafts[threadDraftKey] ?? ''}
-              initialDraftAgentIntent={draftAgentIntents[threadDraftKey] ?? false}
-              onDraftChange={saveDraft}
-              onDraftPersisted={enqueueDraft}
-              onDraftTouched={markDraftTouched}
-              previewEntryLinks
-            />
-          </EntryQuoteApplyContextProvider>
-        </div>
       ) : (
         active &&
         hasChannelSessions && (

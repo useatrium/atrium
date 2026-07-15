@@ -1,5 +1,6 @@
 import {
   useEffect,
+  memo,
   useMemo,
   useCallback,
   useRef,
@@ -52,7 +53,7 @@ function sidebarItemClass(active: boolean, level: UnreadLevel | false, muted = f
   }`;
 }
 
-export function Sidebar({
+function SidebarImpl({
   workspaceName,
   channels,
   activeChannelId,
@@ -657,3 +658,5 @@ export function Sidebar({
     </>
   );
 }
+
+export const Sidebar = memo(SidebarImpl);
