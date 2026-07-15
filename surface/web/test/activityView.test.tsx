@@ -4,6 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { formatExactTimestamp, type ActivityItem, type WireEvent } from '@atrium/surface-client';
 import { ActivityView, partitionActivity } from '../src/components/ActivityView';
+import type { Session } from '../src/sessions/types';
 
 const apiMock = vi.hoisted(() => ({
   getActivity: vi.fn(),
@@ -64,6 +65,33 @@ function activityResponse(
     lastReadEventId: opts.lastReadEventId ?? '0',
     unreadExceptionIds: opts.unreadExceptionIds ?? [],
     counts: { attention: opts.attention ?? 0, unread: opts.unread ?? items.length },
+  };
+}
+
+function session(overrides: Partial<Session> = {}): Session {
+  return {
+    id: 's-1',
+    workspaceId: 'ws-1',
+    channelId: 'ch-agent',
+    threadRootEventId: 1,
+    title: 'Deploy assistant',
+    status: 'running',
+    harness: 'codex',
+    spawnedBy: 'u-me',
+    driverId: 'u-me',
+    pendingSeatRequests: [],
+    suggestions: [],
+    answerProposals: [],
+    seatEvents: [],
+    costUsd: 0,
+    resultText: null,
+    createdAt: '2026-07-02T10:00:00.000Z',
+    completedAt: null,
+    archivedAt: null,
+    pinned: false,
+    lastEventId: 1,
+    permalink: '/s/s-1',
+    ...overrides,
   };
 }
 
@@ -160,7 +188,7 @@ describe('ActivityView', () => {
     render(<ActivityView onSelectChannel={onSelectChannel} onOpenSession={onOpenSession} />);
 
     expect(await screen.findByText('Agent needs your input')).toBeTruthy();
-    expect(screen.getByRole('heading', { name: 'Needs attention · 1' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Needs you · 1' })).toBeTruthy();
     expect(screen.getByRole('heading', { name: 'Activity' })).toBeTruthy();
     expect(screen.getByText('Alice mentioned you')).toBeTruthy();
     expect(screen.getByText('@me').closest('strong')).toBeTruthy();
@@ -207,10 +235,11 @@ describe('ActivityView', () => {
 
     render(<ActivityView onSelectChannel={vi.fn()} onOpenSession={vi.fn()} onCountsChange={onCountsChange} />);
 
-    await screen.findByText('Build docs failed');
+    await screen.findAllByText('Build docs failed');
+    // One unread item → one dot: the pinned failure renders in Needs you only.
     expect(screen.getAllByLabelText('Unread')).toHaveLength(1);
-    expect(screen.getByRole('tab', { name: 'Inbox' })).toBeTruthy();
-    expect(screen.getByRole('tab', { name: 'Done' })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: 'Inbox · 2' })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: 'Reviewed · 0' })).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', { name: 'Mark all read' }));
 
@@ -220,30 +249,127 @@ describe('ActivityView', () => {
     await waitFor(() => expect(apiMock.getActivity).toHaveBeenCalledTimes(2));
   });
 
-  it('hides completions under Done until the Done filter is selected', async () => {
+  it('keeps unread completions in To review, then moves them to Reviewed after opening', async () => {
+    const rows = [
+      activityItem({
+        eventId: '20',
+        kind: 'session_completed',
+        sessionTitle: 'Ship notes',
+        snippet: 'Done shipping',
+      }),
+      activityItem({ eventId: '19', kind: 'mention', snippet: 'see this' }),
+    ];
+    apiMock.getActivity
+      .mockResolvedValueOnce(activityResponse(rows, { lastReadEventId: '0', unread: 2 }))
+      .mockResolvedValue(activityResponse(rows, { lastReadEventId: '20', unread: 0 }));
+    apiMock.markActivityItemRead.mockResolvedValue({ lastReadEventId: '20', unreadExceptionIds: [] });
+    apiMock.messages.mockResolvedValue({
+      events: [{ id: 20, payload: { sessionId: 's-completed' } }],
+      hasMore: false,
+    });
+
+    render(<ActivityView onSelectChannel={vi.fn()} onOpenSession={vi.fn()} />);
+
+    expect(await screen.findByText('Alice mentioned you')).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'To review · 1' })).toBeTruthy();
+    fireEvent.click(screen.getByText(/Ship notes · completed/));
+    await waitFor(() => expect(apiMock.markActivityItemRead).toHaveBeenCalledWith(20));
+    await waitFor(() => expect(screen.queryByRole('heading', { name: 'To review · 1' })).toBeNull());
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Reviewed · 1' }));
+    expect(await screen.findByText(/Ship notes · completed/)).toBeTruthy();
+    expect(screen.queryByText('Alice mentioned you')).toBeNull();
+  });
+
+  it('never shelves a Needs-you-pinned failure under To review as well', async () => {
+    const rows = [
+      activityItem({
+        eventId: '30',
+        kind: 'session_failed',
+        sessionId: 's-pinned-fail',
+        sessionTitle: 'Broken deploy',
+        attention: true,
+      }),
+      activityItem({
+        eventId: '29',
+        kind: 'session_completed',
+        sessionId: 's-quiet-done',
+        sessionTitle: 'Quiet cleanup',
+        snippet: 'All tidy',
+      }),
+    ];
+    apiMock.getActivity.mockResolvedValue(activityResponse(rows, { lastReadEventId: '0', attention: 1, unread: 2 }));
+
+    render(<ActivityView onSelectChannel={vi.fn()} onOpenSession={vi.fn()} />);
+
+    expect(await screen.findByRole('heading', { name: 'Needs you · 1' })).toBeTruthy();
+    // The pinned failure renders exactly once — in Needs you, not To review.
+    expect(screen.getByRole('heading', { name: 'To review · 1' })).toBeTruthy();
+    expect(screen.getAllByText(/Broken deploy failed/)).toHaveLength(1);
+    expect(screen.getByText(/Quiet cleanup · completed/)).toBeTruthy();
+  });
+
+  it('renders the three Inbox shelves from feed and live sessions, with terminal archive actions', async () => {
+    const onArchiveSession = vi.fn();
     apiMock.getActivity.mockResolvedValue(
       activityResponse(
         [
           activityItem({
             eventId: '20',
             kind: 'session_completed',
-            sessionTitle: 'Ship notes',
-            snippet: 'Done shipping',
+            sessionId: 's-completed',
+            sessionTitle: 'Finished notes',
+            snippet: 'Result excerpt',
           }),
-          activityItem({ eventId: '19', kind: 'mention', snippet: 'see this' }),
         ],
-        { lastReadEventId: '0', unread: 2 },
+        { lastReadEventId: '0', unread: 1 },
       ),
     );
 
-    render(<ActivityView onSelectChannel={vi.fn()} onOpenSession={vi.fn()} />);
+    render(
+      <ActivityView
+        onSelectChannel={vi.fn()}
+        onOpenSession={vi.fn()}
+        onArchiveSession={onArchiveSession}
+        channelNames={{ 'ch-agent': 'agents' }}
+        sessions={{
+          's-running': session({
+            id: 's-running',
+            title: 'Live deploy',
+            latestActivity: { summary: 'Running tests', at: '2026-07-02T10:10:00.000Z' },
+          }),
+          's-completed': session({
+            id: 's-completed',
+            title: 'Finished notes',
+            status: 'completed',
+            completedAt: '2026-07-02T10:02:00.000Z',
+          }),
+        }}
+        liveAttention={[
+          activityItem({
+            eventId: 'live:s-running',
+            kind: 'agent_question',
+            sessionId: 's-running',
+            sessionTitle: 'Live deploy',
+            snippet: 'Approve deploy?',
+            attention: true,
+            unread: true,
+          }),
+        ]}
+      />,
+    );
 
-    expect(await screen.findByText('Alice mentioned you')).toBeTruthy();
-    expect(screen.queryByText(/Ship notes · completed/)).toBeNull();
+    expect(await screen.findByRole('heading', { name: 'Needs you · 1' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Running · 1' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'To review · 1' })).toBeTruthy();
+    expect(screen.getByText('Running tests')).toBeTruthy();
+    expect(screen.getByRole('tab', { name: 'Inbox · 2' })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: 'Unread · 2' })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: 'Reviewed · 0' })).toBeTruthy();
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Done' }));
-    expect(await screen.findByText(/Ship notes · completed/)).toBeTruthy();
-    expect(screen.queryByText('Alice mentioned you')).toBeNull();
+    const actions = screen.getByRole('button', { name: 'Actions for Finished notes · completed' });
+    fireEvent.keyDown(actions, { key: 'Enter' });
+    expect(await screen.findByRole('menuitem', { name: 'Archive session' })).toBeTruthy();
   });
 
   // Synthetic `live:<sessionId>` rows have no feed event behind them, so every

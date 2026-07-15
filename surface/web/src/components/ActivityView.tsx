@@ -2,16 +2,20 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   activityKindMarker,
   formatExactTimestamp,
+  formatOutcome,
   formatRelativeTimestamp,
+  formatWaiting,
   isActivityUnread,
   matchesActivityFilter,
+  matchesActivitySource,
   type ActivityCounts,
   type ActivityFeedFilter,
   type ActivityItem,
+  type ActivitySourceFilter,
   type WireEvent,
 } from '@atrium/surface-client';
 import { api } from '../api';
-import type { Session } from '../sessions/types';
+import { isTerminalSessionStatus, type Session } from '../sessions/types';
 import { Menu, MenuContent, MenuItem, MenuTrigger } from './a11y';
 import { CompactMarkdownText } from './MessageText';
 
@@ -20,8 +24,14 @@ const ATTENTION_KINDS = new Set<ActivityItem['kind']>(['agent_question', 'agent_
 const FILTERS: Array<{ id: ActivityFeedFilter; label: string }> = [
   { id: 'inbox', label: 'Inbox' },
   { id: 'unread', label: 'Unread' },
-  { id: 'done', label: 'Done' },
+  { id: 'done', label: 'Reviewed' },
   { id: 'all', label: 'All' },
+];
+
+const SOURCE_FILTERS: Array<{ id: ActivitySourceFilter; label: string }> = [
+  { id: 'all', label: 'All' },
+  { id: 'agents', label: 'Agents' },
+  { id: 'people', label: 'People' },
 ];
 
 function titleFor(item: ActivityItem): string {
@@ -82,7 +92,7 @@ export function partitionActivity(items: readonly ActivityItem[]): {
   const history: ActivityItem[] = [];
 
   for (const item of items) {
-    const canPin = ATTENTION_KINDS.has(item.kind) && item.attention;
+    const canPin = (ATTENTION_KINDS.has(item.kind) || isSyntheticRow(item)) && item.attention;
     if (!canPin) {
       history.push(item);
       continue;
@@ -129,6 +139,17 @@ function isSyntheticRow(item: ActivityItem): boolean {
   return parseEventId(item.eventId) == null;
 }
 
+function isTerminalActivity(item: ActivityItem): boolean {
+  return item.kind === 'session_completed' || item.kind === 'session_failed';
+}
+
+function outcomeFor(item: ActivityItem, session?: Session): string | null {
+  if (!isTerminalActivity(item)) return null;
+  const status = item.kind === 'session_completed' ? 'completed' : 'failed';
+  if (!session?.completedAt) return null;
+  return formatOutcome(status, new Date(session.completedAt).getTime() - new Date(session.createdAt).getTime());
+}
+
 /** What actually makes a synthetic row go away — shown where its ⋯ menu would be. */
 function clearsWhenLabel(item: ActivityItem): string {
   return item.kind === 'agent_auth' ? 'Clears when reconnected' : 'Clears when answered';
@@ -142,6 +163,8 @@ function ActivityRow({
   onActivate,
   onMarkRead,
   onMarkUnread,
+  session,
+  onArchiveSession,
 }: {
   item: ActivityItem;
   attention: boolean;
@@ -151,6 +174,8 @@ function ActivityRow({
   onActivate: (item: ActivityItem) => void;
   onMarkRead: (item: ActivityItem) => void;
   onMarkUnread: (item: ActivityItem) => void;
+  session?: Session;
+  onArchiveSession?: (session: Session) => void;
 }) {
   const relativeTimestamp = formatRelativeTimestamp(item.createdAt);
   const exactTimestamp = formatExactTimestamp(item.createdAt);
@@ -183,6 +208,11 @@ function ActivityRow({
                 </span>
               )}
             </span>
+            {outcomeFor(item, session) && (
+              <span className="mt-0.5 block truncate text-xs font-semibold text-fg-secondary">
+                {outcomeFor(item, session)}
+              </span>
+            )}
             <span className="mt-0.5 block truncate text-sm text-fg-secondary">
               <CompactMarkdownText text={item.snippet} />
             </span>
@@ -228,6 +258,9 @@ function ActivityRow({
                   Mark unread
                 </MenuItem>
               )}
+              {session && isTerminalSessionStatus(session.status) && session.archivedAt == null && onArchiveSession && (
+                <MenuItem onSelect={() => onArchiveSession(session)}>Archive session</MenuItem>
+              )}
             </MenuContent>
           </Menu>
         )}
@@ -251,6 +284,44 @@ function ActivityRow({
   );
 }
 
+function RunningSessionRow({
+  session,
+  channelName,
+  now,
+  onOpenSession,
+}: {
+  session: Session;
+  channelName: string;
+  now: number;
+  onOpenSession: (sessionId: string) => void;
+}) {
+  return (
+    <li>
+      <button
+        type="button"
+        onClick={() => onOpenSession(session.id)}
+        className="flex w-full items-start gap-3 px-4 py-3 text-left hover:bg-surface-overlay/70"
+      >
+        <span className="mt-0.5 text-xs text-success-text" aria-hidden="true">
+          ●
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="flex min-w-0 items-center gap-2">
+            <span className="truncate text-sm font-semibold text-fg">{session.title}</span>
+            <span className="shrink-0 text-2xs tabular-nums text-fg-faint">
+              {formatWaiting(now - new Date(session.createdAt).getTime())}
+            </span>
+          </span>
+          {session.latestActivity?.summary && (
+            <span className="mt-0.5 block truncate text-sm text-fg-secondary">{session.latestActivity.summary}</span>
+          )}
+          <span className="mt-1 block truncate text-xs text-fg-muted">#{channelName}</span>
+        </span>
+      </button>
+    </li>
+  );
+}
+
 export function ActivityView({
   onSelectChannel,
   onOpenSession,
@@ -258,6 +329,9 @@ export function ActivityView({
   refreshKey = 0,
   liveAttention = [],
   sessions = {},
+  channelNames = {},
+  onOpenAgents,
+  onArchiveSession,
   onCountsChange,
 }: {
   onSelectChannel: (channelId: string) => void;
@@ -275,6 +349,10 @@ export function ActivityView({
   liveAttention?: ActivityItem[];
   /** Live session entities — needs-attention question rows point at them ("Answer →"). */
   sessions?: Record<string, Session>;
+  /** Channel labels for live session mirrors, supplied by Chat's channel state. */
+  channelNames?: Record<string, string>;
+  onOpenAgents?: () => void;
+  onArchiveSession?: (sessionId: string, previousArchivedAt: string | null) => void;
   onCountsChange?: (counts: ActivityCounts) => void;
 }) {
   const [items, setItems] = useState<ActivityItem[]>([]);
@@ -283,6 +361,9 @@ export function ActivityView({
   const [unreadExceptionIds, setUnreadExceptionIds] = useState<string[]>([]);
   const [counts, setCounts] = useState<ActivityCounts>({ attention: 0, unread: 0 });
   const [filter, setFilter] = useState<ActivityFeedFilter>('inbox');
+  const [source, setSource] = useState<ActivitySourceFilter>('all');
+  const [now, setNow] = useState(() => Date.now());
+  const [archivedSessionIds, setArchivedSessionIds] = useState<Set<string>>(() => new Set());
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [markingRead, setMarkingRead] = useState(false);
@@ -337,6 +418,11 @@ export function ActivityView({
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     const reconnected = refreshKey !== lastRefreshKeyRef.current;
@@ -505,33 +591,107 @@ export function ActivityView({
     return extra.length > 0 ? [...extra, ...items] : items;
   }, [items, liveAttention]);
 
-  const { attention, history } = useMemo(() => partitionActivity(merged), [merged]);
+  const visibleItems = useMemo(
+    () =>
+      merged.filter((item) => {
+        if (!item.sessionId) return true;
+        if (archivedSessionIds.has(item.sessionId)) return false;
+        return sessions[item.sessionId]?.archivedAt == null;
+      }),
+    [archivedSessionIds, merged, sessions],
+  );
+  const { attention, history } = useMemo(() => partitionActivity(visibleItems), [visibleItems]);
 
   const filteredAttention = useMemo(
     () =>
-      attention.filter((item) =>
-        matchesActivityFilter(item, filter, isActivityUnread(item, lastReadEventId, exceptionSet)),
+      attention.filter(
+        (item) =>
+          matchesActivityFilter(item, filter, isActivityUnread(item, lastReadEventId, exceptionSet)) &&
+          matchesActivitySource(item, source),
       ),
-    [attention, exceptionSet, filter, lastReadEventId],
+    [attention, exceptionSet, filter, lastReadEventId, source],
   );
   const filteredHistory = useMemo(
     () =>
-      history.filter((item) =>
-        matchesActivityFilter(item, filter, isActivityUnread(item, lastReadEventId, exceptionSet)),
+      history.filter(
+        (item) =>
+          matchesActivityFilter(item, filter, isActivityUnread(item, lastReadEventId, exceptionSet)) &&
+          matchesActivitySource(item, source),
       ),
-    [exceptionSet, filter, history, lastReadEventId],
+    [exceptionSet, filter, history, lastReadEventId, source],
+  );
+  const needsYou = useMemo(
+    () => [...filteredAttention].sort((a, b) => a.createdAt.localeCompare(b.createdAt)),
+    [filteredAttention],
+  );
+  const runningSessions = useMemo(
+    () =>
+      source === 'people'
+        ? []
+        : Object.values(sessions).filter(
+            (session) => !isTerminalSessionStatus(session.status) && session.archivedAt == null,
+          ),
+    [sessions, source],
+  );
+  // A failed run that is pinned in Needs you must not ALSO shelve under To
+  // review — one session, one shelf. Partition already routed pinned items
+  // into `attention`, so derive To review from `history` and drop any item
+  // whose session currently holds a Needs-you pin.
+  const pinnedSessionIds = useMemo(
+    () => new Set(attention.map((item) => item.sessionId).filter((id): id is string => id != null)),
+    [attention],
+  );
+  const toReview = useMemo(
+    () =>
+      history.filter(
+        (item) =>
+          isTerminalActivity(item) &&
+          !(item.sessionId != null && pinnedSessionIds.has(item.sessionId)) &&
+          isActivityUnread(item, lastReadEventId, exceptionSet) &&
+          matchesActivitySource(item, source),
+      ),
+    [exceptionSet, history, lastReadEventId, pinnedSessionIds, source],
+  );
+  const historyWithoutReview = useMemo(
+    () =>
+      filter === 'inbox'
+        ? filteredHistory.filter(
+            (item) => !(isTerminalActivity(item) && isActivityUnread(item, lastReadEventId, exceptionSet)),
+          )
+        : filteredHistory,
+    [exceptionSet, filter, filteredHistory, lastReadEventId],
+  );
+  const tabCount = useCallback(
+    (tab: ActivityFeedFilter) =>
+      visibleItems.filter((item) => {
+        const unread = isActivityUnread(item, lastReadEventId, exceptionSet);
+        return matchesActivityFilter(item, tab, unread) && matchesActivitySource(item, source);
+      }).length,
+    [exceptionSet, lastReadEventId, source, visibleItems],
+  );
+
+  const archiveSession = useCallback(
+    (session: Session) => {
+      setArchivedSessionIds((ids) => new Set(ids).add(session.id));
+      onArchiveSession?.(session.id, session.archivedAt);
+    },
+    [onArchiveSession],
   );
 
   if (loading) {
     return <div className="flex flex-1 items-center justify-center text-sm text-fg-muted">Loading attention...</div>;
   }
 
-  const empty = filteredAttention.length === 0 && filteredHistory.length === 0;
+  const showShelves = filter === 'inbox';
+  const empty =
+    (showShelves ? needsYou.length === 0 && runningSessions.length === 0 && toReview.length === 0 : true) &&
+    historyWithoutReview.length === 0;
+  const hasLiveContent = runningSessions.length > 0 || liveAttention.length > 0;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-surface">
       <div className="flex flex-wrap items-center gap-2 border-b border-edge px-4 py-2">
-        <h2 className="text-sm font-bold text-fg">Attention</h2>
+        <h1 className="text-sm font-bold text-fg">Inbox</h1>
         <div
           role="tablist"
           aria-label="Activity filters"
@@ -550,11 +710,27 @@ export function ActivityView({
                   selected ? 'bg-surface-overlay text-fg shadow-sm' : 'text-fg-muted hover:text-fg-body'
                 }`}
               >
-                {entry.label}
+                {entry.id === 'all' ? entry.label : `${entry.label} · ${tabCount(entry.id)}`}
               </button>
             );
           })}
         </div>
+        <fieldset className="flex items-center gap-1 rounded-md border border-edge bg-surface-raised/30 p-0.5">
+          <legend className="sr-only">Activity source</legend>
+          {SOURCE_FILTERS.map((entry) => (
+            <button
+              key={entry.id}
+              type="button"
+              aria-pressed={source === entry.id}
+              onClick={() => setSource(entry.id)}
+              className={`rounded px-2 py-0.5 text-2xs font-semibold ${
+                source === entry.id ? 'bg-surface-overlay text-fg shadow-sm' : 'text-fg-muted hover:text-fg-body'
+              }`}
+            >
+              {entry.label}
+            </button>
+          ))}
+        </fieldset>
         <button
           type="button"
           onClick={() => void markAllRead()}
@@ -570,10 +746,10 @@ export function ActivityView({
           onClick={() => void load()}
           className="mx-4 mt-3 rounded-md border border-danger/30 bg-danger/10 px-3 py-2 text-left text-sm text-danger hover:bg-danger/15"
         >
-          Attention couldn&apos;t load. Click to retry.
+          Inbox couldn&apos;t load. Click to retry.
         </button>
       )}
-      {items.length === 0 && !error ? (
+      {items.length === 0 && !hasLiveContent && !error && filter === 'inbox' && source === 'all' ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-1 px-6 text-center">
           <p className="text-sm font-semibold text-fg">You&apos;re all caught up</p>
           <p className="max-w-md text-sm text-fg-muted">
@@ -584,29 +760,29 @@ export function ActivityView({
         <div className="flex flex-1 flex-col items-center justify-center gap-1 px-6 text-center">
           <p className="text-sm font-semibold text-fg">
             {filter === 'done'
-              ? 'No completed sessions'
+              ? 'No reviewed sessions'
               : filter === 'unread'
                 ? 'No unread activity'
                 : 'Nothing in this view'}
           </p>
           <p className="max-w-md text-sm text-fg-muted">
             {filter === 'done'
-              ? 'Completed agent work lives under Done. Switch to Inbox or All for the rest.'
+              ? 'Completed and failed sessions appear here after you review them.'
               : 'Try another filter, or mark items unread to keep them here.'}
           </p>
         </div>
       ) : (
         <div className="min-h-0 flex-1 overflow-y-auto">
-          {filteredAttention.length > 0 && (
-            <section aria-labelledby="activity-needs-attention">
+          {showShelves && needsYou.length > 0 && (
+            <section aria-labelledby="inbox-needs-you">
               <h2
-                id="activity-needs-attention"
+                id="inbox-needs-you"
                 className="px-4 pb-1 pt-3 text-2xs font-semibold uppercase tracking-wider text-warning-text"
               >
-                Needs attention · {filteredAttention.length}
+                Needs you · {needsYou.length}
               </h2>
               <ul className="divide-y divide-edge border-b border-edge">
-                {filteredAttention.map((item) => (
+                {needsYou.map((item) => (
                   <ActivityRow
                     key={`${item.kind}:${item.eventId}`}
                     item={item}
@@ -618,21 +794,80 @@ export function ActivityView({
                     onActivate={(target) => void activate(target)}
                     onMarkRead={(target) => void markItemRead(target)}
                     onMarkUnread={(target) => void markItemUnread(target)}
+                    session={item.sessionId ? sessions[item.sessionId] : undefined}
+                    onArchiveSession={archiveSession}
                   />
                 ))}
               </ul>
             </section>
           )}
-          {filteredHistory.length > 0 && (
+          {showShelves && runningSessions.length > 0 && (
+            <section aria-labelledby="inbox-running">
+              <h2
+                id="inbox-running"
+                className="px-4 pb-1 pt-3 text-2xs font-semibold uppercase tracking-wider text-fg-muted"
+              >
+                Running · {runningSessions.length}
+              </h2>
+              <ul className="divide-y divide-edge border-b border-edge">
+                {runningSessions.map((session) => (
+                  <RunningSessionRow
+                    key={session.id}
+                    session={session}
+                    channelName={channelNames[session.channelId] ?? session.channelId}
+                    now={now}
+                    onOpenSession={onOpenSession}
+                  />
+                ))}
+              </ul>
+            </section>
+          )}
+          {showShelves && toReview.length > 0 && (
+            <section aria-labelledby="inbox-to-review">
+              <h2
+                id="inbox-to-review"
+                className="px-4 pb-1 pt-3 text-2xs font-semibold uppercase tracking-wider text-fg-muted"
+              >
+                To review · {toReview.length}
+              </h2>
+              <ul className="divide-y divide-edge border-b border-edge">
+                {toReview.map((item) => (
+                  <ActivityRow
+                    key={`review:${item.kind}:${item.eventId}`}
+                    item={item}
+                    attention={false}
+                    unread={isActivityUnread(item, lastReadEventId, exceptionSet)}
+                    onActivate={(target) => void activate(target)}
+                    onMarkRead={(target) => void markItemRead(target)}
+                    onMarkUnread={(target) => void markItemUnread(target)}
+                    session={item.sessionId ? sessions[item.sessionId] : undefined}
+                    onArchiveSession={archiveSession}
+                  />
+                ))}
+              </ul>
+            </section>
+          )}
+          {showShelves && onOpenAgents && (
+            <div className="border-b border-edge px-4 py-3">
+              <button
+                type="button"
+                onClick={onOpenAgents}
+                className="text-xs font-semibold text-accent-text hover:underline"
+              >
+                All sessions →
+              </button>
+            </div>
+          )}
+          {historyWithoutReview.length > 0 && (
             <section aria-labelledby="activity-history">
               <h2
                 id="activity-history"
                 className="px-4 pb-1 pt-3 text-2xs font-semibold uppercase tracking-wider text-fg-muted"
               >
-                {filter === 'done' ? 'Done' : 'Activity'}
+                {filter === 'done' ? 'Reviewed' : 'Activity'}
               </h2>
               <ul className="divide-y divide-edge">
-                {filteredHistory.map((item) => (
+                {historyWithoutReview.map((item) => (
                   <ActivityRow
                     key={`${item.kind}:${item.eventId}`}
                     item={item}
@@ -641,6 +876,8 @@ export function ActivityView({
                     onActivate={(target) => void activate(target)}
                     onMarkRead={(target) => void markItemRead(target)}
                     onMarkUnread={(target) => void markItemUnread(target)}
+                    session={item.sessionId ? sessions[item.sessionId] : undefined}
+                    onArchiveSession={archiveSession}
                   />
                 ))}
               </ul>
