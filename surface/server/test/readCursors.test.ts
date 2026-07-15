@@ -64,6 +64,43 @@ async function post(cookie: string, channelId: string, text: string) {
 }
 
 describe('read cursors', () => {
+  it('includes the caller read cursor in raw and folded channel history', async () => {
+    const { cookie } = await login('alice', 'Alice');
+    const message = await post(cookie, fx.channelId, 'one');
+
+    const neverRead = await app.inject({
+      method: 'GET',
+      url: `/api/channels/${fx.channelId}/messages`,
+      headers: { cookie },
+    });
+    expect(neverRead.statusCode).toBe(200);
+    expect(neverRead.json().readCursor).toBe(0);
+
+    const marked = await app.inject({
+      method: 'POST',
+      url: `/api/channels/${fx.channelId}/read`,
+      headers: { cookie },
+      payload: { lastReadEventId: message.id },
+    });
+    expect(marked.statusCode).toBe(200);
+
+    const raw = await app.inject({
+      method: 'GET',
+      url: `/api/channels/${fx.channelId}/messages`,
+      headers: { cookie },
+    });
+    expect(raw.statusCode).toBe(200);
+    expect(raw.json().readCursor).toBe(message.id);
+
+    const folded = await app.inject({
+      method: 'GET',
+      url: `/api/channels/${fx.channelId}/messages?wire=folded`,
+      headers: { cookie },
+    });
+    expect(folded.statusCode).toBe(200);
+    expect(folded.json().readCursor).toBe(message.id);
+  });
+
   it('advances but never regresses and notifies the user sockets only', async () => {
     const { cookie, user } = await login('alice', 'Alice');
     const { user: other } = await login('ben', 'Ben');

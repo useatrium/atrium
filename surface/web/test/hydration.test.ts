@@ -45,7 +45,7 @@ function channel(id: string, name: string, latestEventId: number, lastReadEventI
 describe('cached timeline hydration', () => {
   it('repairs a cached timeline whose last event is behind the persisted cursor', async () => {
     const dispatch = vi.fn<(action: AppAction) => void>();
-    const latest = { events: [wire(9)], hasMore: true };
+    const latest = { events: [wire(9)], hasMore: true, readCursor: 8 };
     const fetchLatest = vi.fn(async () => latest);
     const onRepaired = vi.fn();
 
@@ -59,12 +59,15 @@ describe('cached timeline hydration', () => {
     });
 
     expect(fetchLatest).toHaveBeenCalledWith('ch-1');
-    expect(dispatch).toHaveBeenCalledWith({
-      type: 'history-reset',
-      channelId: 'ch-1',
-      events: latest.events,
-      hasMore: latest.hasMore,
-    });
+    expect(dispatch.mock.calls.map(([action]) => action)).toEqual([
+      { type: 'server-read-cursor', channelId: 'ch-1', lastReadEventId: 8 },
+      {
+        type: 'history-reset',
+        channelId: 'ch-1',
+        events: latest.events,
+        hasMore: latest.hasMore,
+      },
+    ]);
     expect(dispatch).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'history-loaded' }));
     expect(onRepaired).toHaveBeenCalledWith('ch-1', latest);
   });
@@ -183,7 +186,7 @@ describe('cached timeline hydration', () => {
       },
       lastModifierId: 11,
     };
-    const fetchDelta = vi.fn(async () => ({ events: [folded], hasMore: false, nextCursor: 12 }));
+    const fetchDelta = vi.fn(async () => ({ events: [folded], hasMore: false, nextCursor: 12, readCursor: 4 }));
 
     await hydrateCachedTimelines({
       timelines: { 'ch-1': { events: [wire(4)], hasMore: false } },
@@ -194,7 +197,12 @@ describe('cached timeline hydration', () => {
     });
 
     expect(fetchDelta).toHaveBeenCalledWith('ch-1', 4);
-    expect(dispatch).toHaveBeenCalledWith({
+    expect(dispatch).toHaveBeenNthCalledWith(2, {
+      type: 'server-read-cursor',
+      channelId: 'ch-1',
+      lastReadEventId: 4,
+    });
+    expect(dispatch).toHaveBeenNthCalledWith(3, {
       type: 'history-loaded',
       channelId: 'ch-1',
       events: [folded],
@@ -296,6 +304,23 @@ describe('cached timeline hydration', () => {
 
     expect(state).toBe(stateBeforeDelta);
     expect(dispatch).toHaveBeenCalledTimes(1);
+  });
+
+  it('adopts the server read cursor before a warm delta, including an empty delta', async () => {
+    const dispatch = vi.fn<(action: AppAction) => void>();
+
+    await hydrateCachedTimelines({
+      timelines: { 'ch-1': { events: [wire(4)], hasMore: false } },
+      syncCursor: 4,
+      dispatch,
+      fetchLatest: vi.fn(),
+      fetchDelta: vi.fn(async () => ({ events: [], hasMore: false, readCursor: 9 })),
+    });
+
+    expect(dispatch.mock.calls.map(([action]) => action)).toEqual([
+      { type: 'history-loaded', channelId: 'ch-1', events: [wire(4)], hasMore: false },
+      { type: 'server-read-cursor', channelId: 'ch-1', lastReadEventId: 9 },
+    ]);
   });
 
   it('keeps cached hydration complete when the warm delta fetch rejects', async () => {

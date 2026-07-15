@@ -207,7 +207,7 @@ describe('folded catch-up change feed', () => {
         headers: { cookie },
       });
       expect(legacyChannel.statusCode).toBe(200);
-      expect(legacyChannel.json()).toEqual(legacyChannelExpected);
+      expect(legacyChannel.json()).toEqual({ ...legacyChannelExpected, readCursor: 0 });
       expect(legacyChannel.json()).not.toHaveProperty('nextCursor');
       expect(legacyChannel.json().events).toHaveLength(1);
       expect(legacyChannel.json().events[0]).toMatchObject({ id: editId, type: 'message.edited' });

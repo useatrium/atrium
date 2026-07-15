@@ -105,6 +105,7 @@ export type AppAction =
        */
       source?: 'self' | 'remote';
     }
+  | { type: 'server-read-cursor'; channelId: string; lastReadEventId: number }
   | { type: 'mute-changed'; channelId: string; muted: boolean }
   | { type: 'channel-archive-changed'; channelId: string; archivedAt: string | null }
   | { type: 'channel-pin-changed'; channelId: string; pinned: boolean }
@@ -268,6 +269,25 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         remoteReadCursors,
         unread: { ...state.unread, [action.channelId]: false },
       };
+    }
+
+    case 'server-read-cursor': {
+      /** Does not touch unread. Callers must dispatch this before the history
+       * events from the same response so genuinely newer events can re-mark
+       * unread through their normal isNewMessage path instead of being masked
+       * by seenIds. */
+      const currentLastReadEventId = state.channels.find((c) => c.id === action.channelId)?.lastReadEventId ?? 0;
+      const channels = state.channels.map((c) =>
+        c.id === action.channelId && (c.lastReadEventId ?? 0) < action.lastReadEventId
+          ? { ...c, lastReadEventId: action.lastReadEventId }
+          : c,
+      );
+      const remoteReadCursors =
+        currentLastReadEventId < action.lastReadEventId &&
+        (state.remoteReadCursors[action.channelId] ?? 0) < action.lastReadEventId
+          ? { ...state.remoteReadCursors, [action.channelId]: action.lastReadEventId }
+          : state.remoteReadCursors;
+      return { ...state, channels, remoteReadCursors };
     }
 
     case 'mute-changed': {

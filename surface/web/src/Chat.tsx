@@ -902,6 +902,9 @@ export function Chat({
     await Promise.all(
       loaded.map(async ([channelId]) => {
         const latest = await api.messages(channelId, { limit: PAGE_SIZE });
+        if (typeof latest.readCursor === 'number' && latest.readCursor > 0) {
+          dispatch({ type: 'server-read-cursor', channelId, lastReadEventId: latest.readCursor });
+        }
         dispatch({
           type: 'history-reset',
           channelId,
@@ -1102,10 +1105,13 @@ export function Chat({
     if (!needsInitialLoad && !needsColdCounterRepair) return;
     api
       .messages(channelId, { limit: PAGE_SIZE })
-      .then(({ events, hasMore }) => {
+      .then(({ events, hasMore, readCursor }) => {
         // Skip if we lost access (kicked from a private channel) while the
         // fetch was in flight — avoids a ghost timeline.
         if (!stateRef.current.channels.some((c) => c.id === channelId)) return;
+        if (typeof readCursor === 'number' && readCursor > 0) {
+          dispatch({ type: 'server-read-cursor', channelId, lastReadEventId: readCursor });
+        }
         dispatch({
           type: needsColdCounterRepair ? 'history-reset' : 'history-loaded',
           channelId,
@@ -1127,8 +1133,11 @@ export function Chat({
     const expectedTimelineEpoch = stateRef.current.timelineEpochs[channelId] ?? 0;
     return api
       .messages(channelId, { beforeId: oldest.id, limit: PAGE_SIZE })
-      .then(({ events, hasMore }) => {
+      .then(({ events, hasMore, readCursor }) => {
         if ((stateRef.current.timelineEpochs[channelId] ?? 0) !== expectedTimelineEpoch) return;
+        if (typeof readCursor === 'number' && readCursor > 0) {
+          dispatch({ type: 'server-read-cursor', channelId, lastReadEventId: readCursor });
+        }
         dispatch({ type: 'history-loaded', channelId, events, hasMore, expectedTimelineEpoch });
         void eventCache.saveTimeline(channelId, events, hasMore).catch((err: unknown) => {
           console.warn('failed to cache earlier history', err);

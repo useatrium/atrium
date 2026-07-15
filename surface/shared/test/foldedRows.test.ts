@@ -274,6 +274,7 @@ describe('folded row application', () => {
     const timeline = mergeHistory(emptyTimeline, [posted, edited], { hasMoreBefore: false });
 
     expect(decoded).toEqual({ events: [posted], hasMore: false });
+    expect(decoded.readCursor).toBeUndefined();
     expect(timeline.main[0]).toMatchObject({ text: 'legacy edited', edited: true, lastModifierId: 2 });
     expect(timeline.lastEventId).toBe(2);
   });
