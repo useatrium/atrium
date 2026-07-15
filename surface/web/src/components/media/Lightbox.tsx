@@ -38,6 +38,8 @@ export type LightboxPanel = 'info' | 'history';
 
 const iconButtonClass =
   'grid size-8 max-md:size-11 place-items-center rounded-md border border-edge-strong bg-surface-overlay text-fg-secondary shadow-sm hover:bg-edge-strong hover:text-fg disabled:cursor-default disabled:text-fg-faint';
+// A fixed window makes preview request cost independent of viewport width.
+const FILMSTRIP_PRELOAD_RADIUS = 2;
 
 /** Viewport default for the side panel: info on desktop, closed on narrow
  * screens. URL-controlled hosts write this into the URL on open so the
@@ -87,6 +89,29 @@ function InfoRow({ label, value }: { label: string; value: string }) {
         {value}
       </dd>
     </>
+  );
+}
+
+function FilmstripPreview({ file, eager }: { file: PreviewFile; eager: boolean }) {
+  const [hydrated, setHydrated] = useState(eager);
+
+  useEffect(() => {
+    if (eager) setHydrated(true);
+  }, [eager]);
+
+  return (
+    <div className="size-full">
+      {hydrated ? (
+        <MediaPreview file={file} variant="tile" />
+      ) : (
+        <div className="flex size-full flex-col items-center justify-center gap-1 bg-surface-raised/40 px-2 text-center">
+          <span className="rounded border border-edge px-1.5 py-0.5 text-3xs uppercase tracking-wide text-fg-muted">
+            {kindLabel(effectiveMediaKind(file))}
+          </span>
+          <span className="max-w-full truncate text-3xs text-fg-faint">{file.name}</span>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -686,7 +711,7 @@ export function Lightbox({
             onClick={() => onIndexChange(itemIndex)}
             aria-label={`Open ${item.name}`}
           >
-            <MediaPreview file={item} variant="tile" />
+            <FilmstripPreview file={item} eager={Math.abs(itemIndex - index) <= FILMSTRIP_PRELOAD_RADIUS} />
           </button>
         ))}
       </footer>
