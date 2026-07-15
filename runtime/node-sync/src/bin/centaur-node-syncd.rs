@@ -560,6 +560,7 @@ mod linux_daemon {
         api_key: String,
         atrium_root: PathBuf,
         hydrate_artifacts: bool,
+        scoped_scan: bool,
         cas_dir: PathBuf,
         depcache_root: PathBuf,
         depcache_max_bytes: u64,
@@ -618,6 +619,7 @@ mod linux_daemon {
             ),
             atrium_root: non_empty_path(&env("NODE_SYNC_ATRIUM_ROOT"), "/atrium"),
             hydrate_artifacts: env_truthy(&env("NODE_SYNC_HYDRATE_ARTIFACTS")),
+            scoped_scan: env_truthy(&env("NODE_SYNC_SCOPED_SCAN")),
             cas_dir: non_empty_pathbuf(
                 &env("NODE_SYNC_CAS_DIR"),
                 overlays_root_for_defaults.join("cas"),
@@ -940,6 +942,7 @@ mod linux_daemon {
         let mut dirty = DirtySet::default();
         let mut local_dirty = DirtySessions::default();
         let mut shadow_states: HashMap<String, ShadowState> = HashMap::new();
+        let mut tree_states: HashMap<String, centaur_node_sync::scoped::TreeState> = HashMap::new();
         let mut watched_sessions = HashSet::new();
         let mut just_attached_sessions = HashSet::new();
         let mut last_reconcile: Option<Instant> = None;
@@ -976,6 +979,7 @@ mod linux_daemon {
                     last_forced_wip.retain(|session, _| active.contains(session));
                     local_dirty.retain_sessions(|session| active.contains(session));
                     shadow_states.retain(|session, _| active.contains(session));
+                    tree_states.retain(|session, _| active.contains(session));
 
                     for discovered in discovery.sessions {
                         current_atrium_keys.insert(discovered.atrium_session.clone());
@@ -1278,6 +1282,42 @@ mod linux_daemon {
                 ) || force_wip;
                 if should_scan {
                     let cleared_dirty = local_dirty.clear_for_scan(&session.session);
+                    let tree = tree_states.entry(session.session.clone()).or_default();
+                    // Scoped scans need: the flag, a seeded belief, a live watch
+                    // attachment, path-only dirt, and none of the full-scan
+                    // triggers (backstop reconcile, attach, remount, WIP force).
+                    let scoped_eligible = global.scoped_scan
+                        && tree.seeded()
+                        && !cleared_dirty.full
+                        && !cleared_dirty.paths.is_empty()
+                        && !watcher.is_always_scan(&session.session)
+                        && watched_sessions.contains(&session.session)
+                        && !local_reconcile_due
+                        && !just_attached_sessions.contains(&session.session)
+                        && !wip_remounted
+                        && !wip_restored
+                        && !force_wip;
+                    let plan = if scoped_eligible {
+                        // Dirty paths arrive absolute under the merged root; the
+                        // engine patches upper-relative paths (same rel space).
+                        let rels: Vec<PathBuf> = cleared_dirty
+                            .paths
+                            .iter()
+                            .filter_map(|path| {
+                                path.strip_prefix(&session.merged)
+                                    .ok()
+                                    .map(Path::to_path_buf)
+                            })
+                            .collect();
+                        if rels.is_empty() {
+                            ScanPlan::Full
+                        } else {
+                            ScanPlan::Scoped(rels)
+                        }
+                    } else {
+                        ScanPlan::Full
+                    };
+                    let scan_was_full = matches!(plan, ScanPlan::Full);
                     let scanned_entries = run_local_capture(
                         &global,
                         &session,
@@ -1286,22 +1326,26 @@ mod linux_daemon {
                         &mut client,
                         force_wip,
                         &mut wip_gate,
+                        &plan,
+                        tree,
                     );
                     match scanned_entries {
                         Some(entries) => {
-                            let shadow = shadow_states.entry(session.session.clone()).or_default();
-                            shadow_diff_scan(&session, shadow, &entries, &cleared_dirty);
+                            if scan_was_full && !global.scoped_scan {
+                                let shadow =
+                                    shadow_states.entry(session.session.clone()).or_default();
+                                shadow_diff_scan(&session, shadow, &entries, &cleared_dirty);
+                            }
                         }
                         None => {
-                            if cleared_dirty.any() {
-                                // Scan failed: put the dirt back so the next tick retries.
-                                if cleared_dirty.full {
-                                    local_dirty.mark(session.session.clone(), None);
-                                } else {
-                                    for path in cleared_dirty.paths {
-                                        local_dirty.mark(session.session.clone(), Some(path));
-                                    }
-                                }
+                            // Scan failed: degrade to full dirt so the next tick
+                            // retries with a whole-tree walk (a scoped patch may
+                            // have partially applied).
+                            if cleared_dirty.any() || !scan_was_full {
+                                local_dirty.mark(session.session.clone(), None);
+                            }
+                            if !scan_was_full {
+                                tree.clear();
                             }
                         }
                     }
@@ -1363,6 +1407,7 @@ mod linux_daemon {
         restore_repo_wip(session, state)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn run_local_capture(
         global: &GlobalConfig,
         session: &SessionConfig,
@@ -1371,8 +1416,10 @@ mod linux_daemon {
         client: &mut HttpAtriumClient,
         force_wip: bool,
         wip_gate: &mut WipGateState,
+        plan: &ScanPlan,
+        tree: &mut centaur_node_sync::scoped::TreeState,
     ) -> Option<Vec<RawEntry>> {
-        let raw_entries = outbound(global, session, state, echo, client);
+        let raw_entries = outbound(global, session, state, echo, client, plan, tree);
         warmcache_capture_if_needed(client, session, state, &global.depcache_root);
         capture_repo_wip(
             session,
@@ -2236,7 +2283,16 @@ mod linux_daemon {
         if state.hydrated {
             inbound(session, state, echo, lease, &mut client);
         }
-        let raw_entries = outbound(global, session, state, echo, &mut client);
+        let mut once_tree = centaur_node_sync::scoped::TreeState::default();
+        let raw_entries = outbound(
+            global,
+            session,
+            state,
+            echo,
+            &mut client,
+            &ScanPlan::Full,
+            &mut once_tree,
+        );
         warmcache_capture_if_needed(&mut client, session, state, &global.depcache_root);
         let wip_backstop_elapsed =
             last_forced_wip.is_none_or(|last| now.duration_since(last) >= WIP_FORCE_INTERVAL);
@@ -2378,19 +2434,57 @@ mod linux_daemon {
         }
     }
 
+    /// How this sweep obtains its entry list. `Full` walks the upper and
+    /// rebuilds the session's `TreeState`; `Scoped` patches the belief from
+    /// dirty rel-paths and synthesizes the full list from memory.
+    enum ScanPlan {
+        Full,
+        Scoped(Vec<PathBuf>),
+    }
+
+    /// Read this sweep's entries per the plan, keeping `tree` current. A
+    /// scoped failure returns Err so the caller can degrade to full dirt.
+    fn collect_entries(
+        session: &SessionConfig,
+        plan: &ScanPlan,
+        tree: &mut centaur_node_sync::scoped::TreeState,
+        canary: bool,
+    ) -> std::io::Result<Vec<RawEntry>> {
+        match plan {
+            ScanPlan::Full => {
+                let mut walked = fs_linux::read_upper_entries(&session.upper)?;
+                walked.retain(|entry| entry.rel_path.as_path() != Path::new(READY_MARKER_FILE));
+                if canary && tree.seeded() {
+                    let divergence = tree.divergence_from(&walked);
+                    if divergence > 0 {
+                        println!(
+                            "event=node_sync_scoped_scan_divergence session={} count={divergence}",
+                            session.session
+                        );
+                    }
+                }
+                tree.rebuild(&walked);
+                Ok(walked)
+            }
+            ScanPlan::Scoped(rels) => {
+                let source = centaur_node_sync::scoped::FsEntrySource::new(&session.upper);
+                tree.apply_dirty_paths(&source, rels)?;
+                Ok(tree.synthesized_entries())
+            }
+        }
+    }
+
     fn outbound(
         global: &GlobalConfig,
         session: &SessionConfig,
         state: &mut DaemonState,
         echo: &mut EchoGuard,
         client: &mut HttpAtriumClient,
+        plan: &ScanPlan,
+        tree: &mut centaur_node_sync::scoped::TreeState,
     ) -> Option<Vec<RawEntry>> {
-        match fs_linux::read_upper_entries(&session.upper) {
+        match collect_entries(session, plan, tree, global.scoped_scan) {
             Ok(entries) => {
-                let entries = entries
-                    .into_iter()
-                    .filter(|entry| entry.rel_path.as_path() != Path::new(READY_MARKER_FILE))
-                    .collect::<Vec<_>>();
                 let reader = HardenedReader {
                     upper: session.upper.clone(),
                 };
