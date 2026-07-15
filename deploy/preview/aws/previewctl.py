@@ -592,6 +592,9 @@ def bootstrap_script(params: dict[str, str]) -> str:
           server:
             environment:
               ATRIUM_SERVER_PUBLICATION_HOST: 10.42.0.1
+              APPS_ORIGIN: ${APPS_ORIGIN}
+              APPS_HOST: ${APPS_HOST:-0.0.0.0}
+              APPS_PORT: ${APPS_PORT:-3002}
             ports: !override
               - "10.42.0.1:3001:3001"
           caddy:

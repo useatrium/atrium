@@ -74,3 +74,15 @@ The branch diff against `origin/master` is Surface-only, but the branch differs 
 - Only `centaur-node-sync` was rebuilt among the Centaur services for this branch deploy; the other Centaur service images were reused from ECR.
 - Final URL: `https://54-89-244-184.sslip.io`
 - Remaining functional verification: use the UI and ask an agent question from this preview.
+
+## Follow-Up: Apps Origin Wiring
+
+After initial testing, app/file preview behavior showed browser CORS symptoms. The root cause was preview wiring: the generated `.env` had `APPS_ORIGIN=https://54-89-244-184.sslip.io`, `APPS_HOST=0.0.0.0`, and `APPS_PORT=3002`, but the generated Docker Compose override did not pass those values into the Surface server container. The server therefore fell back to the default `http://127.0.0.1:3201` app origin.
+
+The running preview was live-patched by adding those three environment variables to `docker-compose.aws-preview.yml` and recreating only `server` and `caddy`. Verification:
+
+- `deploy-server-1` now has `APPS_ORIGIN=https://54-89-244-184.sslip.io`, `APPS_HOST=0.0.0.0`, and `APPS_PORT=3002`.
+- Server logs show `atrium apps origin on http://0.0.0.0:3002`.
+- `https://54-89-244-184.sslip.io/apps/not-real/v/1/g/1/bad/index.html` returns `401 invalid app launch signature`, proving Caddy routes `/apps/*` to the app-origin server instead of serving the SPA fallback.
+
+The generator fix is to pass `APPS_ORIGIN`, `APPS_HOST`, and `APPS_PORT` through the AWS preview Compose override for all future previews.
