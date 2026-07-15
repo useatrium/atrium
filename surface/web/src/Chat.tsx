@@ -894,7 +894,8 @@ export function Chat({
   }, [state.channels, state.openSessionId]);
 
   const flushQueuedOps = useCallback(() => {
-    opQueue.nudge();
+    // Reconnect-triggered: clears per-op backoff so queued work retries now.
+    opQueue.reconnect();
   }, [opQueue]);
 
   const resetLoadedTimelinesToLatest = useCallback(async () => {

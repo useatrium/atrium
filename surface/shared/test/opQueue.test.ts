@@ -4,6 +4,7 @@ import {
   ApiError,
   DurableOpQueue,
   MemoryOpStorage,
+  createApi,
   createDefaultOpRegistry,
   makeQueuedOp,
   type Api,
@@ -396,6 +397,110 @@ describe('durable op queue coalescing', () => {
 });
 
 describe('durable op queue flushing', () => {
+  it('backs off when fetch rejects before receiving an HTTP response', async () => {
+    let now = 1_000;
+    const dateNow = vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const storage = new MemoryOpStorage([
+      makeQueuedOp({
+        opId: 'op-read',
+        opType: 'read.mark',
+        payload: { channelId: 'ch-1', lastReadEventId: 42 },
+      }),
+    ]);
+    const fetchMock = vi.fn<typeof fetch>().mockRejectedValue(new TypeError('Failed to fetch'));
+    vi.stubGlobal('fetch', fetchMock);
+    const timers: Array<{ callback: () => void; delay: number }> = [];
+    const registry = createDefaultOpRegistry();
+    const readHandler = registry['read.mark'];
+    registry['read.mark'] = {
+      ...readHandler,
+      execute: async (...args) => {
+        // Bound the pre-fix retry storm so this regression fails instead of hanging.
+        if (fetchMock.mock.calls.length >= 5) throw new ApiError(400, 'test_stop', 'stop retry storm');
+        return readHandler.execute(...args);
+      },
+    };
+    const queue = new DurableOpQueue({
+      storage,
+      api: createApi(),
+      dispatch: () => {},
+      registry,
+      setTimer: (callback, delay) => timers.push({ callback, delay }),
+    });
+
+    try {
+      await queue.flush();
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect([...new Set(timers.map(({ delay }) => delay))]).toEqual([500]);
+
+      now += 500;
+      for (const timer of timers.filter(({ delay }) => delay === 500)) timer.callback();
+      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+      expect([...new Set(timers.map(({ delay }) => delay))]).toEqual([500, 1_000]);
+
+      now += 1_000;
+      for (const timer of timers.filter(({ delay }) => delay === 1_000)) timer.callback();
+      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+      expect([...new Set(timers.map(({ delay }) => delay))]).toEqual([500, 1_000, 2_000]);
+      expect(await storage.listOps()).toMatchObject([{ opId: 'op-read', status: 'pending', retryCount: 3 }]);
+    } finally {
+      dateNow.mockRestore();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('lets a reconnect retry immediately before the backoff expires', async () => {
+    const storage = new MemoryOpStorage([msg('op-net', 'a')]);
+    let attempts = 0;
+    const timers: number[] = [];
+    const queue = new DurableOpQueue({
+      storage,
+      api,
+      dispatch: () => {},
+      registry: registryFor(async () => {
+        attempts += 1;
+        throw new TypeError('Failed to fetch');
+      }),
+      setTimer: (_callback, delay) => timers.push(delay),
+    });
+
+    await queue.flush();
+    expect(attempts).toBe(1);
+    expect([...new Set(timers)]).toEqual([500]);
+
+    queue.reconnect();
+    await vi.waitFor(() => expect(attempts).toBe(2));
+    expect([...new Set(timers)]).toEqual([500, 1_000]);
+  });
+
+  it('keeps a failing op inside its backoff window across ordinary nudges', async () => {
+    // Drafts sync on every keystroke and each enqueue nudges the queue — an
+    // ordinary nudge must NOT reset the failing op's retryAfter, or routine
+    // typing re-arms the retry storm.
+    const storage = new MemoryOpStorage([msg('op-net', 'a')]);
+    let attempts = 0;
+    const timers: number[] = [];
+    const queue = new DurableOpQueue({
+      storage,
+      api,
+      dispatch: () => {},
+      registry: registryFor(async () => {
+        attempts += 1;
+        throw new TypeError('Failed to fetch');
+      }),
+      setTimer: (_callback, delay) => timers.push(delay),
+    });
+
+    await queue.flush();
+    expect(attempts).toBe(1);
+
+    queue.nudge();
+    queue.nudge();
+    queue.nudge();
+    await queue.flush();
+    expect(attempts).toBe(1);
+  });
+
   it('preserves FIFO per queueKey while allowing independent keys', async () => {
     await fc.assert(
       fc.asyncProperty(
