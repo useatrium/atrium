@@ -200,6 +200,90 @@ export async function postMessage(ctx: APIRequestContext, channelIdValue: string
   return body.event.id;
 }
 
+export async function injectSession(args: {
+  handle: string;
+  channelId: string;
+  title: string;
+}): Promise<{ rootId: number; sessionId: string }> {
+  const pool = new Pool({ connectionString: e2eDatabaseUrl });
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const user = await client.query<{ id: string }>('SELECT id FROM users WHERE handle = $1', [args.handle]);
+    const channel = await client.query<{ workspace_id: string }>('SELECT workspace_id FROM channels WHERE id = $1', [
+      args.channelId,
+    ]);
+    if (!user.rows[0] || !channel.rows[0]) throw new Error('missing e2e user or channel');
+
+    const userId = user.rows[0].id;
+    const workspaceId = channel.rows[0].workspace_id;
+    const session = await client.query<{ id: string }>(
+      `INSERT INTO sessions (
+         workspace_id, channel_id, centaur_thread_key, harness, title, status, spawned_by,
+         driver_id, current_execution_id, assignment_generation
+       )
+       VALUES ($1, $2, $3, 'codex', $4, 'running', $5, $5, 'exe_e2e_spine', 1)
+       RETURNING id`,
+      [workspaceId, args.channelId, `thread-${unique('spine')}`, args.title, userId],
+    );
+    const sessionId = session.rows[0]!.id;
+    const root = await client.query<{ id: string }>(
+      `INSERT INTO events (workspace_id, channel_id, type, actor_id, payload)
+       VALUES ($1, $2, 'session.spawned', $3, $4)
+       RETURNING id`,
+      [
+        workspaceId,
+        args.channelId,
+        userId,
+        JSON.stringify({ sessionId, title: args.title, harness: 'codex', by: userId }),
+      ],
+    );
+    const rootId = Number(root.rows[0]!.id);
+    await client.query('UPDATE sessions SET thread_root_event_id = $1 WHERE id = $2', [rootId, sessionId]);
+    await client.query('COMMIT');
+    return { rootId, sessionId };
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+    await pool.end();
+  }
+}
+
+export async function injectSessionReply(args: {
+  channelId: string;
+  rootId: number;
+  sessionId: string;
+  text: string;
+}): Promise<number> {
+  const pool = new Pool({ connectionString: e2eDatabaseUrl });
+  try {
+    const channel = await pool.query<{ workspace_id: string }>('SELECT workspace_id FROM channels WHERE id = $1', [
+      args.channelId,
+    ]);
+    if (!channel.rows[0]) throw new Error('missing e2e channel');
+    const reply = await pool.query<{ id: string }>(
+      `INSERT INTO events (workspace_id, channel_id, thread_root_event_id, type, actor_id, payload)
+       VALUES ($1, $2, $3, 'session.replied', NULL, $4)
+       RETURNING id`,
+      [
+        channel.rows[0].workspace_id,
+        args.channelId,
+        args.rootId,
+        JSON.stringify({ session_id: args.sessionId, text: args.text, broadcast: true }),
+      ],
+    );
+    // The answer implies the turn ended: mark the session terminal so the slot
+    // renders the anchored answer instead of a working strip (a running session
+    // deliberately withholds its claimed answer).
+    await pool.query(`UPDATE sessions SET status = 'completed', completed_at = now() WHERE id = $1`, [args.sessionId]);
+    return Number(reply.rows[0]!.id);
+  } finally {
+    await pool.end();
+  }
+}
+
 // === mw78-overflow additions ===
 export async function uploadViaApi(
   ctx: APIRequestContext,

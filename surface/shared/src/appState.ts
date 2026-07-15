@@ -118,6 +118,8 @@ export type AppAction =
       events: WireEvent[];
       hasMore: boolean;
       expectedTimelineEpoch?: number;
+      /** Per-channel after_id data must not move the workspace-wide sync cursor. */
+      origin?: 'channel-delta';
     }
   | { type: 'history-reset'; channelId: string; events: WireEvent[]; hasMore: boolean }
   | { type: 'thread-loaded'; channelId: string; rootEventId: number; events: WireEvent[] }
@@ -337,23 +339,57 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         unread: action.channelId ? { ...state.unread, [action.channelId]: false } : state.unread,
       };
 
-    case 'history-loaded':
+    case 'history-loaded': {
       if (
         action.expectedTimelineEpoch !== undefined &&
         timelineEpoch(state, action.channelId) !== action.expectedTimelineEpoch
       ) {
         return state;
       }
-      return withSyncCursor(
-        withTimeline(
-          foldSessionEvents(state, action.events),
-          action.channelId,
-          mergeHistory(timeline(state, action.channelId), action.events, {
-            hasMoreBefore: action.hasMore,
-          }),
-        ),
-        maxEventId(action.events),
+      const previousTimeline = timeline(state, action.channelId);
+      let next = withTimeline(
+        foldSessionEvents(state, action.events),
+        action.channelId,
+        mergeHistory(previousTimeline, action.events, {
+          hasMoreBefore: action.hasMore,
+        }),
       );
+      if (action.origin !== 'channel-delta') return withSyncCursor(next, maxEventId(action.events));
+
+      // Warm per-channel deltas run before the workspace sync/WebSocket. Fold
+      // their new message activity now, but leave syncCursor at the persisted
+      // workspace position so the later /sync request cannot skip unrelated
+      // channel or workspace events.
+      const seenIds = new Set(previousTimeline.seenIds);
+      for (const ev of action.events) {
+        const alreadySeen = seenIds.has(ev.id);
+        seenIds.add(ev.id);
+        const isNewMessage = (ev.type === 'message.posted' || ev.type === 'session.spawned') && !alreadySeen;
+        if (!isNewMessage || !ev.channelId) continue;
+        if (isMainTimelineVisibleEvent(ev)) {
+          next = {
+            ...next,
+            channels: next.channels.map((channel) =>
+              channel.id === ev.channelId && (channel.latestEventId ?? 0) < ev.id
+                ? { ...channel, latestEventId: ev.id }
+                : channel,
+            ),
+          };
+        }
+        if (ev.channelId === state.activeChannelId) continue;
+        const channel = state.channels.find((candidate) => candidate.id === ev.channelId);
+        if (channel?.muted) continue;
+        const text = typeof ev.payload?.text === 'string' ? ev.payload.text : '';
+        const isDm = channel?.kind === 'dm' || channel?.kind === 'gdm';
+        const mentioned =
+          isDm || (ev.actorId !== null && mentionsUser(text, { id: state.meId, handle: state.meHandle }))
+            ? 'mention'
+            : true;
+        const level = next.unread[ev.channelId] === 'mention' ? 'mention' : mentioned;
+        next = { ...next, unread: { ...next.unread, [ev.channelId]: level } };
+      }
+      return next;
+    }
 
     case 'history-reset': {
       const next = withSyncCursor(

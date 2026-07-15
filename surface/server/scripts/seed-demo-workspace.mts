@@ -647,7 +647,7 @@ async function main(): Promise<void> {
     repo: 'meridian/atlas',
   });
   // Shaped exactly like persistQuestionRequested's event: attributed to the
-  // spawner, threaded under the session card, questionId in the payload —
+  // spawner, threaded under the session trigger message, questionId in the payload —
   // so the client renders the same persona'd, answerable question card the
   // live path produces (no "Unknown", no dead top-level message).
   const questionEvent = await pool.query<{ id: string }>(

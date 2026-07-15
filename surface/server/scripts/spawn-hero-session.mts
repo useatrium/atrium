@@ -1,6 +1,6 @@
 // Spawns the live "hero" demo session (scripted via demo-scripts.json) as maya
 // into #eng-platform and dresses it to read as a real claude-code run.
-// Prints JSON {sessionId, channelId} on the last line.
+// Prints JSON {sessionId, channelId, threadRootEventId} on the last line.
 //
 // Requires: seed-demo-workspace.mts already ran; server running with
 // ATRIUM_DEMO_SCRIPT_PATH=server/scripts/demo-scripts.json.
@@ -37,9 +37,16 @@ const spawnRes = await fetch(`${API}/api/sessions`, {
   }),
 });
 if (!spawnRes.ok) throw new Error(`spawn: ${spawnRes.status} ${await spawnRes.text()}`);
-const spawned = (await spawnRes.json()) as { session?: { id: string }; id?: string };
+const spawned = (await spawnRes.json()) as {
+  session?: { id: string; threadRootEventId?: number | null };
+  id?: string;
+};
 const sessionId = spawned.session?.id ?? spawned.id;
 if (!sessionId) throw new Error(`no session id in ${JSON.stringify(spawned)}`);
+const threadRootEventId = spawned.session?.threadRootEventId;
+if (!Number.isSafeInteger(threadRootEventId)) {
+  throw new Error(`no trigger message id in ${JSON.stringify(spawned)}`);
+}
 
 await pool.query(`UPDATE sessions SET title=$2, harness=$3, repo=$4, branch=$5 WHERE id=$1`, [
   sessionId,
@@ -54,4 +61,4 @@ await pool.query(
   [sessionId, 'Fix retry backoff in ingestion worker'],
 );
 await pool.end();
-console.log(JSON.stringify({ sessionId, channelId: channel.id }));
+console.log(JSON.stringify({ sessionId, channelId: channel.id, threadRootEventId }));

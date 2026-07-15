@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { AppAction, WireEvent } from '@atrium/surface-client';
+import { appReducer, initialAppState, type AppAction, type Channel, type WireEvent } from '@atrium/surface-client';
 import { hydrateCachedTimelines } from '../src/hydration';
 
 function wire(id: number, channelId = 'ch-1'): WireEvent {
@@ -24,6 +24,24 @@ function modifier(id: number, targetEventId: number, type = 'message.edited'): W
   };
 }
 
+function emptyDelta() {
+  return Promise.resolve({ events: [], hasMore: false });
+}
+
+function channel(id: string, name: string, latestEventId: number, lastReadEventId: number): Channel {
+  return {
+    id,
+    workspaceId: 'ws-1',
+    name,
+    createdAt: new Date(0).toISOString(),
+    kind: 'public',
+    latestEventId,
+    lastReadEventId,
+    archivedAt: null,
+    pinned: false,
+  };
+}
+
 describe('cached timeline hydration', () => {
   it('repairs a cached timeline whose last event is behind the persisted cursor', async () => {
     const dispatch = vi.fn<(action: AppAction) => void>();
@@ -36,6 +54,7 @@ describe('cached timeline hydration', () => {
       syncCursor: 8,
       dispatch,
       fetchLatest,
+      fetchDelta: emptyDelta,
       onRepaired,
     });
 
@@ -69,6 +88,7 @@ describe('cached timeline hydration', () => {
       syncCursor: 8, // ahead of the cache, so a repair is attempted
       dispatch,
       fetchLatest,
+      fetchDelta: emptyDelta,
       onRepairFailed,
     });
 
@@ -93,6 +113,7 @@ describe('cached timeline hydration', () => {
       syncCursor: 8,
       dispatch,
       fetchLatest,
+      fetchDelta: emptyDelta,
       isDisposed: () => true,
     });
 
@@ -102,6 +123,7 @@ describe('cached timeline hydration', () => {
   it('hydrates cached timelines directly when they are not behind the cursor', async () => {
     const dispatch = vi.fn<(action: AppAction) => void>();
     const fetchLatest = vi.fn();
+    const fetchDelta = vi.fn(emptyDelta);
     const events = [wire(8)];
 
     await hydrateCachedTimelines({
@@ -109,9 +131,11 @@ describe('cached timeline hydration', () => {
       syncCursor: 8,
       dispatch,
       fetchLatest,
+      fetchDelta,
     });
 
     expect(fetchLatest).not.toHaveBeenCalled();
+    expect(fetchDelta).toHaveBeenCalledWith('ch-1', 8);
     expect(dispatch).toHaveBeenCalledWith({
       type: 'history-loaded',
       channelId: 'ch-1',
@@ -131,6 +155,7 @@ describe('cached timeline hydration', () => {
       syncCursor: 16,
       dispatch,
       fetchLatest,
+      fetchDelta: emptyDelta,
       onRepaired,
     });
 
@@ -142,5 +167,92 @@ describe('cached timeline hydration', () => {
       hasMore: latest.hasMore,
     });
     expect(onRepaired).toHaveBeenCalledWith('ch-1', latest);
+  });
+
+  it('merges a warm delta thread reply into its root and derives unread activity', async () => {
+    let state = appReducer(initialAppState, {
+      type: 'channels-loaded',
+      channels: [channel('ch-1', 'project', 4, 4), channel('ch-active', 'general', 1, 1)],
+    });
+    state = appReducer(state, { type: 'select-channel', channelId: 'ch-active' });
+    const dispatch = vi.fn((action: AppAction) => {
+      state = appReducer(state, action);
+    });
+    const reply: WireEvent = {
+      ...wire(5),
+      threadRootEventId: 4,
+      actorId: 'u-2',
+      payload: { text: 'reply while closed' },
+      author: { id: 'u-2', handle: 'bea', displayName: 'Bea' },
+    };
+    const fetchDelta = vi.fn(async () => ({ events: [reply], hasMore: false }));
+
+    await hydrateCachedTimelines({
+      timelines: { 'ch-1': { events: [wire(4)], hasMore: false } },
+      syncCursor: 4,
+      dispatch,
+      fetchLatest: vi.fn(),
+      fetchDelta,
+    });
+
+    expect(fetchDelta).toHaveBeenCalledWith('ch-1', 4);
+    const root = state.timelines['ch-1']?.main.find((message) => message.id === 4);
+    expect(root).toMatchObject({
+      replyCount: 1,
+      lastReplyId: 5,
+      lastReply: { id: 5, text: 'reply while closed' },
+    });
+    expect(state.unread['ch-1']).toBe(true);
+    // The per-channel response must not skip the workspace sync past id 4.
+    expect(state.syncCursor).toBe(4);
+  });
+
+  it('leaves hydrated state byte-identical when the warm delta is empty', async () => {
+    let state = initialAppState;
+    let stateBeforeDelta = state;
+    const dispatch = vi.fn((action: AppAction) => {
+      state = appReducer(state, action);
+    });
+    const fetchDelta = vi.fn(async () => {
+      stateBeforeDelta = state;
+      return { events: [], hasMore: false };
+    });
+
+    await hydrateCachedTimelines({
+      timelines: { 'ch-1': { events: [wire(4)], hasMore: false } },
+      syncCursor: 4,
+      dispatch,
+      fetchLatest: vi.fn(),
+      fetchDelta,
+    });
+
+    expect(state).toBe(stateBeforeDelta);
+    expect(dispatch).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps cached hydration complete when the warm delta fetch rejects', async () => {
+    let state = initialAppState;
+    const dispatch = vi.fn((action: AppAction) => {
+      state = appReducer(state, action);
+    });
+    const failure = new Error('delta unavailable');
+    const onDeltaFailed = vi.fn();
+
+    await expect(
+      hydrateCachedTimelines({
+        timelines: { 'ch-1': { events: [wire(4)], hasMore: false } },
+        syncCursor: 4,
+        dispatch,
+        fetchLatest: vi.fn(),
+        fetchDelta: vi.fn(async () => {
+          throw failure;
+        }),
+        onDeltaFailed,
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(state.timelines['ch-1']?.loaded).toBe(true);
+    expect(state.timelines['ch-1']?.main.map((message) => message.id)).toEqual([4]);
+    expect(onDeltaFailed).toHaveBeenCalledWith('ch-1', failure);
   });
 });

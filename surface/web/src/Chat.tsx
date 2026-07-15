@@ -645,6 +645,7 @@ export function Chat({
           syncCursor,
           dispatch,
           fetchLatest: (channelId) => api.messages(channelId, { limit: PAGE_SIZE }),
+          fetchDelta: (channelId, afterId) => api.messages(channelId, { afterId, limit: PAGE_SIZE }),
           isDisposed: () => disposed,
           onRepaired: (channelId, latest) => {
             void eventCache.saveTimeline(channelId, latest.events, latest.hasMore).catch((err: unknown) => {
@@ -653,6 +654,13 @@ export function Chat({
           },
           onRepairFailed: (_channelId, err) => {
             console.warn('failed to repair stale cached history', err);
+            onApiError(err);
+          },
+          onDeltaLoaded: (channelId, delta) => {
+            eventCache.enqueueEvents(channelId, delta.events);
+          },
+          onDeltaFailed: (_channelId, err) => {
+            console.warn('failed to fetch warm hydrate history delta', err);
             onApiError(err);
           },
         });
