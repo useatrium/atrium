@@ -33,8 +33,8 @@ pub trait EntrySource {
 }
 
 /// Files written through mmap (sqlite `-shm` shared memory, and `-wal` under PRAGMA mmap_size — both observed event-silent on prod) generate no
-/// inotify events — no watcher can see them. Shadow diffs and the divergence
-/// canary treat them as backstop-owned so real event-model gaps stand out.
+/// inotify events — no watcher can see them. The divergence canary treats them
+/// as backstop-owned so real event-model gaps stand out.
 pub fn is_mmap_pattern_path(rel: &Path) -> bool {
     rel.file_name()
         .and_then(|name| name.to_str())
@@ -66,7 +66,7 @@ pub struct TreeState {
     /// Divergent paths from the previous backstop, awaiting confirmation: an
     /// event can legitimately be in flight when the walk that saw its effect
     /// runs, so a path only counts as REAL divergence when it diverges on two
-    /// consecutive backstops (same discipline as shadow mode's pending set).
+    /// consecutive backstops.
     pending_divergence: Vec<PathBuf>,
 }
 

@@ -943,7 +943,6 @@ mod linux_daemon {
         let mut pending_wake_messages = VecDeque::new();
         let mut dirty = DirtySet::default();
         let mut local_dirty = DirtySessions::default();
-        let mut shadow_states: HashMap<String, ShadowState> = HashMap::new();
         let mut tree_states: HashMap<String, centaur_node_sync::scoped::TreeState> = HashMap::new();
         let mut capture_stamps: HashMap<String, HashMap<String, CaptureStamp>> = HashMap::new();
         let mut watched_sessions = HashSet::new();
@@ -981,7 +980,6 @@ mod linux_daemon {
                     wip_gate.retain_sessions(|session| active.contains(session));
                     last_forced_wip.retain(|session, _| active.contains(session));
                     local_dirty.retain_sessions(|session| active.contains(session));
-                    shadow_states.retain(|session, _| active.contains(session));
                     tree_states.retain(|session, _| active.contains(session));
                     capture_stamps.retain(|session, _| active.contains(session));
 
@@ -1335,24 +1333,15 @@ mod linux_daemon {
                         &plan,
                         tree,
                     );
-                    match scanned_entries {
-                        Some(entries) => {
-                            if scan_was_full && !global.scoped_scan {
-                                let shadow =
-                                    shadow_states.entry(session.session.clone()).or_default();
-                                shadow_diff_scan(&session, shadow, &entries, &cleared_dirty);
-                            }
+                    if scanned_entries.is_none() {
+                        // Scan failed: degrade to full dirt so the next tick
+                        // retries with a whole-tree walk (a scoped patch may
+                        // have partially applied).
+                        if cleared_dirty.any() || !scan_was_full {
+                            local_dirty.mark(session.session.clone(), None);
                         }
-                        None => {
-                            // Scan failed: degrade to full dirt so the next tick
-                            // retries with a whole-tree walk (a scoped patch may
-                            // have partially applied).
-                            if cleared_dirty.any() || !scan_was_full {
-                                local_dirty.mark(session.session.clone(), None);
-                            }
-                            if !scan_was_full {
-                                tree.clear();
-                            }
+                        if !scan_was_full {
+                            tree.clear();
                         }
                     }
                     if force_wip {
@@ -1446,92 +1435,6 @@ mod linux_daemon {
             wip_gate,
         );
         raw_entries
-    }
-
-    /// One session's shadow-mode memory: the previous full scan's file
-    /// signatures, plus misses awaiting one-round confirmation (an event may
-    /// legitimately still be in flight when the scan that saw its effect ran).
-    #[derive(Default)]
-    struct ShadowState {
-        prev: std::collections::HashMap<PathBuf, (i64, u64)>,
-        pending: Vec<PathBuf>,
-    }
-
-    /// Shadow mode for scoped scanning: after every full scan, ask "would a
-    /// path-scoped scan driven by the drained dirty set have visited every
-    /// file that actually changed?" Misses are logged (rate-capped) — they are
-    /// exactly the silent capture losses a scoped scanner would have had. A
-    /// miss only logs after surviving one round, so late-drained events don't
-    /// count as false positives.
-    fn shadow_diff_scan(
-        session: &SessionConfig,
-        shadow: &mut ShadowState,
-        entries: &[RawEntry],
-        dirt: &centaur_node_sync::watch::DrainedDirt,
-    ) {
-        use centaur_node_sync::overlay::RawFileType;
-        let cur: std::collections::HashMap<PathBuf, (i64, u64)> = entries
-            .iter()
-            .filter(|entry| !matches!(entry.file_type, RawFileType::Dir))
-            .map(|entry| (entry.rel_path.clone(), (entry.mtime_ns, entry.size)))
-            .collect();
-        let first_scan = shadow.prev.is_empty() && shadow.pending.is_empty();
-        // Dirty paths arrive absolute under the MERGED root; entries are
-        // relative to the upper root — the same rel-path space.
-        let dirty_rels: Vec<PathBuf> = dirt
-            .paths
-            .iter()
-            .filter_map(|path| {
-                path.strip_prefix(&session.merged)
-                    .ok()
-                    .map(Path::to_path_buf)
-            })
-            .collect();
-        let covered = |rel: &Path| -> bool {
-            if dirt.full {
-                return true;
-            }
-            // Event-invisible by design (daemon root markers and mmap files),
-            // or capture-pruned by the shared watch/scan predicate.
-            if centaur_node_sync::scoped::is_event_invisible_path(rel) {
-                return true;
-            }
-            dirty_rels
-                .iter()
-                .any(|dirty| rel == dirty || rel.starts_with(dirty))
-        };
-        // Confirm or clear last round's suspects against this round's dirt.
-        let confirmed: Vec<PathBuf> = std::mem::take(&mut shadow.pending)
-            .into_iter()
-            .filter(|rel| !covered(rel))
-            .collect();
-        if !confirmed.is_empty() {
-            let sample: Vec<String> = confirmed
-                .iter()
-                .take(10)
-                .map(|rel| rel.display().to_string())
-                .collect();
-            println!(
-                "event=node_sync_shadow_scan_miss session={} count={} sample={}",
-                session.session,
-                confirmed.len(),
-                sample.join(",")
-            );
-        }
-        if !first_scan {
-            let mut changed: Vec<&PathBuf> = cur
-                .iter()
-                .filter(|(rel, sig)| shadow.prev.get(*rel) != Some(sig))
-                .map(|(rel, _)| rel)
-                .collect();
-            changed.extend(shadow.prev.keys().filter(|rel| !cur.contains_key(*rel)));
-            shadow.pending = changed
-                .into_iter()
-                .filter(|rel| !covered(rel))
-                .cloned()
-                .collect();
-        }
-        shadow.prev = cur;
     }
 
     fn apply_profile_feed(
