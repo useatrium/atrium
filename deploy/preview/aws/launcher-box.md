@@ -73,3 +73,15 @@ Approximate fixed launcher cost in `us-east-1`:
 
 Preview appliances are separate and currently cost about `$0.168/hr` while
 running.
+
+## IAM Notes
+
+The launcher role must be able to create, tag, list, and delete
+`atrium-preview-*` IAM users and their inline policies/access keys. In
+particular, destroy requires `iam:ListUserPolicies`; without it, EC2 termination
+can succeed while per-preview IAM user cleanup fails.
+
+The appliance role must be able to read and write the shared control bucket
+prefix. The preview downloads `bootstrap.sh` and `source.tar.gz` from that
+prefix, then uploads `status.json` and `ready.json` so the launcher can report
+real bootstrap progress instead of treating Surface `/healthz` as full readiness.

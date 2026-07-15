@@ -49,6 +49,10 @@ The controller:
 6. launches Ubuntu 24.04 x86_64;
 7. bootstraps Docker, k3s, Surface, Centaur, local registry, and Caddy.
 
+The EC2 appliance role needs read/write access to the shared control bucket
+prefix because the instance downloads bootstrap/source files and uploads
+`status.json` plus `ready.json` progress markers.
+
 ## Launcher API
 
 `launcher.py` is the narrow API that a production Atrium agent should call
@@ -96,7 +100,10 @@ Agent-facing contract:
 - The agent must push the branch before requesting a preview.
 - The launcher resolves the ref to an immutable commit SHA and deploys that SHA.
 - The response includes `id`, `status`, `url`, `commit_sha`, and `expires_at`.
-  `status` becomes `ready` once the preview URL answers `/healthz`.
+  During bootstrap, `status` may be `bootstrapping:<phase>` and the response may
+  include `phase`, `phase_time`, `appliance_ready`, and `ready_at`.
+  `status` becomes `ready` only after the appliance writes its ready marker and
+  the preview URL answers `/healthz`.
 - Previews are public HTTP URLs for now. Do not use production data or
   production secrets.
 - TTL cleanup is best-effort in the launcher process. Run an external scheduled
@@ -143,6 +150,10 @@ deploy/preview/aws/.venv/bin/python deploy/preview/aws/previewctl.py destroy pre
 Destroy terminates the EC2 instance, deletes the per-preview storage bucket, and
 deletes the per-preview S3 IAM user/access keys. The shared control bucket,
 security group, instance profile, role, and EC2 key pair are retained for reuse.
+
+The launcher role needs `iam:ListUserPolicies` in addition to create/delete
+user, access key, and inline policy permissions so destroy can remove the
+per-preview S3 IAM user idempotently.
 
 ## Known Limitations
 
