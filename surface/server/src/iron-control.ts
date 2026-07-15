@@ -212,6 +212,32 @@ export class IronControlAdminClient {
     });
   }
 
+  /**
+   * Register the no-op secret that puts an egress host set on the proxy
+   * allowlist (see `EGRESS_HOST_SETS`). Shape constraints, all load-bearing:
+   * a secret MUST carry a source or the console silently drops it from the
+   * synthesized proxy config — taking its allowlist hosts with it — so a dummy
+   * inline value rides along; and the console requires exactly one of
+   * inject/replace, so this uses replace mode with a placeholder that never
+   * appears in traffic (`require: false` ⇒ can never reject a request).
+   */
+  async upsertEgressHostSetSecret(setKey: EgressHostSetKey): Promise<IronControlSecret> {
+    const set = EGRESS_HOST_SETS[setKey];
+    const foreignId = egressHostSetSecretForeignId(setKey);
+    return this.write<IronControlSecret>('PUT', `/api/v1/static_secrets/${encodeURIComponent(foreignId)}`, {
+      namespace: this.namespace,
+      foreign_id: foreignId,
+      name: set.name,
+      labels: { source: 'atrium', kind: 'egress-host-set', egress_host_set: setKey },
+      replace_config: {
+        proxy_value: EGRESS_HOST_SET_PLACEHOLDER,
+        require: false,
+      },
+      source: { source_type: 'control_plane', secret: 'egress-only-no-credential' },
+      rules: set.hosts.map((host) => ({ host })),
+    });
+  }
+
   async upsertBrokerCredential(args: {
     foreignId: string;
     name: string;
@@ -415,6 +441,51 @@ export function githubAppFallbackSecretForeignId(): string {
 export function githubAppFallbackBrokerCredentialForeignId(installationId: string): string {
   return `github-app-fallback-installation-${installationId}`;
 }
+
+/**
+ * Egress-only host sets: hosts a granted capability must REACH but never needs
+ * a credential injected for — signed-URL redirect targets and service-run
+ * storage (GitHub 302s Actions log downloads to a signed
+ * results-receiver.actions.githubusercontent.com URL; the API token must NOT
+ * accompany that request).
+ *
+ * iron-control derives each sandbox proxy's egress allowlist exclusively from
+ * the HOSTS of the principal's granted secrets' rules (console
+ * `Proxy.merge_proxy_policy`), so "reachable without a credential" still has to
+ * be expressed as a secret grant. `upsertEgressHostSetSecret` registers a
+ * deliberate no-op secret carrying only the host rules.
+ *
+ * A host belongs in a set here ONLY if it is operator-run storage for the
+ * granted service and cannot reflect request data back to an attacker (egress
+ * to it is not an exfiltration channel). Hosts serving arbitrary third-party
+ * content, or where unauthenticated writes are meaningful, must go through a
+ * server-mediated fetch instead — the allowlist is host-granular (method/path
+ * rules cannot gate the CONNECT tunnel), so there is no tighter knob to reach
+ * for.
+ */
+export const EGRESS_HOST_SETS = {
+  // Signed-URL host GitHub redirects Actions run/job log downloads to
+  // (`gh run view --log`). Uploads require runner-minted signed URLs, and the
+  // signature rides the query string — no credential involved.
+  'github-actions-artifacts': {
+    name: 'GitHub Actions signed-URL log downloads',
+    hosts: ['results-receiver.actions.githubusercontent.com'],
+  },
+} as const;
+
+export type EgressHostSetKey = keyof typeof EGRESS_HOST_SETS;
+
+export function egressHostSetSecretForeignId(setKey: EgressHostSetKey): string {
+  return `egress-hosts-${setKey}`;
+}
+
+/**
+ * Never occurs in real traffic, by construction. The proxy scans request
+ * headers of rule-matching requests for this token (replace mode); absence is
+ * a no-op and `require: false` means absence can never reject the request —
+ * both verified against iron-proxy 0.46.0.
+ */
+const EGRESS_HOST_SET_PLACEHOLDER = 'atrium-egress-only-placeholder-3f6a9c81d2e54b07c9a1';
 
 export function githubAppUserBrokerCredentialForeignId(workspaceId: string, userId: string): string {
   return `github-app-user-${atriumPrincipalForeignId(workspaceId, userId)}`;

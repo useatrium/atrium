@@ -75,6 +75,36 @@ describe('GitHub iron-control convergence', () => {
     ]);
   });
 
+  it('registers the egress host-set as a no-op replace secret and skips the grant when it exists', async () => {
+    const calls: Array<{ url: string; init: RequestInit }> = [];
+    const client = fakeIronControl(calls, {
+      githubHostsRoleGrants: [
+        { id: 'grant_hosts', role_id: 'role_github_hosts', static_secret_id: 'ssr_egress_github_actions' },
+      ],
+    });
+
+    await convergeExistingGitHubDirectGrant(client, { workspaceId: 'ws1', userId: 'user1' });
+
+    const egressPut = calls.find((call) =>
+      String(call.url).includes('/static_secrets/egress-hosts-github-actions-artifacts'),
+    );
+    expect(egressPut).toBeDefined();
+    const body = JSON.parse(String(egressPut!.init.body)).data;
+    expect(body.rules).toEqual([{ host: 'results-receiver.actions.githubusercontent.com' }]);
+    expect(body.replace_config.require).toBe(false);
+    expect(body.replace_config.proxy_value).toMatch(/^atrium-egress-only-placeholder-/);
+    expect(body.inject_config).toBeUndefined();
+    // The console silently drops source-less secrets from the synthesized proxy
+    // config — and their allowlist hosts with them — so the dummy source is
+    // load-bearing, not decorative.
+    expect(body.source).toEqual({ source_type: 'control_plane', secret: 'egress-only-no-credential' });
+    // Pre-existing role grant → no duplicate POST /grants.
+    const grantPosts = calls.filter(
+      (call) => call.init.method === 'POST' && String(call.url).endsWith('/api/v1/grants'),
+    );
+    expect(grantPosts).toHaveLength(0);
+  });
+
   it('converges a PAT direct grant before removing fallback inheritance and verifying', async () => {
     const calls: Array<{ url: string; init: RequestInit }> = [];
     const client = fakeIronControl(calls, { principalGrants: [] });
@@ -85,6 +115,11 @@ describe('GitHub iron-control convergence', () => {
       ['PUT', '/api/v1/principals/atrium-workspace-ws1-user-user1'],
       ['GET', '/api/v1/roles/lookup/default/infra'],
       ['POST', '/api/v1/principals/prn_atrium/roles'],
+      ['PUT', '/api/v1/roles/github-hosts'],
+      ['PUT', '/api/v1/static_secrets/egress-hosts-github-actions-artifacts'],
+      ['GET', '/api/v1/roles/role_github_hosts/grants'],
+      ['POST', '/api/v1/grants'],
+      ['POST', '/api/v1/principals/prn_atrium/roles'],
       ['PUT', '/api/v1/static_secrets/github-token-atrium-workspace-ws1-user-user1-github-pat'],
       ['GET', '/api/v1/principals/prn_atrium/grants'],
       ['POST', '/api/v1/grants'],
@@ -92,14 +127,14 @@ describe('GitHub iron-control convergence', () => {
       ['DELETE', '/api/v1/principals/prn_atrium/roles/role_github_default'],
       ['GET', '/api/v1/principals/lookup/default/atrium-workspace-ws1-user-user1/effective_config'],
     ]);
-    expect(JSON.parse(String(calls[3]!.init.body))).toMatchObject({
+    expect(JSON.parse(String(calls[8]!.init.body))).toMatchObject({
       data: {
         foreign_id: 'github-token-atrium-workspace-ws1-user-user1-github-pat',
         source: { source_type: 'control_plane', secret: 'ghp_secret' },
         labels: { source: 'atrium', provider: 'github', atrium_workspace_id: 'ws1', atrium_user_id: 'user1' },
       },
     });
-    expect(JSON.parse(String(calls[5]!.init.body))).toEqual({
+    expect(JSON.parse(String(calls[10]!.init.body))).toEqual({
       data: { principal_id: 'prn_atrium', static_secret_id: 'ssr_github_user' },
     });
   });
@@ -121,13 +156,18 @@ describe('GitHub iron-control convergence', () => {
       ['PUT', '/api/v1/principals/atrium-workspace-ws1-user-user1'],
       ['GET', '/api/v1/roles/lookup/default/infra'],
       ['POST', '/api/v1/principals/prn_atrium/roles'],
+      ['PUT', '/api/v1/roles/github-hosts'],
+      ['PUT', '/api/v1/static_secrets/egress-hosts-github-actions-artifacts'],
+      ['GET', '/api/v1/roles/role_github_hosts/grants'],
+      ['POST', '/api/v1/grants'],
+      ['POST', '/api/v1/principals/prn_atrium/roles'],
       ['PUT', '/api/v1/static_secrets/github-token-atrium-workspace-ws1-user-user1-github-app_user'],
       ['GET', '/api/v1/principals/prn_atrium/grants'],
       ['PUT', '/api/v1/roles/github-default'],
       ['DELETE', '/api/v1/principals/prn_atrium/roles/role_github_default'],
       ['GET', '/api/v1/principals/lookup/default/atrium-workspace-ws1-user-user1/effective_config'],
     ]);
-    expect(JSON.parse(String(calls[3]!.init.body))).toMatchObject({
+    expect(JSON.parse(String(calls[8]!.init.body))).toMatchObject({
       data: {
         source: {
           source_type: 'token_broker',
@@ -166,6 +206,11 @@ describe('GitHub iron-control convergence', () => {
       ['PUT', '/api/v1/principals/atrium-workspace-ws1-user-user1'],
       ['GET', '/api/v1/roles/lookup/default/infra'],
       ['POST', '/api/v1/principals/prn_atrium/roles'],
+      ['PUT', '/api/v1/roles/github-hosts'],
+      ['PUT', '/api/v1/static_secrets/egress-hosts-github-actions-artifacts'],
+      ['GET', '/api/v1/roles/role_github_hosts/grants'],
+      ['POST', '/api/v1/grants'],
+      ['POST', '/api/v1/principals/prn_atrium/roles'],
       ['PUT', '/api/v1/static_secrets/github-token-atrium-workspace-ws1-user-user1-github-app_installation-12345'],
       ['GET', '/api/v1/principals/prn_atrium/grants'],
       ['DELETE', '/api/v1/grants/grant_old'],
@@ -186,6 +231,11 @@ describe('GitHub iron-control convergence', () => {
       ['PUT', '/api/v1/principals/atrium-workspace-ws1-user-user1'],
       ['GET', '/api/v1/roles/lookup/default/infra'],
       ['POST', '/api/v1/principals/prn_atrium/roles'],
+      ['PUT', '/api/v1/roles/github-hosts'],
+      ['PUT', '/api/v1/static_secrets/egress-hosts-github-actions-artifacts'],
+      ['GET', '/api/v1/roles/role_github_hosts/grants'],
+      ['POST', '/api/v1/grants'],
+      ['POST', '/api/v1/principals/prn_atrium/roles'],
       ['PUT', '/api/v1/roles/github-default'],
       ['DELETE', '/api/v1/principals/prn_atrium/roles/role_github_default'],
       ['GET', '/api/v1/principals/lookup/default/atrium-workspace-ws1-user-user1/effective_config'],
@@ -201,6 +251,11 @@ describe('GitHub iron-control convergence', () => {
     expect(callMethodsAndPaths(calls)).toEqual([
       ['PUT', '/api/v1/principals/atrium-workspace-ws1-user-user1'],
       ['GET', '/api/v1/roles/lookup/default/infra'],
+      ['POST', '/api/v1/principals/prn_atrium/roles'],
+      ['PUT', '/api/v1/roles/github-hosts'],
+      ['PUT', '/api/v1/static_secrets/egress-hosts-github-actions-artifacts'],
+      ['GET', '/api/v1/roles/role_github_hosts/grants'],
+      ['POST', '/api/v1/grants'],
       ['POST', '/api/v1/principals/prn_atrium/roles'],
       ['DELETE', '/api/v1/static_secrets/github-token-atrium-workspace-ws1-user-user1'],
       ['PUT', '/api/v1/roles/github-default'],
@@ -452,6 +507,7 @@ function fakeIronControl(
   options: {
     principalGrants?: Array<{ id: string; principal_id: string; static_secret_id: string }>;
     roleGrants?: Array<{ id: string; role_id: string; static_secret_id: string }>;
+    githubHostsRoleGrants?: Array<{ id: string; role_id: string; static_secret_id: string }>;
   } = {},
 ): IronControlAdminClient {
   return new IronControlAdminClient({
@@ -472,6 +528,21 @@ function fakeIronControl(
       }
       if (path.endsWith('/roles/role_github_default/grants')) {
         return json({ data: options.roleGrants ?? [] });
+      }
+      if (path.endsWith('/roles/role_github_hosts/grants')) {
+        return json({ data: options.githubHostsRoleGrants ?? [] });
+      }
+      if (path.endsWith('/roles/github-hosts')) {
+        return json({ data: { id: 'role_github_hosts', namespace: 'default', foreign_id: 'github-hosts' } });
+      }
+      if (path.includes('/static_secrets/egress-hosts-github-actions-artifacts')) {
+        return json({
+          data: {
+            id: 'ssr_egress_github_actions',
+            namespace: 'default',
+            foreign_id: 'egress-hosts-github-actions-artifacts',
+          },
+        });
       }
       if (path.endsWith('/principals/prn_atrium/grants')) {
         return json({ data: options.principalGrants ?? [] });
