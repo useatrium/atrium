@@ -1,8 +1,59 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WatchMessage {
-    Dirty(String),
+    /// A watched session changed. `path` names the changed entry (a file, or a
+    /// directory whose subtree must be treated as dirty) when the event carried
+    /// one; `None` means the whole session must be rescanned (overflow, unmount,
+    /// watch failure).
+    Dirty {
+        session: String,
+        path: Option<PathBuf>,
+    },
+}
+
+/// Dependency/build trees that are never watched: they are either gitignored
+/// (the repo WIP lane ignores them), capture-denied, or junk the ledger should
+/// not want. Their contents are covered only by backstop full scans. Keeping
+/// them unwatched is what keeps per-session watch counts in the low thousands
+/// instead of node_modules-sized (measured: one pnpm install adds ~15.5k dirs).
+pub const UNWATCHED_DIR_NAMES: &[&str] = &[
+    "node_modules",
+    ".pnpm",
+    ".git",
+    "target",
+    ".venv",
+    "__pycache__",
+    ".cache",
+    ".turbo",
+    ".mypy_cache",
+    ".pytest_cache",
+];
+
+pub fn is_unwatched_dir_name(name: &std::ffi::OsStr) -> bool {
+    UNWATCHED_DIR_NAMES
+        .iter()
+        .any(|skip| std::ffi::OsStr::new(skip) == name)
+}
+
+/// Per-session cap on tracked dirty paths. A busy build dirties more distinct
+/// paths than a scoped scan could visit cheaper than a full walk, so past the
+/// cap the session degrades to whole-session dirty (today's behavior).
+pub const DIRTY_PATH_CAP: usize = 4096;
+
+/// What one scan drained from the dirty set: either "scan everything" or the
+/// specific paths that changed since the last drain.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DrainedDirt {
+    pub full: bool,
+    pub paths: Vec<PathBuf>,
+}
+
+impl DrainedDirt {
+    pub fn any(&self) -> bool {
+        self.full || !self.paths.is_empty()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -13,28 +64,61 @@ pub struct AddSessionResult {
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct DirtySessions {
-    sessions: HashSet<String>,
+    /// Sessions needing a whole-session rescan (overflow/unmount/cap/legacy).
+    full: HashSet<String>,
+    /// Per-session changed paths (absolute, under the watch root).
+    paths: HashMap<String, HashSet<PathBuf>>,
 }
 
 impl DirtySessions {
-    pub fn mark(&mut self, session: impl Into<String>) -> bool {
-        self.sessions.insert(session.into())
+    /// Mark a session dirty. `path=None` marks the whole session; a path marks
+    /// just that entry. Past [`DIRTY_PATH_CAP`] the session degrades to full.
+    pub fn mark(&mut self, session: impl Into<String>, path: Option<PathBuf>) -> bool {
+        let session = session.into();
+        match path {
+            None => {
+                self.paths.remove(&session);
+                self.full.insert(session)
+            }
+            Some(path) => {
+                if self.full.contains(&session) {
+                    return false;
+                }
+                let paths = self.paths.entry(session.clone()).or_default();
+                let inserted = paths.insert(path);
+                if paths.len() > DIRTY_PATH_CAP {
+                    self.paths.remove(&session);
+                    self.full.insert(session);
+                }
+                inserted
+            }
+        }
     }
 
     pub fn contains(&self, session: &str) -> bool {
-        self.sessions.contains(session)
+        self.full.contains(session) || self.paths.contains_key(session)
     }
 
-    pub fn clear_for_scan(&mut self, session: &str) -> bool {
-        self.sessions.remove(session)
+    pub fn clear_for_scan(&mut self, session: &str) -> DrainedDirt {
+        let full = self.full.remove(session);
+        let paths = if full {
+            Vec::new()
+        } else {
+            self.paths
+                .remove(session)
+                .map(|set| set.into_iter().collect())
+                .unwrap_or_default()
+        };
+        DrainedDirt { full, paths }
     }
 
     pub fn retain_sessions(&mut self, mut keep: impl FnMut(&str) -> bool) {
-        self.sessions.retain(|session| keep(session));
+        self.full.retain(|session| keep(session));
+        self.paths.retain(|session, _| keep(session));
     }
 
     pub fn is_empty(&self) -> bool {
-        self.sessions.is_empty()
+        self.full.is_empty() && self.paths.is_empty()
     }
 }
 
@@ -118,11 +202,11 @@ mod imp {
         .union(WatchMask::MODIFY)
         .union(WatchMask::DONT_FOLLOW);
 
-    pub struct UpperWatcher {
-        inner: UpperWatcherInner,
+    pub struct MergedTreeWatcher {
+        inner: MergedTreeWatcherInner,
     }
 
-    enum UpperWatcherInner {
+    enum MergedTreeWatcherInner {
         Active {
             command_tx: mpsc::Sender<WatchCommand>,
             shared: Arc<Mutex<WatcherSharedState>>,
@@ -133,7 +217,7 @@ mod imp {
     enum WatchCommand {
         Add {
             session_id: String,
-            upper_root: PathBuf,
+            watch_root: PathBuf,
             reply: mpsc::Sender<AddSessionResult>,
         },
         Remove {
@@ -152,31 +236,37 @@ mod imp {
         inotify: Inotify,
         shared: Arc<Mutex<WatcherSharedState>>,
         dirty_tx: mpsc::Sender<WatchMessage>,
+        /// Distinct directories watched across all sessions, against `watch_budget`.
+        total_watches: usize,
+        /// 80% of fs.inotify.max_user_watches at startup: sessions that would
+        /// push past this attach as always_scan instead of failing at random
+        /// depths mid-registration.
+        watch_budget: usize,
         session_wds: HashMap<String, Vec<WatchDescriptor>>,
         wd_dirs: HashMap<WatchDescriptor, WatchedDir>,
         session_roots: HashMap<String, PathBuf>,
     }
 
-    impl UpperWatcher {
+    impl MergedTreeWatcher {
         pub fn from_env(dirty_tx: mpsc::Sender<WatchMessage>) -> Self {
             if !events_enabled_from_env_value(
                 std::env::var("NODE_SYNC_EVENTS_ENABLED").ok().as_deref(),
             ) {
-                eprintln!("node-sync upper inotify disabled by NODE_SYNC_EVENTS_ENABLED=0");
+                eprintln!("node-sync merged inotify disabled by NODE_SYNC_EVENTS_ENABLED=0");
                 return Self::disabled();
             }
             let release = match current_kernel_release() {
                 Ok(release) => release,
                 Err(error) => {
                     eprintln!(
-                        "node-sync upper inotify disabled: could not read kernel release: {error}"
+                        "node-sync merged inotify disabled: could not read kernel release: {error}"
                     );
                     return Self::disabled();
                 }
             };
             if !kernel_supports_upper_data_events(&release) {
                 eprintln!(
-                    "node-sync upper inotify disabled: kernel {release} is older than 6.5; falling back to scan-every-tick"
+                    "node-sync merged inotify disabled: kernel {release} is older than 6.5; falling back to scan-every-tick"
                 );
                 return Self::disabled();
             }
@@ -184,7 +274,7 @@ mod imp {
                 Ok(watcher) => watcher,
                 Err(error) => {
                     eprintln!(
-                        "node-sync upper inotify disabled: inotify init failed: {error}; falling back to scan-every-tick"
+                        "node-sync merged inotify disabled: inotify init failed: {error}; falling back to scan-every-tick"
                     );
                     Self::disabled()
                 }
@@ -202,6 +292,8 @@ mod imp {
                         inotify,
                         shared: reader_shared,
                         dirty_tx,
+                        total_watches: 0,
+                        watch_budget: watch_budget_from_sysctl(),
                         session_wds: HashMap::new(),
                         wd_dirs: HashMap::new(),
                         session_roots: HashMap::new(),
@@ -210,37 +302,37 @@ mod imp {
                 );
             });
             Ok(Self {
-                inner: UpperWatcherInner::Active { command_tx, shared },
+                inner: MergedTreeWatcherInner::Active { command_tx, shared },
             })
         }
 
         fn disabled() -> Self {
             Self {
-                inner: UpperWatcherInner::Disabled,
+                inner: MergedTreeWatcherInner::Disabled,
             }
         }
 
         pub fn is_enabled(&self) -> bool {
-            matches!(self.inner, UpperWatcherInner::Active { .. })
+            matches!(self.inner, MergedTreeWatcherInner::Active { .. })
         }
 
         pub fn is_always_scan(&self, session_id: &str) -> bool {
             match &self.inner {
-                UpperWatcherInner::Active { shared, .. } => shared
+                MergedTreeWatcherInner::Active { shared, .. } => shared
                     .lock()
                     .map(|state| state.is_always_scan(session_id))
                     .unwrap_or(true),
-                UpperWatcherInner::Disabled => true,
+                MergedTreeWatcherInner::Disabled => true,
             }
         }
 
         pub fn add_session(
             &self,
             session_id: impl Into<String>,
-            upper_root: impl AsRef<Path>,
+            watch_root: impl AsRef<Path>,
         ) -> AddSessionResult {
             let session_id = session_id.into();
-            let UpperWatcherInner::Active { command_tx, .. } = &self.inner else {
+            let MergedTreeWatcherInner::Active { command_tx, .. } = &self.inner else {
                 return AddSessionResult {
                     attached: false,
                     always_scan: true,
@@ -250,7 +342,7 @@ mod imp {
             if command_tx
                 .send(WatchCommand::Add {
                     session_id,
-                    upper_root: upper_root.as_ref().to_path_buf(),
+                    watch_root: watch_root.as_ref().to_path_buf(),
                     reply: reply_tx,
                 })
                 .is_err()
@@ -267,7 +359,7 @@ mod imp {
         }
 
         pub fn remove_session(&self, session_id: &str) {
-            let UpperWatcherInner::Active { command_tx, .. } = &self.inner else {
+            let MergedTreeWatcherInner::Active { command_tx, .. } = &self.inner else {
                 return;
             };
             let (reply_tx, reply_rx) = mpsc::channel();
@@ -283,9 +375,9 @@ mod imp {
         }
     }
 
-    impl Drop for UpperWatcher {
+    impl Drop for MergedTreeWatcher {
         fn drop(&mut self) {
-            if let UpperWatcherInner::Active { command_tx, .. } = &self.inner {
+            if let MergedTreeWatcherInner::Active { command_tx, .. } = &self.inner {
                 let _ = command_tx.send(WatchCommand::Shutdown);
             }
         }
@@ -331,7 +423,7 @@ mod imp {
                     }
                 }
                 Err(error) => {
-                    eprintln!("node-sync upper inotify read: {error}; marking all sessions dirty");
+                    eprintln!("node-sync merged inotify read: {error}; marking all sessions dirty");
                     mark_all_dirty(&state);
                 }
             }
@@ -342,14 +434,14 @@ mod imp {
         match command {
             WatchCommand::Add {
                 session_id,
-                upper_root,
+                watch_root,
                 reply,
             } => {
                 remove_session_watches(state, &session_id);
                 state
                     .session_roots
-                    .insert(session_id.clone(), upper_root.clone());
-                let result = match add_session_watches(state, &session_id, &upper_root) {
+                    .insert(session_id.clone(), watch_root.clone());
+                let result = match add_session_watches(state, &session_id, &watch_root) {
                     Ok(()) => {
                         with_shared(state, |shared| shared.mark_attached(&session_id));
                         AddSessionResult {
@@ -360,12 +452,15 @@ mod imp {
                     Err(error) => {
                         remove_session_watches(state, &session_id);
                         eprintln!(
-                            "node-sync upper inotify add session={} root={}: {error}; falling back to scan-every-tick for this session",
+                            "node-sync merged inotify add session={} root={}: {error}; falling back to scan-every-tick for this session",
                             session_id,
-                            upper_root.display()
+                            watch_root.display()
                         );
                         with_shared(state, |shared| shared.mark_always_scan(&session_id));
-                        let _ = state.dirty_tx.send(WatchMessage::Dirty(session_id.clone()));
+                        let _ = state.dirty_tx.send(WatchMessage::Dirty {
+                            session: session_id.clone(),
+                            path: None,
+                        });
                         AddSessionResult {
                             attached: false,
                             always_scan: true,
@@ -393,20 +488,22 @@ mod imp {
         name: Option<&Path>,
     ) {
         if mask.contains(EventMask::Q_OVERFLOW) {
-            eprintln!("node-sync upper inotify queue overflow; marking all sessions dirty");
+            eprintln!("node-sync merged inotify queue overflow; marking all sessions dirty");
             mark_all_dirty(state);
             return;
         }
         if mask.intersects(EventMask::IGNORED | EventMask::UNMOUNT) {
             // The wd_dirs entry is removed for IGNORED too (remove runs as the
             // first operand regardless of the UNMOUNT check).
-            if let Some(watched) = state.wd_dirs.remove(&wd)
-                && mask.contains(EventMask::UNMOUNT)
-            {
-                with_shared(state, |shared| shared.mark_always_scan(&watched.session_id));
-                let _ = state
-                    .dirty_tx
-                    .send(WatchMessage::Dirty(watched.session_id.clone()));
+            if let Some(watched) = state.wd_dirs.remove(&wd) {
+                state.total_watches = state.total_watches.saturating_sub(1);
+                if mask.contains(EventMask::UNMOUNT) {
+                    with_shared(state, |shared| shared.mark_always_scan(&watched.session_id));
+                    let _ = state.dirty_tx.send(WatchMessage::Dirty {
+                        session: watched.session_id.clone(),
+                        path: None,
+                    });
+                }
             }
             return;
         }
@@ -417,16 +514,34 @@ mod imp {
         else {
             return;
         };
+        if let Some(name) = name
+            && super::is_unwatched_dir_name(name.as_os_str())
+            && mask.contains(EventMask::ISDIR)
+        {
+            // A dep/build tree appeared (or churned): never watch it and never
+            // path-dirty it — backstop full scans own these subtrees.
+            return;
+        }
         if mask.contains(EventMask::ISDIR)
             && mask.intersects(EventMask::CREATE | EventMask::MOVED_TO)
             && let Some(name) = name
         {
+            // Recursive: a moved-in or freshly created tree can already have
+            // interior directories whose own creation was never evented (POC:
+            // per-dir watch registration races are real and intermittent). The
+            // kernel returns the SAME wd for an already-watched inode, so
+            // re-registering after a rename also heals stale wd->path mappings.
             let child = parent_path.join(name);
-            if let Err(error) = add_dir_watch(state, &session_id, child) {
+            if let Err(error) = add_tree_watches(state, &session_id, &child) {
                 eprintln!(
-                    "node-sync upper inotify add new dir session={session_id}: {error}; falling back to scan-every-tick for this session"
+                    "node-sync merged inotify add new dir session={session_id}: {error}; falling back to scan-every-tick for this session"
                 );
                 with_shared(state, |shared| shared.mark_always_scan(&session_id));
+                let _ = state.dirty_tx.send(WatchMessage::Dirty {
+                    session: session_id,
+                    path: None,
+                });
+                return;
             }
         }
         // The daemon itself rewrites the ready marker into merged root every
@@ -450,20 +565,45 @@ mod imp {
         if name.is_none() && at_session_root && mask.contains(EventMask::ATTRIB) {
             return;
         }
-        let _ = state.dirty_tx.send(WatchMessage::Dirty(session_id));
+        let path = match name {
+            Some(name) => parent_path.join(name),
+            None => parent_path,
+        };
+        let _ = state.dirty_tx.send(WatchMessage::Dirty {
+            session: session_id,
+            path: Some(path),
+        });
+    }
+
+    /// Sysctl-derived watch budget: 80% of fs.inotify.max_user_watches, so a
+    /// too-big session degrades to always_scan up front instead of eating the
+    /// node's whole allowance and failing other sessions' adds at random depths.
+    fn watch_budget_from_sysctl() -> usize {
+        const FALLBACK: usize = 52_000; // 80% of the common 65536 default
+        std::fs::read_to_string("/proc/sys/fs/inotify/max_user_watches")
+            .ok()
+            .and_then(|value| value.trim().parse::<usize>().ok())
+            .map(|limit| limit / 5 * 4)
+            .unwrap_or(FALLBACK)
     }
 
     fn add_session_watches(
         state: &mut ReaderState,
         session_id: &str,
-        upper_root: &Path,
+        watch_root: &Path,
     ) -> io::Result<()> {
-        let mut stack = vec![upper_root.to_path_buf()];
+        add_tree_watches(state, session_id, watch_root)
+    }
+
+    /// Watch `root` and every non-pruned directory under it.
+    fn add_tree_watches(state: &mut ReaderState, session_id: &str, root: &Path) -> io::Result<()> {
+        let mut stack = vec![root.to_path_buf()];
         while let Some(dir) = stack.pop() {
             add_dir_watch(state, session_id, dir.clone())?;
             for entry in fs::read_dir(&dir)? {
                 let entry = entry?;
-                if entry.file_type()?.is_dir() {
+                if entry.file_type()?.is_dir() && !super::is_unwatched_dir_name(&entry.file_name())
+                {
                     stack.push(entry.path());
                 }
             }
@@ -472,19 +612,35 @@ mod imp {
     }
 
     fn add_dir_watch(state: &mut ReaderState, session_id: &str, dir: PathBuf) -> io::Result<()> {
+        if state.total_watches >= state.watch_budget {
+            return Err(io::Error::other(format!(
+                "watch budget exhausted ({} of {} watches in use)",
+                state.total_watches, state.watch_budget
+            )));
+        }
         let wd = state.inotify.watches().add(&dir, WATCH_MASK)?;
+        // Same-inode re-adds return the same wd: refresh the path mapping (this
+        // is what heals stale paths after a directory rename) and don't count
+        // the watch twice.
+        let already_watched = state
+            .wd_dirs
+            .insert(
+                wd.clone(),
+                WatchedDir {
+                    session_id: session_id.to_string(),
+                    path: dir,
+                },
+            )
+            .is_some();
+        if already_watched {
+            return Ok(());
+        }
+        state.total_watches += 1;
         state
             .session_wds
             .entry(session_id.to_string())
             .or_default()
-            .push(wd.clone());
-        state.wd_dirs.insert(
-            wd,
-            WatchedDir {
-                session_id: session_id.to_string(),
-                path: dir,
-            },
-        );
+            .push(wd);
         Ok(())
     }
 
@@ -494,7 +650,9 @@ mod imp {
         };
         let mut watches = state.inotify.watches();
         for wd in wds {
-            state.wd_dirs.remove(&wd);
+            if state.wd_dirs.remove(&wd).is_some() {
+                state.total_watches = state.total_watches.saturating_sub(1);
+            }
             let _ = watches.remove(wd);
         }
     }
@@ -506,7 +664,10 @@ mod imp {
             .map(|shared| shared.active_sessions())
             .unwrap_or_default();
         for session in sessions {
-            let _ = state.dirty_tx.send(WatchMessage::Dirty(session));
+            let _ = state.dirty_tx.send(WatchMessage::Dirty {
+                session,
+                path: None,
+            });
         }
     }
 
@@ -523,9 +684,9 @@ mod imp {
     use std::path::Path;
     use std::sync::mpsc;
 
-    pub struct UpperWatcher;
+    pub struct MergedTreeWatcher;
 
-    impl UpperWatcher {
+    impl MergedTreeWatcher {
         pub fn from_env(_dirty_tx: mpsc::Sender<WatchMessage>) -> Self {
             Self
         }
@@ -545,7 +706,7 @@ mod imp {
         pub fn add_session(
             &self,
             _session_id: impl Into<String>,
-            _upper_root: impl AsRef<Path>,
+            _watch_root: impl AsRef<Path>,
         ) -> AddSessionResult {
             AddSessionResult {
                 attached: false,
@@ -557,7 +718,7 @@ mod imp {
     }
 }
 
-pub use imp::UpperWatcher;
+pub use imp::MergedTreeWatcher;
 
 #[cfg(test)]
 mod tests {
@@ -585,12 +746,51 @@ mod tests {
     #[test]
     fn dirty_sessions_dedupes_and_clears_per_scan() {
         let mut dirty = DirtySessions::default();
-        assert!(dirty.mark("s1"));
-        assert!(!dirty.mark("s1"));
+        assert!(dirty.mark("s1", None));
+        assert!(!dirty.mark("s1", None));
         assert!(dirty.contains("s1"));
-        assert!(dirty.clear_for_scan("s1"));
+        assert!(dirty.clear_for_scan("s1").any());
         assert!(!dirty.contains("s1"));
-        assert!(!dirty.clear_for_scan("s1"));
+        assert!(!dirty.clear_for_scan("s1").any());
+    }
+
+    #[test]
+    fn dirty_paths_collect_and_full_dirty_absorbs_them() {
+        let mut dirty = DirtySessions::default();
+        assert!(dirty.mark("s1", Some(PathBuf::from("/m/a.txt"))));
+        assert!(!dirty.mark("s1", Some(PathBuf::from("/m/a.txt"))));
+        assert!(dirty.mark("s1", Some(PathBuf::from("/m/b/c.txt"))));
+        assert!(dirty.contains("s1"));
+        let drained = dirty.clear_for_scan("s1");
+        assert!(!drained.full);
+        assert_eq!(drained.paths.len(), 2);
+        // Full dirt swallows path dirt and drains as full.
+        dirty.mark("s1", Some(PathBuf::from("/m/a.txt")));
+        dirty.mark("s1", None);
+        dirty.mark("s1", Some(PathBuf::from("/m/late.txt")));
+        let drained = dirty.clear_for_scan("s1");
+        assert!(drained.full);
+        assert!(drained.paths.is_empty());
+    }
+
+    #[test]
+    fn dirty_path_cap_degrades_to_full() {
+        let mut dirty = DirtySessions::default();
+        for i in 0..=DIRTY_PATH_CAP {
+            dirty.mark("s1", Some(PathBuf::from(format!("/m/f{i}"))));
+        }
+        let drained = dirty.clear_for_scan("s1");
+        assert!(drained.full, "cap overflow must degrade to a full rescan");
+        assert!(drained.paths.is_empty());
+    }
+
+    #[test]
+    fn unwatched_dir_names_match_exactly() {
+        use std::ffi::OsStr;
+        assert!(is_unwatched_dir_name(OsStr::new("node_modules")));
+        assert!(is_unwatched_dir_name(OsStr::new("target")));
+        assert!(!is_unwatched_dir_name(OsStr::new("node_modules2")));
+        assert!(!is_unwatched_dir_name(OsStr::new("src")));
     }
 
     #[test]
@@ -619,7 +819,7 @@ mod tests {
             loop {
                 let remaining = deadline.saturating_duration_since(std::time::Instant::now());
                 match rx.recv_timeout(remaining) {
-                    Ok(WatchMessage::Dirty(found)) if found == session => return,
+                    Ok(WatchMessage::Dirty { session: found, .. }) if found == session => return,
                     Ok(_) => continue,
                     Err(error) => panic!("timed out waiting for dirty {session}: {error}"),
                 }
@@ -637,7 +837,7 @@ mod tests {
         fn watcher_reports_file_create_modify_rename_and_delete() {
             let temp = tempfile::tempdir().unwrap();
             let (tx, rx) = mpsc::channel();
-            let watcher = UpperWatcher::start(tx).unwrap();
+            let watcher = MergedTreeWatcher::start(tx).unwrap();
             let result = watcher.add_session("s1", temp.path());
             assert!(result.attached);
 
@@ -662,7 +862,7 @@ mod tests {
         fn watcher_adds_new_directory_before_marking_dirty() {
             let temp = tempfile::tempdir().unwrap();
             let (tx, rx) = mpsc::channel();
-            let watcher = UpperWatcher::start(tx).unwrap();
+            let watcher = MergedTreeWatcher::start(tx).unwrap();
             assert!(watcher.add_session("s1", temp.path()).attached);
 
             let dir = temp.path().join("new");
@@ -678,7 +878,7 @@ mod tests {
         fn daemon_authored_root_markers_do_not_dirty() {
             let temp = tempfile::tempdir().unwrap();
             let (tx, rx) = mpsc::channel();
-            let watcher = UpperWatcher::start(tx).unwrap();
+            let watcher = MergedTreeWatcher::start(tx).unwrap();
             watcher.add_session("sess-markers", temp.path());
 
             // Daemon-authored marker files at the session ROOT must not dirty
@@ -720,11 +920,102 @@ mod tests {
             recv_dirty(&rx, "sess-markers");
         }
 
+        fn recv_dirty_path(rx: &mpsc::Receiver<WatchMessage>, session: &str) -> PathBuf {
+            let deadline = std::time::Instant::now() + Duration::from_secs(2);
+            loop {
+                let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+                match rx.recv_timeout(remaining) {
+                    Ok(WatchMessage::Dirty {
+                        session: found,
+                        path: Some(path),
+                    }) if found == session => return path,
+                    Ok(_) => continue,
+                    Err(error) => panic!("timed out waiting for dirty path {session}: {error}"),
+                }
+            }
+        }
+
+        #[test]
+        fn dirty_messages_carry_the_changed_path() {
+            let temp = tempfile::tempdir().unwrap();
+            let (tx, rx) = mpsc::channel();
+            let watcher = MergedTreeWatcher::start(tx).unwrap();
+            assert!(watcher.add_session("s1", temp.path()).attached);
+
+            let file = temp.path().join("carried.txt");
+            fs::write(&file, b"x").unwrap();
+            let mut saw_file = false;
+            for _ in 0..4 {
+                if recv_dirty_path(&rx, "s1") == file {
+                    saw_file = true;
+                    break;
+                }
+            }
+            assert!(saw_file, "no dirty message named {}", file.display());
+        }
+
+        #[test]
+        fn unwatched_dep_trees_neither_watch_nor_dirty() {
+            let temp = tempfile::tempdir().unwrap();
+            // Pre-existing dep tree at attach time: never watched.
+            fs::create_dir_all(temp.path().join("node_modules").join("pkg")).unwrap();
+            let (tx, rx) = mpsc::channel();
+            let watcher = MergedTreeWatcher::start(tx).unwrap();
+            assert!(watcher.add_session("s1", temp.path()).attached);
+
+            fs::write(
+                temp.path().join("node_modules").join("pkg").join("i.js"),
+                b"x",
+            )
+            .unwrap();
+            assert_no_dirty(&rx);
+
+            // A dep tree appearing mid-session: the ISDIR event is swallowed.
+            fs::create_dir(temp.path().join("target")).unwrap();
+            assert_no_dirty(&rx);
+
+            // Normal dirs still work.
+            fs::write(temp.path().join("kept.txt"), b"x").unwrap();
+            recv_dirty(&rx, "s1");
+        }
+
+        #[test]
+        fn moved_in_tree_is_watched_recursively() {
+            // POC-pinned race: a preexisting tree moved into the watch root got
+            // only its top dir watched, so interior writes were never evented.
+            let temp = tempfile::tempdir().unwrap();
+            let staging = tempfile::tempdir_in(temp.path().parent().unwrap()).unwrap();
+            let src = staging.path().join("tree");
+            fs::create_dir_all(src.join("deep").join("deeper")).unwrap();
+            fs::write(src.join("deep").join("deeper").join("seed.txt"), b"s").unwrap();
+
+            let (tx, rx) = mpsc::channel();
+            let watcher = MergedTreeWatcher::start(tx).unwrap();
+            assert!(watcher.add_session("s1", temp.path()).attached);
+
+            let dst = temp.path().join("tree");
+            fs::rename(&src, &dst).unwrap();
+            recv_dirty(&rx, "s1"); // the MOVED_TO itself
+            while rx.recv_timeout(Duration::from_millis(200)).is_ok() {}
+
+            // Interior write must event — requires the recursive registration.
+            let interior = dst.join("deep").join("deeper").join("late.txt");
+            fs::write(&interior, b"late").unwrap();
+            let mut saw = false;
+            for _ in 0..4 {
+                if recv_dirty_path(&rx, "s1") == interior {
+                    saw = true;
+                    break;
+                }
+            }
+            assert!(saw, "interior write after mv was not evented");
+        }
+
         #[test]
         fn remove_session_stops_future_events() {
             let temp = tempfile::tempdir().unwrap();
             let (tx, rx) = mpsc::channel();
-            let watcher = UpperWatcher::start(tx).unwrap();
+            let watcher = MergedTreeWatcher::start(tx).unwrap();
             assert!(watcher.add_session("s1", temp.path()).attached);
             watcher.remove_session("s1");
             while rx.try_recv().is_ok() {}
