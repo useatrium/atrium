@@ -65,11 +65,29 @@ def fetch_and_resolve_commit(repo: str, ref: str) -> str:
 
     branch = ref.removeprefix("refs/heads/")
     remote_ref = f"refs/remotes/origin/{branch}"
-    run(
-        ["git", "fetch", "--quiet", "origin", f"refs/heads/{branch}:{remote_ref}"],
-        timeout=120,
-    )
+    try:
+        run(
+            ["git", "fetch", "--quiet", "origin", f"refs/heads/{branch}:{remote_ref}"],
+            timeout=120,
+        )
+    except RuntimeError:
+        if branch != "main":
+            raise
+        branch = remote_default_branch()
+        remote_ref = f"refs/remotes/origin/{branch}"
+        run(
+            ["git", "fetch", "--quiet", "origin", f"refs/heads/{branch}:{remote_ref}"],
+            timeout=120,
+        )
     return resolve_commit(remote_ref)
+
+
+def remote_default_branch() -> str:
+    output = run(["git", "ls-remote", "--symref", "origin", "HEAD"], timeout=30)
+    for line in output.splitlines():
+        if line.startswith("ref: refs/heads/") and line.endswith("\tHEAD"):
+            return line.removeprefix("ref: refs/heads/").removesuffix("\tHEAD")
+    raise RuntimeError("could not determine remote default branch")
 
 
 def preview_health_ok(url: str) -> bool:
