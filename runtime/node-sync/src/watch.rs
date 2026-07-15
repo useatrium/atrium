@@ -171,7 +171,11 @@ pub fn events_enabled_from_env_value(value: Option<&str>) -> bool {
     value.is_none_or(|value| value.trim() != "0")
 }
 
-pub fn kernel_supports_upper_data_events(release: &str) -> bool {
+/// Whether this kernel has been validated for merged-directory overlayfs
+/// watching. That strategy is simply untested below 6.5, so older or unknown
+/// kernels conservatively fall back to `always_scan`. A pre-6.5 POC could
+/// later relax this gate.
+pub fn kernel_validated_for_merged_watch(release: &str) -> bool {
     let Some((major, minor)) = parse_kernel_major_minor(release) else {
         return false;
     };
@@ -189,7 +193,7 @@ fn parse_kernel_major_minor(release: &str) -> Option<(u64, u64)> {
 mod imp {
     use super::{
         AddSessionResult, WatchMessage, WatcherSharedState, events_enabled_from_env_value,
-        kernel_supports_upper_data_events,
+        kernel_validated_for_merged_watch,
     };
     use crate::overlay_mount::{OVERLAY_SIGNATURE_FILE, READY_MARKER_FILE};
     use inotify::{EventMask, Inotify, WatchDescriptor, WatchMask};
@@ -271,7 +275,7 @@ mod imp {
                     return Self::disabled();
                 }
             };
-            if !kernel_supports_upper_data_events(&release) {
+            if !kernel_validated_for_merged_watch(&release) {
                 eprintln!(
                     "node-sync merged inotify disabled: kernel {release} is older than 6.5; falling back to scan-every-tick"
                 );
@@ -743,11 +747,11 @@ mod tests {
 
     #[test]
     fn kernel_version_gate_parses_major_minor() {
-        assert!(kernel_supports_upper_data_events("7.0.0-prod"));
-        assert!(kernel_supports_upper_data_events("6.5.0-101-generic"));
-        assert!(!kernel_supports_upper_data_events("6.4.99"));
-        assert!(!kernel_supports_upper_data_events("5.15.0"));
-        assert!(!kernel_supports_upper_data_events("not-a-kernel"));
+        assert!(kernel_validated_for_merged_watch("7.0.0-prod"));
+        assert!(kernel_validated_for_merged_watch("6.5.0-101-generic"));
+        assert!(!kernel_validated_for_merged_watch("6.4.99"));
+        assert!(!kernel_validated_for_merged_watch("5.15.0"));
+        assert!(!kernel_validated_for_merged_watch("not-a-kernel"));
     }
 
     #[test]
