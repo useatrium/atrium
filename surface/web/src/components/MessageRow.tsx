@@ -22,7 +22,7 @@ import {
   type UserRef,
   decodeWireToDisplay,
   deriveSessionGlance,
-  formatDurationUnits,
+  formatOutcome,
   isTerminalSessionStatus,
   messageFromEvent,
   mentionsUser,
@@ -755,8 +755,8 @@ export const MessageRow = memo(function MessageRow({
         {slotAnswer && session && (
           <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-fg-muted">
             <span className="whitespace-nowrap">
-              <span className="text-success">✓</span> worked{' '}
-              {formatDurationUnits(Math.max(0, sessionElapsedMs(session, Date.now())))}
+              <span className="text-success">✓</span>{' '}
+              {formatOutcome(session.status, Math.max(0, sessionElapsedMs(session, Date.now())))}
             </span>
             <span className="inline-flex items-center gap-x-1 whitespace-nowrap">
               <span>·</span>
@@ -1295,7 +1295,7 @@ function AgentSessionSlot({
         <AgentMark size={20} tone="danger" />
         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-0.5">
           <span className="min-w-0 flex-[1_1_16rem] break-words">
-            ✕ Failed after {formatDurationUnits(Math.max(0, sessionElapsedMs(session, now)))}
+            ✕ {formatOutcome(session.status, Math.max(0, sessionElapsedMs(session, now)))}
             {session.resultText?.trim() ? ` — ${session.resultText.trim()}` : ''}
           </span>
           <span className="flex flex-wrap items-center gap-x-2 gap-y-0">
@@ -1343,11 +1343,10 @@ function AgentSessionSlot({
       <div data-testid="session-slot-done" className="flex min-w-0 items-start gap-2 text-xs text-fg-muted">
         <AgentMark size={20} />
         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-0.5">
-          <span className="inline-flex items-center gap-x-1 whitespace-nowrap">
-            <span className="text-success">✓</span>
-            <span>done</span>
-            <span>·</span>
-            <span>{formatDurationUnits(Math.max(0, sessionElapsedMs(session, now)))}</span>
+          <span className="min-w-0 flex-[1_1_16rem] truncate">
+            <span className="text-success">✓</span>{' '}
+            {formatOutcome(session.status, Math.max(0, sessionElapsedMs(session, now)))}
+            {session.resultText?.trim() ? ` — ${session.resultText.trim()}` : ''}
           </span>
           <span className="inline-flex items-center gap-x-1 whitespace-nowrap">
             <span>·</span>

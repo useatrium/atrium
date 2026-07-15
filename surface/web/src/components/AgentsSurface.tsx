@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useMemo, useState, type MouseEvent } from 'react';
-import { formatCost, formatTime, isTerminalSessionStatus, type SessionListItem } from '@atrium/surface-client';
+import {
+  formatCost,
+  formatOutcome,
+  formatTime,
+  isTerminalSessionStatus,
+  type SessionListItem,
+} from '@atrium/surface-client';
 import { navigate } from '../router';
 import { sessionsApi } from '../sessions/api';
 import type { Session, SessionGlanceInput } from '../sessions/types';
@@ -40,6 +46,12 @@ function sessionFreshness(session: SessionListItem): number {
   const timestamp = session.completedAt ?? session.createdAt;
   const parsed = Date.parse(timestamp);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function terminalElapsedMs(session: SessionListItem): number {
+  const start = Date.parse(session.createdAt);
+  const end = Date.parse(session.completedAt ?? session.createdAt);
+  return Number.isFinite(start) && Number.isFinite(end) ? Math.max(0, end - start) : 0;
 }
 
 function sessionMatchesSearch(session: SessionListItem, query: string): boolean {
@@ -371,7 +383,10 @@ function AgentSessionListButton({
             <span className="truncate text-sm font-medium text-fg">{session.title}</span>
           </span>
           <span className="block truncate text-2xs text-fg-muted">
-            #{session.channelName} · {session.spawnerName} · {formatTime(session.createdAt)}
+            #{session.channelName} · {session.spawnerName} ·{' '}
+            {isTerminalSessionStatus(session.status)
+              ? formatOutcome(session.status, terminalElapsedMs(session))
+              : formatTime(session.createdAt)}
           </span>
         </span>
         <span className="shrink-0 text-2xs tabular-nums text-fg-muted">

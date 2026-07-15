@@ -83,6 +83,37 @@ describe('ConversationHeader — one identity across the zooms', () => {
     expect(screen.getByRole('heading', { name: 'Fix the flaky login test' })).toBeTruthy();
   });
 
+  it('gives the hidden-title session opener a distinct status-aware name', () => {
+    const { rerender } = render(
+      <ThemeProvider>
+        <ConversationHeader
+          variant="card"
+          hideTitle
+          onOpenTitle={() => {}}
+          identity={{ kind: 'session', session: session() }}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(screen.getByRole('button', { name: 'Fix the flaky login test — Working' })).toBeTruthy();
+
+    rerender(
+      <ThemeProvider>
+        <ConversationHeader
+          variant="card"
+          hideTitle
+          onOpenTitle={() => {}}
+          identity={{
+            kind: 'session',
+            session: session({ status: 'completed', completedAt: '2026-07-05T12:00:42.000Z' }),
+          }}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(screen.getByRole('button', { name: 'Fix the flaky login test — Done, Done in 42s' })).toBeTruthy();
+  });
+
   it('holds the panel header still while the panel expands around it', () => {
     render(
       <ThemeProvider>
