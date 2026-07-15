@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   addPending,
+  isAgentVoiceBroadcast,
+  isHumanBroadcastReply,
   applyEvent,
   emptyTimeline,
   mergeHistory,
@@ -458,5 +460,44 @@ describe('the final agent reply reaches the channel', () => {
 
     const parsed = messageFromEvent(root);
     expect(parsed.lastReply).toMatchObject({ id: 9, text: 'Finished.', sessionEventType: 'replied' });
+  });
+});
+
+describe('broadcast classification', () => {
+  const base: ChatMessage = {
+    id: 9,
+    clientMsgId: null,
+    channelId: 'ch-1',
+    threadRootEventId: 1,
+    text: 'hi',
+    edited: false,
+    author: { id: 'u-1', handle: 'ada', displayName: 'Ada' },
+    createdAt: '2026-07-15T12:00:00.000Z',
+    replyCount: 0,
+    lastReplyId: 0,
+    status: 'confirmed',
+  };
+
+  it('classifies a human "also send to channel" reply', () => {
+    const m: ChatMessage = { ...base, broadcast: true };
+    expect(isHumanBroadcastReply(m)).toBe(true);
+    expect(isAgentVoiceBroadcast(m)).toBe(false);
+  });
+
+  it('classifies an agent answer as agent-voice', () => {
+    const m: ChatMessage = { ...base, broadcast: true, sessionId: 's-1', sessionEventType: 'replied' };
+    expect(isAgentVoiceBroadcast(m)).toBe(true);
+    expect(isHumanBroadcastReply(m)).toBe(false);
+  });
+
+  it('classifies a broadcast spawn row (sessionId, no event type) as agent-voice', () => {
+    const m: ChatMessage = { ...base, broadcast: true, sessionId: 's-1' };
+    expect(isAgentVoiceBroadcast(m)).toBe(true);
+    expect(isHumanBroadcastReply(m)).toBe(false);
+  });
+
+  it('non-broadcast messages are neither', () => {
+    expect(isAgentVoiceBroadcast(base)).toBe(false);
+    expect(isHumanBroadcastReply(base)).toBe(false);
   });
 });

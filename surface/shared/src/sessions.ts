@@ -1657,3 +1657,23 @@ export function formatElapsed(ms: number): string {
   const mm = h > 0 ? String(m).padStart(2, '0') : String(m);
   return `${h > 0 ? `${h}:` : ''}${mm}:${String(s).padStart(2, '0')}`;
 }
+
+/**
+ * Resolve the agent session attached to a thread root: an explicit
+ * `root.sessionId` (the root IS the session's spawn row) wins; otherwise the
+ * session whose `threadRootEventId` points back at the root. `channelId`
+ * guards the fallback — event ids are globally unique today, but a session
+ * from another channel must never attach (mobile always guarded; web didn't).
+ * Both platforms' thread panes must use this instead of re-deriving it.
+ */
+export function attachedSessionForRoot<S extends { id: string; channelId: string; threadRootEventId: number | null }>(
+  sessions: Record<string, S>,
+  root: { id: number | null; sessionId?: string | null },
+  channelId: string | null,
+): S | undefined {
+  if (root.sessionId != null) return sessions[root.sessionId];
+  if (root.id == null) return undefined;
+  return Object.values(sessions).find(
+    (session) => session.threadRootEventId === root.id && (channelId == null || session.channelId === channelId),
+  );
+}

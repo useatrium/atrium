@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { decodeSessionResponse } from './api';
 import {
+  attachedSessionForRoot,
   matchSteerProvenance,
   maxSessionStatus,
   normalizeSteerProvenanceText,
@@ -377,5 +378,34 @@ describe('session wire decoding of the answered trace', () => {
   it('decodes an older payload that carries no trace at all', () => {
     const { answeredQuestion: _omitted, ...older } = wire;
     expect(sessionFromWire(decodeSessionResponse({ session: older }).session).answeredQuestion).toBeNull();
+  });
+});
+
+describe('attachedSessionForRoot', () => {
+  const sess = (id: string, channelId: string, threadRootEventId: number | null) => ({
+    id,
+    channelId,
+    threadRootEventId,
+  });
+
+  it('prefers the explicit root.sessionId', () => {
+    const sessions = { 's-1': sess('s-1', 'ch-1', 5), 's-2': sess('s-2', 'ch-1', 7) };
+    expect(attachedSessionForRoot(sessions, { id: 7, sessionId: 's-1' }, 'ch-1')?.id).toBe('s-1');
+  });
+
+  it('falls back to threadRootEventId within the channel', () => {
+    const sessions = { 's-1': sess('s-1', 'ch-1', 7) };
+    expect(attachedSessionForRoot(sessions, { id: 7 }, 'ch-1')?.id).toBe('s-1');
+  });
+
+  it('never attaches a session from another channel', () => {
+    const sessions = { 's-1': sess('s-1', 'ch-OTHER', 7) };
+    expect(attachedSessionForRoot(sessions, { id: 7 }, 'ch-1')).toBeUndefined();
+  });
+
+  it('returns undefined for a rootless message or no match', () => {
+    const sessions = { 's-1': sess('s-1', 'ch-1', 5) };
+    expect(attachedSessionForRoot(sessions, { id: null }, 'ch-1')).toBeUndefined();
+    expect(attachedSessionForRoot(sessions, { id: 9 }, 'ch-1')).toBeUndefined();
   });
 });
