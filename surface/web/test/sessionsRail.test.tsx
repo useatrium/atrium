@@ -96,7 +96,7 @@ describe('SessionsRail', () => {
     const onOpen = vi.fn();
     const s = session({ title: 'open me' });
     render(<SessionsRail channelId="ch-1" sessions={asMap(s)} onOpenSession={onOpen} />);
-    fireEvent.click(screen.getByRole('button', { name: 'Open agent session' }));
+    fireEvent.click(screen.getByRole('button', { name: 'open me — Working' }));
     expect(onOpen).toHaveBeenCalledWith(s.id);
   });
 });

@@ -391,6 +391,7 @@ describe('MessageRow web presence', () => {
 
     const failedSlot = screen.getByTestId('session-slot-failed');
     expect(failedSlot.className).toContain('min-w-0');
+    expect(failedSlot.textContent).toContain('Failed after 30s');
     expect(within(failedSlot).getByText(/A detailed failure reason/).className).toContain('break-words');
     expect(screen.getByTestId('card-retry-turn').className).toContain('whitespace-nowrap');
     expect(screen.getByTestId('card-ask-why').className).toContain('whitespace-nowrap');
@@ -428,7 +429,7 @@ describe('MessageRow web presence', () => {
     expect(screen.queryByTestId('session-slot-working')).toBeNull();
   });
 
-  it('renders the minimal terminal strip when no broadcast answer exists', () => {
+  it('renders the terminal outcome and result excerpt when no broadcast answer exists', () => {
     const completed = session({ status: 'completed', completedAt: '2026-07-05T12:01:00.000Z' });
     renderRow({
       row: message({ sessionId: 's-1', sessionTask: 'Quiet completion', reactions: [] }),
@@ -438,11 +439,28 @@ describe('MessageRow web presence', () => {
 
     const doneSlot = screen.getByTestId('session-slot-done');
     expect(doneSlot.querySelector('.flex-wrap')).toBeTruthy();
-    expect(screen.getByText('done')).toBeTruthy();
+    expect(doneSlot.textContent).toContain('Done in 1m');
     expect(within(doneSlot).getByRole('button', { name: 'view session' }).parentElement?.className).toContain(
       'whitespace-nowrap',
     );
     expect(screen.queryByTestId('session-slot-answer')).toBeNull();
+  });
+
+  it('includes the completion result in the terminal strip', () => {
+    const completed = session({
+      status: 'completed',
+      completedAt: '2026-07-05T12:01:00.000Z',
+      resultText: 'Updated the retry backoff and added coverage.',
+    });
+    renderRow({
+      row: message({ sessionId: 's-1', sessionTask: 'Quiet completion', reactions: [] }),
+      session: completed,
+      slotSessions: [completed],
+    });
+
+    expect(screen.getByTestId('session-slot-done').textContent).toContain(
+      'Done in 1m — Updated the retry backoff and added coverage.',
+    );
   });
 
   it('renders an agent reply with the fixed Agent identity and normal markdown body', () => {

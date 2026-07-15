@@ -1,5 +1,7 @@
 import type { ReactNode } from 'react';
+import { deriveSessionGlance, formatOutcome, isTerminalSessionStatus } from '@atrium/surface-client';
 import { Avatar } from '../components/Avatar';
+import { sessionElapsedMs } from './SessionCard';
 import { GlanceChip } from './GlanceChip';
 import type { Session, SessionGlanceKind } from './types';
 
@@ -28,7 +30,7 @@ export type ConversationIdentity =
       /** Rare display exception, e.g. a dead optimistic card's "spawn failed". */
       glanceOverride?: { kind: SessionGlanceKind; label: string };
       /**
-       * One clock per row. A terminal card already says "Agent worked 4m" next
+       * One clock per row. A terminal card already says "Done in 4m" next
        * to the chip, so the chip drops its own clock rather than printing the
        * same duration twice.
        */
@@ -93,6 +95,19 @@ export function ConversationHeader({
 }) {
   const panel = variant === 'panel';
   const title = identity.kind === 'session' ? identity.session.title : identity.authorName;
+  const openerLabel =
+    identity.kind === 'session'
+      ? (() => {
+          const terminal = isTerminalSessionStatus(identity.session.status);
+          const glanceLabel =
+            identity.glanceOverride?.label ?? deriveSessionGlance(identity.session, identity.now ?? Date.now()).label;
+          return `${title} — ${glanceLabel}${
+            terminal
+              ? `, ${formatOutcome(identity.session.status, Math.max(0, sessionElapsedMs(identity.session, identity.now ?? Date.now())))}`
+              : ''
+          }`;
+        })()
+      : undefined;
   // In a panel the identity IS the region's heading (screen readers and the
   // e2e suite both navigate by it); on a card it's a row in the feed, not a
   // document landmark.
@@ -134,7 +149,7 @@ export function ConversationHeader({
         type="button"
         data-testid="conversation-title"
         onClick={onOpenTitle}
-        aria-label={openTitleHint ?? 'Open agent session'}
+        aria-label={openTitleHint ?? openerLabel}
         className="rounded-full focus-visible:underline"
       >
         {chipNode}
