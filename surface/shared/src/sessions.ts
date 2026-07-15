@@ -427,6 +427,9 @@ export interface SessionListItem {
   completedAt: string | null;
   archivedAt: string | null;
   pinned: boolean;
+  needsAttention: boolean;
+  attentionReason: 'question' | 'auth' | null;
+  resultText: string | null;
 }
 
 /** Client-side session entity (wire shape + display-only extras). */
@@ -629,6 +632,15 @@ export function formatDurationUnits(ms: number): string {
   const h = Math.floor(totalMinutes / 60);
   const m = totalMinutes % 60;
   return `${h}h ${String(m).padStart(2, '0')}m`;
+}
+
+/** Terminal status copy with a unit-spoken duration. */
+export function formatOutcome(status: SessionStatus, elapsedMs: number): string {
+  const duration = formatDurationUnits(elapsedMs);
+  if (status === 'completed') return `Done in ${duration}`;
+  if (status === 'failed') return `Failed after ${duration}`;
+  if (status === 'cancelled') return `Stopped after ${duration}`;
+  return '';
 }
 
 /**
@@ -843,6 +855,13 @@ export const SessionListItemSchema = Schema.mutable(
     completedAt: NullableStringSchema,
     archivedAt: Schema.optionalWith(NullableStringSchema, { default: () => null }),
     pinned: Schema.optionalWith(Schema.Boolean, { default: () => false }),
+    // Decode-with-default so clients remain compatible with an older server
+    // during a rolling deploy.
+    needsAttention: Schema.optionalWith(Schema.Boolean, { default: () => false }),
+    attentionReason: Schema.optionalWith(Schema.Union(Schema.Literal('question', 'auth'), Schema.Null), {
+      default: () => null,
+    }),
+    resultText: Schema.optionalWith(NullableStringSchema, { default: () => null }),
   }),
 );
 
@@ -1646,7 +1665,7 @@ function parseQuestionResolutionReason(value: unknown): QuestionResolutionReason
 }
 
 export function formatCost(v: number): string {
-  return `$${v >= 1 ? v.toFixed(2) : v.toFixed(4)}`;
+  return `$${v.toFixed(2)}`;
 }
 
 export function formatElapsed(ms: number): string {

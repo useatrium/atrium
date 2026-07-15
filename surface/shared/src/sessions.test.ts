@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { decodeSessionResponse } from './api';
+import { decodeSessionListResponse, decodeSessionResponse } from './api';
 import {
   attachedSessionForRoot,
+  formatCost,
+  formatOutcome,
   matchSteerProvenance,
   maxSessionStatus,
   normalizeSteerProvenanceText,
@@ -18,6 +20,47 @@ import {
   type SessionQuestionEvent,
   type SessionSuggestion,
 } from './sessions';
+
+describe('session list wire decoding', () => {
+  it('defaults attention and result fields from an older server payload', () => {
+    const decoded = decodeSessionListResponse({
+      sessions: [
+        {
+          id: 's-1',
+          channelId: 'c-1',
+          channelName: 'general',
+          title: 'legacy session',
+          status: 'running',
+          harness: 'codex',
+          spawnedBy: 'u-1',
+          spawnerName: 'Ada',
+          costUsd: 0,
+          createdAt: '2026-07-15T00:00:00.000Z',
+          completedAt: null,
+        },
+      ],
+    });
+
+    expect(decoded.sessions[0]).toMatchObject({
+      needsAttention: false,
+      attentionReason: null,
+      resultText: null,
+    });
+  });
+});
+
+describe('session outcome formatting', () => {
+  it('formats costs to two decimal places', () => {
+    expect(formatCost(0.42)).toBe('$0.42');
+  });
+
+  it('formats terminal outcomes and leaves active work blank', () => {
+    expect(formatOutcome('completed', 102_000)).toBe('Done in 1m');
+    expect(formatOutcome('failed', 3_600_000)).toBe('Failed after 1h 00m');
+    expect(formatOutcome('cancelled', 42_000)).toBe('Stopped after 42s');
+    expect(formatOutcome('running', 42_000)).toBe('');
+  });
+});
 
 describe('maxSessionStatus', () => {
   it('keeps completed ahead of failed regardless of event order', () => {

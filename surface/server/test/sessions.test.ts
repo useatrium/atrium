@@ -548,13 +548,17 @@ async function insertSessionRow(args: {
   createdAt?: string;
   completedAt?: string | null;
   costUsd?: number;
+  pendingQuestion?: unknown;
+  providerAuthRequired?: unknown;
+  resultText?: string | null;
 }): Promise<string> {
   const inserted = await pool.query<{ id: string }>(
     `INSERT INTO sessions (
        workspace_id, channel_id, centaur_thread_key, harness, title, status, spawned_by,
-       driver_id, current_execution_id, assignment_generation, created_at, completed_at, cost_usd
+       driver_id, current_execution_id, assignment_generation, created_at, completed_at, cost_usd,
+       pending_question, provider_auth_required, result_text
      )
-     VALUES ($1, $2, $3, 'claude-code', $4, $5, $6, $6, $7, $8, $9, $10, $11)
+     VALUES ($1, $2, $3, 'claude-code', $4, $5, $6, $6, $7, $8, $9, $10, $11, $12, $13, $14)
      RETURNING id`,
     [
       fx.workspaceId,
@@ -568,6 +572,9 @@ async function insertSessionRow(args: {
       args.createdAt ?? new Date().toISOString(),
       args.completedAt ?? null,
       args.costUsd ?? 0,
+      args.pendingQuestion ?? null,
+      args.providerAuthRequired ?? null,
+      args.resultText ?? null,
     ],
   );
   return inserted.rows[0]!.id;
@@ -5454,6 +5461,7 @@ describe('session access control', () => {
     ]);
     expect(Object.keys(allSessions[0]).sort()).toEqual([
       'archivedAt',
+      'attentionReason',
       'channelId',
       'channelName',
       'completedAt',
@@ -5461,7 +5469,9 @@ describe('session access control', () => {
       'createdAt',
       'harness',
       'id',
+      'needsAttention',
       'pinned',
+      'resultText',
       'spawnedBy',
       'spawnerName',
       'status',
@@ -5494,6 +5504,87 @@ describe('session access control', () => {
       headers: { cookie: alice.cookie },
     });
     expect(recent.json().sessions.map((s: { id: string }) => s.id)).toEqual([failedNewest]);
+    await app.close();
+  });
+
+  it('ships list attention truth and normalized result excerpts', async () => {
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
+    });
+    await app.ready();
+    const alice = await loginUser(app, 'alice', 'Alice');
+    const pendingQuestion = {
+      questionId: 'q-1',
+      turnId: 'turn-1',
+      eventId: 1,
+      questions: [],
+    };
+    const providerAuthRequired = {
+      provider: 'codex',
+      userId: alice.userId,
+      reason: 'missing_token',
+      message: 'Reconnect Codex',
+      at: '2026-07-15T00:00:00.000Z',
+    };
+    const questionId = await insertSessionRow({
+      title: 'question',
+      status: 'running',
+      spawnedBy: alice.userId,
+      pendingQuestion,
+    });
+    const authId = await insertSessionRow({
+      title: 'auth',
+      status: 'running',
+      spawnedBy: alice.userId,
+      providerAuthRequired,
+      resultText: '  reconnect\n\tCodex  ',
+    });
+    const bothId = await insertSessionRow({
+      title: 'both',
+      status: 'running',
+      spawnedBy: alice.userId,
+      pendingQuestion,
+      providerAuthRequired,
+    });
+    const completedId = await insertSessionRow({
+      title: 'completed stale question',
+      status: 'completed',
+      spawnedBy: alice.userId,
+      pendingQuestion,
+    });
+    const resultId = await insertSessionRow({
+      title: 'result',
+      status: 'completed',
+      spawnedBy: alice.userId,
+      resultText: `  ${'word '.repeat(60)}\n tail  `,
+    });
+    const emptyResultId = await insertSessionRow({
+      title: 'empty result',
+      status: 'completed',
+      spawnedBy: alice.userId,
+      resultText: null,
+    });
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/sessions?status=all',
+      headers: { cookie: alice.cookie },
+    });
+    expect(response.statusCode).toBe(200);
+    const byId = new Map(response.json().sessions.map((session: { id: string }) => [session.id, session]));
+    expect(byId.get(questionId)).toMatchObject({ needsAttention: true, attentionReason: 'question' });
+    expect(byId.get(authId)).toMatchObject({
+      needsAttention: true,
+      attentionReason: 'auth',
+      resultText: 'reconnect Codex',
+    });
+    expect(byId.get(bothId)).toMatchObject({ needsAttention: true, attentionReason: 'question' });
+    expect(byId.get(completedId)).toMatchObject({ needsAttention: false, attentionReason: null });
+    expect(byId.get(resultId)).toMatchObject({
+      resultText: `${'word '.repeat(48).trimEnd()}…`,
+    });
+    expect(byId.get(emptyResultId)).toMatchObject({ resultText: null });
     await app.close();
   });
 
