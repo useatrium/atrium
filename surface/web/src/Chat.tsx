@@ -361,7 +361,14 @@ export function Chat({
   onLogout: () => void;
 }) {
   const { prefs } = useTheme();
-  const [state, dispatch] = useReducer(appReducer, initialAppState);
+  // Seed the active channel from the deep-link URL at construction so an async
+  // `channels-loaded` (WS sync or a stale/empty local cache snapshot) can't win
+  // the race and lock in the default `general` channel before the URL is applied.
+  // The reducer's `channels-loaded` only defaults when activeChannelId is null,
+  // so seeding here makes a /c/<id> deep-link deterministic.
+  const [state, dispatch] = useReducer(appReducer, initialChannelId, (channelId) =>
+    channelId ? { ...initialAppState, activeChannelId: channelId } : initialAppState,
+  );
   const [sessionEventSeq, setSessionEventSeq] = useState(0);
   const [activityCounts, setActivityCounts] = useState<ActivityCounts>({ attention: 0, unread: 0 });
   const [activityLiveEvent, setActivityLiveEvent] = useState<WireEvent | null>(null);

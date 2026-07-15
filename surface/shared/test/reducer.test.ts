@@ -768,6 +768,51 @@ describe('app unread read cursors', () => {
     expect(state.unread[CH]).toBe(false);
   });
 
+  it('channels-loaded preserves a deep-link-seeded active channel over the general default', () => {
+    // A /c/<id> deep link seeds activeChannelId at reducer construction. An async
+    // channels-loaded (WS sync or stale cache) must NOT override it with `general`,
+    // otherwise the deep link renders the wrong channel.
+    const seeded = { ...initialAppState, activeChannelId: CH };
+    const state = appReducer(seeded, {
+      type: 'channels-loaded',
+      channels: [
+        {
+          id: 'ch-general',
+          workspaceId: 'ws-1',
+          name: 'general',
+          createdAt: new Date(0).toISOString(),
+          kind: 'public',
+        },
+        {
+          id: CH,
+          workspaceId: 'ws-1',
+          name: 'zeta',
+          createdAt: new Date(0).toISOString(),
+          kind: 'public',
+        },
+      ],
+    });
+
+    expect(state.activeChannelId).toBe(CH);
+  });
+
+  it('channels-loaded still defaults to general when no channel was selected', () => {
+    const state = appReducer(initialAppState, {
+      type: 'channels-loaded',
+      channels: [
+        {
+          id: 'ch-general',
+          workspaceId: 'ws-1',
+          name: 'general',
+          createdAt: new Date(0).toISOString(),
+          kind: 'public',
+        },
+      ],
+    });
+
+    expect(state.activeChannelId).toBe('ch-general');
+  });
+
   it('muted channels never gain unread from live events', () => {
     const loaded = appReducer(initialAppState, {
       type: 'channels-loaded',
