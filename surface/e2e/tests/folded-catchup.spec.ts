@@ -138,7 +138,9 @@ test('warm reload catches up with folded edited rows and reply counts', async ({
   await root.getByRole('button', { name: 'Open thread →' }).click();
   await expect(page.getByTestId('conversation-crumb')).toContainText('1 reply');
 
+  // The active channel can render healed state from its initial history fetch
+  // before hydration's per-channel delta fires — wait for the delta itself.
+  await expect.poll(() => deltaEventTypes, { timeout: 15_000 }).not.toBeNull();
   expect(deltaWire).toBe('folded');
-  expect(deltaEventTypes).not.toBeNull();
   expect(deltaEventTypes).not.toContain('message.edited');
 });
