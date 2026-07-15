@@ -12,7 +12,13 @@ import {
 import { useIsHoverNone } from '../lib/useIsHoverNone';
 import { api, type Channel } from '../api';
 import { MessageActionMenu, type MessageActionMenuState } from './MessageActionMenu';
-import type { ActivityCounts, QueueSyncState } from '@atrium/surface-client';
+import {
+  formatWaiting,
+  isPendingSessionId,
+  isTerminalSessionStatus,
+  type ActivityCounts,
+  type QueueSyncState,
+} from '@atrium/surface-client';
 import type { UnreadLevel, UserRef } from '@atrium/surface-client';
 import { channelAvatarName, channelLabel, dmPartner } from '@atrium/surface-client';
 import { Avatar } from './Avatar';
@@ -35,11 +41,55 @@ import {
   sidebarSizing,
   useSidebarWidth,
 } from '../sessions/useSessionPaneWidth';
+import type { Session } from '../sessions/types';
 const SIDEBAR_GROUP_TITLE_CLASS = 'px-2 pb-1 text-2xs font-semibold uppercase tracking-wider text-fg-muted';
 const SIDEBAR_PANEL_CLASS = 'rounded-md border border-edge bg-surface-raised py-1';
 const SIDEBAR_SUBHEAD_CLASS = 'flex items-center justify-between px-3 pb-1 pt-1 text-2xs font-semibold text-fg-muted';
 const SIDEBAR_ITEM_BASE_CLASS = 'group mx-1 flex min-h-7 items-center rounded-md';
 const SIDEBAR_ROW_BUTTON_CLASS = 'flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm';
+const AGENT_WORK_COLLAPSED_KEY = 'atrium.sidebarAgentWorkCollapsed';
+
+type AgentWorkRow = {
+  session: Session;
+  kind: 'needs-answer' | 'needs-auth' | 'running';
+  detail: string;
+  blockedAt: number;
+};
+
+function agentWorkRows(sessions: Record<string, Session>, activeChannelId: string | null): AgentWorkRow[] {
+  const rows: AgentWorkRow[] = [];
+  for (const session of Object.values(sessions)) {
+    if (isPendingSessionId(session.id) || session.archivedAt || isTerminalSessionStatus(session.status)) continue;
+    const question = session.pendingQuestion?.questions[0]?.question;
+    const auth = session.providerAuthRequired;
+    const kind = question || session.pendingSeatRequests.length > 0 ? 'needs-answer' : auth ? 'needs-auth' : 'running';
+    const detail =
+      question ??
+      auth?.message ??
+      (session.pendingSeatRequests.length > 0 ? 'A collaborator is waiting for a seat' : session.title);
+    const blockedAt = Date.parse(session.pendingQuestion?.askedAt ?? session.createdAt);
+    rows.push({ session, kind, detail, blockedAt: Number.isFinite(blockedAt) ? blockedAt : 0 });
+  }
+  return rows.sort((a, b) => {
+    const group = (a.kind === 'running' ? 1 : 0) - (b.kind === 'running' ? 1 : 0);
+    if (group) return group;
+    const channel = Number(a.session.channelId !== activeChannelId) - Number(b.session.channelId !== activeChannelId);
+    if (channel) return channel;
+    return a.blockedAt - b.blockedAt;
+  });
+}
+
+/** A sidebar-local clock that stays asleep until an expanded live row needs it. */
+function useAgentWorkNow(active: boolean): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!active) return;
+    setNow(Date.now());
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [active]);
+  return now;
+}
 
 function sidebarItemClass(active: boolean, level: UnreadLevel | false, muted = false): string {
   return `${SIDEBAR_ITEM_BASE_CLASS} ${
@@ -69,10 +119,12 @@ function SidebarImpl({
   onStartDm,
   activeSurface = 'chat',
   onOpenFiles,
-  onOpenAgents,
   // === mentions-activity additions ===
   onOpenActivity,
   activityCounts,
+  // === sidebar agent-work additions ===
+  sessions = {},
+  onOpenSession,
   onOpenSettings,
   onLogout,
   isOpen = false,
@@ -97,10 +149,14 @@ function SidebarImpl({
   onStartDm: (userIds: string[]) => void;
   activeSurface?: 'chat' | 'files' | 'activity' | 'agents' | 'settings';
   onOpenFiles?: () => void;
+  /** Kept for callers that expose the Agents directory elsewhere. */
   onOpenAgents?: () => void;
   // === mentions-activity additions ===
   onOpenActivity?: () => void;
   activityCounts?: ActivityCounts;
+  // === sidebar agent-work additions ===
+  sessions?: Record<string, Session>;
+  onOpenSession?: (sessionId: string) => void;
   onOpenSettings?: () => void;
   onLogout: () => void;
   isOpen?: boolean;
@@ -129,6 +185,10 @@ function SidebarImpl({
   const channelMenuButtonRef = useRef<HTMLButtonElement | null>(null);
   const createChannelErrorId = 'sidebar-create-channel-error';
   const isHoverNone = useIsHoverNone();
+  const agentWorkStorageKey = `${AGENT_WORK_COLLAPSED_KEY}:${me.id}`;
+  const [agentWorkCollapsed, setAgentWorkCollapsed] = useState(
+    () => typeof window !== 'undefined' && window.localStorage.getItem(agentWorkStorageKey) === 'true',
+  );
 
   const activeChannels = channels.filter((c) => c.archivedAt == null);
   const pinnedChannels = activeChannels.filter((c) => c.pinned);
@@ -137,6 +197,15 @@ function SidebarImpl({
   const archivedChannels = channels.filter((c) => c.archivedAt != null);
   const [archivedOpen, setArchivedOpen] = useState(false);
   const [channelMenu, setChannelMenu] = useState<{ channel: Channel; state: MessageActionMenuState } | null>(null);
+  const workRows = useMemo(() => agentWorkRows(sessions, activeChannelId), [activeChannelId, sessions]);
+  const hasNeedsYou = workRows.some((row) => row.kind !== 'running');
+  const hasReview = (activityCounts?.unread ?? 0) > 0;
+  const visibleRunning = !agentWorkCollapsed && workRows.some((row) => row.kind === 'running');
+  const now = useAgentWorkNow(visibleRunning);
+
+  useEffect(() => {
+    window.localStorage.setItem(agentWorkStorageKey, String(agentWorkCollapsed));
+  }, [agentWorkCollapsed, agentWorkStorageKey]);
 
   const openChannelMenu = useCallback(
     (channel: Channel, event: MouseEvent<HTMLButtonElement>) => {
@@ -425,24 +494,6 @@ function SidebarImpl({
                 <FileIcon size={15} className="shrink-0 text-fg-muted" />
                 <span className="truncate">Files</span>
               </button>
-              <button
-                type="button"
-                aria-current={activeSurface === 'agents' ? 'page' : undefined}
-                onClick={onOpenAgents}
-                className={`${SIDEBAR_ROW_BUTTON_CLASS} mx-1 w-[calc(100%-0.5rem)] ${
-                  activeSurface === 'agents'
-                    ? 'bg-accent/20 font-medium text-fg'
-                    : 'text-fg-tertiary hover:bg-surface-overlay/70 hover:text-fg-body'
-                }`}
-              >
-                <span
-                  aria-hidden="true"
-                  className="grid w-4 shrink-0 place-items-center text-xs font-bold text-fg-muted"
-                >
-                  A
-                </span>
-                <span className="truncate">Agents</span>
-              </button>
               {/* === mentions-activity additions === */}
               <button
                 type="button"
@@ -460,11 +511,92 @@ function SidebarImpl({
                 >
                   @
                 </span>
-                <span className="truncate">Attention</span>
+                <span className="truncate">Inbox</span>
                 {inboxBadge()}
               </button>
             </div>
           </section>
+
+          {(workRows.length > 0 || hasReview) && (
+            <section className="mt-3">
+              <h2 className={SIDEBAR_GROUP_TITLE_CLASS}>
+                <button
+                  type="button"
+                  aria-expanded={!agentWorkCollapsed}
+                  onClick={() => setAgentWorkCollapsed((collapsed) => !collapsed)}
+                  className="flex w-full items-center gap-1.5 rounded text-left hover:text-fg-body focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                >
+                  <span>Agent work</span>
+                  {hasNeedsYou && <span aria-hidden="true" className="size-1.5 rounded-full bg-warning" />}
+                  {agentWorkCollapsed && workRows.length > 0 && (
+                    <span className={`tabular-nums ${hasNeedsYou ? 'text-warning-text' : 'text-fg-faint'}`}>
+                      · {hasNeedsYou ? workRows.filter((row) => row.kind !== 'running').length : workRows.length}
+                    </span>
+                  )}
+                  <span aria-hidden="true" className="ml-auto text-fg-faint">
+                    {agentWorkCollapsed ? '▸' : '▾'}
+                  </span>
+                </button>
+              </h2>
+              {!agentWorkCollapsed && (
+                <div className={SIDEBAR_PANEL_CLASS}>
+                  {workRows.map((row) => {
+                    const elapsed = formatWaiting(Math.max(0, now - new Date(row.session.createdAt).getTime()));
+                    const stateLabel =
+                      row.kind === 'needs-auth'
+                        ? 'needs provider auth'
+                        : row.kind === 'needs-answer'
+                          ? 'needs your answer'
+                          : `running, ${elapsed}`;
+                    return (
+                      <button
+                        key={row.session.id}
+                        type="button"
+                        aria-label={`${row.session.title} — ${stateLabel}`}
+                        title={row.detail}
+                        onClick={() => onOpenSession?.(row.session.id)}
+                        className={`${SIDEBAR_ROW_BUTTON_CLASS} mx-1 w-[calc(100%-0.5rem)] text-fg-tertiary hover:bg-surface-overlay/70 hover:text-fg-body`}
+                      >
+                        {row.kind === 'running' ? (
+                          <span
+                            aria-hidden="true"
+                            className="w-4 shrink-0 text-center text-[9px] text-success-text motion-safe:animate-pulse"
+                          >
+                            ●
+                          </span>
+                        ) : (
+                          <span
+                            aria-hidden="true"
+                            className="w-4 shrink-0 text-center text-xs font-bold text-warning-text"
+                          >
+                            ⚠
+                          </span>
+                        )}
+                        <span className={`truncate ${row.kind === 'running' ? '' : 'font-medium text-fg-body'}`}>
+                          {row.session.title}
+                        </span>
+                        {row.kind === 'running' && (
+                          <span className="ml-auto shrink-0 pl-1 text-3xs tabular-nums text-fg-faint">{elapsed}</span>
+                        )}
+                      </button>
+                    );
+                  })}
+                  {hasReview && (
+                    <button
+                      type="button"
+                      onClick={onOpenActivity}
+                      className={`${SIDEBAR_ROW_BUTTON_CLASS} mx-1 w-[calc(100%-0.5rem)] text-fg-muted hover:bg-surface-overlay/70 hover:text-fg-body`}
+                    >
+                      <span aria-hidden="true" className="w-4 shrink-0 text-center text-xs">
+                        ✓
+                      </span>
+                      <span className="truncate">To review →</span>
+                    </button>
+                  )}
+                </div>
+              )}
+            </section>
+          )}
 
           <section className="mt-3">
             <h2 className={SIDEBAR_GROUP_TITLE_CLASS}>Conversations</h2>

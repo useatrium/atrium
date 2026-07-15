@@ -108,13 +108,13 @@ describe('Sidebar', () => {
     };
     const { unmount } = renderSidebar([channel], { activityCounts: { attention: 99, unread: 12 } });
 
-    const attentionRow = screen.getByRole('button', { name: /Attention.*needs attention/ });
+    const attentionRow = screen.getByRole('button', { name: /Inbox.*needs attention/ });
     const attentionBadge = within(attentionRow).getByText('99+');
     expect(attentionBadge.className).toContain('bg-warning-tint');
 
     unmount();
     renderSidebar([channel], { activityCounts: { attention: 0, unread: 3 } });
-    const unreadRow = screen.getByRole('button', { name: /Attention.*unread activity/ });
+    const unreadRow = screen.getByRole('button', { name: /Inbox.*unread activity/ });
     const unreadBadge = within(unreadRow).getByText('3');
     expect(unreadBadge.className).toContain('bg-surface-overlay');
   });
@@ -287,8 +287,7 @@ describe('Sidebar', () => {
     expect(onOpenFiles).toHaveBeenCalledOnce();
   });
 
-  it('shows Agents as a workspace destination', () => {
-    const onOpenAgents = vi.fn();
+  it('does not show Agents as a workspace destination', () => {
     renderSidebar(
       [
         {
@@ -302,13 +301,10 @@ describe('Sidebar', () => {
           createdAt: '2026-01-01T00:00:00.000Z',
         },
       ],
-      { activeSurface: 'agents', activeChannelId: null, onOpenAgents },
+      { activeSurface: 'agents', activeChannelId: null },
     );
 
-    const agents = screen.getByRole('button', { name: 'Agents' });
-    expect(agents.getAttribute('aria-current')).toBe('page');
-    fireEvent.click(agents);
-    expect(onOpenAgents).toHaveBeenCalledOnce();
+    expect(screen.queryByRole('button', { name: 'Agents' })).toBeNull();
   });
 
   it('groups global destinations separately from conversations', () => {
@@ -327,8 +323,8 @@ describe('Sidebar', () => {
 
     expect(screen.getByText('Workspace')).toBeTruthy();
     expect(screen.getByText('Conversations')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Agents' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Attention' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Agents' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Inbox' })).toBeTruthy();
     expect(screen.queryByText('Sessions')).toBeNull();
   });
 
