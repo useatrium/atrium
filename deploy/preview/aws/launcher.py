@@ -56,13 +56,20 @@ def resolve_commit(ref: str) -> str:
     return run(["git", "rev-parse", f"{ref}^{{commit}}"], timeout=30).strip()
 
 
-def maybe_fetch_ref(repo: str, ref: str) -> None:
+def fetch_and_resolve_commit(repo: str, ref: str) -> str:
     if repo != "useatrium/atrium":
         raise ValueError(f"repo is not allowed: {repo}")
-    fetch_ref = ref
-    if not re.fullmatch(r"[0-9a-f]{40}", ref):
-        fetch_ref = ref.removeprefix("refs/heads/")
-    run(["git", "fetch", "--quiet", "origin", fetch_ref], timeout=120)
+    if re.fullmatch(r"[0-9a-f]{40}", ref):
+        run(["git", "fetch", "--quiet", "origin", ref], timeout=120)
+        return resolve_commit(ref)
+
+    branch = ref.removeprefix("refs/heads/")
+    remote_ref = f"refs/remotes/origin/{branch}"
+    run(
+        ["git", "fetch", "--quiet", "origin", f"refs/heads/{branch}:{remote_ref}"],
+        timeout=120,
+    )
+    return resolve_commit(remote_ref)
 
 
 def preview_health_ok(url: str) -> bool:
@@ -202,9 +209,12 @@ class Launcher:
         ttl_hours = int(body["ttl_hours"]) if "ttl_hours" in body else DEFAULT_TTL_HOURS
         if ttl_hours <= 0 or ttl_hours > MAX_TTL_HOURS:
             raise ValueError(f"ttl_hours must be between 1 and {MAX_TTL_HOURS}")
-        if body.get("fetch", True):
-            maybe_fetch_ref(repo, ref)
-        commit_sha = str(body.get("commit_sha") or resolve_commit(ref))
+        if body.get("commit_sha"):
+            commit_sha = str(body["commit_sha"])
+        elif body.get("fetch", True):
+            commit_sha = fetch_and_resolve_commit(repo, ref)
+        else:
+            commit_sha = resolve_commit(ref)
         expires_at = utc_now() + dt.timedelta(hours=ttl_hours)
         requested_by = body.get("requested_by")
 
