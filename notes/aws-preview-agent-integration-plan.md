@@ -8,6 +8,35 @@ Let a production Atrium agent deploy a pushed Atrium branch to an isolated AWS p
 
 The agent should not receive AWS credentials. Production Atrium should call a narrow preview launcher API that owns AWS access.
 
+## Orientation For A Future Atrium Agent
+
+Start here if you are reviewing this branch to decide how production Atrium agents should create previews.
+
+Relevant files:
+
+- `deploy/preview/aws/README.md`: operator-facing overview of the AWS preview appliance and launcher API.
+- `deploy/preview/aws/launcher.py`: small bearer-token HTTP API for create/status/destroy.
+- `deploy/preview/aws/previewctl.py`: local AWS controller that creates EC2, S3, ECR, IAM, Surface, Centaur, Caddy, and cleanup state.
+- `deploy/preview/aws/launcher-box.md`: current launcher box shape, restart commands, cost, and IAM notes.
+- `notes/gallery-request-fanout-preview-deploy.md`: real deploy timing, problems found during live testing, and speed improvement observations.
+- This file: production-agent integration context and open design options.
+
+What has been proven:
+
+- A branch can be deployed through the launcher to an isolated AWS preview.
+- Surface and Centaur can both run in the preview appliance.
+- The preview can return a final HTTPS `sslip.io` URL.
+- Agent execution worked well enough for smoke checks in the preview.
+- Preview app-origin routing and S3 file-preview CORS both needed specific preview wiring and are now captured in the generator.
+
+What is not settled:
+
+- The best production-Atrium integration point for the launcher.
+- Whether the agent should call an Atrium server-side wrapper, a Centaur tool, or another connector path.
+- How preview status should appear in the Atrium UI.
+- How production should authorize users/agents to create or destroy previews.
+- How aggressive to be on speed work before the first production-agent integration.
+
 ## Current Preview Launcher Contract
 
 Launcher endpoint:
@@ -52,7 +81,7 @@ The launcher resolves the branch/ref to an immutable commit SHA before deploymen
    - timeout: post preview id and current phase so a human can continue.
 5. Agent should offer to destroy the preview when the user is done.
 
-## Production Atrium Integration Options
+## Production Atrium Integration Options To Evaluate
 
 ### Option A: Server-Side Preview Tool Endpoint
 
@@ -90,9 +119,9 @@ Cons:
 - Tool availability depends on agent runtime configuration.
 - More care needed to avoid leaking launcher URL/token into transcript/logs.
 
-### Recommendation
+### Other Options To Consider
 
-Use Option A. Production Atrium should be the policy and audit boundary, while the launcher remains the AWS credential boundary.
+There may be additional integration points in Atrium or Centaur that are a better fit than either option above. A reviewing agent should inspect the current production agent/tool architecture before choosing.
 
 ## Chat UX
 
@@ -120,14 +149,22 @@ For long deploys, update the same work/status surface instead of posting noisy r
 - Each preview gets its own S3 bucket, per-preview IAM user, database volume, generated app/session secrets, and TTL tag.
 - The launcher should remain allowlisted to `useatrium/atrium` until there is a broader trust model.
 
-## Immediate Engineering Tasks
+## Candidate Engineering Tasks
 
-- Make launcher status return the final HTTPS `ready.json.url`, not the initial EC2 HTTP URL.
-- Add a production-server wrapper endpoint or internal tool definition.
-- Add launcher ingress from production Atrium to the launcher box security group.
+- Verify launcher status returns the final HTTPS `ready.json.url`, not the initial EC2 HTTP URL.
+- Decide whether production needs a server wrapper endpoint, a Centaur connector/tool, or another integration path.
+- Add whatever network ingress is required for the selected production integration path to reach the launcher.
 - Add agent prompt/tool guidance: push branch first, then request preview, then poll.
 - Add status-card rendering in Atrium once the API shape is stable.
 - Add manual and automated destroy paths.
+
+## Questions Allan Can Answer
+
+- Should preview creation be available to all production agents/users or only specific users?
+- Should previews remain public URLs for now, or should they require an auth gate?
+- Should a production agent be allowed to destroy previews automatically?
+- Is a chat/status card enough for V1, or should previews have a first-class UI surface?
+- Is a 10-15 minute first deploy acceptable for V1 if subsequent work improves speed?
 
 ## Speed Follow-Ups
 

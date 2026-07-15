@@ -183,21 +183,24 @@ It also needs ECR repository create/describe/lifecycle permissions for
   controller creates a per-preview IAM user instead of relying only on the EC2
   instance profile.
 
-## Production Agent Integration
+## Production Agent Integration Context
 
-Recommended production shape:
+The current launcher is intentionally narrow: create a preview for a pushed ref,
+poll status, and destroy the preview. A production Atrium agent should be able
+to use that capability without receiving AWS credentials.
 
-1. Production Atrium stores `PREVIEW_LAUNCHER_URL` and
-   `PREVIEW_LAUNCHER_TOKEN` server-side.
-2. Production Atrium exposes a narrow internal tool/API for agents:
-   - create preview for branch/ref
-   - poll preview status
-   - destroy preview
-3. Agents push their branch first, then ask the server-side preview tool to
-   deploy that ref. Agents should not receive AWS credentials or the launcher
-   bearer token.
-4. The chat response should report preview id, branch/ref, resolved commit SHA,
-   status/phase, final URL, and expiry.
+Integration points still need to be chosen. Plausible paths include a
+production Atrium server-side wrapper around the launcher, a Centaur/agent tool
+that calls the launcher, or another existing internal tool path if Atrium
+already has one that fits.
+
+Regardless of integration point, the expected agent workflow is:
+
+1. Push the branch/ref first.
+2. Request a preview for that ref.
+3. Poll status until ready/failed/timeout.
+4. Report preview id, branch/ref, resolved commit SHA, status/phase, final URL,
+   and expiry.
 
 See `notes/aws-preview-agent-integration-plan.md` for the current integration
-plan and tradeoffs.
+orientation, open questions, and tradeoffs.
