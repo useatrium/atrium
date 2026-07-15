@@ -32,6 +32,15 @@ pub trait EntrySource {
     fn walk_subtree(&self, rel: &Path) -> io::Result<Vec<RawEntry>>;
 }
 
+/// Files written through mmap (sqlite `-shm` shared memory) generate no
+/// inotify events — no watcher can see them. Shadow diffs and the divergence
+/// canary treat them as backstop-owned so real event-model gaps stand out.
+pub fn is_mmap_pattern_path(rel: &Path) -> bool {
+    rel.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.ends_with("-shm"))
+}
+
 /// The daemon's belief of one session's upper tree.
 #[derive(Debug, Default, Clone)]
 pub struct TreeState {
@@ -77,6 +86,9 @@ impl TreeState {
             .collect();
         let mut diverged = 0;
         for (rel, believed) in &self.entries {
+            if is_mmap_pattern_path(rel) {
+                continue;
+            }
             match walked_map.get(rel) {
                 Some(actual)
                     if actual.mtime_ns == believed.mtime_ns
@@ -88,7 +100,10 @@ impl TreeState {
         diverged
             + walked
                 .iter()
-                .filter(|entry| !self.entries.contains_key(&entry.rel_path))
+                .filter(|entry| {
+                    !is_mmap_pattern_path(&entry.rel_path)
+                        && !self.entries.contains_key(&entry.rel_path)
+                })
                 .count()
     }
 
