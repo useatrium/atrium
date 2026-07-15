@@ -277,12 +277,11 @@ export async function registerFilesHubRoutes(app: FastifyInstance, deps: FilesHu
       if (!workspaceId) return reply.code(404).send({ error: 'file_not_found', message: 'file not found' });
     }
 
-    const result = await ledger.listWorkspaceFiles({
+    let file = await ledger.workspaceFileByPath({
       workspaceId,
       userId: listUserId,
-      query: { q: ref.canonicalPath, includeDeleted: true, includeScratch: true, limit: 200 },
+      path: ref.canonicalPath,
     });
-    let file = result.files.find((candidate) => candidate.path === ref.canonicalPath);
     if (!file) return reply.code(404).send({ error: 'file_not_found', message: 'file not found' });
     if (listUserId !== user.id) {
       const starred = await pool.query('SELECT 1 FROM artifact_stars WHERE artifact_id = $1 AND user_id = $2', [

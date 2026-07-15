@@ -840,6 +840,40 @@ export class ArtifactLedger {
     return this.listHubFiles(params);
   }
 
+  async workspaceFileByPath(params: { workspaceId: string; userId: string; path: string }): Promise<HubFile | null> {
+    const res = await this.pool.query<HubListRow>(
+      `SELECT a.id AS artifact_id, a.workspace_id, a.session_id, a.channel_id, a.path,
+              a.created_at, a.tombstoned_at, p.seq AS version_seq,
+              v.created_at AS version_created_at, v.author, v.kind, v.source_message_id,
+              b.mime, b.detected_mime, b.media_kind, b.is_text, b.size_bytes, b.thumbnail_sha,
+              b.classification_meta,
+              COALESCE(labels.labels, ARRAY[]::text[]) AS labels,
+              EXISTS (
+                SELECT 1 FROM artifact_stars s
+                 WHERE s.artifact_id = a.id AND s.user_id = $3
+              ) AS starred,
+              u.id AS uploader_id, u.display_name AS uploader_name
+         FROM artifacts a
+         JOIN artifact_pointers p ON p.artifact_id = a.id AND p.name = 'latest'
+         JOIN artifact_versions v ON v.artifact_id = a.id AND v.seq = p.seq
+         LEFT JOIN cas_blobs b ON b.sha256 = v.blob_sha
+         LEFT JOIN LATERAL (
+           SELECT array_agg(al.label ORDER BY al.label ASC) AS labels
+             FROM artifact_labels al
+            WHERE al.artifact_id = a.id
+         ) labels ON true
+         LEFT JOIN users u
+           ON u.id = CASE
+             WHEN v.author ~ '^human:[0-9a-f-]{36}$' THEN substring(v.author from 7)::uuid
+             ELSE NULL
+           END
+        WHERE a.workspace_id = $1 AND a.path = $2`,
+      [params.workspaceId, params.path, params.userId],
+    );
+    const row = res.rows[0];
+    return row ? this.hubFileFromRow(row) : null;
+  }
+
   async listChannelFiles(params: HubListParams & { channelId: string }): Promise<HubFileListResult> {
     return this.listHubFiles(params);
   }
