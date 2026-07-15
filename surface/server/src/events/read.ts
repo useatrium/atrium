@@ -21,31 +21,22 @@ import {
 // Reads (straight off the events table)
 // ---------------------------------------------------------------------------
 
-export async function foldAnnotations(db: Db | DbClient, handle: string): Promise<AnnotationFold> {
-  const reactions = await db.query<{ emoji: string; user_ids: string[] }>(
-    `SELECT emoji, array_agg(actor_id::text ORDER BY first_id) AS user_ids
-       FROM (
-         SELECT x.actor_id,
-                x.payload->>'emoji' AS emoji,
-                SUM(CASE WHEN x.type = 'reaction.added' THEN 1 ELSE -1 END) AS net,
-                MIN(x.id) AS first_id
-           FROM events x
-          WHERE x.type IN ('reaction.added', 'reaction.removed')
-            AND x.payload->>'target' = $1
-          GROUP BY x.actor_id, x.payload->>'emoji'
-       ) n
-      WHERE n.net > 0
-      GROUP BY emoji
-      ORDER BY MIN(first_id)`,
-    [handle],
-  );
-  return {
-    reactions: reactions.rows.map((row) => ({
-      emoji: row.emoji,
-      userIds: row.user_ids,
-    })),
-  };
+export async function readEntryAnnotations(db: Db | DbClient, handle: string): Promise<AnnotationFold> {
+  const state = handle.startsWith('evt_')
+    ? await db.query<{ reactions: AnnotationFold['reactions'] | null }>(
+        'SELECT reactions FROM message_state WHERE event_id = $1',
+        [handle.slice(4)],
+      )
+    : await db.query<{ reactions: AnnotationFold['reactions'] | null }>(
+        'SELECT reactions FROM entry_reaction_state WHERE target = $1',
+        [handle],
+      );
+  return { reactions: state.rows[0]?.reactions ?? [] };
 }
+
+// Keep the existing events.ts barrel source-compatible; entry routes use the
+// projection-named reader directly and no read-time fold remains.
+export { readEntryAnnotations as foldAnnotations };
 
 const MESSAGE_SELECT = `
   SELECT e.*,

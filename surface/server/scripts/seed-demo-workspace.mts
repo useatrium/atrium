@@ -25,6 +25,7 @@ import { writeBackArtifact } from '../src/artifact-writeback.js';
 import { MESSAGE_STATE_ROW_TYPES, sqlTypeList } from '../src/event-types.js';
 import { uploadObject, getObjectBytes, headObject } from '../src/s3.js';
 import { projectAndEmitChange } from '../src/session-record-changefeed.js';
+import { parsePendingQuestion } from '../src/session-runs.js';
 
 const API = process.env.ATRIUM_API ?? 'http://localhost:3210';
 const DATABASE_URL = process.env.DATABASE_URL ?? 'postgres://atrium:atrium@localhost:5433/atrium_demo';
@@ -673,27 +674,29 @@ async function main(): Promise<void> {
      FROM sessions s WHERE s.id = $1 RETURNING id`,
     [backfillSession, min(46)],
   );
+  const pendingBackfillQuestion = parsePendingQuestion({
+    questionId: 'q-backfill-lock',
+    turnId: 't1',
+    eventId: Number(questionEvent.rows[0]!.id),
+    // ~49 minutes ago, matching the question event's place in the timeline —
+    // drives the "Needs you · 49m" waiting clock.
+    askedAt: new Date(Date.now() - 49 * 60_000).toISOString(),
+    questions: [
+      {
+        id: 'q1',
+        header: 'Write lock',
+        question: 'The reindex holds a write lock for ~40 minutes. Run it now or schedule for tonight?',
+        options: [
+          { label: 'Run now', description: 'blocks ingestion writes until ~finished' },
+          { label: 'Tonight 02:00', description: 'schedule for the quiet window' },
+        ],
+      },
+    ],
+  });
+  if (!pendingBackfillQuestion) throw new Error('invalid seeded pending question');
   await pool.query(`UPDATE sessions SET status='running', pending_question=$2 WHERE id=$1`, [
     backfillSession,
-    JSON.stringify({
-      questionId: 'q-backfill-lock',
-      turnId: 't1',
-      eventId: Number(questionEvent.rows[0]!.id),
-      // ~49 minutes ago, matching the question event's place in the timeline —
-      // drives the "Needs you · 49m" waiting clock.
-      askedAt: new Date(Date.now() - 49 * 60_000).toISOString(),
-      questions: [
-        {
-          id: 'q1',
-          header: 'Write lock',
-          question: 'The reindex holds a write lock for ~40 minutes. Run it now or schedule for tonight?',
-          options: [
-            { label: 'Run now', description: 'blocks ingestion writes until ~finished' },
-            { label: 'Tonight 02:00', description: 'schedule for the quiet window' },
-          ],
-        },
-      ],
-    }),
+    JSON.stringify(pendingBackfillQuestion),
   ]);
 
   // #research — Priya's ask lands after the backfill question (unread + mention)

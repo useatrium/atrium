@@ -3,14 +3,8 @@ import { Schema } from 'effect';
 import { EntryReferencesQueryBodySchema } from '@atrium/surface-client/entry-contracts';
 import type { AppMutationContext } from '../app-mutations.js';
 import type { Db } from '../db.js';
-import {
-  DomainError,
-  foldAnnotations,
-  REACTION_EMOJI,
-  searchMessages,
-  setEntryReactionTx,
-  type UserRef,
-} from '../events.js';
+import { DomainError, REACTION_EMOJI, searchMessages, setEntryReactionTx, type UserRef } from '../events.js';
+import { readEntryAnnotations } from '../events/read.js';
 import { extractEntryToMarkdownArtifact } from '../entry-extract.js';
 import { queryEntryReferences, resolveEntry, tryDecodeHandle } from '../entries.js';
 import type { WsHub } from '../hub.js';
@@ -108,7 +102,7 @@ export function registerEntryRoutes(app: FastifyInstance, deps: EntryRouteDeps):
     const resolved = await requireEntry(req, reply, user);
     if (!resolved) return;
     const { handle } = resolved;
-    return foldAnnotations(pool, handle);
+    return readEntryAnnotations(pool, handle);
   });
 
   app.post('/api/entries/references/query', { config: { rateLimit: entryAnnotationRateLimit } }, async (req, reply) => {
