@@ -4,6 +4,7 @@ import { eventIdFromTarget } from '@atrium/surface-client/handle';
 interface HistoryPage {
   events: WireEvent[];
   hasMore: boolean;
+  nextCursor?: number;
 }
 
 export function cachedTimelineLastEventId(timeline: CachedTimeline): number {
@@ -123,6 +124,8 @@ export async function hydrateCachedTimelines({
         events: delta.events,
         // after_id's hasMore describes the forward delta, not older history.
         hasMore: hydratedHasMore,
+        ...(delta.nextCursor !== undefined ? { nextCursor: delta.nextCursor } : {}),
+        catchupCursor: cachedLastEventId,
         origin: 'channel-delta',
       });
       onDeltaLoaded?.(channelId, delta);

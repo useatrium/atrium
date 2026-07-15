@@ -645,7 +645,8 @@ export function Chat({
           syncCursor,
           dispatch,
           fetchLatest: (channelId) => api.messages(channelId, { limit: PAGE_SIZE }),
-          fetchDelta: (channelId, afterId) => api.messages(channelId, { afterId, limit: PAGE_SIZE }),
+          fetchDelta: (channelId, afterId) =>
+            api.messages(channelId, { afterId, limit: PAGE_SIZE, folded: true }),
           isDisposed: () => disposed,
           onRepaired: (channelId, latest) => {
             void eventCache.saveTimeline(channelId, latest.events, latest.hasMore).catch((err: unknown) => {
@@ -918,7 +919,8 @@ export function Chat({
   const syncFromCursor = useCallback(async () => {
     let cursor = stateRef.current.syncCursor;
     for (;;) {
-      const response = await api.sync(cursor, { limit: SYNC_LIMIT });
+      const catchupCursor = cursor;
+      const response = await api.sync(catchupCursor, { limit: SYNC_LIMIT, folded: true });
       if (response.limited) {
         dispatchSyncSnapshot(dispatch, response.state, adoptPrefs);
         reconcileDraftsFromSnapshot(response.state.drafts ?? {}, response.state.draftDeletions ?? {});
@@ -932,6 +934,7 @@ export function Chat({
       }
       dispatchSyncResponse(dispatch, response, {
         onPrefs: adoptPrefs,
+        catchupCursor,
         onEvent: (event) => {
           if (event.type.startsWith('session.')) setSessionEventSeq((n) => n + 1);
           if (event.channelId) eventCache.enqueueEvents(event.channelId, [event]);
