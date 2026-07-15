@@ -106,6 +106,7 @@ export function hubFileToPreview(f: HubFile): PreviewFile {
     path: f.path,
     mime: f.mime ?? 'application/octet-stream',
     mediaKind: asMediaKind(f.mediaKind),
+    versionSeq: f.versionSeq,
     sizeBytes: f.sizeBytes ?? undefined,
     tombstoned: f.tombstoned,
     width: f.width,

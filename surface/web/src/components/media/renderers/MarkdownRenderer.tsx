@@ -1,27 +1,11 @@
-import { useEffect, useState } from 'react';
 import { containsCriticMarkup } from '@atrium/surface-client';
 import { CriticMarkupView } from '../../CriticMarkupView';
 import { SessionMarkdown } from '../../../sessions/Markdown';
 import type { PreviewFile, MediaPreviewVariant } from '../types';
-import { fetchText } from '../utils';
+import { usePreviewText } from '../previewTextCache';
 
 export function MarkdownRenderer({ file, variant }: { file: PreviewFile; variant: MediaPreviewVariant }) {
-  const [state, setState] = useState<{ status: 'loading' | 'ready' | 'error'; text: string }>({
-    status: 'loading',
-    text: '',
-  });
-
-  useEffect(() => {
-    const controller = new AbortController();
-    setState({ status: 'loading', text: '' });
-    fetchText(file, controller.signal)
-      .then((text) => setState({ status: 'ready', text }))
-      .catch((error: unknown) => {
-        if (!controller.signal.aborted)
-          setState({ status: 'error', text: error instanceof Error ? error.message : 'Failed to load' });
-      });
-    return () => controller.abort();
-  }, [file]);
+  const state = usePreviewText(file);
 
   if (variant === 'tile') {
     return (

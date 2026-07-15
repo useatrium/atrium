@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { containsCriticMarkup } from '@atrium/surface-client';
 import { CriticMarkupView } from '../../CriticMarkupView';
 import type { PreviewFile, MediaPreviewVariant } from '../types';
-import { fetchText, languageForFile } from '../utils';
+import { usePreviewText } from '../previewTextCache';
+import { languageForFile } from '../utils';
 
 function escapeHtml(value: string) {
   return value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
@@ -17,61 +18,55 @@ function fallbackHtml(text: string) {
 }
 
 export function CodeRenderer({ file, variant }: { file: PreviewFile; variant: MediaPreviewVariant }) {
-  const [state, setState] = useState<{ status: 'loading' | 'ready' | 'error'; text: string; html: string }>({
-    status: 'loading',
-    text: '',
-    html: '',
-  });
+  const state = usePreviewText(file);
+  const [html, setHtml] = useState<string | null>(null);
   const language = useMemo(() => languageForFile(file), [file]);
 
   useEffect(() => {
-    const controller = new AbortController();
-    setState({ status: 'loading', text: '', html: '' });
-    fetchText(file, controller.signal)
-      .then(async (text) => {
-        try {
-          const shiki = await import('shiki');
-          const html = await shiki.codeToHtml(text, {
-            lang: language,
-            theme: 'github-dark',
-            transformers: [
-              {
-                line(node: { properties?: Record<string, unknown>; children?: unknown[] }, line: number) {
-                  node.properties = {
-                    ...node.properties,
-                    class: `${String(node.properties?.class ?? '')} block min-w-max`,
-                  };
-                  node.children = [
-                    {
-                      type: 'element',
-                      tagName: 'span',
-                      properties: {
-                        class: 'mr-4 inline-block w-10 select-none text-right text-fg-faint',
-                      },
-                      children: [{ type: 'text', value: String(line) }],
+    if (variant === 'tile' || state.status !== 'ready') {
+      setHtml(null);
+      return;
+    }
+    let active = true;
+    setHtml(null);
+    void import('shiki')
+      .then((shiki) =>
+        shiki.codeToHtml(state.text, {
+          lang: language,
+          theme: 'github-dark',
+          transformers: [
+            {
+              line(node: { properties?: Record<string, unknown>; children?: unknown[] }, line: number) {
+                node.properties = {
+                  ...node.properties,
+                  class: `${String(node.properties?.class ?? '')} block min-w-max`,
+                };
+                node.children = [
+                  {
+                    type: 'element',
+                    tagName: 'span',
+                    properties: {
+                      class: 'mr-4 inline-block w-10 select-none text-right text-fg-faint',
                     },
-                    ...(node.children ?? []),
-                  ];
-                },
+                    children: [{ type: 'text', value: String(line) }],
+                  },
+                  ...(node.children ?? []),
+                ];
               },
-            ],
-          });
-          setState({ status: 'ready', text, html });
-        } catch {
-          setState({ status: 'ready', text, html: fallbackHtml(text) });
-        }
+            },
+          ],
+        }),
+      )
+      .then((highlighted) => {
+        if (active) setHtml(highlighted);
       })
-      .catch((error: unknown) => {
-        if (!controller.signal.aborted) {
-          setState({
-            status: 'error',
-            text: error instanceof Error ? error.message : 'Failed to load',
-            html: '',
-          });
-        }
+      .catch(() => {
+        if (active) setHtml(fallbackHtml(state.text));
       });
-    return () => controller.abort();
-  }, [file, language]);
+    return () => {
+      active = false;
+    };
+  }, [language, state, variant]);
 
   if (variant === 'tile') {
     return (
@@ -101,6 +96,8 @@ export function CodeRenderer({ file, variant }: { file: PreviewFile; variant: Me
         <div className="p-4 text-sm text-fg-muted">Loading code...</div>
       ) : state.status === 'error' ? (
         <div className="p-4 text-sm text-danger-text">{state.text}</div>
+      ) : html == null ? (
+        <div className="p-4 text-sm text-fg-muted">Highlighting code...</div>
       ) : containsCriticMarkup(state.text) ? (
         <div className="p-4">
           <CriticMarkupView text={state.text} />
@@ -109,7 +106,7 @@ export function CodeRenderer({ file, variant }: { file: PreviewFile; variant: Me
         <div
           className="media-code-view [&_.shiki]:m-0 [&_.shiki]:min-h-full [&_.shiki]:overflow-x-auto [&_.shiki]:bg-surface! [&_.shiki]:p-4 [&_.shiki]:font-mono [&_.shiki]:text-xs [&_.shiki]:leading-relaxed"
           // biome-ignore lint/security/noDangerouslySetInnerHtml: HTML is produced by shiki from the file bytes; shiki HTML-escapes the code tokens, so this is highlighter output, not untrusted markup.
-          dangerouslySetInnerHTML={{ __html: state.html }}
+          dangerouslySetInnerHTML={{ __html: html }}
         />
       )}
     </div>

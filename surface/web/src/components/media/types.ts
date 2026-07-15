@@ -9,6 +9,7 @@ export interface PreviewFile {
   name: string;
   mime: string;
   mediaKind: MediaKind;
+  versionSeq?: number;
   sizeBytes?: number;
   tombstoned?: boolean;
   width?: number;

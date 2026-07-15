@@ -148,7 +148,7 @@ export function OfficeRenderer({ file, variant }: { file: PreviewFile; variant: 
   }, [file, officeKind]);
 
   useEffect(() => {
-    if (officeKind !== 'word' || !isDocxFile(file)) return undefined;
+    if (variant === 'tile' || officeKind !== 'word' || !isDocxFile(file)) return undefined;
     const container = containerRef.current;
     if (!container) return undefined;
 
@@ -166,13 +166,13 @@ export function OfficeRenderer({ file, variant }: { file: PreviewFile; variant: 
         const docx = await import('docx-preview');
         if (cancelled) return;
         await docx.renderAsync(blob, container, undefined, {
-          breakPages: variant === 'full',
-          ignoreHeight: variant === 'tile',
-          ignoreWidth: variant === 'tile',
+          breakPages: true,
+          ignoreHeight: false,
+          ignoreWidth: false,
           inWrapper: true,
           renderComments: false,
-          renderFooters: variant === 'full',
-          renderHeaders: variant === 'full',
+          renderFooters: true,
+          renderHeaders: true,
         });
         if (!cancelled) setState({ status: 'ready' });
       })
@@ -239,7 +239,7 @@ export function OfficeRenderer({ file, variant }: { file: PreviewFile; variant: 
   }, [file, officeKind, variant]);
 
   useEffect(() => {
-    if (officeKind !== 'spreadsheet') return undefined;
+    if (variant === 'tile' || officeKind !== 'spreadsheet') return undefined;
     const controller = new AbortController();
     let cancelled = false;
     setState({ status: 'loading' });
@@ -280,13 +280,11 @@ export function OfficeRenderer({ file, variant }: { file: PreviewFile; variant: 
       cancelled = true;
       controller.abort();
     };
-  }, [file, officeKind]);
+  }, [file, officeKind, variant]);
 
   if (variant === 'tile') {
-    const thumbnail = <OfficeThumbnail file={file} />;
-    if (file.thumbnailUrl) return thumbnail;
-    if (officeKind === 'presentation')
-      return <OfficeFallback file={file} variant={variant} message={unsupportedMessage} />;
+    if (file.thumbnailUrl) return <OfficeThumbnail file={file} />;
+    return <OfficeFallback file={file} variant={variant} message={unsupportedMessage} />;
   }
 
   if (!officeKind || unsupportedMessage) {
@@ -301,17 +299,15 @@ export function OfficeRenderer({ file, variant }: { file: PreviewFile; variant: 
     if (state.status !== 'sheet-ready') return <LoadingState label="Loading spreadsheet..." variant={variant} />;
     return (
       <div className="flex h-full min-h-0 flex-col bg-surface">
-        {variant === 'full' && (
-          <div className="flex h-10 shrink-0 items-center justify-between gap-3 border-b border-edge bg-surface-raised/45 px-3">
-            <div className="truncate text-xs font-semibold text-fg">{state.sheetName}</div>
-            <div className="shrink-0 text-2xs text-fg-muted">
-              {firstSheetSummary(state.rows)}
-              {state.sheetCount > 1 ? ` - ${state.sheetCount} sheets` : ''}
-            </div>
+        <div className="flex h-10 shrink-0 items-center justify-between gap-3 border-b border-edge bg-surface-raised/45 px-3">
+          <div className="truncate text-xs font-semibold text-fg">{state.sheetName}</div>
+          <div className="shrink-0 text-2xs text-fg-muted">
+            {firstSheetSummary(state.rows)}
+            {state.sheetCount > 1 ? ` - ${state.sheetCount} sheets` : ''}
           </div>
-        )}
+        </div>
         <div className="min-h-0 flex-1 overflow-hidden">
-          <PreviewTable rows={state.rows} compact={variant === 'tile'} />
+          <PreviewTable rows={state.rows} compact={false} />
         </div>
       </div>
     );
@@ -355,21 +351,11 @@ export function OfficeRenderer({ file, variant }: { file: PreviewFile; variant: 
 
   if (officeKind === 'word') {
     return (
-      <div
-        className={
-          variant === 'tile'
-            ? 'h-full min-h-0 overflow-hidden bg-surface-raised/40 p-2'
-            : 'h-full min-h-0 overflow-auto bg-surface p-4'
-        }
-      >
+      <div className="h-full min-h-0 overflow-auto bg-surface p-4">
         {state.status === 'loading' && <LoadingState label="Loading document..." variant={variant} />}
         <div
           ref={containerRef}
-          className={
-            variant === 'tile'
-              ? 'pointer-events-none origin-top-left scale-[0.38] text-fg [width:260%]'
-              : 'mx-auto max-w-5xl text-fg [&_.docx-wrapper]:!bg-transparent [&_.docx-wrapper]:!p-0'
-          }
+          className="mx-auto max-w-5xl text-fg [&_.docx-wrapper]:!bg-transparent [&_.docx-wrapper]:!p-0"
         />
       </div>
     );
