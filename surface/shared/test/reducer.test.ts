@@ -32,6 +32,7 @@ function wire(
     author?: typeof alice;
     replyCount?: number;
     lastReplyId?: number;
+    lastModifierId?: number;
     broadcast?: boolean;
   } = {},
 ): WireEvent {
@@ -47,6 +48,7 @@ function wire(
     author: opts.author ?? alice,
     ...(opts.replyCount !== undefined ? { replyCount: opts.replyCount } : {}),
     ...(opts.lastReplyId !== undefined ? { lastReplyId: opts.lastReplyId } : {}),
+    ...(opts.lastModifierId !== undefined ? { lastModifierId: opts.lastModifierId } : {}),
     ...(opts.broadcast === true ? { broadcast: true } : {}),
   };
 }
@@ -68,6 +70,7 @@ function pending(
     createdAt: new Date().toISOString(),
     replyCount: 0,
     lastReplyId: 0,
+    lastModifierId: 0,
     ...(opts.broadcast === true ? { broadcast: true } : {}),
     status: 'pending',
   };
@@ -409,6 +412,20 @@ describe('history pagination merge', () => {
     expect(t.main.map((m) => m.id)).toEqual([3, 4, 5, 6]);
     expect(t.hasMoreBefore).toBe(false);
     expect(t.lastEventId).toBe(6);
+  });
+
+  it('uses the folded response cursor instead of old row ids', () => {
+    const state = appReducer(initialAppState, {
+      type: 'history-loaded',
+      channelId: CH,
+      events: [wire(75, 'old row, newly changed', { lastModifierId: 180 })],
+      hasMore: false,
+      nextCursor: 200,
+      origin: 'channel-delta',
+    });
+
+    expect(state.timelines[CH]!.lastEventId).toBe(200);
+    expect(state.syncCursor).toBe(0);
   });
 
   it('applies message.edited to loaded messages', () => {

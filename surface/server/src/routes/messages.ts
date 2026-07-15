@@ -49,6 +49,7 @@ const ChannelMessagesQuerySchema = Schema.Struct({
   before_id: Schema.optional(Schema.Unknown),
   after_id: Schema.optional(Schema.Unknown),
   limit: Schema.optional(Schema.Unknown),
+  wire: Schema.optional(Schema.Unknown),
 });
 
 const PostMessageBodySchema = Schema.Struct({
@@ -149,7 +150,13 @@ export function registerMessageRoutes(app: FastifyInstance, deps: MessageRouteDe
     if (beforeId !== undefined && afterId !== undefined) {
       return reply.code(400).send({ error: 'bad_query', message: 'use before_id or after_id, not both' });
     }
-    return listChannelMessages(pool, { channelId: id, beforeId, afterId, limit });
+    return listChannelMessages(pool, {
+      channelId: id,
+      beforeId,
+      afterId,
+      limit,
+      folded: q.wire === 'folded',
+    });
   });
 
   app.get('/api/threads/:rootEventId/messages', async (req, reply) => {

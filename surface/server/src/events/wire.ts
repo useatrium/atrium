@@ -11,6 +11,8 @@ export interface UserRef {
 /** Wire shape of an event, as fanned out over WS and returned from reads. */
 export interface WireEvent {
   id: number;
+  /** Change-feed watermark for rows materialized from message_state. */
+  lastModifierId?: number;
   handle?: string;
   workspaceId: string;
   channelId: string | null;
@@ -50,6 +52,7 @@ export class DomainError extends Error {
 
 export interface EventDbRow {
   id: number;
+  last_modifier_id?: number | null;
   workspace_id: string;
   channel_id: string | null;
   thread_root_event_id: number | null;
@@ -94,6 +97,7 @@ export function toWireEvent(row: EventDbRow): WireEvent {
           }
         : null,
   };
+  if (row.last_modifier_id != null) ev.lastModifierId = Number(row.last_modifier_id);
   if (row.reply_count !== undefined) ev.replyCount = Number(row.reply_count);
   if (row.last_reply_id !== undefined) ev.lastReplyId = Number(row.last_reply_id);
   if (row.last_reply_preview_id != null && row.last_reply_created_at != null) {

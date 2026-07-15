@@ -80,7 +80,7 @@ export function registerSyncRoutes(app: FastifyInstance, deps: SyncRouteDeps): v
   app.get('/api/sync', async (req, reply) => {
     const user = requireUser(req, reply);
     if (!user) return;
-    const q = req.query as { after?: string; limit?: string };
+    const q = req.query as { after?: string; limit?: string; wire?: string };
     const after = q.after == null ? 0 : Number(q.after);
     const rawLimit = q.limit == null ? 500 : Number(q.limit);
     if (!Number.isSafeInteger(after) || after < 0 || !Number.isSafeInteger(rawLimit) || rawLimit <= 0) {
@@ -92,7 +92,7 @@ export function registerSyncRoutes(app: FastifyInstance, deps: SyncRouteDeps): v
       await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ');
       // Events and state are read from one snapshot so nextCursor covers
       // exactly the event set represented in this sync response.
-      const page = await listVisibleSyncEvents(client, { userId: user.id, after, limit });
+      const page = await listVisibleSyncEvents(client, { userId: user.id, after, limit, folded: q.wire === 'folded' });
       const state = await syncStateSnapshot(client, user.id);
       await client.query('COMMIT');
       return { ...page, state };

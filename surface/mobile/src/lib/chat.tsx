@@ -923,7 +923,8 @@ export function ChatProvider({ session, children }: { session: Session; children
   const syncFromCursor = useCallback(async () => {
     let cursor = stateRef.current.syncCursor;
     for (;;) {
-      const response = await api.sync(cursor, { limit: SYNC_LIMIT });
+      const catchupCursor = cursor;
+      const response = await api.sync(catchupCursor, { limit: SYNC_LIMIT, folded: true });
       if (response.limited) {
         dispatchSyncSnapshot(dispatch, response.state, adoptPrefs);
         reconcileDraftsFromSnapshot(response.state.drafts ?? {}, response.state.draftDeletions ?? {});
@@ -937,6 +938,7 @@ export function ChatProvider({ session, children }: { session: Session; children
       }
       dispatchSyncResponse(dispatch, response, {
         onPrefs: adoptPrefs,
+        catchupCursor,
         onEvent: (event) => {
           if (event.channelId) eventCache.enqueueEvents(event.channelId, [event]);
           cacheSyncCursor(event.id);

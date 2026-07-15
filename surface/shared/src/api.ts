@@ -134,7 +134,11 @@ export function decodeSyncResponse(input: unknown): SyncResponse {
   return decodeApiResponse(SyncResponseSchema, input);
 }
 
-export function decodeMessageHistoryResponse(input: unknown): { events: WireEvent[]; hasMore: boolean } {
+export function decodeMessageHistoryResponse(input: unknown): {
+  events: WireEvent[];
+  hasMore: boolean;
+  nextCursor?: number;
+} {
   return decodeApiResponse(MessageHistoryResponseSchema, input);
 }
 
@@ -498,9 +502,10 @@ export function createApi(opts: ApiOptions = {}) {
     logout: () => req<{ ok: true }>('/auth/logout', { method: 'POST', body: '{}' }),
     workspaces: () => req<{ workspaces: Workspace[] }>('/api/workspaces'),
     channels: () => req<{ channels: Channel[] }>('/api/channels'),
-    sync: (after: number, opts: { limit?: number } = {}) => {
+    sync: (after: number, opts: { limit?: number; folded?: boolean } = {}) => {
       const q = new URLSearchParams({ after: String(after) });
       if (opts.limit !== undefined) q.set('limit', String(opts.limit));
+      if (opts.folded === true) q.set('wire', 'folded');
       return req<SyncResponse>(`/api/sync?${q.toString()}`, undefined, decodeSyncResponse);
     },
     createChannel: (name: string, opts: { private?: boolean } = {}) =>
@@ -519,13 +524,17 @@ export function createApi(opts: ApiOptions = {}) {
         method: 'DELETE',
         body: JSON.stringify(op.opId ? { opId: op.opId } : {}),
       }),
-    messages: (channelId: string, opts: { beforeId?: number; afterId?: number; limit?: number } = {}) => {
+    messages: (
+      channelId: string,
+      opts: { beforeId?: number; afterId?: number; limit?: number; folded?: boolean } = {},
+    ) => {
       const q = new URLSearchParams();
       if (opts.beforeId !== undefined) q.set('before_id', String(opts.beforeId));
       if (opts.afterId !== undefined) q.set('after_id', String(opts.afterId));
       if (opts.limit !== undefined) q.set('limit', String(opts.limit));
+      if (opts.folded === true) q.set('wire', 'folded');
       const qs = q.toString();
-      return req<{ events: WireEvent[]; hasMore: boolean }>(
+      return req<{ events: WireEvent[]; hasMore: boolean; nextCursor?: number }>(
         `/api/channels/${channelId}/messages${qs ? `?${qs}` : ''}`,
         undefined,
         decodeMessageHistoryResponse,

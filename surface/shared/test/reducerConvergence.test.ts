@@ -83,6 +83,57 @@ describe('reducer convergence', () => {
       { numRuns: 80 },
     );
   });
+
+  it('converges when folded rows interleave with raw events', () => {
+    const posted: WireEvent = {
+      id: 1,
+      workspaceId: WS,
+      channelId: CH,
+      threadRootEventId: null,
+      type: 'message.posted',
+      actorId: users[0].id,
+      payload: { text: 'original' },
+      createdAt: new Date(1000).toISOString(),
+      author: users[0],
+    };
+    const edited: WireEvent = {
+      ...posted,
+      id: 2,
+      type: 'message.edited',
+      payload: { target: 'evt_1', text: 'edited' },
+      createdAt: new Date(2000).toISOString(),
+    };
+    const reacted: WireEvent = {
+      ...posted,
+      id: 3,
+      type: 'reaction.added',
+      actorId: users[1].id,
+      payload: { target: 'evt_1', emoji: '👍' },
+      createdAt: new Date(3000).toISOString(),
+      author: users[1],
+    };
+    const foldedThroughReaction: WireEvent = {
+      ...posted,
+      payload: { text: 'edited', edited: true, reactions: [{ emoji: '👍', userIds: [users[1].id] }] },
+      lastModifierId: 3,
+    };
+    const staleFold: WireEvent = {
+      ...posted,
+      payload: { text: 'edited', edited: true },
+      lastModifierId: 2,
+    };
+    const canonical = applyAll(emptyTimeline, [posted, edited, reacted]);
+
+    const deliveries = [
+      [foldedThroughReaction, posted, edited, reacted],
+      [posted, edited, foldedThroughReaction, reacted],
+      [posted, edited, reacted, foldedThroughReaction],
+      [posted, edited, reacted, staleFold],
+    ];
+    for (const delivery of deliveries) {
+      expect(snapshot(applyAll(emptyTimeline, delivery))).toEqual(snapshot(canonical));
+    }
+  });
 });
 
 function buildEvents(commands: Command[]): WireEvent[] {
@@ -317,6 +368,7 @@ function snapshot(timeline: ChannelTimeline) {
       deleted: m.deleted === true,
       replyCount: m.replyCount,
       lastReplyId: m.lastReplyId,
+      lastModifierId: m.lastModifierId ?? 0,
       sessionId: m.sessionId,
       sessionEventType: m.sessionEventType,
       reactions: (m.reactions ?? []).map((r) => ({ emoji: r.emoji, userIds: r.userIds })),

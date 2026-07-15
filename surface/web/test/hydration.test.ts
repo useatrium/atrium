@@ -169,6 +169,74 @@ describe('cached timeline hydration', () => {
     expect(onRepaired).toHaveBeenCalledWith('ch-1', latest);
   });
 
+  it('heals an edited and reacted cached row from a folded delta and advances from nextCursor', async () => {
+    let state = initialAppState;
+    const dispatch = vi.fn((action: AppAction) => {
+      state = appReducer(state, action);
+    });
+    const folded: WireEvent = {
+      ...wire(4),
+      payload: {
+        text: 'edited while away',
+        edited: true,
+        reactions: [{ emoji: '👍', userIds: ['u-2'] }],
+      },
+      lastModifierId: 11,
+    };
+    const fetchDelta = vi.fn(async () => ({ events: [folded], hasMore: false, nextCursor: 12 }));
+
+    await hydrateCachedTimelines({
+      timelines: { 'ch-1': { events: [wire(4)], hasMore: false } },
+      syncCursor: 4,
+      dispatch,
+      fetchLatest: vi.fn(),
+      fetchDelta,
+    });
+
+    expect(fetchDelta).toHaveBeenCalledWith('ch-1', 4);
+    expect(dispatch).toHaveBeenCalledWith({
+      type: 'history-loaded',
+      channelId: 'ch-1',
+      events: [folded],
+      hasMore: false,
+      nextCursor: 12,
+      catchupCursor: 4,
+      origin: 'channel-delta',
+    });
+    expect(state.timelines['ch-1']?.main[0]).toMatchObject({
+      id: 4,
+      text: 'edited while away',
+      edited: true,
+      reactions: [{ emoji: '👍', userIds: ['u-2'] }],
+      lastModifierId: 11,
+    });
+    expect(state.timelines['ch-1']?.lastEventId).toBe(12);
+  });
+
+  it('keeps applying a legacy raw modifier delta when nextCursor is absent', async () => {
+    let state = initialAppState;
+    const dispatch = vi.fn((action: AppAction) => {
+      state = appReducer(state, action);
+    });
+    const edit = modifier(5, 4);
+
+    await hydrateCachedTimelines({
+      timelines: { 'ch-1': { events: [wire(4)], hasMore: false } },
+      syncCursor: 4,
+      dispatch,
+      fetchLatest: vi.fn(),
+      fetchDelta: vi.fn(async () => ({ events: [edit], hasMore: false })),
+    });
+
+    expect(state.timelines['ch-1']?.main[0]).toMatchObject({
+      id: 4,
+      text: 'edited 4',
+      edited: true,
+      lastModifierId: 5,
+    });
+    expect(state.timelines['ch-1']?.lastEventId).toBe(5);
+  });
+
   it('merges a warm delta thread reply into its root and derives unread activity', async () => {
     let state = appReducer(initialAppState, {
       type: 'channels-loaded',
