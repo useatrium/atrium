@@ -13,10 +13,9 @@ pub enum WatchMessage {
     },
 }
 
-/// Dependency/build trees that are never watched: they are either gitignored
-/// (the repo WIP lane ignores them), capture-denied, or junk the ledger should
-/// not want. Their contents are covered only by backstop full scans. Keeping
-/// them unwatched is what keeps per-session watch counts in the low thousands
+/// Dependency/build trees that are never watched or capture-scanned: they are
+/// reproducible from lockfiles and are junk the permanent artifact ledger must
+/// not retain. Keeping them pruned also keeps per-session watch counts low
 /// instead of node_modules-sized (measured: one pnpm install adds ~15.5k dirs).
 pub const UNWATCHED_DIR_NAMES: &[&str] = &[
     "node_modules",
@@ -35,6 +34,14 @@ pub fn is_unwatched_dir_name(name: &std::ffi::OsStr) -> bool {
     UNWATCHED_DIR_NAMES
         .iter()
         .any(|skip| std::ffi::OsStr::new(skip) == name)
+}
+
+/// Whether any normal component of a capture-side path names a dependency or
+/// build tree pruned by the watcher. This is deliberately the same exact,
+/// case-sensitive name predicate used during watch registration.
+pub fn is_unwatched_path(path: &std::path::Path) -> bool {
+    path.components()
+        .any(|component| is_unwatched_dir_name(component.as_os_str()))
 }
 
 /// Per-session cap on tracked dirty paths. A busy build dirties more distinct
@@ -791,6 +798,12 @@ mod tests {
         assert!(is_unwatched_dir_name(OsStr::new("target")));
         assert!(!is_unwatched_dir_name(OsStr::new("node_modules2")));
         assert!(!is_unwatched_dir_name(OsStr::new("src")));
+        assert!(is_unwatched_path(std::path::Path::new(
+            "a/node_modules/b/c.js"
+        )));
+        assert!(!is_unwatched_path(std::path::Path::new(
+            "a/node_modules2/b/c.js"
+        )));
     }
 
     #[test]

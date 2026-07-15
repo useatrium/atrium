@@ -1491,16 +1491,9 @@ mod linux_daemon {
             if dirt.full {
                 return true;
             }
-            // Event-invisible by design (daemon root markers, mmap -shm):
-            // backstop full scans own these.
+            // Event-invisible by design (daemon root markers and mmap files),
+            // or capture-pruned by the shared watch/scan predicate.
             if centaur_node_sync::scoped::is_event_invisible_path(rel) {
-                return true;
-            }
-            // Unwatched dep/build trees are backstop-only by design.
-            if rel
-                .components()
-                .any(|c| centaur_node_sync::watch::is_unwatched_dir_name(c.as_os_str()))
-            {
                 return true;
             }
             dirty_rels
@@ -2480,7 +2473,8 @@ mod linux_daemon {
     ) -> std::io::Result<Vec<RawEntry>> {
         match plan {
             ScanPlan::Full => {
-                let mut walked = fs_linux::read_upper_entries(&session.upper)?;
+                let source = centaur_node_sync::scoped::FsEntrySource::new(&session.upper);
+                let mut walked = source.walk_all()?;
                 walked.retain(|entry| !is_capture_marker(&entry.rel_path));
                 if canary && tree.seeded() {
                     let divergence = tree.confirm_divergence(&walked);
