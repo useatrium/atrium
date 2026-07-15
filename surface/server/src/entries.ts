@@ -140,35 +140,13 @@ async function resolveEventEntry(db: Db, eventId: number, userId: string): Promi
             e.actor_id,
             u.display_name AS actor_display_name,
             e.payload,
-            edit.text AS edited_text,
-            suppression.suppressed_unfurls,
-            (del.id IS NOT NULL) AS is_deleted
+            ms.edited_text,
+            ms.suppressed_unfurls,
+            COALESCE(ms.is_deleted, false) AS is_deleted
        FROM events e
        LEFT JOIN channels c ON c.id = e.channel_id
        LEFT JOIN users u ON u.id = e.actor_id
-       LEFT JOIN LATERAL (
-         SELECT x.payload->>'text' AS text
-          FROM events x
-          WHERE x.type = 'message.edited'
-            AND x.payload->>'target' = ('evt_' || e.id::text)
-          ORDER BY x.id DESC
-          LIMIT 1
-       ) edit ON e.type = 'message.posted'
-       LEFT JOIN LATERAL (
-         SELECT x.payload->'suppressed' AS suppressed_unfurls
-          FROM events x
-          WHERE x.type = 'message.unfurls_suppressed'
-            AND x.payload->>'target' = ('evt_' || e.id::text)
-          ORDER BY x.id DESC
-          LIMIT 1
-       ) suppression ON e.type = 'message.posted'
-       LEFT JOIN LATERAL (
-         SELECT x.id
-          FROM events x
-          WHERE x.type = 'message.deleted'
-            AND x.payload->>'target' = ('evt_' || e.id::text)
-          LIMIT 1
-       ) del ON e.type = 'message.posted'
+       LEFT JOIN message_state ms ON ms.event_id = e.id
       WHERE e.id = $1`,
     [eventId],
   );
@@ -311,16 +289,19 @@ export async function queryEntryReferences(
        SELECT unnest($1::text[]) AS handle
      ),
      candidates AS (
-       -- Start from both GIN-indexed ref columns, then re-check the root
-       -- against its latest edit below. That preserves latest-text-wins
-       -- semantics while avoiding a full scan for handles introduced by edits.
-       SELECT input.handle AS queried_handle, e.id AS event_id
+       -- Start from both GIN-indexed ref columns, carrying the matching
+       -- revision text so message_state can enforce latest-text-wins below.
+       SELECT input.handle AS queried_handle,
+              e.id AS event_id,
+              e.payload->>'text' AS matched_text
          FROM input
          JOIN events e
            ON e.type = 'message.posted'
           AND e.payload->'entry_refs' @> to_jsonb(ARRAY[input.handle]::text[])
        UNION
-       SELECT input.handle AS queried_handle, root.id AS event_id
+       SELECT input.handle AS queried_handle,
+              root.id AS event_id,
+              edit_match.payload->>'text' AS matched_text
          FROM input
          JOIN events edit_match
            ON edit_match.type = 'message.edited'
@@ -339,10 +320,7 @@ export async function queryEntryReferences(
               e.thread_root_event_id,
               u.display_name AS actor_label,
               substring(
-                COALESCE(
-                  CASE WHEN latest_edit.id IS NOT NULL THEN latest_edit.payload->>'text' ELSE e.payload->>'text' END,
-                  ''
-                )
+                COALESCE(ms.edited_text, e.payload->>'text', '')
                 from 1 for 140
               ) AS excerpt,
               e.created_at,
@@ -350,28 +328,11 @@ export async function queryEntryReferences(
               row_number() OVER (PARTITION BY candidates.queried_handle ORDER BY e.created_at DESC, e.id DESC) AS rn
          FROM candidates
          JOIN events e ON e.id = candidates.event_id
-         LEFT JOIN LATERAL (
-           SELECT x.id, x.payload
-             FROM events x
-            WHERE x.type = 'message.edited'
-              AND x.payload->>'target' = ('evt_' || e.id::text)
-            ORDER BY x.id DESC
-            LIMIT 1
-         ) latest_edit ON true
+         LEFT JOIN message_state ms ON ms.event_id = e.id
          JOIN channels c ON c.id = e.channel_id
          LEFT JOIN users u ON u.id = e.actor_id
-        WHERE COALESCE(
-                CASE
-                  WHEN latest_edit.id IS NOT NULL THEN latest_edit.payload->'entry_refs'
-                  ELSE e.payload->'entry_refs'
-                END,
-                '[]'::jsonb
-              ) @> to_jsonb(ARRAY[candidates.queried_handle]::text[])
-          AND NOT EXISTS (
-                SELECT 1 FROM events d
-                 WHERE d.type = 'message.deleted'
-                   AND d.payload->>'target' = ('evt_' || e.id::text)
-              )
+        WHERE candidates.matched_text IS NOT DISTINCT FROM COALESCE(ms.edited_text, e.payload->>'text')
+          AND NOT COALESCE(ms.is_deleted, false)
           AND ((c.kind = 'public' AND ${workspaceMemberExists('c.workspace_id', '$2')})
             OR EXISTS (SELECT 1 FROM channel_members cm
                         WHERE cm.channel_id = c.id AND cm.user_id = $2))

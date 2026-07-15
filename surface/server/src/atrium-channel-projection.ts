@@ -191,9 +191,9 @@ export async function loadChannelChatProjection(
             e.actor_id,
             e.payload->>'text' AS payload_text,
             e.payload->>'title' AS payload_title,
-            edit.text AS edited_text,
-            suppression.suppressed_unfurls,
-            (del.id IS NOT NULL) AS is_deleted,
+            ms.edited_text,
+            ms.suppressed_unfurls,
+            COALESCE(ms.is_deleted, false) AS is_deleted,
             e.created_at,
             u.handle AS author_handle,
             u.display_name AS author_display_name,
@@ -201,29 +201,7 @@ export async function loadChannelChatProjection(
        FROM events e
        LEFT JOIN users u ON u.id = e.actor_id
        LEFT JOIN sessions replied_session ON replied_session.id::text = e.payload->>'session_id'
-       LEFT JOIN LATERAL (
-         SELECT x.payload->>'text' AS text
-           FROM events x
-          WHERE x.type = 'message.edited'
-            AND x.payload->>'target' = ('evt_' || e.id::text)
-          ORDER BY x.id DESC
-          LIMIT 1
-       ) edit ON true
-       LEFT JOIN LATERAL (
-         SELECT x.payload->'suppressed' AS suppressed_unfurls
-           FROM events x
-          WHERE x.type = 'message.unfurls_suppressed'
-            AND x.payload->>'target' = ('evt_' || e.id::text)
-          ORDER BY x.id DESC
-          LIMIT 1
-       ) suppression ON true
-       LEFT JOIN LATERAL (
-         SELECT x.id
-           FROM events x
-          WHERE x.type = 'message.deleted'
-            AND x.payload->>'target' = ('evt_' || e.id::text)
-          LIMIT 1
-       ) del ON true
+       LEFT JOIN message_state ms ON ms.event_id = e.id
       WHERE e.channel_id = $1::uuid
         AND e.type IN ('message.posted', 'message.edited', 'message.unfurls_suppressed', 'message.deleted', 'session.spawned', 'session.replied')
       ORDER BY e.id ASC`,

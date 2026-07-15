@@ -146,11 +146,14 @@ describe('channel message pagination', () => {
 
   it('folds message.edited into reads', async () => {
     const m = await post('original');
-    await pool.query(
+    const edit = await pool.query<{ id: number }>(
       `INSERT INTO events (workspace_id, channel_id, type, actor_id, payload)
-       VALUES ($1, $2, 'message.edited', $3, $4)`,
+       VALUES ($1, $2, 'message.edited', $3, $4)
+       RETURNING id`,
       [fx.workspaceId, fx.channelId, fx.userId, JSON.stringify({ target: `evt_${m.id}`, text: 'edited!' })],
     );
+    // Raw inserts bypass the insertEvent choke point, so project explicitly.
+    await pool.query('SELECT project_message_event($1)', [edit.rows[0]!.id]);
     const page = await listChannelMessages(pool, { channelId: fx.channelId });
     const row = page.events.find((e) => e.id === m.id)!;
     expect(row.payload.text).toBe('edited!');
@@ -175,6 +178,8 @@ describe('the agent answer reaches the channel feed', () => {
         JSON.stringify({ session_id: 's-1', text, ...(broadcast ? { broadcast: true } : {}) }),
       ],
     );
+    // Raw inserts bypass the insertEvent choke point, so project explicitly.
+    await pool.query('SELECT project_message_event($1)', [rows[0]!.id]);
     return rows[0]!.id;
   }
 
