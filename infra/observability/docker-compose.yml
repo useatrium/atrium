@@ -38,8 +38,8 @@ services:
   # The config carries the secret topic, so the real file is untracked:
   # copy alertmanager-ntfy.example.yaml -> alertmanager-ntfy.yaml on the box.
   alertmanager-ntfy:
-    image: ghcr.io/alexbakker/alertmanager-ntfy:v1.2.1
-    command: ["--config", "/etc/alertmanager-ntfy/config.yaml"]
+    image: ghcr.io/alexbakker/alertmanager-ntfy:1.2.1
+    command: ["--configs", "/etc/alertmanager-ntfy/config.yaml"]
     volumes:
       - ./alertmanager-ntfy.yaml:/etc/alertmanager-ntfy/config.yaml:ro
 
