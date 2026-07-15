@@ -47,6 +47,30 @@ describe('channel feed reply previews', () => {
     });
   });
 
+  it('flags a broadcast reply on its root preview so clients can skip the duplicate', async () => {
+    const root = await postMessage(pool, {
+      workspaceId: fixture.workspaceId,
+      channelId: fixture.channelId,
+      actorId: fixture.userId,
+      text: 'Root message',
+    });
+    const reply = await postMessage(pool, {
+      workspaceId: fixture.workspaceId,
+      channelId: fixture.channelId,
+      actorId: fixture.userId,
+      threadRootEventId: root.id,
+      broadcast: true,
+      text: 'Also sent to the channel',
+    });
+
+    const history = await listChannelMessages(pool, { channelId: fixture.channelId });
+    const feedRoot = history.events.find((event) => event.id === root.id);
+    expect(feedRoot?.lastReply).toMatchObject({ id: reply.id, broadcast: true });
+    // The plain (non-broadcast) preview never carries the flag.
+    const replyRow = history.events.find((event) => event.id === reply.id);
+    expect(replyRow?.broadcast).toBe(true);
+  });
+
   it('caps feed preview text at 200 characters', async () => {
     const root = await postMessage(pool, {
       workspaceId: fixture.workspaceId,

@@ -1104,7 +1104,15 @@ function ThreadCluster({
   const [expanded, setExpanded] = useState(false);
   const answerIds = new Set(slotAnswers.map((answer) => answer.id).filter((id): id is number => id != null));
   const loadedReplies = (replies ?? []).filter((reply) => !answerIds.has(reply.id ?? -1));
-  const payloadLatest = (root as MessageWithLastReply).lastReply ?? null;
+  // A human "also send to channel" reply renders as its own feed row — the
+  // cluster must not preview it too (web parity: that's the double-render).
+  const rawPayloadLatest = (root as MessageWithLastReply).lastReply ?? null;
+  const payloadLatest =
+    rawPayloadLatest?.broadcast === true &&
+    rawPayloadLatest.sessionEventType == null &&
+    rawPayloadLatest.sessionId == null
+      ? null
+      : rawPayloadLatest;
   const latestAnswer = slotAnswers.find((answer) => answer.id === root.lastReplyId) ?? null;
   const latest = latestAnswer ? null : (loadedReplies.at(-1) ?? payloadLatest);
   const earlierCount = Math.max(0, root.replyCount - (latest != null || latestAnswer != null ? 1 : 0));

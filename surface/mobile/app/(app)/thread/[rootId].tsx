@@ -3,6 +3,7 @@ import { KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView, Text, V
 import { Stack, router, useLocalSearchParams } from 'expo-router';
 import { useHeaderHeight } from 'expo-router/react-navigation';
 import {
+  channelLabel,
   deriveSessionGlance,
   emptyTimeline,
   formatDurationUnits,
@@ -131,6 +132,12 @@ export default function ThreadScreen() {
   const [agentEffort, setAgentEffort] = useState<AgentEffort>('medium');
   const composerRef = useRef<ComposerHandle>(null);
   const draftKey = channelId && Number.isFinite(rootId) ? `channel:${channelId}:thread:${rootId}` : '';
+  const composerChannel = state.channels.find((candidate) => candidate.id === channelId) ?? null;
+  const broadcastChannelLabel = composerChannel
+    ? composerChannel.kind === 'dm' || composerChannel.kind === 'gdm'
+      ? channelLabel(composerChannel, me.id)
+      : `#${composerChannel.name}`
+    : undefined;
   const attachedSession = useMemo(
     () =>
       (root?.sessionId ? state.sessions[root.sessionId] : undefined) ??
@@ -440,6 +447,7 @@ export default function ThreadScreen() {
           // Asides are thread-only by design: a session-attached thread never
           // offers "Also send to channel" (the terminal answer broadcasts itself).
           showBroadcastToggle={attachedSession == null}
+          broadcastChannelLabel={broadcastChannelLabel}
           previewEntryLinks
           serverUrl={chat.serverUrl}
           resolveEntry={chat.resolveEntry}

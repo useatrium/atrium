@@ -40,7 +40,16 @@ export function useSessionStream(sessionId: string | null, active = false): Sess
   activeRef.current = active;
 
   useEffect(() => {
-    if (!sessionId) return;
+    if (!sessionId) {
+      // The owning screen can outlive its session (re-pointed from a
+      // session-attached thread to a plain one). Without this reset the
+      // previous session's folded state keeps rendering (web parity).
+      setStream(initialSessionState());
+      setConnected(false);
+      setLastFrameAt(null);
+      setClockSkewMs(null);
+      return;
+    }
     let disposed = false;
     let acc = initialSessionState();
     let retryTimer: ReturnType<typeof setTimeout> | null = null;

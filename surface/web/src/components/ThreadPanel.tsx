@@ -189,7 +189,12 @@ export function ThreadPanel({
   );
   const sessionLive = attachedSession != null && !isTerminalSessionStatus(attachedSession.status);
   const { stream } = useSessionStream(attachedSession?.id ?? null, sessionLive);
-  const workFolds = useMemo(() => foldedTurnRows(stream.items), [stream.items]);
+  // Belt to the hook's own null-reset: a thread with no attached session must
+  // never render work folds, whatever state the stream is carrying.
+  const workFolds = useMemo(
+    () => (attachedSession != null ? foldedTurnRows(stream.items) : []),
+    [attachedSession, stream.items],
+  );
   const fileChanges = useMemo(() => collectFileChanges(stream), [stream.items, stream.fileChanges]);
   const changedFileCount = useMemo(() => changedPaths(fileChanges).length, [fileChanges]);
   const sideEffects = useMemo(() => collectSideEffects(stream.items), [stream.items]);
@@ -480,8 +485,7 @@ export function ThreadPanel({
               onChange={(e) => setAlsoSendToChannel(e.target.checked)}
               className="h-3.5 w-3.5 rounded border-edge-strong bg-surface-raised text-accent focus:ring-accent"
             />
-            <span className="font-medium">Also send to channel</span>
-            <span className="text-fg-muted">Visible in the channel too</span>
+            <span className="font-medium">Also send to {channelLabel ?? 'channel'}</span>
           </label>
         )}
       </div>

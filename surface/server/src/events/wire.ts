@@ -35,6 +35,8 @@ export interface WireEvent {
     createdAt: string;
     agentVoice: boolean;
     eventType: string;
+    /** The previewed reply is also shown in the channel timeline. */
+    broadcast?: boolean;
   };
   /** Thread reply should also be shown in the channel timeline. */
   broadcast?: boolean;
@@ -71,6 +73,7 @@ export interface EventDbRow {
   last_reply_created_at?: Date | null;
   last_reply_agent_voice?: boolean | null;
   last_reply_event_type?: string | null;
+  last_reply_broadcast?: boolean | null;
   broadcast?: boolean | null;
   transcript_status?: string | null;
   transcript_text?: string | null;
@@ -109,6 +112,7 @@ export function toWireEvent(row: EventDbRow): WireEvent {
       createdAt: new Date(row.last_reply_created_at).toISOString(),
       agentVoice: row.last_reply_agent_voice === true,
       eventType: row.last_reply_event_type ?? 'message.posted',
+      ...(row.last_reply_broadcast === true ? { broadcast: true } : {}),
     };
   }
   if (row.broadcast === true || row.payload?.broadcast === true) ev.broadcast = true;

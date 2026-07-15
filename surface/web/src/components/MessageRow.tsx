@@ -1144,9 +1144,13 @@ function ChannelAnnotationCluster({
   // Anchored rows always render through the full MessageRow machinery. The
   // compact preview renders ONLY when the newest reply is not anchored (a
   // plain thread reply) — matching by id OR clientMsgId so an optimistic
-  // broadcast echo can never double-render next to its confirmed row.
+  // broadcast echo can never double-render next to its confirmed row. A
+  // human "also send to channel" reply is never previewed either: it renders
+  // as its own feed row, so the preview would be that same double-render.
   const anchoredMaxId = answers.reduce((acc, answer) => Math.max(acc, answer.id ?? 0), 0);
-  const previewCandidate = root.lastReply;
+  const humanBroadcastPreview =
+    root.lastReply?.broadcast === true && root.lastReply.sessionEventType == null && root.lastReply.sessionId == null;
+  const previewCandidate = humanBroadcastPreview ? undefined : root.lastReply;
   const previewIsAnchored =
     previewCandidate != null &&
     answers.some(

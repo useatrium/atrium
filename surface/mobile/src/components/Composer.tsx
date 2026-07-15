@@ -95,6 +95,8 @@ export interface ComposerProps {
   onInviteMember?: (userId: string) => Promise<void> | void;
   allowAttachments?: boolean;
   showBroadcastToggle?: boolean;
+  /** Destination label for the broadcast toggle, e.g. "#engineering". */
+  broadcastChannelLabel?: string;
   previewEntryLinks?: boolean;
   serverUrl?: string;
   resolveEntry?: EntryResolver;
@@ -165,6 +167,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     onInviteMember,
     allowAttachments,
     showBroadcastToggle,
+    broadcastChannelLabel,
     previewEntryLinks,
     serverUrl,
     resolveEntry,
@@ -836,9 +839,11 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 
       {showBroadcastToggle && !editing && (
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-          <Text style={{ color: colors.textSecondary, fontSize: font.sm }}>Also send to channel</Text>
+          <Text style={{ color: colors.textSecondary, fontSize: font.sm }}>
+            Also send to {broadcastChannelLabel ?? 'channel'}
+          </Text>
           <Switch
-            accessibilityLabel="Also send to channel"
+            accessibilityLabel={`Also send to ${broadcastChannelLabel ?? 'channel'}`}
             value={alsoSendToChannel}
             onValueChange={setAlsoSendToChannel}
             trackColor={{ false: colors.switchTrackOff, true: colors.accent }}

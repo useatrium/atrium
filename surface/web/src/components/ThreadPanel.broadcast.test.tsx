@@ -60,7 +60,7 @@ afterEach(() => {
 describe('ThreadPanel broadcast replies', () => {
   it('sends a reply with broadcast enabled and resets the checkbox', () => {
     const { onSend } = renderPanel();
-    const checkbox = screen.getByRole('checkbox', { name: /also send to channel/i });
+    const checkbox = screen.getByRole('checkbox', { name: /also send to/i });
     const input = screen.getByLabelText('Message input');
 
     fireEvent.click(checkbox);

@@ -97,12 +97,17 @@ export function Timeline({
         .map((message) => message.id!),
     );
     const answers = new Map<number, ChatMessage[]>();
+    // Only AGENT-VOICE broadcast replies (session answers/questions) anchor
+    // under their loaded root — the cluster's slot presentation carries the
+    // agent identity. A human "also send to channel" reply stays in the feed
+    // as its own row, attributed to its author; rendering one message twice
+    // (cluster preview + standalone row) is still the failure mode, so the
+    // cluster suppresses its compact preview for broadcast replies.
+    const isAgentBroadcast = (message: ChatMessage) =>
+      message.broadcast === true && (message.sessionId != null || message.sessionEventType != null);
     for (const message of messages) {
-      // EVERY broadcast thread reply anchors under its loaded root — agent
-      // answers and human "also send to channel" replies alike. Rendering it
-      // twice (cluster preview + standalone row) is the failure mode.
       if (
-        message.broadcast === true &&
+        isAgentBroadcast(message) &&
         message.sessionEventType !== 'question_requested' &&
         message.threadRootEventId != null &&
         rootIds.has(message.threadRootEventId)
@@ -113,7 +118,7 @@ export function Timeline({
       }
     }
     const isAnchoredAnnotationEvent = (message: ChatMessage) =>
-      message.broadcast === true && message.threadRootEventId != null && rootIds.has(message.threadRootEventId);
+      isAgentBroadcast(message) && message.threadRootEventId != null && rootIds.has(message.threadRootEventId);
     return {
       visibleMessages: messages.filter((message) => !isAnchoredAnnotationEvent(message)),
       answersByRoot: answers,

@@ -42,22 +42,31 @@ test('broadcast reply lands confirmed in the channel and survives reload', async
   await sendMessage(page, root, room);
 
   await openThreadForMessage(page, root);
-  await page.getByRole('checkbox', { name: /also send to channel/i }).check();
+  await page.getByRole('checkbox', { name: /also send to/i }).check();
   await sendThreadReply(page, reply);
 
-  // The broadcast reply anchors under its root as part of the annotation
-  // cluster — no standalone channel row, no "replied to a thread" backlink.
+  // A HUMAN broadcast reply is its own channel row, attributed to its author,
+  // with the "replied to a thread" backlink — never dressed as an agent
+  // answer inside the root's cluster, and never rendered twice (the cluster
+  // suppresses its compact preview for broadcast replies).
+  const standaloneReply = confirmedRowsWithText(page, reply).first();
+  await expect(standaloneReply).toBeVisible();
+  await expect(standaloneReply.getByRole('button', { name: /replied to a thread/ })).toBeVisible();
   const rootRow = confirmedRowsWithText(page, root).first();
-  await expect(rootRow.getByTestId('channel-annotation-cluster').getByText(reply, { exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: /replied to a thread/ })).toHaveCount(0);
+  await expect(rootRow.getByTestId('channel-annotation-cluster').getByText(reply, { exact: true })).toHaveCount(0);
+  await expect(confirmedRowsWithText(page, reply)).toHaveCount(1);
 
   await page.reload();
   await waitForChannel(page, room);
 
+  const reloadedReply = confirmedRowsWithText(page, reply).first();
+  await expect(reloadedReply).toBeVisible();
+  await expect(reloadedReply.getByRole('button', { name: /replied to a thread/ })).toBeVisible();
   const reloadedRootRow = confirmedRowsWithText(page, root).first();
-  await expect(
-    reloadedRootRow.getByTestId('channel-annotation-cluster').getByText(reply, { exact: true }),
-  ).toBeVisible();
+  await expect(reloadedRootRow.getByTestId('channel-annotation-cluster').getByText(reply, { exact: true })).toHaveCount(
+    0,
+  );
+  await expect(confirmedRowsWithText(page, reply)).toHaveCount(1);
   await expect(reloadedRootRow.getByRole('button', { name: 'Open thread →' })).toBeVisible();
 });
 
