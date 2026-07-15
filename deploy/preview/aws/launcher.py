@@ -199,7 +199,7 @@ class Launcher:
             raise ValueError("ref, branch, or commit_sha is required")
         if repo not in ALLOWED_REPOS:
             raise ValueError(f"repo is not allowed: {repo}")
-        ttl_hours = int(body.get("ttl_hours") or DEFAULT_TTL_HOURS)
+        ttl_hours = int(body["ttl_hours"]) if "ttl_hours" in body else DEFAULT_TTL_HOURS
         if ttl_hours <= 0 or ttl_hours > MAX_TTL_HOURS:
             raise ValueError(f"ttl_hours must be between 1 and {MAX_TTL_HOURS}")
         if body.get("fetch", True):
