@@ -507,8 +507,8 @@ mod linux_daemon {
     };
     use centaur_node_sync::overlay::RawEntry;
     use centaur_node_sync::overlay_mount::{
-        OverlayMountPlan, READY_MARKER_FILE, mount_overlay, plan_overlay_mount,
-        session_sibling_dirs, unmount_overlay,
+        OVERLAY_SIGNATURE_FILE, OverlayMountPlan, READY_MARKER_FILE, mount_overlay,
+        plan_overlay_mount, session_sibling_dirs, unmount_overlay,
     };
     use centaur_node_sync::pacing::{TickPacer, TickPacerAction};
     use centaur_node_sync::quiesce::{LeaseGate, apply_quiesced_writes};
@@ -1473,6 +1473,11 @@ mod linux_daemon {
             .collect();
         let covered = |rel: &Path| -> bool {
             if dirt.full {
+                return true;
+            }
+            // Daemon-authored root markers churn outside the event stream by
+            // design (their events are self-dirty-filtered): never misses.
+            if rel == Path::new(OVERLAY_SIGNATURE_FILE) || rel == Path::new(READY_MARKER_FILE) {
                 return true;
             }
             // Unwatched dep/build trees are backstop-only by design.
