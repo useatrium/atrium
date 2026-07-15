@@ -59,7 +59,7 @@ log "server :$SERVER_PORT  web :$WEB_PORT"
 
 # --- start server (detached so it survives this hook returning) ---
 ( cd "$SURF" && \
-  PORT="$SERVER_PORT" HOST=127.0.0.1 DATABASE_URL="$DATABASE_URL" \
+  NODE_ENV=development PORT="$SERVER_PORT" HOST=127.0.0.1 DATABASE_URL="$DATABASE_URL" \
   EMAIL_MODE=log AUTH_DEV_CODES=1 \
   exec pnpm --filter @atrium/server start ) >"$RUN/server.log" 2>&1 &
 SERVER_PID=$!
