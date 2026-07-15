@@ -239,6 +239,7 @@ export async function injectSession(args: {
       ],
     );
     const rootId = Number(root.rows[0]!.id);
+    await client.query('SELECT project_message_event($1)', [rootId]);
     await client.query('UPDATE sessions SET thread_root_event_id = $1 WHERE id = $2', [rootId, sessionId]);
     await client.query('COMMIT');
     return { rootId, sessionId };
@@ -258,12 +259,14 @@ export async function injectSessionReply(args: {
   text: string;
 }): Promise<number> {
   const pool = new Pool({ connectionString: e2eDatabaseUrl });
+  const client = await pool.connect();
   try {
-    const channel = await pool.query<{ workspace_id: string }>('SELECT workspace_id FROM channels WHERE id = $1', [
+    await client.query('BEGIN');
+    const channel = await client.query<{ workspace_id: string }>('SELECT workspace_id FROM channels WHERE id = $1', [
       args.channelId,
     ]);
     if (!channel.rows[0]) throw new Error('missing e2e channel');
-    const reply = await pool.query<{ id: string }>(
+    const reply = await client.query<{ id: string }>(
       `INSERT INTO events (workspace_id, channel_id, thread_root_event_id, type, actor_id, payload)
        VALUES ($1, $2, $3, 'session.replied', NULL, $4)
        RETURNING id`,
@@ -274,12 +277,21 @@ export async function injectSessionReply(args: {
         JSON.stringify({ session_id: args.sessionId, text: args.text, broadcast: true }),
       ],
     );
+    const replyId = Number(reply.rows[0]!.id);
+    await client.query('SELECT project_message_event($1)', [replyId]);
     // The answer implies the turn ended: mark the session terminal so the slot
     // renders the anchored answer instead of a working strip (a running session
     // deliberately withholds its claimed answer).
-    await pool.query(`UPDATE sessions SET status = 'completed', completed_at = now() WHERE id = $1`, [args.sessionId]);
-    return Number(reply.rows[0]!.id);
+    await client.query(`UPDATE sessions SET status = 'completed', completed_at = now() WHERE id = $1`, [
+      args.sessionId,
+    ]);
+    await client.query('COMMIT');
+    return replyId;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
   } finally {
+    client.release();
     await pool.end();
   }
 }
@@ -397,6 +409,7 @@ export async function injectQuestionRequested(args: {
       ],
     );
     const rootId = Number(root.rows[0]!.id);
+    await client.query('SELECT project_message_event($1)', [rootId]);
     const pendingQuestion = {
       questionId: QUESTION_ID,
       turnId: 'turn-1',
@@ -411,9 +424,10 @@ export async function injectQuestionRequested(args: {
        WHERE id = $4`,
       [rootId, JSON.stringify(pendingQuestion), pendingQuestion.eventId, sessionId],
     );
-    await client.query(
+    const questionEvent = await client.query<{ id: string }>(
       `INSERT INTO events (workspace_id, channel_id, thread_root_event_id, type, actor_id, payload)
-       VALUES ($1, $2, $3, 'session.question_requested', $4, $5)`,
+       VALUES ($1, $2, $3, 'session.question_requested', $4, $5)
+       RETURNING id`,
       [
         workspaceId,
         args.channelId,
@@ -427,6 +441,7 @@ export async function injectQuestionRequested(args: {
         }),
       ],
     );
+    await client.query('SELECT project_message_event($1)', [Number(questionEvent.rows[0]!.id)]);
     await client.query('COMMIT');
     return { rootId, sessionId, questionText: questionPrompts[0]!.question };
   } catch (err) {

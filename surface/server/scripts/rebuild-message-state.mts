@@ -12,15 +12,27 @@ const pool = createPool(databaseUrl);
 const client = await pool.connect();
 
 try {
-  await client.query('BEGIN');
+  // Chunked rather than one transaction: each projection takes a
+  // pg_advisory_xact_lock held until its transaction ends, so a single-tx
+  // rebuild would exhaust the shared lock table on a large events table.
+  // The projection is derived state, so a rebuild interrupted mid-way is
+  // harmless — rerun it. The watermark upsert also makes it safe to run
+  // against a live writer.
   await client.query('TRUNCATE message_state');
-  await client.query('SELECT project_message_event(id) FROM events ORDER BY id');
+  const idRange = await client.query<{ min_id: string; max_id: string }>(
+    'SELECT min(id)::text AS min_id, max(id)::text AS max_id FROM events',
+  );
+  const minId = Number(idRange.rows[0]?.min_id ?? 0);
+  const maxId = Number(idRange.rows[0]?.max_id ?? -1);
+  const CHUNK = 5000;
+  for (let lo = minId; lo <= maxId; lo += CHUNK) {
+    await client.query('SELECT project_message_event(id) FROM events WHERE id >= $1 AND id < $2 ORDER BY id', [
+      lo,
+      lo + CHUNK,
+    ]);
+  }
   const count = await client.query<{ count: number }>('SELECT count(*)::int AS count FROM message_state');
-  await client.query('COMMIT');
   console.log(`message_state rebuilt: ${count.rows[0]?.count ?? 0} rows`);
-} catch (err) {
-  await client.query('ROLLBACK').catch(() => {});
-  throw err;
 } finally {
   client.release();
   await pool.end();

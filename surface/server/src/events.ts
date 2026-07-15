@@ -868,8 +868,8 @@ const MESSAGE_SELECT = `
   SELECT e.*,
          u.handle AS author_handle,
          u.display_name AS author_display_name,
-         coalesce(r.reply_count, 0)::int AS reply_count,
-         coalesce(r.last_reply_id, 0)::bigint AS last_reply_id,
+         coalesce(ms.reply_count, 0)::int AS reply_count,
+         coalesce(ms.last_reply_id, 0)::bigint AS last_reply_id,
          lr.id AS last_reply_preview_id,
          CASE
            WHEN lr.type IN ('session.replied', 'session.question_requested')
@@ -880,83 +880,25 @@ const MESSAGE_SELECT = `
            WHEN lr.type IN ('session.replied', 'session.question_requested') THEN 'Agent'
            ELSE coalesce(lru.display_name, lru.handle)
          END AS last_reply_author_display_name,
-         left(coalesce(lr_edit.text, lr.payload->>'text', lr.payload->>'question', lr.payload->>'title', ''), 200)
+         left(coalesce(lr_ms.edited_text, lr.payload->>'text', lr.payload->>'question', lr.payload->>'title', ''), 200)
            AS last_reply_text,
          lr.created_at AS last_reply_created_at,
          (lr.type IN ('session.replied', 'session.question_requested')) AS last_reply_agent_voice,
          lr.type AS last_reply_event_type,
          (e.payload->>'broadcast')::boolean AS broadcast,
-         edit.text AS edited_text,
-         suppression.suppressed_unfurls,
-         (del.id IS NOT NULL) AS is_deleted,
-         rx.reactions AS reactions,
+         ms.edited_text AS edited_text,
+         ms.suppressed_unfurls AS suppressed_unfurls,
+         coalesce(ms.is_deleted, false) AS is_deleted,
+         ms.reactions AS reactions,
          vt.status AS transcript_status,
          vt.text AS transcript_text,
          vt.lang AS transcript_lang
   FROM events e
   LEFT JOIN users u ON u.id = e.actor_id
-  LEFT JOIN LATERAL (
-    SELECT count(*) AS reply_count, max(x.id) AS last_reply_id
-    FROM events x
-    WHERE x.thread_root_event_id = e.id
-      AND x.type IN ('message.posted', 'session.replied', 'session.question_requested', 'session.question_answered', 'session.question_resolved')
-      AND NOT EXISTS (
-        SELECT 1 FROM events d
-        WHERE d.type = 'message.deleted'
-          AND d.payload->>'target' = ('evt_' || x.id::text)
-      )
-  ) r ON e.thread_root_event_id IS NULL
-  LEFT JOIN events lr ON lr.id = r.last_reply_id
+  LEFT JOIN message_state ms ON ms.event_id = e.id
+  LEFT JOIN events lr ON lr.id = ms.last_reply_id
   LEFT JOIN users lru ON lru.id = lr.actor_id
-  LEFT JOIN LATERAL (
-    SELECT x.payload->>'text' AS text
-    FROM events x
-    WHERE x.type = 'message.edited'
-      AND x.payload->>'target' = ('evt_' || lr.id::text)
-    ORDER BY x.id DESC
-    LIMIT 1
-  ) lr_edit ON true
-  LEFT JOIN LATERAL (
-    SELECT x.payload->>'text' AS text
-    FROM events x
-    WHERE x.type = 'message.edited'
-      AND x.payload->>'target' = ('evt_' || e.id::text)
-    ORDER BY x.id DESC
-    LIMIT 1
-  ) edit ON true
-  LEFT JOIN LATERAL (
-    SELECT x.payload->'suppressed' AS suppressed_unfurls
-    FROM events x
-    WHERE x.type = 'message.unfurls_suppressed'
-      AND x.payload->>'target' = ('evt_' || e.id::text)
-    ORDER BY x.id DESC
-    LIMIT 1
-  ) suppression ON true
-  LEFT JOIN LATERAL (
-    SELECT x.id
-    FROM events x
-    WHERE x.type = 'message.deleted'
-      AND x.payload->>'target' = ('evt_' || e.id::text)
-    LIMIT 1
-  ) del ON true
-  LEFT JOIN LATERAL (
-    SELECT json_agg(json_build_object('emoji', emoji, 'userIds', user_ids)) AS reactions
-    FROM (
-      SELECT emoji, json_agg(actor_id ORDER BY first_id) AS user_ids
-      FROM (
-        SELECT x.actor_id, x.payload->>'emoji' AS emoji,
-               SUM(CASE WHEN x.type = 'reaction.added' THEN 1 ELSE -1 END) AS net,
-               MIN(x.id) AS first_id
-        FROM events x
-        WHERE x.type IN ('reaction.added', 'reaction.removed')
-          AND x.payload->>'target' = ('evt_' || e.id::text)
-        GROUP BY x.actor_id, x.payload->>'emoji'
-      ) n
-      WHERE n.net > 0
-      GROUP BY emoji
-      ORDER BY MIN(first_id)
-    ) agg
-  ) rx ON true
+  LEFT JOIN message_state lr_ms ON lr_ms.event_id = ms.last_reply_id
   LEFT JOIN transcripts vt ON vt.event_id = e.id
 `;
 
@@ -1193,7 +1135,7 @@ export async function searchMessages(
        ${MESSAGE_SELECT}
        WHERE e.type = 'message.posted'
          AND e.id IN (SELECT msg_id FROM hits WHERE msg_id IS NOT NULL)
-         AND del.id IS NULL
+         AND NOT coalesce(ms.is_deleted, false)
        ORDER BY e.id DESC
        LIMIT $2
      ) m

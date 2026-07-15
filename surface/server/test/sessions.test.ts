@@ -2884,18 +2884,23 @@ describe('Phase 2 sessions', () => {
       ['session.question_answered', answeredPayload],
       ['session.question_resolved', resolvedPayload],
     ] as const) {
-      await pool.query(
+      const inserted = await pool.query<{ id: number }>(
         `INSERT INTO events (workspace_id, channel_id, thread_root_event_id, type, actor_id, payload)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
+         VALUES ($1, $2, $3, $4, $5, $6)
+         RETURNING id`,
         [fx.workspaceId, fx.channelId, rootId, type, fx.userId, JSON.stringify(payload)],
       );
+      // Raw inserts bypass the insertEvent choke point, so project explicitly.
+      await pool.query('SELECT project_message_event($1)', [inserted.rows[0]!.id]);
     }
     const replyPayload = { session_id: id, text: 'I have the answer.' };
-    await pool.query(
+    const reply = await pool.query<{ id: number }>(
       `INSERT INTO events (workspace_id, channel_id, thread_root_event_id, type, actor_id, payload)
-       VALUES ($1, $2, $3, 'session.replied', NULL, $4)`,
+       VALUES ($1, $2, $3, 'session.replied', NULL, $4)
+       RETURNING id`,
       [fx.workspaceId, fx.channelId, rootId, JSON.stringify(replyPayload)],
     );
+    await pool.query('SELECT project_message_event($1)', [reply.rows[0]!.id]);
 
     const app = await buildApp({
       pool,

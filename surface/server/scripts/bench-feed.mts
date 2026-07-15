@@ -275,6 +275,23 @@ async function seedDatabase(db: Pool, args: Config): Promise<SeedResult> {
     );
   }
 
+  // Chunked: each projection takes a pg_advisory_xact_lock held until its
+  // transaction ends, so one statement over the whole seed would exhaust the
+  // shared lock table at benchmark scale.
+  const idRange = await db.query<{ min_id: string; max_id: string }>(
+    'SELECT min(id)::text AS min_id, max(id)::text AS max_id FROM events WHERE workspace_id = $1',
+    [workspace.id],
+  );
+  const minId = Number(idRange.rows[0]?.min_id ?? 0);
+  const maxId = Number(idRange.rows[0]?.max_id ?? -1);
+  const PROJECT_CHUNK = 5000;
+  for (let lo = minId; lo <= maxId; lo += PROJECT_CHUNK) {
+    await db.query(
+      'SELECT project_message_event(id) FROM events WHERE workspace_id = $1 AND id >= $2 AND id < $3 ORDER BY id',
+      [workspace.id, lo, lo + PROJECT_CHUNK],
+    );
+  }
+
   await db.query('VACUUM (ANALYZE) events');
 
   const counts = await db.query<{ roots: number; replies: number; edits: number; events: number }>(

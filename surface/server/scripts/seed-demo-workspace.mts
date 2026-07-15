@@ -833,6 +833,11 @@ async function main(): Promise<void> {
      FROM artifacts a WHERE av.artifact_id = a.id AND a.path LIKE '%/uploads/%'`,
   );
 
+  // Most events use the API write path, but the missed-call and pending-question
+  // fixtures above are inserted directly. Reproject the complete seed once so
+  // those raw writes and any thread roots they affect have current state.
+  await pool.query('SELECT project_message_event(id) FROM events ORDER BY id');
+
   console.log('done. summary:');
   const counts = await pool.query<{ relname: string; n: string }>(
     `SELECT 'events' AS relname, count(*)::text AS n FROM events
