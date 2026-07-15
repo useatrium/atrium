@@ -2594,6 +2594,7 @@ export function Chat({
             value={{ channelId: active.id, sessions: state.sessions, onSpawnNewAgent: openSpawnWithInitialTask }}
           >
             <ThreadPanel
+              key={openThreadRoot.id ?? 'pending'}
               root={openThreadRoot}
               replies={threadReplies}
               loaded={threadLoaded}

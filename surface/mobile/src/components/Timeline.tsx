@@ -14,6 +14,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { FlashList, type FlashListRef, type ViewToken } from '@shopify/flash-list';
 import {
   buildTimelineItems,
+  isAgentVoiceBroadcast,
   type Api,
   type ChatMessage,
   type Session,
@@ -215,7 +216,9 @@ export function Timeline({
         ? []
         : messages.filter(
             (message) =>
-              message.broadcast === true &&
+              isAgentVoiceBroadcast(message) &&
+              // Spawn rows carry the human's verbatim ask and have their own
+              // MessageRow path; only session-event rows anchor into the root.
               message.sessionEventType != null &&
               message.threadRootEventId != null &&
               loadedRootIds.has(message.threadRootEventId),

@@ -18,7 +18,13 @@ import {
   type FoldedTurnRow,
 } from '@atrium/centaur-client';
 import { isTerminalSessionStatus, type Session } from '../sessions/types';
-import { sessionDriverId, buildTimelineItems, formatTime, normalizeSteerProvenanceText } from '@atrium/surface-client';
+import {
+  attachedSessionForRoot,
+  sessionDriverId,
+  buildTimelineItems,
+  formatTime,
+  normalizeSteerProvenanceText,
+} from '@atrium/surface-client';
 import { encodeEventHandle } from '@atrium/surface-client/handle';
 import { Composer } from './Composer';
 import type { AgentComposerRequest, ComposerHandle } from './Composer';
@@ -181,11 +187,8 @@ export function ThreadPanel({
           ? sessions[m.steeredSessionId]
           : undefined;
   const attachedSession = useMemo(
-    () =>
-      root.sessionId != null
-        ? sessions[root.sessionId]
-        : Object.values(sessions).find((session) => session.threadRootEventId === root.id),
-    [root.id, root.sessionId, sessions],
+    () => attachedSessionForRoot(sessions, root, root.channelId),
+    [root.channelId, root.id, root.sessionId, sessions],
   );
   const sessionLive = attachedSession != null && !isTerminalSessionStatus(attachedSession.status);
   const { stream } = useSessionStream(attachedSession?.id ?? null, sessionLive);

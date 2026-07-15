@@ -61,6 +61,7 @@ import { MentionSuggestions } from './MentionSuggestions';
 import { type MentionContext, useMentionTypeahead } from './useMentionTypeahead';
 import { AgentMark } from './AgentMark';
 import { api } from '../api';
+import { deriveClusterPreview } from './clusterPreview';
 
 export { REACTION_EMOJI } from '@atrium/surface-client/reactions';
 
@@ -1141,33 +1142,11 @@ function ChannelAnnotationCluster({
     const answer = answers.find((candidate) => candidate.sessionId === session.id);
     if (answer?.id != null) claimedAnswerIds.add(answer.id);
   }
-  // Anchored rows always render through the full MessageRow machinery. The
-  // compact preview renders ONLY when the newest reply is not anchored (a
-  // plain thread reply) — matching by id OR clientMsgId so an optimistic
-  // broadcast echo can never double-render next to its confirmed row. A
-  // human "also send to channel" reply is never previewed either: it renders
-  // as its own feed row, so the preview would be that same double-render.
-  const anchoredMaxId = answers.reduce((acc, answer) => Math.max(acc, answer.id ?? 0), 0);
-  const humanBroadcastPreview =
-    root.lastReply?.broadcast === true && root.lastReply.sessionEventType == null && root.lastReply.sessionId == null;
-  const previewCandidate = humanBroadcastPreview ? undefined : root.lastReply;
-  const previewIsAnchored =
-    previewCandidate != null &&
-    answers.some(
-      (answer) =>
-        (answer.id != null && answer.id === previewCandidate.id) ||
-        (answer.clientMsgId != null && answer.clientMsgId === previewCandidate.clientMsgId),
-    );
-  const latest =
-    previewCandidate != null && !previewIsAnchored && (previewCandidate.id ?? 0) > anchoredMaxId
-      ? previewCandidate
-      : (answers.at(-1) ?? previewCandidate);
-  const latestIsAnchored = latest != null && (answers.includes(latest) || previewIsAnchored);
+  const { latest, latestIsAnchored, earlierCount, earlierLabel } = deriveClusterPreview(root, answers);
   const latestIsQuestionSlot =
     latest?.sessionEventType === 'question_requested' &&
     latest.sessionId != null &&
     sessions.some((session) => session.id === latest.sessionId);
-  const earlierCount = Math.max(0, root.replyCount - (latest ? 1 : 0));
   const shownEarlier = (replies ?? []).filter(
     (reply) => reply.id !== latest?.id && (reply.id == null || !answers.some((answer) => answer.id === reply.id)),
   );
@@ -1201,7 +1180,7 @@ function ChannelAnnotationCluster({
           onClick={toggleEarlier}
           className="block whitespace-nowrap text-xs font-medium text-fg-muted hover:text-fg-secondary hover:underline [@media(pointer:coarse)]:inline-flex [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:items-center"
         >
-          {expanded ? '▼' : '▶'} {earlierCount} earlier {earlierCount === 1 ? 'reply' : 'replies'}
+          {expanded ? '▼' : '▶'} {earlierLabel}
         </button>
       )}
       {expanded && (

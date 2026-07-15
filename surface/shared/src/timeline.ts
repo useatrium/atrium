@@ -203,6 +203,26 @@ export interface ChatMessage {
   spawnClientId?: string;
 }
 
+/**
+ * Agent-voice broadcast events (session answers/questions/spawn rows). These
+ * anchor under their loaded root's cluster in the channel feed, presented
+ * with the agent identity. The single source for that classification — the
+ * web and mobile feeds must never re-derive it locally (they drifted once:
+ * web dressed human replies as the agent for months, see #492).
+ */
+export function isAgentVoiceBroadcast(m: ChatMessage): boolean {
+  return m.broadcast === true && (m.sessionId != null || m.sessionEventType != null);
+}
+
+/**
+ * A human "also send to channel" reply. Renders as its own feed row,
+ * attributed to its author — never folded into an agent cluster, and never
+ * duplicated by a cluster's compact preview (the #465/#492 double-render).
+ */
+export function isHumanBroadcastReply(m: ChatMessage): boolean {
+  return m.broadcast === true && m.sessionId == null && m.sessionEventType == null;
+}
+
 export interface ChannelTimeline {
   /** Root messages: confirmed sorted by id asc, then pending/failed in send order. */
   main: ChatMessage[];

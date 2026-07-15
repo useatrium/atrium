@@ -51,6 +51,7 @@ import { VoiceMessage } from './VoiceMessage';
 import type { ArtifactContentResolver, EntryResolver } from '../lib/entryResolve';
 import type { UnfurlResolver } from '../lib/unfurlResolve';
 import { glanceColor } from '../lib/sessionGlance';
+import { deriveClusterPreview } from './clusterPreview';
 
 const IMAGE_MAX_W = 240;
 const SWIPE_REPLY_THRESHOLD = 64;
@@ -1061,8 +1062,6 @@ function actionTargetForMessage(message: ChatMessage, copyText: string | null, c
   return { ...target, actionCopyLink: copyLink } as MessageActionTarget;
 }
 
-type MessageWithLastReply = ChatMessage & { lastReply?: ChatMessage | null };
-
 function CompactReply({ message }: { message: ChatMessage }) {
   const { colors } = useTheme();
   const agent = message.sessionEventType === 'replied';
@@ -1102,21 +1101,7 @@ function ThreadCluster({
 }) {
   const { colors } = useTheme();
   const [expanded, setExpanded] = useState(false);
-  const answerIds = new Set(slotAnswers.map((answer) => answer.id).filter((id): id is number => id != null));
-  const loadedReplies = (replies ?? []).filter((reply) => !answerIds.has(reply.id ?? -1));
-  // A human "also send to channel" reply renders as its own feed row — the
-  // cluster must not preview it too (web parity: that's the double-render).
-  const rawPayloadLatest = (root as MessageWithLastReply).lastReply ?? null;
-  const payloadLatest =
-    rawPayloadLatest?.broadcast === true &&
-    rawPayloadLatest.sessionEventType == null &&
-    rawPayloadLatest.sessionId == null
-      ? null
-      : rawPayloadLatest;
-  const latestAnswer = slotAnswers.find((answer) => answer.id === root.lastReplyId) ?? null;
-  const latest = latestAnswer ? null : (loadedReplies.at(-1) ?? payloadLatest);
-  const earlierCount = Math.max(0, root.replyCount - (latest != null || latestAnswer != null ? 1 : 0));
-  const earlierReplies = latest ? loadedReplies.filter((reply) => reply.id !== latest.id) : loadedReplies;
+  const { latest, earlierCount, earlierReplies, toggleLabel } = deriveClusterPreview(root, replies, slotAnswers);
 
   if (root.replyCount === 0) return slots;
 
@@ -1131,13 +1116,13 @@ function ThreadCluster({
       {earlierCount > 0 ? (
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={`${earlierCount} earlier ${earlierCount === 1 ? 'reply' : 'replies'}`}
+          accessibilityLabel={toggleLabel}
           accessibilityState={{ expanded }}
           onPress={toggleEarlier}
           style={{ minHeight: 44, justifyContent: 'center', alignSelf: 'flex-start' }}
         >
           <Text style={{ color: colors.textMuted, fontSize: font.xs }}>
-            {expanded ? '▼' : '▶'} {earlierCount} earlier {earlierCount === 1 ? 'reply' : 'replies'}
+            {expanded ? '▼' : '▶'} {toggleLabel}
           </Text>
         </Pressable>
       ) : null}
