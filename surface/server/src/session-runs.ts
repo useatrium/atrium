@@ -3757,7 +3757,7 @@ function parseAnsweredQuestion(value: unknown): SessionAnsweredQuestionJson | nu
   };
 }
 
-function parseProviderAuthRequired(value: unknown): ProviderAuthRequiredJson | null {
+export function parseProviderAuthRequired(value: unknown): ProviderAuthRequiredJson | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const raw = value as Record<string, unknown>;
   const provider = typeof raw.provider === 'string' ? providerForHarness(raw.provider) : null;
