@@ -632,11 +632,16 @@ def bootstrap_script(params: dict[str, str]) -> str:
           status centaur-cache-hit
         else
           status centaur-cache-miss
-          for svc in api-rs iron-proxy sandbox node-sync console; do
-            DOCKER_BUILDKIT=1 just build-one "$svc"
-          done
-          for img in centaur-api-rs centaur-iron-proxy centaur-agent centaur-node-sync centaur-console; do
+          for entry in \
+            api-rs:centaur-api-rs \
+            iron-proxy:centaur-iron-proxy \
+            sandbox:centaur-agent \
+            node-sync:centaur-node-sync \
+            console:centaur-console; do
+            svc="${{entry%%:*}}"
+            img="${{entry##*:}}"
             repo="$ECR_PREFIX/$img"
+            DOCKER_BUILDKIT=1 just build-one "$svc"
             docker tag "$img:latest" "$ECR_REGISTRY/$repo:$COMMIT_SHA"
             docker push "$ECR_REGISTRY/$repo:$COMMIT_SHA"
           done
