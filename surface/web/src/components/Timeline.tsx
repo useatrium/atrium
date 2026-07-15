@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ChatMessage, UserRef } from '@atrium/surface-client';
 import type { Session } from '../sessions/types';
-import { buildTimelineItems } from '@atrium/surface-client';
+import { buildTimelineItems, isAgentVoiceBroadcast } from '@atrium/surface-client';
 import { ChevronDownIcon } from './icons';
 import { MessageRow } from './MessageRow';
 import type { MentionContext } from './useMentionTypeahead';
@@ -103,11 +103,9 @@ export function Timeline({
     // as its own row, attributed to its author; rendering one message twice
     // (cluster preview + standalone row) is still the failure mode, so the
     // cluster suppresses its compact preview for broadcast replies.
-    const isAgentBroadcast = (message: ChatMessage) =>
-      message.broadcast === true && (message.sessionId != null || message.sessionEventType != null);
     for (const message of messages) {
       if (
-        isAgentBroadcast(message) &&
+        isAgentVoiceBroadcast(message) &&
         message.sessionEventType !== 'question_requested' &&
         message.threadRootEventId != null &&
         rootIds.has(message.threadRootEventId)
@@ -118,7 +116,7 @@ export function Timeline({
       }
     }
     const isAnchoredAnnotationEvent = (message: ChatMessage) =>
-      isAgentBroadcast(message) && message.threadRootEventId != null && rootIds.has(message.threadRootEventId);
+      isAgentVoiceBroadcast(message) && message.threadRootEventId != null && rootIds.has(message.threadRootEventId);
     return {
       visibleMessages: messages.filter((message) => !isAnchoredAnnotationEvent(message)),
       answersByRoot: answers,

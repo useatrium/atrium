@@ -3,6 +3,7 @@ import { KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView, Text, V
 import { Stack, router, useLocalSearchParams } from 'expo-router';
 import { useHeaderHeight } from 'expo-router/react-navigation';
 import {
+  attachedSessionForRoot,
   channelLabel,
   deriveSessionGlance,
   emptyTimeline,
@@ -139,12 +140,7 @@ export default function ThreadScreen() {
       : `#${composerChannel.name}`
     : undefined;
   const attachedSession = useMemo(
-    () =>
-      (root?.sessionId ? state.sessions[root.sessionId] : undefined) ??
-      Object.values(state.sessions).find(
-        (session) => session.channelId === channelId && session.threadRootEventId === rootId,
-      ) ??
-      null,
+    () => attachedSessionForRoot(state.sessions, { id: rootId, sessionId: root?.sessionId }, channelId) ?? null,
     [channelId, root?.sessionId, rootId, state.sessions],
   );
   const sessionTerminal = attachedSession ? isTerminalSessionStatus(attachedSession.status) : false;

@@ -1,15 +1,18 @@
 import {
+  foldSessionFrame,
   initialSessionState,
-  isTerminalExecutionStatus,
   parseSseStream,
-  reduceSession,
   type CentaurEventFrame,
   type ExecutionStatus,
   type JsonObject,
   type JsonValue,
+  type SessionStreamCallbacks,
+  type SessionStreamTransport,
   type SessionState,
 } from '@atrium/centaur-client';
 import type { SessionStatus } from '@atrium/surface-client';
+
+export { silenceThresholdMs, streamIsTerminal } from '@atrium/centaur-client';
 
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
@@ -27,13 +30,6 @@ export type StreamActivityKind = 'frame' | 'ping';
  * are flowing; the watchdog must not recycle a healthy replay), but not a new
  * fold (the lastFrameAt clock only advances on real folds). */
 export type StreamActivityCallback = (kind: StreamActivityKind, serverTs: string | null, folded?: boolean) => void;
-
-const SILENT_DEATH_MS = 45_000;
-const SILENT_DEATH_FALLBACK_MS = 4 * 60_000;
-
-export function silenceThresholdMs(pingProof: boolean): number {
-  return pingProof ? SILENT_DEATH_MS : SILENT_DEATH_FALLBACK_MS;
-}
 
 export function normalizeExecutionStatus(status: ExecutionStatus): SessionStatus {
   switch (status) {
@@ -80,11 +76,6 @@ function isJsonObject(value: JsonValue): value is JsonObject {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
-export function foldSessionFrame(state: SessionState, frame: CentaurEventFrame): SessionState {
-  if (frame.event_id <= state.lastEventId && frame.event !== 'execution_state') return state;
-  return reduceSession(state, frame);
-}
-
 export async function streamSessionOnce(
   options: StreamSessionOptions,
   state: SessionState = initialSessionState(),
@@ -92,6 +83,33 @@ export async function streamSessionOnce(
   onOpen?: () => void,
   onActivity?: StreamActivityCallback,
 ): Promise<SessionState> {
+  let acc = state;
+  await consumeSessionStream(options, {
+    onOpen: () => onOpen?.(),
+    onPing: (serverTs) => onActivity?.('ping', serverTs),
+    onFrame: (frame) => {
+      const next = foldSessionFrame(acc, frame);
+      const folded = next !== acc;
+      onActivity?.('frame', frame.ts ?? null, folded);
+      if (folded) {
+        acc = next;
+        onState?.(acc);
+      }
+    },
+  });
+  return acc;
+}
+
+interface ConsumeSessionStreamCallbacks {
+  onFrame(frame: CentaurEventFrame): void;
+  onOpen(): void;
+  onPing(serverTs: string | null): void;
+}
+
+async function consumeSessionStream(
+  options: StreamSessionOptions,
+  callbacks: ConsumeSessionStreamCallbacks,
+): Promise<void> {
   const url = `${options.baseUrl.replace(/\/+$/, '')}/api/sessions/${encodeURIComponent(
     options.sessionId,
   )}/stream?after_event_id=${options.afterEventId}`;
@@ -106,28 +124,51 @@ export async function streamSessionOnce(
     throw new Error('session stream response has no body');
   }
 
-  onOpen?.();
-  let acc = state;
+  callbacks.onOpen();
   for await (const parsed of parseSseStream(response.body)) {
     if (parsed.event === 'ping') {
       const serverTs =
         isJsonObject(parsed.data) && typeof parsed.data.atrium_ts === 'string' ? parsed.data.atrium_ts : null;
-      onActivity?.('ping', serverTs);
+      callbacks.onPing(serverTs);
       continue;
     }
     const frame = frameFromParsedSse(parsed);
     if (!frame) continue;
-    const next = foldSessionFrame(acc, frame);
-    const folded = next !== acc;
-    onActivity?.('frame', frame.ts ?? null, folded);
-    if (folded) {
-      acc = next;
-      onState?.(acc);
-    }
+    callbacks.onFrame(frame);
   }
-  return acc;
 }
 
-export function streamIsTerminal(state: SessionState): boolean {
-  return state.status !== 'idle' && isTerminalExecutionStatus(state.status);
+export function createMobileSessionStreamTransport(options: {
+  baseUrl: string;
+  token: string;
+  fetchImpl: FetchLike;
+}): SessionStreamTransport {
+  return {
+    open(sessionId: string, afterEventId: number, callbacks: SessionStreamCallbacks) {
+      const controller = new AbortController();
+      let closed = false;
+      void consumeSessionStream(
+        {
+          ...options,
+          sessionId,
+          afterEventId,
+          signal: controller.signal,
+        },
+        callbacks,
+      ).then(
+        () => {
+          if (!closed) callbacks.onError();
+        },
+        () => {
+          if (!closed) callbacks.onError();
+        },
+      );
+      return {
+        close() {
+          closed = true;
+          controller.abort();
+        },
+      };
+    },
+  };
 }

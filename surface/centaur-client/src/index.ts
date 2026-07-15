@@ -9,3 +9,4 @@ export * from './toolDisplay.js';
 export * from './transcriptRows.js';
 export * from './turnStatus.js';
 export * from './types.js';
+export * from './sessionStream.js'; // === stream lane addition ===
