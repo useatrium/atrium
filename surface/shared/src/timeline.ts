@@ -36,6 +36,8 @@ export interface WireEvent {
   lastReplyId?: number;
   /** Materialized preview of the newest visible reply on root feed rows. */
   lastReply?: LastReplyPreview;
+  /** Max event id materialized into this row. Absent on raw/live events. */
+  lastModifierId?: number;
   // === foundation additions: thread broadcast ===
   broadcast?: boolean;
 }
@@ -76,6 +78,7 @@ export const WireEventSchema = Schema.mutable(
     replyCount: Schema.optionalWith(Schema.Number, { exact: true }),
     lastReplyId: Schema.optionalWith(Schema.Number, { exact: true }),
     lastReply: Schema.optionalWith(LastReplyPreviewSchema, { exact: true }),
+    lastModifierId: Schema.optionalWith(Schema.Number, { exact: true }),
     broadcast: Schema.optionalWith(Schema.Boolean, { exact: true }),
   }),
 );
@@ -84,6 +87,7 @@ export const MessageHistoryResponseSchema = Schema.mutable(
   Schema.Struct({
     events: Schema.mutable(Schema.Array(WireEventSchema)),
     hasMore: Schema.Boolean,
+    nextCursor: Schema.optionalWith(Schema.Number, { exact: true }),
   }),
 );
 
@@ -166,6 +170,8 @@ export interface ChatMessage {
   replyCount: number;
   /** Highest reply event id already included in replyCount. */
   lastReplyId: number;
+  /** Max event id materialized into this row. Legacy/local rows default to 0. */
+  lastModifierId?: number;
   /** Newest reply materialized by the feed query (or folded from a live event). */
   lastReply?: ChatMessage;
   /** Pending thread replies only: this overlay's optimistic +1 is included in
@@ -343,6 +349,7 @@ export function messageFromEvent(ev: WireEvent): ChatMessage {
     createdAt: ev.createdAt,
     replyCount: ev.replyCount ?? 0,
     lastReplyId: ev.lastReplyId ?? 0,
+    lastModifierId: ev.lastModifierId ?? 0,
     ...(ev.lastReply !== undefined ? { lastReply: messageFromLastReply(ev, ev.lastReply) } : {}),
     ...(broadcast ? { broadcast: true } : {}),
     status: 'confirmed',
@@ -379,6 +386,7 @@ function messageFromLastReply(root: WireEvent, preview: LastReplyPreview): ChatM
     createdAt: preview.createdAt,
     replyCount: 0,
     lastReplyId: 0,
+    lastModifierId: 0,
     status: 'confirmed',
     ...(sessionEventType ? { sessionEventType } : {}),
     ...(sessionId ? { sessionId } : {}),
@@ -578,28 +586,29 @@ function bumpRootReplyCount(main: ChatMessage[], rootId: number): ChatMessage[] 
 }
 
 export function addPending(t: ChannelTimeline, msg: ChatMessage): ChannelTimeline {
+  const normalized = msg.lastModifierId == null ? { ...msg, lastModifierId: 0 } : msg;
   // A queued op re-materialized after reload can trail its own confirmation:
   // if the send already landed (history or WS delivered the confirmed row
   // first), overlaying it again would render a phantom duplicate and bump the
   // root's reply count for a reply the server already counted.
-  if (hasConfirmedByClientMsgId(t, msg)) return t;
-  if (msg.threadRootEventId != null) {
-    const existingPending = findPendingReply(t, msg);
-    const rootPresent = t.main.some((m) => m.id === msg.threadRootEventId);
+  if (hasConfirmedByClientMsgId(t, normalized)) return t;
+  if (normalized.threadRootEventId != null) {
+    const existingPending = findPendingReply(t, normalized);
+    const rootPresent = t.main.some((m) => m.id === normalized.threadRootEventId);
     const bumped = existingPending == null && rootPresent;
     const pending: ChatMessage = {
-      ...msg,
+      ...normalized,
       countedInRoot: bumped || existingPending?.countedInRoot === true,
     };
-    const main = existingPending != null ? t.main : bumpRootReplyCount(t.main, msg.threadRootEventId);
-    const existing = t.threads[msg.threadRootEventId] ?? [];
+    const main = existingPending != null ? t.main : bumpRootReplyCount(t.main, normalized.threadRootEventId);
+    const existing = t.threads[normalized.threadRootEventId] ?? [];
     return {
       ...t,
-      main: msg.broadcast === true ? upsertPending(main, pending) : main,
-      threads: { ...t.threads, [msg.threadRootEventId]: upsertPending(existing, pending) },
+      main: normalized.broadcast === true ? upsertPending(main, pending) : main,
+      threads: { ...t.threads, [normalized.threadRootEventId]: upsertPending(existing, pending) },
     };
   }
-  return { ...t, main: upsertPending(t.main, msg) };
+  return { ...t, main: upsertPending(t.main, normalized) };
 }
 
 export function markFailed(t: ChannelTimeline, clientMsgId: string): ChannelTimeline {
@@ -878,7 +887,55 @@ export function rejectLocalOverlay(t: ChannelTimeline, opId: string): ChannelTim
  * Apply one server event (from WS, POST response, or catch-up fetch).
  * Idempotent by event id.
  */
-export function applyEvent(t: ChannelTimeline, ev: WireEvent): ChannelTimeline {
+export function applyEvent(t: ChannelTimeline, ev: WireEvent, opts: { catchupCursor?: number } = {}): ChannelTimeline {
+  if (ev.lastModifierId != null) return applyFoldedRow(t, ev, opts);
+  return applyRawEvent(t, ev);
+}
+
+/**
+ * Apply one materialized row. A present row is replaced wholesale, gated on the
+ * watermark. An absent row is inserted ONLY when it is genuinely new relative
+ * to the catch-up cursor: `main` is contiguous from the pagination frontier
+ * forward, so inserting a changed OLD row the client no longer holds (evicted
+ * cache, fresh sync) would open a silent hole that loadEarlier — which pages
+ * from the oldest held row — could never fill. The skip deliberately leaves the
+ * id unseen so a later history page can still deliver the row.
+ */
+export function applyFoldedRow(
+  t: ChannelTimeline,
+  ev: WireEvent,
+  opts: { catchupCursor?: number } = {},
+): ChannelTimeline {
+  if (!isRowEvent(ev.type)) return applyRawEvent(t, ev);
+
+  const msg = messageFromEvent(ev);
+  const current = findTargetMessage(t, ev.id);
+  const seenIds = new Set(t.seenIds).add(ev.id);
+  if (current) {
+    if ((ev.lastModifierId ?? 0) < (current.lastModifierId ?? 0)) {
+      return bumpLastEvent(t.seenIds.has(ev.id) ? t : { ...t, seenIds }, ev.id);
+    }
+    const replaced = mapTargetMessage({ ...t, seenIds }, ev.id, () => msg);
+    return bumpLastEvent(rematerializeTarget(replaced, ev.id), ev.id);
+  }
+
+  if (opts.catchupCursor !== undefined && ev.id <= opts.catchupCursor) {
+    return t;
+  }
+
+  let main = t.main;
+  const threads = { ...t.threads };
+  if (msg.threadRootEventId == null || msg.broadcast === true) {
+    main = upsertConfirmed(main, msg);
+  }
+  if (msg.threadRootEventId != null) {
+    const thread = threads[msg.threadRootEventId];
+    if (thread !== undefined) threads[msg.threadRootEventId] = upsertConfirmed(thread, msg);
+  }
+  return bumpLastEvent(rematerializeTarget({ ...t, main, threads, seenIds }, ev.id), ev.id);
+}
+
+function applyRawEvent(t: ChannelTimeline, ev: WireEvent): ChannelTimeline {
   if (t.seenIds.has(ev.id)) {
     // Re-delivery of a known event — usually a queued op restored after
     // reload whose re-send the server deduped by clientMsgId into an event
@@ -912,24 +969,39 @@ export function applyEvent(t: ChannelTimeline, ev: WireEvent): ChannelTimeline {
     if (targetId == null) {
       return bumpLastEvent({ ...t, seenIds }, ev.id);
     }
+    const current = findTargetMessage(t, targetId);
+    if (current && ev.id <= (current.lastModifierId ?? 0)) {
+      // Effect already included in a folded row. Still reconcile local
+      // overlays: this redelivery may be the lost-ack confirmation of a local
+      // op whose overlay would otherwise linger pending forever.
+      return bumpLastEvent(reconcileLocalOverlays({ ...t, seenIds }, ev, targetId), ev.id);
+    }
     const fold = (list: ChatMessage[]) =>
       list.map((m) => {
         if (m.id !== targetId) return m;
-        if (ev.type === 'message.deleted') return { ...m, text: '', deleted: true };
+        const lastModifierId = Math.max(m.lastModifierId ?? 0, ev.id);
+        if (ev.type === 'message.deleted') return { ...m, text: '', deleted: true, lastModifierId };
         if (ev.type === 'message.unfurls_suppressed') {
           const suppressedUnfurls = parseSuppressedUnfurls(p.suppressed);
-          if (suppressedUnfurls !== undefined) return { ...m, suppressedUnfurls };
+          if (suppressedUnfurls !== undefined) return { ...m, suppressedUnfurls, lastModifierId };
           const { suppressedUnfurls: _malformed, ...withoutSuppression } = m;
-          return withoutSuppression;
+          return { ...withoutSuppression, lastModifierId };
         }
-        return { ...m, text: String((ev.payload ?? {}).text ?? m.text), edited: true };
+        return { ...m, text: String((ev.payload ?? {}).text ?? m.text), edited: true, lastModifierId };
       });
     const threads: Record<number, ChatMessage[]> = {};
     for (const [k, v] of Object.entries(t.threads)) threads[Number(k)] = fold(v);
     let main = fold(t.main);
-    // Deleting a thread reply: the root's visible reply count shrinks by one.
-    if (ev.type === 'message.deleted' && ev.threadRootEventId != null) {
-      main = main.map((m) => (m.id === ev.threadRootEventId ? { ...m, replyCount: Math.max(0, m.replyCount - 1) } : m));
+    if (ev.threadRootEventId != null) {
+      main = main.map((m) =>
+        m.id === ev.threadRootEventId
+          ? {
+              ...m,
+              ...(ev.type === 'message.deleted' ? { replyCount: Math.max(0, m.replyCount - 1) } : {}),
+              lastModifierId: Math.max(m.lastModifierId ?? 0, ev.id),
+            }
+          : m,
+      );
     }
     return bumpLastEvent(reconcileLocalOverlays({ ...t, main, threads, seenIds }, ev, targetId), ev.id);
   }
@@ -940,14 +1012,31 @@ export function applyEvent(t: ChannelTimeline, ev: WireEvent): ChannelTimeline {
     const emoji = typeof p.emoji === 'string' ? p.emoji : '';
     const uid = ev.actorId;
     const seenIds = new Set(t.seenIds).add(ev.id);
+    const current = targetId == null ? null : findTargetMessage(t, targetId);
+    if (current && targetId != null && ev.id <= (current.lastModifierId ?? 0)) {
+      // Mirror the modifier skip-guard: folded state already includes this
+      // reaction, but a matching local overlay still needs its confirmation.
+      return bumpLastEvent(reconcileLocalOverlays({ ...t, seenIds }, ev, targetId), ev.id);
+    }
     if (!emoji || !uid || targetId == null) {
       return bumpLastEvent({ ...t, seenIds }, ev.id);
     }
     const add = ev.type === 'reaction.added';
-    const fold = (list: ChatMessage[]) => list.map((m) => (m.id === targetId ? foldReaction(m, emoji, uid, add) : m));
+    const fold = (list: ChatMessage[]) =>
+      list.map((m) =>
+        m.id === targetId
+          ? { ...foldReaction(m, emoji, uid, add), lastModifierId: Math.max(m.lastModifierId ?? 0, ev.id) }
+          : m,
+      );
     const threads: Record<number, ChatMessage[]> = {};
     for (const [k, v] of Object.entries(t.threads)) threads[Number(k)] = fold(v);
-    return bumpLastEvent(reconcileLocalOverlays({ ...t, main: fold(t.main), threads, seenIds }, ev, targetId), ev.id);
+    let main = fold(t.main);
+    if (ev.threadRootEventId != null) {
+      main = main.map((m) =>
+        m.id === ev.threadRootEventId ? { ...m, lastModifierId: Math.max(m.lastModifierId ?? 0, ev.id) } : m,
+      );
+    }
+    return bumpLastEvent(reconcileLocalOverlays({ ...t, main, threads, seenIds }, ev, targetId), ev.id);
   }
 
   if (ev.type === 'voice.transcribed') {
@@ -991,6 +1080,7 @@ export function applyEvent(t: ChannelTimeline, ev: WireEvent): ChannelTimeline {
         replyCount: optimisticallyCounted ? m.replyCount : m.replyCount + 1,
         lastReplyId: ev.id,
         lastReply: msg,
+        lastModifierId: Math.max(m.lastModifierId ?? 0, ev.id),
       };
     });
     const threads = { ...t.threads };
@@ -1008,7 +1098,7 @@ export function applyEvent(t: ChannelTimeline, ev: WireEvent): ChannelTimeline {
 export function mergeHistory(
   t: ChannelTimeline,
   events: WireEvent[],
-  opts: { hasMoreBefore: boolean },
+  opts: { hasMoreBefore: boolean; nextCursor?: number; catchupCursor?: number },
 ): ChannelTimeline {
   let main = t.main;
   let threads = t.threads;
@@ -1031,6 +1121,19 @@ export function mergeHistory(
       continue;
     }
     if (!isRowEvent(ev.type)) continue;
+    if (ev.lastModifierId != null) {
+      const folded = applyFoldedRow(
+        { ...t, main, threads, seenIds },
+        ev,
+        opts.catchupCursor !== undefined ? { catchupCursor: opts.catchupCursor } : {},
+      );
+      main = folded.main;
+      threads = folded.threads;
+      // A cursor-skipped old row must stay unseen so a later history page can
+      // still deliver it — take seenIds from the fold instead of adding here.
+      for (const id of folded.seenIds) seenIds.add(id);
+      continue;
+    }
     const msg = messageFromEvent(ev);
     if (ev.threadRootEventId != null) {
       // A thread reply in the page still moves its root's watermark, exactly
@@ -1042,7 +1145,13 @@ export function mergeHistory(
       // pair already covers this reply) no-ops.
       main = main.map((m) =>
         m.id === ev.threadRootEventId && ev.id > m.lastReplyId
-          ? { ...m, replyCount: m.replyCount + 1, lastReplyId: ev.id, lastReply: msg }
+          ? {
+              ...m,
+              replyCount: m.replyCount + 1,
+              lastReplyId: ev.id,
+              lastReply: msg,
+              lastModifierId: Math.max(m.lastModifierId ?? 0, ev.id),
+            }
           : m,
       );
       // Non-broadcast replies still stay out of the main feed.
@@ -1072,7 +1181,10 @@ export function mergeHistory(
     seenIds.add(ev.id);
     main = upsertConfirmed(main, msg);
   }
-  const maxId = events.reduce((acc, e) => Math.max(acc, e.id), t.lastEventId);
+  const maxId =
+    opts.nextCursor === undefined
+      ? events.reduce((acc, e) => Math.max(acc, e.id), t.lastEventId)
+      : Math.max(t.lastEventId, opts.nextCursor);
   let next = rematerializeAll({
     ...t,
     main,

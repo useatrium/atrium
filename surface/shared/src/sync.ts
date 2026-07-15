@@ -103,11 +103,18 @@ export function dispatchSyncResponse(
   opts: {
     onPrefs?: (prefs: UserPrefs) => void;
     onEvent?: (event: WireEvent) => void;
+    /** The `after` cursor this sync was fetched with. Folded rows at or below
+     * it are healing re-ships of OLD rows and must never insert as new rows. */
+    catchupCursor?: number;
   } = {},
 ): void {
   for (const event of response.events) {
     opts.onEvent?.(event);
-    dispatch({ type: 'server-event', event });
+    dispatch({
+      type: 'server-event',
+      event,
+      ...(opts.catchupCursor !== undefined ? { catchupCursor: opts.catchupCursor } : {}),
+    });
   }
   dispatchSyncSnapshot(dispatch, response.state, opts.onPrefs);
   dispatch({ type: 'sync-cursor', cursor: response.nextCursor });

@@ -158,6 +158,29 @@ describe('channel message pagination', () => {
     expect(row.payload.text).toBe('edited!');
     expect(row.payload.edited).toBe(true);
   });
+
+  it('carries message-state watermarks on initial and before_id history pages', async () => {
+    const root = await post('original');
+    const editId = await seedEvent(pool, {
+      workspaceId: fx.workspaceId,
+      channelId: fx.channelId,
+      type: 'message.edited',
+      actorId: fx.userId,
+      payload: { target: `evt_${root.id}`, text: 'edited' },
+    });
+    const later = await post('later');
+
+    const initial = await listChannelMessages(pool, { channelId: fx.channelId });
+    expect(initial.events.find((event) => event.id === root.id)?.lastModifierId).toBe(editId);
+    expect(initial.events.find((event) => event.id === later.id)?.lastModifierId).toBe(later.id);
+
+    const before = await listChannelMessages(pool, {
+      channelId: fx.channelId,
+      beforeId: later.id,
+    });
+    expect(before.events).toHaveLength(1);
+    expect(before.events[0]).toMatchObject({ id: root.id, lastModifierId: editId });
+  });
 });
 
 // The agent's ANSWER is a first-class channel message: `session.replied` is

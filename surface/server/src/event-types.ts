@@ -86,3 +86,16 @@ export const SYNC_EVENT_TYPES = [
 export function sqlTypeList(types: readonly string[]): string {
   return `(${types.map((type) => `'${type.replaceAll("'", "''")}'`).join(', ')})`;
 }
+
+// === fold15-server additions ===
+
+const CATCHUP_FOLDED_EVENT_TYPES = new Set<string>([...MODIFIER_EVENT_TYPES, ...TIMELINE_ROOT_EVENT_TYPES]);
+
+export const CATCHUP_RAW_EVENT_TYPES = TIMELINE_EVENT_TYPES.filter((type) => !CATCHUP_FOLDED_EVENT_TYPES.has(type));
+
+const TIMELINE_EVENT_TYPE_SET = new Set<string>(TIMELINE_EVENT_TYPES);
+
+export const SYNC_CATCHUP_RAW_EVENT_TYPES = [
+  ...CATCHUP_RAW_EVENT_TYPES,
+  ...SYNC_EVENT_TYPES.filter((type) => !TIMELINE_EVENT_TYPE_SET.has(type)),
+];

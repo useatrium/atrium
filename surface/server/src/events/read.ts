@@ -1,6 +1,8 @@
 import type { Db, DbClient } from '../db.js';
 import {
+  CATCHUP_RAW_EVENT_TYPES as CATCHUP_RAW_EVENT_TYPE_VALUES,
   sqlTypeList,
+  SYNC_CATCHUP_RAW_EVENT_TYPES as SYNC_CATCHUP_RAW_EVENT_TYPE_VALUES,
   SYNC_EVENT_TYPES as SYNC_EVENT_TYPE_VALUES,
   TIMELINE_EVENT_TYPES as TIMELINE_EVENT_TYPE_VALUES,
   TIMELINE_ROOT_EVENT_TYPES as TIMELINE_ROOT_EVENT_TYPE_VALUES,
@@ -60,6 +62,7 @@ const MESSAGE_SELECT = `
          (lr.type IN ('session.replied', 'session.question_requested')) AS last_reply_agent_voice,
          lr.type AS last_reply_event_type,
          (e.payload->>'broadcast')::boolean AS broadcast,
+         ms.last_modifier_id AS last_modifier_id,
          ms.edited_text AS edited_text,
          ms.suppressed_unfurls AS suppressed_unfurls,
          coalesce(ms.is_deleted, false) AS is_deleted,
@@ -85,10 +88,12 @@ const TIMELINE_EVENT_TYPES = sqlTypeList(TIMELINE_EVENT_TYPE_VALUES);
 // it, but the type has to be admitted first or the answer is filtered out of
 // the feed before the flag is ever read.
 const TIMELINE_ROOT_EVENT_TYPES = sqlTypeList(TIMELINE_ROOT_EVENT_TYPE_VALUES);
+const CATCHUP_RAW_EVENT_TYPES = sqlTypeList(CATCHUP_RAW_EVENT_TYPE_VALUES);
 
 export interface MessagePage {
   events: WireEvent[];
   hasMore: boolean;
+  nextCursor?: number;
 }
 
 export interface SyncEventsPage {
@@ -105,12 +110,54 @@ export interface SyncEventsPage {
  */
 export async function listChannelMessages(
   pool: Db,
-  args: { channelId: string; beforeId?: number; afterId?: number; limit?: number },
+  args: { channelId: string; beforeId?: number; afterId?: number; limit?: number; folded?: boolean },
 ): Promise<MessagePage> {
   const limit = Math.min(Math.max(args.limit ?? 50, 1), 200);
   const params: unknown[] = [args.channelId, limit + 1];
   let rows: EventDbRow[];
   if (args.afterId !== undefined) {
+    if (args.folded) {
+      const res = await pool.query<EventDbRow & { change_id: number }>(
+        `WITH change_feed AS (
+           SELECT ms.event_id, ms.last_modifier_id::bigint AS change_id
+           FROM message_state ms
+           JOIN events changed ON changed.id = ms.event_id
+           WHERE changed.channel_id = $1
+             AND changed.type IN ${TIMELINE_ROOT_EVENT_TYPES}
+             AND ms.last_modifier_id > $3
+           UNION ALL
+           SELECT raw.id AS event_id, raw.id::bigint AS change_id
+           FROM events raw
+           WHERE raw.channel_id = $1
+             AND raw.type IN ${CATCHUP_RAW_EVENT_TYPES}
+             AND raw.id > $3
+         ), page_feed AS (
+           SELECT event_id, change_id
+           FROM change_feed
+           ORDER BY change_id ASC, event_id ASC
+           LIMIT ($2 + 2)
+         )
+         SELECT materialized.*, page_feed.change_id
+         FROM (
+           ${MESSAGE_SELECT}
+           WHERE e.id IN (SELECT event_id FROM page_feed)
+         ) materialized
+         JOIN page_feed ON page_feed.event_id = materialized.id
+         ORDER BY page_feed.change_id ASC, materialized.id ASC`,
+        [args.channelId, limit, args.afterId],
+      );
+      const candidates = res.rows;
+      if (candidates.length === 0) {
+        return { events: [], hasMore: false, nextCursor: args.afterId };
+      }
+      const finalChangeId = Number(candidates[Math.min(limit, candidates.length) - 1]!.change_id);
+      const pageRows = candidates.filter((row) => Number(row.change_id) <= finalChangeId);
+      return {
+        events: pageRows.map((row) => toWireEvent(foldEdit(row))),
+        hasMore: candidates.some((row) => Number(row.change_id) > finalChangeId),
+        nextCursor: finalChangeId,
+      };
+    }
     params.push(args.afterId);
     const res = await pool.query<EventDbRow>(
       `${MESSAGE_SELECT}
@@ -122,7 +169,10 @@ export async function listChannelMessages(
     rows = res.rows;
     const hasMore = rows.length > limit;
     if (hasMore) rows = rows.slice(0, limit);
-    return { events: rows.map((r) => toWireEvent(foldEdit(r))), hasMore };
+    return {
+      events: rows.map((r) => toWireEvent(foldEdit({ ...r, last_modifier_id: undefined }))),
+      hasMore,
+    };
   }
   if (args.beforeId !== undefined) params.push(args.beforeId);
   const res = await pool.query<EventDbRow>(
@@ -158,6 +208,7 @@ export async function listThreadMessages(pool: Db, args: { rootEventId: number }
 // workspace.created is intentionally excluded: there is no live fanout today
 // and no client reducer consumes it.
 const SYNC_EVENT_TYPES = sqlTypeList(SYNC_EVENT_TYPE_VALUES);
+const SYNC_CATCHUP_RAW_EVENT_TYPES = sqlTypeList(SYNC_CATCHUP_RAW_EVENT_TYPE_VALUES);
 
 function syncVisibleCte(userUuidParam: string, userTextParam: string): string {
   const workspaceMember = workspaceMemberExists('e.workspace_id', userUuidParam);
@@ -201,8 +252,72 @@ function syncVisibleCte(userUuidParam: string, userTextParam: string): string {
  */
 export async function listVisibleSyncEvents(
   db: Db | DbClient,
-  args: { userId: string; after: number; limit: number },
+  args: { userId: string; after: number; limit: number; folded?: boolean },
 ): Promise<SyncEventsPage> {
+  if (args.folded) {
+    const foldedChangeFeedCte = `
+      ${syncVisibleCte('$1', '$2')},
+      change_feed AS (
+        SELECT ms.event_id, ms.last_modifier_id::bigint AS change_id
+        FROM message_state ms
+        JOIN events changed ON changed.id = ms.event_id
+        JOIN visible v ON v.id = ms.last_modifier_id
+        WHERE changed.type IN ${TIMELINE_ROOT_EVENT_TYPES}
+        UNION ALL
+        SELECT raw.id AS event_id, raw.id::bigint AS change_id
+        FROM events raw
+        JOIN visible v ON v.id = raw.id
+        WHERE raw.type IN ${SYNC_CATCHUP_RAW_EVENT_TYPES}
+      )`;
+    const maxCursor = await db.query<{ max_id: number }>(
+      `WITH ${foldedChangeFeedCte}
+       SELECT COALESCE(MAX(change_id), 0)::bigint AS max_id
+       FROM change_feed`,
+      [args.userId, args.userId],
+    );
+    const nextCursor = Math.max(args.after, Number(maxCursor.rows[0]?.max_id ?? 0));
+
+    const probe = await db.query<{ event_id: number; change_id: number }>(
+      `WITH ${foldedChangeFeedCte}
+       SELECT event_id, change_id
+       FROM change_feed
+       WHERE change_id > $3
+       ORDER BY change_id ASC, event_id ASC
+       LIMIT $4`,
+      [args.userId, args.userId, args.after, args.limit + 1],
+    );
+    if (probe.rows.length > args.limit) {
+      return { events: [], nextCursor, limited: true };
+    }
+    if (probe.rows.length === 0) {
+      return { events: [], nextCursor, limited: false };
+    }
+
+    const res = await db.query<EventDbRow & { change_id: number }>(
+      `WITH ${foldedChangeFeedCte},
+       page_feed AS (
+         SELECT event_id, change_id
+         FROM change_feed
+         WHERE change_id > $3
+         ORDER BY change_id ASC, event_id ASC
+         LIMIT $4
+       )
+       SELECT materialized.*, page_feed.change_id
+       FROM (
+         ${MESSAGE_SELECT}
+         WHERE e.id IN (SELECT event_id FROM page_feed)
+       ) materialized
+       JOIN page_feed ON page_feed.event_id = materialized.id
+       ORDER BY page_feed.change_id ASC, materialized.id ASC`,
+      [args.userId, args.userId, args.after, args.limit],
+    );
+    return {
+      events: res.rows.map((row) => toWireEvent(foldEdit(row))),
+      nextCursor,
+      limited: false,
+    };
+  }
+
   const maxCursor = await db.query<{ max_id: number }>(
     `WITH ${syncVisibleCte('$1', '$2')}
      SELECT COALESCE((SELECT id FROM visible ORDER BY id DESC LIMIT 1), 0)::bigint AS max_id`,
@@ -233,7 +348,7 @@ export async function listVisibleSyncEvents(
     [args.userId, args.after, args.limit, args.userId],
   );
   return {
-    events: res.rows.map((r) => toWireEvent(foldEdit(r))),
+    events: res.rows.map((r) => toWireEvent(foldEdit({ ...r, last_modifier_id: undefined }))),
     nextCursor,
     limited: false,
   };

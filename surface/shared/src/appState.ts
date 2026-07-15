@@ -117,6 +117,10 @@ export type AppAction =
       channelId: string;
       events: WireEvent[];
       hasMore: boolean;
+      nextCursor?: number;
+      /** after_id used by the delta fetch; folded rows at or below it are
+       * healing re-ships of OLD rows and must never insert as new rows. */
+      catchupCursor?: number;
       expectedTimelineEpoch?: number;
       /** Per-channel after_id data must not move the workspace-wide sync cursor. */
       origin?: 'channel-delta';
@@ -125,7 +129,14 @@ export type AppAction =
   | { type: 'thread-loaded'; channelId: string; rootEventId: number; events: WireEvent[] }
   | { type: 'open-thread'; rootEventId: number }
   | { type: 'close-thread' }
-  | { type: 'server-event'; event: WireEvent }
+  | {
+      type: 'server-event';
+      event: WireEvent;
+      /** Catch-up cursor of the fetch that delivered this event (folded sync):
+       * folded rows at or below it are healing re-ships of OLD rows and must
+       * never be inserted as new timeline rows. */
+      catchupCursor?: number;
+    }
   | { type: 'sync-cursor'; cursor: number }
   | { type: 'last-synced-at'; at: string }
   | { type: 'send-pending'; channelId: string; message: ChatMessage }
@@ -352,6 +363,8 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         action.channelId,
         mergeHistory(previousTimeline, action.events, {
           hasMoreBefore: action.hasMore,
+          ...(action.nextCursor !== undefined ? { nextCursor: action.nextCursor } : {}),
+          ...(action.catchupCursor !== undefined ? { catchupCursor: action.catchupCursor } : {}),
         }),
       );
       if (action.origin !== 'channel-delta') return withSyncCursor(next, maxEventId(action.events));
@@ -461,7 +474,11 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       // channels fetch their history on first open. But always track unread.
       const alreadySeen = t.seenIds.has(ev.id);
       if (t.loaded || t.main.length > 0) {
-        next = withTimeline(next, ev.channelId, applyEvent(t, ev));
+        next = withTimeline(
+          next,
+          ev.channelId,
+          applyEvent(t, ev, action.catchupCursor !== undefined ? { catchupCursor: action.catchupCursor } : {}),
+        );
       }
       const isNewMessage = (ev.type === 'message.posted' || ev.type === 'session.spawned') && !alreadySeen;
       if (isNewMessage && isMainTimelineVisibleEvent(ev)) {
