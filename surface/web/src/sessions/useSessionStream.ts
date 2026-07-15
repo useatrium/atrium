@@ -55,7 +55,17 @@ export function useSessionStream(sessionId: string | null, active = false): Sess
   const ensureConnectedRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
-    if (!sessionId) return;
+    if (!sessionId) {
+      // The panel that owns this hook can outlive its session (e.g. one
+      // ThreadPanel instance re-pointed from a session-attached thread to a
+      // plain one). Without this reset the previous session's folded state
+      // keeps rendering — its work trace shows up in an unrelated thread.
+      setStream(initialSessionState());
+      setConnected(false);
+      setLastFrameAt(null);
+      setClockSkewMs(null);
+      return;
+    }
     let disposed = false;
     let acc = initialSessionState();
     let handle: SessionStreamHandle | null = null;

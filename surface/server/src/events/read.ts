@@ -61,6 +61,7 @@ const MESSAGE_SELECT = `
          lr.created_at AS last_reply_created_at,
          (lr.type IN ('session.replied', 'session.question_requested')) AS last_reply_agent_voice,
          lr.type AS last_reply_event_type,
+         (lr.payload->>'broadcast')::boolean AS last_reply_broadcast,
          (e.payload->>'broadcast')::boolean AS broadcast,
          ms.last_modifier_id AS last_modifier_id,
          ms.edited_text AS edited_text,

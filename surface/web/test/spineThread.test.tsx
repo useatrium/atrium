@@ -201,7 +201,7 @@ describe('thread spine integration', () => {
     const input = screen.getByLabelText('Message input');
     expect(screen.getByTestId('composer-audience-pill').textContent).toContain('Steer · “Inspect the build”');
     expect(screen.getByText('Goes to the agent · Esc for an aside')).toBeTruthy();
-    expect(screen.queryByRole('checkbox', { name: /also send to channel/i })).toBeNull();
+    expect(screen.queryByRole('checkbox', { name: /also send to/i })).toBeNull();
 
     fireEvent.keyDown(input, { key: 'Escape' });
     expect(screen.getByTestId('composer-audience-pill').textContent).toContain('Aside');
@@ -222,7 +222,7 @@ describe('thread spine integration', () => {
     renderPanel({ attached: false });
 
     expect(screen.getByTestId('composer-audience-pill').textContent).toContain('this thread');
-    expect(screen.getByRole('checkbox', { name: /also send to channel/i })).toBeTruthy();
+    expect(screen.getByRole('checkbox', { name: /also send to/i })).toBeTruthy();
     expect(screen.queryByTestId('spine-work-strips')).toBeNull();
   });
 });

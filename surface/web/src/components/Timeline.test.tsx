@@ -405,3 +405,39 @@ describe('Timeline anchored agent answers', () => {
     rect.mockRestore();
   });
 });
+
+describe('Timeline human broadcast replies', () => {
+  const humanReply = () =>
+    message({
+      id: 9,
+      threadRootEventId: 1,
+      text: 'Chiming in from the thread.',
+      broadcast: true,
+      author: { id: 'u-2', handle: 'grace', displayName: 'Grace Hopper' },
+      createdAt: '2026-07-05T12:01:00.000Z',
+    });
+
+  it('keeps a human "also send to channel" reply standalone, attributed to its author', () => {
+    renderTimeline({
+      messages: [
+        message({
+          id: 1,
+          text: 'Root ask',
+          replyCount: 1,
+          lastReplyId: 9,
+          lastReply: humanReply(),
+        }),
+        humanReply(),
+      ],
+      unreadDividerAfterId: null,
+    });
+
+    // Exactly one render: the standalone row — never the cluster's compact
+    // preview or an agent-dressed slot answer.
+    expect(screen.getAllByText('Chiming in from the thread.')).toHaveLength(1);
+    expect(screen.getByRole('button', { name: '↳ replied to a thread' })).toBeTruthy();
+    // The author's own name and avatar, not the agent mark.
+    expect(screen.getByText('Grace Hopper')).toBeTruthy();
+    expect(screen.queryByRole('img', { name: 'Agent' })).toBeNull();
+  });
+});

@@ -50,6 +50,8 @@ export interface LastReplyPreview {
   createdAt: string;
   agentVoice: boolean;
   eventType: string;
+  /** The previewed reply is also shown in the channel timeline. */
+  broadcast?: boolean;
 }
 
 const LastReplyPreviewSchema = Schema.mutable(
@@ -61,6 +63,7 @@ const LastReplyPreviewSchema = Schema.mutable(
     createdAt: Schema.String,
     agentVoice: Schema.Boolean,
     eventType: Schema.String,
+    broadcast: Schema.optionalWith(Schema.Boolean, { exact: true }),
   }),
 );
 
@@ -388,6 +391,7 @@ function messageFromLastReply(root: WireEvent, preview: LastReplyPreview): ChatM
     lastReplyId: 0,
     lastModifierId: 0,
     status: 'confirmed',
+    ...(preview.broadcast === true ? { broadcast: true } : {}),
     ...(sessionEventType ? { sessionEventType } : {}),
     ...(sessionId ? { sessionId } : {}),
   };
