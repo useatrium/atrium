@@ -62,7 +62,7 @@ import { ConversationPanel } from './sessions/ConversationPanel';
 // === spine additions === Reuse SessionPane's canonical work-tab URL grammar.
 import { TAB_SLUG } from './sessions/WorkDrawer';
 import { loadSessionPaneWidth, sessionPaneSizing } from './sessions/useSessionPaneWidth';
-import { SessionsRail } from './sessions/SessionsRail';
+import { ChannelStrip } from './sessions/ChannelStrip';
 import { SpawnDialog } from './sessions/SpawnDialog';
 import { ViewToggle } from './sessions/ViewToggle';
 import { isPendingSessionId, isTerminalSessionStatus, sessionFromWire } from './sessions/types';
@@ -1388,7 +1388,6 @@ export function Chat({
   );
 
   const {
-    hasChannelSessions,
     focused,
     paneSession,
     paneWatchers,
@@ -1893,7 +1892,7 @@ export function Chat({
       },
       {
         id: 'open-activity',
-        label: 'Open Attention',
+        label: 'Open Inbox',
         subtitle: 'Review mentions and updates',
         group: 'Navigate',
         keywords: ['inbox', 'activity', 'mentions', 'notifications', 'updates'],
@@ -2155,7 +2154,7 @@ export function Chat({
                   : showAgentsSurface
                     ? 'Agents'
                     : showActivitySurface
-                      ? 'Attention'
+                      ? 'Inbox'
                       : showFilesSurface
                         ? `Files for ${active ? channelLabel(active, me.id) : workspace.name}`
                         : undefined
@@ -2179,7 +2178,7 @@ export function Chat({
                   <span className="grid size-4 shrink-0 place-items-center rounded bg-surface-raised text-2xs font-bold text-fg-muted">
                     @
                   </span>
-                  <span className="truncate">Attention</span>
+                  <span className="truncate">Inbox</span>
                   {activityCounts.attention > 0 && (
                     <span className="rounded-full bg-warning-tint px-1.5 py-px text-3xs font-bold text-warning-text-strong">
                       {activityCounts.attention >= 99 ? '99+' : activityCounts.attention}
@@ -2508,6 +2507,13 @@ export function Chat({
           {active && !showNonChatSurface && (
             <>
               <TypingLine typing={typing} />
+              {/* === channel strip additions === */}
+              <ChannelStrip
+                channelId={active.id}
+                sessions={state.sessions}
+                onOpenSession={openSession}
+                onOpenInbox={openActivitySurface}
+              />
               <Composer
                 ref={channelComposerRef}
                 placeholder={
@@ -2694,20 +2700,7 @@ export function Chat({
             <div className="flex flex-1 items-center justify-center text-sm text-fg-muted">Loading session…</div>
           )}
         </aside>
-      ) : (
-        active &&
-        hasChannelSessions && (
-          <div className="hidden md:contents">
-            <SessionsRail
-              channelId={active.id}
-              sessions={state.sessions}
-              meId={me.id}
-              onOpenSession={openSession}
-              onOpenThread={openThread}
-            />
-          </div>
-        )
-      )}
+      ) : null}
 
       {switcherOpen && (
         <QuickSwitcher

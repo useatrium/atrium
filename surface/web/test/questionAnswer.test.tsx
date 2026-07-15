@@ -6,7 +6,8 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { appReducer, initialAppState, type AppState, type WireEvent } from '@atrium/surface-client';
-import { SessionCard } from '../src/sessions/SessionCard';
+import { QuestionCard } from '../src/sessions/SessionBanners';
+import { sessionAnsweredQuestion, sessionDriverId } from '../src/sessions/types';
 import { sessionsApi } from '../src/sessions/api';
 import { resetScheduledAnswers } from '../src/sessions/pendingAnswers';
 
@@ -105,7 +106,17 @@ function answeredState(s: AppState, author = spawner): AppState {
 function cardFor(state: AppState, meId = spawner.id) {
   const session = state.sessions['sess-1'];
   if (!session) throw new Error('session entity missing');
-  return <SessionCard session={session} spectators={0} meId={meId} onOpenPane={() => {}} />;
+  return (
+    <QuestionCard
+      variant="card"
+      sessionId={session.id}
+      pending={session.pendingQuestion}
+      answered={sessionAnsweredQuestion(session)}
+      isDriver={sessionDriverId(session) === meId}
+      driverName={session.driverName ?? session.spawnerName ?? 'the driver'}
+      proposals={session.answerProposals}
+    />
+  );
 }
 
 function answerRunNow(): void {

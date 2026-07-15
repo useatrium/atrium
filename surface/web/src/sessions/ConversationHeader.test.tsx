@@ -4,7 +4,6 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ThemeProvider } from '../theme';
 import { ConversationHeader } from './ConversationHeader';
-import { SessionMetaLine } from './SessionCard';
 import type { Session } from './types';
 
 afterEach(cleanup);
@@ -172,62 +171,5 @@ describe('ConversationHeader — one identity across the zooms', () => {
     expect(screen.getByText('Can we ship the migration today?')).toBeTruthy();
     // No session, so no status chip to fake — and no generic chrome either.
     expect(screen.queryByTestId('glance-chip')).toBeNull();
-  });
-
-  it('slots the session meta line under the identity, whole', () => {
-    render(
-      <ThemeProvider>
-        <ConversationHeader
-          variant="card"
-          identity={{ kind: 'session', session: session() }}
-          meta={<SessionMetaLine session={session()} spectators={2} />}
-        />
-      </ThemeProvider>,
-    );
-
-    expect(screen.getByText('by Ada Lovelace')).toBeTruthy();
-    expect(screen.getByText('codex agent')).toBeTruthy();
-    expect(screen.getByText('acme/web@main')).toBeTruthy();
-    expect(screen.getByText('2 watching')).toBeTruthy();
-  });
-
-  /**
-   * #434 fixed a real bug here: at 390px flexbox was ellipsizing the AUTHOR to
-   * "b…" while preserving boilerplate. The fix is a shrink priority that only
-   * works while the tokens are flat flex children. Moving the row into the
-   * shared header is exactly the kind of change that would quietly re-wrap them
-   * and undo it — so the header must slot the row whole, and this pins that.
-   */
-  it('keeps the meta row flat, so #434 shrink priority survives the header', () => {
-    render(
-      <ThemeProvider>
-        <ConversationHeader
-          variant="card"
-          identity={{ kind: 'session', session: session() }}
-          meta={<SessionMetaLine session={session()} spectators={0} />}
-        />
-      </ThemeProvider>,
-    );
-
-    // The author sits DIRECTLY on the one-line row — no wrapper between them,
-    // or the wrapper (not the token) would be what flexbox shrinks.
-    const author = screen.getByText('by Ada Lovelace');
-    const row = author.parentElement;
-    expect(row?.className).toContain('whitespace-nowrap');
-    expect(row?.className).not.toContain('flex-wrap');
-    expect(row).toBe(screen.getByText('codex agent').parentElement);
-
-    // The author is the headline: structurally incapable of ellipsizing.
-    expect(author.className.split(' ')).toContain('shrink-0');
-    expect(author.className.split(' ')).not.toContain('truncate');
-    expect(author.className.split(' ')).not.toContain('min-w-0');
-    // The start time likewise holds its ground.
-    expect(screen.getByText(/^started /).className.split(' ')).toContain('shrink-0');
-    // The long, low-information harness label is what yields space.
-    expect(screen.getByText('codex agent').className).toContain('shrink-[3]');
-    expect(screen.getByText('codex agent').className).toContain('truncate');
-    // The repo is dropped below `sm`, not stubbed to "acme…".
-    expect(screen.getByText('acme/web@main').className.split(' ')).toContain('hidden');
-    expect(screen.getByText('acme/web@main').className).toContain('sm:inline');
   });
 });

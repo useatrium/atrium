@@ -100,7 +100,7 @@ test('opening a session updates the URL and Back closes it without a document re
     (window as Window & { __urlRoutingMarker?: string }).__urlRoutingMarker = 'kept';
   });
   // The channel owns a compact annotation slot; its quiet session link opens
-  // the same pane without rendering the rail's SessionCard in the feed.
+  // the same pane without rendering a duplicate session card in the feed.
   await messageRow(page, title)
     .getByRole('button', { name: /view session|open session/ })
     .first()
