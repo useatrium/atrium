@@ -370,6 +370,14 @@ pub struct CaptureOutcome {
     pub errors: Vec<(String, String)>,
 }
 
+/// Filesystem metadata recorded after a successful artifact capture. A matching
+/// stamp lets the next sweep skip the read/hash/POST path entirely.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub struct CaptureStamp {
+    pub mtime_ns: i64,
+    pub size: u64,
+}
+
 /// Files at/under this many bytes go through the in-memory `post_capture`; larger
 /// ones stream (constant memory) and are routed OUT of the overlay dirty-byte
 /// budget. 8 MiB keeps the common case (notes/code/configs) on the simple path.
@@ -584,6 +592,7 @@ pub struct ProfileBundleMaterializeOutcome {
 pub fn capture_sweep(
     entries: &[RawEntry],
     base_seqs: &HashMap<String, u64>,
+    captured_stamps: &mut HashMap<String, CaptureStamp>,
     reader: &dyn UpperReader,
     echo: &mut EchoGuard,
     client: &mut dyn AtriumClient,
@@ -598,6 +607,18 @@ pub fn capture_sweep(
         skipped_secret: 0,
         errors: vec![],
     };
+    let entry_stamps: HashMap<&Path, CaptureStamp> = entries
+        .iter()
+        .map(|entry| {
+            (
+                entry.rel_path.as_path(),
+                CaptureStamp {
+                    mtime_ns: entry.mtime_ns,
+                    size: entry.size,
+                },
+            )
+        })
+        .collect();
     let (ops, skipped) = scan_to_ops(entries);
     for (p, _r) in skipped {
         out.skipped_other.push(p.to_string_lossy().into_owned());
@@ -607,6 +628,19 @@ pub fn capture_sweep(
             OverlayOp::Upsert { path, size } => {
                 let key = path.to_string_lossy().into_owned();
                 let base = base_seqs.get(&key).copied().unwrap_or(0);
+                let stamp = entry_stamps
+                    .get(path.as_path())
+                    .copied()
+                    .expect("upsert operation must retain its source entry");
+                // sqlite WAL/shared-memory files can be mmap-written without a
+                // trustworthy mtime transition. Their backstop sweep must always
+                // read and capture them even when the stat tuple appears stable.
+                if !crate::scoped::is_mmap_pattern_path(&path)
+                    && captured_stamps.get(&key) == Some(&stamp)
+                {
+                    out.skipped_other.push(key);
+                    continue;
+                }
                 if size > large_threshold {
                     let sample = match read_secret_sample(reader, &path) {
                         Ok(sample) => sample,
@@ -635,6 +669,7 @@ pub fn capture_sweep(
                         }
                     };
                     if echo.is_echo(&path, &sha) {
+                        captured_stamps.insert(key.clone(), stamp);
                         out.skipped_echo.push(key);
                         continue;
                     }
@@ -647,7 +682,10 @@ pub fn capture_sweep(
                         continue;
                     };
                     match client.post_capture_stream(&key, base, &mut *body, size) {
-                        Ok(seq) => out.streamed.push((key, seq, sha)),
+                        Ok(seq) => {
+                            captured_stamps.insert(key.clone(), stamp);
+                            out.streamed.push((key, seq, sha));
+                        }
                         Err(e) => {
                             if is_permanent_capture_denial(&e) {
                                 echo.record_denied(path.clone(), sha.clone());
@@ -669,6 +707,7 @@ pub fn capture_sweep(
                 }
                 let sha = sha_hex(&bytes);
                 if echo.is_echo(&path, &sha) {
+                    captured_stamps.insert(key.clone(), stamp);
                     out.skipped_echo.push(key);
                     continue;
                 }
@@ -677,7 +716,10 @@ pub fn capture_sweep(
                     continue;
                 }
                 match client.post_capture(&key, base, &bytes) {
-                    Ok(seq) => out.captured.push((key, seq, sha)),
+                    Ok(seq) => {
+                        captured_stamps.insert(key.clone(), stamp);
+                        out.captured.push((key, seq, sha));
+                    }
                     Err(e) => {
                         if is_permanent_capture_denial(&e) {
                             echo.record_denied(path.clone(), sha.clone());
@@ -690,7 +732,10 @@ pub fn capture_sweep(
                 let key = path.to_string_lossy().into_owned();
                 let base = base_seqs.get(&key).copied().unwrap_or(0);
                 match client.post_delete(&key, base) {
-                    Ok(seq) => out.deleted.push((key, seq)),
+                    Ok(seq) => {
+                        captured_stamps.remove(&key);
+                        out.deleted.push((key, seq));
+                    }
                     Err(e) => out.errors.push((key, e)),
                 }
             }
@@ -1314,11 +1359,40 @@ mod tests {
     use super::*;
     use crate::adopt::RemoteStatus;
     use crate::overlay::RawFileType;
+    use std::cell::Cell;
 
     struct MapReader(HashMap<PathBuf, Vec<u8>>);
     impl UpperReader for MapReader {
         fn read(&self, path: &Path) -> Option<Vec<u8>> {
             self.0.get(path).cloned()
+        }
+    }
+
+    struct CountingReader {
+        bytes: Vec<u8>,
+        reads: Cell<usize>,
+        streams: Cell<usize>,
+    }
+
+    impl CountingReader {
+        fn new(bytes: &[u8]) -> Self {
+            Self {
+                bytes: bytes.to_vec(),
+                reads: Cell::new(0),
+                streams: Cell::new(0),
+            }
+        }
+    }
+
+    impl UpperReader for CountingReader {
+        fn read(&self, _path: &Path) -> Option<Vec<u8>> {
+            self.reads.set(self.reads.get() + 1);
+            Some(self.bytes.clone())
+        }
+
+        fn open_stream<'a>(&'a self, _path: &Path) -> Option<Box<dyn Read + 'a>> {
+            self.streams.set(self.streams.get() + 1);
+            Some(Box::new(std::io::Cursor::new(self.bytes.clone())))
         }
     }
 
@@ -1441,6 +1515,185 @@ mod tests {
             mtime_ns: 0,
             xattrs: vec![],
         }
+    }
+
+    fn stamped_reg(p: &str, mtime_ns: i64, size: u64) -> RawEntry {
+        RawEntry {
+            rel_path: PathBuf::from(p),
+            file_type: RawFileType::Regular,
+            rdev: 0,
+            size,
+            mtime_ns,
+            xattrs: vec![],
+        }
+    }
+
+    #[test]
+    fn capture_sweep_skips_unchanged_present_file_before_reading() {
+        let entries = vec![stamped_reg("proj-x/a.md", 123, 4)];
+        let mut stamps = HashMap::from([(
+            "proj-x/a.md".to_string(),
+            CaptureStamp {
+                mtime_ns: 123,
+                size: 4,
+            },
+        )]);
+        let reader = CountingReader::new(b"data");
+        let mut echo = EchoGuard::new();
+        let mut client = FakeClient::default();
+
+        let out = capture_sweep(
+            &entries,
+            &HashMap::new(),
+            &mut stamps,
+            &reader,
+            &mut echo,
+            &mut client,
+            DEFAULT_LARGE_FILE_BYTES,
+        );
+
+        assert_eq!(reader.reads.get(), 0);
+        assert_eq!(reader.streams.get(), 0);
+        assert_eq!(client.capture_attempts, 0);
+        assert!(out.captured.is_empty());
+    }
+
+    #[test]
+    fn capture_sweep_captures_file_when_mtime_changed() {
+        let entries = vec![stamped_reg("proj-x/a.md", 124, 4)];
+        let mut stamps = HashMap::from([(
+            "proj-x/a.md".to_string(),
+            CaptureStamp {
+                mtime_ns: 123,
+                size: 4,
+            },
+        )]);
+        let reader = CountingReader::new(b"data");
+        let mut echo = EchoGuard::new();
+        let mut client = FakeClient::default();
+
+        let out = capture_sweep(
+            &entries,
+            &HashMap::new(),
+            &mut stamps,
+            &reader,
+            &mut echo,
+            &mut client,
+            DEFAULT_LARGE_FILE_BYTES,
+        );
+
+        assert_eq!(reader.reads.get(), 1);
+        assert_eq!(out.captured.len(), 1);
+        assert_eq!(stamps["proj-x/a.md"].mtime_ns, 124);
+    }
+
+    #[test]
+    fn capture_sweep_captures_file_when_size_changed() {
+        let entries = vec![stamped_reg("proj-x/a.md", 123, 5)];
+        let mut stamps = HashMap::from([(
+            "proj-x/a.md".to_string(),
+            CaptureStamp {
+                mtime_ns: 123,
+                size: 4,
+            },
+        )]);
+        let reader = CountingReader::new(b"data!");
+        let mut echo = EchoGuard::new();
+        let mut client = FakeClient::default();
+
+        let out = capture_sweep(
+            &entries,
+            &HashMap::new(),
+            &mut stamps,
+            &reader,
+            &mut echo,
+            &mut client,
+            DEFAULT_LARGE_FILE_BYTES,
+        );
+
+        assert_eq!(reader.reads.get(), 1);
+        assert_eq!(out.captured.len(), 1);
+        assert_eq!(stamps["proj-x/a.md"].size, 5);
+    }
+
+    #[test]
+    fn capture_sweep_captures_file_missing_recorded_state() {
+        let entries = vec![stamped_reg("proj-x/a.md", 123, 4)];
+        let mut stamps = HashMap::new();
+        let reader = CountingReader::new(b"data");
+        let mut echo = EchoGuard::new();
+        let mut client = FakeClient::default();
+
+        let out = capture_sweep(
+            &entries,
+            &HashMap::new(),
+            &mut stamps,
+            &reader,
+            &mut echo,
+            &mut client,
+            DEFAULT_LARGE_FILE_BYTES,
+        );
+
+        assert_eq!(reader.reads.get(), 1);
+        assert_eq!(out.captured.len(), 1);
+        assert_eq!(stamps["proj-x/a.md"].size, 4);
+    }
+
+    #[test]
+    fn capture_sweep_posts_delete_despite_matching_recorded_state() {
+        let entries = vec![whiteout("proj-x/a.md")];
+        let mut stamps = HashMap::from([(
+            "proj-x/a.md".to_string(),
+            CaptureStamp {
+                mtime_ns: 0,
+                size: 0,
+            },
+        )]);
+        let reader = CountingReader::new(b"");
+        let mut echo = EchoGuard::new();
+        let mut client = FakeClient::default();
+
+        let out = capture_sweep(
+            &entries,
+            &HashMap::new(),
+            &mut stamps,
+            &reader,
+            &mut echo,
+            &mut client,
+            DEFAULT_LARGE_FILE_BYTES,
+        );
+
+        assert_eq!(out.deleted.len(), 1);
+        assert_eq!(client.deletes.len(), 1);
+        assert!(!stamps.contains_key("proj-x/a.md"));
+    }
+
+    #[test]
+    fn capture_sweep_never_metadata_skips_sqlite_mmap_files() {
+        let entries = vec![stamped_reg("db.sqlite-wal", 123, 4)];
+        let mut stamps = HashMap::from([(
+            "db.sqlite-wal".to_string(),
+            CaptureStamp {
+                mtime_ns: 123,
+                size: 4,
+            },
+        )]);
+        let reader = CountingReader::new(b"data");
+        let mut echo = EchoGuard::new();
+        let mut client = FakeClient::default();
+
+        let out = capture_sweep(
+            &entries,
+            &HashMap::new(),
+            &mut stamps,
+            &reader,
+            &mut echo,
+            &mut client,
+            DEFAULT_LARGE_FILE_BYTES,
+        );
+
+        assert_eq!(reader.reads.get(), 1);
+        assert_eq!(out.captured.len(), 1);
     }
 
     #[test]
@@ -1695,6 +1948,7 @@ mod tests {
         let out = capture_sweep(
             &partitioned.artifact_entries,
             &HashMap::new(),
+            &mut HashMap::new(),
             &reader,
             &mut echo,
             &mut client,
@@ -1734,6 +1988,7 @@ mod tests {
         let out = capture_sweep(
             &entries,
             &base,
+            &mut HashMap::new(),
             &reader,
             &mut echo,
             &mut client,
@@ -1761,12 +2016,28 @@ mod tests {
         };
 
         // First sweep: the server refuses with 403 — one attempt, one error.
-        let first = capture_sweep(&entries, &base, &reader, &mut echo, &mut client, 1 << 20);
+        let first = capture_sweep(
+            &entries,
+            &base,
+            &mut HashMap::new(),
+            &reader,
+            &mut echo,
+            &mut client,
+            1 << 20,
+        );
         assert_eq!(client.capture_attempts, 1);
         assert_eq!(first.errors.len(), 1);
 
         // Second sweep, same bytes: tombstoned — NO further attempt, no error.
-        let second = capture_sweep(&entries, &base, &reader, &mut echo, &mut client, 1 << 20);
+        let second = capture_sweep(
+            &entries,
+            &base,
+            &mut HashMap::new(),
+            &reader,
+            &mut echo,
+            &mut client,
+            1 << 20,
+        );
         assert_eq!(client.capture_attempts, 1, "denied capture must not retry");
         assert!(second.errors.is_empty());
         assert_eq!(second.skipped_other, vec!["shared/channels/other/plan.md"]);
@@ -1779,7 +2050,15 @@ mod tests {
         );
         let reader = MapReader(changed);
         client.deny_captures = false;
-        let third = capture_sweep(&entries, &base, &reader, &mut echo, &mut client, 1 << 20);
+        let third = capture_sweep(
+            &entries,
+            &base,
+            &mut HashMap::new(),
+            &reader,
+            &mut echo,
+            &mut client,
+            1 << 20,
+        );
         assert_eq!(client.capture_attempts, 2);
         assert_eq!(third.captured.len(), 1);
     }
@@ -1797,6 +2076,7 @@ mod tests {
         let out = capture_sweep(
             &entries,
             &HashMap::new(),
+            &mut HashMap::new(),
             &reader,
             &mut echo,
             &mut client,
@@ -1822,6 +2102,7 @@ mod tests {
         let out = capture_sweep(
             &entries,
             &HashMap::new(),
+            &mut HashMap::new(),
             &reader,
             &mut echo,
             &mut client,
@@ -2435,6 +2716,7 @@ mod tests {
         let out = capture_sweep(
             &entries,
             &HashMap::new(),
+            &mut HashMap::new(),
             &reader,
             &mut echo,
             &mut client,
@@ -2472,6 +2754,7 @@ mod tests {
         let out = capture_sweep(
             &entries,
             &HashMap::new(),
+            &mut HashMap::new(),
             &reader,
             &mut echo,
             &mut client,
@@ -2500,6 +2783,7 @@ mod tests {
         let out = capture_sweep(
             &entries,
             &HashMap::new(),
+            &mut HashMap::new(),
             &reader,
             &mut echo,
             &mut client,
