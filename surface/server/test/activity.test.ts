@@ -3,7 +3,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import type pg from 'pg';
 import { buildApp } from '../src/app.js';
 import { addWorkspaceMember } from '../src/membership.js';
-import { createTestPool, seedFixture, truncateAll, type Fixture } from './helpers.js';
+import { createTestPool, seedEvent, seedFixture, truncateAll, type Fixture } from './helpers.js';
 
 interface Login {
   cookie: string;
@@ -201,11 +201,13 @@ describe('/api/activity', () => {
     const seat = await insertSessionEventFor(sessionId, alice.user.id, 'session.seat_requested', {
       by: alice.user.id,
     });
-    const invite = await pool.query<{ id: number }>(
-      `INSERT INTO events (workspace_id, channel_id, type, actor_id, payload)
-       VALUES ($1, $2, 'channel.member_joined', $3, $4) RETURNING id`,
-      [fx.workspaceId, fx.channelId, alice.user.id, JSON.stringify({ userId: bob.user.id, displayName: 'Bob' })],
-    );
+    const inviteId = await seedEvent(pool, {
+      workspaceId: fx.workspaceId,
+      channelId: fx.channelId,
+      type: 'channel.member_joined',
+      actorId: alice.user.id,
+      payload: { userId: bob.user.id, displayName: 'Bob' },
+    });
 
     const items = (await activity(bob.cookie)).items;
     const reaction = items.find((item: any) => item.kind === 'reaction');
@@ -217,7 +219,7 @@ describe('/api/activity', () => {
       sessionTitle: 'seat session',
       attention: false,
     });
-    expect(items.find((item: any) => Number(item.eventId) === invite.rows[0]!.id)).toMatchObject({
+    expect(items.find((item: any) => Number(item.eventId) === inviteId)).toMatchObject({
       kind: 'channel_invite',
       actorId: alice.user.id,
       attention: false,
@@ -596,23 +598,19 @@ async function insertEndedCallActivity(
   for (const userId of declinedIds) {
     await pool.query('INSERT INTO call_declines (call_id, user_id) VALUES ($1, $2)', [callId, userId]);
   }
-  const event = await pool.query<{ id: number }>(
-    `INSERT INTO events (workspace_id, channel_id, type, actor_id, payload)
-     VALUES ($1, $2, 'call.ended', $3, $4)
-     RETURNING id`,
-    [
-      fx.workspaceId,
-      channelId,
+  const eventId = await seedEvent(pool, {
+    workspaceId: fx.workspaceId,
+    channelId,
+    type: 'call.ended',
+    actorId: initiatorId,
+    payload: {
+      callId,
       initiatorId,
-      JSON.stringify({
-        callId,
-        initiatorId,
-        startedAt,
-        answered: participantIds.some((userId) => userId !== initiatorId),
-      }),
-    ],
-  );
-  return { callId, eventId: event.rows[0]!.id };
+      startedAt,
+      answered: participantIds.some((userId) => userId !== initiatorId),
+    },
+  });
+  return { callId, eventId };
 }
 
 async function insertSessionEvent(userId: string, type: string, payload: Record<string, unknown>): Promise<number> {
@@ -636,11 +634,11 @@ async function insertSessionEventFor(
   type: string,
   payload: Record<string, unknown>,
 ): Promise<number> {
-  const event = await pool.query<{ id: number }>(
-    `INSERT INTO events (workspace_id, channel_id, type, actor_id, payload)
-     VALUES ($1, $2, $3, $4, $5)
-     RETURNING id`,
-    [fx.workspaceId, fx.channelId, type, userId, JSON.stringify({ ...payload, sessionId })],
-  );
-  return event.rows[0]!.id;
+  return seedEvent(pool, {
+    workspaceId: fx.workspaceId,
+    channelId: fx.channelId,
+    type,
+    actorId: userId,
+    payload: { ...payload, sessionId },
+  });
 }

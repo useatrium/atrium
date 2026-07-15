@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type pg from 'pg';
 import type { CentaurClient, CentaurEventFrame } from '@atrium/centaur-client';
-import { createTestPool, seedFixture, truncateAll, type Fixture } from '../test/helpers.js';
+import { createTestPool, seedEvent, seedFixture, truncateAll, type Fixture } from '../test/helpers.js';
 import { getFrameGapStats, resetFrameGapStats } from './frame-gap.js';
 import { WsHub } from './hub.js';
 import { releaseSessionProjectionState } from './session-records.js';
@@ -124,13 +124,13 @@ describe('session projection triggers', () => {
 
   it('persists a completed turn reply under the session conversation root', async () => {
     const sessionId = await insertSession();
-    const root = await pool.query<{ id: number }>(
-      `INSERT INTO events (workspace_id, channel_id, type, actor_id, payload)
-       VALUES ($1, $2, 'message.posted', $3, '{"text":"start"}'::jsonb)
-       RETURNING id`,
-      [fx.workspaceId, fx.channelId, fx.userId],
-    );
-    const rootId = root.rows[0]!.id;
+    const rootId = await seedEvent(pool, {
+      workspaceId: fx.workspaceId,
+      channelId: fx.channelId,
+      type: 'message.posted',
+      actorId: fx.userId,
+      payload: { text: 'start' },
+    });
     await pool.query('UPDATE sessions SET thread_root_event_id = $1 WHERE id = $2', [rootId, sessionId]);
     const runs = new SessionRuns(pool, new WsHub(), {
       autoResume: false,

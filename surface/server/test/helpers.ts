@@ -205,6 +205,48 @@ export interface Fixture {
   userId: string;
 }
 
+export async function seedEvent(
+  connection: pg.Pool | pg.PoolClient,
+  args: {
+    workspaceId: string;
+    channelId: string;
+    threadRootEventId?: number | null;
+    type: string;
+    actorId?: string | null;
+    payload: unknown;
+  },
+): Promise<number> {
+  let client: pg.PoolClient;
+  let ownsClient = false;
+  if (connection instanceof pg.Pool) {
+    client = await connection.connect();
+    ownsClient = true;
+  } else {
+    client = connection;
+  }
+  try {
+    const inserted = await client.query<{ id: string | number }>(
+      `INSERT INTO events (workspace_id, channel_id, thread_root_event_id, type, actor_id, payload)
+       VALUES ($1, $2, $3, $4, $5, $6::jsonb)
+       RETURNING id`,
+      [
+        args.workspaceId,
+        args.channelId,
+        args.threadRootEventId ?? null,
+        args.type,
+        args.actorId ?? null,
+        JSON.stringify(args.payload),
+      ],
+    );
+    const id = Number(inserted.rows[0]!.id);
+    if (!Number.isSafeInteger(id)) throw new Error('seeded event did not return a numeric id');
+    await client.query('SELECT project_message_event($1)', [id]);
+    return id;
+  } finally {
+    if (ownsClient) client.release();
+  }
+}
+
 export async function seedFixture(pool: pg.Pool): Promise<Fixture> {
   const { workspace } = await createWorkspace(pool, { name: 'testws' });
   const { channel } = await createChannel(pool, { workspaceId: workspace.id, name: 'general' });

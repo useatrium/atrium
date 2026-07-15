@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type pg from 'pg';
 import { listChannelMessages, listThreadMessages, postMessage } from '../src/events.js';
-import { createTestPool, seedFixture, truncateAll, type Fixture } from './helpers.js';
+import { createTestPool, seedEvent, seedFixture, truncateAll, type Fixture } from './helpers.js';
 
 let pool: pg.Pool;
 let fx: Fixture;
@@ -71,35 +71,37 @@ describe('channel message pagination', () => {
   it('returns persisted root question events in fresh and paged history', async () => {
     const before = await post('before question');
     const questionId = 'question-1';
-    const inserted = await pool.query<{ id: string; type: string }>(
-      `INSERT INTO events (workspace_id, channel_id, type, actor_id, payload)
-       SELECT $1, $2, type, $3, payload
-       FROM jsonb_to_recordset($4::jsonb) AS event(type text, payload jsonb)
-       RETURNING id::text, type`,
-      [
-        fx.workspaceId,
-        fx.channelId,
-        fx.userId,
-        JSON.stringify([
-          {
-            type: 'session.question_requested',
-            payload: { sessionId: 'session-1', questionId, questions: [{ id: 'choice', question: 'Choose?' }] },
-          },
-          {
-            type: 'session.question_answered',
-            payload: {
-              sessionId: 'session-1',
-              questionId,
-              answers: [{ id: 'choice', header: 'Choice', answers: ['A'], count: 1 }],
-            },
-          },
-          {
-            type: 'session.question_resolved',
-            payload: { sessionId: 'session-1', questionId, reason: 'answered' },
-          },
-        ]),
-      ],
-    );
+    const questionEvents = [
+      {
+        type: 'session.question_requested',
+        payload: { sessionId: 'session-1', questionId, questions: [{ id: 'choice', question: 'Choose?' }] },
+      },
+      {
+        type: 'session.question_answered',
+        payload: {
+          sessionId: 'session-1',
+          questionId,
+          answers: [{ id: 'choice', header: 'Choice', answers: ['A'], count: 1 }],
+        },
+      },
+      {
+        type: 'session.question_resolved',
+        payload: { sessionId: 'session-1', questionId, reason: 'answered' },
+      },
+    ];
+    const inserted: Array<{ id: number; type: string }> = [];
+    for (const event of questionEvents) {
+      inserted.push({
+        id: await seedEvent(pool, {
+          workspaceId: fx.workspaceId,
+          channelId: fx.channelId,
+          type: event.type,
+          actorId: fx.userId,
+          payload: event.payload,
+        }),
+        type: event.type,
+      });
+    }
 
     const latest = await listChannelMessages(pool, { channelId: fx.channelId, limit: 2 });
     expect(latest.events.map((event) => event.type)).toEqual([
@@ -115,9 +117,7 @@ describe('channel message pagination', () => {
     });
     expect(earlier.events.map((event) => event.type)).toEqual(['message.posted', 'session.question_requested']);
     expect(earlier.events[0]!.id).toBe(before.id);
-    expect(earlier.events[1]!.id).toBe(
-      Number(inserted.rows.find((event) => event.type === 'session.question_requested')!.id),
-    );
+    expect(earlier.events[1]!.id).toBe(inserted.find((event) => event.type === 'session.question_requested')!.id);
     expect(earlier.hasMore).toBe(false);
   });
 
@@ -146,14 +146,13 @@ describe('channel message pagination', () => {
 
   it('folds message.edited into reads', async () => {
     const m = await post('original');
-    const edit = await pool.query<{ id: number }>(
-      `INSERT INTO events (workspace_id, channel_id, type, actor_id, payload)
-       VALUES ($1, $2, 'message.edited', $3, $4)
-       RETURNING id`,
-      [fx.workspaceId, fx.channelId, fx.userId, JSON.stringify({ target: `evt_${m.id}`, text: 'edited!' })],
-    );
-    // Raw inserts bypass the insertEvent choke point, so project explicitly.
-    await pool.query('SELECT project_message_event($1)', [edit.rows[0]!.id]);
+    await seedEvent(pool, {
+      workspaceId: fx.workspaceId,
+      channelId: fx.channelId,
+      type: 'message.edited',
+      actorId: fx.userId,
+      payload: { target: `evt_${m.id}`, text: 'edited!' },
+    });
     const page = await listChannelMessages(pool, { channelId: fx.channelId });
     const row = page.events.find((e) => e.id === m.id)!;
     expect(row.payload.text).toBe('edited!');
@@ -167,20 +166,14 @@ describe('channel message pagination', () => {
 // silently never reached the channel — green unit tests and all.
 describe('the agent answer reaches the channel feed', () => {
   async function appendReply(threadRootEventId: number, text: string, broadcast: boolean) {
-    const { rows } = await pool.query<{ id: number }>(
-      `INSERT INTO events (workspace_id, channel_id, thread_root_event_id, type, actor_id, payload)
-       VALUES ($1, $2, $3, 'session.replied', NULL, $4::jsonb)
-       RETURNING id`,
-      [
-        fx.workspaceId,
-        fx.channelId,
-        threadRootEventId,
-        JSON.stringify({ session_id: 's-1', text, ...(broadcast ? { broadcast: true } : {}) }),
-      ],
-    );
-    // Raw inserts bypass the insertEvent choke point, so project explicitly.
-    await pool.query('SELECT project_message_event($1)', [rows[0]!.id]);
-    return rows[0]!.id;
+    return seedEvent(pool, {
+      workspaceId: fx.workspaceId,
+      channelId: fx.channelId,
+      threadRootEventId,
+      type: 'session.replied',
+      actorId: null,
+      payload: { session_id: 's-1', text, ...(broadcast ? { broadcast: true } : {}) },
+    });
   }
 
   it('includes a broadcast session.replied in the channel feed', async () => {

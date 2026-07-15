@@ -3,7 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type pg from 'pg';
 import { createChannel, listChannelsFor } from './events.js';
 import { mentionedHandles, mentionTargetUserIds, persistMentions } from './mentions.js';
-import { createTestPool, seedFixture, seedMember, truncateAll, type Fixture } from '../test/helpers.js';
+import { createTestPool, seedEvent, seedFixture, seedMember, truncateAll, type Fixture } from '../test/helpers.js';
 
 let pool: pg.Pool;
 let fx: Fixture;
@@ -22,13 +22,13 @@ beforeEach(async () => {
 });
 
 async function insertMessage(channelId: string, text: string, actorId = fx.userId): Promise<number> {
-  const result = await pool.query<{ id: number }>(
-    `INSERT INTO events (workspace_id, channel_id, type, actor_id, payload)
-     VALUES ($1, $2, 'message.posted', $3, jsonb_build_object('text', $4::text))
-     RETURNING id`,
-    [fx.workspaceId, channelId, actorId, text],
-  );
-  return result.rows[0]!.id;
+  return seedEvent(pool, {
+    workspaceId: fx.workspaceId,
+    channelId,
+    type: 'message.posted',
+    actorId,
+    payload: { text },
+  });
 }
 
 async function persist(

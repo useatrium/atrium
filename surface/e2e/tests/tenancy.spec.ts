@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { Pool } from 'pg';
-import { channelButton, login, openChannel, unique } from './helpers.js';
+import { channelButton, login, openChannel, seedEvent, unique } from './helpers.js';
 
 const e2eDatabaseUrl = process.env.E2E_DATABASE_URL ?? 'postgres://atrium:atrium@localhost:5433/atrium_e2e';
 
@@ -40,11 +40,13 @@ async function seedWorkspaceB(args: {
        ON CONFLICT DO NOTHING`,
       [workspaceId, actorId],
     );
-    await client.query(
-      `INSERT INTO events (workspace_id, channel_id, type, actor_id, payload)
-       VALUES ($1, $2, 'message.posted', $3, $4)`,
-      [workspaceId, channelId, actorId, JSON.stringify({ text: args.messageText })],
-    );
+    await seedEvent(client, {
+      workspaceId,
+      channelId,
+      type: 'message.posted',
+      actorId,
+      payload: { text: args.messageText },
+    });
     await client.query('COMMIT');
     return { workspaceId, channelId, messageText: args.messageText };
   } catch (err) {

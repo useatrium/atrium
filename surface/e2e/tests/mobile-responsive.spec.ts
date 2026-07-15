@@ -14,6 +14,7 @@ import {
   loginViaForm,
   postMessage,
   postWithAttachment,
+  seedEvent,
   unique,
   uniqueChannel,
   uploadViaApi,
@@ -124,15 +125,14 @@ async function seedSession(handle: string, ch: string, title: string): Promise<s
       [workspaceId, ch, `thread-${unique('mobgate')}`, title, userId],
     );
     const sessionId = session.rows[0]!.id;
-    const root = await client.query<{ id: string }>(
-      `INSERT INTO events (workspace_id, channel_id, type, actor_id, payload)
-       VALUES ($1,$2,'session.spawned',$3,$4) RETURNING id`,
-      [workspaceId, ch, userId, JSON.stringify({ sessionId, title, harness: 'claude-code', by: userId })],
-    );
-    await client.query('UPDATE sessions SET thread_root_event_id=$1 WHERE id=$2', [
-      Number(root.rows[0]!.id),
-      sessionId,
-    ]);
+    const rootId = await seedEvent(client, {
+      workspaceId,
+      channelId: ch,
+      type: 'session.spawned',
+      actorId: userId,
+      payload: { sessionId, title, harness: 'claude-code', by: userId },
+    });
+    await client.query('UPDATE sessions SET thread_root_event_id=$1 WHERE id=$2', [rootId, sessionId]);
     await client.query('COMMIT');
     return sessionId;
   } catch (e) {
