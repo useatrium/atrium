@@ -899,7 +899,8 @@ export function ChatProvider({ session, children }: { session: Session; children
   }, [channelsLoaded, refreshActiveCalls]);
 
   const flushQueuedOps = useCallback(() => {
-    opQueue.nudge();
+    // Reconnect-triggered: clears per-op backoff so queued work retries now.
+    opQueue.reconnect();
   }, [opQueue]);
 
   const resetLoadedTimelinesToLatest = useCallback(async () => {

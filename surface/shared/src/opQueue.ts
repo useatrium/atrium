@@ -1,4 +1,10 @@
-import { ApiError, type AgentAttachmentRef, type Api, type ReactionAction } from './api';
+import {
+  ApiError,
+  type AgentAttachmentRef,
+  type Api,
+  type ReactionAction,
+  isNetworkFailure as isApiNetworkFailure,
+} from './api';
 import type { AppAction } from './appState';
 import type { UserPrefs } from './prefs';
 import { sessionFromWire, type SessionRepoSpec } from './sessions';
@@ -405,7 +411,7 @@ export function makeQueuedOp<T extends OpType>(input: EnqueueOpInput<T>, now = n
 }
 
 export function isNetworkFailure(err: unknown): boolean {
-  return err instanceof TypeError || !(err instanceof ApiError);
+  return isApiNetworkFailure(err) || !(err instanceof ApiError);
 }
 
 function isRetryableServerError(err: unknown): boolean {
@@ -686,6 +692,21 @@ export class DurableOpQueue {
   }
 
   nudge(): void {
+    // New work arrived (an enqueue, a cross-tab ping). Flush, but keep each
+    // failing op's backoff window — drafts sync on every keystroke, so letting
+    // an ordinary nudge clear backoff would re-arm the very retry storm the
+    // backoff exists to prevent.
+    this.flushInBackground();
+  }
+
+  reconnect(): void {
+    // New CONNECTIVITY information (WS reconnect, browser `online`): whatever
+    // made the ops fail has plausibly changed, so retry them all now.
+    this.retryAfter.clear();
+    this.flushInBackground();
+  }
+
+  private flushInBackground(): void {
     void this.flush().catch((err: unknown) => {
       console.warn('queued op flush failed', err);
     });
@@ -729,7 +750,7 @@ export class DurableOpQueue {
       if (!this.dependenciesSatisfied(op, ops)) continue;
       const retryAt = this.retryAfter.get(op.opId) ?? 0;
       if (retryAt > now) {
-        this.setTimer(() => this.nudge(), retryAt - now);
+        this.setTimer(() => this.flushInBackground(), retryAt - now);
         continue;
       }
       picked.push(op);
@@ -789,7 +810,7 @@ export class DurableOpQueue {
       await this.storage.putOp(pending);
       const delay = retryDelayMs(retryCount);
       this.retryAfter.set(op.opId, Date.now() + delay);
-      this.setTimer(() => this.nudge(), delay);
+      this.setTimer(() => this.flushInBackground(), delay);
       return;
     }
 
