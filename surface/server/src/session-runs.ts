@@ -2225,6 +2225,11 @@ export class SessionRuns {
     id: string,
     frame: Extract<CentaurEventFrame, { event: 'question_requested' }>,
   ): Promise<void> {
+    // These session columns are intentionally hand-maintained denormalizations,
+    // not an events projection. Centaur RPC/frame signals can clear a pending
+    // question without appending a matching Atrium event (notably an answered
+    // question_resolved frame), and last_event_id is a Centaur frame-id cursor,
+    // not an events.id watermark. Keep the row writers explicit at those seams.
     const event = await withTx(this.pool, async (client) => {
       const before = await client.query<SessionRow>('SELECT * FROM sessions WHERE id = $1 FOR UPDATE', [id]);
       const row = before.rows[0];
@@ -3658,7 +3663,7 @@ function buildQuestionHistory(rows: SessionLifecycleEventRow[]): SessionQuestion
   return out;
 }
 
-function parsePendingQuestion(value: unknown): SessionPendingQuestionJson | null {
+export function parsePendingQuestion(value: unknown): SessionPendingQuestionJson | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const raw = value as Record<string, unknown>;
   if (typeof raw.questionId !== 'string' || typeof raw.turnId !== 'string') return null;

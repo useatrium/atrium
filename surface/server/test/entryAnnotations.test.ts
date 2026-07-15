@@ -23,6 +23,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await truncateAll(pool);
+  await pool.query('TRUNCATE entry_reaction_state');
   fx = await seedFixture(pool);
   app = await buildApp({
     pool,
@@ -151,7 +152,7 @@ describe('entry annotations', () => {
     expect(write.statusCode).toBe(404);
   });
 
-  it('sets entry reactions on evt_ and rec_ handles and keeps replays idempotent', async () => {
+  it('sets entry reactions on evt_, rec_, and art_ handles and keeps replays idempotent', async () => {
     const cookie = await authCookie(fx.userId);
     const message = await postMessage(pool, {
       workspaceId: fx.workspaceId,
@@ -209,6 +210,22 @@ describe('entry annotations', () => {
     expect(addRecordAgain.json()).toEqual({ event: null, applied: false });
     expect(await reactionNet(recordHandle, fx.userId, '🎉')).toBe(1);
     expect((await annotations(cookie, recordHandle)).reactions).toEqual([{ emoji: '🎉', userIds: [fx.userId] }]);
+
+    const artifactHandle = encodeArtifactHandle(await insertUploadArtifact());
+    const addArtifact = await app.inject({
+      method: 'POST',
+      url: `/api/entries/${artifactHandle}/reactions`,
+      headers: { cookie },
+      payload: { emoji: '❤️', action: 'add' },
+    });
+    expect(addArtifact.statusCode).toBe(200);
+    expect(addArtifact.json().event).toMatchObject({
+      type: 'reaction.added',
+      channelId: fx.channelId,
+      payload: { target: artifactHandle, emoji: '❤️' },
+    });
+    expect(await reactionNet(artifactHandle, fx.userId, '❤️')).toBe(1);
+    expect((await annotations(cookie, artifactHandle)).reactions).toEqual([{ emoji: '❤️', userIds: [fx.userId] }]);
   });
 
   it('serializes concurrent record reaction removes with the handle advisory lock', async () => {
