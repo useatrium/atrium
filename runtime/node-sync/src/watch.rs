@@ -515,7 +515,7 @@ mod imp {
             return;
         };
         if let Some(name) = name
-            && is_unwatched_dir_name(name.as_os_str())
+            && super::is_unwatched_dir_name(name.as_os_str())
             && mask.contains(EventMask::ISDIR)
         {
             // A dep/build tree appeared (or churned): never watch it and never
