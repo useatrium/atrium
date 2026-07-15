@@ -2460,7 +2460,7 @@ mod linux_daemon {
                 let mut walked = fs_linux::read_upper_entries(&session.upper)?;
                 walked.retain(|entry| entry.rel_path.as_path() != Path::new(READY_MARKER_FILE));
                 if canary && tree.seeded() {
-                    let divergence = tree.divergence_from(&walked);
+                    let divergence = tree.confirm_divergence(&walked);
                     if !divergence.is_empty() {
                         let sample: Vec<String> = divergence
                             .iter()

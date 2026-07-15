@@ -66,6 +66,11 @@ pub fn is_event_invisible_path(rel: &Path) -> bool {
 pub struct TreeState {
     entries: HashMap<PathBuf, RawEntry>,
     seeded: bool,
+    /// Divergent paths from the previous backstop, awaiting confirmation: an
+    /// event can legitimately be in flight when the walk that saw its effect
+    /// runs, so a path only counts as REAL divergence when it diverges on two
+    /// consecutive backstops (same discipline as shadow mode's pending set).
+    pending_divergence: Vec<PathBuf>,
 }
 
 impl TreeState {
@@ -87,6 +92,7 @@ impl TreeState {
     pub fn clear(&mut self) {
         self.entries.clear();
         self.seeded = false;
+        self.pending_divergence.clear();
     }
 
     /// The synthesized full entry list, sorted so parents precede children
@@ -127,6 +133,20 @@ impl TreeState {
                 .map(|entry| entry.rel_path.clone()),
         );
         diverged
+    }
+
+    /// Two-round-confirmed divergence: intersect this walk's divergence with
+    /// the previous backstop's, store the fresh set for next time, and return
+    /// only the confirmed survivors — the canary's real signal.
+    pub fn confirm_divergence(&mut self, walked: &[RawEntry]) -> Vec<PathBuf> {
+        let current = self.divergence_from(walked);
+        let confirmed: Vec<PathBuf> = current
+            .iter()
+            .filter(|rel| self.pending_divergence.contains(rel))
+            .cloned()
+            .collect();
+        self.pending_divergence = current;
+        confirmed
     }
 
     fn remove_subtree(&mut self, rel: &Path) {
@@ -546,5 +566,48 @@ mod tests {
             tree.apply_dirty_paths(&source, &dirty).unwrap();
             assert_matches_disk(&tree, &source);
         }
+    }
+}
+
+#[cfg(test)]
+mod confirmation_tests {
+    use super::*;
+    use crate::overlay::RawFileType;
+
+    fn entry(rel: &str, mtime: i64) -> RawEntry {
+        RawEntry {
+            rel_path: PathBuf::from(rel),
+            file_type: RawFileType::Regular,
+            rdev: 0,
+            size: 1,
+            mtime_ns: mtime,
+            xattrs: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn transient_divergence_is_absorbed_and_persistent_divergence_confirms() {
+        let mut tree = TreeState::default();
+        tree.rebuild(&[entry("a.txt", 1), entry("hot.txt", 1)]);
+
+        // Round 1: hot.txt changed on disk but the event was in flight —
+        // divergent once, not confirmed.
+        let walk1 = vec![entry("a.txt", 1), entry("hot.txt", 2)];
+        assert!(tree.confirm_divergence(&walk1).is_empty());
+
+        // The in-flight event lands and a scoped patch heals the belief:
+        // round 2 sees no divergence, pending clears.
+        tree.rebuild(&walk1);
+        assert!(tree.confirm_divergence(&walk1).is_empty());
+
+        // A REAL bug: the belief misses stale.txt on two consecutive walks.
+        let walk2 = vec![
+            entry("a.txt", 1),
+            entry("hot.txt", 2),
+            entry("stale.txt", 5),
+        ];
+        assert!(tree.confirm_divergence(&walk2).is_empty()); // first sighting
+        let confirmed = tree.confirm_divergence(&walk2); // second sighting
+        assert_eq!(confirmed, vec![PathBuf::from("stale.txt")]);
     }
 }
