@@ -84,7 +84,7 @@ impl Harness {
         let walked = walk_all(&self.root);
         assert_eq!(
             self.tree.divergence_from(&walked),
-            0,
+            Vec::<PathBuf>::new(),
             "{context}: scoped belief diverged from disk (full={full})"
         );
         full
@@ -180,20 +180,19 @@ fn delete_heavy_churn_reconciles() {
 }
 
 #[test]
-fn cap_overflow_degrades_to_full_and_still_converges() {
+fn burst_beyond_cap_stays_convergent() {
+    // More files than DIRTY_PATH_CAP (4096). Depending on machine speed the
+    // dirt either exceeds the cap (degrade to full rescan — cap semantics are
+    // unit-tested in watch.rs) or most file events lose the watch-registration
+    // race and the recursive-dir rule carries the round. Either path must
+    // converge; which one ran is machine-dependent, so it is not asserted.
     let mut h = Harness::new();
-    // More distinct paths than DIRTY_PATH_CAP (4096): dirt must degrade to a
-    // whole-session rescan, and the rescan must still converge.
     for i in 0..4300 {
         let dir = h.root.join("big").join(format!("d{}", i % 61));
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join(format!("f{i}.txt")), b"x").unwrap();
     }
-    let degraded = h.scan_and_assert("post-cap-overflow scan");
-    assert!(
-        degraded,
-        "expected the dirty-path cap to degrade this burst to a full rescan"
-    );
+    h.scan_and_assert("post-burst scan");
 }
 
 #[test]
