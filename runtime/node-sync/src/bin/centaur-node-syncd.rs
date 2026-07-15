@@ -507,8 +507,8 @@ mod linux_daemon {
     };
     use centaur_node_sync::overlay::RawEntry;
     use centaur_node_sync::overlay_mount::{
-        OVERLAY_SIGNATURE_FILE, OverlayMountPlan, READY_MARKER_FILE, mount_overlay,
-        plan_overlay_mount, session_sibling_dirs, unmount_overlay,
+        OverlayMountPlan, READY_MARKER_FILE, mount_overlay, plan_overlay_mount,
+        session_sibling_dirs, unmount_overlay,
     };
     use centaur_node_sync::pacing::{TickPacer, TickPacerAction};
     use centaur_node_sync::quiesce::{LeaseGate, apply_quiesced_writes};
@@ -1475,14 +1475,9 @@ mod linux_daemon {
             if dirt.full {
                 return true;
             }
-            // Daemon-authored root markers churn outside the event stream by
-            // design (their events are self-dirty-filtered): never misses.
-            if rel == Path::new(OVERLAY_SIGNATURE_FILE) || rel == Path::new(READY_MARKER_FILE) {
-                return true;
-            }
-            // mmap-written files (sqlite -shm shared memory) physically emit
-            // no inotify events — backstop full scans own them by design.
-            if centaur_node_sync::scoped::is_mmap_pattern_path(rel) {
+            // Event-invisible by design (daemon root markers, mmap -shm):
+            // backstop full scans own these.
+            if centaur_node_sync::scoped::is_event_invisible_path(rel) {
                 return true;
             }
             // Unwatched dep/build trees are backstop-only by design.

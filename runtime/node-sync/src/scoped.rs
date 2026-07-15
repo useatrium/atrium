@@ -41,6 +41,19 @@ pub fn is_mmap_pattern_path(rel: &Path) -> bool {
         .is_some_and(|name| name.ends_with("-shm"))
 }
 
+/// Paths whose churn is invisible to the event stream BY DESIGN: mmap files
+/// plus the daemon-authored root markers (their events are self-dirty-filtered
+/// so the daemon's own per-tick writes don't wake the loop). The divergence
+/// canary skips them — they are always stale in the belief and always healed
+/// by the backstop rebuild.
+pub fn is_event_invisible_path(rel: &Path) -> bool {
+    if is_mmap_pattern_path(rel) {
+        return true;
+    }
+    rel == Path::new(crate::overlay_mount::OVERLAY_SIGNATURE_FILE)
+        || rel == Path::new(crate::overlay_mount::READY_MARKER_FILE)
+}
+
 /// The daemon's belief of one session's upper tree.
 #[derive(Debug, Default, Clone)]
 pub struct TreeState {
@@ -86,7 +99,7 @@ impl TreeState {
             .collect();
         let mut diverged = 0;
         for (rel, believed) in &self.entries {
-            if is_mmap_pattern_path(rel) {
+            if is_event_invisible_path(rel) {
                 continue;
             }
             match walked_map.get(rel) {
@@ -101,7 +114,7 @@ impl TreeState {
             + walked
                 .iter()
                 .filter(|entry| {
-                    !is_mmap_pattern_path(&entry.rel_path)
+                    !is_event_invisible_path(&entry.rel_path)
                         && !self.entries.contains_key(&entry.rel_path)
                 })
                 .count()
