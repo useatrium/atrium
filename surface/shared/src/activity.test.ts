@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { activityKindMarker, isActivityUnread, matchesActivityFilter, type ActivityFeedFilter } from './activity.js';
+import {
+  activityKindMarker,
+  isActivityUnread,
+  matchesActivityFilter,
+  matchesActivitySource,
+  type ActivityFeedFilter,
+} from './activity.js';
 import type { ActivityItem } from './api.js';
 
 function item(overrides: Partial<ActivityItem> = {}): ActivityItem {
@@ -40,8 +46,10 @@ describe('isActivityUnread', () => {
 describe('matchesActivityFilter', () => {
   const cases: Array<{ filter: ActivityFeedFilter; completed: boolean; unread: boolean; expect: boolean }> = [
     { filter: 'inbox', completed: false, unread: false, expect: true },
+    { filter: 'inbox', completed: true, unread: true, expect: true },
     { filter: 'inbox', completed: true, unread: false, expect: false },
     { filter: 'done', completed: true, unread: false, expect: true },
+    { filter: 'done', completed: true, unread: true, expect: false },
     { filter: 'done', completed: false, unread: true, expect: false },
     { filter: 'unread', completed: true, unread: true, expect: true },
     { filter: 'unread', completed: false, unread: false, expect: false },
@@ -54,6 +62,17 @@ describe('matchesActivityFilter', () => {
       expect(matchesActivityFilter(row, c.filter, c.unread)).toBe(c.expect);
     });
   }
+});
+
+describe('matchesActivitySource', () => {
+  it('separates agent workflow activity from people activity', () => {
+    expect(matchesActivitySource(item({ kind: 'agent_question' }), 'agents')).toBe(true);
+    expect(matchesActivitySource(item({ kind: 'session_completed' }), 'agents')).toBe(true);
+    expect(matchesActivitySource(item({ kind: 'mention' }), 'agents')).toBe(false);
+    expect(matchesActivitySource(item({ kind: 'mention' }), 'people')).toBe(true);
+    expect(matchesActivitySource(item({ kind: 'session_failed' }), 'people')).toBe(false);
+    expect(matchesActivitySource(item({ kind: 'reaction' }), 'all')).toBe(true);
+  });
 });
 
 describe('activityKindMarker', () => {

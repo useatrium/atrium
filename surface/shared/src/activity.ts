@@ -2,6 +2,14 @@ import type { ActivityItem } from './api.js';
 
 /** Filters for the Attention inbox surface. */
 export type ActivityFeedFilter = 'inbox' | 'unread' | 'done' | 'all';
+export type ActivitySourceFilter = 'all' | 'agents' | 'people';
+
+const AGENT_ACTIVITY_KINDS = new Set<ActivityItem['kind']>([
+  'agent_question',
+  'agent_auth',
+  'session_completed',
+  'session_failed',
+]);
 
 /**
  * Unread = above the watermark, or in the mark-unread exception set.
@@ -28,13 +36,20 @@ export function isActivityUnread(
   return Number.isSafeInteger(eventId) && Number.isSafeInteger(watermark) && eventId > watermark;
 }
 
-/** Default Inbox hides completions; Done is completions-only; Unread is any unread. */
+/** Inbox keeps ordinary activity plus unread terminal outcomes; Reviewed is read terminal work. */
 export function matchesActivityFilter(item: ActivityItem, filter: ActivityFeedFilter, unread: boolean): boolean {
   if (filter === 'all') return true;
-  if (filter === 'done') return item.kind === 'session_completed';
+  if (filter === 'done') return !unread && (item.kind === 'session_completed' || item.kind === 'session_failed');
   if (filter === 'unread') return unread;
-  // inbox: everything except completed sessions
-  return item.kind !== 'session_completed';
+  // Finished work remains actionable only until it has been reviewed.
+  return !['session_completed', 'session_failed'].includes(item.kind) || unread;
+}
+
+/** Source chips compose with every inbox tab. */
+export function matchesActivitySource(item: ActivityItem, source: ActivitySourceFilter): boolean {
+  if (source === 'all') return true;
+  const agentActivity = AGENT_ACTIVITY_KINDS.has(item.kind);
+  return source === 'agents' ? agentActivity : !agentActivity;
 }
 
 export function activityKindMarker(kind: ActivityItem['kind']): string {

@@ -2406,7 +2406,7 @@ export function Chat({
               }
             />
           ) : showActivitySurface ? (
-            // === mentions-activity additions ===
+            // === inbox additions ===
             <ActivityView
               onSelectChannel={(channelId) => {
                 goToChannel(channelId);
@@ -2418,6 +2418,11 @@ export function Chat({
               refreshKey={activityRefreshKey}
               liveAttention={liveAttentionItems}
               sessions={state.sessions}
+              channelNames={Object.fromEntries(state.channels.map((channel) => [channel.id, channel.name]))}
+              onOpenAgents={openAgentsSurface}
+              onArchiveSession={(sessionId, previousArchivedAt) =>
+                void setSessionArchived(sessionId, true, previousArchivedAt).catch(() => {})
+              }
               onCountsChange={handleActivityCountsChange}
             />
           ) : showFilesSurface ? (

@@ -175,11 +175,15 @@ test('empty destinations, keyboard focus, and deterministic contrast have eviden
   const attention = page.getByRole('button', { name: /Attention$/ });
   await expectVisibleFocus(attention);
   await attention.press('Enter');
-  await expect(page.getByText("You're all caught up")).toBeVisible();
-  await expectComputedContrast(page.getByText("You're all caught up"), 4.5);
+  // The Inbox mirrors workspace-global live sessions, so a brand-new user is
+  // not guaranteed an empty default view when other specs' agents are running.
+  // The Reviewed tab is deterministically empty for a fresh user.
+  await page.getByRole('tab', { name: /^Reviewed/ }).click();
+  await expect(page.getByText('No reviewed sessions')).toBeVisible();
+  await expectComputedContrast(page.getByText('No reviewed sessions'), 4.5);
   await attachScreenshot(page, testInfo, 'empty-attention');
 
-  await page.getByRole('button', { name: 'Agents', exact: true }).click();
+  await page.getByRole('navigation').getByRole('button', { name: 'Agents', exact: true }).click();
   await expect(page.getByPlaceholder('Search agents')).toBeVisible();
   await attachScreenshot(page, testInfo, 'empty-agents');
 
