@@ -90,7 +90,7 @@ import {
   type Session,
   type SessionStatus,
 } from './types';
-import { useSessionStream } from './useSessionStream';
+import { useSessionStream, type SessionStream } from './useSessionStream';
 import {
   SESSION_PANE_FALLBACK_WIDTH,
   SESSION_PANE_MAX_VW,
@@ -123,17 +123,18 @@ import { entryShareUrl, sessionShareUrl } from '../lib/publicUrl';
 import { navigate, URL_PARAMS, useLocation } from '../router';
 import { useExpandAllWork } from './useTranscriptView';
 import { WorkFold } from './WorkFold';
+import {
+  useWorkDockPlacement,
+  useWorkDockSize,
+  WORK_DOCK_MAX_SIDE_WIDTH,
+  WORK_DOCK_MAX_TOP_HEIGHT,
+  WORK_DOCK_MIN_SIDE_WIDTH,
+  WORK_DOCK_MIN_TOP_HEIGHT,
+} from './useWorkDock';
 
 // Skip offscreen rendering work so 500+ item transcripts scroll smoothly.
 const ITEM_VIS: CSSProperties = { contentVisibility: 'auto', containIntrinsicSize: 'auto 32px' };
 const ENTRY_REFERENCES_REFETCH_MS = 60_000;
-const MOBILE_MEDIA_QUERY = '(max-width: 767px)';
-
-function isMobileViewportNow(): boolean {
-  return typeof window !== 'undefined' && typeof window.matchMedia === 'function'
-    ? window.matchMedia(MOBILE_MEDIA_QUERY).matches
-    : false;
-}
 
 function isTextEditingEscapeTarget(target: EventTarget | null): boolean {
   if (!(target instanceof Element)) return false;
@@ -153,19 +154,6 @@ function isPlainEscape(event: KeyboardEvent): boolean {
   return (
     event.key === 'Escape' && !event.repeat && !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey
   );
-}
-
-function useIsMobileViewport(): boolean {
-  const [isMobileViewport, setIsMobileViewport] = useState(isMobileViewportNow);
-  useEffect(() => {
-    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
-    const query = window.matchMedia(MOBILE_MEDIA_QUERY);
-    const sync = () => setIsMobileViewport(query.matches);
-    sync();
-    query.addEventListener('change', sync);
-    return () => query.removeEventListener('change', sync);
-  }, []);
-  return isMobileViewport;
 }
 
 export { useIsHoverNone };
@@ -354,41 +342,7 @@ function spineStripClass({ danger = false, unseen = false }: { danger?: boolean;
   } ${unseen ? 'ring-1 ring-accent-border-muted' : ''}`;
 }
 
-export function SessionPane({
-  session,
-  me,
-  watchers,
-  typers = [],
-  onComposerTyping,
-  onClose,
-  onAnswerQuestion,
-  onSteer = async () => {},
-  queueUpload,
-  failedSteer = null,
-  onClearFailedSteer = () => {},
-  onCancelSession = async () => {},
-  onStopTurn = async () => {},
-  failedCancel = false,
-  onClearFailedCancel = () => {},
-  onSetArchived,
-  onSetPinned,
-  providerCredentials,
-  githubConnection,
-  onConnectProvider,
-  onConnectGitHub,
-  agentProfiles = [],
-  layout = 'split',
-  onToggleFocus,
-  initialEntryHandle = null,
-  origin,
-  liveEvent = null,
-  optimisticThreadSteers = [],
-  popout = false,
-  onUnseenOutputs,
-  filesDefaultScope,
-  onDiscussEntry,
-  onApiError = () => {},
-}: {
+export interface SessionPaneProps {
   session: Session;
   me: UserRef;
   /** Presence list for `session:<id>` — everyone with this pane open. */
@@ -426,9 +380,6 @@ export function SessionPane({
   githubConnection?: ConnectionStatus;
   onConnectProvider?: (provider: ProviderCredentialProvider) => void;
   onConnectGitHub?: () => void;
-  /** The viewer's agent profiles — matched by version id to surface the
-   * session's configured reasoning effort (codex `model_reasoning_effort`).
-   * Watchers without the spawner's profile simply see no effort. */
   agentProfiles?: AgentProfile[];
   /** 'split' = peek beside the channel; 'focus' = full-width, channel hidden. */
   layout?: 'split' | 'focus';
@@ -439,15 +390,10 @@ export function SessionPane({
   liveEvent?: WireEvent | null;
   /** Queue-backed thread steers shown before their durable event arrives. */
   optimisticThreadSteers?: ChatMessage[];
-  /**
-   * Where this pane was zoomed from — renders the place crumb
-   * (#channel ▸ thread ▸ work) so the zoom levels stay legible and
-   * reversible. Absent in popouts, which have no host surface.
-   */
+  /** Where this pane was zoomed from, used for the reversible crumb trail. */
   origin?: {
     channelLabel: string;
     onOpenChannel: () => void;
-    /** Zoom out one level: the session's conversation thread. */
     onOpenThread?: () => void;
   };
   /** Standalone `/s/:id/pane` context; retargets header controls back to the full app. */
@@ -460,16 +406,57 @@ export function SessionPane({
   onDiscussEntry?: (payload: TranscriptDiscussPayload) => void;
   /** Shared API error hook; invalidates auth on 401 in the app shell. */
   onApiError?: (err: unknown) => void;
-}) {
+}
+
+/** Compatibility entry point for popouts and focused session-only hosts. */
+export function SessionPane(props: SessionPaneProps & { visible?: boolean }) {
+  const sessionStream = useSessionStream(props.session.id, !isTerminalSessionStatus(props.session.status));
+  return <SessionPaneContent {...props} sessionStream={sessionStream} />;
+}
+
+export function SessionPaneContent({
+  session,
+  me,
+  watchers,
+  typers = [],
+  onComposerTyping,
+  onClose,
+  onAnswerQuestion,
+  onSteer = async () => {},
+  queueUpload,
+  failedSteer = null,
+  onClearFailedSteer = () => {},
+  onCancelSession = async () => {},
+  onStopTurn = async () => {},
+  failedCancel = false,
+  onClearFailedCancel = () => {},
+  onSetArchived,
+  onSetPinned,
+  providerCredentials,
+  githubConnection,
+  onConnectProvider,
+  onConnectGitHub,
+  agentProfiles = [],
+  layout = 'split',
+  onToggleFocus,
+  initialEntryHandle = null,
+  origin,
+  liveEvent = null,
+  optimisticThreadSteers = [],
+  popout = false,
+  onUnseenOutputs,
+  filesDefaultScope,
+  onDiscussEntry,
+  onApiError = () => {},
+  sessionStream,
+  visible = true,
+}: SessionPaneProps & { sessionStream: SessionStream; visible?: boolean }) {
   const locationState = useLocation();
   const [expandAllWork, setExpandAllWork] = useExpandAllWork();
   // `active` re-opens the SSE the server closes after a terminal session's
   // replay, so a follow-up steer (which flips the session back to running over
   // WS) streams live instead of appearing only on the next pane mount.
-  const { stream, connected, lastFrameAt, clockSkewMs } = useSessionStream(
-    session.id,
-    !isTerminalSessionStatus(session.status),
-  );
+  const { stream, connected, lastFrameAt, clockSkewMs } = sessionStream;
 
   // Changes work-surface (Phase 4): Claude/amp edits from the transcript items +
   // codex fileChange edits the reducer captured.
@@ -491,7 +478,6 @@ export function SessionPane({
     enabled: import.meta.env.MODE !== 'test',
   });
   const conflictsN = conflicts.length;
-  const isMobileViewport = useIsMobileViewport();
   const isHoverNone = useIsHoverNone();
   const [activeTranscriptActionHandle, setActiveTranscriptActionHandle] = useState<string | null>(null);
 
@@ -519,20 +505,13 @@ export function SessionPane({
 
   // Work drawer (Phase 4): one tabbed surface over Changes + Side-effects, with
   // a peek→pin ladder. `workTab` null = closed; `workPinned` docks it beside the
-  // transcript. Pinning gives the transcript room by collapsing to focus (the
-  // ratified pane-cap rule); we restore split on unpin only if pin caused it.
+  // transcript. Pinned means docked at every width; container measurement
+  // chooses a top band or side dock below, without changing focus mode.
   const [workTab, setWorkTab] = useState<WorkTab | null>(null);
   const [workPinned, setWorkPinned] = useState(false);
-  const canPinWork = !isMobileViewport;
-  const workPinnedEffective = workPinned && canPinWork;
-  const workAutoFocusedRef = useRef(false);
+  const canPinWork = true;
+  const workPinnedEffective = workPinned;
   const workUrlSyncedRef = useRef(false);
-  const restoreSplitIfAuto = () => {
-    if (workAutoFocusedRef.current && onToggleFocus) {
-      workAutoFocusedRef.current = false;
-      onToggleFocus();
-    }
-  };
   const writeWorkParam = useCallback(
     (tab: ActiveWorkTab | null, options: { replace?: boolean } = {}) => {
       // Read the LIVE location: pin/focus flows write the URL twice in one
@@ -553,7 +532,6 @@ export function SessionPane({
     setWorkPinned(false);
     workUrlSyncedRef.current = false;
     if (wasPinned) writeWorkParam(null);
-    restoreSplitIfAuto();
   }, [workPinned, writeWorkParam]);
   const urlWorkTab = useMemo(() => {
     if (popout || !isInPaneSessionRoute(locationState.pathname, session.id)) return null;
@@ -571,7 +549,6 @@ export function SessionPane({
     workUrlSyncedRef.current = false;
     setWorkPinned(false);
     setWorkTab(null);
-    restoreSplitIfAuto();
   }, [urlWorkTab]);
   const outputHubOpen = workTab === 'hubFiles' || workTab === 'apps';
   const onOutputHubStrip = () => {
@@ -589,24 +566,15 @@ export function SessionPane({
     }
   };
   const togglePin = () => {
-    if (!canPinWork) {
-      setWorkPinned(false);
-      return;
-    }
     if (workPinned) {
       setWorkPinned(false);
       workUrlSyncedRef.current = false;
       writeWorkParam(null);
-      restoreSplitIfAuto();
     } else {
       const nextTab = workTab === 'artifacts' ? 'changes' : workTab;
       if (!nextTab) return;
       setWorkPinned(true);
       writeWorkParam(nextTab);
-      if (layout === 'split' && onToggleFocus) {
-        workAutoFocusedRef.current = true;
-        onToggleFocus();
-      }
     }
   };
   const setPinnedWorkTab = useCallback(
@@ -1239,7 +1207,9 @@ export function SessionPane({
   ]);
 
   useEffect(() => {
-    if (!canStopTurn || (!isSpawner && !isDriver)) return;
+    // A ConversationPanel keeps this body mounted-but-hidden in thread mode;
+    // its window-level Escape must not stop a turn from offscreen.
+    if (!visible || !canStopTurn || (!isSpawner && !isDriver)) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (!isPlainEscape(event) || escapeHasLocalMeaning(event)) return;
       event.preventDefault();
@@ -1248,7 +1218,7 @@ export function SessionPane({
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [canStopTurn, isDriver, isSpawner, onCancel]);
+  }, [canStopTurn, isDriver, isSpawner, onCancel, visible]);
 
   // Driver-side grant banner; Ignore is a local dismissal only.
   const [ignoredRequests, setIgnoredRequests] = useState<ReadonlySet<string>>(new Set());
@@ -1610,6 +1580,9 @@ export function SessionPane({
 
   const focused = layout === 'focus';
   const { width: paneWidth, resizing, startResize, resetWidth } = useSessionPaneWidth();
+  const panelRef = useRef<HTMLElement>(null);
+  const workDockPlacement = useWorkDockPlacement(panelRef);
+  const workDockSize = useWorkDockSize();
   const paneSizing = sessionPaneSizing(paneWidth);
   const paneMaxWidth =
     typeof window === 'undefined'
@@ -1774,8 +1747,38 @@ export function SessionPane({
     [session.id],
   );
 
+  const renderWorkDrawer = (pinned: boolean) =>
+    workTab ? (
+      <WorkDrawer
+        changes={fileChanges}
+        changedFileCount={changedFileCount}
+        effects={sideEffects}
+        sideEffectCount={sideEffectsN}
+        hasDanger={sideEffectsDanger}
+        artifacts={artifacts}
+        artifactPresentations={artifactPresentations}
+        artifactCount={artifactsN}
+        conflicts={conflicts}
+        conflictCount={conflictsN}
+        onResolveConflict={resolveConflict}
+        sessionId={session.id}
+        workspaceId={session.workspaceId}
+        channelId={session.channelId}
+        filesSessionScope={filesSessionScope}
+        filesDefaultScope={filesDefaultScope}
+        tab={workTab}
+        onTab={setPinnedWorkTab}
+        pinned={pinned}
+        onTogglePin={togglePin}
+        canPin={canPinWork}
+        canDetach={canDetach}
+        onClose={closeWork}
+      />
+    ) : null;
+
   return (
     <aside
+      ref={panelRef}
       id={focused && !popout ? 'main-content' : undefined}
       className={`pane-zoom-in relative flex min-w-0 flex-col border-l border-edge bg-surface ${
         focused ? 'flex-1' : `shrink-0 ${paneSizing.className}`
@@ -1948,6 +1951,31 @@ export function SessionPane({
         </button>
       </div>
 
+      {workTab && workPinnedEffective && workDockPlacement === 'top' && (
+        <div
+          data-testid="work-dock-top"
+          className="relative flex min-h-0 shrink-0 flex-col border-b border-edge"
+          style={workDockSize.topStyle}
+        >
+          {renderWorkDrawer(true)}
+          {/* biome-ignore lint/a11y/useSemanticElements: pointer-capture resize separator. */}
+          <div
+            role="separator"
+            tabIndex={0}
+            aria-orientation="horizontal"
+            aria-label="Resize top work dock"
+            aria-valuemin={WORK_DOCK_MIN_TOP_HEIGHT}
+            aria-valuemax={WORK_DOCK_MAX_TOP_HEIGHT}
+            aria-valuenow={workDockSize.topHeight}
+            data-testid="work-dock-top-resize-handle"
+            onPointerDown={workDockSize.startResize('top')}
+            className={`absolute inset-x-0 -bottom-1 z-raised h-2 cursor-row-resize touch-none hover:bg-accent/40 ${
+              workDockSize.resizing === 'top' ? 'bg-accent/40' : ''
+            }`}
+          />
+        </div>
+      )}
+
       {session.archivedAt != null && (
         <div
           data-testid="archived-banner"
@@ -2087,35 +2115,13 @@ export function SessionPane({
         </section>
       )}
 
-      <div className={`flex min-h-0 flex-1 ${workTab && workPinnedEffective ? 'flex-row' : 'flex-col'}`}>
+      <div
+        className={`flex min-h-0 flex-1 ${
+          workTab && workPinnedEffective && workDockPlacement === 'side' ? 'flex-row' : 'flex-col'
+        }`}
+      >
         <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
-          {workTab && !workPinnedEffective && (
-            <WorkDrawer
-              changes={fileChanges}
-              changedFileCount={changedFileCount}
-              effects={sideEffects}
-              sideEffectCount={sideEffectsN}
-              hasDanger={sideEffectsDanger}
-              artifacts={artifacts}
-              artifactPresentations={artifactPresentations}
-              artifactCount={artifactsN}
-              conflicts={conflicts}
-              conflictCount={conflictsN}
-              onResolveConflict={resolveConflict}
-              sessionId={session.id}
-              workspaceId={session.workspaceId}
-              channelId={session.channelId}
-              filesSessionScope={filesSessionScope}
-              filesDefaultScope={filesDefaultScope}
-              tab={workTab}
-              onTab={setPinnedWorkTab}
-              pinned={false}
-              onTogglePin={togglePin}
-              canPin={canPinWork}
-              canDetach={canDetach}
-              onClose={closeWork}
-            />
-          )}
+          {workTab && !workPinnedEffective && renderWorkDrawer(false)}
           <div ref={scrollRef} onScroll={onScroll} className="h-full overflow-y-auto px-3 py-2">
             <PlanPanel todos={stream.todos} plan={stream.plan} />
             {stream.items.length === 0 && visibleLinkedSteers.length === 0 && !activeTurn && (
@@ -2294,33 +2300,28 @@ export function SessionPane({
             }
           />
         </div>
-        {workTab && workPinnedEffective && (
-          <div className="flex min-h-0 w-[min(440px,46%)] shrink-0 flex-col border-l border-edge">
-            <WorkDrawer
-              changes={fileChanges}
-              changedFileCount={changedFileCount}
-              effects={sideEffects}
-              sideEffectCount={sideEffectsN}
-              hasDanger={sideEffectsDanger}
-              artifacts={artifacts}
-              artifactPresentations={artifactPresentations}
-              artifactCount={artifactsN}
-              conflicts={conflicts}
-              conflictCount={conflictsN}
-              onResolveConflict={resolveConflict}
-              sessionId={session.id}
-              workspaceId={session.workspaceId}
-              channelId={session.channelId}
-              filesSessionScope={filesSessionScope}
-              filesDefaultScope={filesDefaultScope}
-              tab={workTab}
-              onTab={setPinnedWorkTab}
-              pinned
-              onTogglePin={togglePin}
-              canPin={canPinWork}
-              canDetach={canDetach}
-              onClose={closeWork}
+        {workTab && workPinnedEffective && workDockPlacement === 'side' && (
+          <div
+            data-testid="work-dock-side"
+            className="relative flex min-h-0 shrink-0 flex-col border-l border-edge"
+            style={workDockSize.sideStyle}
+          >
+            {/* biome-ignore lint/a11y/useSemanticElements: pointer-capture resize separator. */}
+            <div
+              role="separator"
+              tabIndex={0}
+              aria-orientation="vertical"
+              aria-label="Resize side work dock"
+              aria-valuemin={WORK_DOCK_MIN_SIDE_WIDTH}
+              aria-valuemax={WORK_DOCK_MAX_SIDE_WIDTH}
+              aria-valuenow={workDockSize.sideWidth}
+              data-testid="work-dock-side-resize-handle"
+              onPointerDown={workDockSize.startResize('side')}
+              className={`absolute inset-y-0 -left-1 z-raised w-2 cursor-col-resize touch-none hover:bg-accent/40 ${
+                workDockSize.resizing === 'side' ? 'bg-accent/40' : ''
+              }`}
             />
+            {renderWorkDrawer(true)}
           </div>
         )}
       </div>

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ChatMessage, UserRef } from '@atrium/surface-client';
 import type { Session } from '../sessions/types';
 import { buildTimelineItems, isAgentVoiceBroadcast } from '@atrium/surface-client';
@@ -11,7 +11,7 @@ const AT_BOTTOM_EPSILON_PX = 4;
 const PINNED_BOTTOM_SLOP_PX = 80;
 const SCROLL_POSITION_EPSILON_PX = 1;
 
-export function Timeline({
+function TimelineImpl({
   messages,
   loaded,
   hasMoreBefore,
@@ -593,6 +593,8 @@ export function Timeline({
     </div>
   );
 }
+
+export const Timeline = memo(TimelineImpl);
 
 /** Structural placeholder while the first history page is in flight. */
 function TimelineSkeleton() {

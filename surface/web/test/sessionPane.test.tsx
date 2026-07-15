@@ -1103,6 +1103,26 @@ describe('driver seat', () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
+  it('Escape never stops a turn from a hidden (thread-mode) pane body', async () => {
+    const onStopTurn = vi.fn().mockResolvedValue(undefined);
+    render(
+      <SessionPane
+        session={bSession({ driverId: me.id })}
+        me={me}
+        watchers={[me]}
+        onClose={() => {}}
+        onAnswerQuestion={async () => {}}
+        onStopTurn={onStopTurn}
+        visible={false}
+      />,
+    );
+
+    fireEvent.keyDown(window, { key: 'Escape' });
+
+    await new Promise((r) => setTimeout(r, 50));
+    expect(onStopTurn).not.toHaveBeenCalled();
+  });
+
   it('Escape-to-stop yields to local editing and dialog Escape behavior', async () => {
     vi.spyOn(sessionsApi, 'getCapabilities').mockResolvedValue({ sessionId: 's-b', snapshots: [] });
     const onStopTurn = vi.fn().mockResolvedValue(undefined);
@@ -1627,7 +1647,7 @@ describe('work drawer (Phase 4 consolidation)', () => {
     expect(screen.queryByTestId('work-drawer')).toBeNull();
   });
 
-  it('pinning a split pane collapses to focus; unpinning restores it', async () => {
+  it('pins as a top dock in a narrow split pane without forcing focus', async () => {
     const onToggleFocus = vi.fn();
     render(
       <SessionPane
@@ -1648,12 +1668,15 @@ describe('work drawer (Phase 4 consolidation)', () => {
     });
 
     fireEvent.click(screen.getByTestId('sideeffects-strip'));
-    // Pin → the pane asks the parent to collapse to focus (pane-cap rule).
+    // Pin stays in the current panel. Container width, not viewport/focus
+    // state, chooses the top-band placement.
     fireEvent.click(screen.getByRole('button', { name: 'Pin work drawer' }));
-    expect(onToggleFocus).toHaveBeenCalledTimes(1);
-    // Unpin → the auto-collapse is reversed.
+    expect(screen.getByTestId('work-dock-top')).toBeTruthy();
+    expect(onToggleFocus).not.toHaveBeenCalled();
+    // Unpin returns to the overlay without changing the panel zoom.
     fireEvent.click(screen.getByRole('button', { name: 'Unpin work drawer' }));
-    expect(onToggleFocus).toHaveBeenCalledTimes(2);
+    expect(screen.queryByTestId('work-dock-top')).toBeNull();
+    expect(onToggleFocus).not.toHaveBeenCalled();
   });
 });
 

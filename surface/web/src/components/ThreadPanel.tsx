@@ -33,7 +33,7 @@ import { MessageRow } from './MessageRow';
 import type { MentionContext } from './useMentionTypeahead';
 import { ConversationHeader } from '../sessions/ConversationHeader';
 import { useNow } from '../sessions/SessionCard';
-import { useSessionStream } from '../sessions/useSessionStream';
+import { useSessionStream, type SessionStream } from '../sessions/useSessionStream';
 import { useConflicts } from '../sessions/useConflicts';
 import { WorkFold } from '../sessions/WorkFold';
 import type { ActiveWorkTab } from '../sessions/WorkDrawer';
@@ -99,35 +99,7 @@ export function threadSnippet(text: string): string {
   return oneLine.length > THREAD_SNIPPET_MAX ? `${oneLine.slice(0, THREAD_SNIPPET_MAX - 1)}…` : oneLine;
 }
 
-export function ThreadPanel({
-  root,
-  replies,
-  loaded,
-  sessions,
-  spectators,
-  meId,
-  meHandle,
-  mentionContext,
-  channelLabel,
-  onClose,
-  onSend,
-  queueUpload,
-  onOpenSession,
-  onRetry,
-  onEdit,
-  onDelete,
-  onReact,
-  resolveUser,
-  onMarkupEntry,
-  draftKey,
-  initialDraft,
-  initialDraftAgentIntent,
-  onDraftChange,
-  onDraftPersisted,
-  onDraftTouched,
-  previewEntryLinks,
-  onAgentSend,
-}: {
+export interface ThreadPanelProps {
   root: ChatMessage;
   replies: ChatMessage[];
   /** The thread fetch resolved — gates the empty state vs. the loading hint. */
@@ -168,7 +140,51 @@ export function ThreadPanel({
     attachments?: AttachmentMeta[],
     attachmentRefs?: AttachmentRef[],
   ) => void;
-}) {
+}
+
+/** Compatibility entry point for focused thread tests and non-conversation hosts. */
+export function ThreadPanel(props: ThreadPanelProps) {
+  const attachedSession = useMemo(
+    () => attachedSessionForRoot(props.sessions, props.root, props.root.channelId),
+    [props.root, props.sessions],
+  );
+  const streamState = useSessionStream(
+    attachedSession?.id ?? null,
+    attachedSession != null && !isTerminalSessionStatus(attachedSession.status),
+  );
+  return <ThreadPanelContent {...props} sessionStream={streamState} />;
+}
+
+export function ThreadPanelContent({
+  root,
+  replies,
+  loaded,
+  sessions,
+  spectators,
+  meId,
+  meHandle,
+  mentionContext,
+  channelLabel,
+  onClose,
+  onSend,
+  queueUpload,
+  onOpenSession,
+  onRetry,
+  onEdit,
+  onDelete,
+  onReact,
+  resolveUser,
+  onMarkupEntry,
+  draftKey,
+  initialDraft,
+  initialDraftAgentIntent,
+  onDraftChange,
+  onDraftPersisted,
+  onDraftTouched,
+  previewEntryLinks,
+  onAgentSend,
+  sessionStream,
+}: ThreadPanelProps & { sessionStream: SessionStream }) {
   const { width: paneWidth, resizing, startResize, resetWidth } = useThreadPaneWidth();
   const alsoSendToChannelId = useId();
   const [alsoSendToChannel, setAlsoSendToChannel] = useState(false);
@@ -191,7 +207,7 @@ export function ThreadPanel({
     [root.channelId, root.id, root.sessionId, sessions],
   );
   const sessionLive = attachedSession != null && !isTerminalSessionStatus(attachedSession.status);
-  const { stream } = useSessionStream(attachedSession?.id ?? null, sessionLive);
+  const { stream } = sessionStream;
   // Belt to the hook's own null-reset: a thread with no attached session must
   // never render work folds, whatever state the stream is carrying.
   const workFolds = useMemo(
