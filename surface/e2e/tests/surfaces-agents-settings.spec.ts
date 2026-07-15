@@ -55,7 +55,8 @@ test('Agents is addressable, reload-restores, lists sessions, and Back returns t
   const title = unique('agents-surface-title');
   await injectSession({ handle, channelId: roomId, title });
 
-  await page.getByRole('button', { name: 'Agents', exact: true }).click();
+  // The sidebar Agents entry folded into the Inbox; the directory keeps its URL.
+  await page.goto('/agents');
   await expect(page).toHaveURL(/\/agents$/);
   await expect(page.getByRole('heading', { name: /^Agents$/ }).first()).toBeVisible();
   // Scope to the Agents surface — the session title also appears in the channel's

@@ -2064,6 +2064,14 @@ export function Chat({
     ? labelForCallChannel(calls.activeCall.call, state.channels, me.id)
     : '';
   const closeSidebar = useCallback(() => setIsSidebarOpen(false), []);
+  // === sidebar agent-work additions ===
+  const openSessionFromSidebar = useCallback(
+    (sessionId: string) => {
+      openSession(sessionId);
+      setIsSidebarOpen(false);
+    },
+    [openSession],
+  );
   const selectFromSidebar = useCallback(
     (channelId: string) => {
       goToChannel(channelId);
@@ -2109,6 +2117,9 @@ export function Chat({
         // === mentions-activity additions ===
         onOpenActivity={openActivityFromSidebar}
         activityCounts={activityCounts}
+        // === sidebar agent-work additions ===
+        sessions={state.sessions}
+        onOpenSession={openSessionFromSidebar}
         onOpenSettings={openSettingsFromSidebar}
         onLogout={onLogout}
         isOpen={isSidebarOpen}

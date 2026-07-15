@@ -161,8 +161,7 @@ for (const viewport of VIEWPORTS) {
       await page.getByRole('button', { name: 'Open navigation' }).click();
     }
     await expect(page.getByRole('button', { name: 'Files', exact: true })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Agents', exact: true })).toBeVisible();
-    await expect(page.getByRole('button', { name: /Attention$/ })).toBeVisible();
+    await expect(page.getByRole('button', { name: /Inbox$/ })).toBeVisible();
     await expectNoDocumentOverflow(page, `${viewport.name} authenticated shell`);
     if (viewport.name === 'phone') await attachScreenshot(page, testInfo, 'empty-phone-shell');
   });
@@ -172,7 +171,7 @@ test('empty destinations, keyboard focus, and deterministic contrast have eviden
   await page.setViewportSize(VIEWPORTS[3]);
   await login(page, unique('audit-empty'), 'Audit Empty');
 
-  const attention = page.getByRole('button', { name: /Attention$/ });
+  const attention = page.getByRole('button', { name: /Inbox$/ });
   await expectVisibleFocus(attention);
   await attention.press('Enter');
   // The Inbox mirrors workspace-global live sessions, so a brand-new user is
@@ -183,7 +182,10 @@ test('empty destinations, keyboard focus, and deterministic contrast have eviden
   await expectComputedContrast(page.getByText('No reviewed sessions'), 4.5);
   await attachScreenshot(page, testInfo, 'empty-attention');
 
-  await page.getByRole('navigation').getByRole('button', { name: 'Agents', exact: true }).click();
+  // The Agents entry folded into the Inbox; the directory is reached from the
+  // default tab's "All sessions →" link.
+  await page.getByRole('tab', { name: /^Inbox/ }).click();
+  await page.getByRole('button', { name: 'All sessions' }).click();
   await expect(page.getByPlaceholder('Search agents')).toBeVisible();
   await attachScreenshot(page, testInfo, 'empty-agents');
 
