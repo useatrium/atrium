@@ -907,6 +907,9 @@ export function ChatProvider({ session, children }: { session: Session; children
     await Promise.all(
       loaded.map(async ([channelId]) => {
         const latest = await api.messages(channelId, { limit: PAGE_SIZE });
+        if (typeof latest.readCursor === 'number' && latest.readCursor > 0) {
+          dispatch({ type: 'server-read-cursor', channelId, lastReadEventId: latest.readCursor });
+        }
         dispatch({
           type: 'history-reset',
           channelId,
@@ -1161,10 +1164,13 @@ export function ChatProvider({ session, children }: { session: Session; children
       if (stateRef.current.timelines[channelId]?.loaded) return;
       api
         .messages(channelId, { limit: PAGE_SIZE })
-        .then(({ events, hasMore }) => {
+        .then(({ events, hasMore, readCursor }) => {
           // The fetch can resolve after we were kicked from a private channel;
           // dropping it avoids a ghost timeline that catch-up keeps 404-ing on.
           if (!stateRef.current.channels.some((c) => c.id === channelId)) return;
+          if (typeof readCursor === 'number' && readCursor > 0) {
+            dispatch({ type: 'server-read-cursor', channelId, lastReadEventId: readCursor });
+          }
           dispatch({ type: 'history-loaded', channelId, events, hasMore });
           void eventCache.saveTimeline(channelId, events, hasMore).catch((err: unknown) => {
             console.warn('failed to cache history', err);
@@ -1200,8 +1206,11 @@ export function ChatProvider({ session, children }: { session: Session; children
       const expectedTimelineEpoch = stateRef.current.timelineEpochs[channelId] ?? 0;
       return api
         .messages(channelId, { beforeId: oldest.id, limit: PAGE_SIZE })
-        .then(({ events, hasMore }) => {
+        .then(({ events, hasMore, readCursor }) => {
           if ((stateRef.current.timelineEpochs[channelId] ?? 0) !== expectedTimelineEpoch) return;
+          if (typeof readCursor === 'number' && readCursor > 0) {
+            dispatch({ type: 'server-read-cursor', channelId, lastReadEventId: readCursor });
+          }
           dispatch({ type: 'history-loaded', channelId, events, hasMore, expectedTimelineEpoch });
           void eventCache.saveTimeline(channelId, events, hasMore).catch((err: unknown) => {
             console.warn('failed to cache earlier history', err);
@@ -1817,11 +1826,14 @@ export function ChatProvider({ session, children }: { session: Session; children
         const oldest = t.main.find((m) => m.status === 'confirmed');
         if (!oldest?.id) break;
         const expectedTimelineEpoch = stateRef.current.timelineEpochs[channelId] ?? 0;
-        const { events, hasMore } = await api.messages(channelId, {
+        const { events, hasMore, readCursor } = await api.messages(channelId, {
           beforeId: oldest.id,
           limit: PAGE_SIZE,
         });
         if ((stateRef.current.timelineEpochs[channelId] ?? 0) !== expectedTimelineEpoch) continue;
+        if (typeof readCursor === 'number' && readCursor > 0) {
+          dispatch({ type: 'server-read-cursor', channelId, lastReadEventId: readCursor });
+        }
         dispatch({ type: 'history-loaded', channelId, events, hasMore, expectedTimelineEpoch });
         void eventCache.saveTimeline(channelId, events, hasMore).catch((err: unknown) => {
           console.warn('failed to cache jump history', err);

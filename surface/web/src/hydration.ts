@@ -5,6 +5,7 @@ interface HistoryPage {
   events: WireEvent[];
   hasMore: boolean;
   nextCursor?: number;
+  readCursor?: number;
 }
 
 export function cachedTimelineLastEventId(timeline: CachedTimeline): number {
@@ -81,6 +82,9 @@ export async function hydrateCachedTimelines({
       try {
         const latest = await fetchLatest(channelId);
         if (isDisposed?.()) return;
+        if (typeof latest.readCursor === 'number' && latest.readCursor > 0) {
+          dispatch({ type: 'server-read-cursor', channelId, lastReadEventId: latest.readCursor });
+        }
         dispatch({
           type: 'history-reset',
           channelId,
@@ -115,6 +119,9 @@ export async function hydrateCachedTimelines({
     try {
       const delta = await fetchDelta(channelId, cachedLastEventId);
       if (isDisposed?.()) return;
+      if (typeof delta.readCursor === 'number' && delta.readCursor > 0) {
+        dispatch({ type: 'server-read-cursor', channelId, lastReadEventId: delta.readCursor });
+      }
       // An empty delta must be a true no-op: dispatching it would allocate a
       // replacement timeline even though no server evidence changed.
       if (delta.events.length === 0) continue;
