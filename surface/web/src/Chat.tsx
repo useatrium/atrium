@@ -573,6 +573,7 @@ export function Chat({
     markRead,
     noteReadCursor,
     flush: flushReadMarks,
+    flushBeacon: flushReadMarksBeacon,
   } = useReadMarks({
     dispatch: dispatchWithReadCache,
     enqueueOp,
@@ -604,6 +605,7 @@ export function Chat({
   useEffect(() => {
     const flushCache = () => {
       flushReadMarks();
+      flushReadMarksBeacon();
       void readCursorCacheWriteRef.current
         .then(() => eventCache.flushAll())
         .catch((err: unknown) => {
@@ -620,7 +622,7 @@ export function Chat({
       document.removeEventListener('visibilitychange', flushHiddenCache);
       window.removeEventListener('pagehide', flushCache);
     };
-  }, [flushReadMarks]);
+  }, [flushReadMarks, flushReadMarksBeacon]);
 
   const { queueUpload } = useUploadQueue({ enqueueOp, storage: eventCache });
 
@@ -805,27 +807,32 @@ export function Chat({
     const channel = state.channels.find((c) => c.id === cid);
     const timeline = state.timelines[cid];
     const lastRead = channel?.lastReadEventId ?? 0;
-    // Prefer the loaded timeline's newest id (server truth from the history
-    // fetch) over the channel's cached counter so a cold reload still sees
-    // messages that arrived while away.
-    const latest = Math.max(channel?.latestEventId ?? 0, timeline?.lastEventId ?? 0);
+    const counter = channel?.latestEventId ?? 0;
+    const loadedNewest = timeline?.lastEventId ?? 0;
+    const latest = Math.max(counter, loadedNewest);
+    // A cold-counter repair (see the messages() effect that refetches when the server
+    // counter is ahead of the loaded tail) is in flight while counter > loadedNewest.
+    // Until it lands we cannot tell a real gap from a stale counter, so we must NOT
+    // freeze the divider yet — freezing now would lock in a wrong decision.
+    const repairPending = timeline?.loaded === true && counter > loadedNewest;
 
     if (dividerFrozenForRef.current === cid) {
-      // Frozen so it doesn't move as YOU read here. But if another device/tab
-      // (a remote read) has caught this channel up, the divider is now a phantom
-      // above already-read messages — dissolve it. Marker only; never scroll.
+      // Frozen so the divider doesn't move as YOU read here. If another device/tab
+      // caught this channel up, dissolve the now-phantom divider. Marker only; never scroll.
       if ((state.remoteReadCursors[cid] ?? 0) >= latest && latest > 0) {
         setUnreadDividerAfterId((prev) => (prev == null ? prev : null));
       }
       return;
     }
 
-    setUnreadDividerAfterId(lastRead > 0 && latest > lastRead ? lastRead : null);
+    // Divider ONLY when a genuinely LOADED event sits beyond the read cursor. A server
+    // counter that's merely ahead (nothing loaded past the cursor) is a phantom → no
+    // divider → land at bottom. The repair fetch re-runs this effect with the real tail.
+    setUnreadDividerAfterId(lastRead > 0 && loadedNewest > lastRead ? lastRead : null);
 
-    // Freeze once the timeline is loaded (from cache or the history fetch —
-    // both independent of the WebSocket). Do NOT gate on the WS sync: on a slow
-    // connection that would leave the transcript stuck at the top, never landed.
-    if (timeline?.loaded === true) {
+    // Freeze only once the loaded tail is caught up to the counter (no repair pending);
+    // otherwise wait so a real gap still shows the divider once the tail is fetched.
+    if (timeline?.loaded === true && !repairPending) {
       dividerFrozenForRef.current = cid;
       setDividerReadyChannelId(cid);
     }
@@ -1101,7 +1108,7 @@ export function Chat({
     const current = stateRef.current;
     const channel = current.channels.find((c) => c.id === current.activeChannelId);
     const currentTimeline = channel ? current.timelines[channel.id] : null;
-    if (channel && currentTimeline) markRead(channel.id, currentTimeline.lastEventId);
+    if (channel && currentTimeline) markRead(channel.id, currentTimeline.lastEventId, { immediate: true });
   }, [markRead]);
 
   useEffect(() => {
