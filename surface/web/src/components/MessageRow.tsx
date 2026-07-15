@@ -752,26 +752,32 @@ export const MessageRow = memo(function MessageRow({
           </button>
         )}
         {slotAnswer && session && (
-          <div className="mt-1 flex flex-wrap items-center gap-x-1 text-xs text-fg-muted">
-            <span className="text-success">✓</span>
-            <span>worked {formatDurationUnits(Math.max(0, sessionElapsedMs(session, Date.now())))}</span>
-            <span>·</span>
-            <button type="button" onClick={() => onOpenSession?.(session.id)} className="hover:underline">
-              view session
-            </button>
+          <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-fg-muted">
+            <span className="whitespace-nowrap">
+              <span className="text-success">✓</span> worked{' '}
+              {formatDurationUnits(Math.max(0, sessionElapsedMs(session, Date.now())))}
+            </span>
+            <span className="inline-flex items-center gap-x-1 whitespace-nowrap">
+              <span>·</span>
+              <button type="button" onClick={() => onOpenSession?.(session.id)} className="hover:underline">
+                view session
+              </button>
+            </span>
             {attachments.length > 0 && (
-              <>
+              <span className="inline-flex items-center gap-x-1 whitespace-nowrap">
                 <span>·</span>
                 <button type="button" onClick={() => onOpenSession?.(session.id)} className="hover:underline">
                   {attachments.length} {attachments.length === 1 ? 'file' : 'files'}
                 </button>
-              </>
+              </span>
             )}
             <SessionWorkProductsLink sessionId={session.id} onOpenSession={onOpenSession} />
-            <span>·</span>
-            <TimestampDisclosure iso={m.createdAt} label={formatTime(m.createdAt)}>
-              {formatTime(m.createdAt)}
-            </TimestampDisclosure>
+            <span className="inline-flex items-center gap-x-1 whitespace-nowrap">
+              <span>·</span>
+              <TimestampDisclosure iso={m.createdAt} label={formatTime(m.createdAt)}>
+                {formatTime(m.createdAt)}
+              </TimestampDisclosure>
+            </span>
           </div>
         )}
         {!deleted && !isSessionRow && !isSessionEventRow && !isAgentReply && (
@@ -1095,12 +1101,12 @@ function SessionWorkProductsLink({
   }, [sessionId]);
   if (presentationCount === 0) return null;
   return (
-    <>
+    <span className="inline-flex items-center gap-x-1 whitespace-nowrap">
       <span>·</span>
       <button type="button" onClick={() => onOpenSession?.(sessionId)} className="hover:underline">
         {presentationCount} {presentationCount === 1 ? 'app' : 'apps'}
       </button>
-    </>
+    </span>
   );
 }
 
@@ -1189,7 +1195,7 @@ function ChannelAnnotationCluster({
         <button
           type="button"
           onClick={toggleEarlier}
-          className="block text-xs font-medium text-fg-muted hover:text-fg-secondary hover:underline"
+          className="block whitespace-nowrap text-xs font-medium text-fg-muted hover:text-fg-secondary hover:underline [@media(pointer:coarse)]:inline-flex [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:items-center"
         >
           {expanded ? '▼' : '▶'} {earlierCount} earlier {earlierCount === 1 ? 'reply' : 'replies'}
         </button>
@@ -1302,21 +1308,29 @@ function AgentSessionSlot({
 
   if (session.status === 'failed') {
     return (
-      <div data-testid="session-slot-failed" className="flex items-center gap-2 text-xs text-danger-text">
+      <div data-testid="session-slot-failed" className="flex min-w-0 items-start gap-2 text-xs text-danger-text">
         <AgentMark size={20} tone="danger" />
-        <span className="min-w-0 truncate">
-          ✕ Failed after {formatDurationUnits(Math.max(0, sessionElapsedMs(session, now)))}
-          {session.resultText?.trim() ? ` — ${session.resultText.trim()}` : ''}
-        </span>
-        {isDriver && (
-          <>
-            <RetryTurnAction sessionId={session.id} />
-            <AskWhyAction sessionId={session.id} />
-          </>
-        )}
-        <button type="button" onClick={() => onOpenSession?.(session.id)} className="text-fg-muted hover:underline">
-          view session
-        </button>
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-0.5">
+          <span className="min-w-0 flex-[1_1_16rem] break-words">
+            ✕ Failed after {formatDurationUnits(Math.max(0, sessionElapsedMs(session, now)))}
+            {session.resultText?.trim() ? ` — ${session.resultText.trim()}` : ''}
+          </span>
+          <span className="flex flex-wrap items-center gap-x-2 gap-y-0">
+            {isDriver && (
+              <>
+                <RetryTurnAction sessionId={session.id} nowrap />
+                <AskWhyAction sessionId={session.id} nowrap />
+              </>
+            )}
+            <button
+              type="button"
+              onClick={() => onOpenSession?.(session.id)}
+              className="whitespace-nowrap text-fg-muted hover:underline [@media(pointer:coarse)]:inline-flex [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:items-center"
+            >
+              view session
+            </button>
+          </span>
+        </div>
       </div>
     );
   }
@@ -1343,16 +1357,22 @@ function AgentSessionSlot({
 
   if (terminal) {
     return (
-      <div data-testid="session-slot-done" className="flex items-center gap-2 text-xs text-fg-muted">
+      <div data-testid="session-slot-done" className="flex min-w-0 items-start gap-2 text-xs text-fg-muted">
         <AgentMark size={20} />
-        <span className="text-success">✓</span>
-        <span>done</span>
-        <span>·</span>
-        <span>{formatDurationUnits(Math.max(0, sessionElapsedMs(session, now)))}</span>
-        <span>·</span>
-        <button type="button" onClick={() => onOpenSession?.(session.id)} className="hover:underline">
-          view session
-        </button>
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-0.5">
+          <span className="inline-flex items-center gap-x-1 whitespace-nowrap">
+            <span className="text-success">✓</span>
+            <span>done</span>
+            <span>·</span>
+            <span>{formatDurationUnits(Math.max(0, sessionElapsedMs(session, now)))}</span>
+          </span>
+          <span className="inline-flex items-center gap-x-1 whitespace-nowrap">
+            <span>·</span>
+            <button type="button" onClick={() => onOpenSession?.(session.id)} className="hover:underline">
+              view session
+            </button>
+          </span>
+        </div>
       </div>
     );
   }
@@ -1361,19 +1381,23 @@ function AgentSessionSlot({
     <div data-testid="session-slot-working" className="flex min-w-0 items-center gap-2 text-xs text-fg-secondary">
       <AgentMark size={20} />
       <span className="size-1.5 shrink-0 animate-pulse rounded-full bg-accent motion-reduce:animate-none" />
-      <span className="min-w-0 truncate">
+      <span className="min-w-0 flex-1 truncate">
         {session.latestActivity?.summary ?? [glance.label, glance.detail].filter(Boolean).join(' · ')}
       </span>
       {sessionGlanceClockLabel(glance, now) && (
         <span className="shrink-0 tabular-nums text-fg-muted">{sessionGlanceClockLabel(glance, now)}</span>
       )}
-      <button type="button" onClick={() => onOpenThread?.(rootId)} className="shrink-0 text-fg-muted hover:underline">
+      <button
+        type="button"
+        onClick={() => onOpenThread?.(rootId)}
+        className="shrink-0 whitespace-nowrap text-fg-muted hover:underline"
+      >
         steer
       </button>
       <button
         type="button"
         onClick={() => onOpenSession?.(session.id)}
-        className="shrink-0 text-fg-muted hover:underline"
+        className="shrink-0 whitespace-nowrap text-fg-muted hover:underline"
       >
         open session
       </button>

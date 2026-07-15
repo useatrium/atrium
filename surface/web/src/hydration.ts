@@ -1,7 +1,7 @@
 import type { AppAction, CachedTimeline, WireEvent } from '@atrium/surface-client';
 import { eventIdFromTarget } from '@atrium/surface-client/handle';
 
-interface LatestPage {
+interface HistoryPage {
   events: WireEvent[];
   hasMore: boolean;
 }
@@ -47,20 +47,28 @@ export async function hydrateCachedTimelines({
   syncCursor,
   dispatch,
   fetchLatest,
+  fetchDelta,
   isDisposed,
   onRepaired,
   onRepairFailed,
+  onDeltaLoaded,
+  onDeltaFailed,
 }: {
   timelines: Record<string, CachedTimeline>;
   syncCursor: number;
   dispatch: (action: AppAction) => void;
-  fetchLatest: (channelId: string) => Promise<LatestPage>;
+  fetchLatest: (channelId: string) => Promise<HistoryPage>;
+  fetchDelta: (channelId: string, afterId: number) => Promise<HistoryPage>;
   isDisposed?: () => boolean;
-  onRepaired?: (channelId: string, page: LatestPage) => void;
+  onRepaired?: (channelId: string, page: HistoryPage) => void;
   onRepairFailed?: (channelId: string, err: unknown) => void;
+  onDeltaLoaded?: (channelId: string, page: HistoryPage) => void;
+  onDeltaFailed?: (channelId: string, err: unknown) => void;
 }): Promise<void> {
   for (const [channelId, timeline] of Object.entries(timelines)) {
     if (isDisposed?.()) return;
+    const cachedLastEventId = cachedTimelineLastEventId(timeline);
+    let hydratedHasMore = timeline.hasMore;
     if (!cachedTimelineNeedsCursorRepair(timeline, syncCursor) && !cachedTimelineNeedsStructuralRepair(timeline)) {
       dispatch({
         type: 'history-loaded',
@@ -68,39 +76,61 @@ export async function hydrateCachedTimelines({
         events: timeline.events,
         hasMore: timeline.hasMore,
       });
-      continue;
+    } else {
+      try {
+        const latest = await fetchLatest(channelId);
+        if (isDisposed?.()) return;
+        dispatch({
+          type: 'history-reset',
+          channelId,
+          events: latest.events,
+          hasMore: latest.hasMore,
+        });
+        hydratedHasMore = latest.hasMore;
+        onRepaired?.(channelId, latest);
+      } catch (err) {
+        if (isDisposed?.()) return;
+        // The refetch failed — a cold or briefly-slow server, a network blip. Do
+        // NOT leave the channel with no history at all: this branch used to
+        // dispatch nothing and never retry, so a failed repair rendered a blank
+        // channel (and a deep-linked thread whose root was never found) until the
+        // user reloaded again. That is strictly worse than the stale cache we
+        // already hold, and it failed silently.
+        //
+        // Fall back to the cached events. They are stale or structurally imperfect
+        // — that is why repair was attempted — but they are the same events the
+        // no-repair-needed path above dispatches, and the live WS/sync stream
+        // reconciles from here. Degraded beats blank.
+        dispatch({
+          type: 'history-loaded',
+          channelId,
+          events: timeline.events,
+          hasMore: timeline.hasMore,
+        });
+        onRepairFailed?.(channelId, err);
+      }
     }
 
     try {
-      const latest = await fetchLatest(channelId);
+      const delta = await fetchDelta(channelId, cachedLastEventId);
       if (isDisposed?.()) return;
-      dispatch({
-        type: 'history-reset',
-        channelId,
-        events: latest.events,
-        hasMore: latest.hasMore,
-      });
-      onRepaired?.(channelId, latest);
-    } catch (err) {
-      if (isDisposed?.()) return;
-      // The refetch failed — a cold or briefly-slow server, a network blip. Do
-      // NOT leave the channel with no history at all: this branch used to
-      // dispatch nothing and never retry, so a failed repair rendered a blank
-      // channel (and a deep-linked thread whose root was never found) until the
-      // user reloaded again. That is strictly worse than the stale cache we
-      // already hold, and it failed silently.
-      //
-      // Fall back to the cached events. They are stale or structurally imperfect
-      // — that is why repair was attempted — but they are the same events the
-      // no-repair-needed path above dispatches, and the live WS/sync stream
-      // reconciles from here. Degraded beats blank.
+      // An empty delta must be a true no-op: dispatching it would allocate a
+      // replacement timeline even though no server evidence changed.
+      if (delta.events.length === 0) continue;
       dispatch({
         type: 'history-loaded',
         channelId,
-        events: timeline.events,
-        hasMore: timeline.hasMore,
+        events: delta.events,
+        // after_id's hasMore describes the forward delta, not older history.
+        hasMore: hydratedHasMore,
+        origin: 'channel-delta',
       });
-      onRepairFailed?.(channelId, err);
+      onDeltaLoaded?.(channelId, delta);
+    } catch (err) {
+      if (isDisposed?.()) return;
+      // Cached history is already visible. The initial workspace sync and live
+      // WebSocket can still reconcile this channel after a transient failure.
+      onDeltaFailed?.(channelId, err);
     }
   }
 }

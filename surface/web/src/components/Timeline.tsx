@@ -458,9 +458,20 @@ export function Timeline({
               </div>
             </div>
           )}
-          {items.map((item) => {
+          {items.map((item, index) => {
             const showUnreadDivider =
               item.kind === 'message' && firstUnreadId != null && item.message!.id === firstUnreadId;
+            // A row never author-groups across a cluster: when the previous row
+            // carries a slot/cluster (replies, anchored answers, or sessions),
+            // the grouped header suppression would strand this row's authorship
+            // below someone else's annotation block.
+            const previous = index > 0 ? items[index - 1] : undefined;
+            const previousMessage = previous?.kind === 'message' ? previous.message : undefined;
+            const previousHasCluster =
+              previousMessage?.id != null &&
+              (previousMessage.replyCount > 0 ||
+                answersByRoot.has(previousMessage.id) ||
+                sessionsByRoot.has(previousMessage.id));
             const rowMessage = item.message;
             const rowSessions =
               item.kind === 'message' && rowMessage?.id != null ? [...(sessionsByRoot.get(rowMessage.id) ?? [])] : [];
@@ -490,7 +501,7 @@ export function Timeline({
                 )}
                 <MessageRow
                   message={item.message!}
-                  grouped={item.grouped ?? false}
+                  grouped={(item.grouped ?? false) && !previousHasCluster}
                   slotSessions={rowSessions}
                   anchoredAnswers={item.message!.id != null ? (answersByRoot.get(item.message!.id) ?? []) : []}
                   session={

@@ -237,7 +237,10 @@ describe('MessageRow broadcast replies', () => {
     renderRow({ row: message({ replyCount: 2, lastReplyId: 51, lastReply: latest, reactions: [] }) });
 
     expect(screen.getByText('Newest preview reply')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: '▶ 1 earlier reply' }));
+    const earlierReplies = screen.getByRole('button', { name: '▶ 1 earlier reply' });
+    expect(earlierReplies.className).toContain('whitespace-nowrap');
+    expect(earlierReplies.className).toContain('[@media(pointer:coarse)]:min-h-11');
+    fireEvent.click(earlierReplies);
     expect(await screen.findByText('Earlier fetched reply')).toBeTruthy();
     expect(fetch).toHaveBeenCalledWith('/api/threads/42/messages', expect.anything());
   });
@@ -324,7 +327,11 @@ describe('MessageRow web presence', () => {
     });
 
     expect(screen.getByTestId('session-slot-working')).toBeTruthy();
-    expect(screen.getByText('running timeline tests')).toBeTruthy();
+    const summary = screen.getByText('running timeline tests');
+    expect(summary.className).toContain('flex-1');
+    expect(summary.className).toContain('truncate');
+    expect(screen.getByRole('button', { name: 'steer' }).className).toContain('whitespace-nowrap');
+    expect(screen.getByRole('button', { name: 'open session' }).className).toContain('whitespace-nowrap');
     expect(screen.queryByTestId('session-card')).toBeNull();
     expect(screen.queryByTestId('session-slot-done')).toBeNull();
     expect(screen.queryByTestId('session-slot-failed')).toBeNull();
@@ -356,6 +363,13 @@ describe('MessageRow web presence', () => {
 
     expect(screen.getByTestId('session-slot-answer')).toBeTruthy();
     expect(screen.getAllByText('A'.repeat(700))).toHaveLength(1);
+    const fade = screen.getByTestId('session-slot-answer').querySelector('[aria-hidden="true"]');
+    expect(fade?.className).toContain('pointer-events-none');
+    expect(fade?.className).toContain('from-surface');
+    const viewSession = within(screen.getByTestId('session-slot-answer')).getByRole('button', {
+      name: 'view session',
+    });
+    expect(viewSession.parentElement?.className).toContain('whitespace-nowrap');
     expect(screen.getByRole('button', { name: 'Show all ↓' })).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Show all ↓' }));
     expect(screen.getByRole('button', { name: 'Show less ↑' })).toBeTruthy();
@@ -366,12 +380,23 @@ describe('MessageRow web presence', () => {
     renderRow({
       row: message({ sessionId: 's-1', sessionTask: 'Risky task', reactions: [] }),
       session: session({ status: 'failed', completedAt: '2026-07-05T12:00:30.000Z' }),
-      slotSessions: [session({ status: 'failed', completedAt: '2026-07-05T12:00:30.000Z' })],
+      slotSessions: [
+        session({
+          status: 'failed',
+          completedAt: '2026-07-05T12:00:30.000Z',
+          resultText: 'A detailed failure reason that needs room to wrap without crowding recovery actions.',
+        }),
+      ],
     });
 
-    expect(screen.getByTestId('session-slot-failed')).toBeTruthy();
-    expect(screen.getByTestId('card-retry-turn')).toBeTruthy();
-    expect(screen.getByTestId('card-ask-why')).toBeTruthy();
+    const failedSlot = screen.getByTestId('session-slot-failed');
+    expect(failedSlot.className).toContain('min-w-0');
+    expect(within(failedSlot).getByText(/A detailed failure reason/).className).toContain('break-words');
+    expect(screen.getByTestId('card-retry-turn').className).toContain('whitespace-nowrap');
+    expect(screen.getByTestId('card-ask-why').className).toContain('whitespace-nowrap');
+    const viewSession = within(failedSlot).getByRole('button', { name: 'view session' });
+    expect(viewSession.className).toContain('whitespace-nowrap');
+    expect(viewSession.className).toContain('[@media(pointer:coarse)]:min-h-11');
     expect(screen.queryByTestId('session-slot-working')).toBeNull();
     expect(screen.queryByTestId('session-slot-done')).toBeNull();
   });
@@ -411,8 +436,12 @@ describe('MessageRow web presence', () => {
       slotSessions: [completed],
     });
 
-    expect(screen.getByTestId('session-slot-done')).toBeTruthy();
+    const doneSlot = screen.getByTestId('session-slot-done');
+    expect(doneSlot.querySelector('.flex-wrap')).toBeTruthy();
     expect(screen.getByText('done')).toBeTruthy();
+    expect(within(doneSlot).getByRole('button', { name: 'view session' }).parentElement?.className).toContain(
+      'whitespace-nowrap',
+    );
     expect(screen.queryByTestId('session-slot-answer')).toBeNull();
   });
 

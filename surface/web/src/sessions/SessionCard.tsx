@@ -115,17 +115,21 @@ function SteerActionLink({
   label,
   sentLabel,
   testid,
+  nowrap = false,
 }: {
   sessionId: string;
   prompt: string;
   label: string;
   sentLabel: string;
   testid: string;
+  nowrap?: boolean;
 }) {
   const [busy, setBusy] = useState(false);
   const [sent, setSent] = useState(false);
   const [error, setError] = useState(false);
-  if (sent) return <span className="text-2xs text-fg-muted">{sentLabel}</span>;
+  if (sent) {
+    return <span className={`text-2xs text-fg-muted ${nowrap ? 'whitespace-nowrap' : ''}`}>{sentLabel}</span>;
+  }
   return (
     <button
       type="button"
@@ -141,14 +145,16 @@ function SteerActionLink({
           .catch(() => setError(true))
           .finally(() => setBusy(false));
       }}
-      className={`inline-block text-2xs font-semibold text-danger-text hover:underline disabled:opacity-60 ${TOUCH_TARGET}`}
+      className={`inline-block text-2xs font-semibold text-danger-text hover:underline disabled:opacity-60 ${
+        nowrap ? 'whitespace-nowrap' : ''
+      } ${TOUCH_TARGET}`}
     >
       {error ? `${label} didn't send — try again` : label}
     </button>
   );
 }
 
-export function RetryTurnAction({ sessionId }: { sessionId: string }) {
+export function RetryTurnAction({ sessionId, nowrap = false }: { sessionId: string; nowrap?: boolean }) {
   return (
     <SteerActionLink
       sessionId={sessionId}
@@ -156,11 +162,12 @@ export function RetryTurnAction({ sessionId }: { sessionId: string }) {
       label="Retry turn"
       sentLabel="Retrying…"
       testid="card-retry-turn"
+      nowrap={nowrap}
     />
   );
 }
 
-export function AskWhyAction({ sessionId }: { sessionId: string }) {
+export function AskWhyAction({ sessionId, nowrap = false }: { sessionId: string; nowrap?: boolean }) {
   return (
     <SteerActionLink
       sessionId={sessionId}
@@ -168,6 +175,7 @@ export function AskWhyAction({ sessionId }: { sessionId: string }) {
       label="Ask why"
       sentLabel="Asked — check the thread"
       testid="card-ask-why"
+      nowrap={nowrap}
     />
   );
 }

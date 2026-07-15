@@ -51,10 +51,10 @@ async function loginPage(handle, displayName, viewport = VIEWPORT) {
   if (!res.ok()) throw new Error(`login ${handle}: ${res.status()}`);
   await ctx.addInitScript(() => {
     // Wide enough that no channel name truncates in the shots, and a session
-    // pane wide enough that its header title doesn't collapse.
+    // or thread pane wide enough that its spine stays compact.
     window.localStorage.setItem('atrium.sidebarWidth', '256');
     window.localStorage.setItem('atrium.sessionPaneWidth', '760');
-    window.localStorage.setItem('atrium.threadPaneWidth', '640');
+    window.localStorage.setItem('atrium.threadPaneWidth', '760');
   });
   const page = await ctx.newPage();
   return page;
@@ -79,6 +79,44 @@ async function shoot(page, name) {
   const path = join(OUT, `${name}.png`);
   await page.screenshot({ path });
   console.log(`shot: ${path}`);
+}
+
+async function waitForImage(image) {
+  await image.waitFor({ state: 'visible', timeout: 15_000 });
+  await image.evaluate((element) =>
+    element.complete && element.naturalWidth > 0
+      ? undefined
+      : new Promise((resolve, reject) => {
+          const timeout = window.setTimeout(() => reject(new Error('image did not load')), 10_000);
+          element.addEventListener(
+            'load',
+            () => {
+              window.clearTimeout(timeout);
+              resolve();
+            },
+            { once: true },
+          );
+          element.addEventListener(
+            'error',
+            () => {
+              window.clearTimeout(timeout);
+              reject(new Error('image failed to load'));
+            },
+            { once: true },
+          );
+        }),
+  );
+}
+
+async function openWorkFold(page) {
+  const expanded = page.getByTestId('work-fold-expanded').first();
+  if (!(await expanded.isVisible().catch(() => false))) {
+    const collapsed = page.getByTestId('work-fold-collapsed').first();
+    await collapsed.waitFor({ state: 'visible', timeout: 15_000 });
+    await collapsed.click();
+  }
+  await expanded.waitFor({ state: 'visible', timeout: 15_000 });
+  await expanded.scrollIntoViewIfNeeded();
 }
 
 // ---------------------------------------------------------------------------
@@ -124,13 +162,16 @@ if (hero) {
     const target = t0 + 42_000;
     const waitLeft = target - Date.now();
     if (waitLeft > 0) await maya.waitForTimeout(waitLeft);
-    // Focus view folds finished tool work — expand it so thinking/commands/diffs
-    // are visible in the shot.
-    const fold = maya.getByText(/work steps?/, { exact: false }).first();
-    if (await fold.isVisible().catch(() => false)) {
-      await fold.click();
-      await maya.waitForTimeout(600);
-    }
+    // Frame both altitudes of the new grammar: the trigger message's LIVE slot
+    // in the channel and the split SessionPane's output strips + open work fold.
+    const workingSlot = maya.getByTestId('session-slot-working').last();
+    const annotation = maya.getByTestId('channel-annotation-cluster').filter({ has: workingSlot });
+    await annotation.waitFor({ state: 'visible', timeout: 15_000 });
+    await workingSlot.scrollIntoViewIfNeeded();
+    await maya.getByTestId('spine-work-strips').waitFor({ state: 'visible', timeout: 15_000 });
+    await maya.getByTestId('changes-strip').waitFor({ state: 'visible', timeout: 15_000 });
+    await openWorkFold(maya);
+    await maya.waitForTimeout(600);
     await shoot(maya, 'hero-chat-session');
     // A second take ~25s later (more of the summary streamed in).
     await maya.waitForTimeout(25_000);
@@ -139,8 +180,8 @@ if (hero) {
 }
 
 // ---------------------------------------------------------------------------
-// 1b. THREAD — turn 1 completes, Jonas replies in the card's thread (a steer),
-//     turn 2 streams; shoot the thread mid-turn-2.
+// 1b. THREAD — turn 1 completes, Jonas suggests under the trigger message,
+//     Maya steers, and turn 2 streams; shoot the full spine mid-turn-2.
 // ---------------------------------------------------------------------------
 if (ONLY.includes('thread') && hero) {
   // Turn 1 runs ~150s of scripted stream; wait for the session to settle.
@@ -152,14 +193,12 @@ if (ONLY.includes('thread') && hero) {
     await maya.waitForTimeout(2000);
   }
 
-  // The session card (the session.spawned event) is the thread root.
-  const msgs = await (await mayaCtx.request.get(`${WEB}/api/channels/${hero.channelId}/messages?limit=50`)).json();
-  const card = (msgs.events ?? []).find((e) => e.type === 'session.spawned' && e.payload?.sessionId === hero.sessionId);
-  if (!card) throw new Error('session card not found in channel messages');
+  const triggerEventId = hero.threadRootEventId;
+  if (!Number.isSafeInteger(triggerEventId)) throw new Error('hero trigger message has no thread root');
 
   // The seat model in action: Jonas isn't the driver, so his thread reply is a
   // suggestion; Maya (driver) steers to accept, which revives turn 2. Both
-  // land in the card's thread — exactly what the thread composer sends.
+  // land under the trigger message — exactly what the thread composer sends.
   const jonasCtx = heroPresence[0].context();
   const suggestion = await jonasCtx.request.post(`${WEB}/api/sessions/${hero.sessionId}/suggestions`, {
     data: {
@@ -180,8 +219,31 @@ if (ONLY.includes('thread') && hero) {
 
   // Turn 2: intro ~6s, then a ~26s pytest window — shoot inside it.
   await maya.waitForTimeout(Math.max(0, tReply + 15_000 - Date.now()));
-  await maya.goto(`${WEB}/c/${hero.channelId}/t/${card.id}`);
+  await maya.goto(`${WEB}/c/${hero.channelId}`);
+  await settle(maya, 800);
+  const threadSlot = maya.getByTestId('session-slot-working').last();
+  const triggerCluster = maya.getByTestId('channel-annotation-cluster').filter({ has: threadSlot });
+  await triggerCluster.waitFor({ state: 'visible', timeout: 15_000 });
+  await triggerCluster.getByRole('button', { name: 'Open thread →' }).click();
+  await maya.waitForURL(`**/c/${hero.channelId}/t/${triggerEventId}`);
   await settle(maya, 1500);
+  const threadPane = maya.getByRole('complementary').filter({ has: maya.getByLabel('Close thread') });
+  await threadPane.waitFor({ state: 'visible', timeout: 15_000 });
+  const strips = threadPane.getByTestId('spine-work-strips');
+  await strips.waitFor({ state: 'visible', timeout: 15_000 });
+  await strips.getByRole('button', { name: /What changed/ }).waitFor({ state: 'visible' });
+  await threadPane.getByTestId('work-fold-collapsed').first().waitFor({ state: 'visible', timeout: 15_000 });
+  const liveFold = threadPane.getByTestId('work-fold-expanded').last();
+  await liveFold.waitFor({ state: 'visible', timeout: 15_000 });
+  await threadPane.getByText(/batches stall in pending_ocr whenever/).waitFor({ state: 'visible' });
+  await threadPane.getByText(/Fixed the retry ceiling: 30s → 300s/).waitFor({ state: 'visible' });
+  await threadPane
+    .getByText("the DLQ sweeper's alert threshold still assumes the 30s ceiling", { exact: false })
+    .waitFor({ state: 'visible' });
+  await threadPane
+    .getByText("good catch — bring the sweeper's alert threshold in line with the new ceiling too", { exact: true })
+    .waitFor({ state: 'visible' });
+  await liveFold.scrollIntoViewIfNeeded();
   await shoot(maya, 'thread-turns');
 }
 
@@ -193,19 +255,39 @@ for (const p of heroPresence) await p.context().close();
 if (ONLY.includes('gallery')) {
   await maya.goto(`${WEB}/files`);
   await settle(maya, 1800);
+  const gallery = maya.getByTestId('files-gallery');
+  await gallery.waitFor({ state: 'visible', timeout: 15_000 });
+  const tile = gallery.getByRole('button', { name: /f1-by-rotation\.png/ }).first();
+  // Gallery thumbnails are decorative (alt="") and SELF-HEAL asynchronously
+  // after a fresh seed — reload until the tile's img has actually painted.
+  for (let attempt = 0; ; attempt++) {
+    const img = tile.locator('img').first();
+    const painted = await img.evaluate((element) => element.complete && element.naturalWidth > 0).catch(() => false);
+    if (painted) break;
+    if (attempt >= 20) throw new Error('gallery thumbnail never materialized');
+    await maya.waitForTimeout(3000);
+    await maya.reload();
+    await gallery.waitFor({ state: 'visible', timeout: 15_000 });
+  }
   await shoot(maya, 'files-gallery');
-  const tile = maya.getByText('f1-by-rotation.png', { exact: true }).last();
   await tile.click();
   await settle(maya, 1500);
+  const lightbox = maya.getByRole('dialog');
+  await lightbox.waitFor({ state: 'visible', timeout: 15_000 });
+  await waitForImage(lightbox.locator('img').first());
   await shoot(maya, 'files-lightbox');
 }
 
 // ---------------------------------------------------------------------------
 // 3. APP — eval session pane with the published app presentation card
 // ---------------------------------------------------------------------------
-if (ONLY.includes('app') && evalSession) {
+if (ONLY.includes('app')) {
+  if (!evalSession) throw new Error('eval presentation session not found');
   await maya.goto(`${WEB}/c/${chan.research}/s/${evalSession.id}`);
   await settle(maya, 2500);
+  const presentation = maya.getByTestId('app-presentation-card');
+  await presentation.waitFor({ state: 'visible', timeout: 15_000 });
+  await presentation.locator('iframe').waitFor({ state: 'visible', timeout: 15_000 });
   // Give the sandboxed iframe a beat to render.
   await maya.waitForTimeout(2500);
   await shoot(maya, 'app-presentation');
@@ -217,6 +299,14 @@ if (ONLY.includes('app') && evalSession) {
 if (ONLY.includes('attention')) {
   await maya.goto(`${WEB}/activity`);
   await settle(maya, 1800);
+  await maya
+    .getByRole('heading', { name: 'Attention', exact: true })
+    .first()
+    .waitFor({ state: 'visible', timeout: 15_000 });
+  await maya.getByRole('heading', { name: /Needs attention/ }).waitFor({ state: 'visible', timeout: 15_000 });
+  await maya.getByTestId('question-pointer').waitFor({ state: 'visible', timeout: 15_000 });
+  await maya.getByText('Migrate thumbnails to atlas-derivatives failed', { exact: true }).waitFor({ state: 'visible' });
+  await maya.getByText('Jonas Weber called you', { exact: true }).waitFor({ state: 'visible' });
   await shoot(maya, 'attention-inbox');
 }
 

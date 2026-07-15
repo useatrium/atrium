@@ -9,7 +9,7 @@ and everything an agent does (its live transcript, the files it changes, the
 results it produces, its replies in the conversation) shows up in one shared
 place the whole team can see.
 
-![A channel discussing an incident with a live agent session running in the split pane — thinking steps, file edits, tests, and a running cost/token meter](docs/images/hero-chat-session.png)
+![A channel with a live agent working slot beside the split session pane, showing work strips and an expanded fold of reasoning, commands, edits, and tests](docs/images/hero-chat-session.png)
 
 It has two halves:
 
@@ -65,7 +65,7 @@ Four things the product is built around:
 
 | | |
 |---|---|
-| ![A session card's thread: the agent's first-turn result, a teammate's suggestion, and the driver's steer reopening the session for a second turn](docs/images/thread-turns.png) | ![The Attention inbox: an agent waiting on a human decision, a failed run, mentions, DMs, and a missed call in one feed](docs/images/attention-inbox.png) |
+| ![An agent thread spine: the ask, a folded first turn, its answer, a teammate's suggestion, the driver's steer, and the second turn working live](docs/images/thread-turns.png) | ![The Attention inbox: an agent waiting on a human decision, a failed run, mentions, DMs, and a missed call in one feed](docs/images/attention-inbox.png) |
 | **Sessions are conversations.** Each turn's result lands as a reply in the card's thread. A teammate suggests a follow-up, the driver steers, and the agent reopens for another turn — live in the channel. | **One inbox for people *and* agents.** Mentions and DMs sit alongside an agent that needs a decision and a run that failed — everything that needs you, in one place. |
 
 ## Who it's for
