@@ -90,6 +90,7 @@ export const NETWORK_UNREACHABLE_CODE = 'network_unreachable';
 
 export function isNetworkFailure(err: unknown): boolean {
   if (err instanceof ApiError) return err.status === 0 && err.code === NETWORK_UNREACHABLE_CODE;
+  if (err instanceof Error && err.name === 'AbortError') return true;
   if (err instanceof TypeError) return true;
   const message = err instanceof Error ? err.message : String(err);
   return /Network request failed|Failed to fetch|fetch failed|NetworkError|Load failed/i.test(message);

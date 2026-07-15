@@ -16,6 +16,7 @@ import {
   type SessionSuggestPayload,
   type UploadPayload,
   type WireEvent,
+  NETWORK_UNREACHABLE_CODE,
 } from '../src/index';
 
 const api = {} as Api;
@@ -397,6 +398,102 @@ describe('durable op queue coalescing', () => {
 });
 
 describe('durable op queue flushing', () => {
+  it('loudly rejects an executor bug and its dependents instead of retrying', async () => {
+    const storage = new MemoryOpStorage([upload('upload-1'), msgWithUpload('msg-1')]);
+    const rejected: string[] = [];
+    const timers: number[] = [];
+    const error = new TypeError('executor bug');
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const registry = createDefaultOpRegistry();
+    registry.upload = {
+      ...registry.upload,
+      execute: async () => {
+        throw error;
+      },
+    };
+    const queue = new DurableOpQueue({
+      storage,
+      api,
+      dispatch: () => {},
+      registry,
+      onRejected: (op) => rejected.push(op.opId),
+      setTimer: (_callback, delay) => timers.push(delay),
+    });
+
+    try {
+      await queue.flush();
+
+      expect(consoleError).toHaveBeenCalledWith('queued op failed with unexpected error', {
+        opType: 'upload',
+        opId: 'upload-1',
+        error,
+      });
+      expect(rejected).toEqual(['upload-1', 'msg-1']);
+      expect(timers).toEqual([]);
+      expect(await storage.listOps()).toEqual([]);
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
+  it('retries typed network failures indefinitely without rejecting the op', async () => {
+    const storage = new MemoryOpStorage([msg('op-net', 'a')]);
+    const rejected: string[] = [];
+    let attempts = 0;
+    const queue = new DurableOpQueue({
+      storage,
+      api,
+      dispatch: () => {},
+      registry: registryFor(async () => {
+        attempts += 1;
+        throw new ApiError(0, NETWORK_UNREACHABLE_CODE, 'Could not reach the server');
+      }),
+      onRejected: (op) => rejected.push(op.opId),
+      setTimer: () => undefined,
+    });
+
+    await queue.flush();
+    for (let expectedRetryCount = 2; expectedRetryCount <= 8; expectedRetryCount += 1) {
+      queue.reconnect();
+      await vi.waitFor(() => expect(attempts).toBe(expectedRetryCount));
+      await vi.waitFor(async () => {
+        expect(await storage.listOps()).toMatchObject([
+          { opId: 'op-net', status: 'pending', retryCount: expectedRetryCount },
+        ]);
+      });
+    }
+
+    expect(rejected).toEqual([]);
+  });
+
+  it('wraps a direct upload fetch abort as an indefinitely retryable network failure', async () => {
+    const storage = new MemoryOpStorage([upload('upload-1')]);
+    const rejected: string[] = [];
+    const timers: number[] = [];
+    const uploadApi = {
+      createUpload: vi.fn().mockResolvedValue({ fileId: 'file-1', uploadUrl: 'https://uploads.example/put' }),
+    } as unknown as Api;
+    const queue = new DurableOpQueue({
+      storage,
+      api: uploadApi,
+      dispatch: () => {},
+      uploadFetch: vi
+        .fn()
+        .mockRejectedValue(Object.assign(new Error('The operation was aborted'), { name: 'AbortError' })),
+      readUploadBody: vi.fn().mockResolvedValue(new Blob(['body'])),
+      onRejected: (op) => rejected.push(op.opId),
+      setTimer: (_callback, delay) => timers.push(delay),
+    });
+
+    await queue.flush();
+
+    expect(rejected).toEqual([]);
+    expect([...new Set(timers)]).toEqual([500]);
+    expect(await storage.listOps()).toMatchObject([
+      { opId: 'upload-1', status: 'pending', retryCount: 1, payload: { fileId: 'file-1' } },
+    ]);
+  });
+
   it('backs off when fetch rejects before receiving an HTTP response', async () => {
     let now = 1_000;
     const dateNow = vi.spyOn(Date, 'now').mockImplementation(() => now);
@@ -459,7 +556,7 @@ describe('durable op queue flushing', () => {
       dispatch: () => {},
       registry: registryFor(async () => {
         attempts += 1;
-        throw new TypeError('Failed to fetch');
+        throw new ApiError(0, NETWORK_UNREACHABLE_CODE, 'Could not reach the server');
       }),
       setTimer: (_callback, delay) => timers.push(delay),
     });
@@ -486,7 +583,7 @@ describe('durable op queue flushing', () => {
       dispatch: () => {},
       registry: registryFor(async () => {
         attempts += 1;
-        throw new TypeError('Failed to fetch');
+        throw new ApiError(0, NETWORK_UNREACHABLE_CODE, 'Could not reach the server');
       }),
       setTimer: (_callback, delay) => timers.push(delay),
     });
@@ -568,7 +665,9 @@ describe('durable op queue flushing', () => {
       api,
       dispatch: () => {},
       registry: registryFor(async (payload) => {
-        if (payload.channelId === 'a') throw new TypeError('lost response');
+        if (payload.channelId === 'a') {
+          throw new ApiError(0, NETWORK_UNREACHABLE_CODE, 'Could not reach the server');
+        }
         return { event: eventFor(payload) };
       }),
       setTimer: () => undefined,
@@ -592,7 +691,7 @@ describe('durable op queue flushing', () => {
         registry: registryFor(async (_payload, op) => {
           attempts[op.opId] = (attempts[op.opId] ?? 0) + 1;
           if (op.opId === 'op-net' && attempts[op.opId] === 1) {
-            throw new TypeError('lost response');
+            throw new ApiError(0, NETWORK_UNREACHABLE_CODE, 'Could not reach the server');
           }
           if (op.opId === 'op-4xx') throw new ApiError(400, 'bad_request', 'bad');
           return { event: eventFor(_payload) };
@@ -793,7 +892,7 @@ describe('durable op queue flushing', () => {
         executed.push(`first:${op.opId}`);
         firstStarted.resolve(undefined);
         await releaseFirst.promise;
-        throw new TypeError('offline');
+        throw new ApiError(0, NETWORK_UNREACHABLE_CODE, 'Could not reach the server');
       }),
       lockProvider,
       setTimer: () => undefined,
