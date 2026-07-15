@@ -150,13 +150,18 @@ export function registerMessageRoutes(app: FastifyInstance, deps: MessageRouteDe
     if (beforeId !== undefined && afterId !== undefined) {
       return reply.code(400).send({ error: 'bad_query', message: 'use before_id or after_id, not both' });
     }
-    return listChannelMessages(pool, {
+    const page = await listChannelMessages(pool, {
       channelId: id,
       beforeId,
       afterId,
       limit,
       folded: q.wire === 'folded',
     });
+    const cursor = await pool.query<{ last_read_event_id: string }>(
+      'SELECT last_read_event_id FROM channel_read_cursors WHERE user_id = $1 AND channel_id = $2',
+      [user.id, id],
+    );
+    return { ...page, readCursor: Number(cursor.rows[0]?.last_read_event_id ?? 0) };
   });
 
   app.get('/api/threads/:rootEventId/messages', async (req, reply) => {

@@ -72,3 +72,47 @@ describe('read-cursor source tracking', () => {
     expect(self.channels[0]?.lastReadEventId).toBe(20);
   });
 });
+
+describe('server-read-cursor', () => {
+  it('advances channel and remote cursors monotonically without touching unread', () => {
+    const state = { ...seed(), unread: { c1: true as const } };
+    const advanced = appReducer(state, {
+      type: 'server-read-cursor',
+      channelId: 'c1',
+      lastReadEventId: 15,
+    });
+    expect(advanced.channels[0]?.lastReadEventId).toBe(15);
+    expect(advanced.remoteReadCursors.c1).toBe(15);
+    expect(advanced.unread.c1).toBe(true);
+
+    const regressed = appReducer(advanced, {
+      type: 'server-read-cursor',
+      channelId: 'c1',
+      lastReadEventId: 12,
+    });
+    expect(regressed.channels[0]?.lastReadEventId).toBe(15);
+    expect(regressed.remoteReadCursors.c1).toBe(15);
+    expect(regressed.unread.c1).toBe(true);
+  });
+
+  it('does not advance the remote cursor when the channel cursor already equals the value', () => {
+    const next = appReducer(seed(15), {
+      type: 'server-read-cursor',
+      channelId: 'c1',
+      lastReadEventId: 15,
+    });
+    expect(next.channels[0]?.lastReadEventId).toBe(15);
+    expect(next.remoteReadCursors.c1).toBeUndefined();
+  });
+
+  it('records the remote cursor when the channel is missing from state', () => {
+    const next = appReducer(initialAppState, {
+      type: 'server-read-cursor',
+      channelId: 'missing',
+      lastReadEventId: 7,
+    });
+    expect(next.channels).toEqual([]);
+    expect(next.remoteReadCursors.missing).toBe(7);
+    expect(next.unread).toEqual({});
+  });
+});

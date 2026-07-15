@@ -138,8 +138,12 @@ export function decodeMessageHistoryResponse(input: unknown): {
   events: WireEvent[];
   hasMore: boolean;
   nextCursor?: number;
+  readCursor?: number;
 } {
-  return decodeApiResponse(MessageHistoryResponseSchema, input);
+  const decoded = decodeApiResponse(MessageHistoryResponseSchema, input);
+  const readCursor = (input as { readCursor?: unknown }).readCursor;
+  if (readCursor === undefined) return decoded;
+  return { ...decoded, readCursor: decodeApiResponse(Schema.Number, readCursor) };
 }
 
 export function decodeThreadMessagesResponse(input: unknown): { events: WireEvent[] } {
@@ -534,7 +538,7 @@ export function createApi(opts: ApiOptions = {}) {
       if (opts.limit !== undefined) q.set('limit', String(opts.limit));
       if (opts.folded === true) q.set('wire', 'folded');
       const qs = q.toString();
-      return req<{ events: WireEvent[]; hasMore: boolean; nextCursor?: number }>(
+      return req<{ events: WireEvent[]; hasMore: boolean; nextCursor?: number; readCursor?: number }>(
         `/api/channels/${channelId}/messages${qs ? `?${qs}` : ''}`,
         undefined,
         decodeMessageHistoryResponse,
