@@ -304,6 +304,9 @@ def appliance_values_yaml(commit_sha: str) -> str:
         repoCache:
           enabled: false
 
+        toolServer:
+          enabled: false
+
         console:
           enabled: true
           image:
