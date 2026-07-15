@@ -527,8 +527,10 @@ def bootstrap_script(params: dict[str, str]) -> str:
         META_HEADER=()
         if [ -n "$TOKEN" ]; then META_HEADER=(-H "X-aws-ec2-metadata-token: $TOKEN"); fi
         PUBLIC_HOST="$(curl -fsS "${{META_HEADER[@]}}" http://169.254.169.254/latest/meta-data/public-hostname || true)"
-        if [ -z "$PUBLIC_HOST" ]; then PUBLIC_HOST="$(curl -fsS "${{META_HEADER[@]}}" http://169.254.169.254/latest/meta-data/public-ipv4)"; fi
-        PUBLIC_ORIGIN="http://$PUBLIC_HOST"
+        PUBLIC_IP="$(curl -fsS "${{META_HEADER[@]}}" http://169.254.169.254/latest/meta-data/public-ipv4 || true)"
+        if [ -z "$PUBLIC_HOST" ]; then PUBLIC_HOST="$PUBLIC_IP"; fi
+        HTTPS_HOST="${{PUBLIC_IP//./-}}.sslip.io"
+        PUBLIC_ORIGIN="https://$HTTPS_HOST"
 
         status surface-initial
         cd /opt/atrium/surface/deploy
@@ -563,8 +565,8 @@ def bootstrap_script(params: dict[str, str]) -> str:
         IRON_CONTROL_NAMESPACE=default
         EOF
 
-        cat >Caddyfile.aws-preview <<'EOF'
-        :80 {{
+        cat >Caddyfile.aws-preview <<EOF
+        http://$PUBLIC_HOST, https://$HTTPS_HOST {{
           encode zstd gzip
 
           @apps path /apps/*
@@ -595,6 +597,7 @@ def bootstrap_script(params: dict[str, str]) -> str:
           caddy:
             ports: !override
               - "0.0.0.0:80:80"
+              - "0.0.0.0:443:443"
             volumes: !override
               - ./Caddyfile.aws-preview:/etc/caddy/Caddyfile:ro
               - ../web/dist:/srv:ro
