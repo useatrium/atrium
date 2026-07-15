@@ -4,7 +4,7 @@
 //! control flow is unit-tested with fakes; the live wiring (HTTP to Atrium,
 //! openat2 reads, write-through-`merged`) plugs the real impls in on the node.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
@@ -376,6 +376,68 @@ pub struct CaptureOutcome {
 pub struct CaptureStamp {
     pub mtime_ns: i64,
     pub size: u64,
+}
+
+/// Result of comparing successfully captured artifact paths with a complete
+/// artifact-lane scan. Missing paths require two consecutive observations
+/// before they are returned as confirmed deletes.
+#[derive(Debug, Default, Eq, PartialEq)]
+pub struct DeleteReconcile {
+    pub confirmed: Vec<String>,
+    pub fuse_tripped: bool,
+    pub known_count: usize,
+    pub missing_count: usize,
+}
+
+const DELETE_RECONCILE_FUSE_KNOWN_FLOOR: usize = 8;
+
+/// Reconcile successfully captured artifact paths against a complete scan.
+///
+/// The caller must pass only paths from the artifact lane and must invoke this
+/// only for a successful full scan. A missing path is confirmed on the second
+/// consecutive full scan. Large missing sets trip a fuse and clear the pending
+/// observation so a transient mount/scan failure cannot latch mass deletes.
+pub fn reconcile_deletes(
+    known: &HashMap<String, CaptureStamp>,
+    present: &HashSet<String>,
+    pending: &mut HashSet<String>,
+    max_delete_ratio: f64,
+) -> DeleteReconcile {
+    let missing: HashSet<String> = known
+        .keys()
+        .filter(|path| {
+            let path = Path::new(path.as_str());
+            !crate::watch::is_unwatched_path(path)
+                && path != Path::new(crate::overlay_mount::READY_MARKER_FILE)
+                && path != Path::new(crate::overlay_mount::OVERLAY_SIGNATURE_FILE)
+        })
+        .filter(|path| !present.contains(*path))
+        .cloned()
+        .collect();
+    let known_count = known.len();
+    let missing_count = missing.len();
+
+    if known_count >= DELETE_RECONCILE_FUSE_KNOWN_FLOOR
+        && missing_count as f64 / known_count as f64 > max_delete_ratio
+    {
+        pending.clear();
+        return DeleteReconcile {
+            confirmed: vec![],
+            fuse_tripped: true,
+            known_count,
+            missing_count,
+        };
+    }
+
+    let mut confirmed: Vec<String> = missing.intersection(pending).cloned().collect();
+    confirmed.sort_unstable();
+    *pending = missing;
+    DeleteReconcile {
+        confirmed,
+        fuse_tripped: false,
+        known_count,
+        missing_count,
+    }
 }
 
 /// Files at/under this many bytes go through the in-memory `post_capture`; larger
@@ -1534,6 +1596,127 @@ mod tests {
             mtime_ns,
             xattrs: vec![],
         }
+    }
+
+    fn stamps(paths: &[&str]) -> HashMap<String, CaptureStamp> {
+        paths
+            .iter()
+            .map(|path| {
+                (
+                    (*path).to_string(),
+                    CaptureStamp {
+                        mtime_ns: 1,
+                        size: 1,
+                    },
+                )
+            })
+            .collect()
+    }
+
+    fn paths(paths: &[&str]) -> HashSet<String> {
+        paths.iter().map(|path| (*path).to_string()).collect()
+    }
+
+    #[test]
+    fn reconcile_deletes_with_all_known_present_clears_pending() {
+        let known = stamps(&["a.txt", "dir/b.txt"]);
+        let present = paths(&["a.txt", "dir/b.txt", "extra.txt"]);
+        let mut pending = paths(&["stale.txt"]);
+
+        let out = reconcile_deletes(&known, &present, &mut pending, 0.25);
+
+        assert!(out.confirmed.is_empty());
+        assert!(!out.fuse_tripped);
+        assert_eq!(out.known_count, 2);
+        assert_eq!(out.missing_count, 0);
+        assert!(pending.is_empty());
+    }
+
+    #[test]
+    fn reconcile_deletes_requires_two_consecutive_missing_scans() {
+        let known = stamps(&["gone.txt"]);
+        let mut pending = HashSet::new();
+
+        let first = reconcile_deletes(&known, &HashSet::new(), &mut pending, 0.25);
+
+        assert!(first.confirmed.is_empty());
+        assert_eq!(pending, paths(&["gone.txt"]));
+    }
+
+    #[test]
+    fn reconcile_deletes_confirms_second_missing_scan_then_can_leave_consideration() {
+        let mut known = stamps(&["gone.txt"]);
+        let mut pending = HashSet::new();
+        reconcile_deletes(&known, &HashSet::new(), &mut pending, 0.25);
+
+        let second = reconcile_deletes(&known, &HashSet::new(), &mut pending, 0.25);
+
+        assert_eq!(second.confirmed, vec!["gone.txt"]);
+        known.remove("gone.txt");
+        let after_removal = reconcile_deletes(&known, &HashSet::new(), &mut pending, 0.25);
+        assert!(after_removal.confirmed.is_empty());
+        assert!(pending.is_empty());
+    }
+
+    #[test]
+    fn reconcile_deletes_excludes_pruned_paths_and_capture_markers() {
+        let known = stamps(&[
+            "a/node_modules/x",
+            crate::overlay_mount::READY_MARKER_FILE,
+            crate::overlay_mount::OVERLAY_SIGNATURE_FILE,
+        ]);
+        let mut pending = HashSet::new();
+
+        let first = reconcile_deletes(&known, &HashSet::new(), &mut pending, 0.25);
+        let second = reconcile_deletes(&known, &HashSet::new(), &mut pending, 0.25);
+
+        assert!(first.confirmed.is_empty());
+        assert!(second.confirmed.is_empty());
+        assert_eq!(second.missing_count, 0);
+        assert!(pending.is_empty());
+    }
+
+    #[test]
+    fn reconcile_deletes_mass_delete_fuse_clears_pending() {
+        let known = stamps(&[
+            "0.txt", "1.txt", "2.txt", "3.txt", "4.txt", "5.txt", "6.txt", "7.txt", "8.txt",
+            "9.txt",
+        ]);
+        let present = paths(&["0.txt", "1.txt", "2.txt", "3.txt"]);
+        let mut pending = paths(&["4.txt", "5.txt"]);
+
+        let out = reconcile_deletes(&known, &present, &mut pending, 0.25);
+
+        assert!(out.confirmed.is_empty());
+        assert!(out.fuse_tripped);
+        assert_eq!(out.known_count, 10);
+        assert_eq!(out.missing_count, 6);
+        assert!(pending.is_empty());
+    }
+
+    #[test]
+    fn reconcile_deletes_reappearing_path_clears_pending() {
+        let known = stamps(&["back.txt"]);
+        let mut pending = HashSet::new();
+        reconcile_deletes(&known, &HashSet::new(), &mut pending, 0.25);
+
+        let out = reconcile_deletes(&known, &paths(&["back.txt"]), &mut pending, 0.25);
+
+        assert!(out.confirmed.is_empty());
+        assert!(pending.is_empty());
+    }
+
+    #[test]
+    fn reconcile_deletes_empty_known_set_is_conservative() {
+        let known = HashMap::new();
+        let mut pending = paths(&["old.txt"]);
+
+        let out = reconcile_deletes(&known, &paths(&["present.txt"]), &mut pending, 0.25);
+
+        assert!(out.confirmed.is_empty());
+        assert_eq!(out.known_count, 0);
+        assert_eq!(out.missing_count, 0);
+        assert!(pending.is_empty());
     }
 
     #[test]
