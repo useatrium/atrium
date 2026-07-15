@@ -1,6 +1,15 @@
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
 import { Pool } from 'pg';
-import { channelId, createTestChannel, login, mainComposer, messageRow, openChannel, unique } from './helpers.js';
+import {
+  channelId,
+  createTestChannel,
+  login,
+  mainComposer,
+  messageRow,
+  openChannel,
+  seedEvent,
+  unique,
+} from './helpers.js';
 
 const e2eDatabaseUrl = process.env.E2E_DATABASE_URL ?? 'postgres://atrium:atrium@localhost:5433/atrium_e2e';
 const centaurStubUrl = `http://127.0.0.1:${Number(process.env.E2E_CENTAUR_PORT ?? 18100)}`;
@@ -44,21 +53,14 @@ async function injectSession(args: {
       [workspaceId, args.channelId, threadKey, args.title, userId],
     );
     const sessionId = session.rows[0]!.id;
-    const root = await client.query<{ id: string }>(
-      `INSERT INTO events (workspace_id, channel_id, type, actor_id, payload)
-       VALUES ($1, $2, 'session.spawned', $3, $4)
-       RETURNING id`,
-      [
-        workspaceId,
-        args.channelId,
-        userId,
-        JSON.stringify({ sessionId, title: args.title, harness: 'codex', by: userId }),
-      ],
-    );
-    await client.query('UPDATE sessions SET thread_root_event_id = $1 WHERE id = $2', [
-      Number(root.rows[0]!.id),
-      sessionId,
-    ]);
+    const rootId = await seedEvent(client, {
+      workspaceId,
+      channelId: args.channelId,
+      type: 'session.spawned',
+      actorId: userId,
+      payload: { sessionId, title: args.title, harness: 'codex', by: userId },
+    });
+    await client.query('UPDATE sessions SET thread_root_event_id = $1 WHERE id = $2', [rootId, sessionId]);
     await client.query('COMMIT');
     return { sessionId, threadKey };
   } catch (err) {

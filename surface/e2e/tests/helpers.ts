@@ -1,9 +1,39 @@
 import { expect, request, type APIRequestContext, type BrowserContext, type Page } from '@playwright/test';
-import { Pool } from 'pg';
+import { Pool, type PoolClient } from 'pg';
 
 export const baseURL = `http://127.0.0.1:${Number(process.env.E2E_WEB_PORT ?? 5273)}`;
 export const apiURL = `http://127.0.0.1:${Number(process.env.E2E_SERVER_PORT ?? 3101)}`;
 export const e2eDatabaseUrl = process.env.E2E_DATABASE_URL ?? 'postgres://atrium:atrium@localhost:5433/atrium_e2e';
+
+export async function seedEvent(
+  client: PoolClient,
+  args: {
+    workspaceId: string;
+    channelId: string;
+    threadRootEventId?: number | null;
+    type: string;
+    actorId?: string | null;
+    payload: unknown;
+  },
+): Promise<number> {
+  const inserted = await client.query<{ id: string | number }>(
+    `INSERT INTO events (workspace_id, channel_id, thread_root_event_id, type, actor_id, payload)
+     VALUES ($1, $2, $3, $4, $5, $6::jsonb)
+     RETURNING id`,
+    [
+      args.workspaceId,
+      args.channelId,
+      args.threadRootEventId ?? null,
+      args.type,
+      args.actorId ?? null,
+      JSON.stringify(args.payload),
+    ],
+  );
+  const id = Number(inserted.rows[0]!.id);
+  if (!Number.isSafeInteger(id)) throw new Error('seeded event did not return a numeric id');
+  await client.query('SELECT project_message_event($1)', [id]);
+  return id;
+}
 
 export function unique(prefix: string): string {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
@@ -227,19 +257,13 @@ export async function injectSession(args: {
       [workspaceId, args.channelId, `thread-${unique('spine')}`, args.title, userId],
     );
     const sessionId = session.rows[0]!.id;
-    const root = await client.query<{ id: string }>(
-      `INSERT INTO events (workspace_id, channel_id, type, actor_id, payload)
-       VALUES ($1, $2, 'session.spawned', $3, $4)
-       RETURNING id`,
-      [
-        workspaceId,
-        args.channelId,
-        userId,
-        JSON.stringify({ sessionId, title: args.title, harness: 'codex', by: userId }),
-      ],
-    );
-    const rootId = Number(root.rows[0]!.id);
-    await client.query('SELECT project_message_event($1)', [rootId]);
+    const rootId = await seedEvent(client, {
+      workspaceId,
+      channelId: args.channelId,
+      type: 'session.spawned',
+      actorId: userId,
+      payload: { sessionId, title: args.title, harness: 'codex', by: userId },
+    });
     await client.query('UPDATE sessions SET thread_root_event_id = $1 WHERE id = $2', [rootId, sessionId]);
     await client.query('COMMIT');
     return { rootId, sessionId };
@@ -266,19 +290,14 @@ export async function injectSessionReply(args: {
       args.channelId,
     ]);
     if (!channel.rows[0]) throw new Error('missing e2e channel');
-    const reply = await client.query<{ id: string }>(
-      `INSERT INTO events (workspace_id, channel_id, thread_root_event_id, type, actor_id, payload)
-       VALUES ($1, $2, $3, 'session.replied', NULL, $4)
-       RETURNING id`,
-      [
-        channel.rows[0].workspace_id,
-        args.channelId,
-        args.rootId,
-        JSON.stringify({ session_id: args.sessionId, text: args.text, broadcast: true }),
-      ],
-    );
-    const replyId = Number(reply.rows[0]!.id);
-    await client.query('SELECT project_message_event($1)', [replyId]);
+    const replyId = await seedEvent(client, {
+      workspaceId: channel.rows[0].workspace_id,
+      channelId: args.channelId,
+      threadRootEventId: args.rootId,
+      type: 'session.replied',
+      actorId: null,
+      payload: { session_id: args.sessionId, text: args.text, broadcast: true },
+    });
     // The answer implies the turn ended: mark the session terminal so the slot
     // renders the anchored answer instead of a working strip (a running session
     // deliberately withholds its claimed answer).
@@ -392,24 +411,18 @@ export async function injectQuestionRequested(args: {
       [workspaceId, args.channelId, `thread-${unique('question')}`, args.title, userId],
     );
     const sessionId = session.rows[0]!.id;
-    const root = await client.query<{ id: string }>(
-      `INSERT INTO events (workspace_id, channel_id, type, actor_id, payload)
-       VALUES ($1, $2, 'session.spawned', $3, $4)
-       RETURNING id`,
-      [
-        workspaceId,
-        args.channelId,
-        userId,
-        JSON.stringify({
-          sessionId,
-          title: args.title,
-          harness: 'claude-code',
-          by: userId,
-        }),
-      ],
-    );
-    const rootId = Number(root.rows[0]!.id);
-    await client.query('SELECT project_message_event($1)', [rootId]);
+    const rootId = await seedEvent(client, {
+      workspaceId,
+      channelId: args.channelId,
+      type: 'session.spawned',
+      actorId: userId,
+      payload: {
+        sessionId,
+        title: args.title,
+        harness: 'claude-code',
+        by: userId,
+      },
+    });
     const pendingQuestion = {
       questionId: QUESTION_ID,
       turnId: 'turn-1',
@@ -424,24 +437,19 @@ export async function injectQuestionRequested(args: {
        WHERE id = $4`,
       [rootId, JSON.stringify(pendingQuestion), pendingQuestion.eventId, sessionId],
     );
-    const questionEvent = await client.query<{ id: string }>(
-      `INSERT INTO events (workspace_id, channel_id, thread_root_event_id, type, actor_id, payload)
-       VALUES ($1, $2, $3, 'session.question_requested', $4, $5)
-       RETURNING id`,
-      [
-        workspaceId,
-        args.channelId,
-        rootId,
-        userId,
-        JSON.stringify({
-          sessionId,
-          questionId: pendingQuestion.questionId,
-          questions: questionPrompts,
-          permalink: `/s/${sessionId}`,
-        }),
-      ],
-    );
-    await client.query('SELECT project_message_event($1)', [Number(questionEvent.rows[0]!.id)]);
+    await seedEvent(client, {
+      workspaceId,
+      channelId: args.channelId,
+      threadRootEventId: rootId,
+      type: 'session.question_requested',
+      actorId: userId,
+      payload: {
+        sessionId,
+        questionId: pendingQuestion.questionId,
+        questions: questionPrompts,
+        permalink: `/s/${sessionId}`,
+      },
+    });
     await client.query('COMMIT');
     return { rootId, sessionId, questionText: questionPrompts[0]!.question };
   } catch (err) {

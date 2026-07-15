@@ -7,7 +7,7 @@ import { config } from '../src/config.js';
 import { signSession } from '../src/cookie.js';
 import { encodeArtifactHandle, encodeEventHandle, encodeRecordHandle } from '../src/entries.js';
 import { postMessage } from '../src/events.js';
-import { createTestPool, seedFixture, truncateAll, type Fixture } from './helpers.js';
+import { createTestPool, seedEvent, seedFixture, truncateAll, type Fixture } from './helpers.js';
 
 let pool: pg.Pool;
 let fx: Fixture;
@@ -123,22 +123,20 @@ describe('entry annotations', () => {
       text: 'historical comment target',
     });
     const handle = encodeEventHandle(message.id);
-    const comment = await pool.query<{ id: number }>(
-      `INSERT INTO events (workspace_id, channel_id, type, actor_id, payload)
-       VALUES ($1, $2, 'comment.posted', $3, $4)
-       RETURNING id`,
-      [fx.workspaceId, fx.channelId, fx.userId, JSON.stringify({ target: handle, text: 'legacy note' })],
-    );
-    await pool.query(
-      `INSERT INTO events (workspace_id, channel_id, type, actor_id, payload)
-       VALUES ($1, $2, 'comment.edited', $3, $4)`,
-      [
-        fx.workspaceId,
-        fx.channelId,
-        fx.userId,
-        JSON.stringify({ target: encodeEventHandle(comment.rows[0]!.id), text: 'edited legacy note' }),
-      ],
-    );
+    const commentId = await seedEvent(pool, {
+      workspaceId: fx.workspaceId,
+      channelId: fx.channelId,
+      type: 'comment.posted',
+      actorId: fx.userId,
+      payload: { target: handle, text: 'legacy note' },
+    });
+    await seedEvent(pool, {
+      workspaceId: fx.workspaceId,
+      channelId: fx.channelId,
+      type: 'comment.edited',
+      actorId: fx.userId,
+      payload: { target: encodeEventHandle(commentId), text: 'edited legacy note' },
+    });
 
     const folded = await annotations(cookie, handle);
     expect(folded).toEqual({ reactions: [] });

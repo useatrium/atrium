@@ -17,6 +17,7 @@ import {
   messageRow,
   openChannel,
   postMessage,
+  seedEvent,
   sendMessage,
   timelineText,
   unique,
@@ -50,23 +51,18 @@ async function injectTranscriptSession(args: {
       [workspaceId, args.channelId, `thread-${unique('stream')}`, args.title, userId],
     );
     const sessionId = session.rows[0]!.id;
-    const root = await client.query<{ id: string }>(
-      `INSERT INTO events (workspace_id, channel_id, type, actor_id, payload)
-       VALUES ($1, $2, 'session.spawned', $3, $4)
-       RETURNING id`,
-      [
-        workspaceId,
-        args.channelId,
-        userId,
-        JSON.stringify({
-          sessionId,
-          title: args.title,
-          harness: 'claude-code',
-          by: userId,
-        }),
-      ],
-    );
-    const rootId = Number(root.rows[0]!.id);
+    const rootId = await seedEvent(client, {
+      workspaceId,
+      channelId: args.channelId,
+      type: 'session.spawned',
+      actorId: userId,
+      payload: {
+        sessionId,
+        title: args.title,
+        harness: 'claude-code',
+        by: userId,
+      },
+    });
     await client.query('UPDATE sessions SET thread_root_event_id = $1 WHERE id = $2', [rootId, sessionId]);
     await client.query('COMMIT');
     return { rootId, sessionId };

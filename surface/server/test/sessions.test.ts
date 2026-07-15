@@ -15,7 +15,7 @@ import { addWorkspaceMember } from '../src/membership.js';
 import { ProviderCredentials } from '../src/provider-credentials.js';
 import { githubPatSecretForeignId, IronControlAdminClient } from '../src/iron-control.js';
 import { SeededPrng } from './chaosHarness.js';
-import { createTestPool, seedFixture, truncateAll, type Fixture } from './helpers.js';
+import { createTestPool, seedEvent, seedFixture, truncateAll, type Fixture } from './helpers.js';
 
 interface RecordedRequest {
   method: string;
@@ -2689,12 +2689,13 @@ describe('Phase 2 sessions', () => {
     ]);
     // Real sessions are thread-rooted; the question event must land as a
     // thread child that thread reads return.
-    const root = await pool.query<{ id: number }>(
-      `INSERT INTO events (workspace_id, channel_id, type, actor_id, payload)
-       VALUES ($1, $2, 'session.spawned', $3, '{}'::jsonb) RETURNING id`,
-      [fx.workspaceId, fx.channelId, fx.userId],
-    );
-    const rootId = root.rows[0]!.id;
+    const rootId = await seedEvent(pool, {
+      workspaceId: fx.workspaceId,
+      channelId: fx.channelId,
+      type: 'session.spawned',
+      actorId: fx.userId,
+      payload: {},
+    });
     await pool.query('UPDATE sessions SET thread_root_event_id = $1 WHERE id = $2', [rootId, id]);
     const app = await buildApp({
       pool,
@@ -2855,12 +2856,13 @@ describe('Phase 2 sessions', () => {
 
   it('channel after_id catch-up returns session question and reply events with payloads intact', async () => {
     const id = await insertSessionRow({ title: 'needs input', status: 'running' });
-    const root = await pool.query<{ id: number }>(
-      `INSERT INTO events (workspace_id, channel_id, type, actor_id, payload)
-       VALUES ($1, $2, 'session.spawned', $3, $4) RETURNING id`,
-      [fx.workspaceId, fx.channelId, fx.userId, JSON.stringify({ sessionId: id, title: 'needs input' })],
-    );
-    const rootId = root.rows[0]!.id;
+    const rootId = await seedEvent(pool, {
+      workspaceId: fx.workspaceId,
+      channelId: fx.channelId,
+      type: 'session.spawned',
+      actorId: fx.userId,
+      payload: { sessionId: id, title: 'needs input' },
+    });
     await pool.query('UPDATE sessions SET thread_root_event_id = $1 WHERE id = $2', [rootId, id]);
     const requestedPayload = {
       sessionId: id,
@@ -2884,23 +2886,24 @@ describe('Phase 2 sessions', () => {
       ['session.question_answered', answeredPayload],
       ['session.question_resolved', resolvedPayload],
     ] as const) {
-      const inserted = await pool.query<{ id: number }>(
-        `INSERT INTO events (workspace_id, channel_id, thread_root_event_id, type, actor_id, payload)
-         VALUES ($1, $2, $3, $4, $5, $6)
-         RETURNING id`,
-        [fx.workspaceId, fx.channelId, rootId, type, fx.userId, JSON.stringify(payload)],
-      );
-      // Raw inserts bypass the insertEvent choke point, so project explicitly.
-      await pool.query('SELECT project_message_event($1)', [inserted.rows[0]!.id]);
+      await seedEvent(pool, {
+        workspaceId: fx.workspaceId,
+        channelId: fx.channelId,
+        threadRootEventId: rootId,
+        type,
+        actorId: fx.userId,
+        payload,
+      });
     }
     const replyPayload = { session_id: id, text: 'I have the answer.' };
-    const reply = await pool.query<{ id: number }>(
-      `INSERT INTO events (workspace_id, channel_id, thread_root_event_id, type, actor_id, payload)
-       VALUES ($1, $2, $3, 'session.replied', NULL, $4)
-       RETURNING id`,
-      [fx.workspaceId, fx.channelId, rootId, JSON.stringify(replyPayload)],
-    );
-    await pool.query('SELECT project_message_event($1)', [reply.rows[0]!.id]);
+    await seedEvent(pool, {
+      workspaceId: fx.workspaceId,
+      channelId: fx.channelId,
+      threadRootEventId: rootId,
+      type: 'session.replied',
+      actorId: null,
+      payload: replyPayload,
+    });
 
     const app = await buildApp({
       pool,

@@ -1,6 +1,15 @@
 import { expect, test, type Locator, type Page, type TestInfo } from '@playwright/test';
 import { Pool } from 'pg';
-import { apiAs, channelId, login, postMessage, postWithAttachment, unique, uploadViaApi } from './helpers.js';
+import {
+  apiAs,
+  channelId,
+  login,
+  postMessage,
+  postWithAttachment,
+  seedEvent,
+  unique,
+  uploadViaApi,
+} from './helpers.js';
 
 const e2eDatabaseUrl = process.env.E2E_DATABASE_URL ?? 'postgres://atrium:atrium@localhost:5433/atrium_e2e';
 
@@ -117,20 +126,14 @@ async function seedCompletedSession(handle: string, title: string): Promise<stri
       ],
     );
     const sessionId = session.rows[0]!.id;
-    const event = await client.query<{ id: string }>(
-      `INSERT INTO events (workspace_id, channel_id, type, actor_id, payload)
-       VALUES ($1, $2, 'session.spawned', $3, $4) RETURNING id`,
-      [
-        channel.rows[0].workspace_id,
-        channel.rows[0].id,
-        user.rows[0].id,
-        JSON.stringify({ sessionId, title, harness: 'codex', by: user.rows[0].id }),
-      ],
-    );
-    await client.query('UPDATE sessions SET thread_root_event_id = $1 WHERE id = $2', [
-      Number(event.rows[0]!.id),
-      sessionId,
-    ]);
+    const rootId = await seedEvent(client, {
+      workspaceId: channel.rows[0].workspace_id,
+      channelId: channel.rows[0].id,
+      type: 'session.spawned',
+      actorId: user.rows[0].id,
+      payload: { sessionId, title, harness: 'codex', by: user.rows[0].id },
+    });
+    await client.query('UPDATE sessions SET thread_root_event_id = $1 WHERE id = $2', [rootId, sessionId]);
     await client.query('COMMIT');
     return sessionId;
   } catch (error) {
