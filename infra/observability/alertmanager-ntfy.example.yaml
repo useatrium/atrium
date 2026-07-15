@@ -1,0 +1,20 @@
+# Config for the alertmanager-ntfy bridge (ghcr.io/alexbakker/alertmanager-ntfy).
+# Copy to alertmanager-ntfy.yaml (gitignored — the topic is the credential on
+# ntfy.sh and this repo is public), set a long random topic, and subscribe to
+# it in the ntfy app. Generate one with: openssl rand -hex 12
+#
+# Docs: https://github.com/alexbakker/alertmanager-ntfy
+http:
+  addr: :8000
+
+ntfy:
+  baseurl: https://ntfy.sh
+  notification:
+    topic: atrium-alerts-REPLACE-ME
+    priority: |
+      status == "firing" ? "urgent" : "default"
+    tags:
+      - tag: rotating_light
+        condition: status == "firing"
+      - tag: white_check_mark
+        condition: status == "resolved"
