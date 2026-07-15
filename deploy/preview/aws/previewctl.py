@@ -619,35 +619,32 @@ def bootstrap_script(params: dict[str, str]) -> str:
         ECR_PREFIX="{ECR_CACHE_PREFIX}"
         aws ecr get-login-password --region "$REGION" | docker login --username AWS --password-stdin "$ECR_REGISTRY" >/dev/null
 
-        cache_hit=1
-        for img in centaur-api-rs centaur-iron-proxy centaur-agent centaur-node-sync centaur-console; do
+        cache_miss=0
+        for entry in \
+          api-rs:centaur-api-rs \
+          iron-proxy:centaur-iron-proxy \
+          sandbox:centaur-agent \
+          node-sync:centaur-node-sync \
+          console:centaur-console; do
+          svc="${{entry%%:*}}"
+          img="${{entry##*:}}"
           repo="$ECR_PREFIX/$img"
           if aws ecr describe-images --region "$REGION" --repository-name "$repo" --image-ids imageTag="$COMMIT_SHA" >/dev/null 2>&1; then
+            status "centaur-cache-hit-$img"
             docker pull "$ECR_REGISTRY/$repo:$COMMIT_SHA"
             docker tag "$ECR_REGISTRY/$repo:$COMMIT_SHA" "$img:latest"
           else
-            cache_hit=0
-            break
-          fi
-        done
-
-        if [ "$cache_hit" -eq 1 ]; then
-          status centaur-cache-hit
-        else
-          status centaur-cache-miss
-          for entry in \
-            api-rs:centaur-api-rs \
-            iron-proxy:centaur-iron-proxy \
-            sandbox:centaur-agent \
-            node-sync:centaur-node-sync \
-            console:centaur-console; do
-            svc="${{entry%%:*}}"
-            img="${{entry##*:}}"
-            repo="$ECR_PREFIX/$img"
+            cache_miss=1
+            status "centaur-cache-miss-$img"
             DOCKER_BUILDKIT=1 just build-one "$svc"
             docker tag "$img:latest" "$ECR_REGISTRY/$repo:$COMMIT_SHA"
             docker push "$ECR_REGISTRY/$repo:$COMMIT_SHA"
-          done
+          fi
+        done
+        if [ "$cache_miss" -eq 0 ]; then
+          status centaur-cache-hit
+        else
+          status centaur-cache-partial
         fi
 
         for img in centaur-api-rs centaur-iron-proxy centaur-agent centaur-node-sync centaur-console; do
