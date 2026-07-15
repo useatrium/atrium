@@ -108,6 +108,27 @@ describe('parseAgentPathHref', () => {
     );
   });
 
+  // The incident shape: /c/d4dbf59b…/t/466 linked `/home/agent/allan-things-not-loved.md:1`
+  // and the chip 404'd on the `:1`.
+  it('strips editor-style :line and :line:col suffixes', () => {
+    expect(parseAgentPathHref('/home/agent/allan-things-not-loved.md:1')).toEqual({
+      kind: 'workspace-relative',
+      relPath: 'allan-things-not-loved.md',
+    });
+    expect(parseAgentPathHref(`/home/agent/shared/channels/${CHAN}/notes.md:12:3`)).toEqual(
+      expect.objectContaining({ canonicalPath: `shared/channels/${CHAN}/notes.md` }),
+    );
+    expect(parseAgentPathHref('~/src/main.rs:400')).toEqual({
+      kind: 'workspace-relative',
+      relPath: 'src/main.rs',
+    });
+    // Not a line suffix — colon segments elsewhere stay intact.
+    expect(parseAgentPathHref('/home/agent/notes:v2.md')).toEqual({
+      kind: 'workspace-relative',
+      relPath: 'notes:v2.md',
+    });
+  });
+
   it('decodes percent-encoding and strips query/fragment', () => {
     const ref = parseAgentPathHref(`/home/agent/shared/channels/${CHAN}/notes%20v2.md?raw=1#top`);
     expect(ref).toEqual(expect.objectContaining({ relPath: 'notes v2.md' }));
