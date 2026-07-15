@@ -48,7 +48,7 @@ test('thread↔work toggling never remounts the conversation panel', async ({ pa
   // the marks — this is load-immune, unlike counting SSE opens (the stream
   // machine's silent-death watchdog may legitimately reopen a quiet stream).
   const marked = await page.evaluate(() => {
-    const asides = [...document.querySelectorAll('[data-testid="conversation-title"]')]
+    const asides = Array.from(document.querySelectorAll('[data-testid="conversation-title"]'))
       .map((el) => el.closest('aside'))
       .filter((el): el is HTMLElement => el != null);
     for (const el of asides) {
@@ -74,7 +74,7 @@ test('thread↔work toggling never remounts the conversation panel', async ({ pa
   // deterministically by ConversationPanel.test.tsx with a mocked transport.)
   const survivors = await page.evaluate(
     () =>
-      [...document.querySelectorAll('[data-testid="conversation-title"]')]
+      Array.from(document.querySelectorAll('[data-testid="conversation-title"]'))
         .map((el) => el.closest('aside'))
         .filter((el) => el != null && (el as HTMLElement & { __qaMounted?: boolean }).__qaMounted === true).length,
   );
