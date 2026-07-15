@@ -836,7 +836,9 @@ async function main(): Promise<void> {
   // Most events use the API write path, but the missed-call and pending-question
   // fixtures above are inserted directly. Reproject the complete seed once so
   // those raw writes and any thread roots they affect have current state.
-  await pool.query('SELECT project_message_event(id) FROM events ORDER BY id');
+  await pool.query(
+    `SELECT refold_message_state(id) FROM events WHERE type IN ('message.posted', 'voice.transcribed', 'session.spawned', 'session.replied', 'session.status_changed', 'session.effort_changed', 'session.completed', 'session.archived', 'session.unarchived', 'session.seat_requested', 'session.seat_changed', 'session.question_requested', 'session.question_answered', 'session.question_resolved', 'session.provider_auth_required', 'session.github_auth_required', 'session.provider_auth_resolved') ORDER BY id`,
+  );
 
   console.log('done. summary:');
   const counts = await pool.query<{ relname: string; n: string }>(

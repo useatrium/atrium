@@ -252,6 +252,12 @@ BEGIN
 END;
 $$;
 
+-- Backfill: refold every row-owning timeline event once. Modifier events need
+-- no separate pass — their effects are folded when their target refolds. (The
+-- per-event project_message_event() cascade would re-refold each thread root
+-- once per reply: quadratic on busy threads and pointless for a backfill.)
 -- The checked-in production database is small. Large self-hosted instances
--- should use scripts/rebuild-message-state.mts for an explicit rebuild.
-SELECT project_message_event(id) FROM events ORDER BY id;
+-- should use scripts/rebuild-message-state.mts for an explicit chunked rebuild.
+SELECT refold_message_state(id) FROM events
+WHERE type IN ('message.posted', 'voice.transcribed', 'session.spawned', 'session.replied', 'session.status_changed', 'session.effort_changed', 'session.completed', 'session.archived', 'session.unarchived', 'session.seat_requested', 'session.seat_changed', 'session.question_requested', 'session.question_answered', 'session.question_resolved', 'session.provider_auth_required', 'session.github_auth_required', 'session.provider_auth_resolved')
+ORDER BY id;

@@ -1,6 +1,7 @@
-// Benchmark the channel feed's latest-reply preview joins against the query
-// with only that preview block removed. This script destroys and reseeds the
-// target database, whose name must contain "bench".
+// Benchmark the channel feed's message_state projection reads against the
+// legacy read-time fold (the pre-projection MESSAGE_SELECT LATERAL stack,
+// frozen below). This script destroys and reseeds the target database, whose
+// name must contain "bench".
 //
 // Usage (from surface/):
 //   DATABASE_URL=postgres://atrium:atrium@localhost:5433/atrium_bench_ss15 \
@@ -36,18 +37,106 @@ if (!databaseName!.toLowerCase().includes('bench')) {
 
 const config = parseArgs(process.argv.slice(2));
 const pool = createPool(databaseUrl);
-let candidateCreated = false;
 
 const ROOT_EVENT_TYPES =
   "('message.posted', 'session.spawned', 'session.replied', 'session.question_requested', 'session.question_answered', 'session.question_resolved')";
 const REPLY_EVENT_TYPES =
   "('message.posted', 'session.replied', 'session.question_requested', 'session.question_answered', 'session.question_resolved')";
-const CANDIDATE_INDEX = 'bench_feed_reply_types_idx';
-const CANDIDATE_INDEX_SQL = `
-  CREATE INDEX ${CANDIDATE_INDEX}
-    ON events (thread_root_event_id, id)
-    WHERE thread_root_event_id IS NOT NULL
-      AND type IN ${REPLY_EVENT_TYPES}
+// The read-time fold this projection replaced, kept verbatim for comparison.
+const LEGACY_MESSAGE_SELECT = `
+  SELECT e.*,
+         u.handle AS author_handle,
+         u.display_name AS author_display_name,
+         coalesce(r.reply_count, 0)::int AS reply_count,
+         coalesce(r.last_reply_id, 0)::bigint AS last_reply_id,
+         lr.id AS last_reply_preview_id,
+         CASE
+           WHEN lr.type IN ('session.replied', 'session.question_requested')
+             THEN 'agent:' || coalesce(lr.payload->>'sessionId', lr.payload->>'session_id', 'unknown')
+           ELSE lr.actor_id::text
+         END AS last_reply_author_id,
+         CASE
+           WHEN lr.type IN ('session.replied', 'session.question_requested') THEN 'Agent'
+           ELSE coalesce(lru.display_name, lru.handle)
+         END AS last_reply_author_display_name,
+         left(coalesce(lr_edit.text, lr.payload->>'text', lr.payload->>'question', lr.payload->>'title', ''), 200)
+           AS last_reply_text,
+         lr.created_at AS last_reply_created_at,
+         (lr.type IN ('session.replied', 'session.question_requested')) AS last_reply_agent_voice,
+         lr.type AS last_reply_event_type,
+         (e.payload->>'broadcast')::boolean AS broadcast,
+         edit.text AS edited_text,
+         suppression.suppressed_unfurls,
+         (del.id IS NOT NULL) AS is_deleted,
+         rx.reactions AS reactions,
+         vt.status AS transcript_status,
+         vt.text AS transcript_text,
+         vt.lang AS transcript_lang
+  FROM events e
+  LEFT JOIN users u ON u.id = e.actor_id
+  LEFT JOIN LATERAL (
+    SELECT count(*) AS reply_count, max(x.id) AS last_reply_id
+    FROM events x
+    WHERE x.thread_root_event_id = e.id
+      AND x.type IN ('message.posted', 'session.replied', 'session.question_requested', 'session.question_answered', 'session.question_resolved')
+      AND NOT EXISTS (
+        SELECT 1 FROM events d
+        WHERE d.type = 'message.deleted'
+          AND d.payload->>'target' = ('evt_' || x.id::text)
+      )
+  ) r ON e.thread_root_event_id IS NULL
+  LEFT JOIN events lr ON lr.id = r.last_reply_id
+  LEFT JOIN users lru ON lru.id = lr.actor_id
+  LEFT JOIN LATERAL (
+    SELECT x.payload->>'text' AS text
+    FROM events x
+    WHERE x.type = 'message.edited'
+      AND x.payload->>'target' = ('evt_' || lr.id::text)
+    ORDER BY x.id DESC
+    LIMIT 1
+  ) lr_edit ON true
+  LEFT JOIN LATERAL (
+    SELECT x.payload->>'text' AS text
+    FROM events x
+    WHERE x.type = 'message.edited'
+      AND x.payload->>'target' = ('evt_' || e.id::text)
+    ORDER BY x.id DESC
+    LIMIT 1
+  ) edit ON true
+  LEFT JOIN LATERAL (
+    SELECT x.payload->'suppressed' AS suppressed_unfurls
+    FROM events x
+    WHERE x.type = 'message.unfurls_suppressed'
+      AND x.payload->>'target' = ('evt_' || e.id::text)
+    ORDER BY x.id DESC
+    LIMIT 1
+  ) suppression ON true
+  LEFT JOIN LATERAL (
+    SELECT x.id
+    FROM events x
+    WHERE x.type = 'message.deleted'
+      AND x.payload->>'target' = ('evt_' || e.id::text)
+    LIMIT 1
+  ) del ON true
+  LEFT JOIN LATERAL (
+    SELECT json_agg(json_build_object('emoji', emoji, 'userIds', user_ids)) AS reactions
+    FROM (
+      SELECT emoji, json_agg(actor_id ORDER BY first_id) AS user_ids
+      FROM (
+        SELECT x.actor_id, x.payload->>'emoji' AS emoji,
+               SUM(CASE WHEN x.type = 'reaction.added' THEN 1 ELSE -1 END) AS net,
+               MIN(x.id) AS first_id
+        FROM events x
+        WHERE x.type IN ('reaction.added', 'reaction.removed')
+          AND x.payload->>'target' = ('evt_' || e.id::text)
+        GROUP BY x.actor_id, x.payload->>'emoji'
+      ) n
+      WHERE n.net > 0
+      GROUP BY emoji
+      ORDER BY MIN(first_id)
+    ) agg
+  ) rx ON true
+  LEFT JOIN transcripts vt ON vt.event_id = e.id
 `;
 
 interface Config {
@@ -96,7 +185,6 @@ interface ResultRow {
 try {
   console.log(`database: ${databaseName!} (will wipe and reseed)`);
   await runMigrations(pool);
-  await pool.query(`DROP INDEX IF EXISTS ${CANDIDATE_INDEX}`);
   await truncateAll(pool);
 
   const queries = await loadQueries();
@@ -109,19 +197,8 @@ try {
     await benchmarkCurrent(rows, scale, channel, queries);
   }
 
-  console.log(`creating ephemeral candidate index: ${CANDIDATE_INDEX}`);
-  await pool.query(CANDIDATE_INDEX_SQL);
-  candidateCreated = true;
-  await pool.query('ANALYZE events');
-
-  for (const channel of seed.channels) {
-    await benchmarkCandidate(rows, scale, channel, queries.full);
-  }
-
   printTable(rows);
-  console.log(`candidate DDL: ${oneLine(CANDIDATE_INDEX_SQL)}`);
 } finally {
-  if (candidateCreated) await pool.query(`DROP INDEX IF EXISTS ${CANDIDATE_INDEX}`).catch(() => {});
   await pool.end();
 }
 
@@ -129,69 +206,31 @@ async function benchmarkCurrent(
   rows: ResultRow[],
   scale: string,
   channel: SeededChannel,
-  queries: { full: string; baseline: string },
+  queries: { projection: string; legacy: string },
 ): Promise<void> {
   for (const page of ['first', 'deep'] as const) {
     const beforeId = page === 'deep' ? channel.deepBeforeId : undefined;
-    const fullSql = feedSql(queries.full, beforeId !== undefined);
-    const baselineSql = feedSql(queries.baseline, beforeId !== undefined);
+    const projectionSql = feedSql(queries.projection, beforeId !== undefined);
+    const legacySql = feedSql(queries.legacy, beforeId !== undefined);
     const params = beforeId === undefined ? [channel.id, 51] : [channel.id, 51, beforeId];
 
-    const fullPlan = await explain(pool, fullSql, params);
-    const baselinePlan = await explain(pool, baselineSql, params);
+    const projectionPlan = await explain(pool, projectionSql, params);
+    const legacyPlan = await explain(pool, legacySql, params);
     const e2e = await measure(() => listChannelMessages(pool, { channelId: channel.id, beforeId, limit: 50 }));
-    const sqlFull = await measure(() => pool.query(fullSql, params));
-    const sqlBaseline = await measure(() => pool.query(baselineSql, params));
+    const sqlProjection = await measure(() => pool.query(projectionSql, params));
+    const sqlLegacy = await measure(() => pool.query(legacySql, params));
 
-    rows.push(row(scale, channel.label, `e2e/full/${page}`, e2e, fullPlan));
-    rows.push(row(scale, channel.label, `sql/full/${page}`, sqlFull, fullPlan));
-    rows.push(row(scale, channel.label, `sql/no-preview/${page}`, sqlBaseline, baselinePlan));
+    rows.push(row(scale, channel.label, `e2e/projection/${page}`, e2e, projectionPlan));
+    rows.push(row(scale, channel.label, `sql/projection/${page}`, sqlProjection, projectionPlan));
+    rows.push(row(scale, channel.label, `sql/legacy-fold/${page}`, sqlLegacy, legacyPlan));
   }
 }
 
-async function benchmarkCandidate(
-  rows: ResultRow[],
-  scale: string,
-  channel: SeededChannel,
-  messageSelect: string,
-): Promise<void> {
-  for (const page of ['first', 'deep'] as const) {
-    const beforeId = page === 'deep' ? channel.deepBeforeId : undefined;
-    const sql = feedSql(messageSelect, beforeId !== undefined);
-    const params = beforeId === undefined ? [channel.id, 51] : [channel.id, 51, beforeId];
-    const plan = await explain(pool, sql, params);
-    const e2e = await measure(() => listChannelMessages(pool, { channelId: channel.id, beforeId, limit: 50 }));
-    const raw = await measure(() => pool.query(sql, params));
-    rows.push(row(scale, channel.label, `e2e/candidate/${page}`, e2e, plan));
-    rows.push(row(scale, channel.label, `sql/candidate/${page}`, raw, plan));
-  }
-}
-
-async function loadQueries(): Promise<{ full: string; baseline: string }> {
+async function loadQueries(): Promise<{ projection: string; legacy: string }> {
   const source = await readFile(new URL('../src/events.ts', import.meta.url), 'utf8');
   const match = /const MESSAGE_SELECT = `([\s\S]*?)`;/.exec(source);
   if (!match?.[1]) throw new Error('could not extract MESSAGE_SELECT from server/src/events.ts');
-
-  const full = match[1];
-  const selectStart = full.indexOf('         lr.id AS last_reply_preview_id,');
-  const selectEndMarker = '         lr.type AS last_reply_event_type,\n';
-  const selectEnd = full.indexOf(selectEndMarker, selectStart);
-  const joinStart = full.indexOf('  LEFT JOIN events lr ON lr.id = r.last_reply_id\n');
-  const joinEndMarker = '  ) lr_edit ON true\n';
-  const joinEnd = full.indexOf(joinEndMarker, joinStart);
-  if (selectStart < 0 || selectEnd < 0 || joinStart < 0 || joinEnd < 0) {
-    throw new Error('MESSAGE_SELECT latest-reply block changed; update the benchmark string surgery');
-  }
-
-  // Baseline: preserve the pre-existing reply count/max lateral join, but
-  // remove the preview columns plus events/users/edited-text joins added for
-  // lastReply. This deliberately leaves all other feed folding work intact.
-  const withoutSelect = full.slice(0, selectStart) + full.slice(selectEnd + selectEndMarker.length);
-  const adjustedJoinStart = withoutSelect.indexOf('  LEFT JOIN events lr ON lr.id = r.last_reply_id\n');
-  const adjustedJoinEnd = withoutSelect.indexOf(joinEndMarker, adjustedJoinStart);
-  const baseline =
-    withoutSelect.slice(0, adjustedJoinStart) + withoutSelect.slice(adjustedJoinEnd + joinEndMarker.length);
-  return { full, baseline };
+  return { projection: match[1], legacy: LEGACY_MESSAGE_SELECT };
 }
 
 function feedSql(messageSelect: string, deep: boolean): string {
@@ -285,14 +324,19 @@ async function seedDatabase(db: Pool, args: Config): Promise<SeedResult> {
   const minId = Number(idRange.rows[0]?.min_id ?? 0);
   const maxId = Number(idRange.rows[0]?.max_id ?? -1);
   const PROJECT_CHUNK = 5000;
+  // Refold row-owning timeline events once each (modifiers fold into their
+  // target's refold); the per-event classifier cascade is quadratic on busy
+  // threads and pointless for a bulk backfill.
+  const ROW_OWNING_TYPES = `('message.posted', 'voice.transcribed', 'session.spawned', 'session.replied', 'session.status_changed', 'session.effort_changed', 'session.completed', 'session.archived', 'session.unarchived', 'session.seat_requested', 'session.seat_changed', 'session.question_requested', 'session.question_answered', 'session.question_resolved', 'session.provider_auth_required', 'session.github_auth_required', 'session.provider_auth_resolved')`;
   for (let lo = minId; lo <= maxId; lo += PROJECT_CHUNK) {
     await db.query(
-      'SELECT project_message_event(id) FROM events WHERE workspace_id = $1 AND id >= $2 AND id < $3 ORDER BY id',
+      `SELECT refold_message_state(id) FROM events WHERE workspace_id = $1 AND id >= $2 AND id < $3 AND type IN ${ROW_OWNING_TYPES} ORDER BY id`,
       [workspace.id, lo, lo + PROJECT_CHUNK],
     );
   }
 
   await db.query('VACUUM (ANALYZE) events');
+  await db.query('VACUUM (ANALYZE) message_state');
 
   const counts = await db.query<{ roots: number; replies: number; edits: number; events: number }>(
     `SELECT
@@ -499,10 +543,6 @@ function positiveInteger(raw: string, flag: string): number {
   const value = Number(raw);
   if (!Number.isSafeInteger(value) || value <= 0) throw new Error(`${flag} must be a positive integer`);
   return value;
-}
-
-function oneLine(value: string): string {
-  return value.replace(/\s+/g, ' ').trim();
 }
 
 function refuse(message: string): never {
