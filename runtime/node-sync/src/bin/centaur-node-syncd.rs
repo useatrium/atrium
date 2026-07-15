@@ -524,7 +524,7 @@ mod linux_daemon {
     };
     use centaur_node_sync::sse::{ChangedEvent, DirtySet, SseOutput, SseParser};
     use centaur_node_sync::state::DaemonState;
-    use centaur_node_sync::watch::{DirtySessions, UpperWatcher, WatchMessage};
+    use centaur_node_sync::watch::{DirtySessions, MergedTreeWatcher, WatchMessage};
     use std::collections::{HashMap, HashSet, VecDeque};
     use std::io::Read;
     use std::path::{Path, PathBuf};
@@ -933,12 +933,13 @@ mod linux_daemon {
             start_change_stream(&global.base_url, &global.api_key, wake_tx.clone());
         }
         let (watch_tx, watch_rx) = mpsc::channel();
-        let watcher = UpperWatcher::from_env(watch_tx);
+        let watcher = MergedTreeWatcher::from_env(watch_tx);
         start_watch_bridge(watch_rx, wake_tx.clone());
         let mut stream_healthy = false;
         let mut pending_wake_messages = VecDeque::new();
         let mut dirty = DirtySet::default();
         let mut local_dirty = DirtySessions::default();
+        let mut shadow_states: HashMap<String, ShadowState> = HashMap::new();
         let mut watched_sessions = HashSet::new();
         let mut just_attached_sessions = HashSet::new();
         let mut last_reconcile: Option<Instant> = None;
@@ -974,6 +975,7 @@ mod linux_daemon {
                     wip_gate.retain_sessions(|session| active.contains(session));
                     last_forced_wip.retain(|session, _| active.contains(session));
                     local_dirty.retain_sessions(|session| active.contains(session));
+                    shadow_states.retain(|session, _| active.contains(session));
 
                     for discovered in discovery.sessions {
                         current_atrium_keys.insert(discovered.atrium_session.clone());
@@ -1126,7 +1128,7 @@ mod linux_daemon {
                         if watcher.is_enabled()
                             && (wip_remounted || !watched_sessions.contains(&session.session))
                         {
-                            let result = watcher.add_session(&session.session, &session.upper);
+                            let result = watcher.add_session(&session.session, &session.merged);
                             watched_sessions.insert(session.session.clone());
                             if result.attached {
                                 just_attached_sessions.insert(session.session.clone());
@@ -1276,7 +1278,7 @@ mod linux_daemon {
                 ) || force_wip;
                 if should_scan {
                     let cleared_dirty = local_dirty.clear_for_scan(&session.session);
-                    let scan_ok = run_local_capture(
+                    let scanned_entries = run_local_capture(
                         &global,
                         &session,
                         state,
@@ -1285,8 +1287,23 @@ mod linux_daemon {
                         force_wip,
                         &mut wip_gate,
                     );
-                    if !scan_ok && cleared_dirty {
-                        local_dirty.mark(session.session.clone());
+                    match scanned_entries {
+                        Some(entries) => {
+                            let shadow = shadow_states.entry(session.session.clone()).or_default();
+                            shadow_diff_scan(&session, shadow, &entries, &cleared_dirty);
+                        }
+                        None => {
+                            if cleared_dirty.any() {
+                                // Scan failed: put the dirt back so the next tick retries.
+                                if cleared_dirty.full {
+                                    local_dirty.mark(session.session.clone(), None);
+                                } else {
+                                    for path in cleared_dirty.paths {
+                                        local_dirty.mark(session.session.clone(), Some(path));
+                                    }
+                                }
+                            }
+                        }
                     }
                     if force_wip {
                         last_forced_wip.insert(session.session.clone(), now);
@@ -1354,9 +1371,8 @@ mod linux_daemon {
         client: &mut HttpAtriumClient,
         force_wip: bool,
         wip_gate: &mut WipGateState,
-    ) -> bool {
+    ) -> Option<Vec<RawEntry>> {
         let raw_entries = outbound(global, session, state, echo, client);
-        let scan_ok = raw_entries.is_some();
         warmcache_capture_if_needed(client, session, state, &global.depcache_root);
         capture_repo_wip(
             session,
@@ -1366,7 +1382,95 @@ mod linux_daemon {
             force_wip,
             wip_gate,
         );
-        scan_ok
+        raw_entries
+    }
+
+    /// One session's shadow-mode memory: the previous full scan's file
+    /// signatures, plus misses awaiting one-round confirmation (an event may
+    /// legitimately still be in flight when the scan that saw its effect ran).
+    #[derive(Default)]
+    struct ShadowState {
+        prev: std::collections::HashMap<PathBuf, (i64, u64)>,
+        pending: Vec<PathBuf>,
+    }
+
+    /// Shadow mode for scoped scanning: after every full scan, ask "would a
+    /// path-scoped scan driven by the drained dirty set have visited every
+    /// file that actually changed?" Misses are logged (rate-capped) — they are
+    /// exactly the silent capture losses a scoped scanner would have had. A
+    /// miss only logs after surviving one round, so late-drained events don't
+    /// count as false positives.
+    fn shadow_diff_scan(
+        session: &SessionConfig,
+        shadow: &mut ShadowState,
+        entries: &[RawEntry],
+        dirt: &centaur_node_sync::watch::DrainedDirt,
+    ) {
+        use centaur_node_sync::overlay::RawFileType;
+        let cur: std::collections::HashMap<PathBuf, (i64, u64)> = entries
+            .iter()
+            .filter(|entry| !matches!(entry.file_type, RawFileType::Dir))
+            .map(|entry| (entry.rel_path.clone(), (entry.mtime_ns, entry.size)))
+            .collect();
+        let first_scan = shadow.prev.is_empty() && shadow.pending.is_empty();
+        // Dirty paths arrive absolute under the MERGED root; entries are
+        // relative to the upper root — the same rel-path space.
+        let dirty_rels: Vec<PathBuf> = dirt
+            .paths
+            .iter()
+            .filter_map(|path| {
+                path.strip_prefix(&session.merged)
+                    .ok()
+                    .map(Path::to_path_buf)
+            })
+            .collect();
+        let covered = |rel: &Path| -> bool {
+            if dirt.full {
+                return true;
+            }
+            // Unwatched dep/build trees are backstop-only by design.
+            if rel
+                .components()
+                .any(|c| centaur_node_sync::watch::is_unwatched_dir_name(c.as_os_str()))
+            {
+                return true;
+            }
+            dirty_rels
+                .iter()
+                .any(|dirty| rel == dirty || rel.starts_with(dirty))
+        };
+        // Confirm or clear last round's suspects against this round's dirt.
+        let confirmed: Vec<PathBuf> = std::mem::take(&mut shadow.pending)
+            .into_iter()
+            .filter(|rel| !covered(rel))
+            .collect();
+        if !confirmed.is_empty() {
+            let sample: Vec<String> = confirmed
+                .iter()
+                .take(10)
+                .map(|rel| rel.display().to_string())
+                .collect();
+            println!(
+                "event=node_sync_shadow_scan_miss session={} count={} sample={}",
+                session.session,
+                confirmed.len(),
+                sample.join(",")
+            );
+        }
+        if !first_scan {
+            let mut changed: Vec<&PathBuf> = cur
+                .iter()
+                .filter(|(rel, sig)| shadow.prev.get(*rel) != Some(sig))
+                .map(|(rel, _)| rel)
+                .collect();
+            changed.extend(shadow.prev.keys().filter(|rel| !cur.contains_key(*rel)));
+            shadow.pending = changed
+                .into_iter()
+                .filter(|rel| !covered(rel))
+                .cloned()
+                .collect();
+        }
+        shadow.prev = cur;
     }
 
     fn apply_profile_feed(
@@ -1774,7 +1878,10 @@ mod linux_daemon {
     #[derive(Debug)]
     enum WakeMessage {
         Stream(StreamMessage),
-        LocalDirty(String),
+        LocalDirty {
+            session: String,
+            path: Option<std::path::PathBuf>,
+        },
     }
 
     fn start_change_stream(base_url: &str, api_key: &str, tx: mpsc::Sender<WakeMessage>) {
@@ -1787,8 +1894,8 @@ mod linux_daemon {
         std::thread::spawn(move || {
             while let Ok(message) = rx.recv() {
                 match message {
-                    WatchMessage::Dirty(session) => {
-                        if tx.send(WakeMessage::LocalDirty(session)).is_err() {
+                    WatchMessage::Dirty { session, path } => {
+                        if tx.send(WakeMessage::LocalDirty { session, path }).is_err() {
                             return;
                         }
                     }
@@ -1896,8 +2003,8 @@ mod linux_daemon {
             WakeMessage::Stream(StreamMessage::Changed(event)) => {
                 dirty.mark_changed(&event, current_atrium_keys.iter().map(String::as_str));
             }
-            WakeMessage::LocalDirty(session) => {
-                local_dirty.mark(session);
+            WakeMessage::LocalDirty { session, path } => {
+                local_dirty.mark(session, path);
             }
         }
     }
@@ -1972,7 +2079,7 @@ mod linux_daemon {
                 pending.push_back(WakeMessage::Stream(StreamMessage::Changed(event)));
                 made_dirty
             }
-            WakeMessage::LocalDirty(session) => local_dirty.mark(session),
+            WakeMessage::LocalDirty { session, path } => local_dirty.mark(session, path),
         }
     }
 
@@ -2092,7 +2199,7 @@ mod linux_daemon {
     fn cleanup_removed_watches(
         active: &HashSet<String>,
         watched_sessions: &mut HashSet<String>,
-        watcher: &UpperWatcher,
+        watcher: &MergedTreeWatcher,
     ) {
         let removed = watched_sessions
             .iter()
