@@ -513,6 +513,12 @@ fn restore_untracked(
     if !prefix.exists() {
         return Ok(());
     }
+    // The daemon runs as root, so raw copies into an agent-owned repo land
+    // root-owned and the agent can't edit/delete its own restored files. Chown
+    // anything we create back to the repo's owner. None off Linux or when we're
+    // already the owner (dev/test) — same guard as git_command's privilege drop.
+    #[cfg(target_os = "linux")]
+    let owner = agent_tree_owner(repo);
     let mut stack = vec![prefix.clone()];
     while let Some(dir) = stack.pop() {
         for entry in std::fs::read_dir(&dir).map_err(|e| format!("read {}: {e}", dir.display()))? {
@@ -542,7 +548,49 @@ fn restore_untracked(
             }
             std::fs::copy(entry.path(), &dst)
                 .map_err(|e| format!("restore {}: {e}", dst.display()))?;
+            #[cfg(target_os = "linux")]
+            if let Some((uid, gid)) = owner {
+                chown_restored(&dst, repo, uid, gid)?;
+            }
         }
+    }
+    Ok(())
+}
+
+/// The uid/gid to restore daemon-written files to, or `None` when no chown is
+/// needed: a root-owned repo (daemon/system-created — leave it) or one we
+/// already own (dev/test, where euid == owner). Mirrors git_command's guard.
+#[cfg(target_os = "linux")]
+fn agent_tree_owner(repo: &Path) -> Option<(u32, u32)> {
+    use std::os::unix::fs::MetadataExt;
+    let meta = std::fs::metadata(repo).ok()?;
+    let (uid, gid) = (meta.uid(), meta.gid());
+    // SAFETY: geteuid has no arguments or caller-side safety requirements.
+    let euid = unsafe { libc::geteuid() };
+    (uid != 0 && uid != euid).then_some((uid, gid))
+}
+
+/// Chown a just-restored file, then every ancestor dir we created (contiguous
+/// root-owned dirs from `create_dir_all`) up to the first pre-existing
+/// agent-owned dir or the repo root. Idempotent and self-limiting.
+#[cfg(target_os = "linux")]
+fn chown_restored(path: &Path, repo: &Path, uid: u32, gid: u32) -> Result<(), String> {
+    use std::os::unix::fs::MetadataExt;
+    std::os::unix::fs::chown(path, Some(uid), Some(gid))
+        .map_err(|e| format!("chown {}: {e}", path.display()))?;
+    let mut cursor = path.parent();
+    while let Some(dir) = cursor {
+        if dir == repo || !dir.starts_with(repo) {
+            break;
+        }
+        match std::fs::metadata(dir) {
+            // Already agent-owned: a pre-existing tracked dir — stop climbing.
+            Ok(meta) if meta.uid() == uid => break,
+            Ok(_) => std::os::unix::fs::chown(dir, Some(uid), Some(gid))
+                .map_err(|e| format!("chown {}: {e}", dir.display()))?,
+            Err(_) => break,
+        }
+        cursor = dir.parent();
     }
     Ok(())
 }
@@ -938,6 +986,55 @@ printf '\n'
             .unwrap()
             .is_none()
         );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn restore_untracked_chowns_files_and_created_dirs_to_repo_owner() {
+        use std::os::unix::fs::MetadataExt;
+        // Only meaningful as root (the daemon's context): chowning a tree to a
+        // foreign uid and observing restored files inherit it needs privilege.
+        // SAFETY: geteuid has no safety requirements.
+        if unsafe { libc::geteuid() } != 0 {
+            return;
+        }
+        const OWNER: u32 = 61234; // a spare uid; need not exist in /etc/passwd
+
+        let repo = tmp_repo("chown-repo");
+        let scratch = tmp_repo("chown-scratch");
+        // Pre-existing tracked dir (agent-owned) the walk must stop at.
+        fs::create_dir_all(repo.join("existing")).unwrap();
+        std::os::unix::fs::chown(&repo, Some(OWNER), Some(OWNER)).unwrap();
+        std::os::unix::fs::chown(repo.join("existing"), Some(OWNER), Some(OWNER)).unwrap();
+
+        // Untracked files staged under the manifest prefix: one at root, one in
+        // a brand-new nested dir (exercises the created-ancestor chown walk).
+        let prefix = scratch.join("untracked");
+        fs::create_dir_all(prefix.join("newdir/deep")).unwrap();
+        fs::write(prefix.join("root.txt"), b"r").unwrap();
+        fs::write(prefix.join("newdir/deep/file.txt"), b"d").unwrap();
+
+        let manifest = WipSnapshotManifest {
+            version: 1,
+            repo_key: "repo".into(),
+            snapshot_id: "s".into(),
+            base_head_sha: "0".into(),
+            patch_path: "p".into(),
+            untracked_prefix: "untracked".into(),
+        };
+        restore_untracked(&repo, &scratch, &manifest).unwrap();
+
+        let owner_of = |p: std::path::PathBuf| fs::metadata(p).unwrap().uid();
+        assert_eq!(owner_of(repo.join("root.txt")), OWNER);
+        assert_eq!(owner_of(repo.join("newdir/deep/file.txt")), OWNER);
+        assert_eq!(owner_of(repo.join("newdir")), OWNER, "created dir chowned");
+        assert_eq!(
+            owner_of(repo.join("newdir/deep")),
+            OWNER,
+            "nested created dir chowned"
+        );
+        let _ = fs::remove_dir_all(&repo);
+        let _ = fs::remove_dir_all(&scratch);
     }
 
     #[test]
