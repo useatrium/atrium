@@ -32,10 +32,16 @@ services:
       - ./alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
     ports:
       - "9093:9093"
-    # The external-fallback webhook also lives on host.docker.internal (see
-    # alertmanager.yml) — same Linux gap as the prometheus scrape targets.
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+
+  # Forwards alertmanager webhooks to ntfy.sh push notifications. No host
+  # port on purpose — only alertmanager (same compose network) can reach it.
+  # The config carries the secret topic, so the real file is untracked:
+  # copy alertmanager-ntfy.example.yaml -> alertmanager-ntfy.yaml on the box.
+  alertmanager-ntfy:
+    image: ghcr.io/alexbakker/alertmanager-ntfy:v1.2.1
+    command: ["--config", "/etc/alertmanager-ntfy/config.yaml"]
+    volumes:
+      - ./alertmanager-ntfy.yaml:/etc/alertmanager-ntfy/config.yaml:ro
 
   tempo:
     image: grafana/tempo:2.7.1
