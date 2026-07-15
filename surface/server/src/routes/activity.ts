@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { Db } from '../db.js';
 import type { UserRef } from '../events.js';
 import { workspaceMemberExists } from '../membership.js';
+import { parsePendingQuestion, parseProviderAuthRequired } from '../session-runs.js';
 
 type ActivityKind =
   | 'mention'
@@ -41,6 +42,18 @@ interface ActivityQueryRow {
   unread_exception_ids: Array<number | string> | null;
   items: ActivityRow[] | null;
 }
+
+interface ActiveSessionRow {
+  channel_id: string;
+  pending_question: unknown | null;
+  provider_auth_required: unknown | null;
+}
+
+interface ReviewSessionRow {
+  channel_id: string;
+}
+
+type ChannelActivityCounts = { needsYou: number; running: number; toReview: number };
 
 interface ActivityReadStateRow {
   last_read_event_id: number | string;
@@ -140,6 +153,37 @@ async function advanceWatermark(pool: Db, userId: string, requestedCursor: numbe
   return String(res.rows[0]!.last_read_event_id);
 }
 
+async function markActivityItemsRead(
+  pool: Db,
+  userId: string,
+  eventIds: readonly number[],
+  preserveUnreadEventIds: readonly number[] = [],
+): Promise<void> {
+  for (const eventId of eventIds) {
+    await advanceWatermark(pool, userId, eventId);
+    await pool.query(`DELETE FROM activity_unread_exceptions WHERE user_id = $1 AND event_id = $2`, [userId, eventId]);
+  }
+  if (eventIds.length > 0 && preserveUnreadEventIds.length > 0) {
+    await pool.query(
+      `INSERT INTO activity_unread_exceptions (user_id, event_id)
+       SELECT $1, event_id
+         FROM UNNEST($2::bigint[]) AS preserved(event_id)
+       ON CONFLICT DO NOTHING`,
+      [userId, preserveUnreadEventIds],
+    );
+  }
+}
+
+function incrementChannelCount(
+  channelCounts: Map<string, ChannelActivityCounts>,
+  channelId: string,
+  key: keyof ChannelActivityCounts,
+): void {
+  const counts = channelCounts.get(channelId) ?? { needsYou: 0, running: 0, toReview: 0 };
+  counts[key] += 1;
+  channelCounts.set(channelId, counts);
+}
+
 export function registerActivityRoutes(app: FastifyInstance, deps: ActivityRouteDeps): void {
   const { pool, requireUser } = deps;
 
@@ -181,11 +225,7 @@ export function registerActivityRoutes(app: FastifyInstance, deps: ActivityRoute
     // Per-item mark read: advance watermark through this event (older items
     // also become read) and drop any mark-unread exception on it.
     if (markReadEventId !== undefined) {
-      await advanceWatermark(pool, user.id, markReadEventId);
-      await pool.query(`DELETE FROM activity_unread_exceptions WHERE user_id = $1 AND event_id = $2`, [
-        user.id,
-        markReadEventId,
-      ]);
+      await markActivityItemsRead(pool, user.id, [markReadEventId]);
       return readStateFor(pool, user.id);
     }
 
@@ -207,6 +247,133 @@ export function registerActivityRoutes(app: FastifyInstance, deps: ActivityRoute
       [user.id, eventId],
     );
     return readStateFor(pool, user.id);
+  });
+
+  app.post('/api/activity/sessions/:sessionId/read', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    const { sessionId } = req.params as { sessionId: string };
+    const visibleChannel = canSeeChannelSql();
+    const session = await pool.query<{ id: string }>(
+      `SELECT s.id
+         FROM sessions s
+         JOIN channels c ON c.id = s.channel_id
+        WHERE s.id::text = $2
+          AND ${visibleChannel}`,
+      [user.id, sessionId],
+    );
+    if (!session.rows[0]) {
+      return reply.code(404).send({ error: 'session_not_found', message: 'session not found' });
+    }
+
+    // Keep this terminal-event definition in step with the activity feed. A
+    // failed status-change becomes an activity item only when no later
+    // completed event supersedes it.
+    const unread = await pool.query<{ event_id: number | string }>(
+      `WITH read_cursor AS (
+         SELECT COALESCE((
+           SELECT last_read_event_id FROM activity_read_cursors WHERE user_id = $1
+         ), 0)::bigint AS last_read_event_id
+       ), terminal_items AS (
+         SELECT e.id AS event_id, s.channel_id
+           FROM events e
+           JOIN sessions s ON s.id::text = e.payload->>'sessionId'
+          WHERE s.id::text = $2
+            AND s.spawned_by = $1
+            AND e.type = 'session.completed'
+
+         UNION ALL
+
+         SELECT e.id AS event_id, s.channel_id
+           FROM events e
+           JOIN sessions s ON s.id::text = e.payload->>'sessionId'
+          WHERE s.id::text = $2
+            AND s.spawned_by = $1
+            AND e.type = 'session.status_changed'
+            AND e.payload->>'status' = 'failed'
+            AND NOT EXISTS (
+              SELECT 1 FROM events completed
+               WHERE completed.type = 'session.completed'
+                 AND completed.payload->>'sessionId' = e.payload->>'sessionId'
+                 AND completed.id > e.id
+            )
+       )
+       SELECT ti.event_id
+         FROM terminal_items ti
+         CROSS JOIN read_cursor
+        WHERE (
+          ti.event_id > read_cursor.last_read_event_id
+          OR EXISTS (
+            SELECT 1 FROM activity_unread_exceptions ue
+             WHERE ue.user_id = $1 AND ue.event_id = ti.event_id
+          )
+        )
+          AND NOT EXISTS (
+            SELECT 1 FROM channel_mutes mt
+             JOIN sessions s ON s.id::text = $2
+            WHERE mt.user_id = $1 AND mt.channel_id = s.channel_id
+          )
+        ORDER BY ti.event_id ASC`,
+      [user.id, sessionId],
+    );
+    // Per-item reads use a global watermark. Preserve other sessions' unread
+    // terminal rows as exceptions before that watermark can cover them.
+    const preserved = await pool.query<{ event_id: number | string }>(
+      `WITH read_cursor AS (
+         SELECT COALESCE((
+           SELECT last_read_event_id FROM activity_read_cursors WHERE user_id = $1
+         ), 0)::bigint AS last_read_event_id
+       ), terminal_items AS (
+         SELECT e.id AS event_id, s.channel_id
+           FROM events e
+           JOIN sessions s ON s.id::text = e.payload->>'sessionId'
+           JOIN channels c ON c.id = s.channel_id
+          WHERE s.id::text <> $2
+            AND s.spawned_by = $1
+            AND e.type = 'session.completed'
+            AND ${visibleChannel}
+
+         UNION ALL
+
+         SELECT e.id AS event_id, s.channel_id
+           FROM events e
+           JOIN sessions s ON s.id::text = e.payload->>'sessionId'
+           JOIN channels c ON c.id = s.channel_id
+          WHERE s.id::text <> $2
+            AND s.spawned_by = $1
+            AND e.type = 'session.status_changed'
+            AND e.payload->>'status' = 'failed'
+            AND NOT EXISTS (
+              SELECT 1 FROM events completed
+               WHERE completed.type = 'session.completed'
+                 AND completed.payload->>'sessionId' = e.payload->>'sessionId'
+                 AND completed.id > e.id
+            )
+            AND ${visibleChannel}
+       )
+       SELECT ti.event_id
+         FROM terminal_items ti
+         CROSS JOIN read_cursor
+        WHERE (
+          ti.event_id > read_cursor.last_read_event_id
+          OR EXISTS (
+            SELECT 1 FROM activity_unread_exceptions ue
+             WHERE ue.user_id = $1 AND ue.event_id = ti.event_id
+          )
+        )
+          AND NOT EXISTS (
+            SELECT 1 FROM channel_mutes mt
+             WHERE mt.user_id = $1 AND mt.channel_id = ti.channel_id
+          )`,
+      [user.id, sessionId],
+    );
+    await markActivityItemsRead(
+      pool,
+      user.id,
+      unread.rows.map((row) => Number(row.event_id)),
+      preserved.rows.map((row) => Number(row.event_id)),
+    );
+    return reply.code(204).send();
   });
 
   app.get('/api/activity', async (req, reply) => {
@@ -662,6 +829,86 @@ export function registerActivityRoutes(app: FastifyInstance, deps: ActivityRoute
 
     const result = res.rows[0]!;
     const items = Array.isArray(result.items) ? result.items.map(toActivityItem) : [];
+    // These are deliberately separate from the paginated activity query: the
+    // aggregate is over current session state, not whichever 50 activity rows
+    // happened to be returned above.
+    const activeSessions = await pool.query<ActiveSessionRow>(
+      `SELECT s.channel_id, s.pending_question, s.provider_auth_required
+         FROM sessions s
+         JOIN channels c ON c.id = s.channel_id
+        WHERE s.archived_at IS NULL
+          AND s.status IN ('spawning', 'queued', 'running')
+          AND ${visibleChannel}`,
+      [user.id],
+    );
+    const channelCounts = new Map<string, ChannelActivityCounts>();
+    let needsYou = 0;
+    let running = 0;
+    for (const session of activeSessions.rows) {
+      if (parsePendingQuestion(session.pending_question) || parseProviderAuthRequired(session.provider_auth_required)) {
+        needsYou += 1;
+        incrementChannelCount(channelCounts, session.channel_id, 'needsYou');
+      } else {
+        running += 1;
+        incrementChannelCount(channelCounts, session.channel_id, 'running');
+      }
+    }
+
+    const reviewSessions = await pool.query<ReviewSessionRow>(
+      `WITH read_cursor AS (
+         SELECT COALESCE((
+           SELECT last_read_event_id FROM activity_read_cursors WHERE user_id = $1
+         ), 0)::bigint AS last_read_event_id
+       ), terminal_items AS (
+         SELECT e.id AS event_id, s.id AS session_id, s.channel_id
+           FROM events e
+           JOIN sessions s ON s.id::text = e.payload->>'sessionId'
+           JOIN channels c ON c.id = s.channel_id
+          WHERE e.type = 'session.completed'
+            AND s.spawned_by = $1
+            AND s.archived_at IS NULL
+            AND ${visibleChannel}
+
+         UNION ALL
+
+         SELECT e.id AS event_id, s.id AS session_id, s.channel_id
+           FROM events e
+           JOIN sessions s ON s.id::text = e.payload->>'sessionId'
+           JOIN channels c ON c.id = s.channel_id
+          WHERE e.type = 'session.status_changed'
+            AND e.payload->>'status' = 'failed'
+            AND s.spawned_by = $1
+            AND s.archived_at IS NULL
+            AND NOT EXISTS (
+              SELECT 1 FROM events completed
+               WHERE completed.type = 'session.completed'
+                 AND completed.payload->>'sessionId' = e.payload->>'sessionId'
+                 AND completed.id > e.id
+            )
+            AND ${visibleChannel}
+       ), latest_terminal AS (
+         SELECT DISTINCT ON (session_id) session_id, channel_id, event_id
+           FROM terminal_items
+          ORDER BY session_id, event_id DESC
+       )
+       SELECT lt.channel_id
+         FROM latest_terminal lt
+         CROSS JOIN read_cursor
+        WHERE (
+          lt.event_id > read_cursor.last_read_event_id
+          OR EXISTS (
+            SELECT 1 FROM activity_unread_exceptions ue
+             WHERE ue.user_id = $1 AND ue.event_id = lt.event_id
+          )
+        )
+          AND NOT EXISTS (
+            SELECT 1 FROM channel_mutes mt
+             WHERE mt.user_id = $1 AND mt.channel_id = lt.channel_id
+          )`,
+      [user.id],
+    );
+    for (const session of reviewSessions.rows) incrementChannelCount(channelCounts, session.channel_id, 'toReview');
+    const toReview = reviewSessions.rows.length;
     return {
       items,
       nextCursor: items.length === 50 ? items[items.length - 1]!.eventId : null,
@@ -670,7 +917,11 @@ export function registerActivityRoutes(app: FastifyInstance, deps: ActivityRoute
       counts: {
         attention: Number(result.attention_count),
         unread: Number(result.unread_count),
+        needsYou,
+        running,
+        toReview,
       },
+      channelCounts: Object.fromEntries(channelCounts),
     };
   });
 }

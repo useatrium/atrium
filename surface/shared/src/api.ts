@@ -292,7 +292,15 @@ export type ActivityItem = {
 export type ActivityCounts = {
   attention: number;
   unread: number;
+  /** Optional in shared state so pre-count consumers remain source-compatible. */
+  needsYou?: number;
+  running?: number;
+  toReview?: number;
 };
+
+export type ActivityChannelCounts = Required<Pick<ActivityCounts, 'needsYou' | 'running' | 'toReview'>>;
+
+type DecodedActivityCounts = ActivityCounts & Required<Pick<ActivityCounts, 'needsYou' | 'running' | 'toReview'>>;
 
 export type ActivityReadState = {
   lastReadEventId: string;
@@ -305,8 +313,40 @@ export type ActivityResponse = {
   lastReadEventId: string;
   /** Event ids explicitly marked unread after the watermark advanced past them. */
   unreadExceptionIds?: string[];
-  counts: ActivityCounts;
+  /** The activity decoder fills new count fields with zero for older servers. */
+  counts: DecodedActivityCounts;
+  /** Omitted for channels without current agent-work or review counts. */
+  channelCounts: Record<string, ActivityChannelCounts>;
 };
+
+const ActivityChannelCountsSchema = Schema.Struct({
+  needsYou: Schema.Number,
+  running: Schema.Number,
+  toReview: Schema.Number,
+});
+
+const ActivityResponseSchema = Schema.Struct({
+  items: Schema.Array(Schema.Unknown),
+  nextCursor: Schema.Union(Schema.String, Schema.Null),
+  lastReadEventId: Schema.String,
+  unreadExceptionIds: Schema.optionalWith(Schema.Array(Schema.String), { exact: true }),
+  counts: Schema.Struct({
+    attention: Schema.Number,
+    unread: Schema.Number,
+    // Deploy-skew tolerance: older servers predate the true agent-work counts.
+    needsYou: Schema.optionalWith(Schema.Number, { default: () => 0 }),
+    running: Schema.optionalWith(Schema.Number, { default: () => 0 }),
+    toReview: Schema.optionalWith(Schema.Number, { default: () => 0 }),
+  }),
+  channelCounts: Schema.optionalWith(Schema.Record({ key: Schema.String, value: ActivityChannelCountsSchema }), {
+    default: () => ({}),
+  }),
+});
+
+/** Decode activity with zero/empty defaults while a web client rolls across an older server. */
+export function decodeActivityResponse(input: unknown): ActivityResponse {
+  return decodeApiResponse(ActivityResponseSchema, input) as ActivityResponse;
+}
 
 export function createApi(opts: ApiOptions = {}) {
   const base = (opts.baseUrl ?? '').replace(/\/+$/, '');
@@ -366,6 +406,7 @@ export function createApi(opts: ApiOptions = {}) {
       }
       throw new ApiError(res.status, code, message);
     }
+    if (res.status === 204) return undefined as T;
     if (decode) {
       let body: unknown;
       try {
@@ -568,7 +609,7 @@ export function createApi(opts: ApiOptions = {}) {
       const q = new URLSearchParams();
       if (cursor !== undefined) q.set('cursor', cursor);
       const qs = q.toString();
-      return req<ActivityResponse>(`/api/activity${qs ? `?${qs}` : ''}`);
+      return req<ActivityResponse>(`/api/activity${qs ? `?${qs}` : ''}`, undefined, decodeActivityResponse);
     },
     /** Mark all activity through `lastReadEventId` read and clear mark-unread exceptions. */
     markActivityRead: (lastReadEventId: number) =>
@@ -588,6 +629,9 @@ export function createApi(opts: ApiOptions = {}) {
         method: 'POST',
         body: JSON.stringify({ markUnreadEventId: eventId }),
       }),
+    /** Mark this session's terminal activity items reviewed without clearing unrelated activity. */
+    markSessionActivityRead: (sessionId: string) =>
+      req<void>(`/api/activity/sessions/${encodeURIComponent(sessionId)}/read`, { method: 'POST' }),
     thread: (rootEventId: number) =>
       req<{ events: WireEvent[] }>(`/api/threads/${rootEventId}/messages`, undefined, decodeThreadMessagesResponse),
     postMessage: (body: {

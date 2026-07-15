@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { decodeSessionListResponse, decodeSessionResponse } from './api';
+import { decodeActivityResponse, decodeSessionListResponse, decodeSessionResponse } from './api';
 import {
   attachedSessionForRoot,
   formatCost,
@@ -46,6 +46,20 @@ describe('session list wire decoding', () => {
       attentionReason: null,
       resultText: null,
     });
+  });
+});
+
+describe('activity wire decoding', () => {
+  it('defaults true-count fields absent from a legacy payload', () => {
+    const decoded = decodeActivityResponse({
+      items: [],
+      nextCursor: null,
+      lastReadEventId: '0',
+      counts: { attention: 0, unread: 0 },
+    });
+
+    expect(decoded.counts).toEqual({ attention: 0, unread: 0, needsYou: 0, running: 0, toReview: 0 });
+    expect(decoded.channelCounts).toEqual({});
   });
 });
 

@@ -265,7 +265,7 @@ describe('/api/activity', () => {
       attention: false,
     });
     // …but they no longer demand anything.
-    expect(after.counts).toEqual({ attention: 0, unread: 0 });
+    expect(after.counts).toMatchObject({ attention: 0, unread: 0 });
 
     await app.inject({
       method: 'POST',
@@ -394,13 +394,13 @@ describe('/api/activity', () => {
     expect(staleRead.json()).toMatchObject({ lastReadEventId: String(failed), unreadExceptionIds: [] });
 
     const acknowledged = await activity(bob.cookie);
-    expect(acknowledged.counts).toEqual({ attention: 2, unread: 0 });
+    expect(acknowledged.counts).toMatchObject({ attention: 2, unread: 0 });
     expect(acknowledged.items.find((item: any) => Number(item.eventId) === failed)).toMatchObject({ attention: false });
 
     await pool.query('UPDATE sessions SET pending_question = NULL WHERE id = $1', [questionSessionId]);
     await pool.query('UPDATE sessions SET provider_auth_required = NULL WHERE id = $1', [authSessionId]);
     const cleared = await activity(bob.cookie);
-    expect(cleared.counts).toEqual({ attention: 0, unread: 0 });
+    expect(cleared.counts).toMatchObject({ attention: 0, unread: 0 });
     expect(cleared.items.find((item: any) => Number(item.eventId) === question)).toMatchObject({ attention: false });
     expect(cleared.items.find((item: any) => Number(item.eventId) === auth)).toMatchObject({ attention: false });
   });
@@ -417,11 +417,106 @@ describe('/api/activity', () => {
     });
 
     const body = await activity(bob.cookie);
-    expect(body.counts).toEqual({ attention: 0, unread: 1 });
+    expect(body.counts).toMatchObject({ attention: 0, unread: 1 });
     expect(body.items.find((item: any) => Number(item.eventId) === question)).toMatchObject({
       sessionId,
       attention: false,
     });
+  });
+
+  it('returns true agent-work and review counts, scoped by channel', async () => {
+    const bob = await login('bob', 'Bob');
+    const privateChannel = await createPrivate(bob.cookie, 'private agent work');
+    const needsQuestion = await createActivitySession(bob.user.id, 'question', 'running');
+    await pool.query(`UPDATE sessions SET pending_question = $2::jsonb WHERE id = $1`, [
+      needsQuestion,
+      JSON.stringify({ questionId: 'q-1', turnId: 'turn-1', questions: [], eventId: 1 }),
+    ]);
+    const needsAuth = await createActivitySession(bob.user.id, 'auth', 'queued', privateChannel.id);
+    await pool.query(`UPDATE sessions SET provider_auth_required = $2::jsonb WHERE id = $1`, [
+      needsAuth,
+      JSON.stringify({ provider: 'codex', userId: bob.user.id, reason: 'missing_token' }),
+    ]);
+    await createActivitySession(bob.user.id, 'running');
+    const archivedRunning = await createActivitySession(bob.user.id, 'archived running');
+    await pool.query('UPDATE sessions SET archived_at = now() WHERE id = $1', [archivedRunning]);
+
+    const reviewedSession = await createActivitySession(bob.user.id, 'review me', 'completed');
+    await insertSessionEventFor(reviewedSession, bob.user.id, 'session.completed', { status: 'completed' });
+    const latestReview = await insertSessionEventFor(reviewedSession, bob.user.id, 'session.completed', {
+      status: 'completed',
+    });
+    const archivedReview = await createActivitySession(bob.user.id, 'archived review', 'completed');
+    await insertSessionEventFor(archivedReview, bob.user.id, 'session.completed', { status: 'completed' });
+    await pool.query('UPDATE sessions SET archived_at = now() WHERE id = $1', [archivedReview]);
+
+    const initial = await activity(bob.cookie);
+    expect(initial.counts).toMatchObject({ needsYou: 2, running: 1, toReview: 1 });
+    expect(initial.channelCounts).toEqual({
+      [fx.channelId]: { needsYou: 1, running: 1, toReview: 1 },
+      [privateChannel.id]: { needsYou: 1, running: 0, toReview: 0 },
+    });
+
+    const markAll = await app.inject({
+      method: 'POST',
+      url: '/api/activity/read',
+      headers: { cookie: bob.cookie },
+      payload: { lastReadEventId: latestReview },
+    });
+    expect(markAll.statusCode).toBe(200);
+    expect((await activity(bob.cookie)).counts).toMatchObject({ toReview: 0 });
+
+    const markUnread = await app.inject({
+      method: 'POST',
+      url: '/api/activity/read',
+      headers: { cookie: bob.cookie },
+      payload: { markUnreadEventId: latestReview },
+    });
+    expect(markUnread.statusCode).toBe(200);
+    expect((await activity(bob.cookie)).counts).toMatchObject({ toReview: 1 });
+  });
+
+  it('marks every terminal item in one session reviewed without touching other sessions', async () => {
+    const bob = await login('bob', 'Bob');
+    const target = await createActivitySession(bob.user.id, 'review target', 'completed');
+    const first = await insertSessionEventFor(target, bob.user.id, 'session.completed', { status: 'completed' });
+    const other = await createActivitySession(bob.user.id, 'leave unread', 'failed');
+    const otherEvent = await insertSessionEventFor(other, bob.user.id, 'session.completed', { status: 'failed' });
+    const second = await insertSessionEventFor(target, bob.user.id, 'session.completed', { status: 'completed' });
+
+    const read = await app.inject({
+      method: 'POST',
+      url: `/api/activity/sessions/${target}/read`,
+      headers: { cookie: bob.cookie },
+    });
+    expect(read.statusCode).toBe(204);
+    const after = await activity(bob.cookie);
+    expect(after.items.find((item: any) => Number(item.eventId) === first)).toMatchObject({ unread: false });
+    expect(after.items.find((item: any) => Number(item.eventId) === second)).toMatchObject({ unread: false });
+    expect(after.items.find((item: any) => Number(item.eventId) === otherEvent)).toMatchObject({ unread: true });
+    expect(after.counts).toMatchObject({ toReview: 1 });
+
+    const repeated = await app.inject({
+      method: 'POST',
+      url: `/api/activity/sessions/${target}/read`,
+      headers: { cookie: bob.cookie },
+    });
+    expect(repeated.statusCode).toBe(204);
+  });
+
+  it('does not let a non-member mark a private session reviewed', async () => {
+    const alice = await login('alice', 'Alice');
+    const bob = await login('bob', 'Bob');
+    const secret = await createPrivate(alice.cookie, 'review secret');
+    const sessionId = await createActivitySession(alice.user.id, 'private review', 'completed', secret.id);
+    await insertSessionEventFor(sessionId, alice.user.id, 'session.completed', { status: 'completed' }, secret.id);
+
+    const denied = await app.inject({
+      method: 'POST',
+      url: `/api/activity/sessions/${sessionId}/read`,
+      headers: { cookie: bob.cookie },
+    });
+    expect(denied.statusCode).toBe(404);
   });
 
   it('rejects non-numeric activity cursors', async () => {
@@ -618,12 +713,17 @@ async function insertSessionEvent(userId: string, type: string, payload: Record<
   return insertSessionEventFor(sessionId, userId, type, payload);
 }
 
-async function createActivitySession(userId: string, title = 'activity test', status = 'running'): Promise<string> {
+async function createActivitySession(
+  userId: string,
+  title = 'activity test',
+  status = 'running',
+  channelId = fx.channelId,
+): Promise<string> {
   const session = await pool.query<{ id: string }>(
     `INSERT INTO sessions (workspace_id, channel_id, centaur_thread_key, title, status, spawned_by, driver_id)
      VALUES ($1, $2, $3, $4, $5, $6, $6)
      RETURNING id`,
-    [fx.workspaceId, fx.channelId, `test:${randomUUID()}`, title, status, userId],
+    [fx.workspaceId, channelId, `test:${randomUUID()}`, title, status, userId],
   );
   return session.rows[0]!.id;
 }
@@ -633,10 +733,11 @@ async function insertSessionEventFor(
   userId: string,
   type: string,
   payload: Record<string, unknown>,
+  channelId = fx.channelId,
 ): Promise<number> {
   return seedEvent(pool, {
     workspaceId: fx.workspaceId,
-    channelId: fx.channelId,
+    channelId,
     type,
     actorId: userId,
     payload: { ...payload, sessionId },
