@@ -1,69 +1,16 @@
-import { expect, test, type APIRequestContext, type BrowserContext, type Locator, type Page } from '@playwright/test';
-import { apiAs, channelId, createTestChannel, login, openChannel, postMessage, unique } from './helpers.js';
-
-async function seedTallMessages(
-  ctx: APIRequestContext,
-  channelIdValue: string,
-  prefix: string,
-  count: number,
-): Promise<number[]> {
-  const ids: number[] = [];
-  for (let index = 1; index <= count; index += 1) {
-    const text = `${prefix} ${index} ${'viewport-filling message content '.repeat(40)}`;
-    ids.push(await postMessage(ctx, channelIdValue, text));
-  }
-  return ids;
-}
-
-async function distanceFromBottom(log: Locator): Promise<number> {
-  return log.evaluate((node) => {
-    const element = node as HTMLElement;
-    return element.scrollHeight - element.scrollTop - element.clientHeight;
-  });
-}
-
-async function dividerOffsetFromViewportTop(divider: Locator): Promise<number> {
-  return divider.evaluate((node) => {
-    const scroller = node.closest('[role="log"]');
-    if (!scroller) return Number.POSITIVE_INFINITY;
-    return node.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
-  });
-}
-
-async function warmReaderCache(args: {
-  page: Page;
-  room: string;
-  roomId: string;
-  readerHandle: string;
-  readerSession: APIRequestContext;
-  latestBaselineId: number;
-}): Promise<string> {
-  await login(args.page, args.readerHandle, 'Reader');
-  await openChannel(args.page, args.room);
-
-  const log = args.page.getByRole('log', { name: 'Messages' });
-  const latestRow = log.locator(`[data-eid="${args.latestBaselineId}"]`);
-  await latestRow.scrollIntoViewIfNeeded();
-  await expect(latestRow).toBeVisible();
-  await expect.poll(() => distanceFromBottom(log), { timeout: 20_000 }).toBeLessThan(8);
-  await expect
-    .poll(
-      async () => {
-        const response = await args.readerSession.get(`/api/channels/${args.roomId}/messages?limit=1`);
-        expect(response.ok()).toBeTruthy();
-        return ((await response.json()) as { readCursor?: number }).readCursor ?? 0;
-      },
-      { timeout: 20_000 },
-    )
-    .toBeGreaterThanOrEqual(args.latestBaselineId);
-
-  const route = args.page.url();
-  await args.page.reload();
-  await expect(args.page.getByRole('heading', { name: `# ${args.room}` })).toBeVisible();
-  await expect(log.locator(`[data-eid="${args.latestBaselineId}"]`)).toBeVisible({ timeout: 20_000 });
-  await expect.poll(() => distanceFromBottom(log), { timeout: 20_000 }).toBeLessThan(8);
-  return route;
-}
+import { expect, test, type BrowserContext, type Page } from '@playwright/test';
+import {
+  apiAs,
+  channelId,
+  createTestChannel,
+  distanceFromBottom,
+  dividerOffsetFromViewportTop,
+  login,
+  openChannel,
+  seedMessages,
+  unique,
+  warmReaderCache,
+} from './helpers.js';
 
 function trackHistoryReadCursors(page: Page, roomId: string): number[] {
   const cursors: number[] = [];
@@ -100,18 +47,28 @@ test('history readCursor prevents a stale cached unread-divider landing after an
 
   try {
     const roomId = await channelId(writer, room);
-    const baselineIds = await seedTallMessages(writer, roomId, unique('baseline'), 18);
+    const baselineIds = await seedMessages(writer, roomId, unique('baseline'), 18, {
+      text: (index, prefix) => `${prefix} ${index} ${'viewport-filling message content '.repeat(40)}`,
+    });
+    await login(page, readerHandle, 'Reader');
+    await openChannel(page, room);
     const route = await warmReaderCache({
       page,
       room,
-      roomId,
-      readerHandle,
-      readerSession: initialReaderSession,
-      latestBaselineId: baselineIds.at(-1)!,
+      latestEventId: baselineIds.at(-1)!,
+      confirmBottomBeforeCursor: true,
+      readCursor: async () => {
+        const response = await initialReaderSession.get(`/api/channels/${roomId}/messages?limit=1`);
+        expect(response.ok()).toBeTruthy();
+        return ((await response.json()) as { readCursor?: number }).readCursor ?? 0;
+      },
+      cursorPollOptions: { timeout: 20_000 },
     });
     await page.close();
 
-    const newIds = await seedTallMessages(initialReaderSession, roomId, unique('remote-read'), 14);
+    const newIds = await seedMessages(initialReaderSession, roomId, unique('remote-read'), 14, {
+      text: (index, prefix) => `${prefix} ${index} ${'viewport-filling message content '.repeat(40)}`,
+    });
     const newestId = newIds.at(-1)!;
     const marked = await initialReaderSession.post(`/api/channels/${roomId}/read`, {
       data: { lastReadEventId: newestId },
@@ -139,19 +96,29 @@ test('history readCursor preserves a genuine unread-divider landing', async ({ p
 
   try {
     const roomId = await channelId(writer, room);
-    const baselineIds = await seedTallMessages(writer, roomId, unique('baseline'), 18);
+    const baselineIds = await seedMessages(writer, roomId, unique('baseline'), 18, {
+      text: (index, prefix) => `${prefix} ${index} ${'viewport-filling message content '.repeat(40)}`,
+    });
     const latestBaselineId = baselineIds.at(-1)!;
+    await login(page, readerHandle, 'Reader');
+    await openChannel(page, room);
     const route = await warmReaderCache({
       page,
       room,
-      roomId,
-      readerHandle,
-      readerSession: secondReaderSession,
-      latestBaselineId,
+      latestEventId: latestBaselineId,
+      confirmBottomBeforeCursor: true,
+      readCursor: async () => {
+        const response = await secondReaderSession.get(`/api/channels/${roomId}/messages?limit=1`);
+        expect(response.ok()).toBeTruthy();
+        return ((await response.json()) as { readCursor?: number }).readCursor ?? 0;
+      },
+      cursorPollOptions: { timeout: 20_000 },
     });
     await page.close();
 
-    const newIds = await seedTallMessages(writer, roomId, unique('genuine-unread'), 14);
+    const newIds = await seedMessages(writer, roomId, unique('genuine-unread'), 14, {
+      text: (index, prefix) => `${prefix} ${index} ${'viewport-filling message content '.repeat(40)}`,
+    });
     const newestId = newIds.at(-1)!;
 
     const reopened = await reopenChannel(context, route, room, roomId);

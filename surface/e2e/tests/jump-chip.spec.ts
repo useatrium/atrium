@@ -8,7 +8,8 @@ import {
   login,
   messageRow,
   openChannel,
-  postMessage,
+  scrollToBottom,
+  seedMessages,
   unique,
 } from './helpers.js';
 
@@ -42,17 +43,14 @@ test('an off-screen agent answer offers a jump back to its root', async ({ page,
   const task = unique('top-agent-task');
   const { rootId, sessionId } = await injectSession({ handle, channelId: roomId, title: task });
 
-  for (let index = 0; index < 30; index += 1) {
-    await postMessage(page.context().request, roomId, `${unique('filler')}-${index}`);
-  }
+  await seedMessages(page.context().request, roomId, 'filler', 30, {
+    text: (index) => `${unique('filler')}-${index - 1}`,
+  });
   await openChannel(page, room);
 
   const timeline = page.getByRole('log', { name: 'Messages' });
   const root = messageRow(page, task);
-  await timeline.evaluate((node) => {
-    node.scrollTop = node.scrollHeight;
-    node.dispatchEvent(new Event('scroll'));
-  });
+  await scrollToBottom(timeline, { bubbles: false });
   await expectOutsideViewport(root, timeline);
   await expect(page.getByTestId('agent-answer-jump-chip')).toHaveCount(0);
 

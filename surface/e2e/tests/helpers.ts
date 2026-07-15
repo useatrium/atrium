@@ -1,4 +1,11 @@
-import { expect, request, type APIRequestContext, type BrowserContext, type Page } from '@playwright/test';
+import {
+  expect,
+  request,
+  type APIRequestContext,
+  type BrowserContext,
+  type Locator,
+  type Page,
+} from '@playwright/test';
 import { Pool, type PoolClient } from 'pg';
 
 export const baseURL = `http://127.0.0.1:${Number(process.env.E2E_WEB_PORT ?? 5273)}`;
@@ -228,6 +235,143 @@ export async function postMessage(ctx: APIRequestContext, channelIdValue: string
   expect(res.ok()).toBeTruthy();
   const body = (await res.json()) as { event: { id: number } };
   return body.event.id;
+}
+
+/** Persist a user's read cursor directly in the e2e database. */
+export async function setReadCursor(args: {
+  handle: string;
+  channelId: string;
+  lastReadEventId: number;
+}): Promise<void> {
+  const pool = new Pool({ connectionString: e2eDatabaseUrl });
+  const client = await pool.connect();
+  try {
+    const user = await client.query<{ id: string }>('SELECT id FROM users WHERE handle = $1', [args.handle]);
+    const userId = user.rows[0]?.id;
+    if (!userId) throw new Error(`missing e2e user: ${args.handle}`);
+    await client.query(
+      `INSERT INTO channel_read_cursors (user_id, channel_id, last_read_event_id)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (user_id, channel_id)
+       DO UPDATE SET last_read_event_id = EXCLUDED.last_read_event_id,
+                     updated_at = now()`,
+      [userId, args.channelId, args.lastReadEventId],
+    );
+  } finally {
+    client.release();
+    await pool.end();
+  }
+}
+
+/** Read a user's current persisted channel cursor from the e2e database. */
+export async function readCursor(args: { handle: string; channelId: string }): Promise<number> {
+  const pool = new Pool({ connectionString: e2eDatabaseUrl });
+  const client = await pool.connect();
+  try {
+    const result = await client.query<{ last_read_event_id: string | number }>(
+      `SELECT rc.last_read_event_id
+       FROM channel_read_cursors rc
+       JOIN users u ON u.id = rc.user_id
+       WHERE u.handle = $1 AND rc.channel_id = $2`,
+      [args.handle, args.channelId],
+    );
+    return Number(result.rows[0]?.last_read_event_id ?? 0);
+  } finally {
+    client.release();
+    await pool.end();
+  }
+}
+
+/** Seed a numbered message sequence, optionally with custom text or parallel requests. */
+export async function seedMessages(
+  ctx: APIRequestContext,
+  channelIdValue: string,
+  prefix: string,
+  count: number,
+  options: { parallel?: boolean; text?: (index: number, prefix: string) => string } = {},
+): Promise<number[]> {
+  const text = options.text ?? ((index: number, value: string) => `${value} ${index}`);
+  if (options.parallel) {
+    return Promise.all(
+      Array.from({ length: count }, (_, index) => postMessage(ctx, channelIdValue, text(index + 1, prefix))),
+    );
+  }
+
+  const ids: number[] = [];
+  for (let index = 1; index <= count; index += 1) {
+    ids.push(await postMessage(ctx, channelIdValue, text(index, prefix)));
+  }
+  return ids;
+}
+
+/** Measure the remaining scroll distance below a timeline viewport. */
+export async function distanceFromBottom(log: Locator): Promise<number> {
+  return log.evaluate((node) => {
+    const element = node as HTMLElement;
+    return element.scrollHeight - element.scrollTop - element.clientHeight;
+  });
+}
+
+/** Scroll a timeline to its bottom and dispatch the matching scroll event. */
+export async function scrollToBottom(log: Locator, options: { bubbles?: boolean } = {}): Promise<void> {
+  await log.evaluate((node, bubbles) => {
+    const element = node as HTMLElement;
+    element.scrollTop = element.scrollHeight;
+    element.dispatchEvent(new Event('scroll', { bubbles }));
+  }, options.bubbles ?? true);
+}
+
+/** Assert that an unread divider lies within its timeline viewport. */
+export async function expectDividerInTimelineViewport(divider: Locator): Promise<void> {
+  await expect
+    .poll(async () =>
+      divider.evaluate((node) => {
+        const scroller = node.closest('[role="log"]');
+        if (!scroller) return false;
+        const rect = node.getBoundingClientRect();
+        const bounds = scroller.getBoundingClientRect();
+        return rect.top >= bounds.top - 2 && rect.top <= bounds.bottom + 2;
+      }),
+    )
+    .toBe(true);
+}
+
+/** Measure an unread divider's offset from the top of its timeline viewport. */
+export async function dividerOffsetFromViewportTop(divider: Locator): Promise<number> {
+  return divider.evaluate((node) => {
+    const scroller = node.closest('[role="log"]');
+    if (!scroller) return Number.POSITIVE_INFINITY;
+    return node.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
+  });
+}
+
+/** Warm and reload a reader's cached bottom position after its cursor is confirmed. */
+export async function warmReaderCache(args: {
+  page: Page;
+  room: string;
+  latestEventId: number;
+  readCursor: () => Promise<number>;
+  confirmBottomBeforeCursor?: boolean;
+  confirmBottomAfterReload?: boolean;
+  cursorPollOptions?: { intervals?: number[]; timeout?: number };
+}): Promise<string> {
+  const log = args.page.getByRole('log', { name: 'Messages' });
+  const latestRow = log.locator(`[data-eid="${args.latestEventId}"]`);
+  await latestRow.scrollIntoViewIfNeeded();
+  await expect(latestRow).toBeVisible();
+  if (args.confirmBottomBeforeCursor) {
+    await expect.poll(() => distanceFromBottom(log), { timeout: 20_000 }).toBeLessThan(8);
+  }
+  await expect.poll(args.readCursor, args.cursorPollOptions).toBeGreaterThanOrEqual(args.latestEventId);
+
+  const route = args.page.url();
+  await args.page.reload();
+  await expect(args.page.getByRole('heading', { name: `# ${args.room}` })).toBeVisible();
+  await expect(log.locator(`[data-eid="${args.latestEventId}"]`)).toBeVisible({ timeout: 20_000 });
+  if (args.confirmBottomAfterReload ?? true) {
+    await expect.poll(() => distanceFromBottom(log), { timeout: 20_000 }).toBeLessThan(8);
+  }
+  return route;
 }
 
 export async function injectSession(args: {
