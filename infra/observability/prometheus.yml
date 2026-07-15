@@ -11,12 +11,17 @@ scrape_configs:
     static_configs:
       - targets: ["otel-collector:8889"]
 
+  # centaur-api-rs runs in k3s and is exposed as NodePort 30756 (svc port 8080);
+  # nothing listens on host:8080 itself.
   - job_name: centaur-api-rs
     metrics_path: /metrics
     static_configs:
-      - targets: ["host.docker.internal:8080"]
+      - targets: ["host.docker.internal:30756"]
 
+  # The Atrium server publishes :3001 only on the k3s bridge IP (10.42.0.1) so
+  # sandbox pods can reach it — host.docker.internal (172.17.0.1) is refused.
+  # Same convention as the Loki port binding in docker-compose.yml.
   - job_name: atrium-server
     metrics_path: /metrics
     static_configs:
-      - targets: ["host.docker.internal:3001"]
+      - targets: ["10.42.0.1:3001"]
