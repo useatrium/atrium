@@ -3,6 +3,9 @@
 # ntfy.sh and this repo is public), set a long random topic, and subscribe to
 # it in the ntfy app. Generate one with: openssl rand -hex 12
 #
+# NOTE: the `templates` block is effectively required — v1.2.1 nil-panics on
+# incoming webhooks without it.
+#
 # Docs: https://github.com/alexbakker/alertmanager-ntfy
 http:
   addr: :8000
@@ -18,3 +21,8 @@ ntfy:
         condition: status == "firing"
       - tag: white_check_mark
         condition: status == "resolved"
+    templates:
+      title: |
+        {{ if eq .Status "resolved" }}Resolved: {{ end }}{{ index .Annotations "summary" }}
+      description: |
+        {{ index .Annotations "description" }}
