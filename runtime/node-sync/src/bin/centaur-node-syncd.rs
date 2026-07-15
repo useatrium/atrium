@@ -1480,6 +1480,11 @@ mod linux_daemon {
             if rel == Path::new(OVERLAY_SIGNATURE_FILE) || rel == Path::new(READY_MARKER_FILE) {
                 return true;
             }
+            // mmap-written files (sqlite -shm shared memory) physically emit
+            // no inotify events — backstop full scans own them by design.
+            if centaur_node_sync::scoped::is_mmap_pattern_path(rel) {
+                return true;
+            }
             // Unwatched dep/build trees are backstop-only by design.
             if rel
                 .components()
