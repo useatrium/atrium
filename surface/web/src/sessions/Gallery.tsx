@@ -67,13 +67,7 @@ const GALLERY_URL_PARAM_KEYS = [
  * file or toggling its lightbox panel must not invalidate the gallery listing.
  */
 export function galleryQuerySearch(search: string): string {
-  const source = new URLSearchParams(search);
-  const query = new URLSearchParams();
-  for (const key of GALLERY_URL_PARAM_KEYS) {
-    const value = source.get(key);
-    if (value != null) query.set(key, value);
-  }
-  return query.toString();
+  return galleryUrlSearchParams(galleryStateFromSearch(search)).toString();
 }
 
 function isFileCategory(value: string | null): value is FileCategory {
@@ -226,15 +220,23 @@ function TypeChipPreview({ label }: { label: string }) {
   );
 }
 
-function GalleryCardPreview({ file, preview }: { file: HubFile; preview: PreviewFile }) {
-  return shouldUseTypeChipPreview(preview) ? (
+function GalleryCardPreview({ file, preview, hydrated }: { file: HubFile; preview: PreviewFile; hydrated: boolean }) {
+  return !hydrated || shouldUseTypeChipPreview(preview) ? (
     <TypeChipPreview label={fileTypeLabel(file)} />
   ) : (
     <MediaPreview file={preview} variant="tile" />
   );
 }
 
-function GalleryCard({ file, onOpen }: { file: HubFile; onOpen: () => void }) {
+function GalleryCard({
+  file,
+  onOpen,
+  previewHydrated,
+}: {
+  file: HubFile;
+  onOpen: () => void;
+  previewHydrated: boolean;
+}) {
   // Route-only lightbox changes rerender Gallery, but a stable file must keep a
   // stable preview object so text renderers do not refetch behind the overlay.
   const preview = useMemo(() => hubFileToPreview(file), [file]);
@@ -250,8 +252,11 @@ function GalleryCard({ file, onOpen }: { file: HubFile; onOpen: () => void }) {
       }`}
     >
       <div className="aspect-[4/3] w-full overflow-hidden border-b border-edge bg-surface">
-        <div className="size-full transition-transform duration-200 ease-out group-hover:scale-[1.02] motion-reduce:transition-none motion-reduce:group-hover:scale-100">
-          <GalleryCardPreview file={file} preview={preview} />
+        <div
+          data-gallery-preview-id={file.artifactId}
+          className="size-full transition-transform duration-200 ease-out group-hover:scale-[1.02] motion-reduce:transition-none motion-reduce:group-hover:scale-100"
+        >
+          <GalleryCardPreview file={file} preview={preview} hydrated={previewHydrated} />
         </div>
       </div>
       <div className="flex min-h-20 min-w-0 flex-1 flex-col justify-between gap-2 px-2.5 py-2">
@@ -473,6 +478,7 @@ export function Gallery({
   const [loadedOnce, setLoadedOnce] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
+  const [hydratedPreviewIds, setHydratedPreviewIds] = useState<Set<string>>(() => new Set());
   const [notice, setNotice] = useState<string | null>(null);
   const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -510,6 +516,53 @@ export function Gallery({
   useEffect(() => {
     setSearchDraft(queryState.q);
   }, [queryState.q]);
+
+  useEffect(() => {
+    const root = scrollRef.current;
+    if (!root || files.length === 0) return;
+    const fileIds = new Set(files.map((file) => file.artifactId));
+    setHydratedPreviewIds((current) => {
+      const retained = [...current].filter((id) => fileIds.has(id));
+      if (retained.length === current.size) return current;
+      return new Set(retained);
+    });
+    const nodes = root.querySelectorAll<HTMLElement>('[data-gallery-preview-id]');
+    if (typeof IntersectionObserver === 'undefined') {
+      setHydratedPreviewIds((current) => {
+        const ids = files.map((file) => file.artifactId);
+        if (current.size === ids.length && ids.every((id) => current.has(id))) return current;
+        return new Set(ids);
+      });
+      return;
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const visibleIds = entries
+          .filter((entry) => entry.isIntersecting)
+          .map((entry) => (entry.target as HTMLElement).dataset.galleryPreviewId)
+          .filter((id): id is string => Boolean(id));
+        if (visibleIds.length === 0) return;
+        setHydratedPreviewIds((current) => {
+          const next = new Set(current);
+          let changed = false;
+          for (const id of visibleIds) {
+            if (next.has(id)) continue;
+            next.add(id);
+            changed = true;
+          }
+          return changed ? next : current;
+        });
+        for (const entry of entries) {
+          if (entry.isIntersecting) observer.unobserve(entry.target);
+        }
+      },
+      { root, rootMargin: '240px' },
+    );
+    for (const node of nodes) {
+      observer.observe(node);
+    }
+    return () => observer.disconnect();
+  }, [files]);
 
   const updateQuery = useCallback(
     (patch: Partial<GalleryQueryState>, options: { replace?: boolean } = {}) => {
@@ -806,7 +859,12 @@ export function Gallery({
         {!error && files.length > 0 && (
           <div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(150px,1fr))]">
             {files.map((file, index) => (
-              <GalleryCard key={file.artifactId} file={file} onOpen={() => openLightboxAtIndex(index)} />
+              <GalleryCard
+                key={file.artifactId}
+                file={file}
+                onOpen={() => openLightboxAtIndex(index)}
+                previewHydrated={hydratedPreviewIds.has(file.artifactId)}
+              />
             ))}
           </div>
         )}

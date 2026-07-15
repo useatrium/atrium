@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import Papa from 'papaparse';
 import { SessionMarkdown } from '../../../sessions/Markdown';
 import type { PreviewFile, MediaPreviewVariant } from '../types';
-import { fetchText, isCsvFile, isNotebookFile } from '../utils';
+import { usePreviewText } from '../previewTextCache';
+import { isCsvFile, isNotebookFile } from '../utils';
 
 type NotebookCell = {
   cell_type?: string;
@@ -116,22 +117,7 @@ function NotebookView({ text, compact }: { text: string; compact: boolean }) {
 }
 
 export function DataRenderer({ file, variant }: { file: PreviewFile; variant: MediaPreviewVariant }) {
-  const [state, setState] = useState<{ status: 'loading' | 'ready' | 'error'; text: string }>({
-    status: 'loading',
-    text: '',
-  });
-
-  useEffect(() => {
-    const controller = new AbortController();
-    setState({ status: 'loading', text: '' });
-    fetchText(file, controller.signal)
-      .then((text) => setState({ status: 'ready', text }))
-      .catch((error: unknown) => {
-        if (!controller.signal.aborted)
-          setState({ status: 'error', text: error instanceof Error ? error.message : 'Failed to load' });
-      });
-    return () => controller.abort();
-  }, [file]);
+  const state = usePreviewText(file);
 
   if (state.status !== 'ready') {
     return (

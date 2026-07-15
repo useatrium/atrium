@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 
 import { createElement } from 'react';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FILE_CATEGORIES, type HubFile } from '@atrium/surface-client';
+import { clearPreviewTextCache } from '../components/media/previewTextCache';
 import {
   Gallery,
   galleryApiSearchParams,
@@ -89,6 +90,7 @@ describe('Gallery tiles', () => {
 
   afterEach(() => {
     cleanup();
+    clearPreviewTextCache();
     vi.unstubAllGlobals();
   });
 
@@ -134,6 +136,59 @@ describe('Gallery tiles', () => {
     expect(
       fetchMock.mock.calls.some(([input]) => requestPath(input) === '/api/files/artifact/art_markdown/content'),
     ).toBe(true);
+  });
+
+  it('waits to fetch text previews until their cards approach the viewport', async () => {
+    let observerCallback: IntersectionObserverCallback | undefined;
+    const observe = vi.fn();
+    const unobserve = vi.fn();
+    const disconnect = vi.fn();
+    class MockIntersectionObserver {
+      readonly root = null;
+      readonly rootMargin = '';
+      readonly thresholds = [];
+
+      constructor(callback: IntersectionObserverCallback) {
+        observerCallback = callback;
+      }
+
+      observe = observe;
+      unobserve = unobserve;
+      disconnect = disconnect;
+      takeRecords = () => [];
+    }
+    vi.stubGlobal('IntersectionObserver', MockIntersectionObserver);
+    const fetchMock = mockGalleryFetch(
+      [
+        galleryFile({
+          artifactId: 'art_lazy',
+          path: 'docs/lazy.md',
+          name: 'lazy.md',
+          sizeBytes: 96,
+        }),
+      ],
+      { art_lazy: 'Loaded near the viewport' },
+    );
+
+    const view = render(createElement(Gallery, { workspaceId: WORKSPACE_ID }));
+
+    await screen.findByRole('button', { name: /lazy\.md/ });
+    await waitFor(() => expect(observe).toHaveBeenCalledTimes(1));
+    expect(
+      fetchMock.mock.calls.filter(([input]) => requestPath(input) === '/api/files/artifact/art_lazy/content'),
+    ).toHaveLength(0);
+
+    const target = view.container.querySelector<HTMLElement>('[data-gallery-preview-id="art_lazy"]');
+    expect(target).not.toBeNull();
+    act(() => {
+      observerCallback?.(
+        [{ isIntersecting: true, target }] as unknown as IntersectionObserverEntry[],
+        {} as IntersectionObserver,
+      );
+    });
+
+    expect(await screen.findByText('Loaded near the viewport')).toBeTruthy();
+    expect(unobserve).toHaveBeenCalledWith(target);
   });
 
   it('keeps the type chip fallback for oversized text-like files', async () => {
@@ -222,7 +277,7 @@ describe('Gallery tiles', () => {
     ).toHaveLength(1);
   });
 
-  it('does not refetch background card previews while moving between files', async () => {
+  it('reuses cached card previews while moving between files', async () => {
     const files = ['one', 'two', 'three'].map((name, index) =>
       galleryFile({
         artifactId: `art_${name}`,
@@ -242,25 +297,49 @@ describe('Gallery tiles', () => {
     render(createElement(Gallery, { workspaceId: WORKSPACE_ID }));
 
     const firstCard = await screen.findByRole('button', { name: /one\.txt/ });
-    fireEvent.click(firstCard);
-    expect(await screen.findByRole('heading', { name: 'one.txt' })).toBeTruthy();
-    await waitFor(() =>
-      expect(
-        fetchMock.mock.calls.filter(([input]) => requestPath(input).includes('/api/files/artifact/')).length,
-      ).toBeGreaterThanOrEqual(6),
-    );
-    fetchMock.mockClear();
-
-    fireEvent.click(screen.getByRole('button', { name: 'Next file' }));
-    expect(await screen.findByRole('heading', { name: 'two.txt' })).toBeTruthy();
     await waitFor(() =>
       expect(
         fetchMock.mock.calls.filter(([input]) => requestPath(input).includes('/api/files/artifact/')),
-      ).toHaveLength(1),
+      ).toHaveLength(3),
+    );
+    fetchMock.mockClear();
+    fireEvent.click(firstCard);
+    expect(await screen.findByRole('heading', { name: 'one.txt' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Next file' }));
+    expect(await screen.findByRole('heading', { name: 'two.txt' })).toBeTruthy();
+    await waitFor(() => expect(window.location.search).toContain('file=art_two'));
+    expect(fetchMock.mock.calls.filter(([input]) => requestPath(input).includes('/api/files/artifact/'))).toHaveLength(
+      0,
     );
     expect(
       fetchMock.mock.calls.filter(([input]) => requestPath(input) === `/api/workspaces/${WORKSPACE_ID}/files`),
     ).toHaveLength(0);
+  });
+
+  it('does not refetch unchanged text previews after a files event reload', async () => {
+    const file = galleryFile({
+      artifactId: 'art_refresh',
+      path: 'docs/refresh.txt',
+      name: 'refresh.txt',
+      mime: 'text/plain',
+      mediaKind: 'text',
+      sizeBytes: 100,
+      versionSeq: 7,
+    });
+    const fetchMock = mockGalleryFetch([file], { art_refresh: 'cached body' });
+    const view = render(createElement(Gallery, { workspaceId: WORKSPACE_ID, filesEventSeq: 0 }));
+
+    expect(await screen.findByText('cached body')).toBeTruthy();
+    view.rerender(createElement(Gallery, { workspaceId: WORKSPACE_ID, filesEventSeq: 1 }));
+
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.filter(([input]) => requestPath(input) === `/api/workspaces/${WORKSPACE_ID}/files`),
+      ).toHaveLength(2),
+    );
+    expect(
+      fetchMock.mock.calls.filter(([input]) => requestPath(input) === '/api/files/artifact/art_refresh/content'),
+    ).toHaveLength(1);
   });
 });
 

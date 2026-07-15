@@ -31,7 +31,7 @@ function Harness({ files, initialIndex }: { files: PreviewFile[]; initialIndex: 
 afterEach(cleanup);
 
 describe('Lightbox filmstrip hydration', () => {
-  it('hydrates only the active neighborhood and preserves already-loaded previews while navigating', () => {
+  it('keeps rendering bounded to the active neighborhood while navigating', () => {
     const files = Array.from({ length: 20 }, (_, index) => preview(index));
     render(<Harness files={files} initialIndex={10} />);
 
@@ -46,7 +46,6 @@ describe('Lightbox filmstrip hydration', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Next file' }));
 
     expect(screen.getAllByTestId('tile-preview').map((node) => node.getAttribute('data-file-id'))).toEqual([
-      'art_8',
       'art_9',
       'art_10',
       'art_11',

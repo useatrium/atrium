@@ -93,15 +93,9 @@ function InfoRow({ label, value }: { label: string; value: string }) {
 }
 
 function FilmstripPreview({ file, eager }: { file: PreviewFile; eager: boolean }) {
-  const [hydrated, setHydrated] = useState(eager);
-
-  useEffect(() => {
-    if (eager) setHydrated(true);
-  }, [eager]);
-
   return (
     <div className="size-full">
-      {hydrated ? (
+      {eager ? (
         <MediaPreview file={file} variant="tile" />
       ) : (
         <div className="flex size-full flex-col items-center justify-center gap-1 bg-surface-raised/40 px-2 text-center">
