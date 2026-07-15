@@ -264,12 +264,21 @@ class Launcher:
             current = first_json_object(output)
             status = current.get("instance_state") or record["status"]
             if status == "running" and current.get("url"):
-                status = "ready" if preview_health_ok(current["url"]) else "running"
+                if current.get("appliance_ready") and preview_health_ok(current["url"]):
+                    status = "ready"
+                elif current.get("phase"):
+                    status = f"bootstrapping:{current['phase']}"
+                else:
+                    status = "running"
             record.update(
                 {
                     "status": status,
                     "url": current.get("url"),
                     "commit_sha": current.get("commit_sha") or record.get("commit_sha"),
+                    "phase": current.get("phase"),
+                    "phase_time": current.get("phase_time"),
+                    "appliance_ready": current.get("appliance_ready"),
+                    "ready_at": current.get("ready_at"),
                     "updated_at": iso(utc_now()),
                     "failure_message": None,
                 }
@@ -352,6 +361,10 @@ class Launcher:
             "updated_at": record["updated_at"],
             "expires_at": record["expires_at"],
             "failure_message": record.get("failure_message"),
+            "phase": record.get("phase"),
+            "phase_time": record.get("phase_time"),
+            "appliance_ready": record.get("appliance_ready"),
+            "ready_at": record.get("ready_at"),
         }
 
 

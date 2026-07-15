@@ -74,6 +74,19 @@ def load_state(preview_id: str) -> dict[str, Any]:
     return json.loads(state_path(preview_id).read_text())
 
 
+def get_control_json(s3, state: dict[str, Any], name: str) -> dict[str, Any] | None:
+    try:
+        res = s3.get_object(
+            Bucket=state["control_bucket"],
+            Key=f"{state['control_prefix']}/{name}",
+        )
+    except ClientError as err:
+        if err.response["Error"]["Code"] in {"NoSuchKey", "NoSuchBucket", "404"}:
+            return None
+        raise
+    return json.loads(res["Body"].read().decode())
+
+
 def account_id(session: boto3.Session) -> str:
     return session.client("sts").get_caller_identity()["Account"]
 
@@ -161,7 +174,7 @@ def ensure_instance_role(session: boto3.Session, control_bucket: str) -> str:
         "Statement": [
             {
                 "Effect": "Allow",
-                "Action": ["s3:GetObject", "s3:ListBucket"],
+                "Action": ["s3:GetObject", "s3:ListBucket", "s3:PutObject"],
                 "Resource": [
                     f"arn:aws:s3:::{control_bucket}",
                     f"arn:aws:s3:::{control_bucket}/previews/*",
@@ -367,6 +380,9 @@ def bootstrap_script(params: dict[str, str]) -> str:
         status() {{
           mkdir -p /var/lib/atrium-preview
           printf '{{"preview_id":"%s","phase":"%s","time":"%s"}}\\n' "$PREVIEW_ID" "$1" "$(date -Is)" > /var/lib/atrium-preview/status.json
+          if command -v aws >/dev/null 2>&1; then
+            aws s3 cp /var/lib/atrium-preview/status.json "s3://$CONTROL_BUCKET/$CONTROL_PREFIX/status.json" >/dev/null 2>&1 || true
+          fi
         }}
 
         status packages
@@ -603,6 +619,7 @@ def bootstrap_script(params: dict[str, str]) -> str:
         cat >/var/lib/atrium-preview/ready.json <<EOF
         {{"preview_id":"$PREVIEW_ID","url":"$PUBLIC_ORIGIN","commit_sha":"$COMMIT_SHA","ready_at":"$(date -Is)"}}
         EOF
+        aws s3 cp /var/lib/atrium-preview/ready.json "s3://$CONTROL_BUCKET/$CONTROL_PREFIX/ready.json" >/dev/null 2>&1 || true
         """
     )
 
@@ -744,13 +761,20 @@ def cmd_status(args: argparse.Namespace) -> None:
     state = load_state(args.preview_id)
     session = boto3.Session(profile_name=args.profile, region_name=state["region"])
     inst = instance_for_state(session, state)
+    s3 = session.client("s3", region_name=state["region"])
     public = inst.get("PublicDnsName") or inst.get("PublicIpAddress") or ""
     url = f"http://{public}" if public else None
+    appliance_status = get_control_json(s3, state, "status.json")
+    appliance_ready = get_control_json(s3, state, "ready.json")
     out = {
         "preview_id": state["preview_id"],
         "commit_sha": state["commit_sha"],
         "instance_id": state["instance_id"],
         "instance_state": inst["State"]["Name"],
+        "phase": appliance_status.get("phase") if appliance_status else None,
+        "phase_time": appliance_status.get("time") if appliance_status else None,
+        "appliance_ready": bool(appliance_ready),
+        "ready_at": appliance_ready.get("ready_at") if appliance_ready else None,
         "url": url,
         "storage_bucket": state.get("storage_bucket"),
         "expires_at": state.get("expires_at"),
