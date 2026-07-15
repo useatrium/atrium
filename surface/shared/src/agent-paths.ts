@@ -10,6 +10,10 @@
 
 const HOME_PREFIXES = ['/home/agent/workspace/', '/home/agent/', '~/workspace/', '~/'];
 
+// Agents habitually suffix file links with an editor-style `:line`/`:line:col`
+// (`notes.md:12`, `main.rs:12:3`); the suffix is not part of the path.
+const LINE_COL_SUFFIX_RE = /:\d+(?::\d+)?$/;
+
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** Roots under the agent home that are never ledger artifacts. */
@@ -124,6 +128,8 @@ function classifyCanonical(path: string): AgentPathRef | null {
  *  - ledger-canonical `shared/…` and `scratch/<uuid>/…` (with or without a
  *    leading slash)
  *
+ * A trailing editor-style `:line`/`:line:col` suffix is stripped.
+ *
  * Returns null for anything else, including non-artifact roots
  * (`/home/agent/repos/…`, `~/context/…`) and paths with `..` traversal.
  */
@@ -131,7 +137,7 @@ export function parseAgentPathHref(href: string): AgentPathRef | null {
   if (!href) return null;
   // Explicit schemes (https:, mailto:, atrium-entry:, …) are never agent paths.
   if (/^[a-z][a-z0-9+.-]*:/i.test(href)) return null;
-  const withoutSuffix = href.split(/[?#]/, 1)[0] ?? href;
+  const withoutSuffix = (href.split(/[?#]/, 1)[0] ?? href).replace(LINE_COL_SUFFIX_RE, '');
   const decoded = decodeSegmentwise(withoutSuffix);
   if (decoded == null) return null;
 
