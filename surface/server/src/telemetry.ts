@@ -64,6 +64,16 @@ const httpInflight = new client.Gauge({
   help: 'Current in-flight HTTP requests in the Atrium server.',
 });
 
+const rateLimited = new client.Counter({
+  name: 'atrium_rate_limited_total',
+  help: 'Requests rejected by the Atrium server rate limiter.',
+  labelNames: ['route'] as const,
+});
+
+export function recordRateLimited(route: string): void {
+  rateLimited.inc({ route });
+}
+
 const requestStarts = new WeakMap<FastifyRequest, bigint>();
 
 export async function installServerTelemetry(app: FastifyInstance): Promise<void> {

@@ -118,6 +118,23 @@ function shouldProxyContent(file: {
   return (file.mime ?? '').toLowerCase() === 'application/pdf' && (file.sizeBytes ?? 0) >= 5 * 1024 * 1024;
 }
 
+function setArtifactCacheHeaders(
+  req: FastifyRequest,
+  reply: FastifyReply,
+  blobSha: string,
+  cacheControl: string,
+): boolean {
+  const etag = `"${blobSha}"`;
+  reply.header('ETag', etag);
+  reply.header('Cache-Control', cacheControl);
+  const ifNoneMatch = firstHeader(req.headers['if-none-match']);
+  if (!ifNoneMatch) return false;
+  return ifNoneMatch.split(',').some((candidate) => {
+    const tag = candidate.trim();
+    return tag === '*' || tag === etag || tag === `W/${etag}`;
+  });
+}
+
 function parseRangeHeader(
   range: unknown,
   sizeBytes: number | null,
@@ -598,111 +615,134 @@ export async function registerFilesHubRoutes(app: FastifyInstance, deps: FilesHu
     return reply.send(detail);
   });
 
-  app.get('/api/files/artifact/:artifactId/content', async (req, reply) => {
-    const user = requireUser(req, reply);
-    if (!user) return;
-    const artifactId = await requireReadableArtifact(ledger, req, reply, user);
-    if (!artifactId) return;
-    // `?at=<seq>` serves a specific prior version's bytes (used by the version-diff view).
-    const atRaw = (req.query as { at?: string }).at;
-    if (atRaw != null && /^\d+$/.test(atRaw)) {
-      const v = await ledger.resolveVersionByArtifactId(artifactId, { seq: Number(atRaw) });
-      if (!v || !v.blobSha || !v.s3Key) {
-        return reply.code(404).send({ error: 'file_not_found', message: 'file not found' });
+  app.get(
+    '/api/files/artifact/:artifactId/content',
+    { config: { rateLimit: { max: 3000, timeWindow: '1 minute' } } },
+    async (req, reply) => {
+      const user = requireUser(req, reply);
+      if (!user) return;
+      const artifactId = await requireReadableArtifact(ledger, req, reply, user);
+      if (!artifactId) return;
+      // `?at=<seq>` serves a specific prior version's bytes (used by the version-diff view).
+      const atRaw = (req.query as { at?: string }).at;
+      if (atRaw != null && /^\d+$/.test(atRaw)) {
+        const v = await ledger.resolveVersionByArtifactId(artifactId, { seq: Number(atRaw) });
+        if (!v || !v.blobSha) {
+          return reply.code(404).send({ error: 'file_not_found', message: 'file not found' });
+        }
+        if (setArtifactCacheHeaders(req, reply, v.blobSha, 'private, max-age=31536000, immutable')) {
+          return reply.code(304).send();
+        }
+        if (!v.s3Key) {
+          return reply.code(404).send({ error: 'file_not_found', message: 'file not found' });
+        }
+        const object = await getObjectStream(v.s3Key);
+        reply.header('Content-Type', object.contentType ?? v.mime ?? 'application/octet-stream');
+        reply.header('X-Artifact-Seq', atRaw);
+        if (object.contentLength != null) reply.header('Content-Length', String(object.contentLength));
+        return reply.send(object.stream);
       }
-      const object = await getObjectStream(v.s3Key);
-      reply.header('Content-Type', object.contentType ?? v.mime ?? 'application/octet-stream');
-      reply.header('X-Artifact-Seq', atRaw);
-      if (object.contentLength != null) reply.header('Content-Length', String(object.contentLength));
+      const file = await ledger.artifactContentById(artifactId);
+      if (!file) return reply.code(404).send({ error: 'file_not_found', message: 'file not found' });
+      if (file.tombstoned || file.kind === 'deleted') {
+        return reply.code(410).send({ error: 'artifact_deleted', message: 'artifact was deleted' });
+      }
+      if (!file.blobSha) {
+        return reply.code(503).send({ error: 'blob_unavailable', message: 'artifact bytes are not durable in CAS' });
+      }
+      if (setArtifactCacheHeaders(req, reply, file.blobSha, 'private, no-cache')) {
+        return reply.code(304).send();
+      }
+      if (!file.s3Key) {
+        return reply.code(503).send({ error: 'blob_unavailable', message: 'artifact bytes are not durable in CAS' });
+      }
+      const filename = basename(file.path) || 'artifact';
+      if (!shouldProxyContent(file)) {
+        return reply.redirect(await presignGet(file.s3Key, filename, true), 302);
+      }
+
+      const parsedRange = parseRangeHeader(req.headers.range, file.sizeBytes);
+      if (parsedRange === false) {
+        if (file.sizeBytes != null) reply.header('Content-Range', `bytes */${file.sizeBytes}`);
+        return reply.code(416).send({ error: 'invalid_range', message: 'Range header is not satisfiable' });
+      }
+      const object = await getObjectStream(file.s3Key, parsedRange?.header);
+      reply.header('Accept-Ranges', 'bytes');
+      reply.header('Content-Type', object.contentType ?? file.mime ?? 'application/octet-stream');
+      reply.header('X-Artifact-Seq', String(file.seq));
+      reply.header('X-Artifact-Sha', file.blobSha);
+      if (parsedRange) {
+        reply.header(
+          'Content-Range',
+          object.contentRange ?? `bytes ${parsedRange.start}-${parsedRange.end}/${file.sizeBytes}`,
+        );
+        reply.header('Content-Length', String(object.contentLength ?? parsedRange.length));
+        return reply.code(206).send(object.stream);
+      }
+      if (object.contentLength != null || file.sizeBytes != null) {
+        reply.header('Content-Length', String(object.contentLength ?? file.sizeBytes));
+      }
       return reply.send(object.stream);
-    }
-    const file = await ledger.artifactContentById(artifactId);
-    if (!file) return reply.code(404).send({ error: 'file_not_found', message: 'file not found' });
-    if (file.tombstoned || file.kind === 'deleted') {
-      return reply.code(410).send({ error: 'artifact_deleted', message: 'artifact was deleted' });
-    }
-    if (!file.s3Key || !file.blobSha) {
-      return reply.code(503).send({ error: 'blob_unavailable', message: 'artifact bytes are not durable in CAS' });
-    }
-    const filename = basename(file.path) || 'artifact';
-    if (!shouldProxyContent(file)) {
-      return reply.redirect(await presignGet(file.s3Key, filename, true), 302);
-    }
+    },
+  );
 
-    const parsedRange = parseRangeHeader(req.headers.range, file.sizeBytes);
-    if (parsedRange === false) {
-      if (file.sizeBytes != null) reply.header('Content-Range', `bytes */${file.sizeBytes}`);
-      return reply.code(416).send({ error: 'invalid_range', message: 'Range header is not satisfiable' });
-    }
-    const object = await getObjectStream(file.s3Key, parsedRange?.header);
-    reply.header('Accept-Ranges', 'bytes');
-    reply.header('Content-Type', object.contentType ?? file.mime ?? 'application/octet-stream');
-    reply.header('X-Artifact-Seq', String(file.seq));
-    reply.header('X-Artifact-Sha', file.blobSha);
-    if (parsedRange) {
-      reply.header(
-        'Content-Range',
-        object.contentRange ?? `bytes ${parsedRange.start}-${parsedRange.end}/${file.sizeBytes}`,
-      );
-      reply.header('Content-Length', String(object.contentLength ?? parsedRange.length));
-      return reply.code(206).send(object.stream);
-    }
-    if (object.contentLength != null || file.sizeBytes != null) {
-      reply.header('Content-Length', String(object.contentLength ?? file.sizeBytes));
-    }
-    return reply.send(object.stream);
-  });
-
-  app.get('/api/files/artifact/:artifactId/thumbnail', async (req, reply) => {
-    const user = requireUser(req, reply);
-    if (!user) return;
-    const artifactId = await requireReadableArtifact(ledger, req, reply, user);
-    if (!artifactId) return;
-    const file = await ledger.artifactThumbnailById(artifactId);
-    if (!file) return reply.code(404).send({ error: 'file_not_found', message: 'file not found' });
-    if (file.tombstoned || file.kind === 'deleted') {
-      return reply.code(410).send({ error: 'artifact_deleted', message: 'artifact was deleted' });
-    }
-    let thumbnail = file;
-    if (!thumbnail.thumbnailSha || !thumbnail.s3Key) {
-      if (file.sourceBlobSha) {
-        const source = await pool.query<{
-          sha256: string;
-          s3_key: string | null;
-          mime: string | null;
-          media_kind: string | null;
-        }>(
-          `SELECT sha256, s3_key, mime, media_kind
+  app.get(
+    '/api/files/artifact/:artifactId/thumbnail',
+    { config: { rateLimit: { max: 3000, timeWindow: '1 minute' } } },
+    async (req, reply) => {
+      const user = requireUser(req, reply);
+      if (!user) return;
+      const artifactId = await requireReadableArtifact(ledger, req, reply, user);
+      if (!artifactId) return;
+      const file = await ledger.artifactThumbnailById(artifactId);
+      if (!file) return reply.code(404).send({ error: 'file_not_found', message: 'file not found' });
+      if (file.tombstoned || file.kind === 'deleted') {
+        return reply.code(410).send({ error: 'artifact_deleted', message: 'artifact was deleted' });
+      }
+      if (file.sourceBlobSha && setArtifactCacheHeaders(req, reply, file.sourceBlobSha, 'private, no-cache')) {
+        return reply.code(304).send();
+      }
+      let thumbnail = file;
+      if (!thumbnail.thumbnailSha || !thumbnail.s3Key) {
+        if (file.sourceBlobSha) {
+          const source = await pool.query<{
+            sha256: string;
+            s3_key: string | null;
+            mime: string | null;
+            media_kind: string | null;
+          }>(
+            `SELECT sha256, s3_key, mime, media_kind
              FROM cas_blobs
             WHERE sha256 = $1`,
-          [file.sourceBlobSha],
-        );
-        const sourceRow = source.rows[0];
-        if (
-          sourceRow?.s3_key &&
-          (sourceRow.media_kind === 'image' || sourceRow.media_kind === 'pdf' || sourceRow.media_kind === 'video')
-        ) {
-          const generated = await ensureThumbnailForBlobDeduped({
-            pool,
-            sourceSha: sourceRow.sha256,
-            s3Key: sourceRow.s3_key,
-            mime: sourceRow.mime,
-            mediaKind: sourceRow.media_kind,
-            logger: app.log,
-          }).catch((err) => {
-            app.log.warn({ err, sourceSha: sourceRow.sha256 }, 'on-demand thumbnail generation failed');
-            return null;
-          });
-          if (generated) {
-            thumbnail = (await ledger.artifactThumbnailById(artifactId)) ?? thumbnail;
+            [file.sourceBlobSha],
+          );
+          const sourceRow = source.rows[0];
+          if (
+            sourceRow?.s3_key &&
+            (sourceRow.media_kind === 'image' || sourceRow.media_kind === 'pdf' || sourceRow.media_kind === 'video')
+          ) {
+            const generated = await ensureThumbnailForBlobDeduped({
+              pool,
+              sourceSha: sourceRow.sha256,
+              s3Key: sourceRow.s3_key,
+              mime: sourceRow.mime,
+              mediaKind: sourceRow.media_kind,
+              logger: app.log,
+            }).catch((err) => {
+              app.log.warn({ err, sourceSha: sourceRow.sha256 }, 'on-demand thumbnail generation failed');
+              return null;
+            });
+            if (generated) {
+              thumbnail = (await ledger.artifactThumbnailById(artifactId)) ?? thumbnail;
+            }
           }
         }
+        if (!thumbnail.thumbnailSha || !thumbnail.s3Key) {
+          return reply.code(404).send({ error: 'thumbnail_not_found', message: 'thumbnail not found' });
+        }
       }
-      if (!thumbnail.thumbnailSha || !thumbnail.s3Key) {
-        return reply.code(404).send({ error: 'thumbnail_not_found', message: 'thumbnail not found' });
-      }
-    }
-    const filename = `${basename(file.path) || 'artifact'}-thumbnail`;
-    return reply.redirect(await presignGet(thumbnail.s3Key, filename, true), 302);
-  });
+      const filename = `${basename(file.path) || 'artifact'}-thumbnail`;
+      return reply.redirect(await presignGet(thumbnail.s3Key, filename, true), 302);
+    },
+  );
 }

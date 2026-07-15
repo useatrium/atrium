@@ -44,11 +44,16 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   const { pool } = deps;
   const services = createAppServices(deps);
   const { artifactCaptureApiKey, secret, sessionRuns } = services;
-  const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? 'warn' } });
+  const app = Fastify({
+    logger: { level: process.env.LOG_LEVEL ?? 'warn' },
+    // Port 3001 is reachable only from the Docker network (Caddy) and
+    // localhost, so X-Forwarded-For is always supplied by a trusted hop.
+    trustProxy: true,
+  });
   await installServerTelemetry(app);
 
   const rateLimit = deps.rateLimit;
-  await installAppHttp(app, rateLimit);
+  await installAppHttp(app, rateLimit, secret);
 
   const auth = installAppAuth(app, {
     pool,

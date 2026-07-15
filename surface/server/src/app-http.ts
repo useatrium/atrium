@@ -1,34 +1,59 @@
+import { createHash } from 'node:crypto';
 import fastifyCookie from '@fastify/cookie';
 import fastifyRateLimit from '@fastify/rate-limit';
 import fastifyWebsocket from '@fastify/websocket';
 import { CentaurApiError } from '@atrium/centaur-client';
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { config } from './config.js';
+import { verifySession } from './cookie.js';
 import { DomainError } from './events.js';
+import { recordRateLimited } from './telemetry.js';
 
 export type AppRateLimitConfig = false | { max?: number; loginMax?: number } | undefined;
 
-export async function installAppHttp(app: FastifyInstance, rateLimit: AppRateLimitConfig): Promise<void> {
+export async function installAppHttp(
+  app: FastifyInstance,
+  rateLimit: AppRateLimitConfig,
+  sessionSecret: string,
+): Promise<void> {
   await app.register(fastifyCookie);
   await app.register(fastifyWebsocket, {
     options: { maxPayload: 64 * 1024 },
   });
 
   if (rateLimit !== false) {
+    const keyGenerator = (req: FastifyRequest): string => {
+      // Only a signature-verified cookie earns a per-user bucket — otherwise a
+      // client could mint random cookie values for unlimited fresh buckets.
+      const sessionId = verifySession(req.cookies[config.sessionCookie], sessionSecret);
+      if (sessionId) return `user:${shortHash(sessionId)}`;
+
+      const connectingIp = req.headers['cf-connecting-ip'];
+      const cloudflareIp = Array.isArray(connectingIp) ? connectingIp[0] : connectingIp;
+      return `ip:${cloudflareIp?.trim() || req.ip}`;
+    };
+
     await app.register(fastifyRateLimit, {
       max: rateLimit?.max ?? 600,
       timeWindow: '1 minute',
+      keyGenerator,
       // Internal service routes (Centaur node-sync capture/changes polling) are
       // authenticated by their own bearer key and arrive from a single gateway
       // IP — sharing the per-IP browser bucket both throttles capture traffic
       // (observed live: /api/internal capture 429s) and lets that traffic
       // exhaust the bucket for real clients behind the same NAT.
       allowList: (req) => req.url.startsWith('/api/internal/'),
-      errorResponseBuilder: (_req, context) => ({
-        statusCode: context.statusCode,
-        error: 'rate_limited',
-        message: `rate limit exceeded, retry in ${context.after}`,
-      }),
+      errorResponseBuilder: (req, context) => {
+        const route = metricRoute(req);
+        const bucketKey = keyGenerator(req);
+        recordRateLimited(route);
+        app.log.warn({ route, bucketKey, retryAfter: context.after }, 'request rate limited');
+        return {
+          statusCode: context.statusCode,
+          error: 'rate_limited',
+          message: `rate limit exceeded, retry in ${context.after}`,
+        };
+      },
     });
   }
 
@@ -73,6 +98,15 @@ export async function installAppHttp(app: FastifyInstance, rateLimit: AppRateLim
     const status = error.statusCode ?? 500;
     return reply.code(status).send({ error: 'internal', message: 'internal error' });
   });
+}
+
+function shortHash(value: string): string {
+  return createHash('sha256').update(value).digest('hex').slice(0, 16);
+}
+
+function metricRoute(req: { routeOptions?: { url?: string } }): string {
+  const route = req.routeOptions?.url;
+  return typeof route === 'string' && route.length > 0 ? route : 'unmatched';
 }
 
 function centaurHttpStatus(status: number): number {
