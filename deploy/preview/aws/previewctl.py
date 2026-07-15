@@ -33,6 +33,14 @@ ROLE_NAME = "atrium-preview-appliance-role"
 PROFILE_NAME = "atrium-preview-appliance-profile"
 SG_NAME = "atrium-preview-appliance"
 KEY_NAME = "atrium-preview-appliance"
+ECR_CACHE_PREFIX = "atrium-preview"
+CENTAUR_CACHE_IMAGES = [
+    "centaur-api-rs",
+    "centaur-iron-proxy",
+    "centaur-agent",
+    "centaur-node-sync",
+    "centaur-console",
+]
 
 
 def run(cmd: list[str], *, cwd: Path = ROOT, capture: bool = True) -> str:
@@ -139,6 +147,37 @@ def create_bucket(s3, bucket: str, region: str) -> None:
     waiter.wait(Bucket=bucket)
 
 
+def ensure_ecr_repos(session: boto3.Session, region: str) -> None:
+    ecr = session.client("ecr", region_name=region)
+    for image in CENTAUR_CACHE_IMAGES:
+        repo = f"{ECR_CACHE_PREFIX}/{image}"
+        try:
+            ecr.describe_repositories(repositoryNames=[repo])
+        except ClientError as err:
+            if err.response["Error"]["Code"] != "RepositoryNotFoundException":
+                raise
+            ecr.create_repository(
+                repositoryName=repo,
+                imageTagMutability="MUTABLE",
+                imageScanningConfiguration={"scanOnPush": False},
+            )
+            lifecycle = {
+                "rules": [
+                    {
+                        "rulePriority": 1,
+                        "description": "Keep the most recent preview cache images",
+                        "selection": {
+                            "tagStatus": "any",
+                            "countType": "imageCountMoreThan",
+                            "countNumber": 20,
+                        },
+                        "action": {"type": "expire"},
+                    }
+                ]
+            }
+            ecr.put_lifecycle_policy(repositoryName=repo, lifecyclePolicyText=json.dumps(lifecycle))
+
+
 def empty_bucket(s3, bucket: str) -> None:
     paginator = s3.get_paginator("list_objects_v2")
     for page in paginator.paginate(Bucket=bucket):
@@ -179,7 +218,22 @@ def ensure_instance_role(session: boto3.Session, control_bucket: str) -> str:
                     f"arn:aws:s3:::{control_bucket}",
                     f"arn:aws:s3:::{control_bucket}/previews/*",
                 ],
-            }
+            },
+            {
+                "Effect": "Allow",
+                "Action": [
+                    "ecr:GetAuthorizationToken",
+                    "ecr:BatchCheckLayerAvailability",
+                    "ecr:BatchGetImage",
+                    "ecr:CompleteLayerUpload",
+                    "ecr:DescribeImages",
+                    "ecr:GetDownloadUrlForLayer",
+                    "ecr:InitiateLayerUpload",
+                    "ecr:PutImage",
+                    "ecr:UploadLayerPart",
+                ],
+                "Resource": "*",
+            },
         ],
     }
     iam.put_role_policy(RoleName=ROLE_NAME, PolicyName="atrium-preview-control-s3", PolicyDocument=json.dumps(policy))
@@ -557,9 +611,37 @@ def bootstrap_script(params: dict[str, str]) -> str:
 
         status centaur-build
         cd /opt/atrium/centaur
-        for svc in api-rs iron-proxy sandbox node-sync console; do
-          DOCKER_BUILDKIT=1 just build-one "$svc"
+        AWS_ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
+        ECR_REGISTRY="$AWS_ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com"
+        ECR_PREFIX="{ECR_CACHE_PREFIX}"
+        aws ecr get-login-password --region "$REGION" | docker login --username AWS --password-stdin "$ECR_REGISTRY" >/dev/null
+
+        cache_hit=1
+        for img in centaur-api-rs centaur-iron-proxy centaur-agent centaur-node-sync centaur-console; do
+          repo="$ECR_PREFIX/$img"
+          if aws ecr describe-images --region "$REGION" --repository-name "$repo" --image-ids imageTag="$COMMIT_SHA" >/dev/null 2>&1; then
+            docker pull "$ECR_REGISTRY/$repo:$COMMIT_SHA"
+            docker tag "$ECR_REGISTRY/$repo:$COMMIT_SHA" "$img:latest"
+          else
+            cache_hit=0
+            break
+          fi
         done
+
+        if [ "$cache_hit" -eq 1 ]; then
+          status centaur-cache-hit
+        else
+          status centaur-cache-miss
+          for svc in api-rs iron-proxy sandbox node-sync console; do
+            DOCKER_BUILDKIT=1 just build-one "$svc"
+          done
+          for img in centaur-api-rs centaur-iron-proxy centaur-agent centaur-node-sync centaur-console; do
+            repo="$ECR_PREFIX/$img"
+            docker tag "$img:latest" "$ECR_REGISTRY/$repo:$COMMIT_SHA"
+            docker push "$ECR_REGISTRY/$repo:$COMMIT_SHA"
+          done
+        fi
+
         for img in centaur-api-rs centaur-iron-proxy centaur-agent centaur-node-sync centaur-console; do
           docker tag "$img:latest" "localhost:5000/library/$img:$COMMIT_SHA"
           docker push "localhost:5000/library/$img:$COMMIT_SHA"
@@ -675,6 +757,7 @@ def cmd_create(args: argparse.Namespace) -> None:
     print(f"creating {preview_id} from {commit_sha}")
     create_bucket(s3, control_bucket, region)
     create_bucket(s3, storage_bucket, region)
+    ensure_ecr_repos(session, region)
     profile_name = ensure_instance_role(session, control_bucket)
     sg_id = ensure_security_group(session, region)
     key_name = ensure_key_pair(session, region)

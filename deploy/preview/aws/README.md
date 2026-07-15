@@ -53,6 +53,11 @@ The EC2 appliance role needs read/write access to the shared control bucket
 prefix because the instance downloads bootstrap/source files and uploads
 `status.json` plus `ready.json` progress markers.
 
+The controller also creates ECR repositories under `atrium-preview/` for the
+Centaur images. Each preview first tries to pull commit-SHA-tagged images from
+ECR. On a cache miss, it cold-builds those images once and pushes them to ECR so
+the next preview for the same commit can skip the expensive Centaur image build.
+
 ## Launcher API
 
 `launcher.py` is the narrow API that a production Atrium agent should call
@@ -154,11 +159,14 @@ security group, instance profile, role, and EC2 key pair are retained for reuse.
 The launcher role needs `iam:ListUserPolicies` in addition to create/delete
 user, access key, and inline policy permissions so destroy can remove the
 per-preview S3 IAM user idempotently.
+It also needs ECR repository create/describe/lifecycle permissions for
+`atrium-preview/*` image cache setup.
 
 ## Known Limitations
 
 - First boot builds Centaur images on the preview instance, so startup can be
-  slow.
+  slow. Repeat previews for a commit can reuse ECR cached images after one
+  successful cold build has populated the cache.
 - AWS previews intentionally disable Centaur `toolServer` until preview
   repo-cache/tool delivery is configured. Basic Codex execution works without
   those extra `/app/tools` shims.

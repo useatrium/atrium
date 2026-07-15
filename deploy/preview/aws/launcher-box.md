@@ -85,3 +85,8 @@ The appliance role must be able to read and write the shared control bucket
 prefix. The preview downloads `bootstrap.sh` and `source.tar.gz` from that
 prefix, then uploads `status.json` and `ready.json` so the launcher can report
 real bootstrap progress instead of treating Surface `/healthz` as full readiness.
+
+The launcher role also needs ECR repository management permissions for
+`atrium-preview/*`. Preview appliances use those repositories as a commit-SHA
+Centaur image cache: pull all five images on a hit, or build and push them on a
+miss.
