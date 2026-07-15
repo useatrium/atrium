@@ -1,30 +1,9 @@
 import type { DbClient } from './db.js';
+import { MESSAGE_STATE_ROW_TYPES, MODIFIER_EVENT_TYPES } from './event-types.js';
 
-// Keep this list aligned with the message modifiers and TIMELINE_EVENT_TYPES
-// classifier in events.ts / project_message_event(bigint).
 export const MESSAGE_STATE_EVENT_TYPES: ReadonlySet<string> = new Set([
-  'message.posted',
-  'message.edited',
-  'message.unfurls_suppressed',
-  'message.deleted',
-  'reaction.added',
-  'reaction.removed',
-  'voice.transcribed',
-  'session.spawned',
-  'session.replied',
-  'session.status_changed',
-  'session.effort_changed',
-  'session.completed',
-  'session.archived',
-  'session.unarchived',
-  'session.seat_requested',
-  'session.seat_changed',
-  'session.question_requested',
-  'session.question_answered',
-  'session.question_resolved',
-  'session.provider_auth_required',
-  'session.github_auth_required',
-  'session.provider_auth_resolved',
+  ...MODIFIER_EVENT_TYPES,
+  ...MESSAGE_STATE_ROW_TYPES,
 ]);
 
 export async function projectMessageEvent(client: DbClient, eventId: number): Promise<void> {

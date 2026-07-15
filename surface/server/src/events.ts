@@ -1,6 +1,12 @@
 import type { Db, DbClient } from './db.js';
 import { withTx } from './db.js';
 import { encodeEventHandle, encodeHandle, tryDecodeHandle } from './entries.js';
+import {
+  sqlTypeList,
+  SYNC_EVENT_TYPES as SYNC_EVENT_TYPE_VALUES,
+  TIMELINE_EVENT_TYPES as TIMELINE_EVENT_TYPE_VALUES,
+  TIMELINE_ROOT_EVENT_TYPES as TIMELINE_ROOT_EVENT_TYPE_VALUES,
+} from './event-types.js';
 import { workspaceMemberExists } from './membership.js';
 import { MESSAGE_STATE_EVENT_TYPES, projectMessageEvent } from './message-state.js';
 
@@ -905,14 +911,12 @@ const MESSAGE_SELECT = `
 // Message modifier events are included so after_id
 // catch-up heals changes made while a client was disconnected (live clients
 // fold the same events from WS fanout).
-const TIMELINE_EVENT_TYPES =
-  "('message.posted', 'message.edited', 'message.unfurls_suppressed', 'message.deleted', 'reaction.added', 'reaction.removed', 'voice.transcribed', 'session.spawned', 'session.replied', 'session.status_changed', 'session.effort_changed', 'session.completed', 'session.archived', 'session.unarchived', 'session.seat_requested', 'session.seat_changed', 'session.question_requested', 'session.question_answered', 'session.question_resolved', 'session.provider_auth_required', 'session.github_auth_required', 'session.provider_auth_resolved')";
+const TIMELINE_EVENT_TYPES = sqlTypeList(TIMELINE_EVENT_TYPE_VALUES);
 // `session.replied` is here because the agent's ANSWER is a first-class channel
 // message: it is thread-rooted, so the `broadcast` predicate below still gates
 // it, but the type has to be admitted first or the answer is filtered out of
 // the feed before the flag is ever read.
-const TIMELINE_ROOT_EVENT_TYPES =
-  "('message.posted', 'session.spawned', 'session.replied', 'session.question_requested', 'session.question_answered', 'session.question_resolved')";
+const TIMELINE_ROOT_EVENT_TYPES = sqlTypeList(TIMELINE_ROOT_EVENT_TYPE_VALUES);
 
 function foldEdit(
   row: EventDbRow & {
@@ -1023,8 +1027,7 @@ export async function listThreadMessages(pool: Db, args: { rootEventId: number }
 // /sync mirrors the reducer-visible event families. Workspace-scoped
 // workspace.created is intentionally excluded: there is no live fanout today
 // and no client reducer consumes it.
-const SYNC_EVENT_TYPES =
-  "('message.posted', 'message.edited', 'message.unfurls_suppressed', 'message.deleted', 'reaction.added', 'reaction.removed', 'voice.transcribed', 'session.spawned', 'session.replied', 'session.status_changed', 'session.effort_changed', 'session.completed', 'session.archived', 'session.unarchived', 'session.seat_requested', 'session.seat_changed', 'session.question_requested', 'session.question_answered', 'session.question_resolved', 'session.provider_auth_required', 'session.github_auth_required', 'session.provider_auth_resolved', 'channel.created', 'channel.archived', 'channel.unarchived', 'channel.member_joined', 'channel.member_left', 'call.ended')";
+const SYNC_EVENT_TYPES = sqlTypeList(SYNC_EVENT_TYPE_VALUES);
 
 function syncVisibleCte(userUuidParam: string, userTextParam: string): string {
   const workspaceMember = workspaceMemberExists('e.workspace_id', userUuidParam);

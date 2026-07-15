@@ -22,6 +22,7 @@ import { join } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { writeBackArtifact } from '../src/artifact-writeback.js';
+import { MESSAGE_STATE_ROW_TYPES, sqlTypeList } from '../src/event-types.js';
 import { uploadObject, getObjectBytes, headObject } from '../src/s3.js';
 import { projectAndEmitChange } from '../src/session-record-changefeed.js';
 
@@ -837,7 +838,7 @@ async function main(): Promise<void> {
   // fixtures above are inserted directly. Reproject the complete seed once so
   // those raw writes and any thread roots they affect have current state.
   await pool.query(
-    `SELECT refold_message_state(id) FROM events WHERE type IN ('message.posted', 'voice.transcribed', 'session.spawned', 'session.replied', 'session.status_changed', 'session.effort_changed', 'session.completed', 'session.archived', 'session.unarchived', 'session.seat_requested', 'session.seat_changed', 'session.question_requested', 'session.question_answered', 'session.question_resolved', 'session.provider_auth_required', 'session.github_auth_required', 'session.provider_auth_resolved') ORDER BY id`,
+    `SELECT refold_message_state(id) FROM events WHERE type IN ${sqlTypeList(MESSAGE_STATE_ROW_TYPES)} ORDER BY id`,
   );
 
   console.log('done. summary:');

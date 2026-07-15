@@ -1,4 +1,5 @@
 import { createPool } from '../src/db.js';
+import { MESSAGE_STATE_ROW_TYPES, sqlTypeList } from '../src/event-types.js';
 
 const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) refuse('DATABASE_URL is required');
@@ -28,7 +29,7 @@ try {
   // Refold row-owning timeline events once each; modifier events fold into
   // their target's refold, so projecting them individually would re-refold
   // each thread root once per reply (quadratic on busy threads).
-  const ROW_OWNING_TYPES = `('message.posted', 'voice.transcribed', 'session.spawned', 'session.replied', 'session.status_changed', 'session.effort_changed', 'session.completed', 'session.archived', 'session.unarchived', 'session.seat_requested', 'session.seat_changed', 'session.question_requested', 'session.question_answered', 'session.question_resolved', 'session.provider_auth_required', 'session.github_auth_required', 'session.provider_auth_resolved')`;
+  const ROW_OWNING_TYPES = sqlTypeList(MESSAGE_STATE_ROW_TYPES);
   for (let lo = minId; lo <= maxId; lo += CHUNK) {
     await client.query(
       `SELECT refold_message_state(id) FROM events WHERE id >= $1 AND id < $2 AND type IN ${ROW_OWNING_TYPES} ORDER BY id`,

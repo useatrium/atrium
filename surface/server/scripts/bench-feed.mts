@@ -17,6 +17,12 @@ import { performance } from 'node:perf_hooks';
 import { readFile } from 'node:fs/promises';
 import type { Pool, PoolClient } from 'pg';
 import { createPool } from '../src/db.js';
+import {
+  MESSAGE_STATE_ROW_TYPES,
+  REPLY_EVENT_TYPES as REPLY_EVENT_TYPE_VALUES,
+  sqlTypeList,
+  TIMELINE_ROOT_EVENT_TYPES,
+} from '../src/event-types.js';
 import { createChannel, createWorkspace, listChannelMessages } from '../src/events.js';
 import { addWorkspaceMember } from '../src/membership.js';
 import { runMigrations } from '../src/migrate.js';
@@ -38,10 +44,8 @@ if (!databaseName!.toLowerCase().includes('bench')) {
 const config = parseArgs(process.argv.slice(2));
 const pool = createPool(databaseUrl);
 
-const ROOT_EVENT_TYPES =
-  "('message.posted', 'session.spawned', 'session.replied', 'session.question_requested', 'session.question_answered', 'session.question_resolved')";
-const REPLY_EVENT_TYPES =
-  "('message.posted', 'session.replied', 'session.question_requested', 'session.question_answered', 'session.question_resolved')";
+const ROOT_EVENT_TYPES = sqlTypeList(TIMELINE_ROOT_EVENT_TYPES);
+const REPLY_EVENT_TYPES = sqlTypeList(REPLY_EVENT_TYPE_VALUES);
 // The read-time fold this projection replaced, kept verbatim for comparison.
 const LEGACY_MESSAGE_SELECT = `
   SELECT e.*,
@@ -327,7 +331,7 @@ async function seedDatabase(db: Pool, args: Config): Promise<SeedResult> {
   // Refold row-owning timeline events once each (modifiers fold into their
   // target's refold); the per-event classifier cascade is quadratic on busy
   // threads and pointless for a bulk backfill.
-  const ROW_OWNING_TYPES = `('message.posted', 'voice.transcribed', 'session.spawned', 'session.replied', 'session.status_changed', 'session.effort_changed', 'session.completed', 'session.archived', 'session.unarchived', 'session.seat_requested', 'session.seat_changed', 'session.question_requested', 'session.question_answered', 'session.question_resolved', 'session.provider_auth_required', 'session.github_auth_required', 'session.provider_auth_resolved')`;
+  const ROW_OWNING_TYPES = sqlTypeList(MESSAGE_STATE_ROW_TYPES);
   for (let lo = minId; lo <= maxId; lo += PROJECT_CHUNK) {
     await db.query(
       `SELECT refold_message_state(id) FROM events WHERE workspace_id = $1 AND id >= $2 AND id < $3 AND type IN ${ROW_OWNING_TYPES} ORDER BY id`,
