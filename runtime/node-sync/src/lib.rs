@@ -23,6 +23,7 @@ pub mod adopt;
 pub mod backpressure;
 pub mod batch;
 pub mod cas;
+pub mod daemon;
 pub mod depcache;
 pub mod echo;
 pub mod eviction;
