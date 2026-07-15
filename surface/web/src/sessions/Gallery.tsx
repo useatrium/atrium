@@ -62,6 +62,20 @@ const GALLERY_URL_PARAM_KEYS = [
   'label',
 ];
 
+/**
+ * Keep server-query state separate from presentation-only URL state. Opening a
+ * file or toggling its lightbox panel must not invalidate the gallery listing.
+ */
+export function galleryQuerySearch(search: string): string {
+  const source = new URLSearchParams(search);
+  const query = new URLSearchParams();
+  for (const key of GALLERY_URL_PARAM_KEYS) {
+    const value = source.get(key);
+    if (value != null) query.set(key, value);
+  }
+  return query.toString();
+}
+
 function isFileCategory(value: string | null): value is FileCategory {
   return value != null && FILE_CATEGORIES.some((category) => category.key === value);
 }
@@ -221,7 +235,9 @@ function GalleryCardPreview({ file, preview }: { file: HubFile; preview: Preview
 }
 
 function GalleryCard({ file, onOpen }: { file: HubFile; onOpen: () => void }) {
-  const preview = hubFileToPreview(file);
+  // Route-only lightbox changes rerender Gallery, but a stable file must keep a
+  // stable preview object so text renderers do not refetch behind the overlay.
+  const preview = useMemo(() => hubFileToPreview(file), [file]);
   const showPath = effectiveMediaKind(preview) !== 'image';
   return (
     <button
@@ -430,23 +446,24 @@ export function Gallery({
 }): JSX.Element {
   const location = useLocation();
   const endpoint = `/api/workspaces/${encodeURIComponent(workspaceId)}/files`;
+  const querySearch = useMemo(() => galleryQuerySearch(location.search), [location.search]);
   const urlFileArtifactId = useMemo(
     () => cleanId(new URLSearchParams(location.search).get(URL_PARAMS.file)),
     [location.search],
   );
   const urlPanel = useMemo(() => lightboxPanelFromSearch(location.search), [location.search]);
-  const parsedWithoutContext = useMemo(() => galleryStateFromSearch(location.search), [location.search]);
+  const parsedWithoutContext = useMemo(() => galleryStateFromSearch(querySearch), [querySearch]);
   const [rememberedScopeIds, setRememberedScopeIds] = useState(() => ({
     channelId: parsedWithoutContext.channelId || cleanId(channelId),
     sessionId: parsedWithoutContext.sessionId || cleanId(sessionId),
   }));
   const queryState = useMemo(
     () =>
-      galleryStateFromSearch(location.search, {
+      galleryStateFromSearch(querySearch, {
         channelId: rememberedScopeIds.channelId || channelId,
         sessionId: rememberedScopeIds.sessionId || sessionId,
       }),
-    [channelId, location.search, rememberedScopeIds.channelId, rememberedScopeIds.sessionId, sessionId],
+    [channelId, querySearch, rememberedScopeIds.channelId, rememberedScopeIds.sessionId, sessionId],
   );
   const [searchDraft, setSearchDraft] = useState(queryState.q);
   const [files, setFiles] = useState<HubFile[]>([]);
