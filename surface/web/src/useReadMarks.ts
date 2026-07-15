@@ -22,6 +22,7 @@ export function useReadMarks({
   throttleMs?: number;
 }) {
   const lastReadSentRef = useRef<Record<string, number>>({});
+  const lastReadWantedRef = useRef<Record<string, number>>({});
   const lastReadAtRef = useRef<Record<string, number>>({});
   const readTimersRef = useRef<Record<string, PendingReadMark>>({});
 
@@ -30,7 +31,10 @@ export function useReadMarks({
   }, []);
 
   const markRead = useCallback(
-    (channelId: string, lastEventId: number) => {
+    (channelId: string, lastEventId: number, opts?: { immediate?: boolean }) => {
+      if (lastEventId > 0) {
+        lastReadWantedRef.current[channelId] = Math.max(lastReadWantedRef.current[channelId] ?? 0, lastEventId);
+      }
       if (lastEventId <= 0 || (lastReadSentRef.current[channelId] ?? 0) >= lastEventId) return;
       const fire = () => {
         const previous = lastReadSentRef.current[channelId] ?? 0;
@@ -50,6 +54,15 @@ export function useReadMarks({
           onApiError(err);
         });
       };
+      if (opts?.immediate) {
+        const pending = readTimersRef.current[channelId];
+        if (pending) {
+          clearTimeout(pending.timer);
+          delete readTimersRef.current[channelId];
+        }
+        fire();
+        return;
+      }
       const elapsed = Date.now() - (lastReadAtRef.current[channelId] ?? 0);
       const pending = readTimersRef.current[channelId];
       if (elapsed >= throttleMs) {
@@ -86,5 +99,16 @@ export function useReadMarks({
     [flush],
   );
 
-  return { markRead, noteReadCursor, flush };
+  const flushBeacon = useCallback(() => {
+    if (typeof navigator === 'undefined' || typeof navigator.sendBeacon !== 'function') return;
+    for (const [channelId, lastReadEventId] of Object.entries(lastReadWantedRef.current)) {
+      if (lastReadEventId <= 0) continue;
+      navigator.sendBeacon(
+        `/api/channels/${channelId}/read`,
+        new Blob([JSON.stringify({ lastReadEventId })], { type: 'application/json' }),
+      );
+    }
+  }, []);
+
+  return { markRead, noteReadCursor, flush, flushBeacon };
 }

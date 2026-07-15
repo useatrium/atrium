@@ -71,4 +71,64 @@ describe('useReadMarks read advance persistence hooks', () => {
     );
     expect(onAdvance).toHaveBeenLastCalledWith('ch-1', 9);
   });
+
+  it('fires immediately past the throttle when opts.immediate is set', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(3000);
+    const dispatch = vi.fn();
+    const enqueueOp = vi.fn(async (_input: EnqueueOpInput<'read.mark'>) => ({ opId: 'op-1' }));
+    const onAdvance = vi.fn();
+
+    const { result } = renderHook(() =>
+      useReadMarks({
+        dispatch,
+        enqueueOp,
+        onAdvance,
+        onApiError: vi.fn(),
+        throttleMs: 2000,
+      }),
+    );
+
+    // First mark fires (elapsed >= throttle on a cold channel), advancing to 5.
+    act(() => result.current.markRead('ch-1', 5));
+    // A follow-up within the throttle window would normally trail — immediate bypasses it.
+    act(() => {
+      vi.setSystemTime(3100);
+      result.current.markRead('ch-1', 9, { immediate: true });
+    });
+
+    expect(enqueueOp).toHaveBeenCalledTimes(2);
+    expect(enqueueOp).toHaveBeenLastCalledWith(
+      expect.objectContaining({ opType: 'read.mark', payload: { channelId: 'ch-1', lastReadEventId: 9 } }),
+    );
+    // An immediate call that does not advance the cursor is a no-op (no server spam).
+    act(() => result.current.markRead('ch-1', 9, { immediate: true }));
+    expect(enqueueOp).toHaveBeenCalledTimes(2);
+  });
+
+  it('beacons the intended cursor for each visited channel on flushBeacon', () => {
+    const sendBeacon = vi.fn(() => true);
+    vi.stubGlobal('navigator', { sendBeacon } as unknown as Navigator);
+    const enqueueOp = vi.fn(async (_input: EnqueueOpInput<'read.mark'>) => ({ opId: 'op-1' }));
+
+    const { result } = renderHook(() =>
+      useReadMarks({
+        dispatch: vi.fn(),
+        enqueueOp,
+        onApiError: vi.fn(),
+        throttleMs: 2000,
+      }),
+    );
+
+    // A cursor still sitting in a pending throttle timer must still be beaconed:
+    // markRead records the intended cursor before the throttle branch.
+    act(() => result.current.markRead('ch-1', 5));
+    act(() => result.current.markRead('ch-1', 12));
+    act(() => result.current.flushBeacon());
+
+    expect(sendBeacon).toHaveBeenCalledTimes(1);
+    const [url, body] = sendBeacon.mock.calls[0]!;
+    expect(url).toBe('/api/channels/ch-1/read');
+    expect(body).toBeInstanceOf(Blob);
+  });
 });
