@@ -11,10 +11,13 @@ use centaur_node_sync::daemon::session::{SessionConfig, warmcache_capture_if_nee
 use centaur_node_sync::overlay::RawEntry;
 use centaur_node_sync::overlay_mount::{OVERLAY_SIGNATURE_FILE, READY_MARKER_FILE};
 use centaur_node_sync::runtime::{
-    capture_sweep, credential_refresh_sweep, harness_transcript_sweep, partition_entries_by_lane,
-    profile_baseline_sweep, profile_candidate_sweep,
+    AtriumClient, capture_sweep, credential_refresh_sweep, harness_transcript_sweep,
+    partition_entries_by_lane, profile_baseline_sweep, profile_candidate_sweep, reconcile_deletes,
 };
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+
+const MAX_DELETE_RECONCILE_RATIO: f64 = 0.25;
 
 pub(super) fn run_local_capture(
     ctx: &mut ScanCtx<'_>,
@@ -105,6 +108,7 @@ pub(super) fn outbound(
         session,
         state,
         capture_stamps,
+        pending_deletes,
         uploaded_profile_bundles,
         echo,
         client,
@@ -141,6 +145,13 @@ pub(super) fn outbound(
             }
 
             let base_seqs = state.base_seqs();
+            let present = matches!(plan, ScanPlan::Full).then(|| {
+                partitioned
+                    .artifact_entries
+                    .iter()
+                    .map(|entry| entry.rel_path.to_string_lossy().into_owned())
+                    .collect::<HashSet<_>>()
+            });
             let out = capture_sweep(
                 &partitioned.artifact_entries,
                 &base_seqs,
@@ -165,6 +176,42 @@ pub(super) fn outbound(
             );
             for (path, error) in &out.errors {
                 eprintln!("session {}: capture error {path}: {error}", session.session);
+            }
+            if let Some(present) = present {
+                let reconcile = reconcile_deletes(
+                    capture_stamps,
+                    &present,
+                    pending_deletes,
+                    MAX_DELETE_RECONCILE_RATIO,
+                );
+                if reconcile.fuse_tripped {
+                    println!(
+                        "event=node_sync_delete_reconcile_fuse session={} missing={} known={}",
+                        session.session, reconcile.missing_count, reconcile.known_count
+                    );
+                } else {
+                    let mut reconciled = 0;
+                    for path in reconcile.confirmed {
+                        let base = base_seqs.get(&path).copied().unwrap_or(0);
+                        match (**client).post_delete(&path, base) {
+                            Ok(_) => {
+                                capture_stamps.remove(&path);
+                                state.paths.remove(&path);
+                                reconciled += 1;
+                            }
+                            Err(error) => eprintln!(
+                                "session {}: capture error {path}: {error}",
+                                session.session
+                            ),
+                        }
+                    }
+                    if reconciled > 0 {
+                        println!(
+                            "session {}: capture: reconciled {reconciled} deletes",
+                            session.session
+                        );
+                    }
+                }
             }
 
             for (harness, harness_home) in harnesses_to_capture(session) {
