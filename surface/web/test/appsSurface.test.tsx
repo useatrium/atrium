@@ -55,13 +55,15 @@ describe('AppsSurface', () => {
     vi.spyOn(sessionsApi, 'publishApp').mockResolvedValue({
       appId: 'app-1',
       version: 1,
-      files: ['shared/apps/demo/index.html'],
+      files: 1,
       entry: 'index.html',
+      actions: 0,
     });
     vi.spyOn(sessionsApi, 'launchApp').mockResolvedValue({
       url: 'https://apps.example/demo',
-      expires: '2026-06-25T13:00:00Z',
+      expires: 1_782_391_600,
       version: 2,
+      actions: [],
     });
     vi.spyOn(window, 'open').mockImplementation(() => null);
   });

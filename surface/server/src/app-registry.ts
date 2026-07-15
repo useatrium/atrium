@@ -21,6 +21,7 @@ export interface PublishedApp {
   version: number;
   files: number;
   entry: string;
+  actions: number;
 }
 
 export interface AppRegistryOptions {
@@ -54,7 +55,17 @@ export interface ResolvedAppFile {
   sizeBytes: number;
 }
 
+export interface AppActionDeclaration {
+  name: string;
+  title: string | null;
+  description: string | null;
+  confirmPolicy: 'always' | 'never';
+  idempotencyPolicy: 'required' | 'optional';
+  inputSchema: Record<string, unknown>;
+}
+
 const APP_NAME_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+const ACTION_NAME_RE = /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/;
 
 export class AppRegistry {
   constructor(
@@ -86,6 +97,7 @@ export class AppRegistry {
         throw new DomainError(400, 'app_entry_missing', 'entry file is missing from app source');
       }
       await this.validateEntryAssets(entry, entryFile.s3_key!, byPath);
+      const actions = await this.readActionManifest(byPath);
 
       const appRow = await findOrCreateApp(client, {
         workspaceId: args.workspaceId,
@@ -114,13 +126,30 @@ export class AppRegistry {
           ],
         );
       }
+      for (const action of actions) {
+        await client.query(
+          `INSERT INTO app_version_actions
+             (app_id, version, action_name, title, description, confirm_policy, idempotency_policy, input_schema)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)`,
+          [
+            appRow.id,
+            version,
+            action.name,
+            action.title,
+            action.description,
+            action.confirmPolicy,
+            action.idempotencyPolicy,
+            JSON.stringify(action.inputSchema),
+          ],
+        );
+      }
       await client.query(
         `UPDATE apps
             SET current_version = $2, entry_path = $3, status = 'published', updated_at = now()
           WHERE id = $1`,
         [appRow.id, version, entry],
       );
-      return { appId: appRow.id, version, files: frozen.length, entry };
+      return { appId: appRow.id, version, files: frozen.length, entry, actions: actions.length };
     });
   }
 
@@ -164,7 +193,7 @@ export class AppRegistry {
     appId: string,
     userId: string,
     version?: number,
-  ): Promise<{ url: string; expires: number; version: number }> {
+  ): Promise<{ url: string; expires: number; version: number; actions: AppActionDeclaration[] }> {
     const app = await this.pool.query<{ current_version: number; entry_path: string; status: string }>(
       `SELECT current_version, entry_path, status
          FROM apps a
@@ -194,7 +223,7 @@ export class AppRegistry {
     );
     const base = this.options.appsOrigin.replace(/\/+$/, '');
     const url = `${base}/apps/${appId}/v/${launchVersion}/g/${expires}/${encodeURIComponent(sig)}/${encodeRelPath(row.entry_path)}`;
-    return { url, expires, version: launchVersion };
+    return { url, expires, version: launchVersion, actions: await this.listVersionActions(appId, launchVersion) };
   }
 
   async resolveFile(appId: string, version: number, relPath: string): Promise<ResolvedAppFile | null> {
@@ -242,6 +271,44 @@ export class AppRegistry {
         throw new DomainError(400, 'app_asset_missing', `entry references missing asset: ${ref}`);
       }
     }
+  }
+
+  private async readActionManifest(files: Map<string, FrozenFile>): Promise<AppActionDeclaration[]> {
+    const manifest = files.get('atrium.app.json');
+    if (!manifest?.s3_key) return [];
+    if (!this.options.storage) return [];
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse((await this.options.storage.getObjectBytes(manifest.s3_key)).toString('utf8'));
+    } catch {
+      throw new DomainError(400, 'bad_app_manifest', 'atrium.app.json must be valid JSON');
+    }
+    return parseActionDeclarations(parsed);
+  }
+
+  private async listVersionActions(appId: string, version: number): Promise<AppActionDeclaration[]> {
+    const res = await this.pool.query<{
+      action_name: string;
+      title: string | null;
+      description: string | null;
+      confirm_policy: 'always' | 'never';
+      idempotency_policy: 'required' | 'optional';
+      input_schema: Record<string, unknown>;
+    }>(
+      `SELECT action_name, title, description, confirm_policy, idempotency_policy, input_schema
+         FROM app_version_actions
+        WHERE app_id = $1 AND version = $2
+        ORDER BY action_name ASC`,
+      [appId, version],
+    );
+    return res.rows.map((row) => ({
+      name: row.action_name,
+      title: row.title,
+      description: row.description,
+      confirmPolicy: row.confirm_policy,
+      idempotencyPolicy: row.idempotency_policy,
+      inputSchema: row.input_schema,
+    }));
   }
 }
 
@@ -407,6 +474,63 @@ function resolveRelativeAsset(baseDir: string, ref: string): string | null {
   } catch {
     return null;
   }
+}
+
+function parseActionDeclarations(manifest: unknown): AppActionDeclaration[] {
+  if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)) return [];
+  const actions = (manifest as { actions?: unknown }).actions;
+  if (actions == null) return [];
+  if (!actions || typeof actions !== 'object' || Array.isArray(actions)) {
+    throw new DomainError(400, 'bad_app_actions', 'manifest actions must be an object');
+  }
+  return Object.entries(actions as Record<string, unknown>).map(([name, value]) => parseActionDeclaration(name, value));
+}
+
+function parseActionDeclaration(name: string, value: unknown): AppActionDeclaration {
+  if (!ACTION_NAME_RE.test(name)) {
+    throw new DomainError(400, 'bad_app_action_name', 'action names must be dotted safe identifiers');
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new DomainError(400, 'bad_app_action', `action ${name} must be an object`);
+  }
+  const record = value as Record<string, unknown>;
+  const confirmPolicy = optionalEnum(record.confirm, ['always', 'never'] as const, 'always', `action ${name} confirm`);
+  const idempotencyPolicy = optionalEnum(
+    record.idempotency,
+    ['required', 'optional'] as const,
+    confirmPolicy === 'always' ? 'required' : 'optional',
+    `action ${name} idempotency`,
+  );
+  const inputSchema = record.input_schema ?? { type: 'object', additionalProperties: false };
+  if (!inputSchema || typeof inputSchema !== 'object' || Array.isArray(inputSchema)) {
+    throw new DomainError(400, 'bad_app_action_schema', `action ${name} input_schema must be an object`);
+  }
+  return {
+    name,
+    title: optionalString(record.title, `action ${name} title`),
+    description: optionalString(record.description, `action ${name} description`),
+    confirmPolicy,
+    idempotencyPolicy,
+    inputSchema: inputSchema as Record<string, unknown>,
+  };
+}
+
+function optionalString(value: unknown, label: string): string | null {
+  if (value == null) return null;
+  if (typeof value !== 'string') throw new DomainError(400, 'bad_app_action', `${label} must be a string`);
+  const trimmed = value.trim();
+  return trimmed || null;
+}
+
+function optionalEnum<T extends readonly string[]>(
+  value: unknown,
+  allowed: T,
+  fallback: T[number],
+  label: string,
+): T[number] {
+  if (value == null) return fallback;
+  if (typeof value === 'string' && (allowed as readonly string[]).includes(value)) return value as T[number];
+  throw new DomainError(400, 'bad_app_action', `${label} must be one of: ${allowed.join(', ')}`);
 }
 
 function encodeRelPath(relPath: string): string {

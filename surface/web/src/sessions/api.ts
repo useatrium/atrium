@@ -20,6 +20,15 @@ import { ApiError } from '../api';
 import { desktopApiOptions } from '../desktop';
 import type { SessionListItem, SessionRepoSpec, SessionWire } from './types';
 
+export interface AppActionDeclaration {
+  name: string;
+  title: string | null;
+  description: string | null;
+  confirmPolicy: 'always' | 'never';
+  idempotencyPolicy: 'required' | 'optional';
+  inputSchema: Record<string, unknown>;
+}
+
 export interface CreateSessionBody {
   channelId: string;
   threadRootEventId?: number;
@@ -237,8 +246,8 @@ export const sessionsApi = {
   publishApp(
     sessionId: string,
     body: { name: string; entry?: string; scope?: 'channel' | 'workspace' },
-  ): Promise<{ appId: string; version: number; files: string[]; entry: string }> {
-    return reqJson<{ appId: string; version: number; files: string[]; entry: string }>(
+  ): Promise<{ appId: string; version: number; files: number; entry: string; actions: number }> {
+    return reqJson<{ appId: string; version: number; files: number; entry: string; actions: number }>(
       `/api/sessions/${sessionId}/apps`,
       {
         method: 'POST',
@@ -247,11 +256,17 @@ export const sessionsApi = {
     );
   },
 
-  launchApp(appId: string, version?: number): Promise<{ url: string; expires: string; version: number }> {
-    return reqJson<{ url: string; expires: string; version: number }>(`/api/apps/${appId}/launch`, {
-      method: 'POST',
-      body: JSON.stringify(version === undefined ? {} : { version }),
-    });
+  launchApp(
+    appId: string,
+    version?: number,
+  ): Promise<{ url: string; expires: number; version: number; actions: AppActionDeclaration[] }> {
+    return reqJson<{ url: string; expires: number; version: number; actions: AppActionDeclaration[] }>(
+      `/api/apps/${appId}/launch`,
+      {
+        method: 'POST',
+        body: JSON.stringify(version === undefined ? {} : { version }),
+      },
+    );
   },
 
   // ---- driver seat (Phase 3) ----

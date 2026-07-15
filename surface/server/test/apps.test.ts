@@ -113,6 +113,114 @@ describe('app registry publish/list/launch', () => {
     ]);
   });
 
+  it('freezes action declarations from atrium.app.json and returns them at launch', async () => {
+    const registry = await appRegistry();
+    await capture('apps/actions/index.html', '7'.repeat(64), '<!doctype html><h1>Actions</h1>');
+    await capture(
+      'apps/actions/atrium.app.json',
+      '8'.repeat(64),
+      JSON.stringify({
+        name: 'actions',
+        kind: 'static',
+        entry: 'index.html',
+        actions: {
+          'atrium.channel.add_member': {
+            title: 'Add member',
+            description: 'Invite a member into this channel.',
+            confirm: 'always',
+            idempotency: 'required',
+            input_schema: {
+              type: 'object',
+              required: ['channel_id', 'user_id'],
+              properties: {
+                channel_id: { type: 'string', format: 'uuid' },
+                user_id: { type: 'string', format: 'uuid' },
+              },
+              additionalProperties: false,
+            },
+          },
+        },
+      }),
+      'application/json',
+    );
+
+    const published = await registry.publish({
+      sessionId,
+      workspaceId: fx.workspaceId,
+      channelId: fx.channelId,
+      userId: fx.userId,
+      name: 'actions',
+      scope: 'channel',
+      entry: 'index.html',
+    });
+
+    expect(published).toMatchObject({ version: 1, actions: 1 });
+
+    await capture(
+      'apps/actions/atrium.app.json',
+      '9'.repeat(64),
+      JSON.stringify({
+        actions: {
+          'atrium.channel.list_members': {
+            title: 'List members',
+            confirm: 'never',
+            idempotency: 'optional',
+          },
+        },
+      }),
+      'application/json',
+    );
+
+    const launch = await registry.launch(published.appId, fx.userId, 1);
+    expect(launch.actions).toEqual([
+      {
+        name: 'atrium.channel.add_member',
+        title: 'Add member',
+        description: 'Invite a member into this channel.',
+        confirmPolicy: 'always',
+        idempotencyPolicy: 'required',
+        inputSchema: {
+          type: 'object',
+          required: ['channel_id', 'user_id'],
+          properties: {
+            channel_id: { type: 'string', format: 'uuid' },
+            user_id: { type: 'string', format: 'uuid' },
+          },
+          additionalProperties: false,
+        },
+      },
+    ]);
+  });
+
+  it('rejects malformed action declarations at publish time', async () => {
+    const registry = await appRegistry();
+    await capture('apps/bad-actions/index.html', '0'.repeat(64), '<h1>Bad actions</h1>');
+    await capture(
+      'apps/bad-actions/atrium.app.json',
+      'a1'.padEnd(64, 'a'),
+      JSON.stringify({
+        actions: {
+          'not safe': {
+            input_schema: { type: 'object' },
+          },
+        },
+      }),
+      'application/json',
+    );
+
+    await expect(
+      registry.publish({
+        sessionId,
+        workspaceId: fx.workspaceId,
+        channelId: fx.channelId,
+        userId: fx.userId,
+        name: 'bad-actions',
+        scope: 'channel',
+        entry: 'index.html',
+      }),
+    ).rejects.toMatchObject({ code: 'bad_app_action_name' });
+  });
+
   it('rejects missing durable blobs, missing entries, deletes, and dangling assets', async () => {
     const registry = await appRegistry();
     await capture('apps/bad/index.html', 'd'.repeat(64), '<script src="missing.js"></script>');
