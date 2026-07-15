@@ -405,6 +405,9 @@ pub fn classify_entry(
     harness_homes: &[PathBuf],
     repo_subdirs: &[PathBuf],
 ) -> EntryLane {
+    if crate::watch::is_unwatched_path(rel_path) {
+        return EntryLane::Denied;
+    }
     let Some(path_components) = normalized_path_components(rel_path) else {
         return EntryLane::Denied;
     };
@@ -1803,6 +1806,27 @@ mod tests {
                 "{path} should remain an artifact"
             );
         }
+    }
+
+    #[test]
+    fn classify_entry_denies_pruned_trees_at_any_depth_but_allows_near_misses() {
+        let homes = vec![PathBuf::from(".claude"), PathBuf::from(".codex")];
+
+        for path in [
+            "node_modules/pkg/index.js",
+            "a/node_modules/b/c.js",
+            "target/debug/app",
+        ] {
+            assert_eq!(
+                classify_entry(Path::new(path), &homes, &[]),
+                EntryLane::Denied,
+                "{path} should be denied"
+            );
+        }
+        assert_eq!(
+            classify_entry(Path::new("a/node_modules2/b/c.js"), &homes, &[]),
+            EntryLane::Artifact
+        );
     }
 
     #[test]

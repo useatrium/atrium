@@ -50,11 +50,8 @@ pub fn is_event_invisible_path(rel: &Path) -> bool {
     if is_mmap_pattern_path(rel) {
         return true;
     }
-    // Unwatched dep/build trees emit no events on purpose — backstop-owned.
-    if rel
-        .components()
-        .any(|component| crate::watch::is_unwatched_dir_name(component.as_os_str()))
-    {
+    // Unwatched dep/build trees emit no events and are capture-pruned on purpose.
+    if crate::watch::is_unwatched_path(rel) {
         return true;
     }
     rel == Path::new(crate::overlay_mount::OVERLAY_SIGNATURE_FILE)
@@ -166,6 +163,10 @@ impl TreeState {
         sorted.sort();
         let mut scanned_dirs: Vec<PathBuf> = Vec::new();
         for rel in sorted {
+            if crate::watch::is_unwatched_path(rel) {
+                self.remove_subtree(rel);
+                continue;
+            }
             if scanned_dirs.iter().any(|dir| rel.starts_with(dir)) {
                 continue;
             }
@@ -227,6 +228,18 @@ pub struct FsEntrySource {
 impl FsEntrySource {
     pub fn new(root: impl Into<PathBuf>) -> Self {
         Self { root: root.into() }
+    }
+
+    /// Walk the complete capture-visible tree, pruning the same dependency and
+    /// build directories as the watch layer before reading their contents.
+    pub fn walk_all(&self) -> io::Result<Vec<RawEntry>> {
+        let mut out = Vec::new();
+        for child in std::fs::read_dir(&self.root)? {
+            let child = child?;
+            out.extend(self.walk_subtree(Path::new(&child.file_name()))?);
+        }
+        out.sort_by(|a, b| a.rel_path.cmp(&b.rel_path));
+        Ok(out)
     }
 
     fn entry_for(&self, rel: &Path, meta: &std::fs::Metadata) -> RawEntry {
@@ -311,6 +324,9 @@ impl EntrySource for FsEntrySource {
 
     fn walk_subtree(&self, rel: &Path) -> io::Result<Vec<RawEntry>> {
         let mut out = Vec::new();
+        if crate::watch::is_unwatched_path(rel) {
+            return Ok(out);
+        }
         let Some(root_entry) = self.stat_entry(rel)? else {
             return Ok(out);
         };
@@ -329,6 +345,9 @@ impl EntrySource for FsEntrySource {
             for entry in read {
                 let entry = entry?;
                 let child_rel = dir.join(entry.file_name());
+                if crate::watch::is_unwatched_path(&child_rel) {
+                    continue;
+                }
                 let Ok(meta) = std::fs::symlink_metadata(entry.path()) else {
                     continue; // vanished mid-walk: the next event re-dirties it
                 };
@@ -350,13 +369,7 @@ mod tests {
     use std::fs;
 
     fn walk_all(source: &FsEntrySource) -> Vec<RawEntry> {
-        let mut entries = Vec::new();
-        for child in fs::read_dir(&source.root).unwrap() {
-            let child = child.unwrap();
-            entries.extend(source.walk_subtree(Path::new(&child.file_name())).unwrap());
-        }
-        entries.sort_by(|a, b| a.rel_path.cmp(&b.rel_path));
-        entries
+        source.walk_all().unwrap()
     }
 
     fn assert_matches_disk(tree: &TreeState, source: &FsEntrySource) {
@@ -400,6 +413,30 @@ mod tests {
         tree.apply_dirty_paths(&source, &[PathBuf::from("d/b.txt")])
             .unwrap();
         assert_matches_disk(&tree, &source);
+    }
+
+    #[test]
+    fn full_walk_prunes_dependency_trees_but_keeps_near_misses() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = FsEntrySource::new(temp.path());
+        fs::create_dir_all(temp.path().join("a/node_modules/pkg")).unwrap();
+        fs::write(temp.path().join("a/node_modules/pkg/index.js"), b"junk").unwrap();
+        fs::create_dir_all(temp.path().join("a/node_modules2/pkg")).unwrap();
+        fs::write(
+            temp.path().join("a/node_modules2/pkg/index.js"),
+            b"artifact",
+        )
+        .unwrap();
+
+        let paths: Vec<PathBuf> = source
+            .walk_all()
+            .unwrap()
+            .into_iter()
+            .map(|entry| entry.rel_path)
+            .collect();
+
+        assert!(!paths.iter().any(|path| path.starts_with("a/node_modules")));
+        assert!(paths.contains(&PathBuf::from("a/node_modules2/pkg/index.js")));
     }
 
     #[test]
