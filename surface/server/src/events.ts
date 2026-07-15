@@ -2,6 +2,7 @@ import type { Db, DbClient } from './db.js';
 import { withTx } from './db.js';
 import { encodeEventHandle, encodeHandle, tryDecodeHandle } from './entries.js';
 import { workspaceMemberExists } from './membership.js';
+import { MESSAGE_STATE_EVENT_TYPES, projectMessageEvent } from './message-state.js';
 
 export interface UserRef {
   id: string;
@@ -136,7 +137,9 @@ async function insertEvent(client: DbClient, args: InsertEventArgs): Promise<Eve
       JSON.stringify(args.payload ?? {}),
     ],
   );
-  return res.rows[0]!;
+  const row = res.rows[0]!;
+  if (MESSAGE_STATE_EVENT_TYPES.has(row.type)) await projectMessageEvent(client, row.id);
+  return row;
 }
 
 export async function appendEvent(client: DbClient, args: InsertEventArgs): Promise<WireEvent> {
