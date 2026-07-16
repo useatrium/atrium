@@ -354,3 +354,27 @@ describe('cached timeline hydration', () => {
     expect(onDeltaFailed).toHaveBeenCalledWith('ch-1', failure);
   });
 });
+
+describe('hydration ordering', () => {
+  it('hydrates the requested channel before the rest', async () => {
+    const deltaOrder: string[] = [];
+    await hydrateCachedTimelines({
+      timelines: {
+        'ch-1': { events: [wire(4, 'ch-1')], hasMore: false },
+        'ch-2': { events: [wire(5, 'ch-2')], hasMore: false },
+        'ch-3': { events: [wire(6, 'ch-3')], hasMore: false },
+      },
+      syncCursor: 0,
+      dispatch: vi.fn(),
+      firstChannelId: 'ch-2',
+      fetchLatest: vi.fn(),
+      fetchDelta: vi.fn(async (channelId: string) => {
+        deltaOrder.push(channelId);
+        return { events: [], hasMore: false };
+      }),
+    });
+
+    expect(deltaOrder[0]).toBe('ch-2');
+    expect(deltaOrder).toHaveLength(3);
+  });
+});

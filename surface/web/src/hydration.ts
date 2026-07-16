@@ -48,6 +48,7 @@ export async function hydrateCachedTimelines({
   timelines,
   syncCursor,
   dispatch,
+  firstChannelId,
   fetchLatest,
   fetchDelta,
   isDisposed,
@@ -59,6 +60,9 @@ export async function hydrateCachedTimelines({
   timelines: Record<string, CachedTimeline>;
   syncCursor: number;
   dispatch: (action: AppAction) => void;
+  /** Hydrate this channel before the rest — it's the one on screen, and its
+   * divider landing defers until its warm delta settles. */
+  firstChannelId?: string;
   fetchLatest: (channelId: string) => Promise<HistoryPage>;
   fetchDelta: (channelId: string, afterId: number) => Promise<HistoryPage>;
   isDisposed?: () => boolean;
@@ -67,7 +71,12 @@ export async function hydrateCachedTimelines({
   onDeltaLoaded?: (channelId: string, page: HistoryPage) => void;
   onDeltaFailed?: (channelId: string, err: unknown) => void;
 }): Promise<void> {
-  for (const [channelId, timeline] of Object.entries(timelines)) {
+  const entries = Object.entries(timelines);
+  if (firstChannelId !== undefined) {
+    const first = entries.findIndex(([channelId]) => channelId === firstChannelId);
+    if (first > 0) entries.unshift(...entries.splice(first, 1));
+  }
+  for (const [channelId, timeline] of entries) {
     if (isDisposed?.()) return;
     const cachedLastEventId = cachedTimelineLastEventId(timeline);
     let hydratedHasMore = timeline.hasMore;
