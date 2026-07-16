@@ -1,19 +1,18 @@
 import { deflateSync } from 'node:zlib';
 import { expect, test, type Locator } from '@playwright/test';
-import { Pool } from 'pg';
 import {
   apiAs,
   channelId,
   createTestChannel,
+  distanceFromBottom,
   login,
   openChannel,
-  postMessage,
   postWithAttachment,
+  seedMessages,
+  setReadCursor,
   unique,
   uploadViaApi,
 } from './helpers.js';
-
-const e2eDatabaseUrl = process.env.E2E_DATABASE_URL ?? 'postgres://atrium:atrium@localhost:5433/atrium_e2e';
 
 const PNG_CRC_TABLE = new Uint32Array(256);
 for (let i = 0; i < PNG_CRC_TABLE.length; i += 1) {
@@ -75,34 +74,6 @@ function generatedPng(width: number, height: number): Buffer {
 
 const LATE_IMAGE_PNG = generatedPng(640, 480);
 
-async function setReadCursor(args: { handle: string; channelId: string; lastReadEventId: number }): Promise<void> {
-  const pool = new Pool({ connectionString: e2eDatabaseUrl });
-  const client = await pool.connect();
-  try {
-    const user = await client.query<{ id: string }>('SELECT id FROM users WHERE handle = $1', [args.handle]);
-    const userId = user.rows[0]?.id;
-    if (!userId) throw new Error(`missing e2e user: ${args.handle}`);
-    await client.query(
-      `INSERT INTO channel_read_cursors (user_id, channel_id, last_read_event_id)
-       VALUES ($1, $2, $3)
-       ON CONFLICT (user_id, channel_id)
-       DO UPDATE SET last_read_event_id = EXCLUDED.last_read_event_id,
-                     updated_at = now()`,
-      [userId, args.channelId, args.lastReadEventId],
-    );
-  } finally {
-    client.release();
-    await pool.end();
-  }
-}
-
-async function distanceFromBottom(log: Locator): Promise<number> {
-  return log.evaluate((node) => {
-    const el = node as HTMLElement;
-    return el.scrollHeight - el.scrollTop - el.clientHeight;
-  });
-}
-
 async function scrollHeight(log: Locator): Promise<number> {
   return log.evaluate((node) => (node as HTMLElement).scrollHeight);
 }
@@ -117,10 +88,8 @@ test('fully read channel stays pinned when a landing image finishes loading late
 
   try {
     const roomId = await channelId(writer, room);
-    let latestId = 0;
-    for (let i = 1; i <= 28; i += 1) {
-      latestId = await postMessage(writer, roomId, `media pin filler ${i}`);
-    }
+    const fillerIds = await seedMessages(writer, roomId, 'media pin filler', 28);
+    let latestId = fillerIds.at(-1)!;
     const fileId = await uploadViaApi(writer, 'late-growth.png', 'image/png', LATE_IMAGE_PNG, {
       width: 640,
       height: 480,
