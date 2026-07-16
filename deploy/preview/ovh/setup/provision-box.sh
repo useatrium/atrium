@@ -13,6 +13,9 @@ REGISTRY_PORT="5000"
 CADDY_CONTAINER="atrium-preview-caddy"
 CADDY_IMAGE="atrium-preview-caddy:2-cloudflare"
 SERVICE_USER="${ATRIUM_PREVIEW_SERVICE_USER:-atrium-preview}"
+# Wildcard-cert + vhost suffix for every preview. Must be a zone Cloudflare can
+# solve DNS-01 for with CF_API_TOKEN.
+PREVIEW_DOMAIN="${ATRIUM_PREVIEW_DOMAIN:-preview.useatrium.com}"
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "$SCRIPT_DIR/../../../.." && pwd)"
@@ -258,7 +261,12 @@ write_secret_envs() {
 }
 
 install_caddy() {
-  sudo install -m 0644 "$SCRIPT_DIR/Caddyfile.tmpl" "$CADDY_CONFIG_DIR/Caddyfile"
+  local caddy_tmp
+  caddy_tmp="$(mktemp)"
+  sed -e "s|__ATRIUM_PREVIEW_DOMAIN__|$PREVIEW_DOMAIN|g" \
+    "$SCRIPT_DIR/Caddyfile.tmpl" >"$caddy_tmp"
+  sudo install -m 0644 "$caddy_tmp" "$CADDY_CONFIG_DIR/Caddyfile"
+  rm -f "$caddy_tmp"
   docker volume create atrium-preview-caddy-data >/dev/null
   docker volume create atrium-preview-caddy-config >/dev/null
 
@@ -310,6 +318,10 @@ ensure_service_repo() {
   log "service repo $SERVICE_REPO at $current"
 }
 
+report_domain() {
+  log "preview domain: *.$PREVIEW_DOMAIN (override with ATRIUM_PREVIEW_DOMAIN)"
+}
+
 install_launcher_and_janitor() {
   local unit_tmp cron_tmp
   unit_tmp="$(mktemp)"
@@ -319,6 +331,7 @@ install_launcher_and_janitor() {
     -e "s|__ATRIUM_SERVICE_USER__|$SERVICE_USER|g" \
     -e "s|__ATRIUM_LAUNCHER_ENV__|$LAUNCHER_ENV|g" \
     -e "s|__ATRIUM_CADDY_CONF_DIR__|$CADDY_CONF_DIR|g" \
+    -e "s|__ATRIUM_PREVIEW_DOMAIN__|$PREVIEW_DOMAIN|g" \
     "$SCRIPT_DIR/launcher.service" >"$unit_tmp"
   sudo install -m 0644 "$unit_tmp" /etc/systemd/system/atrium-preview-launcher.service
   rm -f "$unit_tmp"
@@ -411,6 +424,7 @@ main() {
   ensure_service_user
   ensure_directories
   ensure_service_repo
+  report_domain
   ensure_registry
   ensure_caddy_image
   write_secret_envs

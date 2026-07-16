@@ -4,29 +4,30 @@
 	auto_https prefer_wildcard
 }
 
-*.preview.useatrium.com {
+# One wildcard cert (DNS-01) covers every preview, so no per-preview issuance.
+*.__ATRIUM_PREVIEW_DOMAIN__ {
 	tls {
 		dns cloudflare {env.CF_API_TOKEN}
 	}
 	respond "preview route not found" 404
 }
 
-# previewctl writes one file per preview into conf.d and reloads Caddy. Its
-# fragment follows this shape (ports are the preview's host-published ports):
+# previewctl writes one file per preview into conf.d and reloads Caddy
+# (docker exec ... caddy reload). Its fragment follows this shape:
 #
-# prev-<sha12>-<rand4hex>.preview.useatrium.com {
-#     @apps path /apps/*
-#     handle @apps {
-#         reverse_proxy 127.0.0.1:<apps-port>
+# prev-<sha12>-<rand4hex>.__ATRIUM_PREVIEW_DOMAIN__ {
+#     encode zstd gzip
+#
+#     # presigned S3 reads hit the public origin, so send them straight to minio
+#     @minio path /atrium-prev-<...>/*
+#     handle @minio {
+#         reverse_proxy 127.0.0.1:<minio-port>
 #     }
 #
-#     @server path /api/* /auth/* /ws /healthz
-#     handle @server {
-#         reverse_proxy 127.0.0.1:<server-port>
-#     }
-#
+#     # everything else goes to the preview's own caddy, which serves the web SPA
+#     # and proxies /api,/auth,/ws,/healthz to its server
 #     handle {
-#         reverse_proxy 127.0.0.1:<web-port>
+#         reverse_proxy 127.0.0.1:<preview-caddy-port>
 #     }
 # }
 

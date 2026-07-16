@@ -27,6 +27,8 @@ Environment=KUBECACHEDIR=/var/lib/atrium-preview/.kube/cache
 # shared Caddy imports; previewctl's built-in default (/etc/caddy/conf.d) is not
 # this box's layout.
 Environment=ATRIUM_PREVIEW_CADDY_CONF_DIR=__ATRIUM_CADDY_CONF_DIR__
+# Must match the wildcard cert host in the shared Caddyfile.
+Environment=ATRIUM_PREVIEW_DOMAIN=__ATRIUM_PREVIEW_DOMAIN__
 ExecStart=/usr/bin/python3 __ATRIUM_REPO_ROOT__/deploy/preview/ovh/launcher.py
 Restart=on-failure
 RestartSec=5s

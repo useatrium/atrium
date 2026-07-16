@@ -32,6 +32,9 @@ REGISTRY_PULL = os.environ.get("ATRIUM_PREVIEW_REGISTRY_PULL", "registry:5000")
 # alias the chart's image references resolve through.
 REGISTRY_CONTAINER = os.environ.get("ATRIUM_PREVIEW_REGISTRY_CONTAINER", "atrium-preview-registry")
 REGISTRY_ALIAS = REGISTRY_PULL.split(":")[0]
+# The box's shared Caddy container (provision-box.sh). It only re-reads conf.d on
+# reload, so a new preview is not routed until we poke it.
+CADDY_CONTAINER = os.environ.get("ATRIUM_PREVIEW_CADDY_CONTAINER", "atrium-preview-caddy")
 PREVIEW_DOMAIN = os.environ.get("ATRIUM_PREVIEW_DOMAIN", "preview.useatrium.com")
 # Warm pnpm store from provision-box.sh, so the web build reuses downloads.
 PNPM_STORE = Path(os.environ.get("ATRIUM_PREVIEW_PNPM_STORE", "/var/cache/atrium-preview/pnpm/store"))
@@ -636,6 +639,29 @@ def wait_for_url(url: str, timeout: int = 400) -> None:
     raise RuntimeError(f"health check timed out for {url}: {last_error}")
 
 
+def reload_caddy() -> None:
+    """Make a written/removed vhost fragment take effect.
+
+    The shared Caddy imports conf.d/*.caddy but only re-reads it on reload, so
+    without this a preview reaches "ready" and its URL still 404s. Best-effort:
+    Caddy is not running until CF_API_TOKEN is configured, and that must not fail
+    an otherwise-healthy preview.
+    """
+    best_effort(
+        [
+            "docker",
+            "exec",
+            CADDY_CONTAINER,
+            "caddy",
+            "reload",
+            "--config",
+            "/etc/caddy/Caddyfile",
+            "--adapter",
+            "caddyfile",
+        ]
+    )
+
+
 def write_caddy_fragment(state: dict[str, Any]) -> None:
     CADDY_CONF_DIR.mkdir(parents=True, exist_ok=True)
     target = CADDY_CONF_DIR / f"{state['preview_id']}.caddy"
@@ -657,6 +683,7 @@ def write_caddy_fragment(state: dict[str, Any]) -> None:
         )
     )
     temporary.replace(target)
+    reload_caddy()
     state["caddy_fragment"] = str(target)
     save_state(state)
 
@@ -835,6 +862,7 @@ def teardown_resources(state: dict[str, Any]) -> None:
     )
     with contextlib.suppress(OSError):
         fragment.unlink(missing_ok=True)
+    reload_caddy()
     shutil.rmtree(REAL_FS_ROOT / preview_id, ignore_errors=True)
 
 
@@ -859,6 +887,7 @@ def cmd_destroy(args: argparse.Namespace) -> None:
         else CADDY_CONF_DIR / f"{args.preview_id}.caddy"
     )
     fragment.unlink(missing_ok=True)
+    reload_caddy()
     shutil.rmtree(REAL_FS_ROOT / args.preview_id, ignore_errors=True)
 
     if state is not None:
