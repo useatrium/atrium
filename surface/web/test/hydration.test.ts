@@ -60,12 +60,12 @@ describe('cached timeline hydration', () => {
 
     expect(fetchLatest).toHaveBeenCalledWith('ch-1');
     expect(dispatch.mock.calls.map(([action]) => action)).toEqual([
-      { type: 'server-read-cursor', channelId: 'ch-1', lastReadEventId: 8 },
       {
         type: 'history-reset',
         channelId: 'ch-1',
         events: latest.events,
         hasMore: latest.hasMore,
+        readCursor: 8,
       },
     ]);
     expect(dispatch).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'history-loaded' }));
@@ -168,6 +168,7 @@ describe('cached timeline hydration', () => {
       channelId: 'ch-1',
       events: latest.events,
       hasMore: latest.hasMore,
+      readCursor: undefined,
     });
     expect(onRepaired).toHaveBeenCalledWith('ch-1', latest);
   });
@@ -198,11 +199,6 @@ describe('cached timeline hydration', () => {
 
     expect(fetchDelta).toHaveBeenCalledWith('ch-1', 4);
     expect(dispatch).toHaveBeenNthCalledWith(2, {
-      type: 'server-read-cursor',
-      channelId: 'ch-1',
-      lastReadEventId: 4,
-    });
-    expect(dispatch).toHaveBeenNthCalledWith(3, {
       type: 'history-loaded',
       channelId: 'ch-1',
       events: [folded],
@@ -210,6 +206,7 @@ describe('cached timeline hydration', () => {
       nextCursor: 12,
       catchupCursor: 4,
       origin: 'channel-delta',
+      readCursor: 4,
     });
     expect(state.timelines['ch-1']?.main[0]).toMatchObject({
       id: 4,
@@ -319,7 +316,15 @@ describe('cached timeline hydration', () => {
 
     expect(dispatch.mock.calls.map(([action]) => action)).toEqual([
       { type: 'history-loaded', channelId: 'ch-1', events: [wire(4)], hasMore: false },
-      { type: 'server-read-cursor', channelId: 'ch-1', lastReadEventId: 9 },
+      {
+        type: 'history-loaded',
+        channelId: 'ch-1',
+        events: [],
+        hasMore: false,
+        catchupCursor: 4,
+        origin: 'channel-delta',
+        readCursor: 9,
+      },
     ]);
   });
 
