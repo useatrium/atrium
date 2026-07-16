@@ -32,6 +32,9 @@ REGISTRY_PULL = os.environ.get("ATRIUM_PREVIEW_REGISTRY_PULL", "registry:5000")
 REGISTRY_CONTAINER = os.environ.get("ATRIUM_PREVIEW_REGISTRY_CONTAINER", "atrium-preview-registry")
 REGISTRY_ALIAS = REGISTRY_PULL.split(":")[0]
 PREVIEW_DOMAIN = os.environ.get("ATRIUM_PREVIEW_DOMAIN", "preview.useatrium.com")
+# Warm pnpm store from provision-box.sh, so the web build reuses downloads.
+PNPM_STORE = Path(os.environ.get("ATRIUM_PREVIEW_PNPM_STORE", "/var/cache/atrium-preview/pnpm/store"))
+WEB_BUILD_IMAGE = os.environ.get("ATRIUM_PREVIEW_WEB_BUILD_IMAGE", "node:24-alpine")
 PORT_RANGE = range(21000, 29000)
 NODE_PORT = 30080
 CENTAUR_IMAGES = {
@@ -261,6 +264,37 @@ def build_and_push_images(source: Path, commit_sha: str) -> None:
         run(["docker", "push", target], capture=False)
 
 
+def build_web(source: Path) -> None:
+    """Build the web SPA into surface/web/dist.
+
+    The preview's caddy serves this as static files; without it the preview only
+    answers API routes and every page load 404s. Mirrors the AWS appliance, and
+    reuses the box's warm pnpm store so this is a cache hit after the first run.
+    """
+    PNPM_STORE.mkdir(parents=True, exist_ok=True)
+    run(
+        [
+            "docker",
+            "run",
+            "--rm",
+            "-v",
+            f"{source / 'surface'}:/app",
+            "-v",
+            f"{PNPM_STORE}:/pnpm-store",
+            "-w",
+            "/app",
+            "-e",
+            "CI=true",
+            WEB_BUILD_IMAGE,
+            "sh",
+            "-c",
+            "corepack enable && pnpm config set store-dir /pnpm-store --global "
+            "&& pnpm install --frozen-lockfile && pnpm --filter @atrium/web build",
+        ],
+        capture=False,
+    )
+
+
 def appliance_values_yaml(commit_sha: str, surface_port: int) -> str:
     return textwrap.dedent(
         f"""\
@@ -362,6 +396,9 @@ def compose_command(state: dict[str, Any], *args: str) -> list[str]:
     return [
         "docker",
         "compose",
+        # the prod compose gates its web-serving caddy behind this profile
+        "--profile",
+        "caddy",
         "-p",
         f"preview-{state['preview_id']}",
         "--env-file",
@@ -393,6 +430,10 @@ def write_surface_files(state: dict[str, Any]) -> None:
         "BIND_HOST": "127.0.0.1",
         "DB_BIND_HOST": "127.0.0.1",
         "SERVER_HOST_PORT": str(ports["surface"]),
+        # The per-preview caddy serves the web SPA and proxies API paths to the
+        # server. The box's shared caddy terminates TLS and proxies to this port.
+        "CADDY_HOST_PORT": str(ports["caddy"]),
+        "SITE_ADDRESS": ":80",
         "MINIO_HOST_PORT": str(ports["minio"]),
         "DB_HOST_PORT": str(ports["postgres"]),
         "AUTH_OPEN": "1",
@@ -416,6 +457,12 @@ def write_surface_files(state: dict[str, Any]) -> None:
                 environment:
                   APP_SIGNING_SECRET: ${{APP_SIGNING_SECRET}}
                   PROVIDER_CREDENTIAL_SECRET: ${{PROVIDER_CREDENTIAL_SECRET}}
+              caddy:
+                # !override, not a plain list: compose MERGES ports across files,
+                # so without it we would also inherit the prod 80/443 bindings and
+                # collide with the box's shared caddy and with other previews.
+                ports: !override
+                  - "127.0.0.1:${{CADDY_HOST_PORT}}:80"
             """
         )
     )
@@ -598,7 +645,7 @@ def write_caddy_fragment(state: dict[str, Any]) -> None:
                     reverse_proxy 127.0.0.1:{state['ports']['minio']}
                 }}
                 handle {{
-                    reverse_proxy 127.0.0.1:{state['ports']['surface']}
+                    reverse_proxy 127.0.0.1:{state['ports']['caddy']}
                 }}
             }}
             """
@@ -656,8 +703,10 @@ def cmd_create(args: argparse.Namespace) -> None:
         "local_dev_api_key": secrets.token_hex(32),
     }
     with port_allocation_lock():
-        ports = reserve_ports(4)
-        state["ports"] = dict(zip(("surface", "minio", "postgres", "centaur"), ports, strict=True))
+        ports = reserve_ports(5)
+        state["ports"] = dict(
+            zip(("surface", "minio", "postgres", "centaur", "caddy"), ports, strict=True)
+        )
         write_phase(state, "packages")
     try:
         write_phase(state, "source")
@@ -669,6 +718,7 @@ def cmd_create(args: argparse.Namespace) -> None:
         with commit_build_lock(commit_sha):
             write_phase(state, "surface-build")
             build_and_push_images(source, commit_sha)
+            build_web(source)
 
         write_phase(state, "k3d-up")
         create_k3d_cluster(state)
