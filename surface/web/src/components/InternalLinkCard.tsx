@@ -101,6 +101,10 @@ export function InternalLinkCard({
         >
           <ChannelRef channel={channel} meId={meId} />
         </a>
+        {/* A /members link must not read as a plain channel link. Public channels
+            carry no member count (it is private/dm-only on the wire), so without
+            this the two cards would be pixel-identical. Native says the same. */}
+        {!collapsed && linkRef.membersOpen ? <span className="shrink-0 text-xs text-fg-muted">Members</span> : null}
         {!collapsed && memberCount != null ? (
           <span className="shrink-0 text-xs text-fg-muted">
             {memberCount} {memberCount === 1 ? 'member' : 'members'}

@@ -18,6 +18,12 @@ export interface SessionsContextValue {
  * on finished work. Context updates cross memoized boundaries; that is the whole
  * reason this exists. Read-only by design: `requestSession` fetches a miss once
  * and dispatches into the same store, so liveness keeps flowing over the WS.
+ *
+ * KNOWN GAP: `SessionPanePage` (the /s/:id/pane popout) mounts as an alternative
+ * to `Chat` and holds no app state, so there is no provider there and internal
+ * link cards do not render in a popout — the link stays plain text. Consumers
+ * must treat a null context as "no cards", never assume a provider. Giving that
+ * deliberately minimal root a whole store to render a card is not worth it.
  */
 const SessionsContext = createContext<SessionsContextValue | null>(null);
 

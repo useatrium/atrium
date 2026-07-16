@@ -138,7 +138,16 @@ export function internalLinkPath(ref: InternalLinkRef): string {
   }
 }
 
-/** Stable identity for dedupe/suppression bookkeeping. */
+/**
+ * Stable identity for dedupe AND the author-suppression key.
+ *
+ * Every surface MUST suppress internal cards under this key, never under the
+ * pasted URL. `message.unfurls_suppressed` is persisted server-side and shared
+ * by every viewer of a message, so if web keyed by URL and native keyed by this,
+ * an author removing a card on one surface would leave it showing on the other.
+ * Canonical also means `/s/<id>` and `/c/<ch>/s/<id>` — the same session by two
+ * permalink spellings — are one card and one suppression.
+ */
 export function internalLinkKey(ref: InternalLinkRef): string {
   switch (ref.kind) {
     case 'session':

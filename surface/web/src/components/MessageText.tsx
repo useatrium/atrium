@@ -693,10 +693,10 @@ function MessageUnfurlCards({
         if (item.kind === 'internal') {
           return (
             <InternalLinkCard
-              key={`internal:${item.url}`}
+              key={`internal:${internalLinkKey(item.ref)}`}
               linkRef={item.ref}
               meId={meId}
-              onSuppress={canManage && onSuppress ? () => onSuppress(item.url) : undefined}
+              onSuppress={canManage && onSuppress ? () => onSuppress(internalLinkKey(item.ref)) : undefined}
             />
           );
         }
@@ -765,7 +765,9 @@ export function MessageText({
     ...allHandles
       .filter((handle) => !suppressed.has(handle))
       .map((handle): UnfurlCardDescriptor => ({ kind: 'entry', handle })),
-    ...allInternalLinks.filter((item) => !suppressed.has(item.url)),
+    // Suppression keys off internalLinkKey, not the URL — native does the same,
+    // and `unfurls_suppressed` is shared across surfaces. See internal-links.ts.
+    ...allInternalLinks.filter((item) => !suppressed.has(internalLinkKey(item.ref))),
     ...allUrls.filter((url) => !suppressed.has(url)).map((url): UnfurlCardDescriptor => ({ kind: 'link', url })),
   ];
   const shouldCollapse =

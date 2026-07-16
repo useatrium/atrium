@@ -381,6 +381,24 @@ describe('MessageText internal link cards', () => {
     expect(resolveUnfurlsMock).not.toHaveBeenCalled();
   });
 
+  it('suppresses an internal card by its canonical key, not the pasted URL', async () => {
+    // `unfurls_suppressed` is persisted and shared across surfaces, and native
+    // keys by internalLinkKey. Keying by URL here would mean an author removing
+    // a card on web still saw it on their phone. Both permalink spellings of one
+    // session must also die together.
+    const channels = [channel('channel-1', 'one')];
+    const text = `https://atrium.example.com/c/channel-1 and https://atrium.example.com/s/session-1`;
+
+    render(
+      <SessionsContextProvider value={{ sessions: {}, channels, requestSession: vi.fn() }}>
+        <MessageText text={text} unfurls={{ messageEventId: 1, suppressed: ['channel:channel-1'], canManage: true }} />
+      </SessionsContextProvider>,
+    );
+
+    expect(screen.queryByText('one')).toBeNull();
+    expect(screen.queryAllByRole('article')).toHaveLength(0);
+  });
+
   it('counts internal cards in the shared visible-card cap', () => {
     const channels = [
       channel('channel-1', 'one'),
