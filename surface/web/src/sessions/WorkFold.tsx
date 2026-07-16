@@ -2,6 +2,20 @@ import { useEffect, useRef, useState } from 'react';
 import { toolDisplay, type FoldedTurnRow, type TurnWorkItem } from '@atrium/centaur-client';
 import { StepDetail } from './StepDetail';
 
+/**
+ * A fold that owns a row hangs in the avatar gutter of the messages around it:
+ * indented past the avatar but deliberately short of the text column (measured
+ * against a live thread — the message row puts its avatar at 16px and its text
+ * at 60px, and the fold sits at 43px), and inset on the right by that row's own
+ * `px-4` so the two right edges line up — hence 59 = 43 + 16. The pair has to
+ * move together; changing one alone knocks the fold out of alignment.
+ *
+ * Tailwind only generates classes it can see as literal strings, so these stay
+ * spelled out rather than computed. A `nested` fold renders inside a message's
+ * content column, which has already applied the gutter, and takes none of this.
+ */
+const STANDALONE_GUTTER = 'ml-[43px] max-w-[calc(100%-59px)]';
+
 function durationLabel(durationMs: number | undefined, live: boolean): string {
   if (live) return 'live';
   if (durationMs === undefined) return '<1s';
@@ -78,8 +92,7 @@ export function WorkFold({
   const names = fold.toolNames.slice(0, 3).join(', ');
   const countLabel = `${fold.items.length} ${fold.items.length === 1 ? 'step' : 'steps'}`;
 
-  // Nested in a message's content column the avatar gutter is already applied.
-  const offset = nested ? '' : 'ml-[43px] max-w-[calc(100%-59px)]';
+  const offset = nested ? '' : STANDALONE_GUTTER;
 
   if (!open) {
     return (
