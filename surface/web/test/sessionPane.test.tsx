@@ -773,6 +773,12 @@ function spawnedState(): AppState {
       me,
     ),
   });
+  // A spawn event proves existence only. Seat tests need an explicit live
+  // lifecycle source now that the fold no longer fabricates `spawning`.
+  s = appReducer(s, {
+    type: 'server-event',
+    event: seatWire(100, 'session.status_changed', { sessionId: 's-b', status: 'running' }, me),
+  });
   return s;
 }
 

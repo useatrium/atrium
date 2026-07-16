@@ -27,6 +27,7 @@ import {
   maxSessionStatus,
   mergeSpawnResponse,
   type Session,
+  type SessionListItem,
 } from './sessions';
 import { mentionsUser } from './mentions';
 import type { WsStatus } from './useWs';
@@ -169,6 +170,7 @@ export type AppAction =
   | { type: 'session-spawn-pending'; channelId: string; message: ChatMessage; session: Session }
   | { type: 'session-created'; channelId: string; tempId: string; session: Session }
   | { type: 'session-spawn-failed'; channelId: string; tempId: string }
+  | { type: 'sessions-loaded'; sessions: SessionListItem[] }
   | { type: 'session-upsert'; session: Session }
   | { type: 'session-activity'; sessionId: string; summary: string; at: string }
   | { type: 'open-session'; sessionId: string }
@@ -189,6 +191,80 @@ function maxEventId(events: WireEvent[]): number {
 
 function withSyncCursor(state: AppState, cursor: number): AppState {
   return cursor > state.syncCursor ? { ...state, syncCursor: cursor } : state;
+}
+
+/** One order-safe merge for GET, sync snapshots, and any future snapshots. */
+function mergeSessionEntity(existing: Session | undefined, incoming: Session): Session {
+  const questionEvents =
+    incoming.questionEvents && incoming.questionEvents.length > 0
+      ? incoming.questionEvents
+      : (existing?.questionEvents ?? []);
+  const seatEvents = incoming.seatEvents.length > 0 ? incoming.seatEvents : (existing?.seatEvents ?? []);
+  const session: Session = {
+    ...incoming,
+    // A slow snapshot must never roll back a status WS already advanced.
+    status: existing ? maxSessionStatus(existing.status, incoming.status) : incoming.status,
+    pendingQuestion: incoming.pendingQuestion ?? existing?.pendingQuestion ?? null,
+    // The durable answered trace: a fetch that predates the answer must not
+    // erase what WS already folded.
+    answeredQuestion: incoming.answeredQuestion ?? existing?.answeredQuestion ?? null,
+    providerAuthRequired: incoming.providerAuthRequired ?? existing?.providerAuthRequired ?? null,
+    ...(existing?.latestActivity ? { latestActivity: existing.latestActivity } : {}),
+    questionEvents,
+    // Snapshot list rows and GET /api/sessions/:id carry no audit history, so
+    // keep what live session.* folds already accumulated.
+    seatEvents,
+  };
+  const spawnerName = incoming.spawnerName ?? existing?.spawnerName;
+  const driverName = incoming.driverName ?? existing?.driverName;
+  if (spawnerName !== undefined) session.spawnerName = spawnerName;
+  if (driverName !== undefined) session.driverName = driverName;
+  return session;
+}
+
+function sessionFromListSnapshot(state: AppState, item: SessionListItem): Session {
+  const existing = state.sessions[item.id];
+  return {
+    ...(existing ?? {
+      id: item.id,
+      workspaceId: state.channels.find((channel) => channel.id === item.channelId)?.workspaceId ?? '',
+      channelId: item.channelId,
+      threadRootEventId: null,
+      title: item.title,
+      status: item.status,
+      harness: item.harness,
+      spawnedBy: item.spawnedBy,
+      driverId: null,
+      pendingSeatRequests: [],
+      suggestions: [],
+      answerProposals: [],
+      pendingQuestion: null,
+      providerAuthRequired: null,
+      questionEvents: [],
+      seatEvents: [],
+      costUsd: item.costUsd,
+      resultText: item.resultText,
+      createdAt: item.createdAt,
+      completedAt: item.completedAt,
+      archivedAt: item.archivedAt,
+      pinned: item.pinned,
+      lastEventId: 0,
+      permalink: `/s/${item.id}`,
+    }),
+    id: item.id,
+    channelId: item.channelId,
+    title: item.title,
+    status: item.status,
+    harness: item.harness,
+    spawnedBy: item.spawnedBy,
+    spawnerName: item.spawnerName,
+    costUsd: item.costUsd,
+    resultText: item.resultText ?? existing?.resultText ?? null,
+    createdAt: item.createdAt,
+    completedAt: item.completedAt ?? existing?.completedAt ?? null,
+    archivedAt: item.archivedAt,
+    pinned: item.pinned,
+  };
 }
 
 function timelineEpoch(state: AppState, channelId: string): number {
@@ -677,33 +753,18 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       };
     }
 
+    case 'sessions-loaded': {
+      let sessions = state.sessions;
+      for (const item of action.sessions) {
+        if (sessions === state.sessions) sessions = { ...state.sessions };
+        const incoming = sessionFromListSnapshot({ ...state, sessions }, item);
+        sessions[item.id] = mergeSessionEntity(sessions[item.id], incoming);
+      }
+      return sessions === state.sessions ? state : { ...state, sessions };
+    }
+
     case 'session-upsert': {
-      const existing = state.sessions[action.session.id];
-      const questionEvents =
-        action.session.questionEvents && action.session.questionEvents.length > 0
-          ? action.session.questionEvents
-          : (existing?.questionEvents ?? []);
-      const seatEvents =
-        action.session.seatEvents.length > 0 ? action.session.seatEvents : (existing?.seatEvents ?? []);
-      const session: Session = {
-        ...action.session,
-        // A slow GET must never roll back a status WS already advanced.
-        status: existing ? maxSessionStatus(existing.status, action.session.status) : action.session.status,
-        pendingQuestion: action.session.pendingQuestion ?? existing?.pendingQuestion ?? null,
-        // The durable answered trace: a fetch that predates the answer must not
-        // erase what WS already folded.
-        answeredQuestion: action.session.answeredQuestion ?? existing?.answeredQuestion ?? null,
-        providerAuthRequired: action.session.providerAuthRequired ?? existing?.providerAuthRequired ?? null,
-        ...(existing?.latestActivity ? { latestActivity: existing.latestActivity } : {}),
-        questionEvents,
-        // GET /api/sessions/:id carries no audit history, so keep what
-        // live session.* folds already accumulated.
-        seatEvents,
-      };
-      const spawnerName = action.session.spawnerName ?? existing?.spawnerName;
-      const driverName = action.session.driverName ?? existing?.driverName;
-      if (spawnerName !== undefined) session.spawnerName = spawnerName;
-      if (driverName !== undefined) session.driverName = driverName;
+      const session = mergeSessionEntity(state.sessions[action.session.id], action.session);
       return {
         ...state,
         sessions: {

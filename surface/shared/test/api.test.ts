@@ -143,6 +143,7 @@ function syncResponse(overrides: Partial<SyncResponse> = {}): SyncResponse {
           memberCount: 3,
         },
       ],
+      sessions: [],
     },
     ...overrides,
   };
@@ -235,6 +236,22 @@ describe('session API response decoding', () => {
     await expect(createApi().getSession('sess-1')).resolves.toEqual({ session: sessionWire() });
     expect(fetchMock).toHaveBeenCalledWith('/api/sessions/sess-1', expect.any(Object));
   });
+
+  it('requests and decodes dedicated activity counts', async () => {
+    const body = {
+      attention: 2,
+      unread: 3,
+      needsYou: 2,
+      running: 1,
+      toReview: 0,
+      channelCounts: { 'ch-1': { needsYou: 2, running: 1, toReview: 0 } },
+    };
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(body));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(createApi().getActivityCounts()).resolves.toEqual(body);
+    expect(fetchMock).toHaveBeenCalledWith('/api/activity/counts', expect.any(Object));
+  });
 });
 
 describe('API transport failures', () => {
@@ -312,6 +329,13 @@ describe('wire event response decoding', () => {
 
     expect(decoded.state.drafts['ch-1']?.agentIntent).toBe(false);
     expect(decoded.state.drafts['ch-2']?.agentIntent).toBe(true);
+  });
+
+  it('defaults sessions when an older sync server omits them', () => {
+    const wire = syncResponse();
+    delete (wire.state as Partial<SyncResponse['state']>).sessions;
+
+    expect(decodeSyncResponse(wire).state.sessions).toEqual([]);
   });
 
   it('rejects malformed sync event envelopes from createApi', async () => {
