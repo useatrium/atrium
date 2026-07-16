@@ -12,6 +12,15 @@ REGISTRY_NAME="atrium-preview-registry"
 REGISTRY_PORT="5000"
 CADDY_CONTAINER="atrium-preview-caddy"
 CADDY_IMAGE="atrium-preview-caddy:2-cloudflare"
+# Persisted provisioning choices, so a re-run cannot silently revert them (e.g.
+# flip the preview domain back to the default and break every vhost). Written on
+# first run; edit it to change the box's configuration.
+PROVISION_ENV="/etc/atrium-preview/provision.env"
+if [[ -r "$PROVISION_ENV" ]]; then
+  # shellcheck disable=SC1090
+  source "$PROVISION_ENV"
+fi
+
 SERVICE_USER="${ATRIUM_PREVIEW_SERVICE_USER:-atrium-preview}"
 # Wildcard-cert + vhost suffix for every preview. Must be a zone Cloudflare can
 # solve DNS-01 for with CF_API_TOKEN.
@@ -319,7 +328,10 @@ ensure_service_repo() {
 }
 
 report_domain() {
-  log "preview domain: *.$PREVIEW_DOMAIN (override with ATRIUM_PREVIEW_DOMAIN)"
+  # Persist the choice so later re-runs keep it without needing the env var.
+  sudo install -d -m 0755 /etc/atrium-preview
+  printf 'ATRIUM_PREVIEW_DOMAIN=%s\n' "$PREVIEW_DOMAIN" | sudo tee "$PROVISION_ENV" >/dev/null
+  log "preview domain: *.$PREVIEW_DOMAIN (persisted in $PROVISION_ENV)"
 }
 
 install_launcher_and_janitor() {
