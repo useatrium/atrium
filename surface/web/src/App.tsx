@@ -1,5 +1,6 @@
 import { type ReactNode, useEffect, useState } from 'react';
 import { ApiError, api, type Workspace } from './api';
+import { authGatewayRedirected, clearAuthGatewayReloadGuard, reloadForAuthGateway } from './authGateway';
 import { Chat } from './Chat';
 import { EntryLinkRoute, entryHandleFromPath } from './EntryLinkRoute';
 import { FileLinkRoute } from './FileLinkRoute';
@@ -10,7 +11,7 @@ import { TooltipProvider } from './components/a11y';
 import { adoptPrefs } from './theme';
 import type { UserRef } from '@atrium/surface-client';
 import { clearCache, loadBootSnapshot, saveBootSnapshot } from './cacheIdb';
-import { clearDesktopSession, onDesktopNavigate } from './desktop';
+import { clearDesktopSession, isDesktop, onDesktopNavigate } from './desktop';
 import { filePathRefFromPath, initialInAppRoute, navigate } from './router';
 import { SessionPanePage } from './sessions/SessionPanePage';
 import { SessionWorkPage } from './sessions/SessionWorkPage';
@@ -31,6 +32,26 @@ export function paneRouteFromPath(pathname: string): { sessionId: string } | nul
   return m ? { sessionId: m[1]! } : null;
 }
 
+const BOOT_ERROR_COPY = {
+  // Named the gateway's failure, not the network's: the server is reachable and
+  // the account is fine — the identity gateway in front of Atrium wants a login.
+  gateway: {
+    title: 'Your sign-in session expired',
+    detail: 'Sign in again to get back into Atrium.',
+    action: 'Sign in again',
+  },
+  workspace: {
+    title: 'Workspace unavailable',
+    detail: 'Atrium couldn’t load your workspace. Check your connection and try again.',
+    action: 'Try again',
+  },
+  authentication: {
+    title: 'Couldn’t verify your sign-in',
+    detail: 'Atrium couldn’t reach the server. Check your connection and try again.',
+    action: 'Try again',
+  },
+} as const;
+
 export function App() {
   const [paneRoute] = useState(() => paneRouteFromPath(location.pathname));
   const [markupShellRoute] = useState(() => isMarkupShellRoute(location.pathname));
@@ -41,7 +62,7 @@ export function App() {
   const [me, setMe] = useState<UserRef | null>(null);
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [checked, setChecked] = useState(false);
-  const [bootError, setBootError] = useState<'authentication' | 'workspace' | null>(null);
+  const [bootError, setBootError] = useState<'authentication' | 'workspace' | 'gateway' | null>(null);
   const [bootAttempt, setBootAttempt] = useState(0);
 
   useEffect(() => onDesktopNavigate((path) => navigate(path)), []);
@@ -58,6 +79,7 @@ export function App() {
       .me()
       .then(async ({ user, prefs }) => {
         if (disposed) return;
+        clearAuthGatewayReloadGuard();
         setMe(user);
         if (prefs) adoptPrefs(prefs);
         phase = 'workspace';
@@ -78,6 +100,18 @@ export function App() {
       .catch(async (err: unknown) => {
         if (err instanceof ApiError && err.status === 401) {
           await clearCache();
+          return;
+        }
+        // A gateway that redirected us reports as a network failure (status 0),
+        // so it slips past the 401 branch above. Check before falling back to a
+        // snapshot: rendering a cached shell against an expired session is a
+        // dead app, and only a top-level navigation reaches the login page.
+        // Desktop talks to an absolute origin with a bearer token, so a reload
+        // of the Electron shell would not re-authenticate anything.
+        if (!isDesktop && err instanceof ApiError && err.status === 0 && (await authGatewayRedirected())) {
+          if (reloadForAuthGateway()) return;
+          if (disposed) return;
+          setBootError('gateway');
           return;
         }
         try {
@@ -132,32 +166,35 @@ export function App() {
         </p>
       </main>
     );
-  else if (bootError)
+  else if (bootError) {
+    const wall = BOOT_ERROR_COPY[bootError];
     body = (
       <main id="main-content" className="flex h-dvh items-center justify-center bg-surface px-6">
         <div className="max-w-sm text-center">
-          <h1 className="text-base font-semibold text-fg">
-            {bootError === 'workspace' ? 'Workspace unavailable' : 'Couldn’t verify your sign-in'}
-          </h1>
+          <h1 className="text-base font-semibold text-fg">{wall.title}</h1>
           <p role="alert" className="mt-2 text-sm text-fg-muted">
-            {bootError === 'workspace'
-              ? 'Atrium couldn’t load your workspace. Check your connection and try again.'
-              : 'Atrium couldn’t reach the server. Check your connection and try again.'}
+            {wall.detail}
           </p>
           <button
             type="button"
             onClick={() => {
+              // Retrying the request in place can never clear a gateway bounce —
+              // it needs a navigation the gateway can redirect to its login page.
+              if (bootError === 'gateway') {
+                location.reload();
+                return;
+              }
               setChecked(false);
               setBootAttempt((attempt) => attempt + 1);
             }}
             className="mt-4 rounded-md bg-accent px-3 py-2 text-sm font-semibold text-on-accent transition-colors hover:bg-accent-hover"
           >
-            Try again
+            {wall.action}
           </button>
         </div>
       </main>
     );
-  else if (!me) body = <Login onLogin={setMe} />;
+  } else if (!me) body = <Login onLogin={setMe} />;
   else if (!workspace)
     body = (
       <main id="main-content" className="flex h-dvh items-center justify-center bg-surface px-6">
