@@ -12,6 +12,7 @@ describe('thread work fold view mapping', () => {
         type: 'user_message',
         text: 'Inspect it',
         ts: '2026-07-16T12:00:00.000Z',
+        executionId: null,
         sourceEventIds,
       },
       {
@@ -20,6 +21,7 @@ describe('thread work fold view mapping', () => {
         summary: 'Inspecting',
         text: 'I will read the file.',
         ts: '2026-07-16T12:00:01.000Z',
+        executionId: null,
         sourceEventIds,
       },
       {
@@ -29,6 +31,7 @@ describe('thread work fold view mapping', () => {
         questions: [{ id: 'prompt-1', header: 'Choice', question: 'Which file?' }],
         status: 'resolved',
         ts: '2026-07-16T12:00:02.000Z',
+        executionId: null,
         sourceEventIds,
       },
       {
@@ -38,6 +41,7 @@ describe('thread work fold view mapping', () => {
         input: { file_path: 'src/file.ts' },
         result: { content: 'file contents', is_error: false },
         ts: '2026-07-16T12:00:03.000Z',
+        executionId: null,
         sourceEventIds,
       },
       {
@@ -45,6 +49,7 @@ describe('thread work fold view mapping', () => {
         type: 'text',
         text: 'Done',
         ts: '2026-07-16T12:00:05.000Z',
+        executionId: null,
         sourceEventIds,
       },
     ];
@@ -73,12 +78,13 @@ describe('thread work fold view mapping', () => {
 
   it('maps an incomplete turn with no reply as live tool work', () => {
     const items: SessionItem[] = [
-      { id: 'ask', type: 'user_message', text: 'Run it', sourceEventIds },
+      { id: 'ask', type: 'user_message', text: 'Run it', executionId: null, sourceEventIds },
       {
         id: 'run',
         type: 'tool_call',
         name: 'Bash',
         input: { command: 'pnpm test' },
+        executionId: null,
         sourceEventIds,
       },
     ];

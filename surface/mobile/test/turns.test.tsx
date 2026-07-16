@@ -11,11 +11,11 @@ import { deriveTurns, type Turn } from '../src/components/work/turns';
 afterEach(cleanup);
 
 function textItem(id: string, text = 'Agent output'): SessionItem {
-  return { type: 'text', id, text, sourceEventIds: [1] };
+  return { type: 'text', id, text, executionId: null, sourceEventIds: [1] };
 }
 
 function steerItem(id: string, text: string): SessionItem {
-  return { type: 'user_message', id, text, sourceEventIds: [2] };
+  return { type: 'user_message', id, text, executionId: null, sourceEventIds: [2] };
 }
 
 describe('deriveTurns', () => {
