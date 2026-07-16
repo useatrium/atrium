@@ -14,6 +14,7 @@ import {
   collectFileChanges,
   collectSideEffects,
   foldedTurnRows,
+  isLiveFold,
   sideEffectCount,
   type FoldedTurnRow,
 } from '@atrium/centaur-client';
@@ -184,7 +185,8 @@ export function ThreadPanelContent({
   previewEntryLinks,
   onAgentSend,
   sessionStream,
-}: ThreadPanelProps & { sessionStream: SessionStream }) {
+  visible = true,
+}: ThreadPanelProps & { sessionStream: SessionStream; visible?: boolean }) {
   const { width: paneWidth, resizing, startResize, resetWidth } = useThreadPaneWidth();
   const alsoSendToChannelId = useId();
   const [alsoSendToChannel, setAlsoSendToChannel] = useState(false);
@@ -220,12 +222,14 @@ export function ThreadPanelContent({
   const sideEffectsN = useMemo(() => sideEffectCount(sideEffects), [sideEffects]);
   const artifacts = useMemo(() => collectArtifacts(stream), [stream.artifacts]);
   const artifactsN = useMemo(() => artifactCount(artifacts), [artifacts]);
-  const { conflicts } = useConflicts(attachedSession?.id ?? null, { enabled: import.meta.env.MODE !== 'test' });
+  const { conflicts } = useConflicts(attachedSession?.id ?? null, {
+    enabled: visible && import.meta.env.MODE !== 'test',
+  });
   const conflictsN = conflicts.length;
   const hasWorkStrips = conflictsN + changedFileCount + sideEffectsN + artifactsN > 0;
   // The header's glance chip carries a live clock; tick it here (as the card
   // does) so the thread's identity is as alive as the card's.
-  const now = useNow(sessionLive);
+  const now = useNow(visible && sessionLive);
   const spectatorsFor = (m: ChatMessage) => (m.sessionId != null ? (spectators[m.sessionId] ?? 0) : 0);
   const scrollRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<ComposerHandle>(null);
@@ -246,12 +250,11 @@ export function ThreadPanelContent({
     let replyOrdinal = 0;
     let triggerOrdinal = 0;
     const pushFold = (fold: FoldedTurnRow) => {
-      const foldIndex = workFolds.indexOf(fold);
       rows.push({
         kind: 'fold',
         key: fold.key,
         fold,
-        live: sessionLive && !fold.completed && foldIndex === workFolds.length - 1,
+        live: isLiveFold(fold, workFolds, sessionLive),
       });
       usedFolds.add(fold.key);
     };
