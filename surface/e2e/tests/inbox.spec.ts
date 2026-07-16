@@ -78,8 +78,15 @@ test('Inbox puts an unread completed session in To review and clears it on open'
   await expect(page.getByRole('tab', { name: 'Inbox · 1' })).toBeVisible();
   await expect(page.getByRole('tab', { name: 'Unread · 1' })).toBeVisible();
 
+  const markReadRequests: string[] = [];
+  page.on('request', (request) => {
+    if (request.method() === 'POST') markReadRequests.push(request.url());
+  });
   await page.getByText(`${title} · completed`, { exact: true }).click();
   await expect(page).toHaveURL(new RegExp(`/s/${sessionId}`));
+  await expect
+    .poll(() => markReadRequests.filter((url) => url.endsWith(`/api/activity/sessions/${sessionId}/read`)).length)
+    .toBe(1);
 
   await page.goto('/activity');
   await expect(page.getByRole('tab', { name: 'Reviewed · 1' })).toBeVisible();

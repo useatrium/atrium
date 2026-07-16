@@ -38,11 +38,21 @@ function asMap(...sessions: Session[]): Record<string, Session> {
   return Object.fromEntries(sessions.map((value) => [value.id, value]));
 }
 
-function renderStrip(sessions: Record<string, Session>, channelId: string | null = 'channel-1') {
+function renderStrip(
+  sessions: Record<string, Session>,
+  channelId: string | null = 'channel-1',
+  channelCounts = { needsYou: 0, running: 0, toReview: 0 },
+) {
   const onOpenSession = vi.fn();
   const onOpenInbox = vi.fn();
   render(
-    <ChannelStrip channelId={channelId} sessions={sessions} onOpenSession={onOpenSession} onOpenInbox={onOpenInbox} />,
+    <ChannelStrip
+      channelId={channelId}
+      channelCounts={channelCounts}
+      sessions={sessions}
+      onOpenSession={onOpenSession}
+      onOpenInbox={onOpenInbox}
+    />,
   );
   return { onOpenSession, onOpenInbox };
 }
@@ -71,7 +81,7 @@ describe('ChannelStrip', () => {
       completedAt: new Date().toISOString(),
       resultText: 'Shipped.',
     });
-    renderStrip(asMap(needs, running, reviewed));
+    renderStrip(asMap(needs, running, reviewed), 'channel-1', { needsYou: 1, running: 1, toReview: 1 });
 
     const toggle = screen.getByRole('button', {
       name: 'Agent work in this channel: 1 needs you, 1 running, 1 to review',
@@ -96,7 +106,11 @@ describe('ChannelStrip', () => {
         resultText: 'Completed work.',
       }),
     );
-    const { onOpenInbox } = renderStrip(asMap(needs, running, ...review));
+    const { onOpenInbox } = renderStrip(asMap(needs, running, ...review), 'channel-1', {
+      needsYou: 1,
+      running: 1,
+      toReview: 4,
+    });
 
     fireEvent.click(screen.getByRole('button', { name: /Agent work in this channel/ }));
     const rows = screen.getAllByTestId(/channel-strip-row-/);
@@ -111,7 +125,7 @@ describe('ChannelStrip', () => {
 
   it('opens a selected row and only consumes Escape while expanded', () => {
     const value = session({ title: 'Answer me', pendingQuestion: { questionId: 'q-1', questions: [] } });
-    const { onOpenSession } = renderStrip(asMap(value));
+    const { onOpenSession } = renderStrip(asMap(value), 'channel-1', { needsYou: 1, running: 0, toReview: 0 });
     const strip = screen.getByTestId('channel-strip');
     const collapsedEscape = createEvent.keyDown(strip, { key: 'Escape' });
     fireEvent(strip, collapsedEscape);

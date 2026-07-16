@@ -17,8 +17,13 @@ async function setNeedsAnswer(sessionId: string): Promise<void> {
     }>('SELECT workspace_id, channel_id, spawned_by, thread_root_event_id FROM sessions WHERE id = $1', [sessionId]);
     const session = result.rows[0];
     if (!session) throw new Error('missing seeded session');
+    // The server-side aggregate classifier uses the validated wire parse:
+    // turnId and a finite eventId are REQUIRED or the session counts as
+    // merely running (parsePendingQuestion returns null on partial shapes).
     const pending = {
       questionId: 'channel-strip-question',
+      turnId: 'channel-strip-turn',
+      eventId: 900001,
       questions: [{ id: 'channel-strip-prompt', header: 'Confirm', question: 'Which deployment should I use?' }],
       askedAt: new Date().toISOString(),
     };

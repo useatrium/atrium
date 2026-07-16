@@ -19,6 +19,8 @@ async function makeSessionNeedAnAnswer(sessionId: string): Promise<void> {
     if (!row) throw new Error('missing seeded session');
     const pending = {
       questionId: 'sidebar-question',
+      turnId: 'sidebar-turn',
+      eventId: 900002,
       questions: [{ id: 'sidebar-prompt', header: 'Confirm', question: 'Which deployment should I use?' }],
       askedAt: new Date().toISOString(),
     };

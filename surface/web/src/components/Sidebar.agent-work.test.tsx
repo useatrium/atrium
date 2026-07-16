@@ -2,6 +2,7 @@
 
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { ActivityCounts } from '@atrium/surface-client';
 import type { Session } from '../sessions/types';
 import { ThemeProvider } from '../theme';
 import { Sidebar } from './Sidebar';
@@ -37,9 +38,11 @@ function session(overrides: Partial<Session> = {}): Session {
 
 function renderSidebar({
   sessions = {},
+  activityCounts,
   onOpenSession = vi.fn(),
 }: {
   sessions?: Record<string, Session>;
+  activityCounts?: ActivityCounts;
   onOpenSession?: (id: string) => void;
 } = {}) {
   return {
@@ -59,6 +62,7 @@ function renderSidebar({
           onCreateChannel={vi.fn().mockResolvedValue(undefined)}
           onStartDm={vi.fn()}
           onOpenActivity={vi.fn()}
+          activityCounts={activityCounts}
           onOpenSession={onOpenSession}
           onLogout={vi.fn()}
           sessions={sessions}
@@ -139,5 +143,70 @@ describe('Sidebar agent work', () => {
     expect(screen.queryByRole('button', { name: /Agent work/ })).toBeNull();
     expect(screen.queryByRole('button', { name: /^Agents$/ })).toBeNull();
     expect(screen.getByRole('button', { name: /^Inbox$/ })).toBeTruthy();
+  });
+
+  it('shows the server to-review total and hides the line when it is zero', () => {
+    const { rerender } = renderSidebar({ activityCounts: { attention: 0, unread: 7, toReview: 3 } });
+
+    expect(screen.getByRole('button', { name: '3 to review →' })).toBeTruthy();
+
+    rerender(
+      <ThemeProvider>
+        <Sidebar
+          workspaceName="atrium"
+          channels={[]}
+          activeChannelId="channel-active"
+          unread={{}}
+          me={{ id: 'u-1', handle: 'ada', displayName: 'Ada' }}
+          wsStatus="open"
+          queueSync={{ queuedCount: 0, syncStuck: false }}
+          onSelect={vi.fn()}
+          onSetMute={vi.fn()}
+          onCreateChannel={vi.fn().mockResolvedValue(undefined)}
+          onStartDm={vi.fn()}
+          onOpenActivity={vi.fn()}
+          onOpenSession={vi.fn()}
+          onLogout={vi.fn()}
+          activityCounts={{ attention: 0, unread: 7, toReview: 0 }}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(screen.queryByRole('button', { name: /to review/ })).toBeNull();
+  });
+
+  it('splits Inbox badges by needs-you and review, with unread fallback for human-only activity', () => {
+    const { rerender } = renderSidebar({
+      activityCounts: { attention: 9, unread: 12, needsYou: 2, toReview: 4 },
+    });
+
+    const inbox = screen.getByRole('button', { name: 'Inbox 2 need you 4 to review' });
+    expect(inbox.textContent).toContain('2 need you4 to review');
+    expect(inbox.querySelectorAll('.bg-warning-tint')).toHaveLength(1);
+    expect(inbox.querySelectorAll('.bg-surface-overlay')).toHaveLength(1);
+
+    rerender(
+      <ThemeProvider>
+        <Sidebar
+          workspaceName="atrium"
+          channels={[]}
+          activeChannelId="channel-active"
+          unread={{}}
+          me={{ id: 'u-1', handle: 'ada', displayName: 'Ada' }}
+          wsStatus="open"
+          queueSync={{ queuedCount: 0, syncStuck: false }}
+          onSelect={vi.fn()}
+          onSetMute={vi.fn()}
+          onCreateChannel={vi.fn().mockResolvedValue(undefined)}
+          onStartDm={vi.fn()}
+          onOpenActivity={vi.fn()}
+          onOpenSession={vi.fn()}
+          onLogout={vi.fn()}
+          activityCounts={{ attention: 0, unread: 6, needsYou: 0, toReview: 0 }}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(screen.getByRole('button', { name: 'Inbox 6 unread activity' })).toBeTruthy();
   });
 });
