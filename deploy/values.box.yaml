@@ -44,6 +44,17 @@ console:
 
 apiRs:
   sandboxWarmPoolSize: 1
+  # The chart default is 3 days. On a single 193GB box that does not fit: the agent
+  # image is ~10.6GB per build, every deploy makes a new one, and a Sandbox CR pins
+  # its image for its whole lifetime — registry-gc.sh and kubelet image GC both
+  # correctly refuse to reclaim a pinned image ("protecting 50 in-use tag(s)",
+  # "freed 0 bytes"). At ~14 sandboxes/day a 3-day pin held 42 CRs across 19 distinct
+  # agent images and the box hit 91%. Max-lifetime is the only thing that deletes a
+  # CR — measured 2026-07-16: the oldest CR was 71.1h, i.e. nothing survives past the
+  # reaper and nothing else collects them. 12h keeps the pin window just above the 6h
+  # idle backstop (sandboxIdleCleanupBackstopSecs), so an idle sandbox is stopped well
+  # before it is reaped. Resume is transcript-based, so a reaped session respawns.
+  sandboxMaxLifetimeSecs: 43200 # 12h (chart default 259200 = 3d)
   image:
     repository: localhost:5000/library/centaur-api-rs
   # Enable iron-proxy (override infra/values.local.yaml's `disabled`) in per-user
