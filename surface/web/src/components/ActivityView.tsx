@@ -8,6 +8,7 @@ import {
   isActivityUnread,
   matchesActivityFilter,
   matchesActivitySource,
+  sessionDriverId,
   type ActivityChannelCounts,
   type ActivityCounts,
   type ActivityFeedFilter,
@@ -19,6 +20,7 @@ import { api } from '../api';
 import { isTerminalSessionStatus, type Session } from '../sessions/types';
 import { Menu, MenuContent, MenuItem, MenuTrigger } from './a11y';
 import { CompactMarkdownText } from './MessageText';
+import { failedSessionNudge, type FailedSessionNudge } from '../sessions/nudge';
 
 const ATTENTION_KINDS = new Set<ActivityItem['kind']>(['agent_question', 'agent_auth', 'session_failed']);
 
@@ -166,6 +168,8 @@ function ActivityRow({
   onMarkUnread,
   session,
   onArchiveSession,
+  meId,
+  onNudge,
 }: {
   item: ActivityItem;
   attention: boolean;
@@ -177,9 +181,15 @@ function ActivityRow({
   onMarkUnread: (item: ActivityItem) => void;
   session?: Session;
   onArchiveSession?: (session: Session) => void;
+  meId?: string;
+  onNudge?: (nudge: FailedSessionNudge) => void;
 }) {
   const relativeTimestamp = formatRelativeTimestamp(item.createdAt);
   const exactTimestamp = formatExactTimestamp(item.createdAt);
+  const [nudged, setNudged] = useState(false);
+  const nudge = session ? failedSessionNudge(session) : null;
+  const canNudge =
+    item.kind === 'session_failed' && session != null && nudge != null && meId !== sessionDriverId(session);
 
   return (
     <li>
@@ -281,6 +291,22 @@ function ActivityRow({
           </button>
         </div>
       )}
+      {canNudge && nudge && (
+        <div className="px-4 pb-3 pl-14">
+          <button
+            type="button"
+            disabled={nudged}
+            onClick={() => {
+              setNudged(true);
+              onNudge?.(nudge);
+            }}
+            aria-label={`Nudge ${nudge.driverName} about ${nudge.title}`}
+            className="text-xs font-medium text-danger hover:underline disabled:cursor-default disabled:text-fg-muted disabled:no-underline"
+          >
+            {nudged ? 'Nudged ✓' : `Nudge @${nudge.driverName} →`}
+          </button>
+        </div>
+      )}
     </li>
   );
 }
@@ -334,6 +360,8 @@ export function ActivityView({
   onOpenAgents,
   onArchiveSession,
   onCountsChange,
+  meId,
+  onNudge,
 }: {
   onSelectChannel: (channelId: string) => void;
   onOpenSession: (sessionId: string) => void;
@@ -355,6 +383,8 @@ export function ActivityView({
   onOpenAgents?: () => void;
   onArchiveSession?: (sessionId: string, previousArchivedAt: string | null) => void;
   onCountsChange?: (counts: ActivityCounts, channelCounts?: Record<string, ActivityChannelCounts>) => void;
+  meId?: string;
+  onNudge?: (nudge: FailedSessionNudge) => void;
 }) {
   const [items, setItems] = useState<ActivityItem[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
@@ -803,6 +833,8 @@ export function ActivityView({
                     onMarkUnread={(target) => void markItemUnread(target)}
                     session={item.sessionId ? sessions[item.sessionId] : undefined}
                     onArchiveSession={archiveSession}
+                    meId={meId}
+                    onNudge={onNudge}
                   />
                 ))}
               </ul>
@@ -849,6 +881,8 @@ export function ActivityView({
                     onMarkUnread={(target) => void markItemUnread(target)}
                     session={item.sessionId ? sessions[item.sessionId] : undefined}
                     onArchiveSession={archiveSession}
+                    meId={meId}
+                    onNudge={onNudge}
                   />
                 ))}
               </ul>
@@ -885,6 +919,8 @@ export function ActivityView({
                     onMarkUnread={(target) => void markItemUnread(target)}
                     session={item.sessionId ? sessions[item.sessionId] : undefined}
                     onArchiveSession={archiveSession}
+                    meId={meId}
+                    onNudge={onNudge}
                   />
                 ))}
               </ul>
