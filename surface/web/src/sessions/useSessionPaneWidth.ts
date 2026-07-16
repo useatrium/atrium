@@ -5,7 +5,7 @@
 // so a size saved on a wide monitor can't swallow a narrow window.
 
 import { useCallback, useRef, useState } from 'react';
-import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react';
+import type { CSSProperties, PointerEvent as ReactPointerEvent, RefObject } from 'react';
 import {
   LEGACY_SESSION_PANE_WIDTH_STORAGE_KEY,
   LEGACY_SIDEBAR_WIDTH_STORAGE_KEY,
@@ -20,19 +20,30 @@ export const SESSION_PANE_MAX_VW = 70;
 /** Drag-start fallback when the pane can't be measured (jsdom). */
 export const SESSION_PANE_FALLBACK_WIDTH = 520;
 
-interface PaneWidthConfig {
+type PaneSizeMaximum = { maxVw: number; maxPx?: never } | { maxPx: number; maxVw?: never };
+
+export type PaneSizeConfig = PaneSizeMaximum & {
   storageKey: string;
   legacyStorageKey: string;
-  defaultClassName: string;
-  minWidth: number;
-  maxVw: number;
-  fallbackWidth: number;
+  /** Omit to emit the fallback size as an inline default. */
+  defaultClassName?: string;
+  minSize: number;
+  fallbackSize: number;
+  axis?: 'x' | 'y';
+  /** An optional responsive CSS cap, independent of the fixed JS clamp. */
+  maxPercent?: number;
   cssVar?: `--${string}`;
-  dragDirection?: 'left' | 'right';
-}
+  dragDirection?: 'left' | 'right' | 'up' | 'down';
+};
 
-function widthCss(config: PaneWidthConfig, width: number): string {
-  return `min(${width}px, ${config.maxVw}vw)`;
+function sizeCss(config: PaneSizeConfig, size: number): string {
+  const cssMax =
+    config.maxPercent !== undefined
+      ? `${config.maxPercent}%`
+      : config.maxVw !== undefined
+        ? `${config.maxVw}vw`
+        : `${config.maxPx}px`;
+  return `min(${size}px, ${cssMax})`;
 }
 
 /**
@@ -49,37 +60,45 @@ export function sessionPaneSizing(width: number | null): {
 }
 
 function paneSizing(
-  config: PaneWidthConfig,
-  width: number | null,
+  config: PaneSizeConfig,
+  size: number | null,
 ): {
   className: string;
   style: CSSProperties | undefined;
 } {
-  return width === null
-    ? { className: config.defaultClassName, style: undefined }
-    : {
-        className: '',
-        style: config.cssVar
-          ? ({ [config.cssVar]: widthCss(config, width) } as CSSProperties)
-          : { width: widthCss(config, width) },
-      };
+  if (size === null && config.defaultClassName !== undefined) {
+    return { className: config.defaultClassName, style: undefined };
+  }
+
+  const renderedSize = size ?? config.fallbackSize;
+  const value = sizeCss(config, renderedSize);
+  return {
+    className: '',
+    style: config.cssVar
+      ? ({ [config.cssVar]: value } as CSSProperties)
+      : config.axis === 'y'
+        ? { height: value }
+        : { width: value },
+  };
 }
 
-function maxWidth(config: PaneWidthConfig): number {
-  if (typeof window === 'undefined') return config.fallbackWidth;
-  return Math.max(config.minWidth, Math.round((window.innerWidth * config.maxVw) / 100));
+function maxSize(config: PaneSizeConfig): number {
+  if (config.maxPx !== undefined) return Math.max(config.minSize, config.maxPx);
+  if (typeof window === 'undefined') return config.fallbackSize;
+  return Math.max(config.minSize, Math.round((window.innerWidth * config.maxVw) / 100));
 }
 
-function clamp(config: PaneWidthConfig, width: number): number {
-  return Math.min(Math.max(Math.round(width), config.minWidth), maxWidth(config));
+function clamp(config: PaneSizeConfig, size: number): number {
+  return Math.min(Math.max(Math.round(size), config.minSize), maxSize(config));
 }
 
 /** The stored width, or null when the user has never resized. */
 export function loadSessionPaneWidth(): number | null {
-  return loadPaneWidth(sessionPaneWidthConfig);
+  return loadPaneSize(sessionPaneWidthConfig);
 }
 
-function loadPaneWidth(config: PaneWidthConfig): number | null {
+function loadPaneSize(config: PaneSizeConfig): number | null {
+  if (typeof window === 'undefined') return null;
   try {
     const raw = readWithLegacy(config.storageKey, config.legacyStorageKey);
     const parsed = raw === null ? NaN : Number(raw);
@@ -89,67 +108,74 @@ function loadPaneWidth(config: PaneWidthConfig): number | null {
   }
 }
 
-function save(config: PaneWidthConfig, width: number | null): void {
+function save(config: PaneSizeConfig, size: number | null): void {
   try {
-    if (width === null) window.localStorage.removeItem(config.storageKey);
-    else window.localStorage.setItem(config.storageKey, String(width));
+    if (size === null) window.localStorage.removeItem(config.storageKey);
+    else window.localStorage.setItem(config.storageKey, String(size));
   } catch {
     /* storage unavailable (private mode) — width stays session-local */
   }
 }
 
-function usePaneWidth(config: PaneWidthConfig): {
-  /** Dragged width in px, or null for the adaptive default. */
-  width: number | null;
+export function usePaneSize<T extends HTMLElement = HTMLElement>(
+  config: PaneSizeConfig,
+  targetRef?: RefObject<T | null>,
+): {
+  /** Dragged size in px, or null for the configured default. */
+  size: number | null;
   resizing: boolean;
   startResize: (e: ReactPointerEvent<HTMLElement>) => void;
-  resetWidth: () => void;
+  resetSize: () => void;
+  className: string;
+  style: CSSProperties | undefined;
 } {
-  const [width, setWidth] = useState<number | null>(() => loadPaneWidth(config));
+  const [size, setSize] = useState<number | null>(() => loadPaneSize(config));
   const [resizing, setResizing] = useState(false);
-  const drag = useRef<{ startX: number; startWidth: number } | null>(null);
+  const drag = useRef<{ startPosition: number; startSize: number } | null>(null);
 
   const startResize = useCallback(
     (e: ReactPointerEvent<HTMLElement>) => {
       if (e.button !== 0) return;
       e.preventDefault();
       const handle = e.currentTarget;
-      // The aside hosting the handle. Width is written to it imperatively
+      // The element hosting the handle. Size is written to it imperatively
       // during the drag — a ~60Hz pointermove driving React state would
       // re-render the whole transcript per frame; state commits once on up.
-      const aside = handle.parentElement;
+      const target = targetRef?.current ?? handle.parentElement;
       try {
         handle.setPointerCapture(e.pointerId);
       } catch {
         /* jsdom / older browsers: drag still works while the pointer stays on the handle */
       }
-      const measured = aside?.getBoundingClientRect().width ?? 0;
-      drag.current = { startX: e.clientX, startWidth: measured > 0 ? measured : (width ?? config.fallbackWidth) };
+      const measuredRect = target?.getBoundingClientRect();
+      const measured = config.axis === 'y' ? measuredRect?.height : measuredRect?.width;
+      drag.current = {
+        startPosition: config.axis === 'y' ? e.clientY : e.clientX,
+        startSize: measured && measured > 0 ? measured : (size ?? config.fallbackSize),
+      };
       setResizing(true);
 
-      const widthAt = (ev: globalThis.PointerEvent) =>
-        drag.current
-          ? clamp(
-              config,
-              drag.current.startWidth +
-                (config.dragDirection === 'right'
-                  ? ev.clientX - drag.current.startX
-                  : drag.current.startX - ev.clientX),
-            )
-          : null;
+      const sizeAt = (ev: globalThis.PointerEvent) => {
+        if (!drag.current) return null;
+        const position = config.axis === 'y' ? ev.clientY : ev.clientX;
+        const growsWithPointer = config.dragDirection === 'right' || config.dragDirection === 'down';
+        const delta = growsWithPointer ? position - drag.current.startPosition : drag.current.startPosition - position;
+        return clamp(config, drag.current.startSize + delta);
+      };
       const onMove = (ev: globalThis.PointerEvent) => {
-        const w = widthAt(ev);
-        if (w !== null && aside) {
-          if (config.cssVar) aside.style.setProperty(config.cssVar, widthCss(config, w));
-          else aside.style.width = widthCss(config, w);
+        const nextSize = sizeAt(ev);
+        if (nextSize !== null && target) {
+          if (config.cssVar) target.style.setProperty(config.cssVar, sizeCss(config, nextSize));
+          else if (config.axis === 'y') target.style.height = sizeCss(config, nextSize);
+          else target.style.width = sizeCss(config, nextSize);
         }
       };
       const onUp = (ev: globalThis.PointerEvent) => {
-        const final = widthAt(ev);
+        const final = sizeAt(ev);
         if (final === null) return;
         drag.current = null;
         setResizing(false);
-        setWidth(final);
+        setSize(final);
         save(config, final);
         handle.removeEventListener('pointermove', onMove);
         handle.removeEventListener('pointerup', onUp);
@@ -159,24 +185,24 @@ function usePaneWidth(config: PaneWidthConfig): {
       handle.addEventListener('pointerup', onUp);
       handle.addEventListener('pointercancel', onUp);
     },
-    [config, width],
+    [config, size, targetRef],
   );
 
-  const resetWidth = useCallback(() => {
-    setWidth(null);
+  const resetSize = useCallback(() => {
+    setSize(null);
     save(config, null);
   }, [config]);
 
-  return { width, resizing, startResize, resetWidth };
+  return { size, resizing, startResize, resetSize, ...paneSizing(config, size) };
 }
 
-const sessionPaneWidthConfig: PaneWidthConfig = {
+const sessionPaneWidthConfig: PaneSizeConfig = {
   storageKey: SESSION_PANE_WIDTH_STORAGE_KEY,
   legacyStorageKey: LEGACY_SESSION_PANE_WIDTH_STORAGE_KEY,
   defaultClassName: 'w-[min(520px,42vw)]',
-  minWidth: SESSION_PANE_MIN_WIDTH,
+  minSize: SESSION_PANE_MIN_WIDTH,
   maxVw: SESSION_PANE_MAX_VW,
-  fallbackWidth: SESSION_PANE_FALLBACK_WIDTH,
+  fallbackSize: SESSION_PANE_FALLBACK_WIDTH,
 };
 
 export function useSessionPaneWidth(): {
@@ -186,7 +212,8 @@ export function useSessionPaneWidth(): {
   startResize: (e: ReactPointerEvent<HTMLElement>) => void;
   resetWidth: () => void;
 } {
-  return usePaneWidth(sessionPaneWidthConfig);
+  const { size, resizing, startResize, resetSize } = usePaneSize(sessionPaneWidthConfig);
+  return { width: size, resizing, startResize, resetWidth: resetSize };
 }
 
 // # === resize additions ===
@@ -195,13 +222,13 @@ export const THREAD_PANE_MAX_VW = 60;
 /** Drag-start fallback when the pane can't be measured (jsdom). */
 export const THREAD_PANE_FALLBACK_WIDTH = 380;
 
-const threadPaneWidthConfig: PaneWidthConfig = {
+const threadPaneWidthConfig: PaneSizeConfig = {
   storageKey: THREAD_PANE_WIDTH_STORAGE_KEY,
   legacyStorageKey: LEGACY_THREAD_PANE_WIDTH_STORAGE_KEY,
   defaultClassName: 'w-[min(380px,38vw)]',
-  minWidth: THREAD_PANE_MIN_WIDTH,
+  minSize: THREAD_PANE_MIN_WIDTH,
   maxVw: THREAD_PANE_MAX_VW,
-  fallbackWidth: THREAD_PANE_FALLBACK_WIDTH,
+  fallbackSize: THREAD_PANE_FALLBACK_WIDTH,
 };
 
 export function threadPaneSizing(width: number | null): {
@@ -218,7 +245,8 @@ export function useThreadPaneWidth(): {
   startResize: (e: ReactPointerEvent<HTMLElement>) => void;
   resetWidth: () => void;
 } {
-  return usePaneWidth(threadPaneWidthConfig);
+  const { size, resizing, startResize, resetSize } = usePaneSize(threadPaneWidthConfig);
+  return { width: size, resizing, startResize, resetWidth: resetSize };
 }
 
 // === sidebar resize additions ===
@@ -226,13 +254,13 @@ export const SIDEBAR_MIN_WIDTH = 180;
 export const SIDEBAR_MAX_VW = 40;
 export const SIDEBAR_FALLBACK_WIDTH = 224;
 
-const sidebarWidthConfig: PaneWidthConfig = {
+const sidebarWidthConfig: PaneSizeConfig = {
   storageKey: SIDEBAR_WIDTH_STORAGE_KEY,
   legacyStorageKey: LEGACY_SIDEBAR_WIDTH_STORAGE_KEY,
   defaultClassName: '',
-  minWidth: SIDEBAR_MIN_WIDTH,
+  minSize: SIDEBAR_MIN_WIDTH,
   maxVw: SIDEBAR_MAX_VW,
-  fallbackWidth: SIDEBAR_FALLBACK_WIDTH,
+  fallbackSize: SIDEBAR_FALLBACK_WIDTH,
   cssVar: '--sidebar-w',
   dragDirection: 'right',
 };
@@ -250,5 +278,6 @@ export function useSidebarWidth(): {
   startResize: (e: ReactPointerEvent<HTMLElement>) => void;
   resetWidth: () => void;
 } {
-  return usePaneWidth(sidebarWidthConfig);
+  const { size, resizing, startResize, resetSize } = usePaneSize(sidebarWidthConfig);
+  return { width: size, resizing, startResize, resetWidth: resetSize };
 }
