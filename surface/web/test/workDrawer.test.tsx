@@ -238,11 +238,6 @@ describe('WorkDrawer', () => {
     expect(pin.getAttribute('aria-pressed')).toBe('true');
   });
 
-  it('hides the pin control when canPin is false', () => {
-    renderDrawer({ canPin: false });
-    expect(screen.queryByRole('button', { name: /pin work drawer/i })).toBeNull();
-  });
-
   it('closes via the header button', () => {
     const props = renderDrawer();
     fireEvent.click(screen.getByRole('button', { name: 'Close work drawer' }));

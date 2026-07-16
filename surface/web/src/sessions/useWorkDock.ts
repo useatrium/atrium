@@ -1,8 +1,12 @@
 import { useCallback, useLayoutEffect, useState } from 'react';
 import type { CSSProperties, PointerEvent as ReactPointerEvent, RefObject } from 'react';
-
-const SIDE_SIZE_KEY = 'atrium.workDockSideWidth';
-const TOP_SIZE_KEY = 'atrium.workDockTopHeight';
+import {
+  LEGACY_WORK_DOCK_SIDE_WIDTH_STORAGE_KEY,
+  LEGACY_WORK_DOCK_TOP_HEIGHT_STORAGE_KEY,
+  readWithLegacy,
+  WORK_DOCK_SIDE_WIDTH_STORAGE_KEY,
+  WORK_DOCK_TOP_HEIGHT_STORAGE_KEY,
+} from '../storageKeys';
 const DEFAULT_SIDE_WIDTH = 420;
 const DEFAULT_TOP_HEIGHT = 300;
 export const WORK_DOCK_MIN_SIDE_WIDTH = 300;
@@ -17,9 +21,9 @@ export const WORK_DOCK_MAX_TOP_HEIGHT = 520;
  */
 export const WORK_DOCK_SIDE_BREAKPOINT_PX = 800;
 
-function loadSize(key: string, fallback: number): number {
+function loadSize(key: string, legacyKey: string, fallback: number): number {
   if (typeof window === 'undefined') return fallback;
-  const parsed = Number(window.localStorage.getItem(key));
+  const parsed = Number(readWithLegacy(key, legacyKey));
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
@@ -47,8 +51,12 @@ export function useWorkDockPlacement(ref: RefObject<HTMLElement | null>): 'top' 
 }
 
 export function useWorkDockSize() {
-  const [sideWidth, setSideWidth] = useState(() => loadSize(SIDE_SIZE_KEY, DEFAULT_SIDE_WIDTH));
-  const [topHeight, setTopHeight] = useState(() => loadSize(TOP_SIZE_KEY, DEFAULT_TOP_HEIGHT));
+  const [sideWidth, setSideWidth] = useState(() =>
+    loadSize(WORK_DOCK_SIDE_WIDTH_STORAGE_KEY, LEGACY_WORK_DOCK_SIDE_WIDTH_STORAGE_KEY, DEFAULT_SIDE_WIDTH),
+  );
+  const [topHeight, setTopHeight] = useState(() =>
+    loadSize(WORK_DOCK_TOP_HEIGHT_STORAGE_KEY, LEGACY_WORK_DOCK_TOP_HEIGHT_STORAGE_KEY, DEFAULT_TOP_HEIGHT),
+  );
   const [resizing, setResizing] = useState<'top' | 'side' | null>(null);
 
   const startResize = useCallback(
@@ -75,11 +83,11 @@ export function useWorkDockSize() {
         window.removeEventListener('pointerup', onEnd);
         setResizing(null);
         setSideWidth((value) => {
-          window.localStorage.setItem(SIDE_SIZE_KEY, String(value));
+          window.localStorage.setItem(WORK_DOCK_SIDE_WIDTH_STORAGE_KEY, String(value));
           return value;
         });
         setTopHeight((value) => {
-          window.localStorage.setItem(TOP_SIZE_KEY, String(value));
+          window.localStorage.setItem(WORK_DOCK_TOP_HEIGHT_STORAGE_KEY, String(value));
           return value;
         });
       };

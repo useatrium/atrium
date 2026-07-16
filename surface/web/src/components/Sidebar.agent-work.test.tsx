@@ -4,6 +4,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ActivityCounts } from '@atrium/surface-client';
 import type { Session } from '../sessions/types';
+import { sidebarAgentWorkCollapsedKey } from '../storageKeys';
 import { ThemeProvider } from '../theme';
 import { Sidebar } from './Sidebar';
 
@@ -129,7 +130,7 @@ describe('Sidebar agent work', () => {
     fireEvent.click(toggle);
 
     expect(toggle.getAttribute('aria-expanded')).toBe('false');
-    expect(window.localStorage.getItem('atrium.sidebarAgentWorkCollapsed:u-1')).toBe('true');
+    expect(window.localStorage.getItem(sidebarAgentWorkCollapsedKey('u-1'))).toBe('true');
     expect(screen.queryByRole('button', { name: /Background implementation — running,/ })).toBeNull();
 
     rendered.unmount();

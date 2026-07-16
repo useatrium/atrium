@@ -2,6 +2,7 @@
 
 import { act, cleanup, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { LEGACY_SIDEBAR_WIDTH_STORAGE_KEY, SIDEBAR_WIDTH_STORAGE_KEY } from '../storageKeys';
 import { ThemeProvider } from '../theme';
 import { Sidebar } from './Sidebar';
 
@@ -63,16 +64,16 @@ describe('Sidebar resize', () => {
     });
 
     expect(nav.style.getPropertyValue('--sidebar-w')).toBe('min(400px, 40vw)');
-    expect(window.localStorage.getItem('atrium.sidebarWidth')).toBeNull();
+    expect(window.localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY)).toBeNull();
 
     act(() => handle.dispatchEvent(pointerMouseEvent('pointerup', 724)));
 
-    expect(window.localStorage.getItem('atrium.sidebarWidth')).toBe('400');
+    expect(window.localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY)).toBe('400');
     expect(handle.getAttribute('aria-valuenow')).toBe('400');
   });
 
   it('clamps at the minimum and resets to the default on double click', () => {
-    window.localStorage.setItem('atrium.sidebarWidth', '260');
+    window.localStorage.setItem(LEGACY_SIDEBAR_WIDTH_STORAGE_KEY, '260');
     renderSidebar();
     const handle = screen.getByTestId('sidebar-resize-handle') as HTMLElement;
     const nav = handle.parentElement as HTMLElement;
@@ -93,11 +94,12 @@ describe('Sidebar resize', () => {
       handle.dispatchEvent(pointerMouseEvent('pointerdown', 260));
       handle.dispatchEvent(pointerMouseEvent('pointerup', 0));
     });
-    expect(window.localStorage.getItem('atrium.sidebarWidth')).toBe('180');
+    expect(window.localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY)).toBe('180');
+    expect(window.localStorage.getItem(LEGACY_SIDEBAR_WIDTH_STORAGE_KEY)).toBeNull();
 
     act(() => handle.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })));
 
-    expect(window.localStorage.getItem('atrium.sidebarWidth')).toBeNull();
+    expect(window.localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY)).toBeNull();
     expect(nav.style.getPropertyValue('--sidebar-w')).toBe('224px');
     expect(handle.getAttribute('aria-valuenow')).toBe('224');
   });

@@ -12,8 +12,8 @@ import { createContext, useContext, useEffect, useMemo, useState, type ReactNode
 import { api } from './api';
 import { eventCache } from './cacheIdb';
 import { showErrorToast } from './components/Toasts';
+import { PREFS_STORAGE_KEY } from './storageKeys';
 
-const PREFS_KEY = 'atrium:prefs';
 const THEME_META: Record<'dark' | 'light', string> = {
   dark: webPalette.dark.surface,
   light: webPalette.light.surface,
@@ -39,7 +39,7 @@ function canUseDom(): boolean {
 function safeStore(prefs: UserPrefs): void {
   if (!canUseDom()) return;
   try {
-    window.localStorage.setItem(PREFS_KEY, JSON.stringify(prefs));
+    window.localStorage.setItem(PREFS_STORAGE_KEY, JSON.stringify(prefs));
   } catch {
     /* private-mode storage failures leave the in-memory pref active */
   }
@@ -69,7 +69,7 @@ function syncThemeColor(scheme: Scheme): void {
 function loadPrefs(): UserPrefs {
   if (!canUseDom()) return DEFAULT_PREFS;
   try {
-    return normalizePrefs(JSON.parse(window.localStorage.getItem(PREFS_KEY) ?? 'null'));
+    return normalizePrefs(JSON.parse(window.localStorage.getItem(PREFS_STORAGE_KEY) ?? 'null'));
   } catch {
     return DEFAULT_PREFS;
   }

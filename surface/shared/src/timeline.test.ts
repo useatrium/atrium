@@ -13,6 +13,7 @@ import {
   type WireEvent,
 } from './timeline';
 import { encodeEventHandle } from './handle';
+import { expectNoDuplicateConfirmedIds } from './timelineTestUtils';
 
 const me = { id: 'u1', handle: 'tester', displayName: 'Tester' };
 
@@ -25,6 +26,8 @@ function postedEvent(
     broadcast?: boolean;
     replyCount?: number;
     lastReplyId?: number;
+    lastModifierId?: number;
+    edited?: boolean;
   } = {},
 ): WireEvent {
   return {
@@ -37,11 +40,13 @@ function postedEvent(
     payload: {
       text,
       ...(opts.clientMsgId ? { client_msg_id: opts.clientMsgId } : {}),
+      ...(opts.edited === true ? { edited: true } : {}),
     },
     createdAt: '2026-07-12T00:00:00.000Z',
     author: me,
     ...(opts.replyCount != null ? { replyCount: opts.replyCount } : {}),
     ...(opts.lastReplyId != null ? { lastReplyId: opts.lastReplyId } : {}),
+    ...(opts.lastModifierId != null ? { lastModifierId: opts.lastModifierId } : {}),
     ...(opts.broadcast ? { broadcast: true } : {}),
   };
 }
@@ -102,6 +107,7 @@ describe('queued send restored after its confirmation landed', () => {
     expect(next).toBe(t);
     expect(rowsWithClientMsgId(next, 'cm-1')).toHaveLength(1);
     expect(rootRow(next, 10).replyCount).toBe(1);
+    expectNoDuplicateConfirmedIds(next);
   });
 
   it('re-delivery of a seen event drops a lingering pending copy', () => {
@@ -116,6 +122,7 @@ describe('queued send restored after its confirmation landed', () => {
     expect(copies).toHaveLength(1);
     expect(copies[0]!.status).toBe('confirmed');
     expect(rootRow(redelivered, 10).replyCount).toBe(1);
+    expectNoDuplicateConfirmedIds(redelivered);
   });
 
   it('confirm of a server-counted reply takes back the optimistic bump', () => {
@@ -133,6 +140,7 @@ describe('queued send restored after its confirmation landed', () => {
     );
     expect(rootRow(confirmed, 10).replyCount).toBe(1);
     expect(rowsWithClientMsgId(confirmed, 'cm-1').every((m) => m.status === 'confirmed')).toBe(true);
+    expectNoDuplicateConfirmedIds(confirmed);
   });
 });
 
@@ -351,6 +359,7 @@ describe('mergeThread count authority', () => {
     // Server says the thread truly has one reply.
     const healed = mergeThread(t, 10, [postedEvent(11, 'only reply', { clientMsgId: 'cm-4', threadRootEventId: 10 })]);
     expect(rootRow(healed, 10).replyCount).toBe(1);
+    expectNoDuplicateConfirmedIds(healed);
   });
 
   it('counts local overlays exactly once across fetch and confirm', () => {
@@ -367,6 +376,31 @@ describe('mergeThread count authority', () => {
       }),
     );
     expect(rootRow(confirmed, 10).replyCount).toBe(1);
+    expectNoDuplicateConfirmedIds(confirmed);
+  });
+
+  it('refreshes an already-seen reply from a newer materialized thread row', () => {
+    const rootEvent = postedEvent(10, 'root', { replyCount: 1, lastReplyId: 11 });
+    let t = mergeHistory(emptyTimeline, [rootEvent], { hasMoreBefore: false });
+    t = mergeThread(t, 10, [
+      postedEvent(11, 'stale reply', { threadRootEventId: 10, lastModifierId: 20, edited: true }),
+    ]);
+
+    expect(t.seenIds.has(11)).toBe(true);
+    expect(t.threads[10]?.some((row) => row.id === 11)).toBe(true);
+
+    const refreshed = mergeThread(t, 10, [
+      postedEvent(11, 'fresh server edit', { threadRootEventId: 10, lastModifierId: 21, edited: true }),
+    ]);
+
+    expect(refreshed.threads[10]).toHaveLength(1);
+    expect(refreshed.threads[10]?.[0]).toMatchObject({
+      id: 11,
+      text: 'fresh server edit',
+      edited: true,
+      lastModifierId: 21,
+    });
+    expectNoDuplicateConfirmedIds(refreshed);
   });
 });
 

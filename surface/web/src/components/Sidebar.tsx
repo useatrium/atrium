@@ -42,12 +42,12 @@ import {
   useSidebarWidth,
 } from '../sessions/useSessionPaneWidth';
 import type { Session } from '../sessions/types';
+import { legacySidebarAgentWorkCollapsedKey, readWithLegacy, sidebarAgentWorkCollapsedKey } from '../storageKeys';
 const SIDEBAR_GROUP_TITLE_CLASS = 'px-2 pb-1 text-2xs font-semibold uppercase tracking-wider text-fg-muted';
 const SIDEBAR_PANEL_CLASS = 'rounded-md border border-edge bg-surface-raised py-1';
 const SIDEBAR_SUBHEAD_CLASS = 'flex items-center justify-between px-3 pb-1 pt-1 text-2xs font-semibold text-fg-muted';
 const SIDEBAR_ITEM_BASE_CLASS = 'group mx-1 flex min-h-7 items-center rounded-md';
 const SIDEBAR_ROW_BUTTON_CLASS = 'flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm';
-const AGENT_WORK_COLLAPSED_KEY = 'atrium.sidebarAgentWorkCollapsed';
 
 type AgentWorkRow = {
   session: Session;
@@ -185,9 +185,11 @@ function SidebarImpl({
   const channelMenuButtonRef = useRef<HTMLButtonElement | null>(null);
   const createChannelErrorId = 'sidebar-create-channel-error';
   const isHoverNone = useIsHoverNone();
-  const agentWorkStorageKey = `${AGENT_WORK_COLLAPSED_KEY}:${me.id}`;
+  const agentWorkStorageKey = sidebarAgentWorkCollapsedKey(me.id);
   const [agentWorkCollapsed, setAgentWorkCollapsed] = useState(
-    () => typeof window !== 'undefined' && window.localStorage.getItem(agentWorkStorageKey) === 'true',
+    () =>
+      typeof window !== 'undefined' &&
+      readWithLegacy(agentWorkStorageKey, legacySidebarAgentWorkCollapsedKey(me.id)) === 'true',
   );
 
   const activeChannels = channels.filter((c) => c.archivedAt == null);
