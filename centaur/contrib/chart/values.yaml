@@ -32,6 +32,21 @@ ironProxy:
   # matches. Keep the local/IMDS defaults and include the default k3s pod/service
   # CIDRs so sandboxes cannot proxy back into in-cluster services like
   # onepassword-connect.
+  # Hosts a sandbox may reach that no credential vouches for.
+  #
+  # Under iron-control a sandbox's egress allowlist is
+  # union(baseline domains, hosts from granted credentials' rules) — see
+  # centaur-console's Proxy.merge_proxy_policy. Only credentialed hosts can arrive
+  # via the second half, so an uncredentialed host (a package index, say) is only
+  # reachable if a deployment names it here. Domains listed here are UNIONED in:
+  # they widen the allowlist and cannot displace a harness's own entry.
+  #
+  # Empty by default — the allowlist is then exactly what the credentials imply.
+  # Note that `centaur-tools run` executes tools via `uvx --from`, which resolves
+  # each tool's deps (and the hatchling build backend) from a package index at
+  # run time, so a deployment running tools under iron-control needs
+  # ["pypi.org", "files.pythonhosted.org"] here or no tool can start.
+  extraAllowlistDomains: []
   upstreamDenyCidrs:
     - "169.254.169.254/32"
     - "fd00:ec2::254/128"

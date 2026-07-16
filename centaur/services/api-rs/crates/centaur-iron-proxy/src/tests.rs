@@ -119,3 +119,67 @@ fn shipped_proxy_allowlist_preserves_railway_project_tokens() {
             .any(|header| header.as_str() == Some("project-access-token"))
     );
 }
+
+#[test]
+fn extra_allowlist_fragment_is_empty_by_default() {
+    // The default deployment must add no transform at all, so its allowlist stays
+    // exactly what the granted credentials imply.
+    assert!(extra_allowlist_fragment(&[]).is_none());
+    assert!(extra_allowlist_fragment(&["".to_owned(), "   ".to_owned()]).is_none());
+}
+
+#[test]
+fn extra_allowlist_fragment_declares_domains_and_no_secret() {
+    let fragment =
+        extra_allowlist_fragment(&["pypi.org".to_owned(), " files.pythonhosted.org ".to_owned()])
+            .expect("domains configured");
+    let transform = match fragment.transforms.as_slice() {
+        [transform] => transform,
+        other => panic!("expected exactly one transform, got {}", other.len()),
+    };
+    assert_eq!(transform.name, "allowlist");
+    // Allow the host, inject nothing — the same shape as the per-user codex
+    // fragment. A secret here would make iron-control treat it as a credential.
+    assert!(transform.config.secrets.is_empty());
+    assert_eq!(
+        transform.config.extra.get("domains"),
+        Some(&serde_yaml::Value::Sequence(vec![
+            serde_yaml::Value::String("pypi.org".to_owned()),
+            serde_yaml::Value::String("files.pythonhosted.org".to_owned()),
+        ]))
+    );
+}
+
+#[test]
+fn extra_allowlist_fragment_does_not_displace_the_harness_allowlist() {
+    // The property that makes this safe to deploy: centaur-console unions the
+    // domains of EVERY transform named `allowlist` (Proxy.split_allowlist_transforms),
+    // so appending ours widens egress rather than replacing codex's chatgpt.com.
+    // If this ever became a replace, prod would lose model egress.
+    let mut merged = per_user_harness_auth_fragment("codex", "access_token")
+        .unwrap()
+        .expect("codex per-user fragment");
+    let extra = extra_allowlist_fragment(&["pypi.org".to_owned()]).expect("domains configured");
+    merged.transforms.extend(extra.transforms);
+
+    let allowlists: Vec<&Transform> = merged
+        .transforms
+        .iter()
+        .filter(|transform| transform.name == "allowlist")
+        .collect();
+    assert_eq!(
+        allowlists.len(),
+        2,
+        "both allowlists must survive the merge"
+    );
+
+    let domains: Vec<String> = allowlists
+        .iter()
+        .filter_map(|transform| transform.config.extra.get("domains"))
+        .filter_map(|value| value.as_sequence())
+        .flatten()
+        .filter_map(|value| value.as_str().map(str::to_owned))
+        .collect();
+    assert!(domains.contains(&"chatgpt.com".to_owned()));
+    assert!(domains.contains(&"pypi.org".to_owned()));
+}

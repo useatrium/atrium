@@ -20,8 +20,8 @@ use centaur_iron_control::{
     SessionRegistrar, register_proxy_baseline, register_role,
 };
 use centaur_iron_proxy::{
-    ProxyFragment, SourceKind, SourcePolicy, bedrock_enabled, harness_auth_fragment,
-    infra_fragment, per_user_harness_auth_fragment,
+    ProxyFragment, SourceKind, SourcePolicy, bedrock_enabled, extra_allowlist_fragment,
+    harness_auth_fragment, infra_fragment, per_user_harness_auth_fragment,
 };
 use centaur_sandbox_agent_k8s::{
     AgentSandboxBackend, AgentSandboxConfig, GitHubTokenRef, IronControlSettings, IronProxyConfig,
@@ -1768,6 +1768,19 @@ struct IronProxyArgs {
         value_delimiter = ','
     )]
     upstream_deny_cidrs: Vec<String>,
+    /// Hosts a sandbox may reach that no credential vouches for.
+    ///
+    /// Under iron-control, egress is `union(baseline domains, hosts from granted
+    /// credentials)`, and only credentialed hosts can arrive via the latter. A
+    /// deployment that needs an uncredentialed host reachable — a package index,
+    /// say, which `uvx` hits at tool-run time — declares it here. Empty by
+    /// default: the allowlist is then exactly what the credentials imply.
+    #[arg(
+        long = "kubernetes-iron-proxy-extra-allowlist-domains",
+        env = "KUBERNETES_IRON_PROXY_EXTRA_ALLOWLIST_DOMAINS",
+        value_delimiter = ','
+    )]
+    extra_allowlist_domains: Vec<String>,
     #[command(flatten)]
     ca: IronProxyCaArgs,
     #[command(flatten)]
@@ -1840,6 +1853,12 @@ impl IronProxyArgs {
     fn infra_fragment(&self) -> Result<ProxyFragment, ServerError> {
         let mut infra = infra_fragment()?;
         for fragment in self.harness.fragments()? {
+            merge_fragment(&mut infra, fragment);
+        }
+        // Appended last, and only when configured. The console unions the domains
+        // of every `allowlist` transform, so this widens the baseline without
+        // displacing the harness's own entry (losing that would cut model egress).
+        if let Some(fragment) = extra_allowlist_fragment(&self.extra_allowlist_domains) {
             merge_fragment(&mut infra, fragment);
         }
         Ok(infra)

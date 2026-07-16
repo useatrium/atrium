@@ -19,6 +19,16 @@ ironProxy:
   secretSource: env
   manager:
     secretSource: env
+  # `centaur-tools run` executes each tool via `uvx --from`, which resolves the
+  # tool's deps AND the hatchling build backend from a package index at first run.
+  # Under iron-control (console.enabled) sandbox egress is deny-by-default —
+  # union(baseline, granted credentials' hosts) — and a package index has no
+  # credential, so without this no tool can start: even a zero-dependency tool
+  # dies fetching hatchling. See docs/archive/notes/2026-07-16-centaur-tool-egress-and-deps.md.
+  # These are UNIONED with the harness's own entry, so they cannot cut model egress.
+  extraAllowlistDomains:
+    - "pypi.org"
+    - "files.pythonhosted.org"
 
 slackbot:
   enabled: false

@@ -5,8 +5,9 @@ mod source;
 
 pub use error::{IronProxyConfigError, Result};
 pub use fragment::{
-    bedrock_enabled, bedrock_region, bedrock_sandbox_env, harness_auth_fragment, infra_fragment,
-    load_fragment_str, per_user_harness_auth_fragment, pg_sandbox_dsns, placeholder_env,
+    bedrock_enabled, bedrock_region, bedrock_sandbox_env, extra_allowlist_fragment,
+    harness_auth_fragment, infra_fragment, load_fragment_str, per_user_harness_auth_fragment,
+    pg_sandbox_dsns, placeholder_env,
 };
 pub use model::{
     PgDsnSetting, PgDsnSettingValueFrom, PostgresClient, PostgresListener, PostgresUpstream,
