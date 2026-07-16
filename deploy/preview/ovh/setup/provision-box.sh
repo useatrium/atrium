@@ -43,8 +43,10 @@ docker() {
 }
 
 install_docker() {
-  if need_cmd docker; then
-    log "docker already installed ($(docker --version 2>/dev/null))"
+  # `type -P` searches PATH only. need_cmd/`command -v` would match the docker()
+  # wrapper defined above and wrongly report docker as already installed.
+  if type -P docker >/dev/null 2>&1; then
+    log "docker already installed ($(command docker --version 2>/dev/null))"
   else
     log "installing docker.io"
     sudo apt-get update
