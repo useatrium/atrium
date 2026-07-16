@@ -3,11 +3,13 @@ import {
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   type KeyboardEvent,
   type PointerEvent as ReactPointerEvent,
+  type ReactNode,
   type SVGProps,
 } from 'react';
 import {
@@ -120,6 +122,7 @@ export const MessageRow = memo(function MessageRow({
   slotSessions = [],
   anchoredAnswers = [],
   slotAnswer = false,
+  workFold,
   meId,
   meHandle,
   mentionContext,
@@ -145,6 +148,10 @@ export const MessageRow = memo(function MessageRow({
   anchoredAnswers?: ChatMessage[];
   /** Internal compact presentation for an answer anchored under its trigger. */
   slotAnswer?: boolean;
+  /** The agent's folded work for this turn, rendered inside the row's content
+   *  column (between the author line and the answer) so the steps read as part
+   *  of this turn rather than as a detached block above it. */
+  workFold?: ReactNode;
   spectators?: number;
   /** Current user id — enables Edit/Delete on own messages. */
   meId?: string;
@@ -671,6 +678,9 @@ export const MessageRow = memo(function MessageRow({
             ↳ replied to a thread
           </button>
         )}
+        {/* The agent's work belongs to this turn: identity → work → answer, all
+            in one column, rather than a detached box floating above the row. */}
+        {workFold}
         {isSessionEventRow ? (
           <SessionEventCard message={m} session={session} onOpenSession={onOpenSession} />
         ) : isSessionRow ? (
@@ -1405,6 +1415,22 @@ function AgentSessionSlot({
 
 function CompactReply({ message }: { message: ChatMessage }) {
   const agent = message.sessionEventType === 'replied' || message.sessionEventType === 'question_requested';
+  const textRef = useRef<HTMLDivElement>(null);
+  const [expanded, setExpanded] = useState(false);
+  const [overflows, setOverflows] = useState(false);
+  // Measure rather than guess: whether text exceeds the clamp depends on the
+  // rendered width, not its length. Only measured while clamped — once expanded
+  // the element no longer overflows, and re-measuring would drop "Show less".
+  useLayoutEffect(() => {
+    const el = textRef.current;
+    if (!el || expanded) return;
+    const measure = () => setOverflows(el.scrollHeight > el.clientHeight + 1);
+    measure();
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [expanded]);
   return (
     <div data-testid="thread-compact-reply" className="flex min-w-0 gap-2">
       <Avatar
@@ -1426,9 +1452,25 @@ function CompactReply({ message }: { message: ChatMessage }) {
             {formatTime(message.createdAt)}
           </TimestampDisclosure>
         </div>
-        <div className="line-clamp-3 whitespace-pre-wrap break-words text-[13px] leading-relaxed text-fg-body">
-          <MessageText text={message.text} />
+        <div
+          ref={textRef}
+          className={`whitespace-pre-wrap break-words text-[13px] leading-relaxed text-fg-body ${
+            expanded ? '' : 'line-clamp-3'
+          }`}
+        >
+          {/* This row owns the clamp, so MessageText must not add its own — two
+              nested clamps is what made "Show more" shrink the message. */}
+          <MessageText text={message.text} collapsible={false} />
         </div>
+        {overflows && (
+          <button
+            type="button"
+            onClick={() => setExpanded((value) => !value)}
+            className="mt-0.5 text-xs font-medium text-accent-text hover:underline"
+          >
+            {expanded ? 'Show less' : 'Show more'}
+          </button>
+        )}
         {message.steeredSessionId != null && (
           <div className="mt-1 flex flex-wrap items-center gap-1.5 text-3xs">
             <span className="rounded-full border border-edge bg-surface-raised px-1.5 py-0.5 font-medium text-fg-tertiary">

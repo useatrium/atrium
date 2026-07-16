@@ -418,9 +418,11 @@ describe('session pane folds the B_tooltest stream', () => {
     expect(fold.textContent).toContain('1 step');
 
     fireEvent.click(fold);
-    expect(screen.getByTestId('work-fold-expanded')).toBeTruthy();
+    const expanded = screen.getByTestId('work-fold-expanded');
     expect(window.localStorage.getItem(TRANSCRIPT_VIEW_STORAGE_KEY)).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'collapse' }));
+    // The expanded fold's own header closes it, mirroring the collapsed chip.
+    fireEvent.click(expanded.querySelector('button[aria-expanded="true"]') as Element);
+    expect(screen.getByTestId('work-fold-collapsed')).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', { name: 'Agent actions' }));
     fireEvent.click(screen.getByRole('button', { name: 'Expand all work' }));
@@ -1878,7 +1880,10 @@ describe('inline file changes (Phase 4)', () => {
     expect(screen.getByTestId('inline-file-change')).toBeTruthy();
 
     if (collapsedFold) fireEvent.click(collapsedFold);
-    expect(screen.getByTestId('work-fold-expanded').querySelectorAll('button[aria-expanded]')).toHaveLength(3);
+    const expandedFold = screen.getByTestId('work-fold-expanded');
+    // The open header is its own toggle; each of the 3 steps sits closed below it.
+    expect(expandedFold.querySelectorAll('button[aria-expanded="true"]')).toHaveLength(1);
+    expect(expandedFold.querySelectorAll('button[aria-expanded="false"]')).toHaveLength(3);
     expect(screen.queryByTestId('tool-card')).toBeNull();
   });
 });

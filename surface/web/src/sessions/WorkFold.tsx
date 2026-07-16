@@ -33,6 +33,7 @@ export function WorkFold({
   fold,
   live,
   expandAll = false,
+  nested = false,
   revealStepHandle = null,
   highlightedStepHandle = null,
   onOpenWork,
@@ -42,6 +43,9 @@ export function WorkFold({
   live: boolean;
   /** Pane-level disclosure preference. ThreadPanel leaves this uncontrolled. */
   expandAll?: boolean;
+  /** Rendered inside a message's content column (already past the avatar
+   *  gutter), so it drops the standalone row's gutter offset. */
+  nested?: boolean;
   /** Opens a linked step so SessionPane entry deep-links remain addressable. */
   revealStepHandle?: string | null;
   highlightedStepHandle?: string | null;
@@ -74,13 +78,17 @@ export function WorkFold({
   const names = fold.toolNames.slice(0, 3).join(', ');
   const countLabel = `${fold.items.length} ${fold.items.length === 1 ? 'step' : 'steps'}`;
 
+  // Nested in a message's content column the avatar gutter is already applied.
+  const offset = nested ? '' : 'ml-[43px] max-w-[calc(100%-59px)]';
+
   if (!open) {
     return (
       <button
         type="button"
         data-testid="work-fold-collapsed"
+        aria-expanded={false}
         onClick={() => setOpen(true)}
-        className="my-1 ml-[43px] flex max-w-[calc(100%-59px)] items-center gap-1 truncate rounded-md border border-edge px-2 py-1.5 text-left text-[12.5px] text-fg-muted transition-colors hover:border-edge-strong hover:text-fg-secondary"
+        className={`my-1 ${offset} flex items-center gap-1 truncate rounded-md border border-edge px-2 py-1.5 text-left text-[12.5px] text-fg-muted transition-colors hover:border-edge-strong hover:text-fg-secondary`}
       >
         <span aria-hidden>▶</span>
         <span aria-hidden>⚙</span>
@@ -95,22 +103,22 @@ export function WorkFold({
   return (
     <section
       data-testid="work-fold-expanded"
-      className="my-1 ml-[43px] max-w-[calc(100%-59px)] overflow-hidden rounded-md border border-edge bg-surface-raised/45"
+      className={`my-1 ${offset} overflow-hidden rounded-md border border-edge bg-surface-raised/45`}
     >
-      <div className="flex items-center gap-1 border-b border-edge bg-surface-overlay/55 px-2 py-1.5 text-[12.5px] text-fg-secondary">
+      {/* The whole header toggles, mirroring the collapsed chip — the ▼ used to
+          be inert, so the fold could only ever be opened, never closed. */}
+      <button
+        type="button"
+        aria-expanded
+        onClick={() => setOpen(false)}
+        className="flex w-full items-center gap-1 border-b border-edge bg-surface-overlay/55 px-2 py-1.5 text-left text-[12.5px] text-fg-secondary transition-colors hover:bg-surface-overlay hover:text-fg"
+      >
         <span aria-hidden>▼</span>
         <span aria-hidden>⚙</span>
         <span>
           {countLabel} · {duration}
         </span>
-        <button
-          type="button"
-          onClick={() => setOpen(false)}
-          className="ml-auto text-xs text-fg-muted hover:text-fg hover:underline"
-        >
-          collapse
-        </button>
-      </div>
+      </button>
       <div className="divide-y divide-edge/70">
         {fold.items.map((item) => {
           const stepOpen = openSteps[item.id] === true;

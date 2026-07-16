@@ -654,6 +654,7 @@ export function MessageText({
   unfurls,
   channelId,
   sessionId,
+  collapsible = true,
 }: {
   text: string;
   meHandle?: string;
@@ -661,6 +662,10 @@ export function MessageText({
   unfurls?: MessageUnfurlOptions;
   channelId?: string | null;
   sessionId?: string | null;
+  /** Opt out when an ancestor owns the clamp. Nesting this component's own
+   *  max-height inside a line-clamp lets the outer clamp only bite once the
+   *  inner one is released — which made "Show more" visibly SHRINK the text. */
+  collapsible?: boolean;
 }) {
   const { bodyText } = partitionEntryLinks(text);
   const allHandles = extractEntryHandles(text);
@@ -676,7 +681,8 @@ export function MessageText({
     ...allUrls.filter((url) => !suppressed.has(url)).map((url): UnfurlCardDescriptor => ({ kind: 'link', url })),
   ];
   const shouldCollapse =
-    bodyText.length > COLLAPSE_CHAR_THRESHOLD || bodyText.split(/\r\n|\r|\n/).length > COLLAPSE_LINE_THRESHOLD;
+    collapsible &&
+    (bodyText.length > COLLAPSE_CHAR_THRESHOLD || bodyText.split(/\r\n|\r|\n/).length > COLLAPSE_LINE_THRESHOLD);
   const [expanded, setExpanded] = useState(!shouldCollapse);
   const content: ReactNode = (
     <MarkdownContent
