@@ -436,6 +436,14 @@ export interface SessionListItem {
   resultText: string | null;
 }
 
+/** Richer session row carried only by /sync. GET /api/sessions deliberately
+ * stays on SessionListItem so list pagination remains lean. */
+export interface SessionSnapshotItem extends SessionListItem {
+  pendingQuestion: SessionPendingQuestion | null;
+  providerAuthRequired: SessionProviderAuthRequired | null;
+  threadRootEventId: number | null;
+}
+
 /** Client-side session entity (wire shape + display-only extras). */
 export interface Session {
   id: string;
@@ -850,28 +858,43 @@ export const SessionWireSchema = Schema.mutable(
   }),
 );
 
-export const SessionListItemSchema = Schema.mutable(
+const SessionListItemFields = {
+  id: Schema.String,
+  channelId: Schema.String,
+  channelName: Schema.String,
+  title: Schema.String,
+  status: SessionStatusSchema,
+  harness: Schema.String,
+  spawnedBy: Schema.String,
+  spawnerName: Schema.String,
+  costUsd: Schema.Number,
+  createdAt: Schema.String,
+  completedAt: NullableStringSchema,
+  archivedAt: Schema.optionalWith(NullableStringSchema, { default: () => null }),
+  pinned: Schema.optionalWith(Schema.Boolean, { default: () => false }),
+  // Decode-with-default so clients remain compatible with an older server
+  // during a rolling deploy.
+  needsAttention: Schema.optionalWith(Schema.Boolean, { default: () => false }),
+  attentionReason: Schema.optionalWith(Schema.Union(Schema.Literal('question', 'auth'), Schema.Null), {
+    default: () => null,
+  }),
+  resultText: Schema.optionalWith(NullableStringSchema, { default: () => null }),
+};
+
+export const SessionListItemSchema = Schema.mutable(Schema.Struct(SessionListItemFields));
+
+export const SessionSnapshotItemSchema = Schema.mutable(
   Schema.Struct({
-    id: Schema.String,
-    channelId: Schema.String,
-    channelName: Schema.String,
-    title: Schema.String,
-    status: SessionStatusSchema,
-    harness: Schema.String,
-    spawnedBy: Schema.String,
-    spawnerName: Schema.String,
-    costUsd: Schema.Number,
-    createdAt: Schema.String,
-    completedAt: NullableStringSchema,
-    archivedAt: Schema.optionalWith(NullableStringSchema, { default: () => null }),
-    pinned: Schema.optionalWith(Schema.Boolean, { default: () => false }),
-    // Decode-with-default so clients remain compatible with an older server
-    // during a rolling deploy.
-    needsAttention: Schema.optionalWith(Schema.Boolean, { default: () => false }),
-    attentionReason: Schema.optionalWith(Schema.Union(Schema.Literal('question', 'auth'), Schema.Null), {
+    ...SessionListItemFields,
+    // Decode-with-default so a new client can boot against the old /sync
+    // shape during a rolling deploy.
+    pendingQuestion: Schema.optionalWith(Schema.Union(SessionPendingQuestionSchema, Schema.Null), {
       default: () => null,
     }),
-    resultText: Schema.optionalWith(NullableStringSchema, { default: () => null }),
+    providerAuthRequired: Schema.optionalWith(Schema.Union(SessionProviderAuthRequiredSchema, Schema.Null), {
+      default: () => null,
+    }),
+    threadRootEventId: Schema.optionalWith(NullableNumberSchema, { default: () => null }),
   }),
 );
 
@@ -1241,6 +1264,7 @@ export function applySessionEvent(sessions: Record<string, Session>, ev: Session
       base.githubIdentityMode ?? (typeof p.githubIdentityMode === 'string' ? p.githubIdentityMode : null);
     const providerConnectionId =
       base.providerConnectionId ?? (typeof p.providerConnectionId === 'string' ? p.providerConnectionId : null);
+    const threadRootEventId = base.threadRootEventId ?? ev.threadRootEventId;
     return {
       ...sessions,
       [sessionId]: {
@@ -1249,6 +1273,7 @@ export function applySessionEvent(sessions: Record<string, Session>, ev: Session
         repo,
         branch,
         repos,
+        threadRootEventId,
         githubIdentityMode,
         providerConnectionId,
       },

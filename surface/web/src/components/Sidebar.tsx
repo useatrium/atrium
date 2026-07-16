@@ -16,6 +16,7 @@ import {
   deriveSessionGlance,
   formatOutcome,
   formatWaiting,
+  isLiveAgentWork,
   isPendingSessionId,
   isTerminalSessionStatus,
   type ActivityCounts,
@@ -67,7 +68,7 @@ type AgentWorkRow = {
 function agentWorkRows(sessions: Record<string, Session>, activeChannelId: string | null): AgentWorkRow[] {
   const rows: AgentWorkRow[] = [];
   for (const session of Object.values(sessions)) {
-    if (isPendingSessionId(session.id) || session.archivedAt || isTerminalSessionStatus(session.status)) continue;
+    if (isPendingSessionId(session.id) || !isLiveAgentWork(session)) continue;
     const question = session.pendingQuestion?.questions[0]?.question;
     const auth = session.providerAuthRequired;
     const kind = question || session.pendingSeatRequests.length > 0 ? 'needs-answer' : auth ? 'needs-auth' : 'running';
@@ -335,7 +336,10 @@ function SidebarImpl({
   };
 
   const inboxBadge = () => {
-    const needsYou = activityCounts?.needsYou ?? 0;
+    // `attention` is scoped to agents you spawned, matching the Needs-you shelf
+    // this badge opens. `needsYou` is scoped by channel visibility — it counts
+    // the whole workspace's blocked agents, so it read 4 over a list of 1.
+    const needsYou = activityCounts?.attention ?? 0;
     const toReview = activityCounts?.toReview ?? 0;
     const unreadCount = activityCounts?.unread ?? 0;
     const pill = (count: number, description: string, className: string) => (

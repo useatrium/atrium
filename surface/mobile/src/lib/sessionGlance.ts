@@ -1,5 +1,7 @@
 import {
   deriveSessionGlance,
+  isUnknownSessionStatus,
+  sessionAttentionKind,
   type Session,
   type SessionGlance,
   type SessionGlanceInput,
@@ -17,25 +19,31 @@ export function glanceColor(kind: SessionGlanceKind, colors: Colors): string {
   return colors.accent;
 }
 
-/** Glance from a REST list row + optional live entity (live wins). */
+/** Glance from a REST list row + optional live entity (known live state wins). */
 export function listItemGlance(
   item: Pick<SessionListItem, 'status' | 'createdAt' | 'completedAt'> &
     Partial<Pick<SessionListItem, 'needsAttention'>>,
   live: Session | undefined,
   now: number,
 ): SessionGlance {
-  const input: SessionGlanceInput = live ?? {
-    status: item.status,
-    pendingSeatRequests: [],
-    createdAt: item.createdAt,
-    completedAt: item.completedAt,
-  };
+  // A fold-only entity has less lifecycle authority than the REST row, but it
+  // may still carry a real question/auth/seat request folded from events.
+  const liveHasAttention = live != null && sessionAttentionKind(live) !== null;
+  const authoritativeLive = live != null && (!isUnknownSessionStatus(live.status) || liveHasAttention);
+  const input: SessionGlanceInput = authoritativeLive
+    ? live
+    : {
+        status: item.status,
+        pendingSeatRequests: [],
+        createdAt: item.createdAt,
+        completedAt: item.completedAt,
+      };
   const glance = deriveSessionGlance(input, now);
   // The REST row can flag needs-attention without carrying the live fields
   // that prove it (pendingQuestion/providerAuthRequired live on the entity,
   // not the list wire). Honor the flag so the chip never contradicts the
   // group it renders in — same rule as the web Agents surface.
-  if (!live && item.needsAttention === true && glance.kind !== 'needs_you') {
+  if (!authoritativeLive && item.needsAttention === true && glance.kind !== 'needs_you') {
     return { ...glance, kind: 'needs_you', label: 'Needs you', clock: null };
   }
   return glance;

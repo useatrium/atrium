@@ -3,7 +3,7 @@ import type { Channel } from './api';
 import type { AppAction } from './appState';
 import type { DraftDeletionSnapshot, DraftSnapshot } from './drafts';
 import { normalizePrefs, UserPrefsSchema, type UserPrefs } from './prefs';
-import { SessionListItemSchema, type SessionListItem } from './sessions';
+import { SessionSnapshotItemSchema, type SessionSnapshotItem } from './sessions';
 import { UserRefSchema, WireEventSchema, type WireEvent } from './timeline';
 
 const ChannelKindSchema = Schema.Literal('public', 'private', 'dm', 'gdm');
@@ -49,7 +49,7 @@ export const SyncStateSnapshotSchema = Schema.mutable(
     channels: Schema.mutable(Schema.Array(ChannelSchema)),
     // Decode-with-default for rolling deploys where the client arrives before
     // the server starts shipping session snapshot rows.
-    sessions: Schema.optionalWith(Schema.mutable(Schema.Array(SessionListItemSchema)), { default: () => [] }),
+    sessions: Schema.optionalWith(Schema.mutable(Schema.Array(SessionSnapshotItemSchema)), { default: () => [] }),
   }),
 );
 
@@ -60,7 +60,7 @@ export interface SyncStateSnapshot {
   drafts: DraftSnapshot;
   draftDeletions: DraftDeletionSnapshot;
   channels: Channel[];
-  sessions: SessionListItem[];
+  sessions: SessionSnapshotItem[];
 }
 
 export interface SyncResponse {

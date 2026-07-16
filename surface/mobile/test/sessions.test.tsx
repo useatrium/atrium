@@ -3,6 +3,7 @@
 import '@testing-library/jest-dom/vitest';
 import { cleanup, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { Session } from '@atrium/surface-client';
 import SessionsScreen, { groupMobileSessions } from '../app/(app)/(tabs)/sessions';
 import { renderWithTheme } from './rnTestUtils';
 
@@ -16,7 +17,7 @@ vi.mock('react-native-safe-area-context', () => ({
 const chatMock = vi.hoisted(() => ({
   api: { listSessions: vi.fn() },
   me: { id: 'u-me', displayName: 'Me', handle: 'me' },
-  state: { wsStatus: 'open' as const, sessions: {}, channels: [] },
+  state: { wsStatus: 'open' as const, sessions: {} as Record<string, Session>, channels: [] },
   startDemoSession: vi.fn(),
   setSessionArchived: vi.fn(),
   setSessionPinned: vi.fn(),
@@ -45,6 +46,35 @@ const terminalSession = {
   resultText: 'All checks passed.',
 };
 
+function liveSession(overrides: Partial<Session> = {}): Session {
+  return {
+    id: 's-live',
+    workspaceId: 'ws-1',
+    channelId: 'ch-agent',
+    threadRootEventId: null,
+    title: 'Live agent',
+    status: 'running',
+    harness: 'codex',
+    spawnedBy: 'u-me',
+    driverId: 'u-me',
+    pendingSeatRequests: [],
+    suggestions: [],
+    answerProposals: [],
+    pendingQuestion: null,
+    providerAuthRequired: null,
+    seatEvents: [],
+    costUsd: 0,
+    resultText: null,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    completedAt: null,
+    archivedAt: null,
+    pinned: false,
+    lastEventId: 1,
+    permalink: '/session/s-live',
+    ...overrides,
+  };
+}
+
 beforeEach(() => {
   chatMock.api.listSessions.mockReset();
   chatMock.state.sessions = {};
@@ -60,10 +90,57 @@ describe('mobile Agents screen', () => {
     expect(sections.map((section) => section.title)).toEqual(['Needs you']);
   });
 
+  it('counts a live seat request in the Needs you group', () => {
+    const row = {
+      ...terminalSession,
+      id: 's-seat',
+      status: 'running' as const,
+      completedAt: null,
+      needsAttention: false,
+      live: liveSession({
+        id: 's-seat',
+        pendingSeatRequests: [{ userId: 'u-driver', displayName: 'Driver' }],
+      }),
+    };
+
+    expect(groupMobileSessions([row]).map((section) => section.title)).toEqual(['Needs you']);
+  });
+
   it('uses shared outcome grammar and shows the terminal result excerpt', async () => {
     renderWithTheme(<SessionsScreen />);
 
     expect(await screen.findByText('Done in 42s')).toBeInTheDocument();
     expect(screen.getByText('All checks passed.')).toBeInTheDocument();
+  });
+
+  it('does not let fold-only unknown override a known REST outcome', async () => {
+    chatMock.state.sessions = {
+      's-done': liveSession({ id: 's-done', status: 'unknown' as never }),
+    };
+
+    renderWithTheme(<SessionsScreen />);
+
+    expect(await screen.findByText('Done in 42s')).toBeInTheDocument();
+    expect(screen.queryByText('Status unavailable')).not.toBeInTheDocument();
+  });
+
+  it('does not render unknown lifecycle state as a finished outcome', async () => {
+    chatMock.api.listSessions.mockResolvedValue({
+      sessions: [
+        {
+          ...terminalSession,
+          id: 's-unknown',
+          title: 'Lifecycle unavailable',
+          status: 'unknown' as never,
+          completedAt: null,
+          resultText: null,
+        },
+      ],
+    });
+
+    renderWithTheme(<SessionsScreen />);
+
+    expect(await screen.findByText('STATUS UNAVAILABLE')).toBeInTheDocument();
+    expect(screen.queryByText(/Done in/)).not.toBeInTheDocument();
   });
 });

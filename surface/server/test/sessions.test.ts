@@ -5411,7 +5411,7 @@ describe('session access control', () => {
     await app.close();
   });
 
-  it('GET /api/sessions supports status filters, ordering, limit cap, and light shape', async () => {
+  it('GET /api/sessions prioritizes live work, orders terminal work by completion, and stays lean', async () => {
     const app = await buildApp({
       pool,
       sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: false },
@@ -5445,6 +5445,19 @@ describe('session access control', () => {
       createdAt: '2025-01-04T00:00:00.000Z',
       completedAt: '2025-01-04T00:01:00.000Z',
     });
+    const spawningNewest = await insertSessionRow({
+      title: 'stale spawning newest',
+      status: 'spawning',
+      spawnedBy: alice.userId,
+      createdAt: '2025-01-05T00:00:00.000Z',
+    });
+    const completedMostRecently = await insertSessionRow({
+      title: 'old work completed most recently',
+      status: 'completed',
+      spawnedBy: alice.userId,
+      createdAt: '2024-12-01T00:00:00.000Z',
+      completedAt: '2025-01-06T00:00:00.000Z',
+    });
 
     const all = await app.inject({
       method: 'GET',
@@ -5454,8 +5467,10 @@ describe('session access control', () => {
     expect(all.statusCode).toBe(200);
     const allSessions = all.json().sessions;
     expect(allSessions.map((s: { id: string }) => s.id)).toEqual([
-      queuedNewer,
       runningOlder,
+      queuedNewer,
+      spawningNewest,
+      completedMostRecently,
       failedNewest,
       completedOld,
     ]);
@@ -5477,7 +5492,7 @@ describe('session access control', () => {
       'status',
       'title',
     ]);
-    expect(allSessions[3]).toMatchObject({
+    expect(allSessions[5]).toMatchObject({
       id: completedOld,
       channelId: fx.channelId,
       channelName: 'general',
@@ -5496,14 +5511,18 @@ describe('session access control', () => {
       url: '/api/sessions?status=running',
       headers: { cookie: alice.cookie },
     });
-    expect(running.json().sessions.map((s: { id: string }) => s.id)).toEqual([queuedNewer, runningOlder]);
+    expect(running.json().sessions.map((s: { id: string }) => s.id)).toEqual([
+      runningOlder,
+      queuedNewer,
+      spawningNewest,
+    ]);
 
     const recent = await app.inject({
       method: 'GET',
       url: '/api/sessions?status=recent&limit=1',
       headers: { cookie: alice.cookie },
     });
-    expect(recent.json().sessions.map((s: { id: string }) => s.id)).toEqual([failedNewest]);
+    expect(recent.json().sessions.map((s: { id: string }) => s.id)).toEqual([completedMostRecently]);
     await app.close();
   });
 

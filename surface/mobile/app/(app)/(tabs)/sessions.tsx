@@ -7,7 +7,10 @@ import {
   formatCost,
   formatOutcome,
   formatRelativeTimestamp,
-  isTerminalSessionStatus,
+  isDurableTerminalStatus,
+  isLiveAgentWork,
+  isUnknownSessionStatus,
+  sessionAttentionKind,
   sessionGlanceClockLabel,
   type Session,
   type SessionGlance,
@@ -55,7 +58,7 @@ function displayFields(item: DisplaySession) {
   const live = item.live;
   return {
     title: live?.title ?? item.title,
-    status: live?.status ?? item.status,
+    status: live != null && !isUnknownSessionStatus(live.status) ? live.status : item.status,
     costUsd: Math.max(live?.costUsd ?? 0, item.costUsd),
     createdAt: live?.createdAt ?? item.createdAt,
     completedAt: live?.completedAt ?? item.completedAt,
@@ -68,10 +71,12 @@ function displayFields(item: DisplaySession) {
 
 function needsAttention(item: DisplaySession): boolean {
   // The list endpoint carries the canonical attention reason. Live state only
-  // takes precedence while it is present so a just-arrived question can move
-  // immediately without waiting for the next list refresh.
-  if (item.live) return item.live.pendingQuestion != null || item.live.providerAuthRequired != null;
-  return item.needsAttention;
+  // takes precedence when it knows the lifecycle. A fold-only entity cannot
+  // clear a real REST flag, though its folded attention events can add one.
+  if (item.live && !isUnknownSessionStatus(item.live.status)) {
+    return sessionAttentionKind(item.live) !== null;
+  }
+  return item.needsAttention || (item.live != null && sessionAttentionKind(item.live) !== null);
 }
 
 function freshness(item: DisplaySession): number {
@@ -90,8 +95,8 @@ export function groupMobileSessions(rows: DisplaySession[]): SessionSection[] {
     if (fields.archivedAt != null) continue; // archived rows live behind the disclosure
     if (fields.pinned) pinned.push(row);
     else if (needsAttention(row)) needsYou.push(row);
-    else if (isTerminalSessionStatus(fields.status)) recent.push(row);
-    else active.push(row);
+    else if (isLiveAgentWork(fields)) active.push(row);
+    else recent.push(row);
   }
   const byNewest = (a: DisplaySession, b: DisplaySession) => freshness(b) - freshness(a);
   pinned.sort(byNewest);
@@ -207,7 +212,7 @@ export default function SessionsScreen() {
 
   const renderRow = (item: DisplaySession) => {
     const fields = displayFields(item);
-    const terminal = isTerminalSessionStatus(fields.status);
+    const terminal = isDurableTerminalStatus(fields.status);
     const timestamp = fields.completedAt ?? fields.createdAt;
     const time = formatRelativeTimestamp(timestamp) || timestamp;
     const exactTime = formatExactTimestamp(timestamp) || timestamp;

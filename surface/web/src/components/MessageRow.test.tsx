@@ -437,6 +437,46 @@ describe('MessageRow web presence', () => {
     expect(screen.queryByTestId('session-slot-failed')).toBeNull();
   });
 
+  it('presents a fold-only session as unavailable without claiming it finished', () => {
+    const foldOnly = session({ status: 'unknown' as Session['status'] });
+    renderRow({
+      row: message({ sessionId: 's-1', sessionTask: 'Recover status', reactions: [] }),
+      session: foldOnly,
+      slotSessions: [foldOnly],
+    });
+
+    expect(screen.getByTestId('session-slot-stalled').textContent).toContain('Status unavailable');
+    expect(screen.queryByTestId('session-slot-done')).toBeNull();
+    expect(screen.queryByText('✓')).toBeNull();
+  });
+
+  it('renders a folded pending question even when the session status is unknown', () => {
+    const foldOnlyQuestion = session({
+      status: 'unknown' as Session['status'],
+      pendingQuestion: {
+        questionId: 'q-folded',
+        askedAt: '2026-07-05T12:00:05.000Z',
+        questions: [
+          {
+            id: 'scope',
+            header: 'Scope',
+            question: 'Which folded scope?',
+            options: [{ label: 'Small', description: 'Focused' }],
+          },
+        ],
+      },
+    });
+    renderRow({
+      row: message({ sessionId: 's-1', sessionTask: 'Pick a scope', reactions: [] }),
+      session: foldOnlyQuestion,
+      slotSessions: [foldOnlyQuestion],
+    });
+
+    expect(screen.getByTestId('session-slot-needs-input')).toBeTruthy();
+    expect(screen.getByText('Which folded scope?')).toBeTruthy();
+    expect(screen.queryByTestId('session-slot-done')).toBeNull();
+  });
+
   it('collapses a terminal answer to the compact final reply plus a status strip', () => {
     const answer = message({
       id: 99,

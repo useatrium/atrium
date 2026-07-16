@@ -25,7 +25,7 @@ import {
   decodeWireToDisplay,
   deriveSessionGlance,
   formatOutcome,
-  isTerminalSessionStatus,
+  isDurableTerminalStatus,
   messageFromEvent,
   mentionsUser,
   sessionAnsweredQuestion,
@@ -1261,7 +1261,7 @@ function AgentSessionSlot({
   resolveUser?: (id: string) => UserRef | undefined;
   onMarkupEntry?: (handle: string, message: ChatMessage) => void;
 }) {
-  const terminal = isTerminalSessionStatus(session.status);
+  const terminal = isDurableTerminalStatus(session.status);
   const now = useNow(!terminal);
   const glance = deriveSessionGlance(session, now);
   const pending = !terminal && session.pendingQuestion?.questions[0] ? session.pendingQuestion : null;
@@ -1386,11 +1386,20 @@ function AgentSessionSlot({
   }
 
   return (
-    <div data-testid="session-slot-working" className="flex min-w-0 items-center gap-2 text-xs text-fg-secondary">
+    <div
+      data-testid={glance.kind === 'stalled' ? 'session-slot-stalled' : 'session-slot-working'}
+      className="flex min-w-0 items-center gap-2 text-xs text-fg-secondary"
+    >
       <AgentMark size={20} />
-      <span className="size-1.5 shrink-0 animate-pulse rounded-full bg-accent motion-reduce:animate-none" />
+      <span
+        className={`size-1.5 shrink-0 rounded-full ${
+          glance.pulse ? 'animate-pulse bg-accent motion-reduce:animate-none' : 'bg-fg-muted'
+        }`}
+      />
       <span className="min-w-0 flex-1 truncate">
-        {session.latestActivity?.summary ?? [glance.label, glance.detail].filter(Boolean).join(' · ')}
+        {glance.kind === 'stalled'
+          ? [glance.label, glance.detail].filter(Boolean).join(' · ')
+          : (session.latestActivity?.summary ?? [glance.label, glance.detail].filter(Boolean).join(' · '))}
       </span>
       {sessionGlanceClockLabel(glance, now) && (
         <span className="shrink-0 tabular-nums text-fg-muted">{sessionGlanceClockLabel(glance, now)}</span>

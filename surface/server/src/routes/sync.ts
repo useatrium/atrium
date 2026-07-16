@@ -81,6 +81,7 @@ async function syncStateSnapshot(client: DbClient, userId: string, sessionRuns: 
       userId,
       status: 'all',
       limit: SYNC_SESSION_LIMIT,
+      snapshot: true,
     }),
   };
 }

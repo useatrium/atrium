@@ -12,6 +12,7 @@ import { router } from 'expo-router';
 import { Swipeable } from 'react-native-gesture-handler';
 import {
   activityKindMarker,
+  channelLabel,
   type ActivityCounts,
   type ActivityFeedFilter,
   type ActivityItem,
@@ -22,7 +23,9 @@ import {
   formatRelativeTimestamp,
   formatWaiting,
   isActivityUnread,
+  isLiveAgentWork,
   isTerminalSessionStatus,
+  isUnknownSessionStatus,
   matchesActivityFilter,
   matchesActivitySource,
   sessionAttentionKind,
@@ -46,7 +49,7 @@ type ActivityRow =
   | { rowType: 'header'; key: string; label: string; tone: 'attention' | 'default' }
   | { rowType: 'filter'; key: string }
   | { rowType: 'session'; session: DisplaySession }
-  | { rowType: 'running'; session: Session; channelName: string }
+  | { rowType: 'running'; session: Session; channelName: string | null }
   | { rowType: 'activity'; activity: ActivityItem; attention: boolean; review?: boolean };
 
 const FILTERS: Array<{ id: ActivityFeedFilter; label: string }> = [
@@ -135,7 +138,7 @@ function isHistoryKind(kind: ActivityItem['kind']): boolean {
 }
 
 export default function ActivityScreen() {
-  const { api, state, resolveUser, serverUrl, signInAgain } = useChat();
+  const { api, state, me, resolveUser, serverUrl, signInAgain } = useChat();
   const { colors } = useTheme();
   const [sessions, setSessions] = useState<SessionListItem[]>([]);
   const [activityItems, setActivityItems] = useState<ActivityItem[]>([]);
@@ -309,14 +312,15 @@ export default function ActivityScreen() {
   const rows = useMemo<ActivityRow[]>(() => {
     const merged = sessions.map((s) => ({ ...s, live: state.sessions[s.id] }));
     const listById = new Map(merged.map((session) => [session.id, session]));
+    const channelById = new Map(state.channels.map((channel) => [channel.id, channel]));
     // Terminal sessions (failed/cancelled) are represented by their feed items,
     // whose attention flag honors the read watermark — a live row would pin a
     // failure forever with no way to acknowledge it.
     const liveAttention = merged.filter((s) => {
-      const status = s.live?.status ?? s.status;
+      const status = s.live != null && !isUnknownSessionStatus(s.live.status) ? s.live.status : s.status;
       if (isTerminalSessionStatus(status)) return false;
-      if (s.live) return sessionAttentionKind(s.live) !== null;
-      return s.needsAttention;
+      if (s.live && !isUnknownSessionStatus(s.live.status)) return sessionAttentionKind(s.live) !== null;
+      return s.needsAttention || (s.live != null && sessionAttentionKind(s.live) !== null);
     });
     const { attention, history } = partitionRows(liveAttention, activityItems);
 
@@ -345,15 +349,15 @@ export default function ActivityScreen() {
       source === 'people'
         ? []
         : Object.values(state.sessions)
-            .filter(
-              (session): session is Session =>
-                !!session && !isTerminalSessionStatus(session.status) && session.archivedAt == null,
-            )
-            .map((session) => ({
-              rowType: 'running' as const,
-              session,
-              channelName: listById.get(session.id)?.channelName ?? session.channelId,
-            }));
+            .filter((session): session is Session => !!session && isLiveAgentWork(session))
+            .map((session) => {
+              const channel = channelById.get(session.channelId);
+              return {
+                rowType: 'running' as const,
+                session,
+                channelName: listById.get(session.id)?.channelName ?? (channel ? channelLabel(channel, me.id) : null),
+              };
+            });
     const toReview = history.filter(
       (row) =>
         row.rowType === 'activity' &&
@@ -411,7 +415,7 @@ export default function ActivityScreen() {
       out.push(...historyWithoutReview);
     }
     return out;
-  }, [activityItems, exceptionSet, filter, lastReadEventId, sessions, source, state.sessions]);
+  }, [activityItems, exceptionSet, filter, lastReadEventId, me.id, sessions, source, state.channels, state.sessions]);
 
   const openActivity = async (item: ActivityItem) => {
     const unread = isActivityUnread(item, lastReadEventId, exceptionSet);
@@ -688,10 +692,11 @@ export default function ActivityScreen() {
     if (item.rowType === 'activity') return renderActivityItem(item.activity, item.attention, item.review);
     if (item.rowType === 'running') {
       const elapsed = formatWaiting(Date.now() - new Date(item.session.createdAt).getTime());
+      const channelAnnouncement = item.channelName ? `, #${item.channelName}` : '';
       return (
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={`${item.session.title}, running for ${elapsed}, #${item.channelName}`}
+          accessibilityLabel={`${item.session.title}, running for ${elapsed}${channelAnnouncement}`}
           onPress={() => router.push(`/session/${item.session.id}`)}
           style={({ pressed }) => ({
             flexDirection: 'row',
@@ -712,7 +717,8 @@ export default function ActivityScreen() {
               {item.session.title}
             </Text>
             <Text style={{ color: colors.textMuted, fontSize: font.xs }} numberOfLines={1}>
-              {elapsed} · #{item.channelName}
+              {elapsed}
+              {item.channelName ? ` · #${item.channelName}` : ''}
             </Text>
           </View>
         </Pressable>

@@ -255,6 +255,12 @@ export interface SessionListItem {
   resultText: string | null;
 }
 
+export interface SessionSnapshotItem extends SessionListItem {
+  pendingQuestion: SessionPendingQuestionJson | null;
+  providerAuthRequired: ProviderAuthRequiredJson | null;
+  threadRootEventId: number | null;
+}
+
 /** The S3 surface the artifact serve path needs. Injectable in tests
  * (the real impl is s3.ts; defaults to it). */
 export interface ArtifactStorage {
@@ -387,6 +393,7 @@ interface SessionListRow {
   id: string;
   channel_id: string;
   channel_name: string;
+  thread_root_event_id: number | null;
   title: string;
   status: SessionStatus;
   harness: string;
@@ -860,7 +867,22 @@ export class SessionRuns {
     userId: string;
     status: SessionListStatus;
     limit: number;
-  }): Promise<SessionListItem[]> {
+    snapshot: true;
+  }): Promise<SessionSnapshotItem[]>;
+  async listSessionsForUser(args: {
+    client?: DbClient;
+    userId: string;
+    status: SessionListStatus;
+    limit: number;
+    snapshot?: false;
+  }): Promise<SessionListItem[]>;
+  async listSessionsForUser(args: {
+    client?: DbClient;
+    userId: string;
+    status: SessionListStatus;
+    limit: number;
+    snapshot?: boolean;
+  }): Promise<SessionListItem[] | SessionSnapshotItem[]> {
     const statusWhere =
       args.status === 'archived'
         ? 'AND s.archived_at IS NOT NULL'
@@ -875,17 +897,22 @@ export class SessionRuns {
       args.status === 'archived'
         ? '(sp.user_id IS NOT NULL) DESC, s.archived_at DESC, s.created_at DESC'
         : `CASE s.status
-             WHEN 'spawning' THEN 0
+             WHEN 'running' THEN 0
              WHEN 'queued' THEN 1
-             WHEN 'running' THEN 2
+             WHEN 'spawning' THEN 2
              ELSE 3
            END,
            (sp.user_id IS NOT NULL) DESC,
+           CASE
+             WHEN s.status IN ('spawning', 'queued', 'running') THEN s.created_at
+             ELSE COALESCE(s.completed_at, s.created_at)
+           END DESC,
            s.created_at DESC`;
     const res = await (args.client ?? this.pool).query<SessionListRow>(
       `SELECT s.id,
               s.channel_id,
               c.name AS channel_name,
+              s.thread_root_event_id,
               s.title,
               s.status,
               s.harness,
@@ -914,7 +941,7 @@ export class SessionRuns {
        LIMIT $2`,
       [args.userId, args.limit],
     );
-    return res.rows.map(toListItem);
+    return args.snapshot ? res.rows.map(toSnapshotItem) : res.rows.map(toListItem);
   }
 
   async streamCentaurEvents(
@@ -3620,6 +3647,15 @@ function toListItem(row: SessionListRow): SessionListItem {
     needsAttention: pendingQuestion !== null || providerAuthRequired !== null,
     attentionReason: pendingQuestion ? 'question' : providerAuthRequired ? 'auth' : null,
     resultText: resultExcerpt(row.result_text),
+  };
+}
+
+function toSnapshotItem(row: SessionListRow): SessionSnapshotItem {
+  return {
+    ...toListItem(row),
+    pendingQuestion: parsePendingQuestion(row.pending_question),
+    providerAuthRequired: parseProviderAuthRequired(row.provider_auth_required),
+    threadRootEventId: row.thread_root_event_id,
   };
 }
 

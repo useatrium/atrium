@@ -124,9 +124,84 @@ describe('partitionActivity', () => {
       history: [olderQuestion, resolvedQuestion],
     });
   });
+
+  it('pins current seat requests in the Needs-you tier', () => {
+    const seatRequest = activityItem({
+      eventId: '21',
+      kind: 'seat_request',
+      sessionId: 's-1',
+      sessionTitle: 'Deploy assistant',
+      attention: true,
+    });
+
+    expect(partitionActivity([seatRequest])).toEqual({ attention: [seatRequest], history: [] });
+  });
 });
 
 describe('ActivityView', () => {
+  it('renders a pending seat request in the Needs-you shelf', async () => {
+    const onOpenSession = vi.fn();
+    apiMock.getActivity.mockResolvedValue(
+      activityResponse(
+        [
+          activityItem({
+            eventId: '21',
+            kind: 'seat_request',
+            actorName: 'Bea',
+            sessionId: 's-1',
+            sessionTitle: 'Deploy assistant',
+            attention: true,
+          }),
+        ],
+        { attention: 1, unread: 1 },
+      ),
+    );
+    apiMock.messages.mockResolvedValue({
+      events: [{ id: 21, payload: { sessionId: 's-1' } }],
+      hasMore: false,
+    });
+
+    render(<ActivityView onSelectChannel={vi.fn()} onOpenSession={onOpenSession} />);
+
+    expect(await screen.findByRole('heading', { name: 'Needs you · 1' })).toBeTruthy();
+    fireEvent.click(screen.getByText('Bea wants to drive · Deploy assistant'));
+    await waitFor(() => expect(onOpenSession).toHaveBeenCalledWith('s-1'));
+    expect(apiMock.markActivityItemRead).not.toHaveBeenCalledWith(21);
+  });
+
+  it('does not offer Archive for a fold-only session', async () => {
+    apiMock.getActivity.mockResolvedValue(
+      activityResponse([
+        activityItem({
+          eventId: '22',
+          kind: 'agent_question',
+          sessionId: 's-unknown',
+          sessionTitle: 'Unknown lifecycle',
+          attention: false,
+        }),
+      ]),
+    );
+
+    render(
+      <ActivityView
+        onSelectChannel={vi.fn()}
+        onOpenSession={vi.fn()}
+        onArchiveSession={vi.fn()}
+        sessions={{
+          's-unknown': session({
+            id: 's-unknown',
+            status: 'unknown' as Session['status'],
+          }),
+        }}
+      />,
+    );
+
+    const actions = await screen.findByRole('button', { name: 'Actions for Unknown lifecycle · needs your answer' });
+    fireEvent.keyDown(actions, { key: 'Enter' });
+    expect(await screen.findByRole('menuitem', { name: 'Mark read' })).toBeTruthy();
+    expect(screen.queryByRole('menuitem', { name: 'Archive session' })).toBeNull();
+  });
+
   it('renders the two tiers, paginates, and dispatches click destinations', async () => {
     const onSelectChannel = vi.fn();
     const onOpenSession = vi.fn();

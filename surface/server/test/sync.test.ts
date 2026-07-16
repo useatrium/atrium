@@ -162,12 +162,34 @@ describe('/api/sync', () => {
     await putDraft(alice.cookie, `channel:${fx.otherChannelId}`, '');
     const sessionRows = await pool.query<{ id: string }>(
       `INSERT INTO sessions (
-         workspace_id, channel_id, centaur_thread_key, title, status, spawned_by, driver_id, completed_at
+         workspace_id, channel_id, thread_root_event_id, centaur_thread_key, title, status, spawned_by, driver_id,
+         completed_at, pending_question, provider_auth_required
        ) VALUES
-         ($1, $2, $3, 'Live sync work', 'running', $4, $4, NULL),
-         ($1, $2, $5, 'Recent sync work', 'completed', $4, $4, now())
+         ($1, $2, $3, $4, 'Live sync work', 'running', $5, $5, NULL, $6, $7),
+         ($1, $2, NULL, $8, 'Recent sync work', 'completed', $5, $5, now(), NULL, NULL)
        RETURNING id`,
-      [fx.workspaceId, fx.channelId, `sync-live-${randomUUID()}`, alice.user.id, `sync-done-${randomUUID()}`],
+      [
+        fx.workspaceId,
+        fx.channelId,
+        message.id,
+        `sync-live-${randomUUID()}`,
+        alice.user.id,
+        {
+          questionId: 'q-sync',
+          turnId: 'turn-sync',
+          questions: [],
+          eventId: message.id,
+          askedAt: '2026-07-16T12:00:00.000Z',
+        },
+        {
+          provider: 'codex',
+          userId: alice.user.id,
+          reason: 'missing_token',
+          message: 'Reconnect Codex',
+          at: '2026-07-16T12:01:00.000Z',
+        },
+        `sync-done-${randomUUID()}`,
+      ],
     );
 
     const healed = await sync(alice.cookie, initial.nextCursor, 1000);
@@ -189,6 +211,11 @@ describe('/api/sync', () => {
         expect.objectContaining({ id: sessionRows.rows[1]!.id, status: 'completed' }),
       ]),
     );
+    expect(healed.state.sessions.find((session: any) => session.id === sessionRows.rows[0]!.id)).toMatchObject({
+      threadRootEventId: message.id,
+      pendingQuestion: { questionId: 'q-sync', turnId: 'turn-sync', eventId: message.id },
+      providerAuthRequired: { provider: 'codex', userId: alice.user.id, reason: 'missing_token' },
+    });
   });
 
   it('ships mentionedSinceRead for unread channel mentions only', async () => {
