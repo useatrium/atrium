@@ -43,14 +43,25 @@ docker() {
 }
 
 install_docker() {
+  # Ubuntu ships the buildx and compose plugins as separate packages. Both are
+  # required: previewctl drives `docker compose` for every preview, and the warm
+  # cache builder needs `docker buildx`. Mirrors the AWS appliance bootstrap.
+  local -a missing=()
   # `type -P` searches PATH only. need_cmd/`command -v` would match the docker()
   # wrapper defined above and wrongly report docker as already installed.
-  if type -P docker >/dev/null 2>&1; then
-    log "docker already installed ($(command docker --version 2>/dev/null))"
-  else
-    log "installing docker.io"
+  type -P docker >/dev/null 2>&1 || missing+=(docker.io)
+  local package
+  for package in docker-buildx docker-compose-v2; do
+    if ! dpkg-query -W -f='${Status}' "$package" 2>/dev/null | grep -q 'ok installed'; then
+      missing+=("$package")
+    fi
+  done
+  if ((${#missing[@]})); then
+    log "installing: ${missing[*]}"
     sudo apt-get update
-    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y docker.io
+    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y "${missing[@]}"
+  else
+    log "docker + buildx + compose already installed ($(command docker --version 2>/dev/null))"
   fi
   sudo systemctl enable --now docker
   # The invoking admin needs group membership to run docker without sudo. This
