@@ -1137,21 +1137,17 @@ function ChannelAnnotationCluster({
   const [expanded, setExpanded] = useState(false);
   const [loading, setLoading] = useState(false);
   const [replies, setReplies] = useState<ChatMessage[] | null>(null);
-  const claimedAnswerIds = new Set<number>();
-  for (const session of sessions) {
-    const answer = answers.find((candidate) => candidate.sessionId === session.id);
-    if (answer?.id != null) claimedAnswerIds.add(answer.id);
-  }
-  const { latest, latestIsAnchored, earlierCount, earlierLabel } = deriveClusterPreview(root, answers);
+  const { latest, earlierCount, earlierLabel } = deriveClusterPreview(root, answers);
   const latestIsQuestionSlot =
     latest?.sessionEventType === 'question_requested' &&
     latest.sessionId != null &&
     sessions.some((session) => session.id === latest.sessionId);
-  // Expanded, the cluster becomes a mini thread: the full reply set — steers,
-  // agent answers, and human replies — rendered in one chronological list so a
-  // human's steers interleave with the agent's responses exactly as the thread
-  // panel shows them. Collapsed, the anchored answers + latest preview stand in
-  // for it. The server returns replies oldest-first; sort by id to be safe.
+  // Collapsed, the cluster shows only the single latest reply plus a count of
+  // what's hidden ("N earlier replies"). Expanded, it becomes a mini thread: the
+  // full reply set — steers, agent answers, and human replies — in one
+  // chronological list so a human's steers interleave with the agent's responses
+  // exactly as the thread panel shows them. The server returns replies
+  // oldest-first; sort by id to be safe.
   const expandedReplies = (replies ?? []).slice().sort((a, b) => (a.id ?? 0) - (b.id ?? 0));
 
   const toggleEarlier = () => {
@@ -1202,9 +1198,9 @@ function ChannelAnnotationCluster({
           answer={answers.find(
             (candidate) => candidate.sessionId === slotSession.id && candidate.sessionEventType === 'replied',
           )}
-          // Expanded, the answer lives in the interleaved list above; keep only
-          // the session's live/status strip here so it isn't rendered twice.
-          suppressAnswer={expanded}
+          // The reply body renders once — as the collapsed latest preview or in
+          // the expanded interleaved list — so the slot shows only its status.
+          suppressAnswer
           meId={meId}
           meHandle={meHandle}
           rootId={root.id!}
@@ -1215,25 +1211,7 @@ function ChannelAnnotationCluster({
           onMarkupEntry={onMarkupEntry}
         />
       ))}
-      {!expanded &&
-        answers
-          .filter((answer) => answer.id == null || !claimedAnswerIds.has(answer.id))
-          .map((answer) => (
-            <MessageRow
-              key={answer.id ?? answer.clientMsgId}
-              message={answer}
-              grouped={false}
-              inThread
-              slotAnswer
-              meId={meId}
-              meHandle={meHandle}
-              onOpenSession={onOpenSession}
-              onReact={onReact}
-              resolveUser={resolveUser}
-              onMarkupEntry={onMarkupEntry}
-            />
-          ))}
-      {!expanded && latest && !latestIsAnchored && !latestIsQuestionSlot && <CompactReply message={latest} />}
+      {!expanded && latest && !latestIsQuestionSlot && <CompactReply message={latest} />}
       <button
         type="button"
         onClick={() => root.id != null && onOpenThread?.(root.id)}

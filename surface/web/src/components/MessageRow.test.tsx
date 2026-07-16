@@ -317,8 +317,10 @@ describe('MessageRow broadcast replies', () => {
       anchoredAnswers: [answerOne, answerTwo],
     });
 
-    // Collapsed: agent responses are anchored/visible; the steer is hidden.
-    expect(screen.getByText('Agent first response')).toBeTruthy();
+    // Collapsed: only the final reply shows; the earlier reply and the steer are
+    // folded behind the "2 earlier replies" count.
+    expect(screen.getByText('Agent second response')).toBeTruthy();
+    expect(screen.queryByText('Agent first response')).toBeNull();
     expect(screen.queryByText('Allan steer between responses')).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: '▶ 2 earlier replies' }));
@@ -334,8 +336,8 @@ describe('MessageRow broadcast replies', () => {
     expect(within(cluster).getByText('→ agent')).toBeTruthy();
     expect(within(cluster).getByText('Bea Chan')).toBeTruthy();
 
-    // No double-render: each agent response appears exactly once (the anchored
-    // rows are suppressed while the interleaved list carries them).
+    // No double-render: each agent response appears exactly once (the collapsed
+    // latest preview is suppressed while the interleaved list carries them).
     expect(within(cluster).getAllByText('Agent first response')).toHaveLength(1);
     expect(within(cluster).getAllByText('Agent second response')).toHaveLength(1);
   });
@@ -432,7 +434,7 @@ describe('MessageRow web presence', () => {
     expect(screen.queryByTestId('session-slot-failed')).toBeNull();
   });
 
-  it('renders a terminal answer once, with a clamp toggle, instead of a card', () => {
+  it('collapses a terminal answer to the compact final reply plus a status strip', () => {
     const answer = message({
       id: 99,
       threadRootEventId: 42,
@@ -449,6 +451,7 @@ describe('MessageRow web presence', () => {
         sessionTask: 'Long answer please',
         replyCount: 1,
         lastReplyId: 99,
+        lastReply: answer,
         reactions: [],
       }),
       session: session({ status: 'completed', completedAt: '2026-07-05T12:01:00.000Z' }),
@@ -456,18 +459,14 @@ describe('MessageRow web presence', () => {
       anchoredAnswers: [answer],
     });
 
-    expect(screen.getByTestId('session-slot-answer')).toBeTruthy();
+    // Collapsed, the session shows only its status strip (with "view session"),
+    // and the answer renders once as the compact final-reply preview — not the
+    // rich slot-answer card with its own clamp toggle.
+    const done = screen.getByTestId('session-slot-done');
+    expect(within(done).getByRole('button', { name: 'view session' })).toBeTruthy();
+    expect(screen.queryByTestId('session-slot-answer')).toBeNull();
     expect(screen.getAllByText('A'.repeat(700))).toHaveLength(1);
-    const fade = screen.getByTestId('session-slot-answer').querySelector('[aria-hidden="true"]');
-    expect(fade?.className).toContain('pointer-events-none');
-    expect(fade?.className).toContain('from-surface');
-    const viewSession = within(screen.getByTestId('session-slot-answer')).getByRole('button', {
-      name: 'view session',
-    });
-    expect(viewSession.parentElement?.className).toContain('whitespace-nowrap');
-    expect(screen.getByRole('button', { name: 'Show all ↓' })).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Show all ↓' }));
-    expect(screen.getByRole('button', { name: 'Show less ↑' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Show all ↓' })).toBeNull();
     expect(screen.queryByTestId('session-card')).toBeNull();
   });
 

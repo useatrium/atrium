@@ -48,10 +48,10 @@ test('expanding the channel cluster interleaves a human steer between agent resp
 
   const cluster = confirmedRowsWithText(page, root).first().getByTestId('channel-annotation-cluster');
 
-  // Collapsed: the agent responses anchor and are visible; the steer is hidden
-  // (it is thread-only, not a channel-feed broadcast).
-  await expect(cluster.getByText('Agent first response')).toBeVisible();
+  // Collapsed: only the final reply shows; the earlier reply and the steer are
+  // folded behind the "N earlier replies" count.
   await expect(cluster.getByText('Agent second response')).toBeVisible();
+  await expect(cluster.getByText('Agent first response')).toHaveCount(0);
   await expect(page.getByText('Human steer in the middle')).toHaveCount(0);
 
   const earlier = cluster.getByRole('button', { name: /earlier repl/ });
