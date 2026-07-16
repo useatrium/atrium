@@ -1,6 +1,12 @@
 import { isValidElement, memo, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { compactMarkdownSource, isUnfurlableUrl, type UnfurlResult } from '@atrium/surface-client';
 import { parseAgentPathHref } from '@atrium/surface-client/agent-paths';
+import {
+  internalLinkKey,
+  parseInternalLinkUrl,
+  threadEntryHandle,
+  type InternalLinkRef,
+} from '@atrium/surface-client/internal-links';
 import ReactMarkdown, { defaultUrlTransform, type Components } from 'react-markdown';
 import rehypeHighlight from 'rehype-highlight';
 import remarkGfm from 'remark-gfm';
@@ -14,11 +20,13 @@ import { resolveUnfurls } from '../lib/unfurls';
 import { api } from '../api';
 import { EntryInlineChip, EntryQuoteCard } from './EntryQuoteCard';
 import { FilePathChip } from './FilePathChip';
+import { InternalLinkCard } from './InternalLinkCard';
 import { LinkUnfurlCard } from './LinkUnfurlCard';
 import { TimelineImage } from './TimelineImage';
 import '../sessions/Markdown.css';
 import { useUserDirectory } from '../userDirectory';
 import { parseInAppRoute, useLocation } from '../router';
+import { useSessionsContext } from '../sessions/SessionsContext';
 
 type MarkdownMode = 'message' | 'compact';
 
@@ -31,6 +39,11 @@ const MENTION_RE = new RegExp(`<@(${UUID_SOURCE})>|<!(channel|here)>|(^|[\\s(["'
 const COLLAPSE_LINE_THRESHOLD = 16;
 const COLLAPSE_CHAR_THRESHOLD = 1800;
 const MAX_VISIBLE_UNFURL_CARDS = 3;
+
+type UnfurlCardDescriptor =
+  | { kind: 'entry'; handle: string }
+  | { kind: 'internal'; url: string; ref: InternalLinkRef }
+  | { kind: 'link'; url: string };
 
 function remarkMentions() {
   return (tree: unknown) => {
@@ -200,13 +213,44 @@ export function extractExternalUnfurlUrls(text: string): string[] {
   const seen = new Set<string>();
 
   for (const match of findEntryLinkCandidates(text)) {
-    if (match.handle || !isUnfurlableUrl(match.candidate) || hasEntryLinkPath(match.candidate)) continue;
+    if (
+      match.handle ||
+      parseInternalLinkUrl(match.candidate) ||
+      !isUnfurlableUrl(match.candidate) ||
+      hasEntryLinkPath(match.candidate)
+    )
+      continue;
     if (seen.has(match.candidate)) continue;
     seen.add(match.candidate);
     urls.push(match.candidate);
   }
 
   return urls;
+}
+
+function extractInternalUnfurlDescriptors(text: string): UnfurlCardDescriptor[] {
+  const descriptors: UnfurlCardDescriptor[] = [];
+  const seen = new Set<string>();
+
+  for (const match of findEntryLinkCandidates(text)) {
+    if (match.handle) continue;
+    const ref = parseInternalLinkUrl(match.candidate);
+    if (!ref) continue;
+    if (ref.kind === 'thread') {
+      const handle = threadEntryHandle(ref);
+      const key = `entry:${handle}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      descriptors.push({ kind: 'entry', handle });
+      continue;
+    }
+    const key = `internal:${internalLinkKey(ref)}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    descriptors.push({ kind: 'internal', url: match.candidate, ref });
+  }
+
+  return descriptors;
 }
 
 function mentionSpan(handle: string, meHandle?: string) {
@@ -554,30 +598,45 @@ export interface MessageUnfurlOptions {
   canManage: boolean;
 }
 
-type UnfurlCardDescriptor = { kind: 'entry'; handle: string } | { kind: 'link'; url: string };
-
 function MessageUnfurlCards({
   descriptors,
+  meId,
   messageEventId,
   canManage = false,
   onSuppress,
 }: {
   descriptors: UnfurlCardDescriptor[];
+  meId?: string;
   messageEventId?: number | null;
   canManage?: boolean;
   onSuppress?: (key: string) => void;
 }) {
+  const sessionsContext = useSessionsContext();
   const handles = descriptors
     .filter((item): item is Extract<UnfurlCardDescriptor, { kind: 'entry' }> => item.kind === 'entry')
     .map((item) => item.handle);
   const urls = descriptors
     .filter((item): item is Extract<UnfurlCardDescriptor, { kind: 'link' }> => item.kind === 'link')
     .map((item) => item.url);
+  const internalSessionIds = descriptors.flatMap((item) =>
+    item.kind === 'internal' && item.ref.kind === 'session' ? [item.ref.sessionId] : [],
+  );
   const [entries, setEntries] = useState<Record<string, ResolvedEntryQuote | null>>({});
   const [links, setLinks] = useState<Record<string, UnfurlResult | null>>({});
   const [showAll, setShowAll] = useState(false);
   const handlesKey = handles.join('\n');
   const urlsKey = urls.join('\n');
+  const internalSessionIdsKey = internalSessionIds.join('\n');
+
+  useEffect(() => {
+    if (!sessionsContext) return;
+    for (const id of internalSessionIds) {
+      // Ask even when the store already has it: a /sync snapshot entity is thin
+      // (no pendingQuestion), so it would render "Working" on work that is
+      // blocked on a person. requestSession dedupes per id.
+      sessionsContext.requestSession(id);
+    }
+  }, [internalSessionIdsKey, sessionsContext]);
 
   useEffect(() => {
     let active = true;
@@ -603,9 +662,19 @@ function MessageUnfurlCards({
     };
   }, [urlsKey]);
 
-  const resolvedDescriptors = descriptors.filter((item) =>
-    item.kind === 'entry' ? Boolean(entries[item.handle]) : Boolean(links[item.url]),
-  );
+  const resolvedDescriptors = descriptors.filter((item) => {
+    if (item.kind === 'entry') return Boolean(entries[item.handle]);
+    if (item.kind === 'link') return Boolean(links[item.url]);
+    if (!sessionsContext) return false;
+    if (item.ref.kind === 'channel') {
+      return sessionsContext.channels.some((channel) => channel.id === item.ref.channelId);
+    }
+    if (item.ref.kind === 'session') {
+      const session = sessionsContext.sessions[item.ref.sessionId];
+      return Boolean(session && sessionsContext.channels.some((channel) => channel.id === session.channelId));
+    }
+    return false;
+  });
   const visible = showAll ? resolvedDescriptors : resolvedDescriptors.slice(0, MAX_VISIBLE_UNFURL_CARDS);
 
   if (resolvedDescriptors.length === 0) return null;
@@ -623,6 +692,16 @@ function MessageUnfurlCards({
               onSuppress={canManage && onSuppress ? () => onSuppress(item.handle) : undefined}
             />
           ) : null;
+        }
+        if (item.kind === 'internal') {
+          return (
+            <InternalLinkCard
+              key={`internal:${internalLinkKey(item.ref)}`}
+              linkRef={item.ref}
+              meId={meId}
+              onSuppress={canManage && onSuppress ? () => onSuppress(internalLinkKey(item.ref)) : undefined}
+            />
+          );
         }
         const result = links[item.url];
         return result ? (
@@ -668,7 +747,18 @@ export function MessageText({
   collapsible?: boolean;
 }) {
   const { bodyText } = partitionEntryLinks(text);
-  const allHandles = extractEntryHandles(text);
+  const internalDescriptors = extractInternalUnfurlDescriptors(text);
+  const allHandles = Array.from(
+    new Set([
+      ...extractEntryHandles(text),
+      ...internalDescriptors
+        .filter((item): item is Extract<UnfurlCardDescriptor, { kind: 'entry' }> => item.kind === 'entry')
+        .map((item) => item.handle),
+    ]),
+  );
+  const allInternalLinks = internalDescriptors.filter(
+    (item): item is Extract<UnfurlCardDescriptor, { kind: 'internal' }> => item.kind === 'internal',
+  );
   const allUrls = extractExternalUnfurlUrls(text);
   const [optimisticallySuppressed, setOptimisticallySuppressed] = useState<Set<string>>(() => new Set());
   const [unfurlError, setUnfurlError] = useState(false);
@@ -678,6 +768,9 @@ export function MessageText({
     ...allHandles
       .filter((handle) => !suppressed.has(handle))
       .map((handle): UnfurlCardDescriptor => ({ kind: 'entry', handle })),
+    // Suppression keys off internalLinkKey, not the URL — native does the same,
+    // and `unfurls_suppressed` is shared across surfaces. See internal-links.ts.
+    ...allInternalLinks.filter((item) => !suppressed.has(internalLinkKey(item.ref))),
     ...allUrls.filter((url) => !suppressed.has(url)).map((url): UnfurlCardDescriptor => ({ kind: 'link', url })),
   ];
   const shouldCollapse =
@@ -717,6 +810,7 @@ export function MessageText({
       )}
       <MessageUnfurlCards
         descriptors={cardDescriptors}
+        meId={meId}
         messageEventId={unfurls?.messageEventId}
         canManage={unfurls?.canManage}
         onSuppress={

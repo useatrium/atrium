@@ -1,10 +1,12 @@
 // @vitest-environment jsdom
 
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import type { Channel } from '@atrium/surface-client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { clearEntryResolveCacheForTests, type ResolvedEntryQuote } from '../lib/entryLinks';
 import { clearUnfurlResolveCacheForTests } from '../lib/unfurls';
-import { CompactMarkdownText, MessageText } from './MessageText';
+import { SessionsContextProvider } from '../sessions/SessionsContext';
+import { CompactMarkdownText, extractExternalUnfurlUrls, MessageText } from './MessageText';
 import { clearUserDirectoryForTests } from '../userDirectory';
 
 const resolveEntryMock = vi.hoisted(() => vi.fn());
@@ -39,6 +41,18 @@ function entry(overrides: Partial<ResolvedEntryQuote> = {}): ResolvedEntryQuote 
       sessionTitle: 'Planning session',
     },
     ...overrides,
+  };
+}
+
+function channel(id: string, name: string): Channel {
+  return {
+    id,
+    workspaceId: 'workspace-1',
+    name,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    archivedAt: null,
+    pinned: false,
+    kind: 'public',
   };
 }
 
@@ -325,6 +339,110 @@ describe('MessageText entry links', () => {
     await waitFor(() => expect(resolveEntryMock).toHaveBeenCalledTimes(1));
     expect(screen.queryByText('/e/evt_404')).toBeNull();
     expect(screen.queryByRole('link')).toBeNull();
+  });
+});
+
+describe('MessageText internal link cards', () => {
+  it('intercepts an Atrium URL before the external unfurl fetcher', () => {
+    const url = 'https://atrium.example.com/c/channel-1/s/session-1';
+
+    expect(extractExternalUnfurlUrls(url)).toEqual([]);
+    render(<MessageText text={url} />);
+
+    expect(resolveUnfurlsMock).not.toHaveBeenCalled();
+    expect(screen.getByRole('link').getAttribute('href')).toBe(url);
+  });
+
+  it('maps a thread permalink to the root event quote descriptor', async () => {
+    resolveEntryMock.mockResolvedValue(entry({ handle: 'evt_434', text: 'Thread root quote' }));
+    const url = 'https://atrium.example.com/c/channel-1/t/434';
+
+    render(<MessageText text={url} />);
+
+    expect(await screen.findByText('Thread root quote')).toBeTruthy();
+    expect(resolveEntryMock).toHaveBeenCalledWith('evt_434');
+    expect(resolveUnfurlsMock).not.toHaveBeenCalled();
+  });
+
+  it('leaves a missing session as a plain link and renders no card', async () => {
+    const requestSession = vi.fn();
+    const url = 'https://atrium.example.com/c/channel-1/s/missing-session';
+
+    render(
+      <SessionsContextProvider value={{ sessions: {}, channels: [], requestSession }}>
+        <MessageText text={url} />
+      </SessionsContextProvider>,
+    );
+
+    await waitFor(() => expect(requestSession).toHaveBeenCalledWith('missing-session'));
+    expect(screen.getAllByRole('link')).toHaveLength(1);
+    expect(screen.getByRole('link').getAttribute('href')).toBe(url);
+    expect(screen.queryByRole('article')).toBeNull();
+    expect(resolveUnfurlsMock).not.toHaveBeenCalled();
+  });
+
+  it('still fetches a linked session the store already has, because snapshots are thin', async () => {
+    // A /sync snapshot entity hard-codes pendingQuestion/providerAuthRequired to
+    // null (appState sessionFromListSnapshot), so skipping the fetch when the id
+    // is present would render "Working" on a session that needs a person. The
+    // routed-session fetch in Chat.tsx is unconditional for the same reason.
+    const requestSession = vi.fn();
+    const thin = {
+      id: 'session-1',
+      channelId: 'channel-1',
+      status: 'running',
+      pendingQuestion: null,
+    } as unknown as Parameters<typeof SessionsContextProvider>[0]['value']['sessions'][string];
+
+    render(
+      <SessionsContextProvider
+        value={{ sessions: { 'session-1': thin }, channels: [channel('channel-1', 'one')], requestSession }}
+      >
+        <MessageText text="https://atrium.example.com/c/channel-1/s/session-1" />
+      </SessionsContextProvider>,
+    );
+
+    await waitFor(() => expect(requestSession).toHaveBeenCalledWith('session-1'));
+  });
+
+  it('suppresses an internal card by its canonical key, not the pasted URL', async () => {
+    // `unfurls_suppressed` is persisted and shared across surfaces, and native
+    // keys by internalLinkKey. Keying by URL here would mean an author removing
+    // a card on web still saw it on their phone. Both permalink spellings of one
+    // session must also die together.
+    const channels = [channel('channel-1', 'one')];
+    const text = `https://atrium.example.com/c/channel-1 and https://atrium.example.com/s/session-1`;
+
+    render(
+      <SessionsContextProvider value={{ sessions: {}, channels, requestSession: vi.fn() }}>
+        <MessageText text={text} unfurls={{ messageEventId: 1, suppressed: ['channel:channel-1'], canManage: true }} />
+      </SessionsContextProvider>,
+    );
+
+    expect(screen.queryByText('one')).toBeNull();
+    expect(screen.queryAllByRole('article')).toHaveLength(0);
+  });
+
+  it('counts internal cards in the shared visible-card cap', () => {
+    const channels = [
+      channel('channel-1', 'one'),
+      channel('channel-2', 'two'),
+      channel('channel-3', 'three'),
+      channel('channel-4', 'four'),
+    ];
+    const text = channels.map((item) => `https://atrium.example.com/c/${item.id}`).join(' ');
+
+    render(
+      <SessionsContextProvider value={{ sessions: {}, channels, requestSession: vi.fn() }}>
+        <MessageText text={text} />
+      </SessionsContextProvider>,
+    );
+
+    expect(screen.getAllByRole('article')).toHaveLength(3);
+    expect(screen.queryByText('four')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Show 1 more' }));
+    expect(screen.getByText('four')).toBeTruthy();
+    expect(screen.getAllByRole('article')).toHaveLength(4);
   });
 });
 

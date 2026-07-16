@@ -21,4 +21,19 @@ describe('createUnfurlResolver', () => {
     await resolve([urls[1] ?? '', urls[0] ?? '']);
     expect(resolveUnfurls).toHaveBeenCalledTimes(1);
   });
+
+  it('never sends internal Atrium routes to the external unfurl API', async () => {
+    const internal = 'https://prod.atrium.test/c/channel-1/s/session-1';
+    const external = 'https://example.com/story';
+    const resolveUnfurls = vi.fn(async () => ({
+      results: { [external]: { url: external, kind: 'og' as const, title: 'Story' } },
+    }));
+    const resolve = createUnfurlResolver({ resolveUnfurls } as never);
+
+    await expect(resolve([internal, external])).resolves.toEqual({
+      [internal]: null,
+      [external]: { url: external, kind: 'og', title: 'Story' },
+    });
+    expect(resolveUnfurls).toHaveBeenCalledWith([external]);
+  });
 });

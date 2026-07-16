@@ -333,6 +333,7 @@ export default function ThreadScreen() {
               loaded={replies !== undefined}
               hasMoreBefore={false}
               sessions={state.sessions}
+              channels={state.channels}
               sessionSpineId={attachedSession?.id}
               threadWorkFolds={workFoldNodes}
               meId={me.id}

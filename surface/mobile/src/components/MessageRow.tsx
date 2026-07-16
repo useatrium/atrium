@@ -31,6 +31,7 @@ import {
   sessionQuestionEventLabel,
   type Api,
   type ChatMessage,
+  type Channel,
   type MessageReaction,
   type Session,
   type UserRef,
@@ -39,7 +40,7 @@ import { encodeEventHandle } from '@atrium/surface-client/handle';
 import { font, radius, space, useTheme } from '../lib/theme';
 import { useAccessibilityAnnouncement } from '../lib/accessibility';
 import { lightImpactHaptic, selectionHaptic } from '../lib/haptics';
-import { partitionEntryLinks, unsuppressedEntryHandles } from '../lib/entryLinks';
+import { partitionEntryLinks, unsuppressedEntryHandles, unsuppressedInternalLinks } from '../lib/entryLinks';
 import { AnsweredQuestionTrace } from './AnsweredQuestionTrace';
 import { AgentMark } from './AgentMark';
 import { Avatar } from './Avatar';
@@ -169,6 +170,9 @@ export interface MessageRowProps {
   session?: Session;
   /** Sessions attached to this channel root, in spawn order. */
   attachedSessions?: Session[];
+  /** Live entities used to resolve internal link cards under the viewer's ACL. */
+  linkSessions?: Readonly<Record<string, Session>>;
+  channels?: readonly Channel[];
   /** Broadcast agent answers anchored into the attached sessions' slots. */
   slotAnswers?: ChatMessage[];
   /** Loaded thread replies used by the universal collapsed cluster. */
@@ -1155,6 +1159,8 @@ export const MessageRow = memo(function MessageRow({
   highlighted,
   session,
   attachedSessions = [],
+  linkSessions = {},
+  channels = [],
   slotAnswers = [],
   threadReplies,
   onExpandThread,
@@ -1220,6 +1226,10 @@ export const MessageRow = memo(function MessageRow({
   const externalUnfurlUrls = useMemo(
     () => unsuppressedEntryHandles(partitionedEntryLinks.externalUrls, m.suppressedUnfurls),
     [m.suppressedUnfurls, partitionedEntryLinks.externalUrls],
+  );
+  const internalUnfurlLinks = useMemo(
+    () => unsuppressedInternalLinks(partitionedEntryLinks.internalLinks, m.suppressedUnfurls),
+    [m.suppressedUnfurls, partitionedEntryLinks.internalLinks],
   );
   const entryReferenceMarkdown = useMemo(
     () => ({ resolveEntry, onOpenChannel, onOpenSession }),
@@ -1615,12 +1625,16 @@ export const MessageRow = memo(function MessageRow({
               {body}
               {editedNote}
             </Pressable>
-            {unfurlHandles.length > 0 || externalUnfurlUrls.length > 0 ? (
+            {unfurlHandles.length > 0 || internalUnfurlLinks.length > 0 || externalUnfurlUrls.length > 0 ? (
               <EntryQuoteCards
                 text={m.text}
                 serverUrl={serverUrl}
                 handles={unfurlHandles}
+                internalLinks={internalUnfurlLinks}
                 externalUrls={externalUnfurlUrls}
+                sessions={linkSessions}
+                channels={channels}
+                meId={meId}
                 resolveEntry={resolveEntry}
                 resolveUnfurls={resolveUnfurls}
                 resolveArtifactContent={resolveArtifactContent}

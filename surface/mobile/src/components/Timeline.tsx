@@ -17,6 +17,7 @@ import {
   isAgentVoiceBroadcast,
   type Api,
   type ChatMessage,
+  type Channel,
   type Session,
   type TimelineItem,
   type UserRef,
@@ -33,6 +34,7 @@ export interface TimelineProps {
   loaded: boolean;
   hasMoreBefore: boolean;
   sessions: Record<string, Session>;
+  channels?: Channel[];
   threadReplies?: Record<number, ChatMessage[]>;
   onExpandThread?: (m: ChatMessage) => void;
   /** When present, ordinary human replies are asides unless they target this session. */
@@ -165,6 +167,7 @@ export function Timeline({
   loaded,
   hasMoreBefore,
   sessions,
+  channels = [],
   threadReplies,
   onExpandThread,
   sessionSpineId,
@@ -470,6 +473,8 @@ export function Timeline({
           meHandle={meHandle}
           highlighted={(highlightId != null && m.id === highlightId) || m.id === localHighlightId}
           session={m.sessionId ? sessions[m.sessionId] : undefined}
+          linkSessions={sessions}
+          channels={channels}
           attachedSessions={rowSessions}
           slotAnswers={rowAnswers}
           threadReplies={m.id != null ? threadReplies?.[m.id] : undefined}
@@ -510,6 +515,7 @@ export function Timeline({
       meHandle,
       highlightId,
       sessions,
+      channels,
       sessionsByRoot,
       answersByRoot,
       threadReplies,

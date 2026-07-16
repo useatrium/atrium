@@ -3,6 +3,7 @@ import type { AddressInfo } from 'node:net';
 import type pg from 'pg';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app.js';
+import { config } from '../src/config.js';
 import { extractUnfurl } from '../src/unfurl/extract.js';
 import {
   isPublicUnfurlAddress,
@@ -52,6 +53,10 @@ beforeAll(async () => {
     } else if (path === '/credential-redirect') {
       res.statusCode = 302;
       res.setHeader('location', fixtureBase.replace('http://', 'http://user:secret@'));
+      res.end();
+    } else if (path === '/own-origin-redirect') {
+      res.statusCode = 302;
+      res.setHeader('location', `${fixtureBase}/og`);
       res.end();
     } else if (path === '/large') {
       res.setHeader('content-type', 'text/html');
@@ -105,12 +110,14 @@ beforeAll(async () => {
 
 afterAll(async () => {
   delete process.env.ATRIUM_UNFURL_ALLOW_PRIVATE;
+  config.publicOrigin = '';
   await pool.end();
   await new Promise<void>((resolve, reject) => fixtureServer.close((error) => (error ? reject(error) : resolve())));
 });
 
 beforeEach(async () => {
   process.env.ATRIUM_UNFURL_ALLOW_PRIVATE = '1';
+  config.publicOrigin = '';
   fixtureHits = new Map();
   activeSlowRequests = 0;
   maxActiveSlowRequests = 0;
@@ -133,6 +140,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   process.env.ATRIUM_UNFURL_ALLOW_PRIVATE = '1';
+  config.publicOrigin = '';
   await app.close();
 });
 
@@ -180,6 +188,44 @@ describe('unfurl extraction and safe fetch', () => {
     await expect(safeFetch(`${fixtureBase}/credential-redirect`, { maxBytes: UNFURL_HTML_MAX_BYTES })).rejects.toThrow(
       'credentials',
     );
+  });
+
+  it('rejects the configured public origin', async () => {
+    config.publicOrigin = fixtureBase;
+    await expect(safeFetch(`${fixtureBase}/og`, { maxBytes: UNFURL_HTML_MAX_BYTES })).rejects.toThrow('own origin');
+    expect(fixtureHits.get('/og')).toBeUndefined();
+  });
+
+  it('rejects the configured public origin on a redirect hop', async () => {
+    config.publicOrigin = fixtureBase;
+    const externalOrigin = fixtureBase.replace('127.0.0.1', 'localhost');
+    await expect(
+      safeFetch(`${externalOrigin}/own-origin-redirect`, { maxBytes: UNFURL_HTML_MAX_BYTES }),
+    ).rejects.toThrow('own origin');
+    expect(fixtureHits.get('/own-origin-redirect')).toBe(1);
+    expect(fixtureHits.get('/og')).toBeUndefined();
+  });
+
+  it('still unfurls an unrelated origin when the guard is configured', async () => {
+    config.publicOrigin = 'https://atrium.example';
+    await expect(safeFetch(`${fixtureBase}/og`, { maxBytes: UNFURL_HTML_MAX_BYTES })).resolves.toMatchObject({
+      status: 200,
+      finalUrl: `${fixtureBase}/og`,
+    });
+  });
+
+  it('leaves the guard inactive when the public origin is unset', async () => {
+    config.publicOrigin = '';
+    await expect(safeFetch(`${fixtureBase}/og`, { maxBytes: UNFURL_HTML_MAX_BYTES })).resolves.toMatchObject({
+      status: 200,
+    });
+  });
+
+  it('does not let the private-address escape hatch disable the own-origin guard', async () => {
+    process.env.ATRIUM_UNFURL_ALLOW_PRIVATE = '1';
+    config.publicOrigin = fixtureBase;
+    await expect(safeFetch(`${fixtureBase}/og`, { maxBytes: UNFURL_HTML_MAX_BYTES })).rejects.toThrow('own origin');
+    expect(fixtureHits.get('/og')).toBeUndefined();
   });
 
   it('aborts a streamed body beyond the hard cap', async () => {
@@ -278,6 +324,15 @@ describe('unfurl routes', () => {
   it('requires authentication', async () => {
     const response = await app.inject({ method: 'POST', url: '/api/unfurl/resolve', payload: { urls: [] } });
     expect(response.statusCode).toBe(401);
+  });
+
+  it('returns the existing silent null result for the configured public origin', async () => {
+    config.publicOrigin = fixtureBase;
+    const url = `${fixtureBase}/og`;
+    const response = await resolve([url]);
+    expect(response.statusCode).toBe(200);
+    expect(response.json().results[url]).toBeNull();
+    expect(fixtureHits.get('/og')).toBeUndefined();
   });
 
   it('rejects malformed or oversized batches', async () => {

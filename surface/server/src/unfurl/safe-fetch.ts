@@ -3,6 +3,7 @@ import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import { isIP } from 'node:net';
 import type { LookupAddress, LookupAllOptions, LookupOneOptions } from 'node:dns';
+import { config } from '../config.js';
 
 const HEADERS_TIMEOUT_MS = 5_000;
 const TOTAL_TIMEOUT_MS = 8_000;
@@ -111,6 +112,7 @@ export function validateUnfurlUrl(rawUrl: string): URL {
   const url = new URL(rawUrl);
   if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new Error('unsupported protocol');
   if (url.username || url.password) throw new Error('URL credentials are forbidden');
+  if (config.publicOrigin && url.origin === config.publicOrigin) throw new Error('own origin is forbidden');
   if (!privateAccessEnabled()) {
     const port = url.port ? Number(url.port) : url.protocol === 'https:' ? 443 : 80;
     if (port !== 80 && port !== 443) throw new Error('unsupported port');

@@ -65,6 +65,7 @@ import { ConversationPanel } from './sessions/ConversationPanel';
 import { TAB_SLUG } from './sessions/WorkDrawer';
 import { loadSessionPaneWidth, sessionPaneSizing } from './sessions/useSessionPaneWidth';
 import { ChannelStrip } from './sessions/ChannelStrip';
+import { SessionsContextProvider } from './sessions/SessionsContext';
 import { SpawnDialog } from './sessions/SpawnDialog';
 import { ViewToggle } from './sessions/ViewToggle';
 import { isPendingSessionId, sessionFromWire } from './sessions/types';
@@ -797,6 +798,31 @@ export function Chat({
     query.addEventListener('change', sync);
     return () => query.removeEventListener('change', sync);
   }, []);
+
+  // A link card names ONE session, so this fetches that session and nothing
+  // else. It is not the N+1 heal loop #543 removed: that refetched every
+  // non-terminal session on every load, and the /sync snapshot serves that now.
+  //
+  // Deliberately does NOT skip when the session is already in the store, for the
+  // same reason the routed-session fetch below doesn't: a snapshot entity is
+  // thin — `sessionFromListSnapshot` hard-codes pendingQuestion and
+  // providerAuthRequired to null — so a card built from one would read "Working"
+  // on a session that is actually blocked on a person. Only the full GET carries
+  // those. Fetched once per id; `mergeSessionEntity` keeps it order-safe against
+  // a WS event that already advanced the status.
+  const requestedLinkedSessionsRef = useRef(new Set<string>());
+  const requestLinkedSession = useCallback((id: string) => {
+    if (requestedLinkedSessionsRef.current.has(id)) return;
+    requestedLinkedSessionsRef.current.add(id);
+    sessionsApi
+      .get(id)
+      .then(({ session: wire }) => dispatch({ type: 'session-upsert', session: sessionFromWire(wire) }))
+      .catch(() => {});
+  }, []);
+  const sessionsContextValue = useMemo(
+    () => ({ sessions: state.sessions, channels: state.channels, requestSession: requestLinkedSession }),
+    [state.sessions, state.channels, requestLinkedSession],
+  );
 
   // Live sessions blocked on a person pin into Attention immediately, before
   // (or without) the server feed item — parity with the mobile Attention tab.
@@ -2148,7 +2174,7 @@ export function Chat({
     openSettingsSurface();
     setIsSidebarOpen(false);
   }, [openSettingsSurface]);
-  return (
+  const shell = (
     <div className="flex h-dvh overflow-hidden">
       <Sidebar
         workspaceName={workspace.name}
@@ -2833,6 +2859,7 @@ export function Chat({
       )}
     </div>
   );
+  return <SessionsContextProvider value={sessionsContextValue}>{shell}</SessionsContextProvider>;
 }
 
 /** Fixed-height "X is typing…" line — always present so the layout never shifts. */

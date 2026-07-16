@@ -51,8 +51,16 @@ export function unfurlImageProxyUrl(imageUrl: string): string {
 
 /**
  * True for absolute http(s) URLs that are candidates for external unfurling.
- * Entry-ref URLs (`/e/<handle>` on any host) are handled by the entry-quote
- * pipeline and must be excluded by callers before resolving.
+ *
+ * It returns TRUE for Atrium's own URLs — it knows nothing about who we are.
+ * Callers MUST exclude both of these before resolving, and the checks must run
+ * BEFORE this one:
+ *   - entry refs (`/e/<handle>`, any host) -> the entry-quote pipeline
+ *   - internal links (`parseInternalLinkUrl`) -> internal link cards
+ *
+ * Skipping the second is what shipped the Cloudflare Access sign-in card: an
+ * Atrium permalink reached this fetcher, which is unauthenticated, so it got the
+ * sign-in page and cached its <title> as a perfectly ordinary og result.
  */
 export function isUnfurlableUrl(url: string): boolean {
   let parsed: URL;

@@ -91,9 +91,12 @@ SITE_ADDRESS=atrium.example.com
 HTTP_HOST_PORT=80
 HTTPS_HOST_PORT=443
 S3_ENDPOINT=https://minio.example.com
+ATRIUM_PUBLIC_ORIGIN=https://atrium.example.com
 ```
 
 Leave `S3_INTERNAL_ENDPOINT` unset unless the server needs a different private MinIO URL than the compose-internal `http://minio:9000` default.
+
+Set `ATRIUM_PUBLIC_ORIGIN` to this deployment's own public origin (the same value the web build gets as `VITE_PUBLIC_URL`). The link-unfurl fetcher then refuses to fetch Atrium itself. It matters most behind an access proxy such as Cloudflare Access: the fetcher is unauthenticated, so it receives the *sign-in page*, and that page's `<title>` caches as a perfectly ordinary-looking link card. Unset leaves the guard off.
 
 The mobile app server URL is:
 
