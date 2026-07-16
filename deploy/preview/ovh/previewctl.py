@@ -679,7 +679,10 @@ def cmd_create(args: argparse.Namespace) -> None:
         write_phase(state, "surface-up")
         write_surface_files(state)
         run(compose_command(state, "up", "-d", "--no-build"), capture=False)
-        run(compose_command(state, "exec", "-T", "minio", "mc", "mb", "--ignore-existing", f"local/{state['minio_bucket']}"))
+        # No explicit bucket creation: the Surface server calls ensureBucket() on
+        # boot (surface/server/src/s3.ts) and creates it with the credentials it
+        # was configured with. The minio image's preconfigured "local" mc alias
+        # carries default creds, so `mc mb` here just fails with Access Denied.
 
         write_phase(state, "migrate")
         # Surface applies migrations before it starts listening. The table check
@@ -763,19 +766,8 @@ def cmd_destroy(args: argparse.Namespace) -> None:
     if state is not None and state.get("source_dir"):
         runtime = runtime_dir(args.preview_id)
         if (runtime / ".env").exists() and (runtime / "docker-compose.preview.yml").exists():
-            best_effort(
-                compose_command(
-                    state,
-                    "exec",
-                    "-T",
-                    "minio",
-                    "mc",
-                    "rm",
-                    "--recursive",
-                    "--force",
-                    f"local/{state['minio_bucket']}",
-                )
-            )
+            # `down -v` removes this project's minio volume, taking the bucket
+            # with it, so there is no separate bucket teardown to do.
             run(compose_command(state, "down", "-v", "--remove-orphans"), capture=False)
 
     fragment = (
