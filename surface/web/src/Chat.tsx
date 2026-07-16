@@ -24,6 +24,7 @@ import {
   emptyTimeline,
   mentionsHandle,
   sessionAttentionKind,
+  type ActivityChannelCounts,
   type ActivityCounts,
   type ActivityItem,
   type Channel,
@@ -371,7 +372,15 @@ export function Chat({
     channelId ? { ...initialAppState, activeChannelId: channelId } : initialAppState,
   );
   const [sessionEventSeq, setSessionEventSeq] = useState(0);
-  const [activityCounts, setActivityCounts] = useState<ActivityCounts>({ attention: 0, unread: 0 });
+  // === true-counts additions ===
+  const [activityCounts, setActivityCounts] = useState<ActivityCounts>({
+    attention: 0,
+    unread: 0,
+    needsYou: 0,
+    running: 0,
+    toReview: 0,
+  });
+  const [activityChannelCounts, setActivityChannelCounts] = useState<Record<string, ActivityChannelCounts>>({});
   const [activityLiveEvent, setActivityLiveEvent] = useState<WireEvent | null>(null);
   const [activityRefreshKey, setActivityRefreshKey] = useState(0);
   const { clearFailedCancel, clearFailedSteer, failedCancels, failedSteers, rememberRejectedSessionOp } =
@@ -393,9 +402,14 @@ export function Chat({
   const dividerFrozenForRef = useRef<string | null>(null);
   const locationState = useLocation();
 
-  const handleActivityCountsChange = useCallback((next: ActivityCounts) => {
-    setActivityCounts(next);
-  }, []);
+  // === true-counts additions ===
+  const handleActivityCountsChange = useCallback(
+    (next: ActivityCounts, channelCounts?: Record<string, ActivityChannelCounts>) => {
+      setActivityCounts(next);
+      if (channelCounts) setActivityChannelCounts(channelCounts);
+    },
+    [],
+  );
 
   const refreshActivityCounts = useCallback(() => {
     // Promise.resolve() guard: a transport that throws synchronously (e.g. a
@@ -403,9 +417,16 @@ export function Chat({
     // normalization guards a deploy-skewed server that predates `counts`.
     void Promise.resolve()
       .then(() => api.getActivity())
-      .then(({ counts }) =>
-        setActivityCounts({ attention: Number(counts?.attention) || 0, unread: Number(counts?.unread) || 0 }),
-      )
+      .then(({ counts, channelCounts }) => {
+        setActivityCounts({
+          attention: Number(counts?.attention) || 0,
+          unread: Number(counts?.unread) || 0,
+          needsYou: Number(counts?.needsYou) || 0,
+          running: Number(counts?.running) || 0,
+          toReview: Number(counts?.toReview) || 0,
+        });
+        setActivityChannelCounts(channelCounts);
+      })
       .catch(() => {});
   }, []);
 
@@ -1545,6 +1566,12 @@ export function Chat({
   const openSession = useCallback(
     (sessionId: string, options?: SpineOpenSessionOptions) => {
       if (isPendingSessionId(sessionId)) return;
+      // === true-counts additions ===
+      // Navigation must not wait on this idempotent per-session acknowledgement.
+      void api
+        .markSessionActivityRead(sessionId)
+        .then(() => scheduleActivityCountsRefresh())
+        .catch(() => {});
       const sessionChannelId = stateRef.current.sessions[sessionId]?.channelId ?? stateRef.current.activeChannelId;
       const route: InAppRoute = {
         surface: 'chat',
@@ -1561,7 +1588,7 @@ export function Chat({
       }
       goToRoute(route);
     },
-    [goToRoute, locationState.hash, locationState.search],
+    [goToRoute, locationState.hash, locationState.search, scheduleActivityCountsRefresh],
   );
 
   const closeSession = useCallback(() => {
@@ -2524,6 +2551,8 @@ export function Chat({
               {/* === channel strip additions === */}
               <ChannelStrip
                 channelId={active.id}
+                // === true-counts additions ===
+                channelCounts={activityChannelCounts[active.id]}
                 sessions={state.sessions}
                 onOpenSession={openSession}
                 onOpenInbox={openActivitySurface}

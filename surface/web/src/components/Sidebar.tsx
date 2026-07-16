@@ -199,7 +199,8 @@ function SidebarImpl({
   const [channelMenu, setChannelMenu] = useState<{ channel: Channel; state: MessageActionMenuState } | null>(null);
   const workRows = useMemo(() => agentWorkRows(sessions, activeChannelId), [activeChannelId, sessions]);
   const hasNeedsYou = workRows.some((row) => row.kind !== 'running');
-  const hasReview = (activityCounts?.unread ?? 0) > 0;
+  const toReview = activityCounts?.toReview ?? 0;
+  const hasReview = toReview > 0;
   const visibleRunning = !agentWorkCollapsed && workRows.some((row) => row.kind === 'running');
   const now = useAgentWorkNow(visibleRunning);
 
@@ -295,20 +296,28 @@ function SidebarImpl({
   };
 
   const inboxBadge = () => {
-    const attention = activityCounts?.attention ?? 0;
+    const needsYou = activityCounts?.needsYou ?? 0;
+    const toReview = activityCounts?.toReview ?? 0;
     const unreadCount = activityCounts?.unread ?? 0;
-    const count = attention > 0 ? attention : unreadCount;
-    if (count <= 0) return null;
-    const label = count >= 99 ? '99+' : String(count);
-    const description = attention > 0 ? 'needs attention' : 'unread activity';
-    return (
-      <span
-        className={`ml-auto shrink-0 rounded-full px-1.5 py-px text-3xs font-bold leading-4 ${
-          attention > 0 ? 'bg-warning-tint text-warning-text-strong' : 'bg-surface-overlay text-fg-muted'
-        }`}
-      >
-        {label}
+    const pill = (count: number, description: string, className: string) => (
+      <span className={`shrink-0 rounded-full px-1.5 py-px text-3xs font-bold leading-4 ${className}`}>
+        {count >= 99 ? '99+' : count}
         <span className="sr-only"> {description}</span>
+      </span>
+    );
+    if (needsYou > 0 || toReview > 0) {
+      return (
+        <span className="ml-auto flex shrink-0 items-center gap-1">
+          {needsYou > 0 && pill(needsYou, 'need you', 'bg-warning-tint text-warning-text-strong')}
+          {toReview > 0 && pill(toReview, 'to review', 'bg-surface-overlay text-fg-muted')}
+        </span>
+      );
+    }
+    if (unreadCount <= 0) return null;
+    return (
+      <span className="ml-auto shrink-0 rounded-full bg-surface-overlay px-1.5 py-px text-3xs font-bold leading-4 text-fg-muted">
+        {unreadCount >= 99 ? '99+' : unreadCount}
+        <span className="sr-only"> unread activity</span>
       </span>
     );
   };
@@ -590,7 +599,7 @@ function SidebarImpl({
                       <span aria-hidden="true" className="w-4 shrink-0 text-center text-xs">
                         ✓
                       </span>
-                      <span className="truncate">To review →</span>
+                      <span className="truncate">{toReview} to review →</span>
                     </button>
                   )}
                 </div>

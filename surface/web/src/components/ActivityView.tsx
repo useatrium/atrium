@@ -8,6 +8,7 @@ import {
   isActivityUnread,
   matchesActivityFilter,
   matchesActivitySource,
+  type ActivityChannelCounts,
   type ActivityCounts,
   type ActivityFeedFilter,
   type ActivityItem,
@@ -353,7 +354,7 @@ export function ActivityView({
   channelNames?: Record<string, string>;
   onOpenAgents?: () => void;
   onArchiveSession?: (sessionId: string, previousArchivedAt: string | null) => void;
-  onCountsChange?: (counts: ActivityCounts) => void;
+  onCountsChange?: (counts: ActivityCounts, channelCounts?: Record<string, ActivityChannelCounts>) => void;
 }) {
   const [items, setItems] = useState<ActivityItem[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
@@ -400,9 +401,15 @@ export function ActivityView({
         // Decode-with-default: a deploy-skewed server may predate read-state.
         setLastReadEventId(typeof res.lastReadEventId === 'string' ? res.lastReadEventId : '0');
         setUnreadExceptionIds(Array.isArray(res.unreadExceptionIds) ? res.unreadExceptionIds.map(String) : []);
-        const nextCounts = { attention: Number(res.counts?.attention) || 0, unread: Number(res.counts?.unread) || 0 };
+        const nextCounts = {
+          attention: Number(res.counts?.attention) || 0,
+          unread: Number(res.counts?.unread) || 0,
+          needsYou: Number(res.counts?.needsYou) || 0,
+          running: Number(res.counts?.running) || 0,
+          toReview: Number(res.counts?.toReview) || 0,
+        };
         setCounts(nextCounts);
-        onCountsChange?.(nextCounts);
+        onCountsChange?.(nextCounts, res.channelCounts);
       } catch (err) {
         if (requestId === loadRequestRef.current) {
           setError(err instanceof Error ? err.message : 'Unable to load activity');
@@ -443,7 +450,7 @@ export function ActivityView({
       setLastReadEventId(nextWatermark);
       setUnreadExceptionIds(nextExceptions);
       setCounts((c) => {
-        const next = { attention: c.attention, unread: Math.max(0, c.unread - 1) };
+        const next = { ...c, unread: Math.max(0, c.unread - 1) };
         onCountsChange?.(next);
         return next;
       });
@@ -474,7 +481,7 @@ export function ActivityView({
         setUnreadExceptionIds((ids) => [...ids, item.eventId]);
       }
       setCounts((c) => {
-        const next = { attention: c.attention, unread: Math.min(99, c.unread + 1) };
+        const next = { ...c, unread: Math.min(99, c.unread + 1) };
         onCountsChange?.(next);
         return next;
       });
@@ -552,7 +559,7 @@ export function ActivityView({
       counts,
       items,
     };
-    const optimisticCounts = { attention: counts.attention, unread: 0 };
+    const optimisticCounts = { ...counts, unread: 0 };
     setMarkingRead(true);
     setLastReadEventId(String(newestEventId));
     setUnreadExceptionIds([]);

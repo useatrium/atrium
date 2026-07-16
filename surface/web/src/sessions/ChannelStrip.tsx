@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { formatOutcome } from '@atrium/surface-client';
+import { formatOutcome, type ActivityChannelCounts } from '@atrium/surface-client';
 import {
   formatDurationUnits,
   isArchivedSession,
@@ -10,7 +10,6 @@ import {
 import { sessionElapsedMs, useNow } from './SessionCard';
 
 const ROW_CAP = 5;
-const REVIEW_WINDOW_MS = 48 * 60 * 60 * 1000;
 
 type Bucket = 'needs' | 'running' | 'review';
 
@@ -25,12 +24,6 @@ function needsAttention(session: Session): boolean {
   );
 }
 
-function completedRecently(session: Session, now: number): boolean {
-  if (!session.completedAt) return false;
-  const completedAt = Date.parse(session.completedAt);
-  return Number.isFinite(completedAt) && completedAt >= now - REVIEW_WINDOW_MS;
-}
-
 function sortNewest(a: Session, b: Session): number {
   return Date.parse(b.completedAt ?? b.createdAt) - Date.parse(a.completedAt ?? a.createdAt);
 }
@@ -41,23 +34,32 @@ function sortLongestBlocked(a: Session, b: Session): number {
   return blockedAt(a) - blockedAt(b);
 }
 
-function channelSessions(channelId: string | null, sessions: Record<string, Session>, now: number): StripSession[] {
+function channelSessions(
+  channelId: string | null,
+  sessions: Record<string, Session>,
+  reviewCount: number,
+): StripSession[] {
   if (!channelId) return [];
   const buckets: Record<Bucket, Session[]> = { needs: [], running: [], review: [] };
   for (const session of Object.values(sessions)) {
     if (session.channelId !== channelId || isArchivedSession(session) || isPendingSessionId(session.id)) continue;
     if (isTerminalSessionStatus(session.status)) {
-      // Client session state has no completion-unread marker yet. Keep recent
-      // terminal work visible until the server provides that per-user signal.
-      if (completedRecently(session, now)) buckets.review.push(session);
+      buckets.review.push(session);
     } else if (needsAttention(session)) {
       buckets.needs.push(session);
     } else {
       buckets.running.push(session);
     }
   }
+  buckets.needs.sort(sortLongestBlocked);
+  buckets.running.sort(sortNewest);
+  buckets.review.sort(sortNewest);
+  // The API intentionally exposes aggregate review counts, not row identities.
+  // Keep locally known terminal rows for detail, but never list more than the
+  // server says remain unreviewed.
+  buckets.review = buckets.review.slice(0, reviewCount);
   return (['needs', 'running', 'review'] as const).flatMap((bucket) =>
-    buckets[bucket].sort(bucket === 'needs' ? sortLongestBlocked : sortNewest).map((session) => ({ session, bucket })),
+    buckets[bucket].map((session) => ({ session, bucket })),
   );
 }
 
@@ -67,27 +69,26 @@ function countLabel(count: number, label: string): string {
 
 export function ChannelStrip({
   channelId,
+  channelCounts,
   sessions,
   onOpenSession,
   onOpenInbox,
 }: {
   channelId: string | null;
+  channelCounts?: ActivityChannelCounts;
   sessions: Record<string, Session>;
   onOpenSession: (sessionId: string) => void;
   onOpenInbox: () => void;
 }) {
   const now = useNow(Object.values(sessions).some((session) => !isTerminalSessionStatus(session.status)));
   const [expandedByChannel, setExpandedByChannel] = useState<Record<string, boolean>>({});
-  const rows = useMemo(() => channelSessions(channelId, sessions, now), [channelId, now, sessions]);
-  const counts = useMemo(
-    () => ({
-      needs: rows.filter((row) => row.bucket === 'needs').length,
-      running: rows.filter((row) => row.bucket === 'running').length,
-      review: rows.filter((row) => row.bucket === 'review').length,
-    }),
-    [rows],
-  );
-  if (!channelId || rows.length === 0) return null;
+  const counts = {
+    needs: channelCounts?.needsYou ?? 0,
+    running: channelCounts?.running ?? 0,
+    review: channelCounts?.toReview ?? 0,
+  };
+  const rows = useMemo(() => channelSessions(channelId, sessions, counts.review), [channelId, counts.review, sessions]);
+  if (!channelId || counts.needs + counts.running + counts.review === 0) return null;
 
   const expanded = expandedByChannel[channelId] === true;
   const summary = [

@@ -245,7 +245,7 @@ describe('ActivityView', () => {
 
     await waitFor(() => expect(apiMock.markActivityRead).toHaveBeenCalledWith(12));
     expect(screen.queryByLabelText('Unread')).toBeNull();
-    expect(onCountsChange).toHaveBeenCalledWith({ attention: 1, unread: 0 });
+    expect(onCountsChange).toHaveBeenCalledWith({ attention: 1, unread: 0, needsYou: 0, running: 0, toReview: 0 });
     await waitFor(() => expect(apiMock.getActivity).toHaveBeenCalledTimes(2));
   });
 

@@ -161,7 +161,7 @@ for (const viewport of VIEWPORTS) {
       await page.getByRole('button', { name: 'Open navigation' }).click();
     }
     await expect(page.getByRole('button', { name: 'Files', exact: true })).toBeVisible();
-    await expect(page.getByRole('button', { name: /Inbox$/ })).toBeVisible();
+    await expect(page.getByRole('button', { name: /^Inbox/ })).toBeVisible();
     await expectNoDocumentOverflow(page, `${viewport.name} authenticated shell`);
     if (viewport.name === 'phone') await attachScreenshot(page, testInfo, 'empty-phone-shell');
   });
@@ -171,7 +171,7 @@ test('empty destinations, keyboard focus, and deterministic contrast have eviden
   await page.setViewportSize(VIEWPORTS[3]);
   await login(page, unique('audit-empty'), 'Audit Empty');
 
-  const attention = page.getByRole('button', { name: /Inbox$/ });
+  const attention = page.getByRole('button', { name: /^Inbox/ });
   await expectVisibleFocus(attention);
   await attention.press('Enter');
   // The Inbox mirrors workspace-global live sessions, so a brand-new user is
