@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { Platform, useWindowDimensions } from 'react-native';
 import { Tabs } from 'expo-router';
-import { isTerminalSessionStatus, sessionAttentionKind, type Session } from '@atrium/surface-client';
+import { isLiveAgentWork, sessionAttentionKind, type Session } from '@atrium/surface-client';
 import { useChat } from '../../../src/lib/chat';
 import { useActivityCounts } from '../../../src/lib/useActivityCounts';
 import { navigationTargetSize, TabIcon } from '../../../src/components/PlatformTabBar';
@@ -12,7 +12,7 @@ export function getSessionNavigationCounts(sessions: Record<string, Session | un
     (session): session is Session => !!session && session.archivedAt === null,
   );
   return {
-    live: values.filter((session) => !isTerminalSessionStatus(session.status)).length,
+    live: values.filter(isLiveAgentWork).length,
     attention: values.filter((session) => sessionAttentionKind(session) !== null).length,
   };
 }

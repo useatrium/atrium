@@ -24,8 +24,8 @@ export function useActivityCounts(): ActivityCounts {
     // Promise.resolve() guard + decode-with-default: a sync-throwing transport
     // or a deploy-skewed server without counts must not break the tab bar.
     void Promise.resolve()
-      .then(() => api.getActivity())
-      .then(({ counts: next }) =>
+      .then(() => api.getActivityCounts())
+      .then((next) =>
         setCounts({
           attention: Number(next?.attention) || 0,
           unread: Number(next?.unread) || 0,

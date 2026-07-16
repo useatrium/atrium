@@ -56,6 +56,11 @@ function optimistic(over: Partial<Session>): Record<string, Session> {
 }
 
 describe('applySessionEvent repo/branch fold', () => {
+  it('repairs the thread root when a snapshot created the entity before the spawn folds', () => {
+    const s = applySessionEvent(optimistic({ threadRootEventId: null }), { ...spawned({}), threadRootEventId: 42 });
+    expect(s['sess-1']!.threadRootEventId).toBe(42);
+  });
+
   it('reads repo/branch from a fresh session.spawned event', () => {
     const s = applySessionEvent({}, spawned({ repo: 'acme/app', branch: 'dev' }));
     expect(s['sess-1']).toMatchObject({ repo: 'acme/app', branch: 'dev' });

@@ -3,7 +3,7 @@
 import '@testing-library/jest-dom/vitest';
 import { cleanup, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { formatExactTimestamp } from '@atrium/surface-client';
+import { formatExactTimestamp, type Channel, type Session } from '@atrium/surface-client';
 import ActivityScreen from '../app/(app)/(tabs)/activity';
 import { pressWhenReady, renderWithTheme } from './rnTestUtils';
 import { Text } from 'react-native';
@@ -32,7 +32,8 @@ const chatMock = vi.hoisted(() => ({
   me: { id: 'u-me', handle: 'me', displayName: 'Me' },
   state: {
     wsStatus: 'open' as const,
-    sessions: {},
+    sessions: {} as Record<string, Session>,
+    channels: [] as Channel[],
   },
   resolveUser: () => null,
 }));
@@ -63,6 +64,35 @@ vi.mock('../src/components/Markdown', () => ({
 
 afterEach(cleanup);
 
+function liveSession(overrides: Partial<Session> = {}): Session {
+  return {
+    id: 's-live',
+    workspaceId: 'ws-1',
+    channelId: 'ch-agent',
+    threadRootEventId: null,
+    title: 'Live agent',
+    status: 'running',
+    harness: 'codex',
+    spawnedBy: 'u-me',
+    driverId: 'u-me',
+    pendingSeatRequests: [],
+    suggestions: [],
+    answerProposals: [],
+    pendingQuestion: null,
+    providerAuthRequired: null,
+    seatEvents: [],
+    costUsd: 0,
+    resultText: null,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    completedAt: null,
+    archivedAt: null,
+    pinned: false,
+    lastEventId: 1,
+    permalink: '/session/s-live',
+    ...overrides,
+  };
+}
+
 beforeEach(() => {
   routerMock.push.mockReset();
   chatMock.api.listSessions.mockReset();
@@ -73,6 +103,7 @@ beforeEach(() => {
   chatMock.api.markSessionActivityRead.mockReset();
   chatMock.api.messages.mockReset();
   chatMock.state.sessions = {};
+  chatMock.state.channels = [];
   chatMock.api.markActivityRead.mockResolvedValue({ lastReadEventId: '0', unreadExceptionIds: [] });
   chatMock.api.markActivityItemRead.mockResolvedValue({ lastReadEventId: '0', unreadExceptionIds: [] });
   chatMock.api.markActivityItemUnread.mockResolvedValue({ lastReadEventId: '0', unreadExceptionIds: [] });
@@ -87,6 +118,71 @@ vi.mock('react-native-gesture-handler', () => {
 });
 
 describe('mobile Activity screen', () => {
+  it('keeps a REST-flagged row pinned when its fold-only live status is unknown', async () => {
+    chatMock.state.sessions = {
+      's-needs': liveSession({ id: 's-needs', title: 'Answer the agent', status: 'unknown' as never }),
+    };
+    chatMock.api.listSessions.mockResolvedValue({
+      sessions: [
+        {
+          id: 's-needs',
+          channelId: 'ch-agent',
+          channelName: 'agents',
+          title: 'Answer the agent',
+          status: 'running',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          completedAt: null,
+          archivedAt: null,
+          pinned: false,
+          costUsd: 0,
+          needsAttention: true,
+          attentionReason: 'question',
+          resultText: null,
+        },
+      ],
+    });
+    chatMock.api.getActivity.mockResolvedValue({
+      items: [],
+      nextCursor: null,
+      lastReadEventId: '0',
+      counts: { attention: 1, unread: 0, needsYou: 1, running: 0, toReview: 0 },
+    });
+
+    renderWithTheme(<ActivityScreen />);
+
+    expect(await screen.findByText('Needs you · 1')).toBeInTheDocument();
+    expect(screen.getByText('Answer the agent')).toBeInTheDocument();
+  });
+
+  it('resolves a snapshot-only running session channel without leaking its UUID', async () => {
+    chatMock.state.sessions = {
+      's-running': liveSession({ id: 's-running', title: 'Snapshot-only agent' }),
+    };
+    chatMock.state.channels = [
+      {
+        id: 'ch-agent',
+        workspaceId: 'ws-1',
+        name: 'agents',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        archivedAt: null,
+        pinned: false,
+      },
+    ];
+    chatMock.api.listSessions.mockResolvedValue({ sessions: [] });
+    chatMock.api.getActivity.mockResolvedValue({
+      items: [],
+      nextCursor: null,
+      lastReadEventId: '0',
+      counts: { attention: 0, unread: 0, needsYou: 0, running: 1, toReview: 0 },
+    });
+
+    renderWithTheme(<ActivityScreen />);
+
+    expect(await screen.findByText('Snapshot-only agent')).toBeInTheDocument();
+    expect(screen.getByText(/#agents/)).toBeInTheDocument();
+    expect(screen.queryByText(/ch-agent/)).not.toBeInTheDocument();
+  });
+
   it('keeps healthy running work out of Attention while preserving server activity', async () => {
     chatMock.api.listSessions.mockResolvedValue({
       sessions: [
@@ -230,15 +326,7 @@ describe('mobile Activity screen', () => {
 
   it('shelves running work and terminal results, then composes source filtering with Inbox predicates', async () => {
     chatMock.state.sessions = {
-      's-running': {
-        id: 's-running',
-        title: 'Keep the rollout moving',
-        status: 'running',
-        channelId: 'ch-agent',
-        createdAt: '2026-01-01T00:00:00.000Z',
-        archivedAt: null,
-        pendingSeatRequests: [],
-      },
+      's-running': liveSession({ id: 's-running', title: 'Keep the rollout moving' }),
     };
     chatMock.api.listSessions.mockResolvedValue({
       sessions: [

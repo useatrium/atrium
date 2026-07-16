@@ -12,7 +12,7 @@ import {
   isNetworkFailure,
 } from '../src/api';
 import type { CallJoin, CallWire } from '../src/calls';
-import type { SessionListItem, SessionWire } from '../src/sessions';
+import type { SessionListItem, SessionSnapshotItem, SessionWire } from '../src/sessions';
 import type { SyncResponse } from '../src/sync';
 import type { WireEvent } from '../src/timeline';
 
@@ -336,6 +336,38 @@ describe('wire event response decoding', () => {
     delete (wire.state as Partial<SyncResponse['state']>).sessions;
 
     expect(decodeSyncResponse(wire).state.sessions).toEqual([]);
+  });
+
+  it('decodes snapshot attention payloads and defaults them across deploy skew', () => {
+    const wire = syncResponse();
+    wire.state.sessions = [
+      {
+        ...listItem(),
+        threadRootEventId: 42,
+        pendingQuestion: {
+          questionId: 'q-1',
+          turnId: 'turn-1',
+          questions: [],
+          eventId: 7,
+          askedAt: '2026-07-16T12:00:00.000Z',
+        },
+        providerAuthRequired: null,
+      } satisfies SessionSnapshotItem,
+    ];
+
+    expect(decodeSyncResponse(wire).state.sessions[0]).toMatchObject({
+      threadRootEventId: 42,
+      pendingQuestion: { questionId: 'q-1' },
+      providerAuthRequired: null,
+    });
+
+    const oldWire = syncResponse();
+    oldWire.state.sessions = [listItem() as SessionSnapshotItem];
+    expect(decodeSyncResponse(oldWire).state.sessions[0]).toMatchObject({
+      threadRootEventId: null,
+      pendingQuestion: null,
+      providerAuthRequired: null,
+    });
   });
 
   it('rejects malformed sync event envelopes from createApi', async () => {

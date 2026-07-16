@@ -15,9 +15,11 @@ import {
   resetToLatest,
   type ChatMessage,
   type Session,
-  type SessionListItem,
+  type SessionSnapshotItem,
   type SyncResponse,
   type WireEvent,
+  deriveSessionGlance,
+  sessionAttentionKind,
 } from '../src/index';
 
 const alice = { id: 'u-alice', handle: 'alice', displayName: 'Alice' };
@@ -1245,6 +1247,128 @@ describe('live cold-counter advancement (unread divider depends on it)', () => {
 });
 
 describe('unified sync application', () => {
+  it('classifies a snapshot-only pending question as needing a person', () => {
+    const pendingQuestion = {
+      questionId: 'q-snapshot',
+      turnId: 'turn-snapshot',
+      questions: [{ id: 'choice', header: 'Pick', question: 'Choose?' }],
+      eventId: 41,
+      askedAt: '2026-07-16T12:00:00.000Z',
+    };
+    const snapshot = {
+      id: 'sess-snapshot-question',
+      channelId: CH,
+      channelName: 'general',
+      threadRootEventId: 40,
+      title: 'waiting for input',
+      status: 'running' as const,
+      harness: 'codex',
+      spawnedBy: alice.id,
+      spawnerName: alice.displayName,
+      costUsd: 0,
+      createdAt: '2026-07-16T11:00:00.000Z',
+      completedAt: null,
+      archivedAt: null,
+      pinned: false,
+      needsAttention: true,
+      attentionReason: 'question' as const,
+      resultText: null,
+      pendingQuestion,
+      providerAuthRequired: null,
+    } satisfies SessionSnapshotItem;
+
+    const state = appReducer(initialAppState, { type: 'sessions-loaded', sessions: [snapshot] });
+    const session = state.sessions[snapshot.id]!;
+
+    expect(session.threadRootEventId).toBe(40);
+    expect(sessionAttentionKind(session)).toBe('question');
+    expect(deriveSessionGlance(session, Date.parse('2026-07-16T12:05:00.000Z')).kind).toBe('needs_you');
+  });
+
+  it('does not let a null snapshot question wipe one already folded from WS', () => {
+    const live: Session = {
+      id: 'sess-live-question',
+      workspaceId: 'ws-1',
+      channelId: CH,
+      threadRootEventId: 40,
+      title: 'waiting for input',
+      status: 'running',
+      harness: 'codex',
+      spawnedBy: alice.id,
+      driverId: alice.id,
+      pendingSeatRequests: [],
+      suggestions: [],
+      answerProposals: [],
+      pendingQuestion: { questionId: 'q-live', questions: [] },
+      providerAuthRequired: null,
+      seatEvents: [],
+      costUsd: 0,
+      resultText: null,
+      createdAt: '2026-07-16T11:00:00.000Z',
+      completedAt: null,
+      archivedAt: null,
+      pinned: false,
+      lastEventId: 41,
+      permalink: '/s/sess-live-question',
+    };
+    const snapshot = {
+      id: live.id,
+      channelId: CH,
+      channelName: 'general',
+      threadRootEventId: null,
+      title: live.title,
+      status: 'running' as const,
+      harness: live.harness,
+      spawnedBy: alice.id,
+      spawnerName: alice.displayName,
+      costUsd: 0,
+      createdAt: live.createdAt,
+      completedAt: null,
+      archivedAt: null,
+      pinned: false,
+      needsAttention: false,
+      attentionReason: null,
+      resultText: null,
+      pendingQuestion: null,
+      providerAuthRequired: null,
+    } satisfies SessionSnapshotItem;
+
+    let state = appReducer(initialAppState, { type: 'session-upsert', session: live });
+    state = appReducer(state, { type: 'sessions-loaded', sessions: [snapshot] });
+
+    expect(state.sessions[live.id]!.pendingQuestion?.questionId).toBe('q-live');
+    expect(state.sessions[live.id]!.threadRootEventId).toBe(40);
+  });
+
+  it('leaves a snapshot-only session without seat payload classified as running work', () => {
+    const snapshot: SessionSnapshotItem = {
+      id: 'sess-seat-gap',
+      channelId: CH,
+      channelName: 'general',
+      title: 'seat request omitted by snapshot',
+      status: 'running',
+      harness: 'codex',
+      spawnedBy: alice.id,
+      spawnerName: alice.displayName,
+      costUsd: 0,
+      createdAt: '2026-07-16T11:00:00.000Z',
+      completedAt: null,
+      archivedAt: null,
+      pinned: false,
+      needsAttention: false,
+      attentionReason: null,
+      resultText: null,
+      threadRootEventId: null,
+      pendingQuestion: null,
+      providerAuthRequired: null,
+    };
+
+    const state = appReducer(initialAppState, { type: 'sessions-loaded', sessions: [snapshot] });
+    const session = state.sessions[snapshot.id]!;
+    expect(sessionAttentionKind(session)).toBeNull();
+    expect(deriveSessionGlance(session, Date.parse('2026-07-16T12:05:00.000Z')).kind).toBe('working');
+  });
+
   it('applies events and state snapshot through existing actions', () => {
     let state = appReducer(initialAppState, {
       type: 'channels-loaded',
@@ -1350,7 +1474,7 @@ describe('unified sync application', () => {
       lastEventId: 10,
       permalink: '/s/sess-snapshot-race',
     };
-    const staleSnapshot: SessionListItem = {
+    const staleSnapshot: SessionSnapshotItem = {
       id: completed.id,
       channelId: CH,
       channelName: 'general',
@@ -1367,6 +1491,9 @@ describe('unified sync application', () => {
       needsAttention: false,
       attentionReason: null,
       resultText: null,
+      threadRootEventId: null,
+      pendingQuestion: null,
+      providerAuthRequired: null,
     };
 
     let state = appReducer(initialAppState, { type: 'session-upsert', session: completed });

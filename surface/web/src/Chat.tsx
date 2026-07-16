@@ -826,10 +826,16 @@ export function Chat({
 
   // Live sessions blocked on a person pin into Attention immediately, before
   // (or without) the server feed item — parity with the mobile Attention tab.
+  //
+  // Scoped to sessions you spawned, like every other Inbox row: the server's
+  // feed and its attention count are both `spawned_by = me`, and state.sessions
+  // is scoped by channel visibility, so synthesizing for anyone's session put
+  // rows in the shelf that the badge above it could never count.
   const liveAttentionItems = useMemo(() => {
     const items: ActivityItem[] = [];
     for (const session of Object.values(state.sessions)) {
       if (isPendingSessionId(session.id)) continue;
+      if (session.spawnedBy !== me.id) continue;
       const kind = sessionAttentionKind(session);
       if (!kind || kind === 'failed') continue;
       const channel = state.channels.find((c) => c.id === session.channelId);
@@ -850,7 +856,7 @@ export function Chat({
       });
     }
     return items;
-  }, [state.sessions, state.channels]);
+  }, [state.sessions, state.channels, me.id]);
 
   const active = state.channels.find((c) => c.id === state.activeChannelId) ?? null;
   const timeline = (active && state.timelines[active.id]) || emptyTimeline;

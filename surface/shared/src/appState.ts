@@ -27,7 +27,7 @@ import {
   maxSessionStatus,
   mergeSpawnResponse,
   type Session,
-  type SessionListItem,
+  type SessionSnapshotItem,
 } from './sessions';
 import { mentionsUser } from './mentions';
 import type { WsStatus } from './useWs';
@@ -170,7 +170,7 @@ export type AppAction =
   | { type: 'session-spawn-pending'; channelId: string; message: ChatMessage; session: Session }
   | { type: 'session-created'; channelId: string; tempId: string; session: Session }
   | { type: 'session-spawn-failed'; channelId: string; tempId: string }
-  | { type: 'sessions-loaded'; sessions: SessionListItem[] }
+  | { type: 'sessions-loaded'; sessions: SessionSnapshotItem[] }
   | { type: 'session-upsert'; session: Session }
   | { type: 'session-activity'; sessionId: string; summary: string; at: string }
   | { type: 'open-session'; sessionId: string }
@@ -204,6 +204,7 @@ function mergeSessionEntity(existing: Session | undefined, incoming: Session): S
     ...incoming,
     // A slow snapshot must never roll back a status WS already advanced.
     status: existing ? maxSessionStatus(existing.status, incoming.status) : incoming.status,
+    threadRootEventId: incoming.threadRootEventId ?? existing?.threadRootEventId ?? null,
     pendingQuestion: incoming.pendingQuestion ?? existing?.pendingQuestion ?? null,
     // The durable answered trace: a fetch that predates the answer must not
     // erase what WS already folded.
@@ -222,14 +223,14 @@ function mergeSessionEntity(existing: Session | undefined, incoming: Session): S
   return session;
 }
 
-function sessionFromListSnapshot(state: AppState, item: SessionListItem): Session {
+function sessionFromListSnapshot(state: AppState, item: SessionSnapshotItem): Session {
   const existing = state.sessions[item.id];
   return {
     ...(existing ?? {
       id: item.id,
       workspaceId: state.channels.find((channel) => channel.id === item.channelId)?.workspaceId ?? '',
       channelId: item.channelId,
-      threadRootEventId: null,
+      threadRootEventId: item.threadRootEventId,
       title: item.title,
       status: item.status,
       harness: item.harness,
@@ -238,8 +239,8 @@ function sessionFromListSnapshot(state: AppState, item: SessionListItem): Sessio
       pendingSeatRequests: [],
       suggestions: [],
       answerProposals: [],
-      pendingQuestion: null,
-      providerAuthRequired: null,
+      pendingQuestion: item.pendingQuestion,
+      providerAuthRequired: item.providerAuthRequired,
       questionEvents: [],
       seatEvents: [],
       costUsd: item.costUsd,
@@ -253,11 +254,14 @@ function sessionFromListSnapshot(state: AppState, item: SessionListItem): Sessio
     }),
     id: item.id,
     channelId: item.channelId,
+    threadRootEventId: item.threadRootEventId,
     title: item.title,
     status: item.status,
     harness: item.harness,
     spawnedBy: item.spawnedBy,
     spawnerName: item.spawnerName,
+    pendingQuestion: item.pendingQuestion,
+    providerAuthRequired: item.providerAuthRequired,
     costUsd: item.costUsd,
     resultText: item.resultText ?? existing?.resultText ?? null,
     createdAt: item.createdAt,

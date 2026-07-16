@@ -262,12 +262,16 @@ describe('Sidebar agent work', () => {
   });
 
   it('splits Inbox badges by needs-you and review, with unread fallback for human-only activity', () => {
+    // `attention` (9) is scoped to agents you spawned — the same scope as the
+    // Needs-you shelf this badge opens. `needsYou` (2) is scoped by channel
+    // visibility. They deliberately differ here: the badge must follow the
+    // count whose list it actually lands you on.
     const { rerender } = renderSidebar({
       activityCounts: { attention: 9, unread: 12, needsYou: 2, toReview: 4 },
     });
 
-    const inbox = screen.getByRole('button', { name: 'Inbox 2 need you 4 to review' });
-    expect(inbox.textContent).toContain('2 need you4 to review');
+    const inbox = screen.getByRole('button', { name: 'Inbox 9 need you 4 to review' });
+    expect(inbox.textContent).toContain('9 need you4 to review');
     expect(inbox.querySelectorAll('.bg-warning-tint')).toHaveLength(1);
     expect(inbox.querySelectorAll('.bg-surface-overlay')).toHaveLength(1);
 

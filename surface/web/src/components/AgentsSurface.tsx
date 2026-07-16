@@ -3,7 +3,9 @@ import {
   formatCost,
   formatOutcome,
   formatTime,
+  isUnknownSessionStatus,
   isTerminalSessionStatus,
+  sessionAttentionKind,
   type SessionListItem,
 } from '@atrium/surface-client';
 import { navigate } from '../router';
@@ -27,19 +29,27 @@ type SessionRowMenu = {
 
 function sessionNeedsAttention(session: SessionListItem, liveSession?: Session): boolean {
   if (session.needsAttention) return true;
-  return liveSession?.pendingQuestion != null || liveSession?.providerAuthRequired != null;
+  return liveSession != null && sessionAttentionKind(liveSession) != null;
 }
 
 /** Chip input: the live entity when the socket has one, else the REST row. */
 function glanceInputFor(session: SessionListItem, live?: Session): SessionGlanceInput {
-  return (
-    live ?? {
-      status: session.status,
-      pendingSeatRequests: [],
-      createdAt: session.createdAt,
-      completedAt: session.completedAt,
-    }
-  );
+  const rest = {
+    status: session.status,
+    pendingSeatRequests: [],
+    createdAt: session.createdAt,
+    completedAt: session.completedAt,
+  };
+  if (!live) return rest;
+  if (!isUnknownSessionStatus(live.status)) return live;
+  // A fold-only entity can still carry useful question/auth/seat state, but its
+  // unknown lifecycle must not replace the REST row's durable status and clock.
+  return {
+    ...live,
+    status: rest.status,
+    createdAt: rest.createdAt,
+    completedAt: rest.completedAt,
+  };
 }
 
 function sessionFreshness(session: SessionListItem): number {
@@ -361,7 +371,7 @@ function AgentSessionListButton({
 }) {
   // The REST row can flag needs-attention without carrying the live fields
   // that prove it — honor the flag so the chip never contradicts the group.
-  const flaggedOnly = !live && session.needsAttention;
+  const flaggedOnly = (!live || isUnknownSessionStatus(live.status)) && session.needsAttention;
   return (
     <div className="group/agent-row flex w-full min-w-0 items-center border-b border-edge last:border-b-0 hover:bg-accent/20">
       <button

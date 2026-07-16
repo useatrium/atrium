@@ -6,6 +6,8 @@ import {
   formatRelativeTimestamp,
   formatWaiting,
   isActivityUnread,
+  isDurableTerminalStatus,
+  isLiveAgentWork,
   matchesActivityFilter,
   matchesActivitySource,
   sessionDriverId,
@@ -17,12 +19,17 @@ import {
   type WireEvent,
 } from '@atrium/surface-client';
 import { api } from '../api';
-import { isTerminalSessionStatus, type Session } from '../sessions/types';
+import type { Session } from '../sessions/types';
 import { Menu, MenuContent, MenuItem, MenuTrigger } from './a11y';
 import { CompactMarkdownText } from './MessageText';
 import { failedSessionNudge, type FailedSessionNudge } from '../sessions/nudge';
 
-const ATTENTION_KINDS = new Set<ActivityItem['kind']>(['agent_question', 'agent_auth', 'session_failed']);
+const ATTENTION_KINDS = new Set<ActivityItem['kind']>([
+  'agent_question',
+  'agent_auth',
+  'seat_request',
+  'session_failed',
+]);
 
 const FILTERS: Array<{ id: ActivityFeedFilter; label: string }> = [
   { id: 'inbox', label: 'Inbox' },
@@ -155,7 +162,9 @@ function outcomeFor(item: ActivityItem, session?: Session): string | null {
 
 /** What actually makes a synthetic row go away — shown where its ⋯ menu would be. */
 function clearsWhenLabel(item: ActivityItem): string {
-  return item.kind === 'agent_auth' ? 'Clears when reconnected' : 'Clears when answered';
+  if (item.kind === 'agent_auth') return 'Clears when reconnected';
+  if (item.kind === 'seat_request') return 'Clears when the seat request is resolved';
+  return 'Clears when answered';
 }
 
 function ActivityRow({
@@ -269,7 +278,7 @@ function ActivityRow({
                   Mark unread
                 </MenuItem>
               )}
-              {session && isTerminalSessionStatus(session.status) && session.archivedAt == null && onArchiveSession && (
+              {session && isDurableTerminalStatus(session.status) && session.archivedAt == null && onArchiveSession && (
                 <MenuItem onSelect={() => onArchiveSession(session)}>Archive session</MenuItem>
               )}
             </MenuContent>
@@ -535,7 +544,7 @@ export function ActivityView({
 
   const activate = async (item: ActivityItem) => {
     // History rows (including failures in history) auto-mark read on open.
-    // Live question/auth pins stay until the session state clears.
+    // Live question/auth/seat pins stay until the session state clears.
     const unread = isActivityUnread(item, lastReadEventId, exceptionSet);
     if (unread && isHistoryKind(item.kind) && !item.attention) {
       void markItemRead(item);
@@ -546,7 +555,8 @@ export function ActivityView({
       item.kind !== 'agent_question' &&
       item.kind !== 'session_completed' &&
       item.kind !== 'session_failed' &&
-      item.kind !== 'agent_auth'
+      item.kind !== 'agent_auth' &&
+      item.kind !== 'seat_request'
     ) {
       return;
     }
@@ -662,12 +672,7 @@ export function ActivityView({
     [filteredAttention],
   );
   const runningSessions = useMemo(
-    () =>
-      source === 'people'
-        ? []
-        : Object.values(sessions).filter(
-            (session) => !isTerminalSessionStatus(session.status) && session.archivedAt == null,
-          ),
+    () => (source === 'people' ? [] : Object.values(sessions).filter(isLiveAgentWork)),
     [sessions, source],
   );
   // A failed run that is pinned in Needs you must not ALSO shelve under To

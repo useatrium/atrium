@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { formatOutcome, type ActivityChannelCounts } from '@atrium/surface-client';
+import { formatOutcome, isLiveAgentWork, type ActivityChannelCounts } from '@atrium/surface-client';
 import {
   formatDurationUnits,
   isArchivedSession,
@@ -51,7 +51,7 @@ function channelSessions(
   const buckets: Record<Bucket, Session[]> = { needs: [], running: [], review: [] };
   for (const session of Object.values(sessions)) {
     if (session.channelId !== channelId || isArchivedSession(session) || isPendingSessionId(session.id)) continue;
-    if (isTerminalSessionStatus(session.status)) {
+    if (!isLiveAgentWork(session)) {
       if (completedRecently(session, now)) buckets.review.push(session);
       continue;
     }

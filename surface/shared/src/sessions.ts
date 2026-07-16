@@ -436,6 +436,14 @@ export interface SessionListItem {
   resultText: string | null;
 }
 
+/** Richer session row carried only by /sync. GET /api/sessions deliberately
+ * stays on SessionListItem so list pagination remains lean. */
+export interface SessionSnapshotItem extends SessionListItem {
+  pendingQuestion: SessionPendingQuestion | null;
+  providerAuthRequired: SessionProviderAuthRequired | null;
+  threadRootEventId: number | null;
+}
+
 /** Client-side session entity (wire shape + display-only extras). */
 export interface Session {
   id: string;
@@ -571,8 +579,9 @@ export function deriveSessionGlance(
     ...rest,
   });
 
-  // A person is being waited on — this outranks every raw status.
-  if (!isTerminalSessionStatus(session.status)) {
+  // A person is being waited on — this outranks every raw status, including a
+  // fold-only `unknown`: "Status unavailable" must never bury a real question.
+  if (!isDurableTerminalStatus(session.status)) {
     if (session.pendingQuestion) {
       const fromTs = session.pendingQuestion.askedAt;
       return glance('needs_you', { clock: fromTs ? { mode: 'waiting', fromTs } : null });
@@ -588,7 +597,7 @@ export function deriveSessionGlance(
     }
   }
 
-  if ((session.status as string) === UNKNOWN_SESSION_STATUS) {
+  if (isUnknownSessionStatus(session.status)) {
     return { kind: 'stalled', label: 'Status unavailable', pulse: false, clock: null };
   }
 
@@ -849,28 +858,43 @@ export const SessionWireSchema = Schema.mutable(
   }),
 );
 
-export const SessionListItemSchema = Schema.mutable(
+const SessionListItemFields = {
+  id: Schema.String,
+  channelId: Schema.String,
+  channelName: Schema.String,
+  title: Schema.String,
+  status: SessionStatusSchema,
+  harness: Schema.String,
+  spawnedBy: Schema.String,
+  spawnerName: Schema.String,
+  costUsd: Schema.Number,
+  createdAt: Schema.String,
+  completedAt: NullableStringSchema,
+  archivedAt: Schema.optionalWith(NullableStringSchema, { default: () => null }),
+  pinned: Schema.optionalWith(Schema.Boolean, { default: () => false }),
+  // Decode-with-default so clients remain compatible with an older server
+  // during a rolling deploy.
+  needsAttention: Schema.optionalWith(Schema.Boolean, { default: () => false }),
+  attentionReason: Schema.optionalWith(Schema.Union(Schema.Literal('question', 'auth'), Schema.Null), {
+    default: () => null,
+  }),
+  resultText: Schema.optionalWith(NullableStringSchema, { default: () => null }),
+};
+
+export const SessionListItemSchema = Schema.mutable(Schema.Struct(SessionListItemFields));
+
+export const SessionSnapshotItemSchema = Schema.mutable(
   Schema.Struct({
-    id: Schema.String,
-    channelId: Schema.String,
-    channelName: Schema.String,
-    title: Schema.String,
-    status: SessionStatusSchema,
-    harness: Schema.String,
-    spawnedBy: Schema.String,
-    spawnerName: Schema.String,
-    costUsd: Schema.Number,
-    createdAt: Schema.String,
-    completedAt: NullableStringSchema,
-    archivedAt: Schema.optionalWith(NullableStringSchema, { default: () => null }),
-    pinned: Schema.optionalWith(Schema.Boolean, { default: () => false }),
-    // Decode-with-default so clients remain compatible with an older server
-    // during a rolling deploy.
-    needsAttention: Schema.optionalWith(Schema.Boolean, { default: () => false }),
-    attentionReason: Schema.optionalWith(Schema.Union(Schema.Literal('question', 'auth'), Schema.Null), {
+    ...SessionListItemFields,
+    // Decode-with-default so a new client can boot against the old /sync
+    // shape during a rolling deploy.
+    pendingQuestion: Schema.optionalWith(Schema.Union(SessionPendingQuestionSchema, Schema.Null), {
       default: () => null,
     }),
-    resultText: Schema.optionalWith(NullableStringSchema, { default: () => null }),
+    providerAuthRequired: Schema.optionalWith(Schema.Union(SessionProviderAuthRequiredSchema, Schema.Null), {
+      default: () => null,
+    }),
+    threadRootEventId: Schema.optionalWith(NullableNumberSchema, { default: () => null }),
   }),
 );
 
@@ -1009,11 +1033,17 @@ export function isPendingSessionId(id: string): boolean {
 }
 
 /**
- * A lifecycle the server actually recorded as finished. `unknown` is not one:
- * a fold-only session has no known lifecycle at all.
+ * Did the server record this session as finished? `unknown` never qualifies: a
+ * fold-only entity has no known lifecycle at all, so it neither finished nor is
+ * it live. Use this to decide whether to render an outcome ("Done in 2m", a ✓).
  */
-function isDurableTerminalStatus(s: SessionStatus): boolean {
+export function isDurableTerminalStatus(s: SessionStatus): boolean {
   return s === 'completed' || s === 'failed' || s === 'cancelled';
+}
+
+/** A fold-only entity: it exists, but no source that knows its status has spoken. */
+export function isUnknownSessionStatus(s: SessionStatus): boolean {
+  return (s as string) === UNKNOWN_SESSION_STATUS;
 }
 
 export function isTerminalSessionStatus(s: SessionStatus): boolean {
@@ -1022,7 +1052,21 @@ export function isTerminalSessionStatus(s: SessionStatus): boolean {
   // entity instead of presenting fabricated running work. Callers asking "did
   // this finish?" rather than "is this live work?" must use
   // isDurableTerminalStatus — see the new-turn clamp in applySessionEvent.
-  return (s as string) === UNKNOWN_SESSION_STATUS || isDurableTerminalStatus(s);
+  return isUnknownSessionStatus(s) || isDurableTerminalStatus(s);
+}
+
+/**
+ * The one definition of "this agent is working right now", for every live-work
+ * selector on every surface. Excludes fold-only entities: a replayed spawn tells
+ * us a session existed, never that it is running.
+ *
+ * Exists so the `unknown`-is-terminal contract above is stated once rather than
+ * re-derived at each call site — six selectors previously open-coded
+ * `!isTerminalSessionStatus(s) && !archived`, and all six broke silently if that
+ * overload were ever "cleaned up".
+ */
+export function isLiveAgentWork(session: Pick<Session, 'status' | 'archivedAt'>): boolean {
+  return !isTerminalSessionStatus(session.status) && !isArchivedSession(session);
 }
 
 /** Shared archive grouping definition for all client surfaces. */
@@ -1220,6 +1264,7 @@ export function applySessionEvent(sessions: Record<string, Session>, ev: Session
       base.githubIdentityMode ?? (typeof p.githubIdentityMode === 'string' ? p.githubIdentityMode : null);
     const providerConnectionId =
       base.providerConnectionId ?? (typeof p.providerConnectionId === 'string' ? p.providerConnectionId : null);
+    const threadRootEventId = base.threadRootEventId ?? ev.threadRootEventId;
     return {
       ...sessions,
       [sessionId]: {
@@ -1228,6 +1273,7 @@ export function applySessionEvent(sessions: Record<string, Session>, ev: Session
         repo,
         branch,
         repos,
+        threadRootEventId,
         githubIdentityMode,
         providerConnectionId,
       },
