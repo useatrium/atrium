@@ -18,6 +18,7 @@
     "./agent-paths": "./src/agent-paths.ts",
     "./entry-contracts": "./src/entry-contracts.ts",
     "./unfurl-contracts": "./src/unfurl-contracts.ts",
+    "./internal-links": "./src/internal-links.ts",
     "./session-capabilities": "./src/sessionCapabilities.ts"
   },
   "scripts": {
