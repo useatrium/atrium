@@ -16,16 +16,20 @@ import {
   type ActivityFeedFilter,
   type ActivityItem,
   decodeWireToDisplay,
+  formatOutcome,
   plainMarkdownSnippet,
   formatExactTimestamp,
   formatRelativeTimestamp,
+  formatWaiting,
   isActivityUnread,
   isTerminalSessionStatus,
   matchesActivityFilter,
+  matchesActivitySource,
   sessionAttentionKind,
   sessionGlanceClockLabel,
   type Session,
   type SessionListItem,
+  type ActivitySourceFilter,
 } from '@atrium/surface-client';
 import { useChat } from '../../../src/lib/chat';
 import { glanceColor, listItemGlance } from '../../../src/lib/sessionGlance';
@@ -42,13 +46,20 @@ type ActivityRow =
   | { rowType: 'header'; key: string; label: string; tone: 'attention' | 'default' }
   | { rowType: 'filter'; key: string }
   | { rowType: 'session'; session: DisplaySession }
-  | { rowType: 'activity'; activity: ActivityItem; attention: boolean };
+  | { rowType: 'running'; session: Session; channelName: string }
+  | { rowType: 'activity'; activity: ActivityItem; attention: boolean; review?: boolean };
 
 const FILTERS: Array<{ id: ActivityFeedFilter; label: string }> = [
   { id: 'inbox', label: 'Inbox' },
   { id: 'unread', label: 'Unread' },
-  { id: 'done', label: 'Done' },
+  { id: 'done', label: 'Reviewed' },
   { id: 'all', label: 'All' },
+];
+
+const SOURCE_FILTERS: Array<{ id: ActivitySourceFilter; label: string }> = [
+  { id: 'all', label: 'All' },
+  { id: 'agents', label: 'Agents' },
+  { id: 'people', label: 'People' },
 ];
 
 // DM/GDM channel names are internal keys (`dm:<ids>` / `gdm:<ids>`), so the key
@@ -131,8 +142,15 @@ export default function ActivityScreen() {
   const [nextActivityCursor, setNextActivityCursor] = useState<string | null>(null);
   const [lastReadEventId, setLastReadEventId] = useState('0');
   const [unreadExceptionIds, setUnreadExceptionIds] = useState<string[]>([]);
-  const [counts, setCounts] = useState<ActivityCounts>({ attention: 0, unread: 0 });
+  const [counts, setCounts] = useState<ActivityCounts>({
+    attention: 0,
+    unread: 0,
+    needsYou: 0,
+    running: 0,
+    toReview: 0,
+  });
   const [filter, setFilter] = useState<ActivityFeedFilter>('inbox');
+  const [source, setSource] = useState<ActivitySourceFilter>('all');
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -161,6 +179,9 @@ export default function ActivityScreen() {
         setCounts({
           attention: Number(activityRes.counts?.attention) || 0,
           unread: Number(activityRes.counts?.unread) || 0,
+          needsYou: Number(activityRes.counts?.needsYou) || 0,
+          running: Number(activityRes.counts?.running) || 0,
+          toReview: Number(activityRes.counts?.toReview) || 0,
         });
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Unable to load activity');
@@ -205,7 +226,7 @@ export default function ActivityScreen() {
       const previous = { lastReadEventId, unreadExceptionIds, counts, items: activityItems };
       setLastReadEventId((w) => (Number(w) < eventId ? String(eventId) : w));
       setUnreadExceptionIds((ids) => ids.filter((id) => id !== item.eventId));
-      setCounts((prev) => ({ attention: prev.attention, unread: Math.max(0, prev.unread - 1) }));
+      setCounts((prev) => ({ ...prev, unread: Math.max(0, prev.unread - 1) }));
       setActivityItems((rows) => rows.map((row) => (row.eventId === item.eventId ? { ...row, unread: false } : row)));
       try {
         const response = await api.markActivityItemRead(eventId);
@@ -230,7 +251,7 @@ export default function ActivityScreen() {
       if (!unreadExceptionIds.includes(item.eventId) && Number(item.eventId) <= Number(lastReadEventId)) {
         setUnreadExceptionIds((ids) => [...ids, item.eventId]);
       }
-      setCounts((prev) => ({ attention: prev.attention, unread: Math.min(99, prev.unread + 1) }));
+      setCounts((prev) => ({ ...prev, unread: Math.min(99, prev.unread + 1) }));
       setActivityItems((rows) => rows.map((row) => (row.eventId === item.eventId ? { ...row, unread: true } : row)));
       try {
         const response = await api.markActivityItemUnread(eventId);
@@ -265,7 +286,7 @@ export default function ActivityScreen() {
     setMarkingRead(true);
     setLastReadEventId(String(newestEventId));
     setUnreadExceptionIds([]);
-    setCounts((prev) => ({ attention: prev.attention, unread: 0 }));
+    setCounts((prev) => ({ ...prev, unread: 0 }));
     setActivityItems((rows) => rows.map((row) => ({ ...row, unread: false })));
     try {
       const response = await api.markActivityRead(newestEventId);
@@ -282,10 +303,12 @@ export default function ActivityScreen() {
     }
   }, [activityItems, api, applyReadState, counts, lastReadEventId, load, markingRead, unreadExceptionIds]);
 
-  // Only unresolved agent states belong in the pinned tier. Healthy progress
-  // stays on Agents; everything else is history under the watermark.
+  // Keep the server's attention feed authoritative, but surface live blocks
+  // before their feed event arrives. Default Inbox view then shelves that
+  // state beside live work and unread terminal outcomes.
   const rows = useMemo<ActivityRow[]>(() => {
     const merged = sessions.map((s) => ({ ...s, live: state.sessions[s.id] }));
+    const listById = new Map(merged.map((session) => [session.id, session]));
     // Terminal sessions (failed/cancelled) are represented by their feed items,
     // whose attention flag honors the read watermark — a live row would pin a
     // failure forever with no way to acknowledge it.
@@ -293,52 +316,102 @@ export default function ActivityScreen() {
       const status = s.live?.status ?? s.status;
       if (isTerminalSessionStatus(status)) return false;
       if (s.live) return sessionAttentionKind(s.live) !== null;
-      return (
-        sessionAttentionKind({
-          status: s.status,
-          pendingQuestion: null,
-          providerAuthRequired: null,
-          pendingSeatRequests: [],
-        }) !== null
-      );
+      return s.needsAttention;
     });
     const { attention, history } = partitionRows(liveAttention, activityItems);
 
     const filterRow = (row: ActivityRow): boolean => {
       if (row.rowType !== 'activity') {
-        // Live session pins only appear in inbox/all/unread (not Done).
+        // Live session pins only appear in Inbox/All/Unread (not Reviewed).
         if (filter === 'done') return false;
         if (filter === 'unread') return true; // treat live pins as needing eyes
-        return true;
+        return source !== 'people';
       }
       const unread = isActivityUnread(row.activity, lastReadEventId, exceptionSet);
-      return matchesActivityFilter(row.activity, filter, unread);
+      return matchesActivityFilter(row.activity, filter, unread) && matchesActivitySource(row.activity, source);
     };
 
-    const filteredAttention = attention.filter(filterRow);
-    const filteredHistory = history.filter(filterRow);
+    const filteredAttention = attention.filter((item) => filterRow(item));
+    const filteredHistory = history.filter((item) => filterRow(item));
+    const attentionCreatedAt = (row: ActivityRow) =>
+      row.rowType === 'activity' ? row.activity.createdAt : row.rowType === 'session' ? row.session.createdAt : '';
+    const needsYou = [...filteredAttention].sort((a, b) => attentionCreatedAt(a).localeCompare(attentionCreatedAt(b)));
+    const pinnedSessionIds = new Set(
+      attention.flatMap((row) =>
+        row.rowType === 'activity' ? (row.activity.sessionId ? [row.activity.sessionId] : []) : [],
+      ),
+    );
+    const running =
+      source === 'people'
+        ? []
+        : Object.values(state.sessions)
+            .filter(
+              (session): session is Session =>
+                !!session && !isTerminalSessionStatus(session.status) && session.archivedAt == null,
+            )
+            .map((session) => ({
+              rowType: 'running' as const,
+              session,
+              channelName: listById.get(session.id)?.channelName ?? session.channelId,
+            }));
+    const toReview = history.filter(
+      (row) =>
+        row.rowType === 'activity' &&
+        (row.activity.kind === 'session_completed' || row.activity.kind === 'session_failed') &&
+        isActivityUnread(row.activity, lastReadEventId, exceptionSet) &&
+        !(row.activity.sessionId != null && pinnedSessionIds.has(row.activity.sessionId)) &&
+        matchesActivitySource(row.activity, source),
+    );
+    const historyWithoutReview =
+      filter === 'inbox'
+        ? filteredHistory.filter(
+            (row) =>
+              row.rowType !== 'activity' ||
+              !(
+                (row.activity.kind === 'session_completed' || row.activity.kind === 'session_failed') &&
+                isActivityUnread(row.activity, lastReadEventId, exceptionSet)
+              ),
+          )
+        : filteredHistory;
 
     const out: ActivityRow[] = [{ rowType: 'filter', key: 'filters' }];
-    if (filteredAttention.length > 0) {
+    if (filter === 'inbox' && needsYou.length > 0) {
       out.push({
         rowType: 'header',
-        key: 'needs-attention',
-        label: `Needs attention · ${filteredAttention.length}`,
+        key: 'needs-you',
+        label: `Needs you · ${needsYou.length}`,
+        tone: 'attention',
+      });
+      out.push(...needsYou);
+    }
+    if (filter === 'inbox' && running.length > 0) {
+      out.push({ rowType: 'header', key: 'running', label: `Running · ${running.length}`, tone: 'default' });
+      out.push(...running);
+    }
+    if (filter === 'inbox' && toReview.length > 0) {
+      out.push({ rowType: 'header', key: 'to-review', label: `To review · ${toReview.length}`, tone: 'default' });
+      out.push(...toReview.map((row) => (row.rowType === 'activity' ? { ...row, review: true } : row)));
+    }
+    if (filter !== 'inbox' && filteredAttention.length > 0) {
+      out.push({
+        rowType: 'header',
+        key: 'needs-you',
+        label: `Needs you · ${filteredAttention.length}`,
         tone: 'attention',
       });
       out.push(...filteredAttention);
     }
-    if (filteredHistory.length > 0) {
+    if (historyWithoutReview.length > 0) {
       out.push({
         rowType: 'header',
         key: 'activity',
-        label: filter === 'done' ? 'Done' : 'Activity',
+        label: filter === 'done' ? 'Reviewed' : 'Activity',
         tone: 'default',
       });
-      out.push(...filteredHistory);
+      out.push(...historyWithoutReview);
     }
     return out;
-  }, [activityItems, exceptionSet, filter, lastReadEventId, sessions, state.sessions]);
+  }, [activityItems, exceptionSet, filter, lastReadEventId, sessions, source, state.sessions]);
 
   const openActivity = async (item: ActivityItem) => {
     const unread = isActivityUnread(item, lastReadEventId, exceptionSet);
@@ -370,6 +443,22 @@ export default function ActivityScreen() {
     }
   };
 
+  const openReview = (item: ActivityItem) => {
+    if (item.sessionId) {
+      // Preserve the existing watermark UX for this visible item, then ask
+      // the session-scoped endpoint to clear sibling terminal activity without
+      // touching unrelated Inbox work.
+      void markItemRead(item);
+      void api
+        .markSessionActivityRead(item.sessionId)
+        .then(() => load())
+        .catch(() => undefined);
+      router.push(`/session/${item.sessionId}`);
+      return;
+    }
+    void openActivity(item);
+  };
+
   const renderSwipeActions = (item: ActivityItem, unread: boolean) => {
     const actionLabel = unread ? 'Read' : 'Unread';
     const onPress = (event: GestureResponderEvent) => {
@@ -397,7 +486,7 @@ export default function ActivityScreen() {
     );
   };
 
-  const renderActivityItem = (item: ActivityItem, attention: boolean) => {
+  const renderActivityItem = (item: ActivityItem, attention: boolean, review = false) => {
     const time = formatRelativeTimestamp(item.createdAt) || item.createdAt;
     const exactTime = formatExactTimestamp(item.createdAt) || item.createdAt;
     const title = activityItemTitle(item);
@@ -408,6 +497,16 @@ export default function ActivityScreen() {
       decodeWireToDisplay(item.snippet, (id) => resolveUser(id)?.handle ?? null).text,
     );
     const unread = isActivityUnread(item, lastReadEventId, exceptionSet);
+    const session = item.sessionId ? sessions.find((candidate) => candidate.id === item.sessionId) : undefined;
+    const terminal = item.kind === 'session_completed' || item.kind === 'session_failed';
+    const outcome =
+      terminal && session?.completedAt
+        ? formatOutcome(
+            item.kind === 'session_completed' ? 'completed' : 'failed',
+            new Date(session.completedAt).getTime() - new Date(session.createdAt).getTime(),
+          )
+        : null;
+    const resultExcerpt = terminal ? plainMarkdownSnippet(session?.resultText ?? '') : '';
     const danger = attention && item.kind === 'session_failed';
     const chipBackground = attention ? (danger ? colors.dangerSurface : colors.warningSurface) : colors.bgElevated;
     const chipColor = attention ? (danger ? colors.danger : colors.warning) : colors.textMuted;
@@ -424,7 +523,7 @@ export default function ActivityScreen() {
         ]
           .filter(Boolean)
           .join(', ')}
-        onPress={() => void openActivity(item)}
+        onPress={() => (review ? openReview(item) : void openActivity(item))}
         onLongPress={() => {
           if (unread) void markItemRead(item);
           else void markItemUnread(item);
@@ -462,9 +561,14 @@ export default function ActivityScreen() {
               {title}
             </Text>
           </View>
-          {snippet.length > 0 && (
+          {outcome && (
+            <Text style={{ color: colors.textSecondary, fontSize: font.xs, fontWeight: '700' }} numberOfLines={1}>
+              {outcome}
+            </Text>
+          )}
+          {(resultExcerpt || snippet).length > 0 && (
             <Text style={{ color: colors.textSecondary, fontSize: font.sm }} numberOfLines={1}>
-              {snippet}
+              {resultExcerpt || snippet}
             </Text>
           )}
           <Text style={{ color: colors.textMuted, fontSize: font.xs }} numberOfLines={1}>
@@ -528,6 +632,38 @@ export default function ActivityScreen() {
               </Pressable>
             );
           })}
+          <View
+            accessibilityRole="radiogroup"
+            accessibilityLabel="Activity source"
+            style={{ flexDirection: 'row', gap: 4, width: '100%' }}
+          >
+            {SOURCE_FILTERS.map((entry) => {
+              const selected = source === entry.id;
+              return (
+                <Pressable
+                  key={entry.id}
+                  accessibilityRole="radio"
+                  accessibilityState={{ selected }}
+                  accessibilityLabel={`Filter source ${entry.label}`}
+                  onPress={() => setSource(entry.id)}
+                  style={{
+                    borderRadius: radius.pill,
+                    paddingHorizontal: 10,
+                    paddingVertical: 6,
+                    backgroundColor: selected ? colors.bgElevated : 'transparent',
+                    borderWidth: 1,
+                    borderColor: selected ? colors.border : colors.borderSoft,
+                  }}
+                >
+                  <Text
+                    style={{ color: selected ? colors.text : colors.textMuted, fontSize: font.xs, fontWeight: '700' }}
+                  >
+                    {entry.label}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
         </View>
       );
     }
@@ -549,7 +685,39 @@ export default function ActivityScreen() {
         </Text>
       );
     }
-    if (item.rowType === 'activity') return renderActivityItem(item.activity, item.attention);
+    if (item.rowType === 'activity') return renderActivityItem(item.activity, item.attention, item.review);
+    if (item.rowType === 'running') {
+      const elapsed = formatWaiting(Date.now() - new Date(item.session.createdAt).getTime());
+      return (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`${item.session.title}, running for ${elapsed}, #${item.channelName}`}
+          onPress={() => router.push(`/session/${item.session.id}`)}
+          style={({ pressed }) => ({
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: space.sm,
+            paddingHorizontal: space.lg,
+            paddingVertical: space.md,
+            borderBottomWidth: 1,
+            borderBottomColor: colors.borderSoft,
+            backgroundColor: pressed ? colors.borderSoft : 'transparent',
+          })}
+        >
+          <Text style={{ color: colors.online, fontSize: font.sm }} accessibilityElementsHidden>
+            ●
+          </Text>
+          <View style={{ flex: 1 }}>
+            <Text style={{ color: colors.text, fontSize: font.md, fontWeight: '700' }} numberOfLines={1}>
+              {item.session.title}
+            </Text>
+            <Text style={{ color: colors.textMuted, fontSize: font.xs }} numberOfLines={1}>
+              {elapsed} · #{item.channelName}
+            </Text>
+          </View>
+        </Pressable>
+      );
+    }
     const session = item.session;
     const now = Date.now();
     const glance = listItemGlance(session, session.live, now);
@@ -589,13 +757,15 @@ export default function ActivityScreen() {
     );
   };
 
-  const hasFeedRows = rows.some((row) => row.rowType === 'activity' || row.rowType === 'session');
+  const hasFeedRows = rows.some(
+    (row) => row.rowType === 'activity' || row.rowType === 'session' || row.rowType === 'running',
+  );
   const showEmptyBody = !loading && !hasFeedRows;
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg }}>
       <MobileHeader
-        title="Attention"
+        title="Inbox"
         right={
           <Pressable
             accessibilityRole="button"
@@ -635,7 +805,9 @@ export default function ActivityScreen() {
               ? `${item.rowType}:${item.key}`
               : item.rowType === 'session'
                 ? `session:${item.session.id}`
-                : `activity:${item.activity.kind}:${item.activity.eventId}`
+                : item.rowType === 'running'
+                  ? `running:${item.session.id}`
+                  : `activity:${item.activity.kind}:${item.activity.eventId}`
           }
           renderItem={renderItem}
           refreshControl={
@@ -671,7 +843,7 @@ export default function ActivityScreen() {
                     {activityItems.length === 0
                       ? "You're all caught up"
                       : filter === 'done'
-                        ? 'No completed sessions'
+                        ? 'No reviewed sessions'
                         : filter === 'unread'
                           ? 'No unread activity'
                           : 'Nothing in this view'}
@@ -680,7 +852,7 @@ export default function ActivityScreen() {
                     {activityItems.length === 0
                       ? 'Mentions, DMs, agent questions, failed work, and recent completions will appear here.'
                       : filter === 'done'
-                        ? 'Completed agent work lives under Done. Switch to Inbox or All for the rest.'
+                        ? 'Completed and failed sessions appear here after you review them.'
                         : 'Try another filter, or mark items unread to keep them here.'}
                   </Text>
                 </View>

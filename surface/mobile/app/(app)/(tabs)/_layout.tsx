@@ -25,7 +25,9 @@ export default function TabsLayout() {
   // Server-derived: correct on cold boot AND honors the read watermark for
   // acknowledged failures, unlike the live WS map above.
   const activityCounts = useActivityCounts();
-  const attentionBadge = activityCounts.attention;
+  // Inbox follows web's actionable-first precedence. The native tab bar only
+  // supports one badge style, so carry the most urgent useful count.
+  const inboxBadge = activityCounts.needsYou || activityCounts.toReview || activityCounts.unread;
   const expandedAndroid = Platform.OS === 'android' && width >= 600;
 
   return (
@@ -87,9 +89,13 @@ export default function TabsLayout() {
       <Tabs.Screen
         name="activity"
         options={{
-          title: 'Attention',
-          tabBarAccessibilityLabel: attentionBadge > 0 ? `Attention, ${attentionBadge} items` : 'Attention',
-          tabBarBadge: attentionBadge > 0 ? attentionBadge : undefined,
+          title: 'Inbox',
+          tabBarAccessibilityLabel: inboxBadge > 0 ? `Inbox, ${inboxBadge} items` : 'Inbox',
+          tabBarBadge: inboxBadge > 0 ? inboxBadge : undefined,
+          tabBarBadgeStyle: {
+            backgroundColor: activityCounts.needsYou ? colors.warning : colors.accent,
+            color: activityCounts.needsYou ? colors.bg : colors.onAccent,
+          },
           tabBarIcon: ({ color }) => <TabIcon name="notifications" color={color} />,
         }}
       />
