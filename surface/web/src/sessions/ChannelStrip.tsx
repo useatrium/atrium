@@ -10,6 +10,7 @@ import {
 import { sessionElapsedMs, useNow } from './SessionCard';
 
 const ROW_CAP = 5;
+const COMPLETED_RECENTLY_MS = 48 * 60 * 60 * 1_000;
 
 type Bucket = 'needs' | 'running' | 'review';
 
@@ -28,6 +29,12 @@ function sortNewest(a: Session, b: Session): number {
   return Date.parse(b.completedAt ?? b.createdAt) - Date.parse(a.completedAt ?? a.createdAt);
 }
 
+function completedRecently(session: Session, now: number): boolean {
+  if (!isTerminalSessionStatus(session.status) || session.completedAt === null) return false;
+  const completedAt = Date.parse(session.completedAt);
+  return Number.isFinite(completedAt) && completedAt >= now - COMPLETED_RECENTLY_MS;
+}
+
 /** Longest-waiting blocker first — same order as the sidebar and Inbox. */
 function sortLongestBlocked(a: Session, b: Session): number {
   const blockedAt = (s: Session) => Date.parse(s.pendingQuestion?.askedAt ?? s.createdAt);
@@ -38,14 +45,17 @@ function channelSessions(
   channelId: string | null,
   sessions: Record<string, Session>,
   reviewCount: number,
+  now: number,
 ): StripSession[] {
   if (!channelId) return [];
   const buckets: Record<Bucket, Session[]> = { needs: [], running: [], review: [] };
   for (const session of Object.values(sessions)) {
     if (session.channelId !== channelId || isArchivedSession(session) || isPendingSessionId(session.id)) continue;
     if (isTerminalSessionStatus(session.status)) {
-      buckets.review.push(session);
-    } else if (needsAttention(session)) {
+      if (completedRecently(session, now)) buckets.review.push(session);
+      continue;
+    }
+    if (needsAttention(session)) {
       buckets.needs.push(session);
     } else {
       buckets.running.push(session);
@@ -87,7 +97,10 @@ export function ChannelStrip({
     running: channelCounts?.running ?? 0,
     review: channelCounts?.toReview ?? 0,
   };
-  const rows = useMemo(() => channelSessions(channelId, sessions, counts.review), [channelId, counts.review, sessions]);
+  const rows = useMemo(
+    () => channelSessions(channelId, sessions, counts.review, now),
+    [channelId, counts.review, sessions, now],
+  );
   if (!channelId || counts.needs + counts.running + counts.review === 0) return null;
 
   const expanded = expandedByChannel[channelId] === true;
