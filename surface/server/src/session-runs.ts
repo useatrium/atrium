@@ -856,6 +856,7 @@ export class SessionRuns {
   }
 
   async listSessionsForUser(args: {
+    client?: DbClient;
     userId: string;
     status: SessionListStatus;
     limit: number;
@@ -881,7 +882,7 @@ export class SessionRuns {
            END,
            (sp.user_id IS NOT NULL) DESC,
            s.created_at DESC`;
-    const res = await this.pool.query<SessionListRow>(
+    const res = await (args.client ?? this.pool).query<SessionListRow>(
       `SELECT s.id,
               s.channel_id,
               c.name AS channel_name,

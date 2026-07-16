@@ -15,6 +15,7 @@ import {
   resetToLatest,
   type ChatMessage,
   type Session,
+  type SessionListItem,
   type SyncResponse,
   type WireEvent,
 } from '../src/index';
@@ -1222,6 +1223,7 @@ describe('live cold-counter advancement (unread divider depends on it)', () => {
         drafts: {},
         draftDeletions: {},
         channels: [snapshotChannel(lastReadEventId)],
+        sessions: [],
       },
     );
     return state;
@@ -1298,6 +1300,7 @@ describe('unified sync application', () => {
             muted: true,
           },
         ],
+        sessions: [],
       },
     };
 
@@ -1320,6 +1323,60 @@ describe('unified sync application', () => {
     expect(state.unread[CH]).toBe(false);
     expect(state.syncCursor).toBe(12);
     expect(prefs.theme).toBe('dark');
+  });
+
+  it('does not let sessions-loaded roll back a status advanced by WS', () => {
+    const completed: Session = {
+      id: 'sess-snapshot-race',
+      workspaceId: 'ws-1',
+      channelId: CH,
+      threadRootEventId: null,
+      title: 'already done',
+      status: 'completed',
+      harness: 'codex',
+      spawnedBy: alice.id,
+      driverId: alice.id,
+      pendingSeatRequests: [],
+      suggestions: [],
+      answerProposals: [],
+      pendingQuestion: null,
+      seatEvents: [],
+      costUsd: 1,
+      resultText: 'finished',
+      createdAt: new Date(1_000).toISOString(),
+      completedAt: new Date(2_000).toISOString(),
+      archivedAt: null,
+      pinned: false,
+      lastEventId: 10,
+      permalink: '/s/sess-snapshot-race',
+    };
+    const staleSnapshot: SessionListItem = {
+      id: completed.id,
+      channelId: CH,
+      channelName: 'general',
+      title: completed.title,
+      status: 'running',
+      harness: completed.harness,
+      spawnedBy: alice.id,
+      spawnerName: alice.displayName,
+      costUsd: 0,
+      createdAt: completed.createdAt,
+      completedAt: null,
+      archivedAt: null,
+      pinned: false,
+      needsAttention: false,
+      attentionReason: null,
+      resultText: null,
+    };
+
+    let state = appReducer(initialAppState, { type: 'session-upsert', session: completed });
+    state = appReducer(state, { type: 'sessions-loaded', sessions: [staleSnapshot] });
+
+    expect(state.sessions[completed.id]).toMatchObject({
+      status: 'completed',
+      completedAt: completed.completedAt,
+      resultText: 'finished',
+    });
   });
 
   it('folds session events even when the channel timeline is not loaded', () => {

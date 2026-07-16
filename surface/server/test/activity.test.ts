@@ -245,6 +245,78 @@ describe('/api/activity', () => {
     expect(aliceItems.find((item: any) => item.kind === 'reaction')).toBeUndefined();
   });
 
+  it('keeps the counts route equivalent to the feed and counts a pending seat request as attention', async () => {
+    const alice = await login('alice', 'Alice');
+    const bob = await login('bob', 'Bob');
+    await post(alice.cookie, fx.channelId, 'ping @bob');
+
+    const questionSessionId = await createActivitySession(bob.user.id, 'question session');
+    await pool.query(`UPDATE sessions SET pending_question = $2::jsonb WHERE id = $1`, [
+      questionSessionId,
+      JSON.stringify({ questionId: 'q-counts', turnId: 'turn-counts', questions: [], eventId: 1 }),
+    ]);
+    await insertSessionEventFor(questionSessionId, bob.user.id, 'session.question_requested', {
+      questions: [{ id: 'q-counts', question: 'Ship it?' }],
+    });
+
+    const seatSessionId = await createActivitySession(bob.user.id, 'seat session');
+    await pool.query('INSERT INTO seat_requests (session_id, user_id) VALUES ($1, $2)', [seatSessionId, alice.user.id]);
+    const seatEventId = await insertSessionEventFor(seatSessionId, alice.user.id, 'session.seat_requested', {
+      by: alice.user.id,
+    });
+
+    const feed = await activity(bob.cookie);
+    const counts = await activityCounts(bob.cookie);
+
+    expect(counts).toMatchObject({
+      attention: feed.counts.attention,
+      unread: feed.counts.unread,
+      needsYou: feed.counts.needsYou,
+      running: feed.counts.running,
+      toReview: feed.counts.toReview,
+      channelCounts: feed.channelCounts,
+    });
+    expect(counts.attention).toBe(2);
+    expect(counts.needsYou).toBe(2);
+    expect(feed.items.find((item: any) => Number(item.eventId) === seatEventId)).toMatchObject({
+      kind: 'seat_request',
+      attention: true,
+    });
+  });
+
+  it('returns an ETag and accepts strong and weak conditional count requests', async () => {
+    const alice = await login('alice', 'Alice');
+    const bob = await login('bob', 'Bob');
+    const initial = await app.inject({
+      method: 'GET',
+      url: '/api/activity/counts',
+      headers: { cookie: bob.cookie },
+    });
+    expect(initial.statusCode).toBe(200);
+    expect(initial.headers.etag).toMatch(/^"[a-f0-9]{64}"$/);
+    expect(initial.headers['cache-control']).toBe('private, no-cache');
+
+    for (const ifNoneMatch of [initial.headers.etag!, `W/${initial.headers.etag}`]) {
+      const notModified = await app.inject({
+        method: 'GET',
+        url: '/api/activity/counts',
+        headers: { cookie: bob.cookie, 'if-none-match': ifNoneMatch },
+      });
+      expect(notModified.statusCode).toBe(304);
+      expect(notModified.body).toBe('');
+    }
+
+    await post(alice.cookie, fx.channelId, 'new ping @bob');
+    const changed = await app.inject({
+      method: 'GET',
+      url: '/api/activity/counts',
+      headers: { cookie: bob.cookie, 'if-none-match': initial.headers.etag! },
+    });
+    expect(changed.statusCode).toBe(200);
+    expect(changed.headers.etag).not.toBe(initial.headers.etag);
+    expect(changed.json().unread).toBe(1);
+  });
+
   it('keeps muted-channel items in history but out of counts and attention', async () => {
     const alice = await login('alice', 'Alice');
     const bob = await login('bob', 'Bob');
@@ -617,6 +689,16 @@ async function activity(cookie: string, cursor?: string) {
   const res = await app.inject({
     method: 'GET',
     url: `/api/activity${cursor ? `?cursor=${cursor}` : ''}`,
+    headers: { cookie },
+  });
+  expect(res.statusCode).toBe(200);
+  return res.json();
+}
+
+async function activityCounts(cookie: string) {
+  const res = await app.inject({
+    method: 'GET',
+    url: '/api/activity/counts',
     headers: { cookie },
   });
   expect(res.statusCode).toBe(200);

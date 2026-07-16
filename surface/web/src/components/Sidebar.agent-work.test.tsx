@@ -4,7 +4,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ActivityCounts } from '@atrium/surface-client';
 import type { Session } from '../sessions/types';
-import { sidebarAgentWorkCollapsedKey } from '../storageKeys';
+import { sidebarAgentWorkCollapsedKey, sidebarAgentWorkRecentCollapsedKey } from '../storageKeys';
 import { ThemeProvider } from '../theme';
 import { Sidebar } from './Sidebar';
 
@@ -138,12 +138,97 @@ describe('Sidebar agent work', () => {
     expect(screen.getByRole('button', { name: /Agent work/ }).getAttribute('aria-expanded')).toBe('false');
   });
 
-  it('hides the section when there is no live work or review activity, and replaces the old workspace links', () => {
+  it('keeps the section mounted when there is no live work or review activity', () => {
     renderSidebar();
 
-    expect(screen.queryByRole('button', { name: /Agent work/ })).toBeNull();
+    expect(screen.getByRole('button', { name: /Agent work/ })).toBeTruthy();
+    expect(screen.getByText('No agent work yet.')).toBeTruthy();
     expect(screen.queryByRole('button', { name: /^Agents$/ })).toBeNull();
     expect(screen.getByRole('button', { name: /^Inbox$/ })).toBeTruthy();
+  });
+
+  it('shows a fold-only session in neither live work nor Recent', () => {
+    renderSidebar({
+      sessions: {
+        unknown: session({
+          id: 'fold-only',
+          title: 'Fold-only phantom',
+          status: 'unknown' as Session['status'],
+        }),
+      },
+    });
+
+    expect(screen.queryByText('Fold-only phantom')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Recent' })).toBeNull();
+    expect(screen.getByText('No agent work yet.')).toBeTruthy();
+  });
+
+  it('lists the eight newest terminal sessions in Recent and excludes archived sessions', () => {
+    const recent = Object.fromEntries(
+      Array.from({ length: 10 }, (_, index) => {
+        const id = `recent-${index}`;
+        return [
+          id,
+          session({
+            id,
+            title: `Recent ${index}`,
+            status: 'completed',
+            createdAt: '2026-07-15T12:00:00.000Z',
+            completedAt: `2026-07-15T14:${String(59 - index).padStart(2, '0')}:00.000Z`,
+          }),
+        ];
+      }),
+    );
+    const { onOpenSession } = renderSidebar({
+      sessions: {
+        ...recent,
+        archived: session({
+          id: 'archived',
+          title: 'Archived newest',
+          status: 'completed',
+          completedAt: '2026-07-15T15:00:00.000Z',
+          archivedAt: '2026-07-15T15:01:00.000Z',
+        }),
+      },
+    });
+
+    expect(screen.queryByRole('button', { name: /Recent 0 — Done in/ })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Recent' }));
+
+    const rows = screen.getAllByRole('button', { name: /Recent \d+ — Done in/ });
+    expect(rows.map((row) => row.textContent)).toEqual(
+      Array.from({ length: 8 }, (_, index) => expect.stringContaining(`Recent ${index}`)),
+    );
+    expect(screen.queryByText('Recent 8')).toBeNull();
+    expect(screen.queryByText('Archived newest')).toBeNull();
+
+    fireEvent.click(rows[0]!);
+    expect(onOpenSession).toHaveBeenCalledWith('recent-0');
+  });
+
+  it('persists the Recent disclosure choice', () => {
+    const completed = session({ status: 'completed', completedAt: '2026-07-15T15:00:00.000Z' });
+    const rendered = renderSidebar({ sessions: { completed } });
+    fireEvent.click(screen.getByRole('button', { name: 'Recent' }));
+
+    expect(window.localStorage.getItem(sidebarAgentWorkRecentCollapsedKey('u-1'))).toBe('false');
+    rendered.unmount();
+    renderSidebar({ sessions: { completed } });
+    expect(screen.getByRole('button', { name: 'Recent' }).getAttribute('aria-expanded')).toBe('true');
+  });
+
+  it('keeps Recent out of the collapsed live-work count', () => {
+    renderSidebar({
+      sessions: {
+        running: session({ id: 'running' }),
+        completed: session({ id: 'completed', status: 'completed', completedAt: '2026-07-15T15:00:00.000Z' }),
+      },
+    });
+
+    const toggle = screen.getByRole('button', { name: /Agent work/ });
+    fireEvent.click(toggle);
+    expect(toggle.textContent).toContain('· 1');
+    expect(toggle.textContent).not.toContain('· 2');
   });
 
   it('shows the server to-review total and hides the line when it is zero', () => {

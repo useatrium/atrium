@@ -3,6 +3,7 @@ import type { Channel } from './api';
 import type { AppAction } from './appState';
 import type { DraftDeletionSnapshot, DraftSnapshot } from './drafts';
 import { normalizePrefs, UserPrefsSchema, type UserPrefs } from './prefs';
+import { SessionListItemSchema, type SessionListItem } from './sessions';
 import { UserRefSchema, WireEventSchema, type WireEvent } from './timeline';
 
 const ChannelKindSchema = Schema.Literal('public', 'private', 'dm', 'gdm');
@@ -46,6 +47,9 @@ export const SyncStateSnapshotSchema = Schema.mutable(
     drafts: Schema.mutable(Schema.Record({ key: Schema.String, value: DraftSnapshotEntrySchema })),
     draftDeletions: Schema.mutable(Schema.Record({ key: Schema.String, value: Schema.String })),
     channels: Schema.mutable(Schema.Array(ChannelSchema)),
+    // Decode-with-default for rolling deploys where the client arrives before
+    // the server starts shipping session snapshot rows.
+    sessions: Schema.optionalWith(Schema.mutable(Schema.Array(SessionListItemSchema)), { default: () => [] }),
   }),
 );
 
@@ -56,6 +60,7 @@ export interface SyncStateSnapshot {
   drafts: DraftSnapshot;
   draftDeletions: DraftDeletionSnapshot;
   channels: Channel[];
+  sessions: SessionListItem[];
 }
 
 export interface SyncResponse {
@@ -89,6 +94,7 @@ export function dispatchSyncSnapshot(
     dispatch({ type: 'read-cursor', channelId, lastReadEventId, source: 'remote' });
   }
   dispatch({ type: 'channels-loaded', channels: snapshot.channels });
+  dispatch({ type: 'sessions-loaded', sessions: snapshot.sessions });
   const muted = new Set(snapshot.mutes);
   for (const channel of snapshot.channels) {
     dispatch({ type: 'mute-changed', channelId: channel.id, muted: muted.has(channel.id) });

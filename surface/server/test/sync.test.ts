@@ -150,7 +150,7 @@ describe('/api/sync', () => {
     expect(privateEvents.some((event: any) => event.type === 'channel.created')).toBe(false);
   });
 
-  it('ships read cursor, mutes, prefs, drafts, and channels in the state snapshot', async () => {
+  it('ships read cursor, mutes, prefs, drafts, channels, and sessions in the state snapshot', async () => {
     const alice = await login('alice', 'Alice');
     const initial = await sync(alice.cookie, 0, 1000);
     const message = await post(alice.cookie, fx.channelId, 'read me');
@@ -160,6 +160,15 @@ describe('/api/sync', () => {
     await putDraft(alice.cookie, `channel:${fx.channelId}`, 'draft text');
     await putDraft(alice.cookie, `channel:${fx.otherChannelId}`, 'stale draft');
     await putDraft(alice.cookie, `channel:${fx.otherChannelId}`, '');
+    const sessionRows = await pool.query<{ id: string }>(
+      `INSERT INTO sessions (
+         workspace_id, channel_id, centaur_thread_key, title, status, spawned_by, driver_id, completed_at
+       ) VALUES
+         ($1, $2, $3, 'Live sync work', 'running', $4, $4, NULL),
+         ($1, $2, $5, 'Recent sync work', 'completed', $4, $4, now())
+       RETURNING id`,
+      [fx.workspaceId, fx.channelId, `sync-live-${randomUUID()}`, alice.user.id, `sync-done-${randomUUID()}`],
+    );
 
     const healed = await sync(alice.cookie, initial.nextCursor, 1000);
     expect(healed.state.readCursors[fx.channelId]).toBe(message.id);
@@ -174,6 +183,12 @@ describe('/api/sync', () => {
     expect(healed.state.channels.find((channel: any) => channel.id === fx.otherChannelId)).toMatchObject({
       muted: true,
     });
+    expect(healed.state.sessions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: sessionRows.rows[0]!.id, status: 'running' }),
+        expect.objectContaining({ id: sessionRows.rows[1]!.id, status: 'completed' }),
+      ]),
+    );
   });
 
   it('ships mentionedSinceRead for unread channel mentions only', async () => {

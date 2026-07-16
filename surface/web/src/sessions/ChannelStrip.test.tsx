@@ -79,4 +79,34 @@ describe('ChannelStrip', () => {
     expect(screen.getByTestId('channel-strip-row-newer')).toBeTruthy();
     expect(screen.queryByTestId('channel-strip-row-older')).toBeNull();
   });
+
+  it('never admits fold-only sessions to the terminal review rows', () => {
+    render(
+      <ChannelStrip
+        channelId="channel-1"
+        channelCounts={{ needsYou: 0, running: 0, toReview: 1 }}
+        sessions={{
+          unknown: session({
+            id: 'unknown',
+            title: 'Fold-only phantom',
+            status: 'unknown' as Session['status'],
+            createdAt: new Date().toISOString(),
+          }),
+          completed: session({
+            id: 'completed',
+            title: 'Durably completed work',
+            status: 'completed',
+            createdAt: new Date(Date.now() - 60_000).toISOString(),
+            completedAt: new Date().toISOString(),
+          }),
+        }}
+        onOpenSession={vi.fn()}
+        onOpenInbox={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Agent work in this channel: 1 to review' }));
+    expect(screen.getByTestId('channel-strip-row-completed')).toBeTruthy();
+    expect(screen.queryByTestId('channel-strip-row-unknown')).toBeNull();
+  });
 });

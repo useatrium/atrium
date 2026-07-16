@@ -8,6 +8,10 @@ const NullableNumberSchema = Schema.Union(Schema.Number, Schema.Null);
 
 export type SessionStatus = 'spawning' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
 
+// Client-only fold sentinel. Keep it out of SessionStatus/SessionStatusSchema:
+// neither the server nor any wire payload may claim this lifecycle value.
+const UNKNOWN_SESSION_STATUS = 'unknown';
+
 export const SessionStatusSchema = Schema.Literal('spawning', 'queued', 'running', 'completed', 'failed', 'cancelled');
 
 /**
@@ -584,6 +588,10 @@ export function deriveSessionGlance(
     }
   }
 
+  if ((session.status as string) === UNKNOWN_SESSION_STATUS) {
+    return { kind: 'stalled', label: 'Status unavailable', pulse: false, clock: null };
+  }
+
   switch (session.status) {
     case 'completed':
       return glance('done', {
@@ -640,6 +648,7 @@ export function formatOutcome(status: SessionStatus, elapsedMs: number): string 
   if (status === 'completed') return `Done in ${duration}`;
   if (status === 'failed') return `Failed after ${duration}`;
   if (status === 'cancelled') return `Stopped after ${duration}`;
+  if ((status as string) === UNKNOWN_SESSION_STATUS) return 'Status unavailable';
   return '';
 }
 
@@ -999,8 +1008,21 @@ export function isPendingSessionId(id: string): boolean {
   return id.startsWith(PENDING_SESSION_PREFIX);
 }
 
-export function isTerminalSessionStatus(s: SessionStatus): boolean {
+/**
+ * A lifecycle the server actually recorded as finished. `unknown` is not one:
+ * a fold-only session has no known lifecycle at all.
+ */
+function isDurableTerminalStatus(s: SessionStatus): boolean {
   return s === 'completed' || s === 'failed' || s === 'cancelled';
+}
+
+export function isTerminalSessionStatus(s: SessionStatus): boolean {
+  // `unknown` is not a durable terminal status. It is intentionally treated as
+  // non-live here so every existing live-work selector excludes a fold-only
+  // entity instead of presenting fabricated running work. Callers asking "did
+  // this finish?" rather than "is this live work?" must use
+  // isDurableTerminalStatus — see the new-turn clamp in applySessionEvent.
+  return (s as string) === UNKNOWN_SESSION_STATUS || isDurableTerminalStatus(s);
 }
 
 /** Shared archive grouping definition for all client surfaces. */
@@ -1026,6 +1048,7 @@ export function maxSessionStatus(a: SessionStatus, b: SessionStatus): SessionSta
 
 /** Lifecycle progress rank — used to never regress status from a stale fetch. */
 function statusRank(s: SessionStatus): number {
+  if ((s as string) === UNKNOWN_SESSION_STATUS) return -1;
   switch (s) {
     case 'spawning':
       return 0;
@@ -1162,7 +1185,7 @@ export function applySessionEvent(sessions: Record<string, Session>, ev: Session
       channelId: ev.channelId ?? '',
       threadRootEventId: ev.threadRootEventId,
       title: typeof p.title === 'string' ? p.title : '(agent task)',
-      status: 'spawning',
+      status: UNKNOWN_SESSION_STATUS as SessionStatus,
       harness: typeof p.harness === 'string' ? p.harness : 'codex',
       repo: typeof p.repo === 'string' ? p.repo : null,
       branch: typeof p.branch === 'string' ? p.branch : null,
@@ -1238,7 +1261,10 @@ export function applySessionEvent(sessions: Record<string, Session>, ev: Session
     // out-of-order event, so it bypasses the non-regression clamp. Clear the
     // stale completion so panes/cards go live again (the server nulls
     // completed_at on the same transition).
-    const newTurn = isTerminalSessionStatus(prev.status) && !isTerminalSessionStatus(status);
+    // Only a session the server recorded as finished can start a new turn. A
+    // fold-only `unknown` has no lifecycle to resume, and treating it as one
+    // would clear a pendingQuestion that a replayed question_requested just set.
+    const newTurn = isDurableTerminalStatus(prev.status) && !isDurableTerminalStatus(status);
     const nextStatus = newTurn ? status : maxSessionStatus(prev.status, status);
     if (nextStatus === prev.status) return sessions;
     return {

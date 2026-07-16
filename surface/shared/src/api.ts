@@ -303,6 +303,10 @@ export type ActivityChannelCounts = Required<Pick<ActivityCounts, 'needsYou' | '
 
 type DecodedActivityCounts = ActivityCounts & Required<Pick<ActivityCounts, 'needsYou' | 'running' | 'toReview'>>;
 
+export type ActivityCountsResponse = DecodedActivityCounts & {
+  channelCounts: Record<string, ActivityChannelCounts>;
+};
+
 export type ActivityReadState = {
   lastReadEventId: string;
   unreadExceptionIds: string[];
@@ -344,9 +348,22 @@ const ActivityResponseSchema = Schema.Struct({
   }),
 });
 
+const ActivityCountsResponseSchema = Schema.Struct({
+  attention: Schema.Number,
+  unread: Schema.Number,
+  needsYou: Schema.Number,
+  running: Schema.Number,
+  toReview: Schema.Number,
+  channelCounts: Schema.Record({ key: Schema.String, value: ActivityChannelCountsSchema }),
+});
+
 /** Decode activity with zero/empty defaults while a web client rolls across an older server. */
 export function decodeActivityResponse(input: unknown): ActivityResponse {
   return decodeApiResponse(ActivityResponseSchema, input) as ActivityResponse;
+}
+
+export function decodeActivityCountsResponse(input: unknown): ActivityCountsResponse {
+  return decodeApiResponse(ActivityCountsResponseSchema, input) as ActivityCountsResponse;
 }
 
 export function createApi(opts: ApiOptions = {}) {
@@ -612,6 +629,8 @@ export function createApi(opts: ApiOptions = {}) {
       const qs = q.toString();
       return req<ActivityResponse>(`/api/activity${qs ? `?${qs}` : ''}`, undefined, decodeActivityResponse);
     },
+    getActivityCounts: () =>
+      req<ActivityCountsResponse>('/api/activity/counts', undefined, decodeActivityCountsResponse),
     /** Mark all activity through `lastReadEventId` read and clear mark-unread exceptions. */
     markActivityRead: (lastReadEventId: number) =>
       req<ActivityReadState>('/api/activity/read', {

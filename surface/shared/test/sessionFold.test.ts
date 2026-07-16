@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { applySessionActivity, applySessionEvent, isArchivedSession, sessionFromWire } from '../src/sessions';
+import {
+  applySessionActivity,
+  applySessionEvent,
+  deriveSessionGlance,
+  isArchivedSession,
+  isTerminalSessionStatus,
+  sessionFromWire,
+} from '../src/sessions';
 import type { Session } from '../src/sessions';
 import type { WireEvent } from '../src/timeline';
 
@@ -123,6 +130,44 @@ describe('applySessionEvent status fold', () => {
       author: alice,
     };
   }
+
+  it('keeps a replayed spawn entity without claiming it is live', () => {
+    const session = applySessionEvent({}, spawned({}))['sess-1']!;
+
+    expect(session.status).toBe('unknown');
+    expect(isTerminalSessionStatus(session.status)).toBe(true);
+    expect(deriveSessionGlance(session, Date.now())).toMatchObject({
+      label: 'Status unavailable',
+      pulse: false,
+    });
+  });
+
+  it('a replayed spawn does not fake a new turn and drop the question it is blocked on', () => {
+    // Replay order for a session still waiting on a person: spawned (status
+    // unknown) → question_requested → status_changed(running). The new-turn
+    // clamp keys off "did this finish?", and `unknown` never did — treating it
+    // as terminal here would clear pendingQuestion and hide real Needs-you work.
+    const questionRequested: WireEvent = {
+      id: 2,
+      workspaceId: 'ws-1',
+      channelId: 'ch-1',
+      threadRootEventId: null,
+      type: 'session.question_requested',
+      actorId: alice.id,
+      payload: { sessionId: 'sess-1', questionId: 'q-1', questions: ['Ship it?'] },
+      createdAt: new Date(1500).toISOString(),
+      author: alice,
+    };
+
+    let sessions = applySessionEvent({}, spawned({}));
+    sessions = applySessionEvent(sessions, questionRequested);
+    expect(sessions['sess-1']!.pendingQuestion?.questionId).toBe('q-1');
+
+    sessions = applySessionEvent(sessions, statusChanged(3, 'running'));
+
+    expect(sessions['sess-1']!.status).toBe('running');
+    expect(sessions['sess-1']!.pendingQuestion?.questionId).toBe('q-1');
+  });
 
   it('never regresses within a turn (running does not fall back to queued)', () => {
     const s = applySessionEvent(optimistic({ status: 'running' }), statusChanged(5, 'queued'));

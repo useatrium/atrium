@@ -19,14 +19,11 @@ import {
   filesChangedWorkspaceId,
   initialAppState,
   isNetworkFailure,
-  isPendingSessionId,
-  isTerminalSessionStatus,
   looksLikeSummonSigil,
   parseSummonSigil,
   PENDING_SESSION_PREFIX,
   randomId,
   reconcileDraftSnapshot,
-  sessionFromWire,
   useWs,
   wsStatusKind,
   type Api,
@@ -1700,23 +1697,6 @@ export function ChatProvider({ session, children }: { session: Session; children
   const upsertSession = useCallback((agentSession: AgentSession) => {
     dispatch({ type: 'session-upsert', session: agentSession });
   }, []);
-
-  // Heal stale session cards: a session.spawned folded from cached history only
-  // advances via live WS events, so a session that finished while the app was
-  // closed shows "spawning" forever. Refetch each non-terminal session once to
-  // converge on server truth (mirrors web/src/Chat.tsx).
-  const reconciledSessionsRef = useRef<Set<string>>(new Set());
-  useEffect(() => {
-    for (const [id, s] of Object.entries(state.sessions)) {
-      if (isPendingSessionId(id) || isTerminalSessionStatus(s.status)) continue;
-      if (reconciledSessionsRef.current.has(id)) continue;
-      reconciledSessionsRef.current.add(id);
-      api
-        .getSession(id)
-        .then(({ session }) => dispatch({ type: 'session-upsert', session: sessionFromWire(session) }))
-        .catch(() => {});
-    }
-  }, [state.sessions, api]);
 
   // ---- uploads ----
   const uploadFile = useCallback(

@@ -67,7 +67,7 @@ import { loadSessionPaneWidth, sessionPaneSizing } from './sessions/useSessionPa
 import { ChannelStrip } from './sessions/ChannelStrip';
 import { SpawnDialog } from './sessions/SpawnDialog';
 import { ViewToggle } from './sessions/ViewToggle';
-import { isPendingSessionId, isTerminalSessionStatus, sessionFromWire } from './sessions/types';
+import { isPendingSessionId, sessionFromWire } from './sessions/types';
 import { adoptPrefs, useTheme } from './theme';
 import { channelAvatarName, channelLabel, dmPartner } from '@atrium/surface-client';
 import { clearCache, eventCache } from './cacheIdb';
@@ -434,18 +434,18 @@ export function Chat({
   const refreshActivityCounts = useCallback(() => {
     // Promise.resolve() guard: a transport that throws synchronously (e.g. a
     // test environment without fetch) must not take the whole tree down; the
-    // normalization guards a deploy-skewed server that predates `counts`.
+    // normalization guards a deploy-skewed server response.
     void Promise.resolve()
-      .then(() => api.getActivity())
-      .then(({ counts, channelCounts }) => {
+      .then(() => api.getActivityCounts())
+      .then((counts) => {
         setActivityCounts({
-          attention: Number(counts?.attention) || 0,
-          unread: Number(counts?.unread) || 0,
-          needsYou: Number(counts?.needsYou) || 0,
-          running: Number(counts?.running) || 0,
-          toReview: Number(counts?.toReview) || 0,
+          attention: Number(counts.attention) || 0,
+          unread: Number(counts.unread) || 0,
+          needsYou: Number(counts.needsYou) || 0,
+          running: Number(counts.running) || 0,
+          toReview: Number(counts.toReview) || 0,
         });
-        setActivityChannelCounts(channelCounts);
+        setActivityChannelCounts(counts.channelCounts);
       })
       .catch(() => {});
   }, []);
@@ -797,23 +797,6 @@ export function Chat({
     query.addEventListener('change', sync);
     return () => query.removeEventListener('change', sync);
   }, []);
-
-  // ---- heal stale session entities ----
-  // Cards folded from history only move via live WS events; a session whose
-  // terminal event predates our page never updates. Refetch each non-terminal
-  // session once so dead "starting/running" chips converge on server truth.
-  const reconciledRef = useRef(new Set<string>());
-  useEffect(() => {
-    for (const [id, session] of Object.entries(state.sessions)) {
-      if (isPendingSessionId(id) || isTerminalSessionStatus(session.status)) continue;
-      if (reconciledRef.current.has(id)) continue;
-      reconciledRef.current.add(id);
-      sessionsApi
-        .get(id)
-        .then(({ session: wire }) => dispatch({ type: 'session-upsert', session: sessionFromWire(wire) }))
-        .catch(() => {}); // unreachable server — the stalled display covers it
-    }
-  }, [state.sessions]);
 
   // Live sessions blocked on a person pin into Attention immediately, before
   // (or without) the server feed item — parity with the mobile Attention tab.

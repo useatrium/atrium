@@ -3,13 +3,18 @@ import { normalizePrefs } from '@atrium/surface-client/prefs';
 import type { Db, DbClient } from '../db.js';
 import { listChannelsFor, listVisibleSyncEvents, type UserRef } from '../events.js';
 import { workspaceMemberExists } from '../membership.js';
+import type { SessionRuns } from '../session-runs.js';
+
+// /sync is boot-critical. This includes ample live work plus the newest
+// terminal rows for Recent while putting a firm bound on query/payload size.
+const SYNC_SESSION_LIMIT = 100;
 
 export interface SyncRouteDeps {
   pool: Db;
   requireUser(req: FastifyRequest, reply: FastifyReply): UserRef | null;
 }
 
-async function syncStateSnapshot(client: DbClient, userId: string) {
+async function syncStateSnapshot(client: DbClient, userId: string, sessionRuns: SessionRuns) {
   const readRows = await client.query<{ channel_id: string; last_read_event_id: number }>(
     `SELECT rc.channel_id, rc.last_read_event_id
      FROM channel_read_cursors rc
@@ -71,6 +76,12 @@ async function syncStateSnapshot(client: DbClient, userId: string) {
     draftDeletions,
     // === mentions-activity additions ===
     channels: await listChannelsFor(client, userId),
+    sessions: await sessionRuns.listSessionsForUser({
+      client,
+      userId,
+      status: 'all',
+      limit: SYNC_SESSION_LIMIT,
+    }),
   };
 }
 
@@ -93,7 +104,7 @@ export function registerSyncRoutes(app: FastifyInstance, deps: SyncRouteDeps): v
       // Events and state are read from one snapshot so nextCursor covers
       // exactly the event set represented in this sync response.
       const page = await listVisibleSyncEvents(client, { userId: user.id, after, limit, folded: q.wire === 'folded' });
-      const state = await syncStateSnapshot(client, user.id);
+      const state = await syncStateSnapshot(client, user.id, app.sessionRuns);
       await client.query('COMMIT');
       return { ...page, state };
     } catch (err) {
