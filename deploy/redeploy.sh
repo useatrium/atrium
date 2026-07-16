@@ -356,9 +356,23 @@ _rb_centaur(){ local last; last=$(cat "$STATE/last-good-centaur-sha" 2>/dev/null
 BUILD_CACHE_KEEP="${BUILD_CACHE_KEEP:-20g}"
 prune_images(){
   log "prune: bounding image stores (keep-cache=$BUILD_CACHE_KEEP)"
-  # 1. build cache — keep a recent floor, drop the rest
-  sudo docker builder prune -f --keep-storage="$BUILD_CACHE_KEEP" >/dev/null 2>&1 \
+  # 1. build cache — bound it to BUILD_CACHE_KEEP, drop the rest.
+  #    BOTH flags here are load-bearing, and getting either wrong reclaims 0B while
+  #    logging success. Measured on the box (Docker 29.1.3) with 62.58GB of cache:
+  #      prune --keep-storage=20g        -> 0B      (deprecated alias: a silent NO-OP.
+  #                                                  It warns "changed to reserved-space"
+  #                                                  and then does nothing.)
+  #      prune --reserved-space=20g      -> 0B      (without -a only DANGLING is eligible)
+  #      prune -a                        -> 62.58GB (works, but drops the whole cache)
+  #      prune -a --max-used-space=20g   -> bounds to 20g, keeps in-use   <- what we want
+  #    This shipped as form 1, so the cache grew unbounded to 62GB and filled the disk
+  #    to 91%; kubelet image GC then failed every 5 min ("freed 0 bytes") and pods were
+  #    evicted for ephemeral-storage. Do not "simplify" this back to --keep-storage.
+  #    Log the reclaimed total: piping to /dev/null is what kept the no-op invisible.
+  local reclaimed
+  reclaimed="$(sudo docker builder prune -f -a --max-used-space="$BUILD_CACHE_KEEP" 2>/dev/null | tail -1)" \
     || log "prune: warn: builder prune failed"
+  log "prune: build cache reclaimed ${reclaimed:-unknown}"
   # 2. old local SHA-tagged copies of our images (keep :latest; the registry retains
   #    every SHA for rollback, so dropping the local copy is safe)
   sudo docker image ls --format '{{.Repository}}:{{.Tag}}' 2>/dev/null \
