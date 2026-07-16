@@ -158,6 +158,22 @@ def commit_build_lock(commit_sha: str) -> Iterator[None]:
             fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 
+def seed_git_repo(tree: Path, commit_sha: str) -> None:
+    """Give an exported source tree a throwaway git history.
+
+    `git archive` exports no .git, but centaur's Justfile evaluates
+    `git rev-parse HEAD` at parse time, so every `just build-one` aborts with
+    "not a git repository" without this. The AWS appliance bootstrap did the same
+    thing. The synthetic commit's SHA is never published: previewctl passes
+    image_revision=<real sha> explicitly to every build.
+    """
+    run(["git", "init", "-q"], cwd=tree)
+    run(["git", "config", "user.email", "preview@atrium.local"], cwd=tree)
+    run(["git", "config", "user.name", "Atrium Preview"], cwd=tree)
+    run(["git", "add", "-A"], cwd=tree)
+    run(["git", "commit", "-qm", f"preview source {commit_sha}"], cwd=tree)
+
+
 def source_for_commit(commit_sha: str) -> Path:
     source = STATE_DIR / "sources" / commit_sha
     marker = source / ".atrium-preview-source"
@@ -171,6 +187,7 @@ def source_for_commit(commit_sha: str) -> Path:
         run(["git", "archive", "--format=tar", f"--output={archive}", commit_sha])
         with tarfile.open(archive) as bundle:
             bundle.extractall(temporary, filter="data")
+        seed_git_repo(temporary, commit_sha)
         marker_in_temp = temporary / marker.name
         marker_in_temp.write_text(commit_sha + "\n")
         if source.exists():
