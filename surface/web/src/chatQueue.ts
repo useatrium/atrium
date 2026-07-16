@@ -5,8 +5,9 @@ import {
   type OpRegistry,
   type OpType,
 } from '@atrium/surface-client';
+import { QUEUE_NUDGE_STORAGE_KEY } from './storageKeys';
 
-export const QUEUE_NUDGE_KEY = 'atrium:queue-nudge';
+export const QUEUE_NUDGE_KEY = QUEUE_NUDGE_STORAGE_KEY;
 
 export function createQueueLockProvider(): OpQueueLockProvider | undefined {
   if (typeof navigator === 'undefined') return undefined;

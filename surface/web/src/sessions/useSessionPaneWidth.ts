@@ -6,8 +6,15 @@
 
 import { useCallback, useRef, useState } from 'react';
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react';
-
-const STORAGE_KEY = 'atrium.sessionPaneWidth';
+import {
+  LEGACY_SESSION_PANE_WIDTH_STORAGE_KEY,
+  LEGACY_SIDEBAR_WIDTH_STORAGE_KEY,
+  LEGACY_THREAD_PANE_WIDTH_STORAGE_KEY,
+  readWithLegacy,
+  SESSION_PANE_WIDTH_STORAGE_KEY,
+  SIDEBAR_WIDTH_STORAGE_KEY,
+  THREAD_PANE_WIDTH_STORAGE_KEY,
+} from '../storageKeys';
 export const SESSION_PANE_MIN_WIDTH = 320;
 export const SESSION_PANE_MAX_VW = 70;
 /** Drag-start fallback when the pane can't be measured (jsdom). */
@@ -15,6 +22,7 @@ export const SESSION_PANE_FALLBACK_WIDTH = 520;
 
 interface PaneWidthConfig {
   storageKey: string;
+  legacyStorageKey: string;
   defaultClassName: string;
   minWidth: number;
   maxVw: number;
@@ -73,7 +81,7 @@ export function loadSessionPaneWidth(): number | null {
 
 function loadPaneWidth(config: PaneWidthConfig): number | null {
   try {
-    const raw = window.localStorage.getItem(config.storageKey);
+    const raw = readWithLegacy(config.storageKey, config.legacyStorageKey);
     const parsed = raw === null ? NaN : Number(raw);
     return Number.isFinite(parsed) ? clamp(config, parsed) : null;
   } catch {
@@ -163,7 +171,8 @@ function usePaneWidth(config: PaneWidthConfig): {
 }
 
 const sessionPaneWidthConfig: PaneWidthConfig = {
-  storageKey: STORAGE_KEY,
+  storageKey: SESSION_PANE_WIDTH_STORAGE_KEY,
+  legacyStorageKey: LEGACY_SESSION_PANE_WIDTH_STORAGE_KEY,
   defaultClassName: 'w-[min(520px,42vw)]',
   minWidth: SESSION_PANE_MIN_WIDTH,
   maxVw: SESSION_PANE_MAX_VW,
@@ -187,7 +196,8 @@ export const THREAD_PANE_MAX_VW = 60;
 export const THREAD_PANE_FALLBACK_WIDTH = 380;
 
 const threadPaneWidthConfig: PaneWidthConfig = {
-  storageKey: 'atrium.threadPaneWidth',
+  storageKey: THREAD_PANE_WIDTH_STORAGE_KEY,
+  legacyStorageKey: LEGACY_THREAD_PANE_WIDTH_STORAGE_KEY,
   defaultClassName: 'w-[min(380px,38vw)]',
   minWidth: THREAD_PANE_MIN_WIDTH,
   maxVw: THREAD_PANE_MAX_VW,
@@ -217,7 +227,8 @@ export const SIDEBAR_MAX_VW = 40;
 export const SIDEBAR_FALLBACK_WIDTH = 224;
 
 const sidebarWidthConfig: PaneWidthConfig = {
-  storageKey: 'atrium.sidebarWidth',
+  storageKey: SIDEBAR_WIDTH_STORAGE_KEY,
+  legacyStorageKey: LEGACY_SIDEBAR_WIDTH_STORAGE_KEY,
   defaultClassName: '',
   minWidth: SIDEBAR_MIN_WIDTH,
   maxVw: SIDEBAR_MAX_VW,

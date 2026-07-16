@@ -1,6 +1,7 @@
 import { useCallback, useState } from 'react';
+import { TRANSCRIPT_VIEW_STORAGE_KEY } from '../storageKeys';
 
-export const TRANSCRIPT_VIEW_STORAGE_KEY = 'atrium:transcript-view';
+export { TRANSCRIPT_VIEW_STORAGE_KEY };
 
 /**
  * The old transcript Focus/Full preference now controls fold disclosure.

@@ -8,6 +8,7 @@ import {
 } from '@atrium/surface-client';
 import { resolveEntryQuote, type ResolvedEntryQuote } from '../lib/entryLinks';
 import { attachmentMetaToPreviewFile } from '../lib/previewFiles';
+import { LEGACY_UNFURL_COLLAPSED_STORAGE_KEY, readWithLegacy, UNFURL_COLLAPSED_STORAGE_KEY } from '../storageKeys';
 import { ApplyMarkupMenu } from './ApplyMarkupMenu';
 import { CriticMarkupView } from './CriticMarkupView';
 import { FileIcon } from './icons';
@@ -18,7 +19,6 @@ const MAX_EXCERPT_LENGTH = 200;
 const MAX_MARKUP_CARD_BYTES = 64 * 1024;
 const MAX_VISIBLE_CARDS = 3;
 const MAX_THUMBNAILS = 4;
-const COLLAPSED_STORAGE_KEY = 'atrium.unfurl.collapsed';
 const MAX_COLLAPSED_KEYS = 500;
 
 export interface EntryQuoteApplyContext {
@@ -282,7 +282,9 @@ export function EntryInlineChip({ handle, compact = false }: { handle: string; c
 export function collapsedUnfurlStorageKeys(): string[] {
   if (typeof localStorage === 'undefined') return [];
   try {
-    const value: unknown = JSON.parse(localStorage.getItem(COLLAPSED_STORAGE_KEY) ?? '[]');
+    const value: unknown = JSON.parse(
+      readWithLegacy(UNFURL_COLLAPSED_STORAGE_KEY, LEGACY_UNFURL_COLLAPSED_STORAGE_KEY) ?? '[]',
+    );
     return Array.isArray(value) ? value.filter((key): key is string => typeof key === 'string') : [];
   } catch {
     return [];
@@ -294,7 +296,7 @@ export function updateCollapsedUnfurlStorage(key: string, collapsed: boolean): v
   const keys = collapsedUnfurlStorageKeys().filter((stored) => stored !== key);
   if (collapsed) keys.push(key);
   try {
-    localStorage.setItem(COLLAPSED_STORAGE_KEY, JSON.stringify(keys.slice(-MAX_COLLAPSED_KEYS)));
+    localStorage.setItem(UNFURL_COLLAPSED_STORAGE_KEY, JSON.stringify(keys.slice(-MAX_COLLAPSED_KEYS)));
   } catch {
     // Storage can be disabled or full. Collapse still works for this render.
   }

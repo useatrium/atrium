@@ -3,6 +3,7 @@
 import { act, cleanup, render, screen } from '@testing-library/react';
 import type { ChatMessage, UserRef } from '@atrium/surface-client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { LEGACY_THREAD_PANE_WIDTH_STORAGE_KEY, THREAD_PANE_WIDTH_STORAGE_KEY } from '../storageKeys';
 import { ThemeProvider } from '../theme';
 import { ThreadPanel } from './ThreadPanel';
 
@@ -93,29 +94,31 @@ describe('ThreadPanel resize', () => {
     });
 
     expect(aside.style.width).toBe('min(430px, 60vw)');
-    expect(window.localStorage.getItem('atrium.threadPaneWidth')).toBeNull();
+    expect(window.localStorage.getItem(THREAD_PANE_WIDTH_STORAGE_KEY)).toBeNull();
 
     act(() => {
       handle.dispatchEvent(pointerMouseEvent('pointerup', 450));
     });
 
-    expect(window.localStorage.getItem('atrium.threadPaneWidth')).toBe('430');
+    expect(window.localStorage.getItem(THREAD_PANE_WIDTH_STORAGE_KEY)).toBe('430');
     expect(handle.getAttribute('aria-valuenow')).toBe('430');
   });
 
   it('resets to the adaptive default on double click', () => {
-    window.localStorage.setItem('atrium.threadPaneWidth', '430');
+    window.localStorage.setItem(LEGACY_THREAD_PANE_WIDTH_STORAGE_KEY, '430');
     renderPanel();
     const handle = screen.getByTestId('thread-resize-handle') as HTMLElement;
     const aside = handle.parentElement as HTMLElement;
 
     expect(aside.style.width).toBe('min(430px, 60vw)');
+    expect(window.localStorage.getItem(THREAD_PANE_WIDTH_STORAGE_KEY)).toBe('430');
+    expect(window.localStorage.getItem(LEGACY_THREAD_PANE_WIDTH_STORAGE_KEY)).toBeNull();
 
     act(() => {
       handle.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
     });
 
-    expect(window.localStorage.getItem('atrium.threadPaneWidth')).toBeNull();
+    expect(window.localStorage.getItem(THREAD_PANE_WIDTH_STORAGE_KEY)).toBeNull();
     expect(aside.className).toContain('w-[min(380px,38vw)]');
     expect(handle.getAttribute('aria-valuenow')).toBe('380');
   });

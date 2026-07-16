@@ -10,6 +10,7 @@ import type { CentaurEventFrame } from '@atrium/centaur-client';
 import { SessionPane } from '../src/sessions/SessionPane';
 import { sessionsApi } from '../src/sessions/api';
 import type { Session } from '../src/sessions/types';
+import { LEGACY_SESSION_PANE_WIDTH_STORAGE_KEY, SESSION_PANE_WIDTH_STORAGE_KEY } from '../src/storageKeys';
 import { FakeEventSource, installFakeEventSource } from './helpers/fakeEventSource';
 
 const me = { id: 'u-me', handle: 'me', displayName: 'Me' };
@@ -121,20 +122,22 @@ describe('resizable session pane', () => {
     await waitFor(() => expect(aside.style.width).toBe('min(660px, 70vw)'));
     fireEvent(handle, new MouseEvent('pointerup', { bubbles: true, clientX: 660 }));
 
-    expect(window.localStorage.getItem('atrium.sessionPaneWidth')).toBe('660');
+    expect(window.localStorage.getItem(SESSION_PANE_WIDTH_STORAGE_KEY)).toBe('660');
   });
 
   it('restores the persisted width on mount and double-click resets to the adaptive default', async () => {
-    window.localStorage.setItem('atrium.sessionPaneWidth', '640');
+    window.localStorage.setItem(LEGACY_SESSION_PANE_WIDTH_STORAGE_KEY, '640');
     renderPane();
     const handle = screen.getByTestId('pane-resize-handle');
     const aside = handle.closest('aside')!;
     expect(aside.style.width).toBe('min(640px, 70vw)');
+    expect(window.localStorage.getItem(SESSION_PANE_WIDTH_STORAGE_KEY)).toBe('640');
+    expect(window.localStorage.getItem(LEGACY_SESSION_PANE_WIDTH_STORAGE_KEY)).toBeNull();
 
     fireEvent.doubleClick(handle);
     await waitFor(() => expect(aside.className).toContain('w-[min(520px,42vw)]'));
     expect(aside.style.width).toBe('');
-    expect(window.localStorage.getItem('atrium.sessionPaneWidth')).toBeNull();
+    expect(window.localStorage.getItem(SESSION_PANE_WIDTH_STORAGE_KEY)).toBeNull();
   });
 
   it('hides the resize handle in focus layout', () => {

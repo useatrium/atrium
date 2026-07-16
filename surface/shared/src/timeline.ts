@@ -1292,10 +1292,10 @@ export function mergeThread(t: ChannelTimeline, rootEventId: number, events: Wir
   for (const ev of events) {
     if (!isRowEvent(ev.type)) continue;
     const msg = messageFromEvent(ev);
-    if (!(seenIds.has(ev.id) && thread.some((m) => m.id === ev.id))) {
-      seenIds.add(ev.id);
-      thread = upsertConfirmed(thread, msg);
-    }
+    seenIds.add(ev.id);
+    // upsertConfirmed is the single dedup/freshness authority; local overlays
+    // are re-applied by rematerializeAll after a fresher row replaces one.
+    thread = upsertConfirmed(thread, msg);
     // A broadcast reply is a main-timeline row too (mirrors applyEvent). The
     // thread fetch marks the id seen, so if it lands before the channel
     // history page, mergeHistory would never fold the row into main.

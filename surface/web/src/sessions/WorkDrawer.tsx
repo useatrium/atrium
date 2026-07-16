@@ -219,7 +219,6 @@ export function WorkDrawer({
   onTab,
   pinned,
   onTogglePin,
-  canPin = true,
   canDetach = true,
   onClose,
 }: {
@@ -244,8 +243,6 @@ export function WorkDrawer({
   onTab: (tab: ActiveWorkTab) => void;
   pinned: boolean;
   onTogglePin: () => void;
-  /** Whether the pin control is offered (mobile/peek-only ceilings hide it). */
-  canPin?: boolean;
   /** Whether the detach-to-new-tab control is offered (hidden for pending
    * sessions, which have no permalink yet). */
   canDetach?: boolean;
@@ -311,23 +308,21 @@ export function WorkDrawer({
             ))}
           </TabsList>
         </div>
-        {canPin && (
-          <Tooltip content={pinLabel}>
-            <button
-              type="button"
-              onClick={onTogglePin}
-              aria-pressed={pinned}
-              aria-label={pinAriaLabel}
-              className={`rounded-md px-1.5 py-1 max-md:inline-flex max-md:size-11 max-md:shrink-0 max-md:items-center max-md:justify-center max-md:p-0 [@media(pointer:coarse)]:inline-flex [@media(pointer:coarse)]:size-11 [@media(pointer:coarse)]:shrink-0 [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center [@media(pointer:coarse)]:p-0 ${
-                pinned
-                  ? 'text-accent-text-strong hover:bg-surface-overlay'
-                  : 'text-fg-tertiary hover:bg-surface-overlay hover:text-fg'
-              }`}
-            >
-              {pinned ? <PanelRightCloseIcon size={15} /> : <PanelRightIcon size={15} />}
-            </button>
-          </Tooltip>
-        )}
+        <Tooltip content={pinLabel}>
+          <button
+            type="button"
+            onClick={onTogglePin}
+            aria-pressed={pinned}
+            aria-label={pinAriaLabel}
+            className={`rounded-md px-1.5 py-1 max-md:inline-flex max-md:size-11 max-md:shrink-0 max-md:items-center max-md:justify-center max-md:p-0 [@media(pointer:coarse)]:inline-flex [@media(pointer:coarse)]:size-11 [@media(pointer:coarse)]:shrink-0 [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center [@media(pointer:coarse)]:p-0 ${
+              pinned
+                ? 'text-accent-text-strong hover:bg-surface-overlay'
+                : 'text-fg-tertiary hover:bg-surface-overlay hover:text-fg'
+            }`}
+          >
+            {pinned ? <PanelRightCloseIcon size={15} /> : <PanelRightIcon size={15} />}
+          </button>
+        </Tooltip>
         {showDetach && (
           <Tooltip content={detachLabel}>
             <a

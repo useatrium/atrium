@@ -4,8 +4,7 @@
 
 import { api } from './api';
 import { desktopApiOptions } from './desktop';
-
-const PREF_KEY = 'atrium:notifications';
+import { NOTIFICATIONS_STORAGE_KEY } from './storageKeys';
 
 export type NotifyState = 'unsupported' | 'denied' | 'off' | 'on';
 
@@ -104,7 +103,9 @@ export function notificationState(): NotifyState {
   if (!NotificationApi) return 'unsupported';
   if (NotificationApi.permission === 'denied') return 'denied';
   try {
-    return NotificationApi.permission === 'granted' && window.localStorage.getItem(PREF_KEY) === 'on' ? 'on' : 'off';
+    return NotificationApi.permission === 'granted' && window.localStorage.getItem(NOTIFICATIONS_STORAGE_KEY) === 'on'
+      ? 'on'
+      : 'off';
   } catch {
     return 'off';
   }
@@ -115,13 +116,13 @@ export async function toggleNotifications(): Promise<NotifyState> {
   const NotificationApi = notificationApi();
   if (!NotificationApi) return 'unsupported';
   if (notificationState() === 'on') {
-    window.localStorage.setItem(PREF_KEY, 'off');
+    window.localStorage.setItem(NOTIFICATIONS_STORAGE_KEY, 'off');
     await disableWebPush();
     return 'off';
   }
   const perm = NotificationApi.permission === 'granted' ? 'granted' : await NotificationApi.requestPermission();
   if (perm !== 'granted') return 'denied';
-  window.localStorage.setItem(PREF_KEY, 'on');
+  window.localStorage.setItem(NOTIFICATIONS_STORAGE_KEY, 'on');
   await enableWebPush();
   return 'on';
 }

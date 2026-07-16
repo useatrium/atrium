@@ -509,8 +509,6 @@ export function SessionPaneContent({
   // chooses a top band or side dock below, without changing focus mode.
   const [workTab, setWorkTab] = useState<WorkTab | null>(null);
   const [workPinned, setWorkPinned] = useState(false);
-  const canPinWork = true;
-  const workPinnedEffective = workPinned;
   const workUrlSyncedRef = useRef(false);
   const writeWorkParam = useCallback(
     (tab: ActiveWorkTab | null, options: { replace?: boolean } = {}) => {
@@ -552,14 +550,14 @@ export function SessionPaneContent({
   }, [urlWorkTab]);
   const outputHubOpen = workTab === 'hubFiles' || workTab === 'apps';
   const onOutputHubStrip = () => {
-    if (outputHubOpen && !workPinnedEffective) closeWork();
+    if (outputHubOpen && !workPinned) closeWork();
     else {
       setWorkTab('hubFiles');
       if (workPinned) writeWorkParam('hubFiles', { replace: true });
     }
   };
   const onStrip = (tab: WorkTab) => {
-    if (workTab === tab && !workPinnedEffective) closeWork();
+    if (workTab === tab && !workPinned) closeWork();
     else {
       setWorkTab(tab);
       if (workPinned) writeWorkParam(tab === 'artifacts' ? 'changes' : tab, { replace: true });
@@ -1770,7 +1768,6 @@ export function SessionPaneContent({
         onTab={setPinnedWorkTab}
         pinned={pinned}
         onTogglePin={togglePin}
-        canPin={canPinWork}
         canDetach={canDetach}
         onClose={closeWork}
       />
@@ -1951,7 +1948,7 @@ export function SessionPaneContent({
         </button>
       </div>
 
-      {workTab && workPinnedEffective && workDockPlacement === 'top' && (
+      {workTab && workPinned && workDockPlacement === 'top' && (
         <div
           data-testid="work-dock-top"
           className="relative flex min-h-0 shrink-0 flex-col overflow-hidden border-b border-edge"
@@ -2117,11 +2114,11 @@ export function SessionPaneContent({
 
       <div
         className={`flex min-h-0 flex-1 ${
-          workTab && workPinnedEffective && workDockPlacement === 'side' ? 'flex-row' : 'flex-col'
+          workTab && workPinned && workDockPlacement === 'side' ? 'flex-row' : 'flex-col'
         }`}
       >
         <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
-          {workTab && !workPinnedEffective && renderWorkDrawer(false)}
+          {workTab && !workPinned && renderWorkDrawer(false)}
           <div ref={scrollRef} onScroll={onScroll} className="h-full overflow-y-auto px-3 py-2">
             <PlanPanel todos={stream.todos} plan={stream.plan} />
             {stream.items.length === 0 && visibleLinkedSteers.length === 0 && !activeTurn && (
@@ -2300,7 +2297,7 @@ export function SessionPaneContent({
             }
           />
         </div>
-        {workTab && workPinnedEffective && workDockPlacement === 'side' && (
+        {workTab && workPinned && workDockPlacement === 'side' && (
           <div
             data-testid="work-dock-side"
             className="relative flex min-h-0 shrink-0 flex-col overflow-hidden border-l border-edge"

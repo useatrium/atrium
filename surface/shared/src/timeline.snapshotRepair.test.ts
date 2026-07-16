@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { applyEvent, emptyTimeline, mergeHistory, mergeThread, resetToLatest, type WireEvent } from './timeline';
+import { expectNoDuplicateConfirmedIds } from './timelineTestUtils';
 
 const me = { id: 'u1', handle: 'tester', displayName: 'Tester' };
 
@@ -48,6 +49,7 @@ describe('duplicate thread reply after limited-sync snapshot repair', () => {
 
     expect(t.threads[10]!.map((m) => m.id)).toEqual([12]);
     expect(t.main.find((m) => m.id === 10)?.replyCount).toBe(1);
+    expectNoDuplicateConfirmedIds(t);
   });
 
   it('raw catch-up redelivery after resetToLatest does not duplicate replies', () => {
@@ -56,6 +58,7 @@ describe('duplicate thread reply after limited-sync snapshot repair', () => {
     t = applyEvent(t, reply);
 
     expect(t.threads[10]!.map((m) => m.id)).toEqual([12]);
+    expectNoDuplicateConfirmedIds(t);
   });
 
   it('does not clobber a folded edit with a raw redelivery', () => {
@@ -74,6 +77,7 @@ describe('duplicate thread reply after limited-sync snapshot repair', () => {
       edited: true,
       lastModifierId: 20,
     });
+    expectNoDuplicateConfirmedIds(t);
   });
 
   it('replaces an existing reply with a newer materialized refresh', () => {
@@ -98,5 +102,6 @@ describe('duplicate thread reply after limited-sync snapshot repair', () => {
       lastModifierId: 21,
     });
     expect(t.main.find((m) => m.id === 10)?.replyCount).toBe(1);
+    expectNoDuplicateConfirmedIds(t);
   });
 });

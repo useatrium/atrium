@@ -13,6 +13,7 @@ import { api } from '../src/api';
 import { sessionsApi } from '../src/sessions/api';
 import { ANSWER_UNDO_MS, resetScheduledAnswers } from '../src/sessions/pendingAnswers';
 import type { Session } from '../src/sessions/types';
+import { TRANSCRIPT_VIEW_STORAGE_KEY } from '../src/storageKeys';
 import type { ChatMessage, UserRef, WireEvent } from '@atrium/surface-client';
 import { FakeEventSource, installFakeEventSource } from './helpers/fakeEventSource';
 
@@ -388,7 +389,7 @@ describe('session pane folds the B_tooltest stream', () => {
   });
 
   it('renders one Bash step inside the completed turn fold with its roundtrip result', async () => {
-    window.localStorage.setItem('atrium:transcript-view', 'full');
+    window.localStorage.setItem(TRANSCRIPT_VIEW_STORAGE_KEY, 'full');
     await renderPaneWithB();
 
     const fold = screen.getByTestId('work-fold-expanded');
@@ -417,18 +418,18 @@ describe('session pane folds the B_tooltest stream', () => {
 
     fireEvent.click(fold);
     expect(screen.getByTestId('work-fold-expanded')).toBeTruthy();
-    expect(window.localStorage.getItem('atrium:transcript-view')).toBeNull();
+    expect(window.localStorage.getItem(TRANSCRIPT_VIEW_STORAGE_KEY)).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'collapse' }));
 
     fireEvent.click(screen.getByRole('button', { name: 'Agent actions' }));
     fireEvent.click(screen.getByRole('button', { name: 'Expand all work' }));
     expect(screen.getByTestId('work-fold-expanded')).toBeTruthy();
-    expect(window.localStorage.getItem('atrium:transcript-view')).toBe('full');
+    expect(window.localStorage.getItem(TRANSCRIPT_VIEW_STORAGE_KEY)).toBe('full');
 
     fireEvent.click(screen.getByRole('button', { name: 'Agent actions' }));
     fireEvent.click(screen.getByRole('button', { name: 'Collapse all work' }));
     expect(screen.getByTestId('work-fold-collapsed')).toBeTruthy();
-    expect(window.localStorage.getItem('atrium:transcript-view')).toBe('focus');
+    expect(window.localStorage.getItem(TRANSCRIPT_VIEW_STORAGE_KEY)).toBe('focus');
   });
 
   it('reconnects from the last folded event id on stream error', async () => {
@@ -1718,7 +1719,7 @@ describe('inline file changes (Phase 4)', () => {
   ] as unknown as CentaurEventFrame[];
 
   it('renders a file edit as an inline diff card, not a raw tool card', async () => {
-    window.localStorage.setItem('atrium:transcript-view', 'full');
+    window.localStorage.setItem(TRANSCRIPT_VIEW_STORAGE_KEY, 'full');
     render(
       <SessionPane session={bSession()} me={me} watchers={[]} onClose={() => {}} onAnswerQuestion={async () => {}} />,
     );
@@ -1779,7 +1780,7 @@ describe('inline file changes (Phase 4)', () => {
   ] as unknown as CentaurEventFrame[];
 
   it('renders a codex fileChange inline in the transcript (previously drawer-only)', async () => {
-    window.localStorage.setItem('atrium:transcript-view', 'full');
+    window.localStorage.setItem(TRANSCRIPT_VIEW_STORAGE_KEY, 'full');
     render(
       <SessionPane session={bSession()} me={me} watchers={[]} onClose={() => {}} onAnswerQuestion={async () => {}} />,
     );
