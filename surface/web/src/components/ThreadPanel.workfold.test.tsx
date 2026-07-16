@@ -131,6 +131,38 @@ function workedTurn(): SessionItem[] {
   ];
 }
 
+/** Two steered turns, each: steer echo → work → the answer that closed it. */
+function twoSteeredTurns(): SessionItem[] {
+  return [
+    { type: 'user_message', id: 'u-1', text: 'first steer', ts: '2026-07-05T12:00:00.000Z', sourceEventIds: [1] },
+    {
+      type: 'tool_call',
+      id: 't-1',
+      name: 'Bash',
+      input: { command: 'pnpm test' },
+      result: { content: 'ok', is_error: false },
+      ts: '2026-07-05T12:00:01.000Z',
+      sourceEventIds: [2],
+    },
+    { type: 'text', id: 'x-1', text: 'First answer.', ts: '2026-07-05T12:00:02.000Z', sourceEventIds: [3] },
+    { type: 'user_message', id: 'u-2', text: 'second steer', ts: '2026-07-05T12:00:03.000Z', sourceEventIds: [4] },
+    {
+      type: 'tool_call',
+      id: 't-2',
+      name: 'Read',
+      input: { file_path: 'a.ts' },
+      result: { content: 'ok', is_error: false },
+      ts: '2026-07-05T12:00:04.000Z',
+      sourceEventIds: [5],
+    },
+    { type: 'text', id: 'x-2', text: 'Second answer.', ts: '2026-07-05T12:00:05.000Z', sourceEventIds: [6] },
+  ];
+}
+
+function steer(overrides: Partial<ChatMessage> = {}): ChatMessage {
+  return message({ threadRootEventId: 42, steeredSessionId: 's-1', ...overrides });
+}
+
 function renderPanel(replies: ChatMessage[], sessions: Record<string, Session>) {
   render(
     <ThemeProvider>
@@ -180,6 +212,33 @@ describe('ThreadPanel work folds', () => {
     const fold = screen.getByTestId('work-fold-collapsed');
     expect(fold.textContent).toContain('2 steps');
     expect(document.querySelector('[data-eid="43"]')).toBeNull();
+  });
+
+  it('renders each fold exactly once when a steer precedes the reply it belongs to', () => {
+    // The steer bumps triggerOrdinal, and the trigger pass would push the second
+    // turn's fold as a standalone row before the reply that owns it ever nests
+    // it — rendering the same work twice, which is what prod showed.
+    streamItems.splice(0, streamItems.length, ...twoSteeredTurns());
+    renderPanel(
+      [
+        steer({ id: 43, text: 'first steer' }),
+        agentReply({ id: 44, text: 'First answer.' }),
+        steer({ id: 45, text: 'second steer' }),
+        agentReply({ id: 46, text: 'Second answer.' }),
+      ],
+      { 's-1': session() },
+    );
+
+    const folds = screen.getAllByTestId('work-fold-collapsed');
+    expect(folds).toHaveLength(2);
+    // Both belong to a reply, so neither may float as its own row.
+    for (const fold of folds) expect(fold.closest('[data-eid]')).toBeTruthy();
+    expect(
+      document.querySelector('[data-eid="44"]')?.querySelector('[data-testid="work-fold-collapsed"]'),
+    ).toBeTruthy();
+    expect(
+      document.querySelector('[data-eid="46"]')?.querySelector('[data-testid="work-fold-collapsed"]'),
+    ).toBeTruthy();
   });
 
   it('opens and closes the fold from its own header', () => {

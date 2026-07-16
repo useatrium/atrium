@@ -14,9 +14,7 @@ import {
   collectFileChanges,
   collectSideEffects,
   foldedTurnRows,
-  isLiveFold,
   sideEffectCount,
-  type FoldedTurnRow,
 } from '@atrium/centaur-client';
 import { isTerminalSessionStatus, type Session } from '../sessions/types';
 import {
@@ -31,6 +29,7 @@ import { Composer } from './Composer';
 import type { AgentComposerRequest, ComposerHandle } from './Composer';
 import { XIcon } from './icons';
 import { MessageRow } from './MessageRow';
+import { buildSpineRows } from './threadSpine';
 import type { MentionContext } from './useMentionTypeahead';
 import { ConversationHeader } from '../sessions/ConversationHeader';
 import { useNow } from '../sessions/SessionCard';
@@ -228,95 +227,10 @@ export function ThreadPanelContent({
   }, [count, stream.lastEventId]);
 
   const items = useMemo(() => buildTimelineItems(reconciledReplies), [reconciledReplies]);
-  const spineRows = useMemo(() => {
-    const rows: Array<
-      | {
-          kind: 'message';
-          key: string;
-          message: ChatMessage;
-          grouped: boolean;
-          aside: boolean;
-          fold?: FoldedTurnRow;
-          foldLive?: boolean;
-        }
-      | { kind: 'fold'; key: string; fold: FoldedTurnRow; live: boolean }
-    > = [];
-    const usedFolds = new Set<string>();
-    let replyOrdinal = 0;
-    let triggerOrdinal = 0;
-    const pushFold = (fold: FoldedTurnRow) => {
-      rows.push({
-        kind: 'fold',
-        key: fold.key,
-        fold,
-        live: isLiveFold(fold, workFolds, sessionLive),
-      });
-      usedFolds.add(fold.key);
-    };
-    // A turn's work belongs to the reply it produced, so those folds render
-    // inside that reply's row. Resolve them up front: the trigger-zero pass
-    // below would otherwise hoist the first reply's work to the top of the
-    // thread, detached from the answer it explains.
-    const agentReplyCount = items.filter(
-      (item) =>
-        item.kind !== 'day' &&
-        item.message != null &&
-        attachedSession != null &&
-        item.message.sessionId === attachedSession.id &&
-        item.message.sessionEventType === 'replied',
-    ).length;
-    const foldByReplyOrdinal = new Map<number, FoldedTurnRow>();
-    for (const fold of workFolds) {
-      if (fold.replyOrdinal == null || fold.replyOrdinal >= agentReplyCount) continue;
-      if (!foldByReplyOrdinal.has(fold.replyOrdinal)) foldByReplyOrdinal.set(fold.replyOrdinal, fold);
-    }
-    const attachedFoldKeys = new Set([...foldByReplyOrdinal.values()].map((fold) => fold.key));
-    // The root ask is trigger zero. Harnesses that omit its user_message echo
-    // produce a null trigger, which belongs at this same position.
-    for (const fold of workFolds) {
-      if (attachedFoldKeys.has(fold.key)) continue;
-      if (fold.triggerOrdinal === null || fold.triggerOrdinal === 0) pushFold(fold);
-    }
-    for (const item of items) {
-      if (item.kind === 'day' || !item.message) continue;
-      const message = item.message;
-      const agentReply =
-        attachedSession != null && message.sessionId === attachedSession.id && message.sessionEventType === 'replied';
-      let fold: FoldedTurnRow | undefined;
-      if (agentReply) {
-        fold = foldByReplyOrdinal.get(replyOrdinal);
-        if (fold) usedFolds.add(fold.key);
-        replyOrdinal += 1;
-      }
-      const aside =
-        attachedSession != null &&
-        message.sessionId == null &&
-        message.steeredSessionId == null &&
-        message.suggestedSessionId == null;
-      rows.push({
-        kind: 'message',
-        key: item.key,
-        message,
-        grouped: item.grouped ?? false,
-        aside,
-        ...(fold ? { fold, foldLive: isLiveFold(fold, workFolds, sessionLive) } : {}),
-      });
-      const targetsAttachedSession =
-        attachedSession != null &&
-        (message.steeredSessionId === attachedSession.id || message.suggestedSessionId === attachedSession.id);
-      if (targetsAttachedSession) {
-        triggerOrdinal += 1;
-        for (const fold of workFolds) {
-          if (!usedFolds.has(fold.key) && fold.triggerOrdinal === triggerOrdinal) pushFold(fold);
-        }
-      }
-    }
-    for (const fold of workFolds) {
-      if (usedFolds.has(fold.key)) continue;
-      pushFold(fold);
-    }
-    return rows;
-  }, [attachedSession, items, sessionLive, workFolds]);
+  const spineRows = useMemo(
+    () => buildSpineRows({ items, workFolds, attachedSessionId: attachedSession?.id ?? null, sessionLive }),
+    [attachedSession, items, sessionLive, workFolds],
+  );
 
   return (
     <aside
