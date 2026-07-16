@@ -128,6 +128,20 @@ daemon's tests):
 | `GET  sessions/:viewerId/atrium/changes` | `atrium-changes.json` |
 | `GET  sessions/:viewerId/atrium/channels` | `atrium-channels.json` |
 | `GET  sessions/:id/profile-bundles` | `profile-bundles.json` (element shape daemon-side; live check pins the envelope — seeding a real bundle needs the whole profile-writeback pipeline) |
+| `GET  sessions/:id/git-identity` | `git-identity.json` (200 with the identity, or **204** when none is resolvable) |
+
+The `git-identity` lane deserves a note, because its shape invites the wrong
+home. It looks like a profile bundle and is deliberately not one: profile
+bundles are user-authored files that get captured and **written back**, whereas
+the git identity is server-derived per claim and must never round-trip (that is
+the clobber class fixed in #97). It exists because commit authorship is the one
+per-user value this architecture cannot inject at the HTTP boundary — the
+iron-proxy rewrites headers, and authorship lives *inside* the payload, below
+that seam. A warm pod's env is baked before the claiming principal is known, so
+env cannot carry it either; per-session file materialization is the only channel
+that reaches a claimed warm pod. On 204 the daemon writes nothing and the
+image's baked `Centaur AI` identity stands — that fallback is the pre-existing
+behavior, which is what makes this lane safe to ship dark.
 
 Lanes covered by route-existence + daemon-side parsing only (their payloads
 are opaque blobs or one-way writes): `artifacts/raw`, `harness-transcript`,

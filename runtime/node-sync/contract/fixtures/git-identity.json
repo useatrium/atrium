@@ -1,0 +1,8 @@
+{
+  "_comment": "GET {session_prefix}/:threadKey/git-identity — the git author identity the daemon materializes into the sandbox's ~/.config/git/atrium-identity. /opt/centaur/gitconfig includes that path AFTER its own [user] block, so these values win (git config is last-wins); when the daemon writes nothing the image's baked 'Centaur AI' identity stands unchanged. A 204 means surface could not resolve an identity for this session — the daemon MUST then leave the file absent rather than write a partial one. This payload is SERVER-DERIVED per claim: it is deliberately NOT a profile bundle, because profile bundles are user-authored, captured, and written back, and an identity that round-trips through writeback would re-introduce the clobber class fixed in #97. Never capture, never write back, never let it be restored from a resumed session's overlay ahead of a fresh fetch.",
+  "authorName": "Allan Niemerg",
+  "authorEmail": "123+aniemerg@users.noreply.github.com",
+  "source": "github_noreply",
+  "sessionId": "de230f34-b9d9-42df-bce3-9270f2184294",
+  "harness": "claude"
+}
