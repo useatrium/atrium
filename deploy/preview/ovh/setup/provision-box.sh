@@ -17,6 +17,11 @@ REPO_ROOT="$(cd -- "$SCRIPT_DIR/../../../.." && pwd)"
 # 0750 and the unit sets ProtectHome), so the service gets its own checkout at a
 # system path. Never point the unit at $REPO_ROOT.
 SERVICE_REPO="${ATRIUM_PREVIEW_REPO:-/opt/atrium}"
+# The launcher unit runs with ProtectHome=read-only, so the docker CLI cannot
+# write buildx state into the service user's home. Give it a writable config dir
+# under /var/lib (which is in the unit's ReadWritePaths) and build the cache
+# builder there, so the service actually uses the warm builder.
+SERVICE_DOCKER_CONFIG="/var/lib/atrium-preview/.docker"
 STATE_DIR="/var/lib/atrium-preview/state"
 CACHE_ROOT="/var/cache/atrium-preview"
 CONFIG_DIR="/etc/atrium-preview"
@@ -45,6 +50,12 @@ docker() {
   else
     command docker "$@"
   fi
+}
+
+# Run docker as the service user with the service's DOCKER_CONFIG, so buildx
+# state lands where the launcher will actually look for it.
+svc_docker() {
+  sudo -u "$SERVICE_USER" env "DOCKER_CONFIG=$SERVICE_DOCKER_CONFIG" docker "$@"
 }
 
 install_docker() {
@@ -149,7 +160,8 @@ ensure_directories() {
     "$CACHE_ROOT/cargo/registry" \
     "$CACHE_ROOT/cargo/git" \
     "$CACHE_ROOT/cargo/target" \
-    "$CACHE_ROOT/buildkit"
+    "$CACHE_ROOT/buildkit" \
+    "$SERVICE_DOCKER_CONFIG"
   sudo install -d -m 0755 "$CONFIG_DIR" "$CADDY_CONFIG_DIR"
   sudo install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0755 "$CADDY_CONF_DIR"
 }
@@ -303,17 +315,17 @@ warm_images_and_buildkit() {
     fi
   done
 
-  if docker buildx inspect atrium-preview-builder >/dev/null 2>&1; then
+  if svc_docker buildx inspect atrium-preview-builder >/dev/null 2>&1; then
     log "buildx cache builder already exists"
   else
-    docker buildx create \
+    svc_docker buildx create \
       --name atrium-preview-builder \
       --driver docker-container \
       --driver-opt "network=host" \
       --use >/dev/null
-    log "created buildx cache builder"
+    log "created buildx cache builder for $SERVICE_USER"
   fi
-  docker buildx inspect --bootstrap atrium-preview-builder >/dev/null
+  svc_docker buildx inspect --bootstrap atrium-preview-builder >/dev/null
 }
 
 start_configured_services() {

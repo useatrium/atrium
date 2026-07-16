@@ -12,6 +12,10 @@ SupplementaryGroups=docker
 WorkingDirectory=__ATRIUM_REPO_ROOT__
 EnvironmentFile=__ATRIUM_LAUNCHER_ENV__
 Environment=PYTHONUNBUFFERED=1
+# ProtectHome=read-only makes the service user's home unwritable, and the docker
+# CLI writes buildx state under $DOCKER_CONFIG (default ~/.docker). Point it at a
+# writable, service-owned dir or every `docker build` fails instantly.
+Environment=DOCKER_CONFIG=/var/lib/atrium-preview/.docker
 ExecStart=/usr/bin/python3 __ATRIUM_REPO_ROOT__/deploy/preview/ovh/launcher.py
 Restart=on-failure
 RestartSec=5s
