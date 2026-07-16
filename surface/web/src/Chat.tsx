@@ -106,6 +106,10 @@ import {
 } from './router';
 
 const PAGE_SIZE = 50;
+// Upper bound on how long a channel's divider freeze waits for its warm-boot
+// after_id delta. On expiry the divider freezes off the cache — the pre-defer
+// behavior — so a hung fetch costs at most this much landing latency.
+const WARM_DELTA_FREEZE_CAP_MS = 5_000;
 const SYNC_LIMIT = 500;
 const MOBILE_MEDIA_QUERY = '(max-width: 767px)';
 const browserWsUrl = import.meta.env.VITE_ATRIUM_WS_URL?.trim();
@@ -392,6 +396,20 @@ export function Chat({
   // channel can't leak into a freshly-opened one and cause a premature landing.
   const [dividerReadyChannelId, setDividerReadyChannelId] = useState<string | null>(null);
   const dividerFrozenForRef = useRef<string | null>(null);
+  // Channels whose warm-boot after_id delta hasn't settled yet. While a channel is
+  // in here its divider decision must not freeze: the cached timeline can look
+  // fully read even though messages arrived while this device was closed. Bounded
+  // by WARM_DELTA_FREEZE_CAP_MS so a hung fetch degrades to today's fast landing.
+  const [pendingWarmDeltas, setPendingWarmDeltas] = useState<ReadonlySet<string>>(() => new Set());
+  const warmDeltaCapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const settleWarmDelta = useCallback((channelId: string) => {
+    setPendingWarmDeltas((current) => {
+      if (!current.has(channelId)) return current;
+      const next = new Set(current);
+      next.delete(channelId);
+      return next;
+    });
+  }, []);
   const locationState = useLocation();
 
   const handleActivityCountsChange = useCallback((next: ActivityCounts) => {
@@ -651,10 +669,20 @@ export function Chat({
       .then(async ({ channels, timelines, syncCursor }) => {
         if (disposed) return;
         if (channels) dispatch({ type: 'channels-loaded', channels });
+        // Every cached channel starts freeze-deferred until its warm delta settles
+        // (see pendingWarmDeltas). The cap keeps a hung fetch from stalling the
+        // landing forever — on expiry we freeze off the cache, i.e. the old behavior.
+        setPendingWarmDeltas(new Set(Object.keys(timelines)));
+        if (warmDeltaCapTimerRef.current) clearTimeout(warmDeltaCapTimerRef.current);
+        warmDeltaCapTimerRef.current = setTimeout(() => {
+          setPendingWarmDeltas((current) => (current.size === 0 ? current : new Set()));
+        }, WARM_DELTA_FREEZE_CAP_MS);
         await hydrateCachedTimelines({
           timelines,
           syncCursor,
           dispatch,
+          // Land the visible channel first so its freeze-defer window is short.
+          firstChannelId: stateRef.current.activeChannelId ?? undefined,
           fetchLatest: (channelId) => api.messages(channelId, { limit: PAGE_SIZE }),
           fetchDelta: (channelId, afterId) => api.messages(channelId, { afterId, limit: PAGE_SIZE, folded: true }),
           isDisposed: () => disposed,
@@ -668,13 +696,18 @@ export function Chat({
             onApiError(err);
           },
           onDeltaLoaded: (channelId, delta) => {
+            settleWarmDelta(channelId);
             eventCache.enqueueEvents(channelId, delta.events);
           },
-          onDeltaFailed: (_channelId, err) => {
+          onDeltaFailed: (channelId, err) => {
+            settleWarmDelta(channelId);
             console.warn('failed to fetch warm hydrate history delta', err);
             onApiError(err);
           },
         });
+        // The loop settles each channel as it goes; this sweep covers early
+        // dispose/return paths so nothing stays deferred after hydration ends.
+        setPendingWarmDeltas((current) => (current.size === 0 ? current : new Set()));
         if (disposed) return;
         if (syncCursor > 0) dispatch({ type: 'sync-cursor', cursor: syncCursor });
         await opQueue.recoverInflight();
@@ -690,8 +723,9 @@ export function Chat({
       });
     return () => {
       disposed = true;
+      if (warmDeltaCapTimerRef.current) clearTimeout(warmDeltaCapTimerRef.current);
     };
-  }, [applyQueuedOp, onApiError, opQueue]);
+  }, [applyQueuedOp, onApiError, opQueue, settleWarmDelta]);
 
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isMobileViewport, setIsMobileViewport] = useState(isMobileViewportNow);
@@ -816,6 +850,12 @@ export function Chat({
     // Until it lands we cannot tell a real gap from a stale counter, so we must NOT
     // freeze the divider yet — freezing now would lock in a wrong decision.
     const repairPending = timeline?.loaded === true && counter > loadedNewest;
+    // Same reasoning for the warm-boot delta: a cached timeline looks self-consistent
+    // (cached counter == cached tail) even when messages arrived while this device was
+    // closed, so freezing off it would land at the bottom and eager mark-read would
+    // swallow the unread. Wait for that channel's after_id delta to settle (bounded —
+    // hydration clears the set on completion, failure, or the safety cap).
+    const warmDeltaPending = pendingWarmDeltas.has(cid);
 
     if (dividerFrozenForRef.current === cid) {
       // Frozen so the divider doesn't move as YOU read here. If another device/tab
@@ -831,13 +871,14 @@ export function Chat({
     // divider → land at bottom. The repair fetch re-runs this effect with the real tail.
     setUnreadDividerAfterId(lastRead > 0 && loadedNewest > lastRead ? lastRead : null);
 
-    // Freeze only once the loaded tail is caught up to the counter (no repair pending);
-    // otherwise wait so a real gap still shows the divider once the tail is fetched.
-    if (timeline?.loaded === true && !repairPending) {
+    // Freeze only once the loaded tail is caught up to the counter (no repair pending)
+    // and the warm-boot delta for this channel has settled; otherwise wait so a real
+    // gap still shows the divider once the tail is fetched.
+    if (timeline?.loaded === true && !repairPending && !warmDeltaPending) {
       dividerFrozenForRef.current = cid;
       setDividerReadyChannelId(cid);
     }
-  }, [state.activeChannelId, state.channels, state.timelines, state.remoteReadCursors]);
+  }, [state.activeChannelId, state.channels, state.timelines, state.remoteReadCursors, pendingWarmDeltas]);
 
   // Ready only when the frozen decision belongs to the currently active channel.
   const dividerReady = dividerReadyChannelId != null && dividerReadyChannelId === state.activeChannelId;

@@ -7,6 +7,7 @@ import {
   dividerOffsetFromViewportTop,
   login,
   openChannel,
+  readCursor,
   seedMessages,
   unique,
   warmReaderCache,
@@ -135,3 +136,75 @@ test('history readCursor preserves a genuine unread-divider landing', async ({ p
     await secondReaderSession.dispose();
   }
 });
+
+test('a slow warm delta defers the divider freeze instead of swallowing unread', async ({ page, context }) => {
+  // Forces the freeze-vs-delta race the unlucky way: the cached timeline looks
+  // fully read, messages arrived while the browser was closed, and the warm
+  // after_id delta is artificially slow. Without the freeze-defer the client
+  // froze a null divider, landed at the bottom, and eager mark-read swallowed
+  // the unread messages.
+  test.slow();
+  const room = await createTestChannel('history-defer');
+  const readerHandle = unique('reader');
+  const writer = await apiAs(unique('writer'), 'Writer');
+  const readerSession = await apiAs(readerHandle, 'Reader');
+
+  try {
+    const roomId = await channelId(writer, room);
+    const baselineIds = await seedMessages(writer, roomId, unique('baseline'), 18, {
+      text: (index, prefix) => `${prefix} ${index} ${'viewport-filling message content '.repeat(40)}`,
+    });
+    const latestBaselineId = baselineIds.at(-1)!;
+    await login(page, readerHandle, 'Reader');
+    await openChannel(page, room);
+    const route = await warmReaderCache({
+      page,
+      room,
+      latestEventId: latestBaselineId,
+      confirmBottomBeforeCursor: true,
+      readCursor: async () => {
+        const response = await readerSession.get(`/api/channels/${roomId}/messages?limit=1`);
+        expect(response.ok()).toBeTruthy();
+        return ((await response.json()) as { readCursor?: number }).readCursor ?? 0;
+      },
+      cursorPollOptions: { timeout: 20_000 },
+    });
+    await page.close();
+
+    const newIds = await seedMessages(writer, roomId, unique('while-closed'), 14, {
+      text: (index, prefix) => `${prefix} ${index} ${'viewport-filling message content '.repeat(40)}`,
+    });
+    const newestId = newIds.at(-1)!;
+
+    const reopenedPage = await context.newPage();
+    await reopenedPage.route(
+      (url) => url.pathname.includes('/messages') && url.searchParams.has('after_id'),
+      async (routeHandle) => {
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        await routeHandle.continue();
+      },
+    );
+    await reopenedPage.goto(route);
+    await expect(reopenedPage.getByRole('heading', { name: `# ${room}` })).toBeVisible();
+
+    // The freeze waited for the delayed delta, so the divider plants and the
+    // landing anchors it — not the bottom.
+    const divider = reopenedPage.locator('[data-unread-divider]');
+    await expect(divider).toBeVisible({ timeout: 20_000 });
+    await expectDividerAnchored(divider);
+    await expect(reopenedPage.getByRole('log', { name: 'Messages' }).locator(`[data-eid="${newestId}"]`)).toHaveCount(
+      1,
+    );
+    // Swallow guard: landing on the divider must not have marked the new
+    // messages read — the persisted cursor still sits at the baseline.
+    expect(await readCursor({ handle: readerHandle, channelId: roomId })).toBe(latestBaselineId);
+  } finally {
+    await writer.dispose();
+    await readerSession.dispose();
+  }
+});
+
+async function expectDividerAnchored(divider: ReturnType<Page['locator']>): Promise<void> {
+  await expect.poll(() => dividerOffsetFromViewportTop(divider), { timeout: 20_000 }).toBeGreaterThanOrEqual(-2);
+  await expect.poll(() => dividerOffsetFromViewportTop(divider), { timeout: 20_000 }).toBeLessThan(120);
+}
