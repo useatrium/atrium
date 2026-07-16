@@ -147,8 +147,8 @@ reporting the failure.
 
 ## Agent workflow
 
-Agents use [`tool/atrium-preview`](tool/atrium-preview); they do not call the
-launcher with a token.
+Agents use the packaged `atrium-preview` CLI rather than calling the launcher
+directly.
 
 1. Push the branch or ref to origin first. The tool warns when the ref is not on
    origin, and the launcher deploys the resolved commit rather than local work.
@@ -161,8 +161,7 @@ launcher with a token.
 
 Destroy is safe to repeat. It removes the preview's k3d cluster, Compose project
 and volumes, MinIO bucket, and Caddy vhost, but leaves wildcard TLS and DNS
-alone. See [`tool/AGENT_GUIDANCE.md`](tool/AGENT_GUIDANCE.md) for the tool's
-agent-facing usage guidance.
+alone.
 
 ## Guardrails and capacity
 
