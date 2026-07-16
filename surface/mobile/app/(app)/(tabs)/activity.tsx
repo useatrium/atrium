@@ -722,7 +722,12 @@ export default function ActivityScreen() {
     const now = Date.now();
     const glance = listItemGlance(session, session.live, now);
     const clock = glance.clock?.mode === 'waiting' ? sessionGlanceClockLabel(glance, now) : null;
-    const stateWord = clock ? `${glance.label} · ${clock}` : glance.label;
+    // A blocked row leads with WHAT it needs, not its raw run state: the
+    // question itself when the live entity carries it, else the auth ask.
+    const blockedDetail =
+      session.live?.pendingQuestion?.questions[0]?.question ??
+      (session.live?.providerAuthRequired ? 'needs provider auth' : null);
+    const stateWord = blockedDetail ?? (clock ? `${glance.label} · ${clock}` : glance.label);
     const title = session.live?.title ?? session.title;
     const time = formatRelativeTimestamp(session.createdAt) || session.createdAt;
     const exactTime = formatExactTimestamp(session.createdAt) || session.createdAt;

@@ -62,6 +62,7 @@ function displayFields(item: DisplaySession) {
     archivedAt: live?.archivedAt ?? item.archivedAt,
     pinned: live?.pinned ?? item.pinned,
     resultText: live?.resultText ?? item.resultText,
+    needsAttention: item.needsAttention,
   };
 }
 
