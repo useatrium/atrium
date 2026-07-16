@@ -1,0 +1,224 @@
+#!/usr/bin/env python3
+"""Create, inspect, and destroy Atrium preview environments."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from typing import Any
+
+
+DEFAULT_LAUNCHER_URL = "https://preview-launcher.useatrium.com"
+DEFAULT_POLL_INTERVAL_SECONDS = 10.0
+DEFAULT_TIMEOUT_SECONDS = 15 * 60.0
+
+
+class PreviewError(Exception):
+    """An error suitable for concise display to an agent."""
+
+
+def launcher_url() -> str:
+    return os.environ.get("ATRIUM_PREVIEW_LAUNCHER_URL", DEFAULT_LAUNCHER_URL).rstrip("/")
+
+
+def positive_float_env(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        value = float(raw)
+    except ValueError as exc:
+        raise PreviewError(f"{name} must be a number, got {raw!r}") from exc
+    if value <= 0:
+        raise PreviewError(f"{name} must be greater than zero")
+    return value
+
+
+def api_request(method: str, path: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
+    data = None
+    headers = {"Accept": "application/json"}
+    if body is not None:
+        data = json.dumps(body).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+
+    # Authorization is deliberately absent. iron-proxy injects it on the wire.
+    request = urllib.request.Request(
+        f"{launcher_url()}{path}", data=data, headers=headers, method=method
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            raw = response.read().decode("utf-8", errors="replace")
+            status = response.status
+    except urllib.error.HTTPError as exc:
+        raw = exc.read().decode("utf-8", errors="replace")
+        detail = raw.strip() or "<empty body>"
+        raise PreviewError(f"launcher returned HTTP {exc.code}: {detail}") from exc
+    except urllib.error.URLError as exc:
+        raise PreviewError(f"launcher request failed: {exc.reason}") from exc
+    except TimeoutError as exc:
+        raise PreviewError("launcher request timed out") from exc
+
+    if status < 200 or status >= 300:
+        detail = raw.strip() or "<empty body>"
+        raise PreviewError(f"launcher returned HTTP {status}: {detail}")
+    if not raw.strip():
+        return {}
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise PreviewError(f"launcher returned invalid JSON: {raw.strip()}") from exc
+    if not isinstance(payload, dict):
+        raise PreviewError(f"launcher returned an unexpected JSON value: {raw.strip()}")
+    return payload
+
+
+def preview_path(preview_id: str) -> str:
+    return f"/previews/{urllib.parse.quote(preview_id, safe='')}"
+
+
+def require_pushed_ref(ref: str) -> None:
+    try:
+        result = subprocess.run(
+            ["git", "ls-remote", "--exit-code", "origin", ref],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+    except FileNotFoundError as exc:
+        raise PreviewError("git is required to verify the branch on origin") from exc
+    if result.returncode != 0:
+        detail = result.stderr.strip()
+        suffix = f" ({detail})" if detail else ""
+        raise PreviewError(
+            f"ref {ref!r} was not found on origin; push your branch first{suffix}"
+        )
+
+
+def value(payload: dict[str, Any], key: str) -> str:
+    item = payload.get(key)
+    return "-" if item is None or item == "" else str(item)
+
+
+def print_ready(payload: dict[str, Any]) -> None:
+    print(f"preview: {value(payload, 'id')}")
+    print(f"sha: {value(payload, 'commit_sha')}")
+    print(f"url: {value(payload, 'url')}")
+    print(f"expires: {value(payload, 'expires_at')}")
+
+
+def print_status(payload: dict[str, Any]) -> None:
+    print(f"preview: {value(payload, 'id')}")
+    print(f"status: {value(payload, 'status')}")
+    print(f"phase: {value(payload, 'phase')}")
+    if payload.get("commit_sha"):
+        print(f"sha: {payload['commit_sha']}")
+    if payload.get("url"):
+        print(f"url: {payload['url']}")
+    if payload.get("expires_at"):
+        print(f"expires: {payload['expires_at']}")
+    if payload.get("failure_message"):
+        print(f"failure: {payload['failure_message']}")
+
+
+def create_preview(args: argparse.Namespace) -> int:
+    require_pushed_ref(args.ref)
+    created = api_request(
+        "POST",
+        "/previews",
+        {
+            "repo": args.repo,
+            "ref": args.ref,
+            "ttl_hours": args.ttl_hours,
+            "requested_by": args.requested_by,
+        },
+    )
+    preview_id = created.get("id")
+    if not isinstance(preview_id, str) or not preview_id:
+        raise PreviewError(f"launcher create response had no preview id: {json.dumps(created)}")
+
+    interval = positive_float_env(
+        "ATRIUM_PREVIEW_POLL_INTERVAL_SECONDS", DEFAULT_POLL_INTERVAL_SECONDS
+    )
+    timeout = positive_float_env("ATRIUM_PREVIEW_TIMEOUT_SECONDS", DEFAULT_TIMEOUT_SECONDS)
+    deadline = time.monotonic() + timeout
+    current = created
+
+    while True:
+        status = current.get("status")
+        if status == "ready":
+            print_ready(current)
+            return 0
+        if status == "failed":
+            print(f"preview: {preview_id}")
+            print(f"failed phase: {value(current, 'phase')}")
+            print(f"failure: {value(current, 'failure_message')}")
+            return 1
+        if time.monotonic() >= deadline:
+            print(f"preview: {preview_id}")
+            print(f"timed out; current phase: {value(current, 'phase')}")
+            print(f"continue: atrium-preview status {preview_id}")
+            return 1
+
+        time.sleep(min(interval, max(0.0, deadline - time.monotonic())))
+        current = api_request("GET", preview_path(preview_id))
+
+
+def status_preview(args: argparse.Namespace) -> int:
+    print_status(api_request("GET", preview_path(args.preview_id)))
+    return 0
+
+
+def destroy_preview(args: argparse.Namespace) -> int:
+    payload = api_request("DELETE", preview_path(args.preview_id))
+    print(f"preview: {payload.get('id', args.preview_id)}")
+    print(f"status: {payload.get('status', 'destroy requested')}")
+    return 0
+
+
+def parser() -> argparse.ArgumentParser:
+    result = argparse.ArgumentParser(
+        prog="atrium-preview", description="Manage Atrium preview environments"
+    )
+    subcommands = result.add_subparsers(dest="command", required=True)
+
+    create = subcommands.add_parser("create", help="create and wait for a preview")
+    create.add_argument("--repo", required=True, choices=["useatrium/atrium"])
+    create.add_argument("--ref", required=True, help="branch or ref already pushed to origin")
+    create.add_argument("--ttl-hours", type=int, default=24, choices=range(1, 73))
+    create.add_argument(
+        "--requested-by", default=os.environ.get("USER", "atrium-agent")
+    )
+    create.set_defaults(handler=create_preview)
+
+    status = subcommands.add_parser("status", help="show preview status")
+    status.add_argument("preview_id")
+    status.set_defaults(handler=status_preview)
+
+    destroy = subcommands.add_parser("destroy", help="destroy a preview")
+    destroy.add_argument("preview_id")
+    destroy.set_defaults(handler=destroy_preview)
+    return result
+
+
+def main() -> int:
+    args = parser().parse_args()
+    try:
+        return args.handler(args)
+    except PreviewError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    except KeyboardInterrupt:
+        print("error: interrupted", file=sys.stderr)
+        return 130
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

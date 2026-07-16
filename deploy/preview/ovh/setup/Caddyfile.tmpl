@@ -1,0 +1,33 @@
+{
+	email {$ACME_EMAIL}
+	acme_dns cloudflare {env.CF_API_TOKEN}
+	auto_https prefer_wildcard
+}
+
+*.preview.useatrium.com {
+	tls {
+		dns cloudflare {env.CF_API_TOKEN}
+	}
+	respond "preview route not found" 404
+}
+
+# previewctl writes one file per preview into conf.d and reloads Caddy. Its
+# fragment follows this shape (ports are the preview's host-published ports):
+#
+# prev-<sha12>-<rand4hex>.preview.useatrium.com {
+#     @apps path /apps/*
+#     handle @apps {
+#         reverse_proxy 127.0.0.1:<apps-port>
+#     }
+#
+#     @server path /api/* /auth/* /ws /healthz
+#     handle @server {
+#         reverse_proxy 127.0.0.1:<server-port>
+#     }
+#
+#     handle {
+#         reverse_proxy 127.0.0.1:<web-port>
+#     }
+# }
+
+import /etc/caddy/conf.d/*.caddy

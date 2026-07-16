@@ -1,0 +1,26 @@
+[Unit]
+Description=Atrium OVH preview launcher
+After=docker.service network-online.target
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+User=__ATRIUM_SERVICE_USER__
+Group=__ATRIUM_SERVICE_USER__
+SupplementaryGroups=docker
+WorkingDirectory=__ATRIUM_REPO_ROOT__
+EnvironmentFile=__ATRIUM_LAUNCHER_ENV__
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 __ATRIUM_REPO_ROOT__/deploy/preview/ovh/launcher.py
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=30s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/var/lib/atrium-preview /var/cache/atrium-preview __ATRIUM_REPO_ROOT__/deploy/preview/ovh
+
+[Install]
+WantedBy=multi-user.target
