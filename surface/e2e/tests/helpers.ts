@@ -118,8 +118,8 @@ export async function goOffline(page: Page, context: BrowserContext, { signal = 
   if (signal) await page.evaluate(() => window.dispatchEvent(new Event('offline')));
 }
 
-export function mainComposer(page: Page, channelName = 'general') {
-  return page.getByPlaceholder(`Message #${channelName}`);
+export function mainComposer(page: Page, _channelName = 'general') {
+  return page.locator('main').getByRole('combobox', { name: 'Message input' });
 }
 
 export async function sendMessage(page: Page, text: string, channelName = 'general'): Promise<void> {

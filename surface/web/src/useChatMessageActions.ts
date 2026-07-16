@@ -1,6 +1,7 @@
 import { useCallback } from 'react';
 import type {
   AgentAttachmentRef,
+  AgentComposerRequest,
   AppAction,
   AttachmentRef,
   Channel,
@@ -24,7 +25,6 @@ import {
 } from './chatQueuedOverlays';
 import { showErrorToast } from './components/Toasts';
 import type { AttachmentMeta } from '@atrium/surface-client';
-import type { AgentComposerRequest } from './components/Composer';
 
 export type VoiceSendMeta = { fileId: string; durationMs: number; waveform?: number[] };
 export type QueuedVoiceMsgSendPayload = MsgSendPayload;

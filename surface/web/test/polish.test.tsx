@@ -641,7 +641,7 @@ describe('terminal session pane', () => {
     // No dead ends: the read-only notice is gone; the (non-driver) composer
     // offers the suggestion path, and the failure banner offers the retry.
     expect(screen.queryByText(/Agent ended/)).toBeNull();
-    expect(screen.getByPlaceholderText(/Suggest a message/)).toBeTruthy();
+    expect(screen.getByLabelText('Message input')).toBeTruthy();
     expect(screen.getByText(/Failed — review the transcript/)).toBeTruthy();
     // Retry is driver-only; `me` is a watcher here.
     expect(screen.queryByTestId('retry-turn')).toBeNull();

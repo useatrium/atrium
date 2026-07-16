@@ -99,7 +99,7 @@ test('open thread URL reload-restores the thread panel', async ({ page }) => {
   await page.reload();
   await expect(page).toHaveURL(new RegExp(`/c/${roomId}/t/${rootId}`));
   await expect(page.getByRole('button', { name: 'Close thread' })).toBeVisible();
-  await expect(page.getByPlaceholder('Reply…')).toBeVisible();
+  await expect(page.getByRole('complementary').getByRole('combobox', { name: 'Message input' })).toBeVisible();
 });
 
 test('pinned work drawer Changes tab is URL-driven and reload-restored', async ({ page }) => {

@@ -51,7 +51,12 @@ import {
   queryEntryReferencesForHandles,
   type EntryReferenceSummary,
 } from '../components/EntryReferencesChip';
-import { parseAttachments, splitMarkdownFrontmatter } from '@atrium/surface-client';
+import {
+  agentDestination,
+  parseAttachments,
+  peopleDestination,
+  splitMarkdownFrontmatter,
+} from '@atrium/surface-client';
 import { MarkupPane, type MarkupPaneSource } from '../components/MarkupPane';
 import { MarkupSteerCard } from '../components/MarkupSteerCard';
 import { Tooltip } from '../components/a11y';
@@ -60,6 +65,7 @@ import type {
   AttachmentMeta,
   AttachmentRef,
   ChatMessage,
+  ComposerAudience,
   UploadPayload,
   UserRef,
   WireEvent,
@@ -349,6 +355,8 @@ export interface SessionPaneProps {
     attachmentRefs?: AttachmentRef[],
     context?: SessionSteerContext,
   ) => Promise<void>;
+  /** Queue-backed People message to the session's owning thread. */
+  onSendToThread?: (text: string, attachments?: AttachmentMeta[], attachmentRefs?: AttachmentRef[]) => void;
   queueUpload?: (payload: UploadPayload) => Promise<{ fileId: string }>;
   failedSteer?: string | null;
   onClearFailedSteer?: () => void;
@@ -401,6 +409,7 @@ export function SessionPaneContent({
   onClose,
   onAnswerQuestion,
   onSteer = async () => {},
+  onSendToThread,
   queueUpload,
   failedSteer = null,
   onClearFailedSteer = () => {},
@@ -825,17 +834,20 @@ export function SessionPaneContent({
       ? `You're watching — ${driverName} is driving`
       : "You're watching";
   // The pane composer speaks to the agent by default (it's the workbench),
-  // with a one-tap thread mode for talking to PEOPLE about the work — the
-  // agent never reads thread replies.
-  const [paneSendMode, setPaneSendMode] = useState<'agent' | 'thread'>('agent');
+  // with a one-tap People destination for discussion without prompting it.
+  const [paneSendMode, setPaneSendMode] = useState<ComposerAudience>('agent');
   const [asideRefresh, setAsideRefresh] = useState(0);
   // A note that fails must never vanish — hold the text for an explicit retry.
   const [threadReplyError, setThreadReplyError] = useState<string | null>(null);
   const sendThreadReply = useCallback(
-    (text: string) => {
+    (text: string, attachments?: AttachmentMeta[], attachmentRefs?: AttachmentRef[]) => {
       const root = session.threadRootEventId;
       const trimmed = text.trim();
-      if (root == null || !trimmed) return;
+      if (root == null || (!trimmed && !attachments?.length)) return;
+      if (onSendToThread) {
+        onSendToThread(trimmed, attachments, attachmentRefs);
+        return;
+      }
       setThreadReplyError(null);
       // Optimistic echo: your note appears the instant you send it. The WS
       // fold or the healing refetch replaces it with the real event row.
@@ -845,7 +857,13 @@ export function SessionPaneContent({
         { id: tempId, author: me.displayName, createdAt: new Date().toISOString(), text: trimmed, pending: true },
       ]);
       api
-        .postMessage({ channelId: session.channelId, text: trimmed, clientMsgId: randomId(), threadRootEventId: root })
+        .postMessage({
+          channelId: session.channelId,
+          text: trimmed,
+          clientMsgId: randomId(),
+          threadRootEventId: root,
+          ...(attachments?.length ? { attachments: attachments.map((attachment) => attachment.id) } : {}),
+        })
         .then(() => {
           setAsides((prev) => prev.filter((a) => a.id !== tempId));
           setAsideRefresh((n) => n + 1);
@@ -855,11 +873,11 @@ export function SessionPaneContent({
           setThreadReplyError(trimmed);
         });
     },
-    [me.displayName, session.channelId, session.threadRootEventId],
+    [me.displayName, onSendToThread, session.channelId, session.threadRootEventId],
   );
   const composerPlaceholder =
-    paneSendMode === 'thread'
-      ? "Reply in the thread — the agent won't read this…"
+    paneSendMode === 'people'
+      ? 'Reply in the thread without prompting the agent…'
       : isDriver
         ? isEnded
           ? 'Steer to retry — starts a new turn…'
@@ -2363,7 +2381,7 @@ export function SessionPaneContent({
             <Composer
               placeholder={composerPlaceholder}
               onSend={
-                paneSendMode === 'thread' && session.threadRootEventId != null
+                session.threadRootEventId != null
                   ? sendThreadReply
                   : isDriver
                     ? sendSteer
@@ -2374,17 +2392,25 @@ export function SessionPaneContent({
               allowAttachments={isDriver}
               allowVoice={false}
               previewEntryLinks
-              audiencePill={
+              routing={
                 session.threadRootEventId != null
                   ? {
-                      mode: paneSendMode,
-                      // Same grammar as the channel and thread composers: the pill
-                      // names the real target, not just the mode.
-                      agentLabel: `${isDriver ? 'Steer' : 'Suggest'} · “${session.title}”`,
-                      threadLabel: 'this thread',
-                      onModeChange: setPaneSendMode,
-                      agentSendLabel: isDriver ? 'Steer' : 'Suggest',
-                      threadSendLabel: 'Reply',
+                      kind: 'controlled',
+                      audience: paneSendMode,
+                      people: peopleDestination('thread', 'this thread'),
+                      agent: agentDestination(
+                        {
+                          target: isDriver ? 'steer' : 'suggest',
+                          sessionId: session.id,
+                          threadRootEventId: session.threadRootEventId,
+                        },
+                        `“${session.title}”`,
+                      ),
+                      onAudienceChange: setPaneSendMode,
+                      onAgentSend: (_request, text, attachments, attachmentRefs) => {
+                        if (isDriver) sendSteer(text, attachments, attachmentRefs);
+                        else sendSuggestion(text);
+                      },
                     }
                   : undefined
               }

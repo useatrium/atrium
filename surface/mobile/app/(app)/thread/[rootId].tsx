@@ -10,6 +10,9 @@ import {
   isTerminalSessionStatus,
   sessionDriverId,
   sessionGlanceClockLabel,
+  agentDestination,
+  peopleDestination,
+  type AgentComposerRequest,
   type ChatMessage,
   type HubFile,
 } from '@atrium/surface-client';
@@ -203,9 +206,13 @@ export default function ThreadScreen() {
   );
   // Canonical seat resolution: null driverId falls back to the spawner.
   const isDriver = attachedSession != null && sessionDriverId(attachedSession) === me.id;
-  const agentTargetLabel = attachedSession
-    ? `${agentTarget === 'new' ? 'New session' : isDriver ? 'Steer' : 'Suggest'} · ${attachedSession.title}`
-    : 'New agent · this thread';
+  const agentTargetLabel = attachedSession ? attachedSession.title : 'this thread';
+  const agentRequest: AgentComposerRequest =
+    attachedSession && agentTarget === 'steer'
+      ? isDriver
+        ? { target: 'steer', sessionId: attachedSession.id, threadRootEventId: rootId, effort: agentEffort }
+        : { target: 'suggest', sessionId: attachedSession.id, threadRootEventId: rootId }
+      : { target: 'spawn-thread', threadRootEventId: rootId, effort: agentEffort };
 
   useEffect(() => {
     if (!draftKey) return;
@@ -411,20 +418,32 @@ export default function ThreadScreen() {
           onOpenChannel={(channelId) => router.push(`/channel/${channelId}`)}
           onOpenSession={(sessionId) => router.push(`/session/${sessionId}`)}
           uploadFile={chat.uploadFile}
-          onAgentSend={(text, anchorEventId) => {
-            if (attachedSession && agentTarget === 'steer') {
-              if (isDriver) void chat.steerSession(attachedSession.id, text, agentEffort, { postToThread: true });
-              else void chat.suggestToSession(attachedSession.id, text);
-              return;
-            }
-            chat.spawnSession(channelId, text, rootId, {
-              broadcastCard: true,
-              ...(anchorEventId != null ? { anchorEventId } : {}),
-            });
+          peopleDestination={peopleDestination('thread', 'this thread')}
+          agentRouting={{
+            destination: agentDestination(agentRequest, agentTargetLabel),
+            onSubmit: (request, submission) => {
+              const media = {
+                attachments: submission.attachments,
+                attachmentRefs: submission.attachmentRefs,
+              };
+              if (request.target === 'steer') {
+                void chat.steerSession(request.sessionId, submission.text, request.effort, {
+                  postToThread: true,
+                  ...media,
+                });
+              } else if (request.target === 'suggest') {
+                void chat.suggestToSession(request.sessionId, submission.text, media);
+              } else {
+                chat.spawnSession(channelId, submission.text, rootId, {
+                  broadcastCard: true,
+                  effort: request.effort,
+                  anchorEventId: request.anchorEventId,
+                  ...media,
+                });
+              }
+            },
           }}
           initialAgentMode={attachedSession != null}
-          agentTargetLabel={agentTargetLabel}
-          chatTargetLabel="this thread"
           onConfigureAgentMode={() => setAgentConfigVisible(true)}
         />
       </KeyboardAvoidingView>

@@ -201,16 +201,16 @@ describe('thread spine integration', () => {
     expect(onOpenSession).toHaveBeenLastCalledWith('s-1', { workTab: 'hubFiles' });
   });
 
-  it('defaults to agent mode and Esc changes the attached composer to an aside', () => {
+  it('defaults to Agent and Esc changes the attached composer to People', () => {
     renderPanel();
     const input = screen.getByLabelText('Message input');
-    expect(screen.getByTestId('composer-audience-pill').textContent).toContain('Steer · “Inspect the build”');
-    expect(screen.getByText('Goes to the agent · Esc for an aside')).toBeTruthy();
+    expect(screen.getByTestId('composer-audience-pill').getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByPlaceholderText('Prompt agent…')).toBeTruthy();
     expect(screen.queryByRole('checkbox', { name: /also send to/i })).toBeNull();
 
     fireEvent.keyDown(input, { key: 'Escape' });
-    expect(screen.getByTestId('composer-audience-pill').textContent).toContain('Aside');
-    expect(screen.getByText('Aside — visible to people, never sent to the agent')).toBeTruthy();
+    expect(screen.getByTestId('composer-audience-pill').getAttribute('aria-pressed')).toBe('false');
+    expect(screen.getByPlaceholderText('Message people…')).toBeTruthy();
   });
 
   it('omits the work-strip row when an attached session has no outputs', () => {
@@ -226,7 +226,8 @@ describe('thread spine integration', () => {
     mocks.conflicts = [];
     renderPanel({ attached: false });
 
-    expect(screen.getByTestId('composer-audience-pill').textContent).toContain('this thread');
+    expect(screen.getByTestId('composer-audience-pill').getAttribute('aria-pressed')).toBe('false');
+    expect(screen.getByPlaceholderText('Message people…')).toBeTruthy();
     expect(screen.getByRole('checkbox', { name: /also send to/i })).toBeTruthy();
     expect(screen.queryByTestId('spine-work-strips')).toBeNull();
   });

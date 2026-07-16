@@ -44,7 +44,7 @@ test('channel composer inserts and renders a stable user mention', async ({ page
     await page.getByRole('button', { name: new RegExp(`^#?\\s*${channelName}(\\s|$|unread)`) }).click();
     await expect(page.getByRole('heading', { name: `# ${channelName}` })).toBeVisible();
 
-    const composer = page.getByPlaceholder(`Message #${channelName}`);
+    const composer = page.locator('main').getByRole('combobox', { name: 'Message input' });
     // Type a unique prefix — the shared e2e workspace accumulates users across
     // specs, and a bare "@" caps the list at 8 alphabetical rows.
     await composer.fill(`@${handleB.slice(0, -1)}`);

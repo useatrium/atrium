@@ -169,9 +169,10 @@ test('thread: reply in thread; root shows reply count', async ({ page }) => {
   await row.scrollIntoViewIfNeeded();
   await row.hover();
   await row.getByLabel('Reply in thread').click({ force: true });
-  await expect(page.getByPlaceholder('Reply…')).toBeVisible();
-  await page.getByPlaceholder('Reply…').fill(reply);
-  await page.getByPlaceholder('Reply…').press('Enter');
+  const threadComposer = page.getByRole('complementary').getByRole('combobox', { name: 'Message input' });
+  await expect(threadComposer).toBeVisible();
+  await threadComposer.fill(reply);
+  await threadComposer.press('Enter');
 
   await expect(page.getByText(reply, { exact: true })).toBeVisible();
   await page.getByLabel('Close thread').click();

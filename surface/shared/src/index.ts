@@ -18,6 +18,7 @@ export { isNetworkFailure } from './api';
 export * from './queueStatus';
 export * from './cache';
 export * from './drafts';
+export * from './composerRouting';
 export * from './catchup';
 export * from './prefs';
 export * from './handle';

@@ -61,7 +61,6 @@ import { useTheme } from './theme';
 import { useCall } from './useCall';
 import type { VoiceSendMeta } from './voice';
 import { encodeMessageForSend } from './mentionComposer';
-import { enqueueSessionSuggestion } from './sessionSuggestion';
 
 const PAGE_SIZE = 50;
 const SYNC_LIMIT = 500;
@@ -93,6 +92,9 @@ type SpawnSessionOptions = Pick<
   | 'agentProfileVersionId'
   | 'anchorEventId'
   | 'broadcastCard'
+  | 'effort'
+  | 'attachments'
+  | 'attachmentRefs'
 >;
 
 interface ChatContextValue {
@@ -140,9 +142,18 @@ interface ChatContextValue {
     questionId: string,
     answers: Record<string, { answers: string[] }>,
   ) => Promise<void>;
-  steerSession: (sessionId: string, text: string, effort?: string, opts?: { postToThread?: boolean }) => Promise<void>;
+  steerSession: (
+    sessionId: string,
+    text: string,
+    effort?: string,
+    opts?: { postToThread?: boolean; attachments?: AttachmentMeta[]; attachmentRefs?: AttachmentRef[] },
+  ) => Promise<void>;
   /** Queue a suggestion for a session's driver. */
-  suggestToSession: (sessionId: string, text: string) => Promise<void>;
+  suggestToSession: (
+    sessionId: string,
+    text: string,
+    opts?: { attachments?: AttachmentMeta[]; attachmentRefs?: AttachmentRef[] },
+  ) => Promise<void>;
   failedSessionSteers: Record<string, string>;
   clearFailedSessionSteer: (sessionId: string) => void;
   cancelSession: (sessionId: string) => Promise<void>;
@@ -420,6 +431,42 @@ export function ChatProvider({ session, children }: { session: Session; children
         await msgSend.onRejected(dispatchFn, payload, error, op);
       },
     };
+    const sessionSpawn = registry['session.spawn'];
+    registry['session.spawn'] = {
+      ...sessionSpawn,
+      onConfirmed: async (dispatchFn, result, payload, op) => {
+        await deleteUploadRefs(payload.attachmentRefs);
+        await sessionSpawn.onConfirmed(dispatchFn, result, payload, op);
+      },
+      onRejected: async (dispatchFn, payload, error, op) => {
+        await deleteUploadRefs(payload.attachmentRefs);
+        await sessionSpawn.onRejected(dispatchFn, payload, error, op);
+      },
+    };
+    const sessionSteer = registry['session.steer'];
+    registry['session.steer'] = {
+      ...sessionSteer,
+      onConfirmed: async (dispatchFn, result, payload, op) => {
+        await deleteUploadRefs(payload.attachmentRefs);
+        await sessionSteer.onConfirmed(dispatchFn, result, payload, op);
+      },
+      onRejected: async (dispatchFn, payload, error, op) => {
+        await deleteUploadRefs(payload.attachmentRefs);
+        await sessionSteer.onRejected(dispatchFn, payload, error, op);
+      },
+    };
+    const sessionSuggest = registry['session.suggest'];
+    registry['session.suggest'] = {
+      ...sessionSuggest,
+      onConfirmed: async (dispatchFn, result, payload, op) => {
+        await deleteUploadRefs(payload.attachmentRefs);
+        await sessionSuggest.onConfirmed(dispatchFn, result, payload, op);
+      },
+      onRejected: async (dispatchFn, payload, error, op) => {
+        await deleteUploadRefs(payload.attachmentRefs);
+        await sessionSuggest.onRejected(dispatchFn, payload, error, op);
+      },
+    };
     const upload = registry.upload;
     registry.upload = {
       ...upload,
@@ -497,7 +544,12 @@ export function ChatProvider({ session, children }: { session: Session; children
   }, []);
 
   const steerSession = useCallback(
-    async (sessionId: string, text: string, effort?: string, opts?: { postToThread?: boolean }): Promise<void> => {
+    async (
+      sessionId: string,
+      text: string,
+      effort?: string,
+      opts?: { postToThread?: boolean; attachments?: AttachmentMeta[]; attachmentRefs?: AttachmentRef[] },
+    ): Promise<void> => {
       clearFailedSessionSteer(sessionId);
       await enqueueOp({
         opId: randomId(),
@@ -507,6 +559,8 @@ export function ChatProvider({ session, children }: { session: Session; children
           text,
           ...(effort ? { effort } : {}),
           ...(opts?.postToThread ? { postToThread: true } : {}),
+          ...(opts?.attachments?.length ? { attachments: opts.attachments } : {}),
+          ...(opts?.attachmentRefs?.length ? { attachmentRefs: opts.attachmentRefs } : {}),
         },
       });
     },
@@ -514,8 +568,22 @@ export function ChatProvider({ session, children }: { session: Session; children
   );
 
   const suggestToSession = useCallback(
-    async (sessionId: string, text: string): Promise<void> => {
-      await enqueueSessionSuggestion(enqueueOp, sessionId, text);
+    async (
+      sessionId: string,
+      text: string,
+      opts?: { attachments?: AttachmentMeta[]; attachmentRefs?: AttachmentRef[] },
+    ): Promise<void> => {
+      await enqueueOp({
+        opId: randomId(),
+        opType: 'session.suggest',
+        payload: {
+          sessionId,
+          text,
+          postToThread: true,
+          ...(opts?.attachments?.length ? { attachments: opts.attachments } : {}),
+          ...(opts?.attachmentRefs?.length ? { attachmentRefs: opts.attachmentRefs } : {}),
+        },
+      });
     },
     [enqueueOp],
   );
@@ -1265,6 +1333,9 @@ export function ChatProvider({ session, children }: { session: Session; children
         ...(opts?.agentProfileVersionId ? { agentProfileVersionId: opts.agentProfileVersionId } : {}),
         ...(opts?.anchorEventId != null ? { anchorEventId: opts.anchorEventId } : {}),
         ...(opts?.broadcastCard === true ? { broadcastCard: true } : {}),
+        ...(opts?.effort ? { effort: opts.effort } : {}),
+        ...(opts?.attachments?.length ? { attachments: opts.attachments } : {}),
+        ...(opts?.attachmentRefs?.length ? { attachmentRefs: opts.attachmentRefs } : {}),
         createdAt: now,
       };
       const pending = pendingSpawnFromPayload(payload);

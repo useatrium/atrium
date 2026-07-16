@@ -680,7 +680,7 @@ describe('linked thread steers', () => {
     }
 
     render(<PaneHarness />);
-    fireEvent.change(screen.getByPlaceholderText(/steer the agent/i), { target: { value: 'Inspect once' } });
+    fireEvent.change(screen.getByPlaceholderText('Prompt agent…'), { target: { value: 'Inspect once' } });
     fireEvent.click(screen.getByRole('button', { name: 'Steer' }));
 
     await waitFor(() => expect(screen.getAllByTestId('user-steer')).toHaveLength(1), { timeout: 10_000 });
@@ -808,8 +808,8 @@ describe('driver seat', () => {
     let s = spawnedState();
     const { rerender } = render(paneFor(s));
 
-    // I spawned it → I hold the seat: enabled composer, steer placeholder.
-    const boxBefore = screen.getByPlaceholderText(/steer the agent/i);
+    // I spawned it → I hold the seat: enabled Agent composer.
+    const boxBefore = screen.getByLabelText('Message input');
     expect((boxBefore as HTMLTextAreaElement).disabled).toBe(false);
     expect(screen.getByTestId('driver-chip').textContent).toBe('driver: Me');
 
@@ -823,7 +823,7 @@ describe('driver seat', () => {
     expect(screen.getByTestId('driver-chip').textContent).toBe('driver: Bob');
     // As a spectator the composer becomes a suggest box (still enabled — you can
     // always propose), not a dead "you can't type" field.
-    const boxAfter = screen.getByPlaceholderText(/Suggest a message — Bob decides/);
+    const boxAfter = screen.getByLabelText('Message input');
     expect((boxAfter as HTMLTextAreaElement).disabled).toBe(false);
   });
 
@@ -879,9 +879,7 @@ describe('driver seat', () => {
     // Pure spectator: no cancel, no take (driver present), and the composer is
     // a suggest box rather than a steer composer.
     expect(screen.queryByText('Cancel')).toBeNull();
-    expect((screen.getByPlaceholderText(/Suggest a message — Alice decides/) as HTMLTextAreaElement).disabled).toBe(
-      false,
-    );
+    expect((screen.getByLabelText('Message input') as HTMLTextAreaElement).disabled).toBe(false);
     expect(screen.queryByText('Take seat')).toBeNull();
 
     fireEvent.click(screen.getByText('Request seat'));
@@ -1061,7 +1059,7 @@ describe('driver seat', () => {
       />,
     );
 
-    fireEvent.change(screen.getByPlaceholderText(/Steer the agent/), { target: { value: 'check status' } });
+    fireEvent.change(screen.getByLabelText('Message input'), { target: { value: 'check status' } });
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
 
     await waitFor(() => expect(onApiError).toHaveBeenCalledTimes(1));
@@ -1148,7 +1146,7 @@ describe('driver seat', () => {
       />,
     );
 
-    fireEvent.keyDown(screen.getByPlaceholderText(/Steer the agent/), { key: 'Escape' });
+    fireEvent.keyDown(screen.getByLabelText('Message input'), { key: 'Escape' });
     fireEvent.keyDown(window, { key: 'Escape', metaKey: true });
     fireEvent.click(screen.getByRole('button', { name: 'Agent actions' }));
     fireEvent.click(screen.getByRole('button', { name: 'Session details & scope' }));
@@ -1622,7 +1620,7 @@ describe('suggestion queue', () => {
     expect(within(strip).queryByRole('button', { name: 'Dismiss' })).toBeNull();
 
     // The composer is an enabled suggest box that posts createSuggestion.
-    const box = screen.getByPlaceholderText(/Suggest a message — Alice decides/) as HTMLTextAreaElement;
+    const box = screen.getByLabelText('Message input') as HTMLTextAreaElement;
     expect(box.disabled).toBe(false);
     fireEvent.change(box, { target: { value: 'try the staging env' } });
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));

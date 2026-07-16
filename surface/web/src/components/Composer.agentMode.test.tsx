@@ -1,35 +1,45 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Composer } from './Composer';
 
-const channelMode = { scope: 'channel' as const, channelLabel: '#engineering' };
+const channelContext = { scope: 'channel' as const, channelLabel: '#engineering' };
 
 function renderComposer(props: Partial<React.ComponentProps<typeof Composer>> = {}) {
   const onSend = vi.fn();
   const onAgentSend = vi.fn();
   render(
-    <Composer placeholder="Message" onSend={onSend} agentMode={channelMode} onAgentSend={onAgentSend} {...props} />,
+    <Composer
+      placeholder="Message"
+      onSend={onSend}
+      routing={{ kind: 'managed', context: channelContext, onAgentSend }}
+      {...props}
+    />,
   );
   return { onSend, onAgentSend };
 }
 
-const pill = () => screen.getByTestId('composer-audience-pill');
+const toggle = () => screen.getByTestId('composer-audience-pill');
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 
-afterEach(cleanup);
-
-describe('Composer audience pill', () => {
-  it('names the chat audience by default and the agent target in agent mode', () => {
+describe('Composer audience control', () => {
+  it('uses an icon-only switch plus persistent destination feedback', () => {
     renderComposer();
 
-    expect(pill().textContent).toContain('💬#engineering');
-    expect(pill().getAttribute('aria-pressed')).toBe('false');
+    expect(toggle().textContent).toBe('');
+    expect(toggle().getAttribute('aria-pressed')).toBe('false');
+    expect(toggle().getAttribute('aria-label')).toContain('Messaging people');
+    expect(screen.getByPlaceholderText('Message people…')).toBeTruthy();
 
-    fireEvent.click(pill());
+    fireEvent.click(toggle());
 
-    expect(pill().textContent).toContain('⚡New agent · #engineering');
-    expect(pill().getAttribute('aria-pressed')).toBe('true');
+    expect(toggle().getAttribute('aria-pressed')).toBe('true');
+    expect(toggle().getAttribute('aria-label')).toContain('Prompting the agent');
+    expect(screen.getByPlaceholderText('Prompt agent…')).toBeTruthy();
   });
 
   it('turns a leading !! into agent mode and swallows the sigil', () => {
@@ -39,38 +49,75 @@ describe('Composer audience pill', () => {
     fireEvent.change(input, { target: { value: '!!Research this' } });
 
     expect(input.value).toBe('Research this');
-    expect(pill().textContent).toContain('⚡New agent · #engineering');
+    expect(toggle().getAttribute('aria-pressed')).toBe('true');
   });
 
-  it('defaults an attached non-driver thread to Suggest and exposes an aside escape', () => {
+  it('preserves Mod+J and Escape audience switching', () => {
+    renderComposer();
+    const input = screen.getByLabelText('Message input');
+
+    fireEvent.keyDown(input, { key: 'j', metaKey: true });
+    expect(toggle().getAttribute('aria-pressed')).toBe('true');
+
+    fireEvent.keyDown(input, { key: 'Escape' });
+    expect(toggle().getAttribute('aria-pressed')).toBe('false');
+  });
+
+  it('defaults an attached non-driver thread to Suggest and keeps it sticky after send', () => {
+    const onAgentSend = vi.fn();
     renderComposer({
-      agentMode: {
-        scope: 'thread',
-        channelLabel: 'this thread',
-        threadRootEventId: 17,
-        meId: 'me',
-        attachedSession: { id: 's-1', title: 'Fix tests', driverId: 'someone-else' },
+      routing: {
+        kind: 'managed',
+        context: {
+          scope: 'thread',
+          channelLabel: 'this thread',
+          threadRootEventId: 17,
+          meId: 'me',
+          attachedSession: { id: 's-1', title: 'Fix tests', driverId: 'someone-else' },
+        },
+        onAgentSend,
       },
     });
 
-    expect(pill().textContent).toContain('Suggest · “Fix tests”');
-    fireEvent.click(pill());
-    expect(pill().textContent).toContain('💬Aside');
+    expect(screen.getByPlaceholderText('Prompt agent…')).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('Message input'), { target: { value: 'Try the flaky test first' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Suggest' }));
+
+    expect(onAgentSend).toHaveBeenCalledWith(
+      expect.objectContaining({ target: 'suggest', sessionId: 's-1' }),
+      'Try the flaky test first',
+      undefined,
+      undefined,
+    );
+    expect(toggle().getAttribute('aria-pressed')).toBe('true');
   });
 
-  it('shows the retired @agent guidance', () => {
-    renderComposer();
-    fireEvent.change(screen.getByLabelText('Message input'), { target: { value: '@agent please help' } });
+  it('restores a saved People draft instead of applying the attached-thread Agent default', () => {
+    renderComposer({
+      initialDraft: 'Keep this in the discussion',
+      initialDraftAgentIntent: false,
+      routing: {
+        kind: 'managed',
+        context: {
+          scope: 'thread',
+          channelLabel: 'this thread',
+          threadRootEventId: 17,
+          attachedSession: { id: 's-1', title: 'Fix tests', driverId: 'me' },
+          meId: 'me',
+        },
+        onAgentSend: vi.fn(),
+      },
+    });
 
-    expect(screen.getByText(/Summon agents with !! or ⚡/)).toBeTruthy();
+    expect(toggle().getAttribute('aria-pressed')).toBe('false');
+    expect((screen.getByLabelText('Message input') as HTMLTextAreaElement).value).toBe('Keep this in the discussion');
   });
 
-  it('dispatches a channel spawn request and returns to chat audience after send', () => {
+  it('dispatches a channel spawn request and returns to People after send', () => {
     const { onAgentSend } = renderComposer();
-    const input = screen.getByLabelText('Message input');
-    fireEvent.click(pill());
-    fireEvent.change(input, { target: { value: 'Research the incident' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    fireEvent.click(toggle());
+    fireEvent.change(screen.getByLabelText('Message input'), { target: { value: 'Research the incident' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Start' }));
 
     expect(onAgentSend).toHaveBeenCalledWith(
       expect.objectContaining({ target: 'spawn-channel' }),
@@ -78,86 +125,61 @@ describe('Composer audience pill', () => {
       undefined,
       undefined,
     );
-    expect(pill().textContent).toContain('💬#engineering');
+    expect(toggle().getAttribute('aria-pressed')).toBe('false');
+  });
+
+  it('hides voice recording while Agent is selected', () => {
+    renderComposer({ allowAttachments: true, allowVoice: true });
+    expect(screen.getByRole('button', { name: 'Record a voice message' })).toBeTruthy();
+
+    fireEvent.click(toggle());
+
+    expect(screen.queryByRole('button', { name: 'Record a voice message' })).toBeNull();
+  });
+
+  it('routes uploaded files through the agent handler', async () => {
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:test');
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+    const queueUpload = vi.fn().mockResolvedValue({ fileId: 'file-1' });
+    const { onAgentSend } = renderComposer({ allowAttachments: true, queueUpload });
+    const file = new File(['hello'], 'notes.txt', { type: 'text/plain' });
+
+    fireEvent.change(document.querySelector('input[type="file"]') as HTMLInputElement, {
+      target: { files: [file] },
+    });
+    await waitFor(() => expect(screen.getByText('notes.txt')).toBeTruthy());
+    fireEvent.click(toggle());
+    fireEvent.change(screen.getByLabelText('Message input'), { target: { value: 'Read this' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Start' }));
+
+    expect(onAgentSend).toHaveBeenCalledWith(
+      expect.objectContaining({ target: 'spawn-channel' }),
+      'Read this',
+      [expect.objectContaining({ id: 'file-1', filename: 'notes.txt' })],
+      [expect.objectContaining({ uploadKey: expect.any(String) })],
+    );
   });
 });
 
 describe('Composer draft audience', () => {
-  it('keeps the task on Escape and says the draft is still for an agent', () => {
-    renderComposer();
-    const input = screen.getByLabelText('Message input') as HTMLTextAreaElement;
-    fireEvent.change(input, { target: { value: '!!fix the build' } });
-    fireEvent.keyDown(input, { key: 'Escape' });
-
-    expect(input.value).toBe('fix the build');
-    expect(pill().textContent).toContain('💬#engineering');
-    expect(screen.getByTestId('composer-agent-intent-strip').textContent).toContain('Agent mode off — draft kept');
-  });
-
-  it('persists the agent intent alongside the draft text', () => {
+  it('immediately reroutes existing text and persists its selected audience', () => {
     const onDraftChange = vi.fn();
     renderComposer({ draftKey: 'channel:c1', onDraftChange });
     const input = screen.getByLabelText('Message input');
-    fireEvent.change(input, { target: { value: '!!fix the build' } });
-    fireEvent.keyDown(input, { key: 'Escape' });
+    fireEvent.change(input, { target: { value: 'fix the build' } });
 
+    fireEvent.click(toggle());
     expect(onDraftChange).toHaveBeenLastCalledWith('channel:c1', 'fix the build', true);
+
+    fireEvent.click(toggle());
+    expect(onDraftChange).toHaveBeenLastCalledWith('channel:c1', 'fix the build', false);
   });
 
-  it('restores a cross-device agent draft wearing its strip, never as a naked chat draft', () => {
+  it('restores an agent-intent draft directly to Agent', () => {
     renderComposer({ draftKey: 'channel:c1', initialDraft: 'fix the build', initialDraftAgentIntent: true });
 
     expect((screen.getByLabelText('Message input') as HTMLTextAreaElement).value).toBe('fix the build');
-    expect(screen.getByTestId('composer-agent-intent-strip')).toBeTruthy();
-    expect(pill().textContent).toContain('💬#engineering');
-  });
-
-  it('Resume ⚡ puts the kept draft back on the agent', () => {
-    const { onAgentSend, onSend } = renderComposer({
-      draftKey: 'channel:c1',
-      initialDraft: 'fix the build',
-      initialDraftAgentIntent: true,
-    });
-
-    fireEvent.click(screen.getByRole('button', { name: 'Resume ⚡' }));
-    expect(pill().textContent).toContain('⚡New agent · #engineering');
-
-    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
-    expect(onSend).not.toHaveBeenCalled();
-    expect(onAgentSend).toHaveBeenCalledWith(
-      expect.objectContaining({ target: 'spawn-channel' }),
-      'fix the build',
-      undefined,
-      undefined,
-    );
-  });
-
-  it('Clear draft drops the text and the intent', () => {
-    const onDraftChange = vi.fn();
-    renderComposer({
-      draftKey: 'channel:c1',
-      initialDraft: 'fix the build',
-      initialDraftAgentIntent: true,
-      onDraftChange,
-    });
-
-    fireEvent.click(screen.getByRole('button', { name: 'Clear draft' }));
-
-    expect((screen.getByLabelText('Message input') as HTMLTextAreaElement).value).toBe('');
-    expect(screen.queryByTestId('composer-agent-intent-strip')).toBeNull();
-    expect(onDraftChange).toHaveBeenLastCalledWith('channel:c1', '', false);
-  });
-
-  it('sends as chat only once the kept-draft strip has been on screen', () => {
-    const { onSend } = renderComposer({
-      draftKey: 'channel:c1',
-      initialDraft: 'fix the build',
-      initialDraftAgentIntent: true,
-    });
-
-    // The strip is on screen from the restore, so the deliberate chat send lands.
-    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
-    expect(onSend).toHaveBeenCalledWith('fix the build', undefined, undefined);
+    expect(toggle().getAttribute('aria-pressed')).toBe('true');
     expect(screen.queryByTestId('composer-agent-intent-strip')).toBeNull();
   });
 });

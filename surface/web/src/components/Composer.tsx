@@ -11,10 +11,28 @@ import {
   type ReactNode,
 } from 'react';
 import { looksLikeSummonSigil, parseSummonSigil } from '../sessions/spawn';
-import type { AttachmentMeta, AttachmentRef, UploadPayload, VoiceMeta } from '@atrium/surface-client';
-import { createDraftChangeDebouncer, formatBytes, randomId } from '@atrium/surface-client';
-import { FileIcon, PaperclipIcon, XIcon } from './icons';
+import type {
+  AgentComposerRequest,
+  AttachmentMeta,
+  AttachmentRef,
+  ComposerAudience,
+  ComposerDestination,
+  UploadPayload,
+  VoiceMeta,
+} from '@atrium/surface-client';
+import {
+  agentDestination,
+  agentIntentFromAudience,
+  audienceAfterAgentSend,
+  audienceFromAgentIntent,
+  createDraftChangeDebouncer,
+  formatBytes,
+  peopleDestination,
+  randomId,
+} from '@atrium/surface-client';
+import { FileIcon, MessageSquareIcon, PaperclipIcon, XIcon } from './icons';
 import { Tooltip } from './a11y';
+import { AgentMark } from './AgentMark';
 import { VoiceRecorder, type RecordedVoice } from '../VoiceRecorder';
 import { SHORTCUTS, matchesChord } from '../lib/shortcuts';
 import { extractEntryHandles } from '../lib/entryLinks';
@@ -43,14 +61,6 @@ export interface ComposerHandle {
   activateAgentMode: (anchor?: { eventId: number; label: string }) => void;
 }
 
-export type AgentComposerRequest = {
-  target: 'spawn-channel' | 'spawn-thread' | 'steer' | 'suggest';
-  sessionId?: string;
-  threadRootEventId?: number;
-  anchorEventId?: number;
-  effort?: string;
-};
-
 /** Context for the first-class agent mode. Kept local to web so server contracts stay explicit. */
 export type AgentComposerMode = {
   scope: 'channel' | 'thread';
@@ -60,6 +70,34 @@ export type AgentComposerMode = {
   meId?: string;
   initialAnchor?: { eventId: number; label: string };
 };
+
+type AgentDestination = Extract<ComposerDestination, { audience: 'agent' }>;
+type PeopleDestination = Extract<ComposerDestination, { audience: 'people' }>;
+
+export type ComposerRouting =
+  | {
+      kind: 'managed';
+      context: AgentComposerMode;
+      onAgentSend: (
+        request: AgentComposerRequest,
+        text: string,
+        attachments?: AttachmentMeta[],
+        attachmentRefs?: AttachmentRef[],
+      ) => void;
+    }
+  | {
+      kind: 'controlled';
+      audience: ComposerAudience;
+      people: PeopleDestination;
+      agent: AgentDestination;
+      onAudienceChange: (audience: ComposerAudience) => void;
+      onAgentSend: (
+        request: AgentComposerRequest,
+        text: string,
+        attachments?: AttachmentMeta[],
+        attachmentRefs?: AttachmentRef[],
+      ) => void;
+    };
 
 type ComposerProps = {
   placeholder: string;
@@ -89,40 +127,18 @@ type ComposerProps = {
   footer?: ReactNode;
   draftKey?: string;
   initialDraft?: string;
-  /** The restored draft was written for an agent — re-show the "draft kept" strip. */
+  /** The restored draft was written for an agent — restore that destination too. */
   initialDraftAgentIntent?: boolean;
   onDraftChange?: (key: string, text: string, agentIntent: boolean) => void | Promise<void>;
   onDraftPersisted?: (key: string, text: string, agentIntent: boolean) => void | Promise<void>;
   onDraftTouched?: (key: string) => void;
   previewEntryLinks?: boolean;
-  /** Enables the first-class summon/steer UI for channel and thread composers. */
-  agentMode?: AgentComposerMode;
-  onAgentSend?: (
-    request: AgentComposerRequest,
-    text: string,
-    attachments?: AttachmentMeta[],
-    attachmentRefs?: AttachmentRef[],
-  ) => void;
+  /** Audience routing is discriminated so an Agent UI always has an Agent handler. */
+  routing?: ComposerRouting;
   /** Enables channel mention suggestions. Omit for agent-session composers. */
   mentionContext?: MentionContext;
-  /** Observes agent-mode entry/exit (e.g. the thread panel hides its broadcast checkbox). */
+  /** Observes agent destination entry/exit (e.g. the thread panel hides its broadcast checkbox). */
   onAgentModeChange?: (active: boolean) => void;
-  /**
-   * Session-pane audience control: the pane owns the send mode, so it drives
-   * the in-input pill from outside. Channel and thread composers get the same
-   * pill for free from `agentMode` — they just own the state internally.
-   */
-  audiencePill?: {
-    mode: 'agent' | 'thread';
-    /** Pill text in agent mode (e.g. "Steer · “Fix tests”"). */
-    agentLabel: string;
-    /** Pill text in thread mode (e.g. "this thread"). */
-    threadLabel: string;
-    onModeChange: (mode: 'agent' | 'thread') => void;
-    /** Send-button verb per mode (e.g. "Steer"/"Suggest" and "Reply"). */
-    agentSendLabel: string;
-    threadSendLabel: string;
-  };
 };
 
 export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Composer(
@@ -147,11 +163,9 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     onDraftPersisted,
     onDraftTouched,
     previewEntryLinks,
-    agentMode: agentModeContext,
-    onAgentSend,
+    routing,
     mentionContext,
     onAgentModeChange,
-    audiencePill,
   },
   imperativeRef,
 ) {
@@ -159,15 +173,13 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   // "!!" with no task: refuse to post the literal string — show what's
   // missing instead (cleared as soon as the text changes).
   const [agentNeedsTask, setAgentNeedsTask] = useState(false);
-  const [agentMode, setAgentMode] = useState(false);
+  const [managedAudience, setManagedAudience] = useState<ComposerAudience>(() =>
+    audienceFromAgentIntent(initialDraftAgentIntent),
+  );
   const [agentTarget, setAgentTarget] = useState<'session' | 'thread'>('session');
   const [agentAnchor, setAgentAnchor] = useState<AgentComposerMode['initialAnchor']>();
   const [agentEffort, setAgentEffort] = useState<string>('');
   const [agentOptionsOpen, setAgentOptionsOpen] = useState(false);
-  // The draft was typed for an agent. Survives leaving agent mode (and a
-  // cross-device restore) so an agent command can never quietly become chat.
-  const [draftAgentIntent, setDraftAgentIntent] = useState(false);
-  const [agentIntentSeen, setAgentIntentSeen] = useState(false);
   const [agentTargetOpen, setAgentTargetOpen] = useState(false);
   const [files, setFiles] = useState<PendingFile[]>([]);
   const [attachmentNotice, setAttachmentNotice] = useState<string | null>(null);
@@ -196,6 +208,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const uploading = files.some((f) => f.status === 'uploading');
   const readyFiles = files.filter((f): f is PendingFile & { fileId: string } => f.status === 'ready' && !!f.fileId);
   const sendDisabled = (!text.trim() && readyFiles.length === 0) || !!disabled || uploading;
+  const agentModeContext = routing?.kind === 'managed' ? routing.context : undefined;
   const attachedSession = agentModeContext?.attachedSession;
   const isDriver = attachedSession?.driverId != null && attachedSession.driverId === agentModeContext?.meId;
   const canTargetSession = agentModeContext?.scope === 'thread' && attachedSession != null;
@@ -209,29 +222,67 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           : 'suggest';
   const targetLabel =
     agentModeContext?.scope === 'channel'
-      ? `New agent · ${agentModeContext.channelLabel}`
+      ? `an agent in ${agentModeContext.channelLabel}`
       : effectiveAgentTarget === 'spawn-thread'
-        ? 'New agent · this thread'
-        : `${effectiveAgentTarget === 'steer' ? 'Steer' : 'Suggest'} · “${attachedSession?.title ?? 'agent'}”`;
+        ? 'an agent in this thread'
+        : `“${attachedSession?.title ?? 'agent'}”`;
   const anchorLabel = agentAnchor?.label ?? (agentModeContext?.scope === 'thread' ? 'this thread' : 'latest message');
-  // One audience grammar for every composer. The pane hands its mode in from
-  // outside (it owns the send route); channel and thread composers own it here.
-  // Either way the pill below is the single place the audience is named or changed.
-  const audienceAvailable = !!agentModeContext || !!audiencePill;
-  const agentAudience = audiencePill ? audiencePill.mode === 'agent' : agentMode;
-  const pillAgentLabel = audiencePill ? audiencePill.agentLabel : targetLabel;
-  // === spine additions === Attached-thread chat is an explicit aside, not the default audience.
-  const pillChatLabel = audiencePill
-    ? audiencePill.threadLabel
-    : canTargetSession
-      ? 'Aside'
-      : (agentModeContext?.channelLabel ?? 'this thread');
-  const setAgentAudience = useCallback(
-    (next: boolean) => {
-      if (audiencePill) audiencePill.onModeChange(next ? 'agent' : 'thread');
-      else setAgentMode(next);
+  let managedAgentRequest: AgentComposerRequest | null = null;
+  if (agentModeContext?.scope === 'channel') {
+    managedAgentRequest = {
+      target: 'spawn-channel',
+      ...(agentAnchor?.eventId ? { anchorEventId: agentAnchor.eventId } : {}),
+      ...(agentEffort ? { effort: agentEffort } : {}),
+    };
+  } else if (agentModeContext) {
+    const common = {
+      ...(agentModeContext.threadRootEventId ? { threadRootEventId: agentModeContext.threadRootEventId } : {}),
+      ...(agentAnchor?.eventId ? { anchorEventId: agentAnchor.eventId } : {}),
+    };
+    if (effectiveAgentTarget === 'spawn-thread') {
+      if (agentModeContext.threadRootEventId != null) {
+        managedAgentRequest = {
+          target: 'spawn-thread',
+          threadRootEventId: agentModeContext.threadRootEventId,
+          ...(agentAnchor?.eventId ? { anchorEventId: agentAnchor.eventId } : {}),
+          ...(agentEffort ? { effort: agentEffort } : {}),
+        };
+      }
+    } else if (attachedSession) {
+      managedAgentRequest =
+        effectiveAgentTarget === 'steer'
+          ? {
+              target: 'steer',
+              sessionId: attachedSession.id,
+              ...common,
+              ...(agentEffort ? { effort: agentEffort } : {}),
+            }
+          : { target: 'suggest', sessionId: attachedSession.id, ...common };
+    }
+  }
+  const managedPeopleDestination = agentModeContext
+    ? peopleDestination(agentModeContext.scope, agentModeContext.channelLabel)
+    : null;
+  const managedAgentDestination = managedAgentRequest ? agentDestination(managedAgentRequest, targetLabel) : null;
+  const audience: ComposerAudience =
+    routing?.kind === 'controlled' ? routing.audience : routing?.kind === 'managed' ? managedAudience : 'people';
+  const destination =
+    routing?.kind === 'controlled'
+      ? audience === 'agent'
+        ? routing.agent
+        : routing.people
+      : audience === 'agent'
+        ? managedAgentDestination
+        : managedPeopleDestination;
+  const audienceAvailable =
+    routing?.kind === 'controlled' || (managedPeopleDestination != null && managedAgentDestination != null);
+  const agentAudience = audience === 'agent';
+  const setAudienceState = useCallback(
+    (next: ComposerAudience) => {
+      if (routing?.kind === 'controlled') routing.onAudienceChange(next);
+      else setManagedAudience(next);
     },
-    [audiencePill],
+    [routing],
   );
   const sendTooltip = disabled
     ? (disabledHint ?? 'Message composer unavailable')
@@ -252,11 +303,17 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     onAgentModeChange?.(agentAudience);
   }, [agentAudience, onAgentModeChange]);
 
-  // === spine additions === An attached thread opens ready to steer/suggest; human threads stay plain chat.
+  // An attached thread opens ready to steer/suggest; restored drafts keep their saved audience.
   useEffect(() => {
-    if (audiencePill) return;
-    setAgentMode(agentModeContext?.scope === 'thread' && attachedSession != null);
-  }, [agentModeContext?.scope, attachedSession?.id, audiencePill]);
+    if (routing?.kind !== 'managed') return;
+    setManagedAudience(
+      initialDraft
+        ? audienceFromAgentIntent(initialDraftAgentIntent)
+        : agentModeContext?.scope === 'thread' && attachedSession != null
+          ? 'agent'
+          : 'people',
+    );
+  }, [agentModeContext?.scope, attachedSession?.id, initialDraft, initialDraftAgentIntent, routing?.kind]);
 
   useEffect(
     () => () => {
@@ -274,8 +331,6 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   useEffect(() => {
     setText('');
     mentions.clear();
-    setDraftAgentIntent(false);
-    setAgentIntentSeen(false);
     setFiles((prev) => {
       for (const file of prev) URL.revokeObjectURL(file.localUri);
       return [];
@@ -286,15 +341,20 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   useEffect(() => {
     if (!initialDraft) return;
     setText((prev) => (prev === '' ? initialDraft : prev));
+    requestAnimationFrame(() => {
+      const element = ref.current;
+      if (!element) return;
+      element.style.height = 'auto';
+      element.style.height = `${Math.min(element.scrollHeight, 160)}px`;
+    });
   }, [initialDraft]);
 
-  // A restored draft brings its audience with it: an agent-intent draft comes
-  // back wearing the "draft kept" strip, never as an innocent chat draft.
+  // A restored draft brings its audience with it.
   useEffect(() => {
     if (!initialDraftAgentIntent || !initialDraft) return;
-    setDraftAgentIntent(true);
-    setAgentIntentSeen(false);
-  }, [initialDraft, initialDraftAgentIntent]);
+    if (routing?.kind === 'controlled') routing.onAudienceChange('agent');
+    else setManagedAudience('agent');
+  }, [initialDraft, initialDraftAgentIntent, routing]);
 
   useEffect(() => {
     setAgentTarget('session');
@@ -315,45 +375,15 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     [draftKey, draftWriter, onDraftTouched],
   );
 
-  /** Leaving agent mode with text still in the input: the draft keeps its
-   *  audience and says so, rather than silently becoming an ordinary message. */
-  const leaveAgentAudience = useCallback(() => {
-    setAgentAudience(false);
-    // === spine additions === Esc in an attached thread deliberately changes the draft into an aside.
-    if (canTargetSession) {
-      setDraftAgentIntent(false);
-      setAgentIntentSeen(false);
-      persistDraftValue(text, false);
-      return;
-    }
-    const kept = text.trim().length > 0;
-    setDraftAgentIntent(kept);
-    setAgentIntentSeen(false);
-    persistDraftValue(text, kept);
-  }, [canTargetSession, persistDraftValue, setAgentAudience, text]);
-
-  const clearAgentIntentDraft = useCallback(() => {
-    setText('');
-    mentions.clear();
-    setDraftAgentIntent(false);
-    setAgentIntentSeen(false);
-    setAgentNeedsTask(false);
-    persistDraftValue('');
-    if (ref.current) ref.current.style.height = 'auto';
-    requestAnimationFrame(() => ref.current?.focus());
-  }, [mentions.clear, persistDraftValue]);
-
-  const resumeAgentAudience = useCallback(() => {
-    setAgentAudience(true);
-    persistDraftValue(text, true);
-    requestAnimationFrame(() => ref.current?.focus());
-  }, [persistDraftValue, setAgentAudience, text]);
-
-  const showAgentIntentStrip = draftAgentIntent && !agentAudience && text.trim().length > 0 && !disabled;
-
-  useEffect(() => {
-    if (showAgentIntentStrip) setAgentIntentSeen(true);
-  }, [showAgentIntentStrip]);
+  const selectAudience = useCallback(
+    (next: ComposerAudience) => {
+      setAudienceState(next);
+      const nextIntent = text.trim().length > 0 && agentIntentFromAudience(next);
+      persistDraftValue(text, nextIntent);
+      requestAnimationFrame(() => ref.current?.focus());
+    },
+    [persistDraftValue, setAudienceState, text],
+  );
 
   useImperativeHandle(
     imperativeRef,
@@ -361,17 +391,14 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       activateAgentMode(anchor) {
         if (!agentModeContext || disabled) return;
         if (anchor) setAgentAnchor(anchor);
-        setAgentMode(true);
+        selectAudience('agent');
         setAgentNeedsTask(false);
-        requestAnimationFrame(() => ref.current?.focus());
       },
       captureForConfigure() {
         const captured = text;
         setText('');
         mentions.clear();
         setAgentNeedsTask(false);
-        setDraftAgentIntent(false);
-        setAgentIntentSeen(false);
         persistDraftValue('');
         if (ref.current) ref.current.style.height = 'auto';
         return captured;
@@ -380,7 +407,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
         setText(value);
         mentions.clear();
         setAgentNeedsTask(false);
-        persistDraftValue(value);
+        persistDraftValue(value, value.trim().length > 0 && agentIntentFromAudience(audience));
         requestAnimationFrame(() => {
           const el = ref.current;
           if (!el) return;
@@ -391,7 +418,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
         });
       },
     }),
-    [imperativeRef, mentions.clear, persistDraftValue, text],
+    [agentModeContext, audience, disabled, mentions.clear, persistDraftValue, selectAudience, text],
   );
 
   const contentHashFor = async (file: File): Promise<string | undefined> => {
@@ -472,12 +499,6 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       setAgentNeedsTask(true);
       return;
     }
-    // An agent-intent draft cannot be Enter'd into chat before its strip has
-    // been on screen — that strip is the whole point of remembering the audience.
-    if (!agentAudience && draftAgentIntent && !agentIntentSeen) {
-      setAgentIntentSeen(true);
-      return;
-    }
     const attachments =
       readyFiles.length > 0
         ? readyFiles.map((f) => ({
@@ -490,25 +511,10 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           }))
         : undefined;
     const attachmentRefs = readyFiles.length > 0 ? readyFiles.map((f) => ({ uploadKey: f.uploadKey })) : undefined;
-    if (agentAudience && agentModeContext && onAgentSend) {
-      onAgentSend(
-        {
-          target: effectiveAgentTarget,
-          ...(attachedSession && effectiveAgentTarget !== 'spawn-thread' ? { sessionId: attachedSession.id } : {}),
-          ...(agentModeContext.threadRootEventId ? { threadRootEventId: agentModeContext.threadRootEventId } : {}),
-          ...(agentAnchor?.eventId ? { anchorEventId: agentAnchor.eventId } : {}),
-          ...(agentEffort ? { effort: agentEffort } : {}),
-        },
-        trimmed,
-        attachments,
-        attachmentRefs,
-      );
-      // Sticky steer: once you're driving a session, stay in agent mode for
-      // the follow-ups (Esc exits). Spawn targets still exit — the message
-      // after "start an agent" is normally chat, not another spawn.
-      if (effectiveAgentTarget !== 'steer' && effectiveAgentTarget !== 'suggest') {
-        setAgentAudience(false);
-      }
+    const agentRequest = destination?.audience === 'agent' ? destination.request : null;
+    if (agentAudience && agentRequest && routing) {
+      routing.onAgentSend(agentRequest, trimmed, attachments, attachmentRefs);
+      setAudienceState(audienceAfterAgentSend(agentRequest));
     } else {
       onSend(mentions.serialize(text).trim(), attachments, attachmentRefs);
     }
@@ -518,8 +524,6 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     }
     setText('');
     mentions.clear();
-    setDraftAgentIntent(false);
-    setAgentIntentSeen(false);
     setFiles((prev) => {
       for (const file of prev) URL.revokeObjectURL(file.localUri);
       return [];
@@ -528,6 +532,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   };
 
   const sendVoice = async (recorded: RecordedVoice) => {
+    if (agentAudience) throw new Error('voice messages are unavailable for agent prompts');
     if (disabled || !queueUpload) throw new Error('upload queue unavailable');
     const uploadKey = randomId();
     const localUri = URL.createObjectURL(recorded.blob);
@@ -564,8 +569,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     if (mentions.onKeyDown(e)) return;
     if (audienceAvailable && matchesChord(e.nativeEvent, SHORTCUTS.toggleAgentMode.keys)) {
       e.preventDefault();
-      if (agentAudience) leaveAgentAudience();
-      else setAgentAudience(true);
+      selectAudience(agentAudience ? 'people' : 'agent');
     } else if (e.key === 'Escape' && agentAudience) {
       // stopPropagation too: the window-level Escape handler closes the
       // thread/pane, and exiting a composer mode must not also close the room.
@@ -573,7 +577,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       e.stopPropagation();
       setAgentOptionsOpen(false);
       setAgentTargetOpen(false);
-      leaveAgentAudience();
+      selectAudience('people');
     } else if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
       send();
@@ -585,7 +589,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 
   const agentTinted = agentAudience;
   return (
-    <div className={`border-t bg-surface p-3 ${agentTinted ? 'border-accent/60 bg-accent/5' : 'border-edge'}`}>
+    <div className={`border-t bg-surface p-3 ${agentTinted ? 'border-accent/60' : 'border-edge'}`}>
       {agentAudience && agentModeContext && (
         <div className="mb-2 hidden min-w-0 flex-wrap items-center gap-1.5 px-1 min-[431px]:flex">
           {/* The pill in the input frame already names the target — this row is
@@ -679,31 +683,6 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           </button>
         </div>
       )}
-      {showAgentIntentStrip && (
-        <div
-          data-testid="composer-agent-intent-strip"
-          role="status"
-          className="mb-2 flex flex-wrap items-center gap-2 rounded-md border border-accent/40 bg-accent/10 px-2 py-1 text-xs text-accent-text-strong"
-        >
-          <span className="min-w-0 flex-1">
-            <span aria-hidden>⚡ </span>Agent mode off — draft kept
-          </span>
-          <button
-            type="button"
-            onClick={resumeAgentAudience}
-            className="shrink-0 rounded-full bg-accent px-2 py-0.5 font-semibold text-on-accent hover:bg-accent-hover"
-          >
-            Resume ⚡
-          </button>
-          <button
-            type="button"
-            onClick={clearAgentIntentDraft}
-            className="shrink-0 rounded-full border border-edge-strong px-2 py-0.5 font-medium text-fg-secondary hover:bg-surface-overlay hover:text-fg"
-          >
-            Clear draft
-          </button>
-        </div>
-      )}
       {/* biome-ignore lint/a11y/noStaticElementInteractions: drop zone handles drag/drop events; keyboard file attachment uses the adjacent Attach button. */}
       <div
         title={disabled ? disabledHint : undefined}
@@ -714,13 +693,13 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
         }}
         onDragLeave={() => setDragOver(false)}
         onDrop={onDrop}
-        className={`relative rounded-lg border px-3 py-2 ${
+        className={`relative rounded-lg border px-3 py-2 transition-[background-color,border-color,box-shadow] focus-within:ring-2 focus-within:ring-accent/45 ${
           disabled
             ? 'border-edge bg-surface-raised/40'
             : dragOver
               ? 'border-accent-hover bg-surface-raised'
               : agentTinted
-                ? 'border-accent/60 bg-surface-raised focus-within:border-accent'
+                ? 'border-accent/60 bg-accent/5 focus-within:border-accent'
                 : 'border-edge-strong bg-surface-raised focus-within:border-edge-focus'
         }`}
       >
@@ -825,53 +804,47 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               />
             </>
           )}
-          {allowAttachments && allowVoice && !disabled && (
+          {allowAttachments && allowVoice && !agentAudience && !disabled && (
             <VoiceRecorder
               disabled={disabled || uploading || files.length > 0 || text.trim().length > 0}
               onSend={sendVoice}
               onActiveChange={setVoiceActive}
             />
           )}
-          {/* One audience grammar, every composer: a persistent pill inside the
-              input frame that names who the message is for. Tap flips it; !!
-              flips it to the agent; Esc flips it back. There is no other door. */}
+          {/* The icon is the compact switch; the short input placeholder names
+              the action without adding a second line of destination copy. */}
           {!voiceActive && audienceAvailable && !disabled && (
-            <Tooltip
-              content={
-                agentAudience
-                  ? 'Talking to the agent — tap to reply to people instead (Esc)'
-                  : 'Talking to people — tap to address the agent (or type !!)'
-              }
-              shortcut={SHORTCUTS.toggleAgentMode.keys}
-            >
-              <button
-                type="button"
-                data-testid="composer-audience-pill"
-                aria-pressed={agentAudience}
-                // Named explicitly, not by its own text: the chat label is literally
-                // "#channel", which would give this button the same accessible name as
-                // the channel's sidebar button.
-                aria-label={
+            <div className="flex shrink-0 items-center self-center">
+              <Tooltip
+                content={
                   agentAudience
-                    ? `Sending to the agent: ${pillAgentLabel}. Switch to the conversation`
-                    : `Sending to people: ${pillChatLabel}. Switch to the agent`
+                    ? 'Prompting the agent. Switch to message people.'
+                    : 'Messaging people. Switch to prompt the agent.'
                 }
-                onClick={() => {
-                  if (agentAudience) leaveAgentAudience();
-                  else setAgentAudience(true);
-                }}
-                className={`inline-flex min-w-0 max-w-[45%] shrink basis-auto items-center gap-1 self-center whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-semibold transition-colors [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:px-3 ${
-                  agentAudience
-                    ? 'bg-accent text-on-accent hover:bg-accent-hover'
-                    : 'border border-edge-strong bg-surface-overlay text-fg-secondary hover:bg-surface-raised hover:text-fg'
-                }`}
+                shortcut={SHORTCUTS.toggleAgentMode.keys}
               >
-                <span aria-hidden>{agentAudience ? '⚡' : '💬'}</span>
-                <span aria-hidden className="truncate">
-                  {agentAudience ? pillAgentLabel : pillChatLabel}
-                </span>
-              </button>
-            </Tooltip>
+                <button
+                  type="button"
+                  data-testid="composer-audience-pill"
+                  aria-pressed={agentAudience}
+                  aria-label={
+                    agentAudience
+                      ? 'Prompting the agent. Switch to message people.'
+                      : 'Messaging people. Switch to prompt the agent.'
+                  }
+                  onClick={() => selectAudience(agentAudience ? 'people' : 'agent')}
+                  className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11 ${
+                    agentAudience
+                      ? 'bg-accent/15 text-accent-text-strong hover:bg-accent/25'
+                      : 'bg-surface-overlay text-fg-secondary hover:bg-edge-strong hover:text-fg'
+                  }`}
+                >
+                  <span aria-hidden="true">
+                    {agentAudience ? <AgentMark size={18} /> : <MessageSquareIcon size={18} />}
+                  </span>
+                </button>
+              </Tooltip>
+            </div>
           )}
           {!voiceActive && (
             <>
@@ -883,11 +856,10 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                 placeholder={
                   disabled
                     ? (disabledHint ?? placeholder)
-                    : // The pane supplies its own audience-aware placeholder ("Steer the
-                      // agent…" / "Reply in the thread…"); only the composers that own
-                      // agent mode internally get the generic task prompt.
-                      agentAudience && agentModeContext
-                      ? 'Describe the task…'
+                    : audienceAvailable
+                      ? agentAudience
+                        ? 'Prompt agent…'
+                        : 'Message people…'
                       : placeholder
                 }
                 aria-label="Message input"
@@ -906,7 +878,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                   const entering = audienceAvailable && !agentAudience && (summonSource === '!!' || summon != null);
                   let value = next;
                   if (entering) {
-                    setAgentAudience(true);
+                    setAudienceState('agent');
                     value = summon?.task ?? '';
                     e.target.value = value;
                     mentions.onValueChange(value, value.length);
@@ -922,8 +894,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                   // The draft carries its audience from the first keystroke, so a
                   // reload (or another device) restores it as an agent draft.
                   const nextAgentAudience = entering || agentAudience;
-                  const nextIntent = value.trim().length > 0 && (nextAgentAudience || draftAgentIntent);
-                  setDraftAgentIntent(nextIntent);
+                  const nextIntent = value.trim().length > 0 && nextAgentAudience;
                   if (draftKey) {
                     onDraftTouched?.(draftKey);
                     draftWriter.schedule(draftKey, value, nextIntent);
@@ -958,11 +929,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                   aria-disabled={sendDisabled || undefined}
                   className="rounded-md bg-accent px-3 py-1 text-sm font-medium text-on-accent transition-colors hover:bg-accent-hover aria-disabled:cursor-default aria-disabled:bg-surface-overlay aria-disabled:text-fg-muted"
                 >
-                  {audiencePill
-                    ? audiencePill.mode === 'agent'
-                      ? audiencePill.agentSendLabel
-                      : audiencePill.threadSendLabel
-                    : 'Send'}
+                  {destination?.sendLabel ?? 'Send'}
                 </button>
               </Tooltip>
             </>
@@ -980,7 +947,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       <div className="mt-1 flex items-center gap-2 px-1 text-3xs text-fg-muted">
         {text.startsWith('@agent ') ? (
           <span className="rounded-full bg-warning/15 px-2 py-0.5 font-medium text-warning-text">
-            Summon agents with !! or ⚡ — mentions are for people now.
+            Summon agents with !! or the audience control — mentions are for people now.
           </span>
         ) : agentNeedsTaskHint ? (
           <span className="rounded-full bg-warning/15 px-2 py-0.5 font-medium text-warning-text">
@@ -1008,7 +975,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             {disabled
               ? (disabledHint ?? '')
               : audienceAvailable
-                ? 'Enter to send · Shift+Enter for a new line · !! or the ⚡ pill for an agent'
+                ? 'Enter to send · Shift+Enter for a new line · !! or the audience control for an agent'
                 : agentAware
                   ? 'Enter to send · Shift+Enter for a new line · !!<task> spawns an agent'
                   : 'Enter to send · Shift+Enter for a new line'}

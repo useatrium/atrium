@@ -14,11 +14,11 @@ async function openThread(page: Page, root: string): Promise<void> {
   await row.scrollIntoViewIfNeeded();
   await row.hover();
   await row.getByLabel('Reply in thread').click({ force: true });
-  await expect(page.getByPlaceholder('Reply…')).toBeVisible();
+  await expect(page.getByRole('complementary').getByRole('combobox', { name: 'Message input' })).toBeVisible();
 }
 
 async function reply(page: Page, text: string): Promise<void> {
-  const composer = page.getByPlaceholder('Reply…');
+  const composer = page.getByRole('complementary').getByRole('combobox', { name: 'Message input' });
   await composer.fill(text);
   await composer.press('Enter');
   await expect(page.locator('aside').getByText(text, { exact: true })).toBeVisible();

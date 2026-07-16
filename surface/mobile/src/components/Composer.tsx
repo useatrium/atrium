@@ -39,6 +39,10 @@ import {
   type MentionCandidate,
   type MentionRange,
   type UserRef,
+  audienceAfterAgentSend,
+  type AgentComposerRequest,
+  type ComposerDestination,
+  type ComposerSubmission,
 } from '@atrium/surface-client';
 import { extractEntryLinkHandles } from '../lib/entryLinks';
 import type { EntryResolver } from '../lib/entryResolve';
@@ -46,6 +50,7 @@ import { font, radius, space, useTheme } from '../lib/theme';
 import { useAccessibilityAnnouncement } from '../lib/accessibility';
 import { createDraftChangeDebouncer } from '../lib/outbox';
 import { Avatar } from './Avatar';
+import { AgentMark } from './AgentMark';
 import { EntryInlineChip } from './EntryInlineChip';
 import { lightImpactHaptic } from '../lib/haptics';
 import { downsamplePeaks, formatVoiceDuration, normalizeMetering, type VoiceSendMeta } from '../lib/voice';
@@ -111,14 +116,14 @@ export interface ComposerProps {
     height?: number;
   }) => Promise<AttachmentMeta & { uploadKey: string; localUri: string }>;
   onConfigureAgent?: (fullText: string) => void;
-  /** Agent mode owns the normal text input but dispatches through session ops. */
-  onAgentSend?: (text: string, anchorEventId?: number) => void;
+  peopleDestination?: Extract<ComposerDestination, { audience: 'people' }>;
+  /** Agent mode owns the same draft and uploads, but dispatches through this typed route. */
+  agentRouting?: {
+    destination: Extract<ComposerDestination, { audience: 'agent' }>;
+    onSubmit: (request: AgentComposerRequest, submission: ComposerSubmission) => void;
+  };
   /** Attached-session threads start with the agent audience selected. */
   initialAgentMode?: boolean;
-  /** Audience pill in agent mode, e.g. "New agent · #engineering" / "Steer · “Fix tests”". */
-  agentTargetLabel?: string;
-  /** Audience pill in chat mode, e.g. "#engineering" / "this thread". */
-  chatTargetLabel?: string;
   onConfigureAgentMode?: () => void;
 }
 
@@ -175,10 +180,9 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     onOpenSession,
     uploadFile,
     onConfigureAgent,
-    onAgentSend,
+    peopleDestination,
+    agentRouting,
     initialAgentMode = false,
-    agentTargetLabel,
-    chatTargetLabel,
     onConfigureAgentMode,
   }: ComposerProps,
   ref,
@@ -196,12 +200,10 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const [recordingBusy, setRecordingBusy] = useState(false);
   const [recordingError, setRecordingError] = useState<string | null>(null);
   const [agentMode, setAgentMode] = useState(initialAgentMode);
-  // The draft was typed for an agent. Survives leaving agent mode (and a
-  // cross-device restore) so an agent command can never quietly become chat.
-  const [draftAgentIntent, setDraftAgentIntent] = useState(false);
-  const [agentIntentSeen, setAgentIntentSeen] = useState(false);
+  const [inputFocused, setInputFocused] = useState(false);
   const [agentAnchor, setAgentAnchor] = useState<{ eventId: number; label: string } | null>(null);
   const [agentMentionHintDismissed, setAgentMentionHintDismissed] = useState(false);
+  const [audienceAnnouncement, setAudienceAnnouncement] = useState<string | null>(null);
   const audioRecorder = useAudioRecorder(VOICE_RECORDING_OPTIONS);
   const recorderState = useAudioRecorderState(audioRecorder, 125);
   const inputRef = useRef<TextInput>(null);
@@ -213,6 +215,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const meterSamplesRef = useRef<number[]>([]);
   const editing = editingText != null;
   useAccessibilityAnnouncement(recordingError);
+  useAccessibilityAnnouncement(audienceAnnouncement);
   const draftWriter = useMemo(
     () =>
       createDraftChangeDebouncer(
@@ -246,8 +249,9 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       setMentionRanges([]);
       setWarnedNonMembers([]);
       setSelection({ start: 0, end: 0 });
-      setDraftAgentIntent(false);
-      setAgentIntentSeen(false);
+      setAgentMode(initialAgentMode);
+      setAgentAnchor(null);
+      setAudienceAnnouncement(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draftKey]);
@@ -256,12 +260,9 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     if (textRef.current !== '') return;
     setText(initialDraft);
     setSelection({ start: initialDraft.length, end: initialDraft.length });
-    // A restored draft brings its audience with it: an agent-intent draft comes
-    // back wearing the "draft kept" strip, never as an innocent chat draft.
-    if (initialDraftAgentIntent) {
-      setDraftAgentIntent(true);
-      setAgentIntentSeen(false);
-    }
+    // A restored draft brings either saved audience with it. This matters in
+    // attached threads, whose empty composer otherwise defaults to Agent.
+    setAgentMode(initialDraftAgentIntent === true);
   }, [editing, initialDraft, initialDraftAgentIntent]);
 
   useEffect(() => {
@@ -291,8 +292,6 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           setText('');
           setMentionRanges([]);
           setSelection({ start: 0, end: 0 });
-          setDraftAgentIntent(false);
-          setAgentIntentSeen(false);
           if (draftKey) {
             onDraftTouched?.(draftKey);
             draftWriter.saveNow(draftKey, '');
@@ -337,35 +336,20 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     [draftKey, draftWriter, onDraftTouched],
   );
 
-  /** Leaving agent mode with text still in the input: the draft keeps its
-   *  audience and says so, rather than silently becoming an ordinary reply. */
   const leaveAgentMode = useCallback(() => {
     setAgentMode(false);
     setAgentAnchor(null);
-    const kept = textRef.current.trim().length > 0;
-    setDraftAgentIntent(kept);
-    setAgentIntentSeen(false);
-    persistDraftValue(textRef.current, kept);
-  }, [persistDraftValue]);
+    persistDraftValue(textRef.current, false);
+    setAudienceAnnouncement(`People mode. ${peopleDestination?.description ?? 'Posts without prompting the agent'}.`);
+  }, [peopleDestination?.description, persistDraftValue]);
 
   const enterAgentMode = useCallback(() => {
     setAgentMode(true);
-    if (textRef.current.trim()) {
-      setDraftAgentIntent(true);
-      persistDraftValue(textRef.current, true);
-    }
+    const hasDraft = textRef.current.trim().length > 0;
+    persistDraftValue(textRef.current, hasDraft);
+    setAudienceAnnouncement(`Agent mode. ${agentRouting?.destination.description ?? 'Prompts the agent'}.`);
     setTimeout(() => inputRef.current?.focus(), 0);
-  }, [persistDraftValue]);
-
-  const clearAgentIntentDraft = useCallback(() => {
-    setText('');
-    setMentionRanges([]);
-    setWarnedNonMembers([]);
-    setSelection({ start: 0, end: 0 });
-    setDraftAgentIntent(false);
-    setAgentIntentSeen(false);
-    persistDraftValue('', false);
-  }, [persistDraftValue]);
+  }, [agentRouting?.destination.description, persistDraftValue]);
 
   const startUpload = async (file: PickedAttachment) => {
     if (!uploadFile) return;
@@ -487,8 +471,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   }));
   const readyRefs = ready.map(({ meta }) => ({ uploadKey: meta.uploadKey }));
   const canSend = !uploading && (text.trim().length > 0 || readyMeta.length > 0);
-  const audienceAvailable = !editing && onAgentSend != null;
-  const showAgentIntentStrip = audienceAvailable && draftAgentIntent && !agentMode && text.trim().length > 0;
+  const audienceAvailable = !editing && agentRouting != null && peopleDestination != null;
+  const activeDestination = agentMode ? agentRouting?.destination : peopleDestination;
   const showConfigureAgentChip = !editing && onConfigureAgent != null && looksLikeSummonSigil(text);
   const showAgentMentionHint = !editing && !agentMentionHintDismissed && /^@agent(?:\s|$)/i.test(text);
   const mentionMatch = !editing ? matchMentionPrefix(text.slice(0, selection.start)) : null;
@@ -517,10 +501,6 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   }, [mentionMatch, onMentionTrigger]);
 
   useEffect(() => {
-    if (showAgentIntentStrip) setAgentIntentSeen(true);
-  }, [showAgentIntentStrip]);
-
-  useEffect(() => {
     if (!recorderState.isRecording) return;
     const peak = normalizeMetering(recorderState.metering);
     if (peak != null) meterSamplesRef.current.push(peak);
@@ -540,7 +520,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     setSelection({ start: inserted.caret, end: inserted.caret });
     if (draftKey) {
       onDraftTouched?.(draftKey);
-      draftWriter.saveNow(draftKey, inserted.text);
+      draftWriter.saveNow(draftKey, inserted.text, agentMode);
     }
     setTimeout(() => {
       inputRef.current?.focus();
@@ -561,25 +541,28 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       return;
     }
     if (!canSend) return;
-    // An agent-intent draft cannot be sent as chat before its strip has been on
-    // screen — that strip is the whole point of remembering the audience.
-    if (!agentMode && draftAgentIntent && !agentIntentSeen) {
-      setAgentIntentSeen(true);
-      return;
-    }
     lightImpactHaptic();
-    if (agentMode && onAgentSend) {
-      onAgentSend(trimmed, agentAnchor?.eventId);
+    if (agentMode && agentRouting) {
+      const request = {
+        ...agentRouting.destination.request,
+        ...(agentAnchor?.eventId != null ? { anchorEventId: agentAnchor.eventId } : {}),
+      } as AgentComposerRequest;
+      agentRouting.onSubmit(request, {
+        text: trimmed,
+        ...(readyMeta.length > 0 ? { attachments: readyMeta } : {}),
+        ...(readyRefs.length > 0 ? { attachmentRefs: readyRefs } : {}),
+      });
       if (draftKey) {
         onDraftTouched?.(draftKey);
         draftWriter.saveNow(draftKey, '');
       }
       setText('');
+      setMentionRanges([]);
+      setWarnedNonMembers([]);
+      setSelection({ start: 0, end: 0 });
       setAttachments([]);
       setAgentAnchor(null);
-      setAgentMode(false);
-      setDraftAgentIntent(false);
-      setAgentIntentSeen(false);
+      setAgentMode(audienceAfterAgentSend(request) === 'agent');
       return;
     }
     const broadcast = showBroadcastToggle && alsoSendToChannel;
@@ -602,12 +585,10 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     setWarnedNonMembers([]);
     setSelection({ start: 0, end: 0 });
     setAttachments([]);
-    setDraftAgentIntent(false);
-    setAgentIntentSeen(false);
   };
 
   const startRecording = async () => {
-    if (!uploadFile || editing || recordingBusy || uploading) return;
+    if (!uploadFile || editing || agentMode || recordingBusy || uploading) return;
     try {
       setRecordingError(null);
       const permission = await requestRecordingPermissionsAsync();
@@ -763,61 +744,6 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               ⚓ {agentAnchor.label}
             </Text>
           ) : null}
-        </View>
-      ) : null}
-
-      {showAgentIntentStrip ? (
-        <View
-          testID="composer-agent-intent-strip"
-          accessibilityLiveRegion="polite"
-          style={{
-            alignItems: 'center',
-            backgroundColor: colors.accentBg,
-            borderColor: colors.accent,
-            borderRadius: radius.md,
-            borderWidth: 1,
-            flexDirection: 'row',
-            gap: space.sm,
-            paddingHorizontal: space.sm,
-            paddingVertical: space.xs,
-          }}
-        >
-          <Text numberOfLines={2} style={{ color: colors.accent, flex: 1, fontSize: font.xs, fontWeight: '700' }}>
-            ⚡ Agent mode off — draft kept
-          </Text>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Resume agent mode"
-            onPress={enterAgentMode}
-            hitSlop={8}
-            style={{
-              alignItems: 'center',
-              backgroundColor: colors.accent,
-              borderRadius: radius.lg,
-              justifyContent: 'center',
-              minHeight: 34,
-              paddingHorizontal: space.sm,
-            }}
-          >
-            <Text style={{ color: colors.onAccent, fontSize: font.xs, fontWeight: '800' }}>Resume ⚡</Text>
-          </Pressable>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Clear draft"
-            onPress={clearAgentIntentDraft}
-            hitSlop={8}
-            style={{
-              alignItems: 'center',
-              borderColor: colors.border,
-              borderRadius: radius.lg,
-              borderWidth: 1,
-              justifyContent: 'center',
-              minHeight: 34,
-              paddingHorizontal: space.sm,
-            }}
-          >
-            <Text style={{ color: colors.textSecondary, fontSize: font.xs, fontWeight: '700' }}>Clear draft</Text>
-          </Pressable>
         </View>
       ) : null}
 
@@ -1071,7 +997,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                 accessibilityHint="Discards the recording"
                 onPress={() => void finishRecording(false)}
                 hitSlop={8}
-                style={{ minHeight: 36, justifyContent: 'center' }}
+                style={{ minHeight: 48, justifyContent: 'center' }}
               >
                 <Text style={{ color: colors.textMuted, fontSize: font.xs, fontWeight: '700' }}>Cancel</Text>
               </Pressable>
@@ -1082,9 +1008,9 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                 onPress={() => void finishRecording(true)}
                 hitSlop={8}
                 style={{
-                  minWidth: 36,
-                  minHeight: 36,
-                  borderRadius: 18,
+                  minWidth: 48,
+                  minHeight: 48,
+                  borderRadius: 24,
                   backgroundColor: colors.danger,
                   alignItems: 'center',
                   justifyContent: 'center',
@@ -1156,9 +1082,9 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             onPress={pickAttachment}
             hitSlop={8}
             style={{
-              minWidth: 44,
-              minHeight: 44,
-              borderRadius: 22,
+              minWidth: 48,
+              minHeight: 48,
+              borderRadius: 24,
               backgroundColor: colors.bgElevated,
               alignItems: 'center',
               justifyContent: 'center',
@@ -1168,7 +1094,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             <Ionicons name="attach-outline" size={21} color={colors.textSecondary} />
           </Pressable>
         )}
-        {allowAttachments && !editing && uploadFile && (
+        {allowAttachments && !editing && uploadFile && !agentMode && (
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={recording ? 'Stop and send voice message' : 'Record voice message'}
@@ -1183,9 +1109,9 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             disabled={recordingBusy || uploading}
             hitSlop={8}
             style={{
-              minWidth: 44,
-              minHeight: 44,
-              borderRadius: 22,
+              minWidth: 48,
+              minHeight: 48,
+              borderRadius: 24,
               backgroundColor: recording
                 ? colors.dangerSurface
                 : recordingBusy || uploading
@@ -1205,77 +1131,63 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             />
           </Pressable>
         )}
-        {/* The pill sits inside the input frame but on its own line: a phone frame is
-            never wide enough to share a row with the text without starving it (three
-            44px buttons already eat the width), and the label carries a session title. */}
         <View
           style={{
-            alignItems: 'flex-start',
-            backgroundColor: colors.bgInput,
-            borderColor: agentMode ? colors.accent : colors.border,
+            alignItems: 'center',
+            backgroundColor: agentMode ? colors.accentBg : colors.bgInput,
+            borderColor: inputFocused ? colors.accent : colors.border,
             borderRadius: radius.lg,
-            borderWidth: 1,
+            borderWidth: 2,
             flex: 1,
-            flexDirection: 'column',
-            // 6, not 2: the pill's bottom hitSlop has to land in this gap. Any slop that
-            // reaches the TextInput's frame is swallowed by it (later sibling wins the
-            // overlap), which silently shrinks the pill's real touch target.
+            flexDirection: 'row',
+            // Keep the toggle's 48pt target distinct from the multiline input.
             gap: 6,
             paddingHorizontal: space.xs,
             paddingVertical: 4,
           }}
         >
-          {audienceAvailable ? (
+          {audienceAvailable && activeDestination ? (
             <Pressable
-              testID="composer-audience-pill"
+              testID="composer-audience-toggle"
               accessibilityRole="button"
-              accessibilityState={{ selected: agentMode }}
               accessibilityLabel={
                 agentMode
-                  ? `Talking to the agent: ${agentTargetLabel ?? 'New agent'}. Tap to reply to people instead.`
-                  : `Talking to people: ${chatTargetLabel ?? 'this conversation'}. Tap to address the agent.`
+                  ? 'Agent mode selected. Switch to People mode.'
+                  : 'People mode selected. Switch to Agent mode.'
               }
+              accessibilityHint={activeDestination.description}
+              accessibilityState={{ disabled: recording || recordingBusy, selected: agentMode }}
               onPress={() => {
+                if (recording || recordingBusy) return;
                 if (agentMode) leaveAgentMode();
                 else enterAgentMode();
               }}
-              // 36 tall + 8 above + 6 below (the frame's gap) = a 50pt touch target,
-              // over the 44pt floor, without making the frame two thumbs high. The
-              // bottom value is capped by the gap on purpose — see the note there.
-              hitSlop={{ top: 8, bottom: 6, left: 8, right: 8 }}
+              disabled={recording || recordingBusy}
               style={({ pressed }) => ({
                 alignItems: 'center',
-                alignSelf: 'flex-start',
                 backgroundColor: agentMode ? colors.accent : pressed ? colors.bgPressed : colors.bgElevated,
                 borderColor: agentMode ? colors.accent : colors.border,
-                borderRadius: radius.lg,
+                borderRadius: 24,
                 borderWidth: 1,
-                flexDirection: 'row',
-                flexShrink: 1,
+                height: 48,
                 justifyContent: 'center',
-                maxWidth: '100%',
-                minHeight: 36,
-                opacity: pressed && agentMode ? 0.85 : 1,
-                paddingHorizontal: space.sm,
+                opacity: recording || recordingBusy ? 0.5 : pressed ? 0.82 : 1,
+                width: 48,
               })}
             >
-              <Text
-                numberOfLines={1}
-                maxFontSizeMultiplier={1.6}
-                style={{
-                  color: agentMode ? colors.onAccent : colors.textSecondary,
-                  fontSize: font.xs,
-                  fontWeight: '800',
-                }}
-              >
-                {agentMode ? `⚡ ${agentTargetLabel ?? 'New agent'}` : `💬 ${chatTargetLabel ?? 'this conversation'}`}
-              </Text>
+              {agentMode ? (
+                <AgentMark size={24} />
+              ) : (
+                <Ionicons name="chatbubbles-outline" size={23} color={colors.textSecondary} />
+              )}
             </Pressable>
           ) : null}
           <TextInput
-            accessibilityLabel={editing ? 'Edit message' : 'Message'}
+            accessibilityLabel={editing ? 'Edit message' : agentMode ? 'Prompt agent' : 'Message'}
             ref={inputRef}
             value={text}
+            onFocus={() => setInputFocused(true)}
+            onBlur={() => setInputFocused(false)}
             onChangeText={(v) => {
               // The summon sigil is strictly position-zero. Swallow it as soon as
               // it is complete so `!! task` feels like entering a mode, not a
@@ -1298,8 +1210,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               setText(next);
               // The draft carries its audience from the first keystroke, so a
               // reload (or another device) restores it as an agent draft.
-              const nextIntent = !editing && next.trim().length > 0 && (nextAgentModeNow || draftAgentIntent);
-              if (!editing) setDraftAgentIntent(nextIntent);
+              const nextIntent = !editing && next.trim().length > 0 && nextAgentModeNow;
               if (!editing && draftKey) {
                 onDraftTouched?.(draftKey);
                 draftWriter.schedule(draftKey, next, nextIntent);
@@ -1308,13 +1219,20 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             }}
             selection={selection}
             onSelectionChange={(event) => setSelection(event.nativeEvent.selection)}
-            placeholder={agentMode && !editing ? 'Describe the task…' : placeholder}
+            placeholder={
+              editing
+                ? placeholder
+                : audienceAvailable
+                  ? agentMode
+                    ? 'Prompt agent…'
+                    : 'Message people…'
+                  : placeholder
+            }
             placeholderTextColor={colors.textFaint}
             multiline
             style={{
-              // width (not flex) — in the frame's column layout, flex:1 would fight the
-              // pill for vertical space instead of filling the line.
-              width: '100%',
+              flex: 1,
+              minWidth: 0,
               minHeight: 38,
               maxHeight: 120,
               backgroundColor: 'transparent',
@@ -1323,12 +1241,13 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               paddingHorizontal: space.xs,
               paddingTop: 9,
               paddingBottom: 9,
+              textAlignVertical: 'top',
             }}
           />
         </View>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={editing ? 'Save edit' : 'Send message'}
+          accessibilityLabel={editing ? 'Save edit' : (activeDestination?.sendLabel ?? 'Send message')}
           accessibilityState={{
             disabled: recording || recordingBusy || (editing ? text.trim().length === 0 : !canSend),
           }}
@@ -1336,9 +1255,9 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           disabled={recording || recordingBusy || (editing ? text.trim().length === 0 : !canSend)}
           hitSlop={8}
           style={{
-            minWidth: 44,
-            minHeight: 44,
-            borderRadius: 22,
+            minWidth: 48,
+            minHeight: 48,
+            borderRadius: 24,
             backgroundColor: (editing ? text.trim().length > 0 : canSend) ? colors.accent : colors.bgElevated,
             alignItems: 'center',
             justifyContent: 'center',

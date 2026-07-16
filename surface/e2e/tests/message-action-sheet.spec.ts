@@ -36,10 +36,10 @@ test('message-action sheet opens on touch long-press without release click-throu
 
     await expect(dialog).toBeVisible();
     await expect(page.getByRole('button', { name: 'Close thread' })).toHaveCount(0);
-    await expect(page.getByPlaceholder('Reply…')).toHaveCount(0);
+    await expect(page.getByRole('complementary').getByRole('combobox', { name: 'Message input' })).toHaveCount(0);
 
     await dialog.getByRole('button', { name: 'Reply in thread' }).tap();
-    await expect(page.getByPlaceholder('Reply…')).toBeVisible();
+    await expect(page.getByRole('complementary').getByRole('combobox', { name: 'Message input' })).toBeVisible();
   } finally {
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] }).catch(() => {});
     await cdp.detach();
@@ -77,7 +77,7 @@ test('touch swipe right on a message opens the reply thread', async ({ context, 
     }
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
 
-    await expect(page.getByPlaceholder('Reply…')).toBeVisible();
+    await expect(page.getByRole('complementary').getByRole('combobox', { name: 'Message input' })).toBeVisible();
   } finally {
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] }).catch(() => {});
     await cdp.detach();

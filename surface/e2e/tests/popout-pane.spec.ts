@@ -157,7 +157,7 @@ test('popout renders the lean pane, folds the stream, tracks unseen output, and 
     (response) =>
       response.request().method() === 'POST' && response.url().includes(`/api/sessions/${sessionId}/messages`),
   );
-  await page.getByPlaceholder(/Steer the agent/).fill(steerText);
+  await page.getByPlaceholder('Prompt agent…').fill(steerText);
   await page.keyboard.press('Enter');
   expect((await accepted).status()).toBe(202);
 
@@ -204,7 +204,7 @@ test('popout stop turn forwards an interrupt without cancelling the session', as
 
   await page.goto(`/s/${sessionId}/pane`);
   await expect(page.getByTestId('session-pane-page')).toBeVisible();
-  await expect(page.getByPlaceholder(/Steer the agent/)).toBeVisible();
+  await expect(page.getByPlaceholder('Prompt agent…')).toBeVisible();
 
   const stopAccepted = page.waitForResponse(
     (response) =>
@@ -222,5 +222,5 @@ test('popout stop turn forwards an interrupt without cancelling the session', as
     })
     .toBe(true);
 
-  await expect(page.getByPlaceholder(/Steer the agent/)).toBeVisible();
+  await expect(page.getByPlaceholder('Prompt agent…')).toBeVisible();
 });

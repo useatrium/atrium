@@ -20,12 +20,13 @@ async function openThreadForMessage(page: Page, text: string): Promise<void> {
   await row.scrollIntoViewIfNeeded();
   await row.hover();
   await row.getByLabel('Reply in thread').click({ force: true });
-  await expect(page.getByPlaceholder('Reply…')).toBeVisible();
+  await expect(page.getByRole('complementary').getByRole('combobox', { name: 'Message input' })).toBeVisible();
 }
 
 async function sendThreadReply(page: Page, text: string): Promise<void> {
-  await page.getByPlaceholder('Reply…').fill(text);
-  await page.getByPlaceholder('Reply…').press('Enter');
+  const composer = page.getByRole('complementary').getByRole('combobox', { name: 'Message input' });
+  await composer.fill(text);
+  await composer.press('Enter');
 }
 
 function threadPanel(page: Page) {

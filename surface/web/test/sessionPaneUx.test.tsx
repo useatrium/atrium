@@ -178,7 +178,7 @@ describe('effort picker', () => {
     expect(select.value).toBe('');
     fireEvent.change(select, { target: { value: 'xhigh' } });
 
-    const composer = screen.getByPlaceholderText('Steer the agent...');
+    const composer = screen.getByLabelText('Message input');
     fireEvent.change(composer, { target: { value: 'dig deeper' } });
     fireEvent.keyDown(composer, { key: 'Enter' });
     await waitFor(() => expect(onSteer).toHaveBeenCalledWith(driving.id, 'dig deeper', 'xhigh'));

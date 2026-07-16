@@ -2624,14 +2624,16 @@ export function Chat({
                 onDraftPersisted={enqueueDraft}
                 onDraftTouched={markDraftTouched}
                 autoFocus={!state.openSessionId}
-                agentMode={{
-                  scope: 'channel',
-                  channelLabel:
-                    active.kind === 'dm' || active.kind === 'gdm' ? channelLabel(active, me.id) : `#${active.name}`,
+                routing={{
+                  kind: 'managed',
+                  context: {
+                    scope: 'channel',
+                    channelLabel:
+                      active.kind === 'dm' || active.kind === 'gdm' ? channelLabel(active, me.id) : `#${active.name}`,
+                  },
+                  onAgentSend: (request, text, attachments, attachmentRefs) =>
+                    sendAgent(active.id, request, text, attachments, attachmentRefs),
                 }}
-                onAgentSend={(request, text, attachments, attachmentRefs) =>
-                  sendAgent(active.id, request, text, attachments, attachmentRefs)
-                }
                 previewEntryLinks
                 allowAttachments
                 mentionContext={{
@@ -2700,6 +2702,12 @@ export function Chat({
                         : undefined,
                     onAnswerQuestion: answerSessionQuestion,
                     onSteer: steerSession,
+                    onSendToThread: (text, attachments, attachmentRefs) => {
+                      const root = conversationSession.threadRootEventId;
+                      if (root != null) {
+                        send(conversationSession.channelId, text, root, attachments, attachmentRefs);
+                      }
+                    },
                     queueUpload,
                     failedSteer: failedSteers[conversationSession.id] ?? null,
                     onClearFailedSteer: () => clearFailedSteer(conversationSession.id),

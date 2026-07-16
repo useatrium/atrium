@@ -18,6 +18,7 @@ import * as Clipboard from 'expo-clipboard';
 import { Ionicons } from '@expo/vector-icons';
 import { Stack, router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useHeaderHeight } from 'expo-router/react-navigation';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   ApiError,
   formatCost,
@@ -96,6 +97,11 @@ import { HiddenWorkChip } from '../../../src/components/HiddenWorkChip';
 import { AgentFileMarkdownProvider } from '../../../src/components/FilePathChip';
 import { MediaLightbox } from '../../../src/components/MediaLightbox';
 import { MessageActionSheet, type MessageActionListItem } from '../../../src/components/MessageActions';
+import {
+  SessionAudienceToggle,
+  sessionComposerRoute,
+  type SessionComposerAudience,
+} from '../../../src/components/SessionAudienceToggle';
 import {
   createEntryReferenceQuery,
   type EntryReference,
@@ -695,6 +701,7 @@ export default function SessionScreen() {
     cached ? !isTerminalSessionStatus(cached.status) : false,
   );
   const headerHeight = useHeaderHeight();
+  const insets = useSafeAreaInsets();
   const [snapshot, setSnapshot] = useState<Session | null>(cached);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -713,6 +720,9 @@ export default function SessionScreen() {
   const [seatAsk, setSeatAsk] = useState<'idle' | 'confirm-take'>('idle');
   const [ignoredSeatRequests, setIgnoredSeatRequests] = useState<ReadonlySet<string>>(() => new Set());
   const [suggestText, setSuggestText] = useState('');
+  const [sessionAudience, setSessionAudience] = useState<SessionComposerAudience>('agent');
+  const [sessionComposerFocused, setSessionComposerFocused] = useState(false);
+  const [audienceAnnouncement, setAudienceAnnouncement] = useState<string | null>(null);
   const [pendingSteers, setPendingSteers] = useState<PendingSteer[]>([]);
   const [optimisticProvenanceByMessageId, setOptimisticProvenanceByMessageId] = useState<
     Map<string, SteerRowProvenance>
@@ -1303,9 +1313,15 @@ export default function SessionScreen() {
   }, [chat, session, setTranscriptView, transcriptView]);
 
   const sendSteer = () => {
-    if (!id) return;
     const text = steerText.trim();
     if (!text) return;
+    const route = sessionComposerRoute(sessionAudience, true, sessionPeopleAvailable);
+    if (route === 'discussion' && sessionChannelId && sessionThreadRootEventId != null) {
+      setSteerText('');
+      chat.send(sessionChannelId, text, sessionThreadRootEventId);
+      return;
+    }
+    if (!id) return;
     setSteerText('');
     setSteerError(null);
     chat.clearFailedSessionSteer(id);
@@ -1417,7 +1433,14 @@ export default function SessionScreen() {
   };
   const sendSuggestion = () => {
     const text = suggestText.trim();
-    if (!id || !text) return;
+    if (!text) return;
+    const route = sessionComposerRoute(sessionAudience, false, sessionPeopleAvailable);
+    if (route === 'discussion' && sessionChannelId && sessionThreadRootEventId != null) {
+      setSuggestText('');
+      chat.send(sessionChannelId, text, sessionThreadRootEventId);
+      return;
+    }
+    if (!id) return;
     setSuggestText('');
     api.createSuggestion(id, text, { opId: randomId() }).catch((err: unknown) => {
       setSuggestText((current) => (current === '' ? text : current));
@@ -1457,6 +1480,12 @@ export default function SessionScreen() {
 
   const sessionChannelId = session?.channelId ?? null;
   const sessionThreadRootEventId = session?.threadRootEventId ?? null;
+  const sessionPeopleAvailable = sessionChannelId != null && sessionThreadRootEventId != null;
+  useAccessibilityAnnouncement(audienceAnnouncement);
+  useEffect(() => {
+    setSessionAudience('agent');
+    setAudienceAnnouncement(null);
+  }, [id]);
   const agentFileMarkdown = useMemo(
     () => ({
       serverUrl: chat.serverUrl,
@@ -2074,12 +2103,13 @@ export default function SessionScreen() {
 
         {canSteer ? (
           <View
-            accessibilityViewIsModal
             style={{
               borderTopWidth: 1,
               borderTopColor: colors.border,
               backgroundColor: colors.bg,
-              padding: space.sm,
+              paddingHorizontal: space.sm,
+              paddingTop: space.sm,
+              paddingBottom: Math.max(space.sm, insets.bottom),
               flexDirection: 'row',
               alignItems: 'flex-end',
               gap: space.sm,
@@ -2092,7 +2122,7 @@ export default function SessionScreen() {
                 accessibilityLabel="Reasoning effort for the next turn"
                 onPress={() => setEffortOpen(true)}
                 style={({ pressed }) => ({
-                  minHeight: 38,
+                  minHeight: 48,
                   justifyContent: 'center',
                   borderRadius: radius.sm,
                   borderWidth: 1,
@@ -2106,53 +2136,85 @@ export default function SessionScreen() {
                 </Text>
               </Pressable>
             ) : null}
-            <View style={{ flex: 1, gap: 6 }}>
-              {steerEntryLinkHandles.length > 0 ? (
-                <View
-                  testID="session-steer-entry-link-preview"
-                  style={{
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    flexWrap: 'wrap',
-                    gap: 6,
-                    paddingHorizontal: space.xs,
+            <View
+              style={{
+                alignItems: 'center',
+                backgroundColor: sessionAudience === 'agent' ? colors.accentBg : colors.bgInput,
+                borderColor: sessionComposerFocused ? colors.accent : colors.border,
+                borderRadius: radius.lg,
+                borderWidth: 2,
+                flex: 1,
+                flexDirection: 'row',
+                gap: 6,
+                padding: 4,
+              }}
+            >
+              {sessionPeopleAvailable ? (
+                <SessionAudienceToggle
+                  audience={sessionAudience}
+                  isDriver
+                  driverName={driverName}
+                  onToggle={() => {
+                    const next = sessionAudience === 'agent' ? 'people' : 'agent';
+                    setSessionAudience(next);
+                    setAudienceAnnouncement(
+                      next === 'agent'
+                        ? 'Agent mode. Prompts this agent.'
+                        : 'People mode. Posts to the discussion without prompting the agent.',
+                    );
                   }}
-                >
-                  <Text style={{ color: colors.textMuted, fontSize: font.xs, fontWeight: '700' }}>referencing:</Text>
-                  {steerEntryLinkHandles.map((handle) => (
-                    <EntryInlineChip
-                      key={handle}
-                      handle={handle}
-                      resolveEntry={chat.resolveEntry}
-                      onOpenChannel={openEntryChannel}
-                      onOpenSession={openEntrySession}
-                    />
-                  ))}
-                </View>
+                />
               ) : null}
-              <TextInput
-                accessibilityLabel="Agent message"
-                value={steerText}
-                onChangeText={setSteerText}
-                placeholder="Message this agent"
-                placeholderTextColor={colors.textFaint}
-                multiline
-                style={{
-                  alignSelf: 'stretch',
-                  minHeight: 38,
-                  maxHeight: 110,
-                  borderRadius: radius.md,
-                  backgroundColor: colors.bgInput,
-                  color: colors.text,
-                  paddingHorizontal: space.md,
-                  paddingVertical: space.sm,
-                  fontSize: font.md,
-                }}
-              />
+              <View style={{ flex: 1, gap: 6 }}>
+                {steerEntryLinkHandles.length > 0 ? (
+                  <View
+                    testID="session-steer-entry-link-preview"
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      flexWrap: 'wrap',
+                      gap: 6,
+                      paddingHorizontal: space.xs,
+                    }}
+                  >
+                    <Text style={{ color: colors.textMuted, fontSize: font.xs, fontWeight: '700' }}>referencing:</Text>
+                    {steerEntryLinkHandles.map((handle) => (
+                      <EntryInlineChip
+                        key={handle}
+                        handle={handle}
+                        resolveEntry={chat.resolveEntry}
+                        onOpenChannel={openEntryChannel}
+                        onOpenSession={openEntrySession}
+                      />
+                    ))}
+                  </View>
+                ) : null}
+                <TextInput
+                  accessibilityLabel={sessionAudience === 'people' ? 'Message people' : 'Prompt agent'}
+                  value={steerText}
+                  onChangeText={setSteerText}
+                  onFocus={() => setSessionComposerFocused(true)}
+                  onBlur={() => setSessionComposerFocused(false)}
+                  placeholder={sessionAudience === 'people' ? 'Message people…' : 'Prompt agent…'}
+                  placeholderTextColor={colors.textFaint}
+                  multiline
+                  style={{
+                    alignSelf: 'stretch',
+                    minHeight: 38,
+                    maxHeight: 110,
+                    backgroundColor: 'transparent',
+                    color: colors.text,
+                    paddingHorizontal: space.xs,
+                    paddingVertical: space.sm,
+                    fontSize: font.md,
+                    textAlignVertical: 'top',
+                  }}
+                />
+              </View>
             </View>
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel="Send session message"
+              accessibilityLabel={sessionAudience === 'people' ? 'Send to discussion' : 'Send session message'}
               accessibilityState={{ disabled: !steerText.trim() }}
               onPress={sendSteer}
               disabled={!steerText.trim()}
@@ -2160,8 +2222,8 @@ export default function SessionScreen() {
                 borderRadius: radius.md,
                 backgroundColor: steerText.trim() ? colors.accent : colors.bgElevated,
                 paddingHorizontal: space.md,
-                minHeight: 44,
-                minWidth: 44,
+                minHeight: 48,
+                minWidth: 48,
                 alignItems: 'center',
                 justifyContent: 'center',
               }}
@@ -2184,34 +2246,69 @@ export default function SessionScreen() {
                 borderTopWidth: 1,
                 borderTopColor: colors.border,
                 backgroundColor: colors.bg,
-                padding: space.sm,
+                paddingHorizontal: space.sm,
+                paddingTop: space.sm,
+                paddingBottom: Math.max(space.sm, insets.bottom),
                 flexDirection: 'row',
                 alignItems: 'flex-end',
                 gap: space.sm,
               }}
             >
-              <TextInput
-                accessibilityLabel={`Suggested message for ${driverName}`}
-                value={suggestText}
-                onChangeText={setSuggestText}
-                placeholder={`Suggest a message — ${driverName} decides`}
-                placeholderTextColor={colors.textFaint}
-                multiline
+              <View
                 style={{
+                  alignItems: 'center',
+                  backgroundColor: sessionAudience === 'agent' ? colors.accentBg : colors.bgInput,
+                  borderColor: sessionComposerFocused ? colors.accent : colors.border,
+                  borderRadius: radius.lg,
+                  borderWidth: 2,
                   flex: 1,
-                  minHeight: 38,
-                  maxHeight: 110,
-                  borderRadius: radius.md,
-                  backgroundColor: colors.bgInput,
-                  color: colors.text,
-                  paddingHorizontal: space.md,
-                  paddingVertical: space.sm,
-                  fontSize: font.md,
+                  flexDirection: 'row',
+                  gap: 6,
+                  padding: 4,
                 }}
-              />
+              >
+                {sessionPeopleAvailable ? (
+                  <SessionAudienceToggle
+                    audience={sessionAudience}
+                    isDriver={false}
+                    driverName={driverName}
+                    onToggle={() => {
+                      const next = sessionAudience === 'agent' ? 'people' : 'agent';
+                      setSessionAudience(next);
+                      setAudienceAnnouncement(
+                        next === 'agent'
+                          ? `Agent mode. Suggests a prompt for ${driverName}.`
+                          : 'People mode. Posts to the discussion without prompting the agent.',
+                      );
+                    }}
+                  />
+                ) : null}
+                <TextInput
+                  accessibilityLabel={sessionAudience === 'people' ? 'Message people' : 'Prompt agent'}
+                  value={suggestText}
+                  onChangeText={setSuggestText}
+                  onFocus={() => setSessionComposerFocused(true)}
+                  onBlur={() => setSessionComposerFocused(false)}
+                  placeholder={sessionAudience === 'people' ? 'Message people…' : 'Prompt agent…'}
+                  placeholderTextColor={colors.textFaint}
+                  multiline
+                  style={{
+                    flex: 1,
+                    minWidth: 0,
+                    minHeight: 38,
+                    maxHeight: 110,
+                    backgroundColor: 'transparent',
+                    color: colors.text,
+                    paddingHorizontal: space.xs,
+                    paddingVertical: space.sm,
+                    fontSize: font.md,
+                    textAlignVertical: 'top',
+                  }}
+                />
+              </View>
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel="Send suggestion"
+                accessibilityLabel={sessionAudience === 'people' ? 'Send to discussion' : 'Send suggestion'}
                 accessibilityState={{ disabled: !suggestText.trim() }}
                 onPress={sendSuggestion}
                 disabled={!suggestText.trim()}
@@ -2219,8 +2316,8 @@ export default function SessionScreen() {
                   borderRadius: radius.md,
                   backgroundColor: suggestText.trim() ? colors.accent : colors.bgElevated,
                   paddingHorizontal: space.md,
-                  minHeight: 44,
-                  minWidth: 44,
+                  minHeight: 48,
+                  minWidth: 48,
                   alignItems: 'center',
                   justifyContent: 'center',
                 }}

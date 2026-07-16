@@ -10,6 +10,8 @@ import {
   type HubFile,
   newestConfirmedMainEventId,
   parseSummonSigil,
+  agentDestination,
+  peopleDestination,
 } from '@atrium/surface-client';
 import { Ionicons } from '@expo/vector-icons';
 import { useChat } from '../../../src/lib/chat';
@@ -532,13 +534,19 @@ export default function ChannelScreen() {
           onOpenSession={(sessionId) => router.push(`/session/${sessionId}`)}
           uploadFile={chat.uploadFile}
           onConfigureAgent={handleConfigureAgent}
-          onAgentSend={(text, anchorEventId) =>
-            spawnSession(id, text, undefined, {
-              ...(anchorEventId != null ? { anchorEventId } : {}),
-            })
-          }
-          agentTargetLabel={`New agent · ${channelAudienceLabel}`}
-          chatTargetLabel={channelAudienceLabel}
+          peopleDestination={peopleDestination('channel', channelAudienceLabel)}
+          agentRouting={{
+            destination: agentDestination({ target: 'spawn-channel', effort: agentEffort }, channelAudienceLabel),
+            onSubmit: (request, submission) => {
+              if (request.target !== 'spawn-channel') return;
+              spawnSession(id, submission.text, undefined, {
+                effort: request.effort,
+                anchorEventId: request.anchorEventId,
+                attachments: submission.attachments,
+                attachmentRefs: submission.attachmentRefs,
+              });
+            },
+          }}
           onConfigureAgentMode={() => setAgentConfigVisible(true)}
         />
       </KeyboardAvoidingView>

@@ -2,6 +2,7 @@ import { useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type {
   AttachmentMeta,
   AttachmentRef,
+  AgentComposerRequest,
   ChatMessage,
   UploadPayload,
   UserRef,
@@ -26,7 +27,7 @@ import {
 } from '@atrium/surface-client';
 import { encodeEventHandle } from '@atrium/surface-client/handle';
 import { Composer } from './Composer';
-import type { AgentComposerRequest, ComposerHandle } from './Composer';
+import type { ComposerHandle } from './Composer';
 import { XIcon } from './icons';
 import { MessageRow } from './MessageRow';
 import { buildSpineRows } from './threadSpine';
@@ -429,33 +430,29 @@ export function ThreadPanelContent({
           </div>
         )}
       </div>
-      <div className="border-t border-edge bg-surface px-3 pt-2">
-        {attachedSession ? (
-          <p className="flex items-center gap-2 text-xs text-fg-muted">
-            {composerAgentMode
-              ? 'Goes to the agent · Esc for an aside'
-              : 'Aside — visible to people, never sent to the agent'}
-          </p>
-        ) : composerAgentMode ? (
-          <p className="flex items-center gap-2 text-xs text-fg-muted">
-            Goes to the agent — its card already shows this session in the channel.
-          </p>
-        ) : (
-          <label htmlFor={alsoSendToChannelId} className="flex items-center gap-2 text-xs text-fg-secondary">
-            <input
-              id={alsoSendToChannelId}
-              type="checkbox"
-              checked={alsoSendToChannel}
-              onChange={(e) => setAlsoSendToChannel(e.target.checked)}
-              className="h-3.5 w-3.5 rounded border-edge-strong bg-surface-raised text-accent focus:ring-accent"
-            />
-            <span className="font-medium">Also send to {channelLabel ?? 'channel'}</span>
-          </label>
-        )}
-      </div>
+      {!attachedSession && (
+        <div className="border-t border-edge bg-surface px-3 pt-2">
+          {composerAgentMode ? (
+            <p className="flex items-center gap-2 text-xs text-fg-muted">
+              Goes to the agent — its card already shows this session in the channel.
+            </p>
+          ) : (
+            <label htmlFor={alsoSendToChannelId} className="flex items-center gap-2 text-xs text-fg-secondary">
+              <input
+                id={alsoSendToChannelId}
+                type="checkbox"
+                checked={alsoSendToChannel}
+                onChange={(e) => setAlsoSendToChannel(e.target.checked)}
+                className="h-3.5 w-3.5 rounded border-edge-strong bg-surface-raised text-accent focus:ring-accent"
+              />
+              <span className="font-medium">Also send to {channelLabel ?? 'channel'}</span>
+            </label>
+          )}
+        </div>
+      )}
       <Composer
         ref={composerRef}
-        placeholder={attachedSession ? 'Write an aside…' : 'Reply…'}
+        placeholder={attachedSession ? 'Reply in the thread…' : 'Reply…'}
         onSend={(text, attachments, attachmentRefs, voice) => {
           onSend(text, attachments, attachmentRefs, voice, alsoSendToChannel);
           setAlsoSendToChannel(false);
@@ -466,24 +463,31 @@ export function ThreadPanelContent({
         }}
         queueUpload={queueUpload}
         autoFocus
-        agentMode={{
-          scope: 'thread',
-          channelLabel: 'this thread',
-          threadRootEventId: root.id ?? undefined,
-          ...(attachedSession
+        routing={
+          onAgentSend
             ? {
-                attachedSession: {
-                  id: attachedSession.id,
-                  title: attachedSession.title,
-                  // Canonical seat resolution: null driverId falls back to the spawner.
-                  driverId: sessionDriverId(attachedSession),
-                  modelEffort: attachedSession.modelEffort,
+                kind: 'managed',
+                context: {
+                  scope: 'thread',
+                  channelLabel: 'this thread',
+                  threadRootEventId: root.id ?? undefined,
+                  ...(attachedSession
+                    ? {
+                        attachedSession: {
+                          id: attachedSession.id,
+                          title: attachedSession.title,
+                          // Canonical seat resolution: null driverId falls back to the spawner.
+                          driverId: sessionDriverId(attachedSession),
+                          modelEffort: attachedSession.modelEffort,
+                        },
+                      }
+                    : {}),
+                  meId,
                 },
+                onAgentSend,
               }
-            : {}),
-          meId,
-        }}
-        onAgentSend={onAgentSend}
+            : undefined
+        }
         allowAttachments
         draftKey={draftKey}
         initialDraft={initialDraft}
