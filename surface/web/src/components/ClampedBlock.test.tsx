@@ -29,7 +29,12 @@ function setMetrics(element: Element, scrollHeight: number, clientHeight: number
 
 function renderClamp(children: React.ReactNode = 'Content') {
   return render(
-    <ClampedBlock collapsedClassName="test-clamp" expandLabel="Show more ↓" collapseLabel="Show less ↑">
+    <ClampedBlock
+      collapsedClassName="test-clamp"
+      overflowingClassName="test-fade"
+      expandLabel="Show more ↓"
+      collapseLabel="Show less ↑"
+    >
       {children}
     </ClampedBlock>,
   );
@@ -55,6 +60,34 @@ describe('ClampedBlock', () => {
     act(() => observers[0]?.trigger());
 
     expect(screen.queryByRole('button')).toBeNull();
+  });
+
+  // The fade advertises "there is more below". Content that fits gets no toggle,
+  // so a fade there would point at nothing and the user would have no control to
+  // clear it — the message would just render permanently dimmed.
+  it('withholds the overflow hint from content that fits, alongside the toggle', () => {
+    const { container } = renderClamp();
+    const content = container.querySelector('.test-clamp');
+    setMetrics(content!, 80, 80);
+
+    act(() => observers[0]?.trigger());
+
+    expect(screen.queryByRole('button')).toBeNull();
+    expect(container.querySelector('.test-fade')).toBeNull();
+  });
+
+  it('applies the overflow hint while clamped content overflows', () => {
+    const { container } = renderClamp();
+    const content = container.querySelector('.test-clamp');
+    setMetrics(content!, 180, 80);
+
+    act(() => observers[0]?.trigger());
+
+    expect(container.querySelector('.test-fade')).toBeTruthy();
+
+    // Expanding drops the hint with the constraint: nothing is hidden any more.
+    fireEvent.click(screen.getByRole('button', { name: 'Show more ↓' }));
+    expect(container.querySelector('.test-fade')).toBeNull();
   });
 
   it('toggles its caller-supplied label and expansion direction', () => {
