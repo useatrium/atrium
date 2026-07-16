@@ -251,13 +251,14 @@ export interface SessionListItem {
   archivedAt: string | null;
   pinned: boolean;
   needsAttention: boolean;
-  attentionReason: 'question' | 'auth' | null;
+  attentionReason: 'question' | 'auth' | 'seat' | null;
   resultText: string | null;
 }
 
 export interface SessionSnapshotItem extends SessionListItem {
   pendingQuestion: SessionPendingQuestionJson | null;
   providerAuthRequired: ProviderAuthRequiredJson | null;
+  pendingSeatRequests: SessionUserJson[];
   threadRootEventId: number | null;
 }
 
@@ -406,6 +407,7 @@ interface SessionListRow {
   pinned: boolean;
   pending_question: unknown | null;
   provider_auth_required: unknown | null;
+  seat_requests: unknown | null;
   result_text: string | null;
 }
 
@@ -925,6 +927,7 @@ export class SessionRuns {
               s.pending_question,
               s.provider_auth_required,
               s.result_text,
+              seats.seat_requests,
               (sp.user_id IS NOT NULL) AS pinned
        FROM sessions s
        JOIN channels c ON c.id = s.channel_id
@@ -933,6 +936,22 @@ export class SessionRuns {
          ON m.channel_id = c.id AND m.user_id = $1
        LEFT JOIN session_pins sp
          ON sp.session_id = s.id AND sp.user_id = $1
+       -- Seat requests block a person exactly like a pending question does, so
+       -- they have to reach the client the same way. Aggregated set-wise rather
+       -- than per row: this feeds /sync, which is on the boot path. Indexed by
+       -- seat_requests' (session_id, user_id) primary key.
+       LEFT JOIN LATERAL (
+         SELECT COALESCE(
+                  json_agg(
+                    json_build_object('userId', su.id, 'displayName', su.display_name)
+                    ORDER BY sr.created_at ASC, su.display_name ASC
+                  ),
+                  '[]'::json
+                ) AS seat_requests
+           FROM seat_requests sr
+           JOIN users su ON su.id = sr.user_id
+          WHERE sr.session_id = s.id
+       ) seats ON true
        -- Must mirror canAccessChannel: only 'public' is world-visible; every
        -- other kind (dm, gdm, private — and future ones) requires membership.
        WHERE (c.kind = 'public' OR m.user_id IS NOT NULL)
@@ -3632,10 +3651,22 @@ function toJson(
   };
 }
 
+/** Seat rows arrive as a json_agg from the list query's lateral. */
+function parseSeatRequests(value: unknown): SessionUserJson[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) => {
+    if (typeof entry !== 'object' || entry === null) return [];
+    const { userId, displayName } = entry as { userId?: unknown; displayName?: unknown };
+    if (typeof userId !== 'string' || typeof displayName !== 'string') return [];
+    return [{ userId, displayName }];
+  });
+}
+
 function toListItem(row: SessionListRow): SessionListItem {
   const terminal = TERMINAL_STATUSES.has(row.status);
   const pendingQuestion = terminal ? null : parsePendingQuestion(row.pending_question);
   const providerAuthRequired = terminal ? null : parseProviderAuthRequired(row.provider_auth_required);
+  const pendingSeatRequests = terminal ? [] : parseSeatRequests(row.seat_requests);
   return {
     id: row.id,
     channelId: row.channel_id,
@@ -3650,17 +3681,31 @@ function toListItem(row: SessionListRow): SessionListItem {
     completedAt: row.completed_at ? new Date(row.completed_at).toISOString() : null,
     archivedAt: row.archived_at ? new Date(row.archived_at).toISOString() : null,
     pinned: row.pinned,
-    needsAttention: pendingQuestion !== null || providerAuthRequired !== null,
-    attentionReason: pendingQuestion ? 'question' : providerAuthRequired ? 'auth' : null,
+    // A seat request blocks a person as surely as a question does, and the
+    // Inbox's attention count has always counted it — this flag just never did.
+    needsAttention: pendingQuestion !== null || providerAuthRequired !== null || pendingSeatRequests.length > 0,
+    attentionReason: pendingQuestion
+      ? 'question'
+      : providerAuthRequired
+        ? 'auth'
+        : pendingSeatRequests.length > 0
+          ? 'seat'
+          : null,
     resultText: resultExcerpt(row.result_text),
   };
 }
 
 function toSnapshotItem(row: SessionListRow): SessionSnapshotItem {
+  // Mirror toListItem's terminal rule: work that is over blocks nobody, so a
+  // stale pending_question on a cancelled session must not reach the client as
+  // live attention. (The columns outlive the turn — see the auth flag, which is
+  // only cleared on steer/resolve/assign.)
+  const terminal = TERMINAL_STATUSES.has(row.status);
   return {
     ...toListItem(row),
-    pendingQuestion: parsePendingQuestion(row.pending_question),
-    providerAuthRequired: parseProviderAuthRequired(row.provider_auth_required),
+    pendingQuestion: terminal ? null : parsePendingQuestion(row.pending_question),
+    providerAuthRequired: terminal ? null : parseProviderAuthRequired(row.provider_auth_required),
+    pendingSeatRequests: terminal ? [] : parseSeatRequests(row.seat_requests),
     threadRootEventId: row.thread_root_event_id,
   };
 }

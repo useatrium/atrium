@@ -432,7 +432,7 @@ export interface SessionListItem {
   archivedAt: string | null;
   pinned: boolean;
   needsAttention: boolean;
-  attentionReason: 'question' | 'auth' | null;
+  attentionReason: 'question' | 'auth' | 'seat' | null;
   resultText: string | null;
 }
 
@@ -441,6 +441,7 @@ export interface SessionListItem {
 export interface SessionSnapshotItem extends SessionListItem {
   pendingQuestion: SessionPendingQuestion | null;
   providerAuthRequired: SessionProviderAuthRequired | null;
+  pendingSeatRequests: SessionSeatUser[];
   threadRootEventId: number | null;
 }
 
@@ -875,7 +876,7 @@ const SessionListItemFields = {
   // Decode-with-default so clients remain compatible with an older server
   // during a rolling deploy.
   needsAttention: Schema.optionalWith(Schema.Boolean, { default: () => false }),
-  attentionReason: Schema.optionalWith(Schema.Union(Schema.Literal('question', 'auth'), Schema.Null), {
+  attentionReason: Schema.optionalWith(Schema.Union(Schema.Literal('question', 'auth', 'seat'), Schema.Null), {
     default: () => null,
   }),
   resultText: Schema.optionalWith(NullableStringSchema, { default: () => null }),
@@ -893,6 +894,9 @@ export const SessionSnapshotItemSchema = Schema.mutable(
     }),
     providerAuthRequired: Schema.optionalWith(Schema.Union(SessionProviderAuthRequiredSchema, Schema.Null), {
       default: () => null,
+    }),
+    pendingSeatRequests: Schema.optionalWith(Schema.mutable(Schema.Array(SessionSeatUserSchema)), {
+      default: () => [],
     }),
     threadRootEventId: Schema.optionalWith(NullableNumberSchema, { default: () => null }),
   }),

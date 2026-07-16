@@ -1275,6 +1275,7 @@ describe('unified sync application', () => {
       resultText: null,
       pendingQuestion,
       providerAuthRequired: null,
+      pendingSeatRequests: [],
     } satisfies SessionSnapshotItem;
 
     const state = appReducer(initialAppState, { type: 'sessions-loaded', sessions: [snapshot] });
@@ -1283,6 +1284,94 @@ describe('unified sync application', () => {
     expect(session.threadRootEventId).toBe(40);
     expect(sessionAttentionKind(session)).toBe('question');
     expect(deriveSessionGlance(session, Date.parse('2026-07-16T12:05:00.000Z')).kind).toBe('needs_you');
+  });
+
+  it('classifies a seat-blocked snapshot session as needs-you, not running work', () => {
+    const snapshot = {
+      id: 'sess-snapshot-seat',
+      channelId: CH,
+      channelName: 'general',
+      threadRootEventId: 40,
+      title: 'waiting for a seat',
+      status: 'running' as const,
+      harness: 'codex',
+      spawnedBy: alice.id,
+      spawnerName: alice.displayName,
+      costUsd: 0,
+      createdAt: '2026-07-16T11:00:00.000Z',
+      completedAt: null,
+      archivedAt: null,
+      pinned: false,
+      needsAttention: true,
+      attentionReason: 'seat' as const,
+      resultText: null,
+      pendingQuestion: null,
+      providerAuthRequired: null,
+      pendingSeatRequests: [{ userId: 'u-bob', displayName: 'Bob' }],
+    } satisfies SessionSnapshotItem;
+
+    const state = appReducer(initialAppState, { type: 'sessions-loaded', sessions: [snapshot] });
+    const session = state.sessions[snapshot.id]!;
+
+    // The Inbox badge has always counted this. Before the snapshot carried the
+    // payload, every client surface rendered it as a plain running agent.
+    expect(sessionAttentionKind(session)).toBe('seat-request');
+    expect(deriveSessionGlance(session, Date.parse('2026-07-16T12:05:00.000Z')).kind).toBe('needs_you');
+  });
+
+  it('does not let an empty snapshot seat list wipe a request already folded from WS', () => {
+    const live: Session = {
+      id: 'sess-seat-live',
+      workspaceId: 'ws-1',
+      channelId: CH,
+      threadRootEventId: 40,
+      title: 'waiting for a seat',
+      status: 'running',
+      harness: 'codex',
+      spawnedBy: alice.id,
+      driverId: alice.id,
+      pendingSeatRequests: [{ userId: 'u-bob', displayName: 'Bob' }],
+      suggestions: [],
+      answerProposals: [],
+      pendingQuestion: null,
+      providerAuthRequired: null,
+      seatEvents: [],
+      costUsd: 0,
+      resultText: null,
+      createdAt: '2026-07-16T11:00:00.000Z',
+      completedAt: null,
+      archivedAt: null,
+      pinned: false,
+      lastEventId: 41,
+      permalink: '/s/sess-seat-live',
+    };
+    const snapshot = {
+      id: 'sess-seat-live',
+      channelId: CH,
+      channelName: 'general',
+      threadRootEventId: 40,
+      title: 'waiting for a seat',
+      status: 'running' as const,
+      harness: 'codex',
+      spawnedBy: alice.id,
+      spawnerName: alice.displayName,
+      costUsd: 0,
+      createdAt: '2026-07-16T11:00:00.000Z',
+      completedAt: null,
+      archivedAt: null,
+      pinned: false,
+      needsAttention: false,
+      attentionReason: null,
+      resultText: null,
+      pendingQuestion: null,
+      providerAuthRequired: null,
+      pendingSeatRequests: [],
+    } satisfies SessionSnapshotItem;
+
+    let state = appReducer(initialAppState, { type: 'session-upsert', session: live });
+    state = appReducer(state, { type: 'sessions-loaded', sessions: [snapshot] });
+
+    expect(state.sessions['sess-seat-live']!.pendingSeatRequests).toEqual([{ userId: 'u-bob', displayName: 'Bob' }]);
   });
 
   it('does not let a null snapshot question wipe one already folded from WS', () => {
@@ -1331,6 +1420,7 @@ describe('unified sync application', () => {
       resultText: null,
       pendingQuestion: null,
       providerAuthRequired: null,
+      pendingSeatRequests: [],
     } satisfies SessionSnapshotItem;
 
     let state = appReducer(initialAppState, { type: 'session-upsert', session: live });
@@ -1340,7 +1430,7 @@ describe('unified sync application', () => {
     expect(state.sessions[live.id]!.threadRootEventId).toBe(40);
   });
 
-  it('leaves a snapshot-only session without seat payload classified as running work', () => {
+  it('leaves a snapshot session with no pending seat requests as plain running work', () => {
     const snapshot: SessionSnapshotItem = {
       id: 'sess-seat-gap',
       channelId: CH,
@@ -1361,6 +1451,7 @@ describe('unified sync application', () => {
       threadRootEventId: null,
       pendingQuestion: null,
       providerAuthRequired: null,
+      pendingSeatRequests: [],
     };
 
     const state = appReducer(initialAppState, { type: 'sessions-loaded', sessions: [snapshot] });
@@ -1494,6 +1585,7 @@ describe('unified sync application', () => {
       threadRootEventId: null,
       pendingQuestion: null,
       providerAuthRequired: null,
+      pendingSeatRequests: [],
     };
 
     let state = appReducer(initialAppState, { type: 'session-upsert', session: completed });
