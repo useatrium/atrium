@@ -45,6 +45,9 @@ export default defineConfig({
   test: {
     retry: process.env.CI ? 1 : 0,
     reporters: process.env.CI ? ['default', new FlakyReporter('@atrium/web')] : ['default'],
+    // Cap jsdom concurrency so full-workspace test load cannot cause CPU-starvation flakes.
+    maxWorkers: Number(process.env.ATRIUM_TEST_WORKERS ?? 3),
+    testTimeout: 15_000,
     // React must run its development build for act()/Testing Library, even if
     // the invoking shell exports NODE_ENV=production.
     env: { NODE_ENV: 'test' },

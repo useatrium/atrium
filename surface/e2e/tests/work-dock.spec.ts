@@ -1,5 +1,13 @@
 import { expect, test } from '@playwright/test';
-import { channelId, createTestChannel, injectSession, injectSessionReply, login, unique } from './helpers.js';
+import {
+  channelId,
+  createTestChannel,
+  injectSession,
+  injectSessionReply,
+  injectSessionWork,
+  login,
+  unique,
+} from './helpers.js';
 
 // The unified ConversationPanel: one mounted panel whose work surface docks by
 // container width (top band when narrow, side dock when wide), and whose
@@ -12,12 +20,23 @@ test('the pinned work surface docks top in a split pane and side in focus', asyn
   const roomId = await channelId(page.context().request, room);
   const { rootId, sessionId } = await injectSession({ handle, channelId: roomId, title: unique('dock-session') });
   await injectSessionReply({ channelId: roomId, rootId, sessionId, text: unique('dock-reply') });
+  await injectSessionWork(page, { sessionId, sideEffects: 15, files: 3 });
 
   // ?work= pins the drawer; the split pane is narrower than the dock
   // breakpoint, so the surface must dock as a top band.
   await page.goto(`/c/${roomId}/s/${sessionId}?work=side-effects`);
   await expect(page.getByTestId('work-dock-top')).toBeVisible({ timeout: 20_000 });
   await expect(page.getByTestId('work-dock-side')).toHaveCount(0);
+  const topDock = page.getByTestId('work-dock-top');
+  const drawer = topDock.getByTestId('work-drawer');
+  const transcript = page.locator('[data-testid="work-dock-top"] ~ div.flex.min-h-0.flex-1').first();
+  await expect(topDock.getByText('echo step 15', { exact: true })).toBeAttached();
+  const topDockBox = await topDock.boundingBox();
+  const drawerBox = await drawer.boundingBox();
+  const transcriptBox = await transcript.boundingBox();
+  if (!topDockBox || !drawerBox || !transcriptBox) throw new Error('top dock or transcript did not lay out');
+  expect(drawerBox.y + drawerBox.height).toBeLessThanOrEqual(topDockBox.y + topDockBox.height + 1);
+  expect(transcriptBox.y).toBeGreaterThanOrEqual(topDockBox.y + topDockBox.height - 1);
   await page.screenshot({ path: 'test-results/work-dock-top.png' });
 
   // Focus layout hands the panel the full viewport — the same pinned surface

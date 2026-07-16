@@ -497,6 +497,108 @@ export async function injectSteer(args: {
   }
 }
 
+export function sseFrame(event: string, eventId: number, data: Record<string, unknown>): string {
+  return `event: ${event}\ndata: ${JSON.stringify({ ...data, event_id: eventId })}\n\n`;
+}
+
+export async function injectSessionWork(
+  page: Page,
+  args: {
+    sessionId: string;
+    sideEffects?: number;
+    files?: number;
+    replyText?: string;
+  },
+): Promise<void> {
+  const sideEffectCount = Math.max(0, Math.trunc(args.sideEffects ?? 0));
+  const fileCount = Math.max(0, Math.trunc(args.files ?? 0));
+  const stamp = new Date().toISOString();
+  let eventId = 1;
+  const frames = [
+    sseFrame('execution_state', eventId, {
+      type: 'execution.state',
+      status: 'running',
+      thread_key: `thread-${args.sessionId}`,
+      execution_id: `exe-e2e-${args.sessionId}`,
+      atrium_ts: stamp,
+    }),
+  ];
+
+  for (let index = 1; index <= sideEffectCount; index += 1) {
+    eventId += 1;
+    frames.push(
+      sseFrame('amp_raw_event', eventId, {
+        type: 'assistant',
+        uuid: `assistant-work-${index}`,
+        message: {
+          id: `message-work-${index}`,
+          content: [
+            {
+              type: 'tool_use',
+              id: `tool-work-${index}`,
+              name: 'Bash',
+              input: { command: `echo step ${index}` },
+            },
+          ],
+        },
+        atrium_ts: stamp,
+      }),
+    );
+  }
+
+  for (let index = 1; index <= fileCount; index += 1) {
+    eventId += 1;
+    frames.push(
+      sseFrame('amp_raw_event', eventId, {
+        type: 'item.completed',
+        item: {
+          id: `file-change-${index}`,
+          type: 'fileChange',
+          changes: [
+            {
+              path: `/home/agent/workspace/fixture-${index}.ts`,
+              kind: 'update',
+              diff: `@@\n-old step ${index}\n+new step ${index}`,
+            },
+          ],
+        },
+        atrium_ts: stamp,
+      }),
+    );
+  }
+
+  if (args.replyText != null) {
+    eventId += 1;
+    frames.push(
+      sseFrame('amp_raw_event', eventId, {
+        type: 'item.completed',
+        item: { id: 'agent-work-reply', type: 'agentMessage', text: args.replyText },
+        atrium_ts: stamp,
+      }),
+    );
+  }
+
+  eventId += 1;
+  frames.push(
+    sseFrame('execution_state', eventId, {
+      type: 'execution.state',
+      status: 'completed',
+      thread_key: `thread-${args.sessionId}`,
+      execution_id: `exe-e2e-${args.sessionId}`,
+      ...(args.replyText != null ? { result_text: args.replyText } : {}),
+      atrium_ts: stamp,
+    }),
+  );
+
+  await page.route(`**/api/sessions/${args.sessionId}/stream*`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      headers: { 'content-type': 'text/event-stream; charset=utf-8' },
+      body: frames.join(''),
+    });
+  });
+}
+
 // === mw78-overflow additions ===
 export async function uploadViaApi(
   ctx: APIRequestContext,
