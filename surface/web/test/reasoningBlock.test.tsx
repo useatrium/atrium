@@ -11,6 +11,7 @@ const item: ReasoningItem = {
   id: 'reasoning-1',
   text: 'Full internal reasoning\nwith a second line.',
   summary: 'Checking the transcript render branch',
+  executionId: null,
   sourceEventIds: [1],
 };
 

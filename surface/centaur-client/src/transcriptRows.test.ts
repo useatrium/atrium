@@ -8,7 +8,8 @@ import {
   toolDefaultOpen,
 } from './transcriptRows.js';
 
-const item = (id: string, type: SessionItem['type']): SessionItem => ({ id, type }) as SessionItem;
+const item = (id: string, type: SessionItem['type'], executionId: string | null = null): SessionItem =>
+  ({ id, type, executionId }) as SessionItem;
 
 describe('focus transcript rows', () => {
   it('groups contiguous reasoning, tools, and inline changes into one count', () => {
@@ -96,18 +97,18 @@ describe('tool default visibility', () => {
 describe('turn work folds', () => {
   it('groups work after each human input and before that turn’s final answer', () => {
     const items = [
-      { ...item('ask-1', 'user_message'), text: 'First', ts: '2026-07-14T12:00:00.000Z' },
-      { ...item('thought-1', 'reasoning'), text: 'Think', ts: '2026-07-14T12:00:01.000Z' },
+      { ...item('ask-1', 'user_message', 'exe-1'), text: 'First', ts: '2026-07-14T12:00:00.000Z' },
+      { ...item('thought-1', 'reasoning', 'exe-1'), text: 'Think', ts: '2026-07-14T12:00:01.000Z' },
       {
-        ...item('tool-1', 'tool_call'),
+        ...item('tool-1', 'tool_call', 'exe-1'),
         name: 'Bash',
         input: {},
         result: { content: 'ok', is_error: false },
         ts: '2026-07-14T12:00:02.000Z',
       },
-      { ...item('answer-1', 'text'), text: 'Done', ts: '2026-07-14T12:00:04.000Z' },
-      { ...item('ask-2', 'user_message'), text: 'Again', ts: '2026-07-14T12:01:00.000Z' },
-      { ...item('tool-2', 'tool_call'), name: 'Read', input: {}, ts: '2026-07-14T12:01:01.000Z' },
+      { ...item('answer-1', 'text', 'exe-1'), text: 'Done', ts: '2026-07-14T12:00:04.000Z' },
+      { ...item('ask-2', 'user_message', 'exe-2'), text: 'Again', ts: '2026-07-14T12:01:00.000Z' },
+      { ...item('tool-2', 'tool_call', 'exe-2'), name: 'Read', input: {}, ts: '2026-07-14T12:01:01.000Z' },
     ] as SessionItem[];
 
     const folds = foldedTurnRows(items);
@@ -115,7 +116,7 @@ describe('turn work folds', () => {
     expect(folds[0]).toMatchObject({
       items: [items[1], items[2]],
       toolNames: ['Bash'],
-      replyOrdinal: 0,
+      executionId: 'exe-1',
       triggerIndex: 0,
       triggerOrdinal: 0,
       replyIndex: 3,
@@ -125,7 +126,7 @@ describe('turn work folds', () => {
     expect(folds[1]).toMatchObject({
       items: [items[5]],
       toolNames: ['Read'],
-      replyOrdinal: null,
+      executionId: 'exe-2',
       triggerIndex: 4,
       triggerOrdinal: 1,
       replyIndex: null,
@@ -133,17 +134,17 @@ describe('turn work folds', () => {
     });
   });
 
-  it('preserves the reply ordinal when an earlier turn has no hidden work', () => {
+  it('takes identity from the fold’s own work and final reply', () => {
     const items = [
-      { ...item('ask-1', 'user_message'), text: 'First' },
-      { ...item('answer-1', 'text'), text: 'Immediate answer' },
-      { ...item('ask-2', 'user_message'), text: 'Second' },
-      { ...item('thought-2', 'reasoning'), text: 'Think' },
-      { ...item('answer-2', 'text'), text: 'Worked answer' },
+      { ...item('ask-1', 'user_message', 'exe-1'), text: 'First' },
+      { ...item('answer-1', 'text', 'exe-1'), text: 'Immediate answer' },
+      { ...item('ask-2', 'user_message', 'exe-2'), text: 'Second' },
+      { ...item('thought-2', 'reasoning', 'exe-2'), text: 'Think' },
+      { ...item('answer-2', 'text', 'exe-2'), text: 'Worked answer' },
     ] as SessionItem[];
 
     expect(foldedTurnRows(items)).toHaveLength(1);
-    expect(foldedTurnRows(items)[0]).toMatchObject({ replyOrdinal: 1, replyIndex: 4 });
+    expect(foldedTurnRows(items)[0]).toMatchObject({ executionId: 'exe-2', replyIndex: 4 });
   });
 });
 

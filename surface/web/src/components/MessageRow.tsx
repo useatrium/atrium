@@ -3,7 +3,6 @@ import {
   useCallback,
   useEffect,
   useId,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -38,6 +37,7 @@ import { QuestionCard } from '../sessions/SessionBanners';
 import type { Session } from '../sessions/types';
 import { formatBytes, formatGutterTime, formatTime } from '@atrium/surface-client';
 import { Avatar } from './Avatar';
+import { ClampedBlock } from './ClampedBlock';
 import { Tooltip } from './a11y';
 import { CornerUpLeftIcon, FileIcon, SmilePlusIcon } from './icons';
 import { Lightbox } from './media';
@@ -1415,22 +1415,6 @@ function AgentSessionSlot({
 
 function CompactReply({ message }: { message: ChatMessage }) {
   const agent = message.sessionEventType === 'replied' || message.sessionEventType === 'question_requested';
-  const textRef = useRef<HTMLDivElement>(null);
-  const [expanded, setExpanded] = useState(false);
-  const [overflows, setOverflows] = useState(false);
-  // Measure rather than guess: whether text exceeds the clamp depends on the
-  // rendered width, not its length. Only measured while clamped — once expanded
-  // the element no longer overflows, and re-measuring would drop "Show less".
-  useLayoutEffect(() => {
-    const el = textRef.current;
-    if (!el || expanded) return;
-    const measure = () => setOverflows(el.scrollHeight > el.clientHeight + 1);
-    measure();
-    if (typeof ResizeObserver === 'undefined') return;
-    const observer = new ResizeObserver(measure);
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, [expanded]);
   return (
     <div data-testid="thread-compact-reply" className="flex min-w-0 gap-2">
       <Avatar
@@ -1452,34 +1436,26 @@ function CompactReply({ message }: { message: ChatMessage }) {
             {formatTime(message.createdAt)}
           </TimestampDisclosure>
         </div>
-        <div
-          ref={textRef}
-          className={`whitespace-pre-wrap break-words text-[13px] leading-relaxed text-fg-body ${
-            // `relative` is load-bearing: line-clamp hides the overflow with
-            // `overflow: hidden`, which only clips descendants whose containing
-            // block chain runs through this div. An absolutely positioned
-            // descendant with a static ancestor chain (GFM footnotes open with
-            // `<h3 class="sr-only">`, and sr-only is position: absolute) would
-            // otherwise resolve its containing block to a positioned ancestor
-            // ABOVE the clamp, escape the clip, keep its static position
-            // thousands of px down, and inflate the transcript's scroll height
-            // into blank unreachable space.
-            expanded ? '' : 'relative line-clamp-3'
-          }`}
+        <ClampedBlock
+          contentClassName="whitespace-pre-wrap break-words text-[13px] leading-relaxed text-fg-body"
+          // `relative` is load-bearing: line-clamp hides the overflow with
+          // `overflow: hidden`, which only clips descendants whose containing
+          // block chain runs through this div. An absolutely positioned
+          // descendant with a static ancestor chain (GFM footnotes open with
+          // `<h3 class="sr-only">`, and sr-only is position: absolute) would
+          // otherwise resolve its containing block to a positioned ancestor
+          // ABOVE the clamp, escape the clip, keep its static position
+          // thousands of px down, and inflate the transcript's scroll height
+          // into blank unreachable space.
+          collapsedClassName="relative line-clamp-3"
+          expandLabel="Show more"
+          collapseLabel="Show less"
+          toggleClassName="mt-0.5 text-xs font-medium text-accent-text hover:underline"
         >
           {/* This row owns the clamp, so MessageText must not add its own — two
               nested clamps is what made "Show more" shrink the message. */}
           <MessageText text={message.text} collapsible={false} />
-        </div>
-        {overflows && (
-          <button
-            type="button"
-            onClick={() => setExpanded((value) => !value)}
-            className="mt-0.5 text-xs font-medium text-accent-text hover:underline"
-          >
-            {expanded ? 'Show less' : 'Show more'}
-          </button>
-        )}
+        </ClampedBlock>
         {message.steeredSessionId != null && (
           <div className="mt-1 flex flex-wrap items-center gap-1.5 text-3xs">
             <span className="rounded-full border border-edge bg-surface-raised px-1.5 py-0.5 font-medium text-fg-tertiary">

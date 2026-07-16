@@ -142,7 +142,7 @@ describe('session projection triggers', () => {
 
     const replies = await pool.query<{
       thread_root_event_id: number;
-      payload: { session_id: string; text: string; broadcast: boolean };
+      payload: { session_id: string; text: string; broadcast: boolean; execution_id: string };
     }>(
       `SELECT thread_root_event_id, payload
          FROM events
@@ -156,7 +156,7 @@ describe('session projection triggers', () => {
     expect(replies.rows).toEqual([
       {
         thread_root_event_id: rootId,
-        payload: { session_id: sessionId, text: 'done', broadcast: true },
+        payload: { session_id: sessionId, text: 'done', broadcast: true, execution_id: 'exec-test' },
       },
     ]);
   });

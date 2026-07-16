@@ -592,6 +592,7 @@ describe('linked thread steers', () => {
       type: 'user_message',
       id: 'original-prompt',
       text: 'Repeat this',
+      executionId: null,
       ts: '2026-07-13T11:59:59.000Z',
       sourceEventIds: [1],
     };
