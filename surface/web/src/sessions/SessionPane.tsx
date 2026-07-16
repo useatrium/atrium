@@ -125,7 +125,8 @@ import { useExpandAllWork } from './useTranscriptView';
 import { WorkFold } from './WorkFold';
 import {
   useWorkDockPlacement,
-  useWorkDockSize,
+  useWorkDockSideWidth,
+  useWorkDockTopHeight,
   WORK_DOCK_MAX_SIDE_WIDTH,
   WORK_DOCK_MAX_TOP_HEIGHT,
   WORK_DOCK_MIN_SIDE_WIDTH,
@@ -1580,7 +1581,8 @@ export function SessionPaneContent({
   const { width: paneWidth, resizing, startResize, resetWidth } = useSessionPaneWidth();
   const panelRef = useRef<HTMLElement>(null);
   const workDockPlacement = useWorkDockPlacement(panelRef);
-  const workDockSize = useWorkDockSize();
+  const workDockSide = useWorkDockSideWidth();
+  const workDockTop = useWorkDockTopHeight();
   const paneSizing = sessionPaneSizing(paneWidth);
   const paneMaxWidth =
     typeof window === 'undefined'
@@ -1950,9 +1952,10 @@ export function SessionPaneContent({
 
       {workTab && workPinned && workDockPlacement === 'top' && (
         <div
+          ref={workDockTop.containerRef}
           data-testid="work-dock-top"
           className="relative flex min-h-0 shrink-0 flex-col overflow-hidden border-b border-edge"
-          style={workDockSize.topStyle}
+          style={workDockTop.style}
         >
           {renderWorkDrawer(true)}
           {/* biome-ignore lint/a11y/useSemanticElements: pointer-capture resize separator. */}
@@ -1963,11 +1966,13 @@ export function SessionPaneContent({
             aria-label="Resize top work dock"
             aria-valuemin={WORK_DOCK_MIN_TOP_HEIGHT}
             aria-valuemax={WORK_DOCK_MAX_TOP_HEIGHT}
-            aria-valuenow={workDockSize.topHeight}
+            aria-valuenow={workDockTop.height}
+            title="Drag to resize · double-click to reset"
             data-testid="work-dock-top-resize-handle"
-            onPointerDown={workDockSize.startResize('top')}
+            onPointerDown={workDockTop.startResize}
+            onDoubleClick={workDockTop.resetHeight}
             className={`absolute inset-x-0 -bottom-1 z-raised h-2 cursor-row-resize touch-none hover:bg-accent/40 ${
-              workDockSize.resizing === 'top' ? 'bg-accent/40' : ''
+              workDockTop.resizing ? 'bg-accent/40' : ''
             }`}
           />
         </div>
@@ -2299,9 +2304,10 @@ export function SessionPaneContent({
         </div>
         {workTab && workPinned && workDockPlacement === 'side' && (
           <div
+            ref={workDockSide.containerRef}
             data-testid="work-dock-side"
             className="relative flex min-h-0 shrink-0 flex-col overflow-hidden border-l border-edge"
-            style={workDockSize.sideStyle}
+            style={workDockSide.style}
           >
             {/* biome-ignore lint/a11y/useSemanticElements: pointer-capture resize separator. */}
             <div
@@ -2311,11 +2317,13 @@ export function SessionPaneContent({
               aria-label="Resize side work dock"
               aria-valuemin={WORK_DOCK_MIN_SIDE_WIDTH}
               aria-valuemax={WORK_DOCK_MAX_SIDE_WIDTH}
-              aria-valuenow={workDockSize.sideWidth}
+              aria-valuenow={workDockSide.width}
+              title="Drag to resize · double-click to reset"
               data-testid="work-dock-side-resize-handle"
-              onPointerDown={workDockSize.startResize('side')}
+              onPointerDown={workDockSide.startResize}
+              onDoubleClick={workDockSide.resetWidth}
               className={`absolute inset-y-0 -left-1 z-raised w-2 cursor-col-resize touch-none hover:bg-accent/40 ${
-                workDockSize.resizing === 'side' ? 'bg-accent/40' : ''
+                workDockSide.resizing ? 'bg-accent/40' : ''
               }`}
             />
             {renderWorkDrawer(true)}

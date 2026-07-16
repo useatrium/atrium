@@ -1,12 +1,12 @@
-import { useCallback, useLayoutEffect, useState } from 'react';
-import type { CSSProperties, PointerEvent as ReactPointerEvent, RefObject } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
+import type { RefObject } from 'react';
 import {
   LEGACY_WORK_DOCK_SIDE_WIDTH_STORAGE_KEY,
   LEGACY_WORK_DOCK_TOP_HEIGHT_STORAGE_KEY,
-  readWithLegacy,
   WORK_DOCK_SIDE_WIDTH_STORAGE_KEY,
   WORK_DOCK_TOP_HEIGHT_STORAGE_KEY,
 } from '../storageKeys';
+import { type PaneSizeConfig, usePaneSize } from './useSessionPaneWidth';
 const DEFAULT_SIDE_WIDTH = 420;
 const DEFAULT_TOP_HEIGHT = 300;
 export const WORK_DOCK_MIN_SIDE_WIDTH = 300;
@@ -20,16 +20,6 @@ export const WORK_DOCK_MAX_TOP_HEIGHT = 520;
  * work surface becomes a top band instead of squeezing either column.
  */
 export const WORK_DOCK_SIDE_BREAKPOINT_PX = 800;
-
-function loadSize(key: string, legacyKey: string, fallback: number): number {
-  if (typeof window === 'undefined') return fallback;
-  const parsed = Number(readWithLegacy(key, legacyKey));
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, Math.round(value)));
-}
 
 export function useWorkDockPlacement(ref: RefObject<HTMLElement | null>): 'top' | 'side' {
   const [placement, setPlacement] = useState<'top' | 'side'>('top');
@@ -50,54 +40,44 @@ export function useWorkDockPlacement(ref: RefObject<HTMLElement | null>): 'top' 
   return placement;
 }
 
-export function useWorkDockSize() {
-  const [sideWidth, setSideWidth] = useState(() =>
-    loadSize(WORK_DOCK_SIDE_WIDTH_STORAGE_KEY, LEGACY_WORK_DOCK_SIDE_WIDTH_STORAGE_KEY, DEFAULT_SIDE_WIDTH),
-  );
-  const [topHeight, setTopHeight] = useState(() =>
-    loadSize(WORK_DOCK_TOP_HEIGHT_STORAGE_KEY, LEGACY_WORK_DOCK_TOP_HEIGHT_STORAGE_KEY, DEFAULT_TOP_HEIGHT),
-  );
-  const [resizing, setResizing] = useState<'top' | 'side' | null>(null);
+const workDockSideWidthConfig: PaneSizeConfig = {
+  storageKey: WORK_DOCK_SIDE_WIDTH_STORAGE_KEY,
+  legacyStorageKey: LEGACY_WORK_DOCK_SIDE_WIDTH_STORAGE_KEY,
+  minSize: WORK_DOCK_MIN_SIDE_WIDTH,
+  maxPx: WORK_DOCK_MAX_SIDE_WIDTH,
+  maxPercent: 55,
+  fallbackSize: DEFAULT_SIDE_WIDTH,
+};
 
-  const startResize = useCallback(
-    (placement: 'top' | 'side') => (event: ReactPointerEvent<HTMLElement>) => {
-      if (event.button !== 0) return;
-      event.preventDefault();
-      const target = event.currentTarget;
-      target.setPointerCapture?.(event.pointerId);
-      const startX = event.clientX;
-      const startY = event.clientY;
-      const initialSide = sideWidth;
-      const initialTop = topHeight;
-      setResizing(placement);
+const workDockTopHeightConfig: PaneSizeConfig = {
+  storageKey: WORK_DOCK_TOP_HEIGHT_STORAGE_KEY,
+  legacyStorageKey: LEGACY_WORK_DOCK_TOP_HEIGHT_STORAGE_KEY,
+  minSize: WORK_DOCK_MIN_TOP_HEIGHT,
+  maxPx: WORK_DOCK_MAX_TOP_HEIGHT,
+  maxPercent: 55,
+  fallbackSize: DEFAULT_TOP_HEIGHT,
+  axis: 'y',
+  dragDirection: 'down',
+};
 
-      const onMove = (move: PointerEvent) => {
-        if (placement === 'side') {
-          setSideWidth(clamp(initialSide + startX - move.clientX, WORK_DOCK_MIN_SIDE_WIDTH, WORK_DOCK_MAX_SIDE_WIDTH));
-        } else {
-          setTopHeight(clamp(initialTop + move.clientY - startY, WORK_DOCK_MIN_TOP_HEIGHT, WORK_DOCK_MAX_TOP_HEIGHT));
-        }
-      };
-      const onEnd = () => {
-        window.removeEventListener('pointermove', onMove);
-        window.removeEventListener('pointerup', onEnd);
-        setResizing(null);
-        setSideWidth((value) => {
-          window.localStorage.setItem(WORK_DOCK_SIDE_WIDTH_STORAGE_KEY, String(value));
-          return value;
-        });
-        setTopHeight((value) => {
-          window.localStorage.setItem(WORK_DOCK_TOP_HEIGHT_STORAGE_KEY, String(value));
-          return value;
-        });
-      };
-      window.addEventListener('pointermove', onMove);
-      window.addEventListener('pointerup', onEnd, { once: true });
-    },
-    [sideWidth, topHeight],
-  );
+export function useWorkDockSideWidth() {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const { size, resetSize, ...pane } = usePaneSize(workDockSideWidthConfig, containerRef);
+  return {
+    ...pane,
+    containerRef,
+    width: size ?? DEFAULT_SIDE_WIDTH,
+    resetWidth: resetSize,
+  };
+}
 
-  const sideStyle: CSSProperties = { width: `min(${sideWidth}px, 55%)` };
-  const topStyle: CSSProperties = { height: `${topHeight}px`, maxHeight: '55%' };
-  return { resizing, sideStyle, sideWidth, startResize, topHeight, topStyle };
+export function useWorkDockTopHeight() {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const { size, resetSize, ...pane } = usePaneSize(workDockTopHeightConfig, containerRef);
+  return {
+    ...pane,
+    containerRef,
+    height: size ?? DEFAULT_TOP_HEIGHT,
+    resetHeight: resetSize,
+  };
 }
