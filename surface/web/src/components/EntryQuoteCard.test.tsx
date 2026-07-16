@@ -1,11 +1,37 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EntryInlineChip, EntryQuoteCard } from './EntryQuoteCard';
 import { clearEntryResolveCacheForTests, type ResolvedEntryQuote } from '../lib/entryLinks';
 
 const resolveEntryMock = vi.hoisted(() => vi.fn());
+
+const observers: MockResizeObserver[] = [];
+
+// The clamp measures once on mount and then re-measures through a ResizeObserver,
+// which jsdom does not implement. Markup arrives after the mount measurement, so
+// growing the card only reaches the clamp through the observer.
+class MockResizeObserver {
+  constructor(private readonly callback: ResizeObserverCallback) {
+    observers.push(this);
+  }
+
+  observe(_target: Element) {}
+
+  disconnect() {}
+
+  trigger() {
+    this.callback([], this as unknown as ResizeObserver);
+  }
+}
+
+function setMetrics(element: Element, scrollHeight: number, clientHeight: number) {
+  Object.defineProperties(element, {
+    scrollHeight: { configurable: true, value: scrollHeight },
+    clientHeight: { configurable: true, value: clientHeight },
+  });
+}
 
 vi.mock('../api', () => ({
   api: {
@@ -37,6 +63,8 @@ function entry(overrides: Partial<ResolvedEntryQuote> = {}): ResolvedEntryQuote 
 beforeEach(() => {
   clearEntryResolveCacheForTests();
   resolveEntryMock.mockReset();
+  observers.length = 0;
+  vi.stubGlobal('ResizeObserver', MockResizeObserver);
 });
 
 afterEach(() => {
@@ -103,17 +131,16 @@ describe('entry links', () => {
     expect(screen.getByRole('link').getAttribute('href')).toBe('/e/evt_404');
   });
 
-  it('upgrades small markup artifacts into a tracked-changes card with clamp and expand', async () => {
-    const headers = new Headers({
-      'Content-Type': 'text/markdown; charset=utf-8',
-      'Content-Length': '180',
-      'X-Artifact-Seq': '4',
-    });
+  function renderMarkupCard() {
     vi.stubGlobal(
       'fetch',
       vi.fn().mockResolvedValue({
         ok: true,
-        headers,
+        headers: new Headers({
+          'Content-Type': 'text/markdown; charset=utf-8',
+          'Content-Length': '180',
+          'X-Artifact-Seq': '4',
+        }),
         text: vi
           .fn()
           .mockResolvedValue(
@@ -130,7 +157,7 @@ describe('entry links', () => {
       }),
     );
 
-    render(
+    return render(
       <EntryQuoteCard
         entry={entry({
           handle: 'art_00000000-0000-0000-0000-000000000001',
@@ -143,16 +170,39 @@ describe('entry links', () => {
         })}
       />,
     );
+  }
+
+  it('upgrades small markup artifacts into a tracked-changes card', async () => {
+    renderMarkupCard();
 
     expect(screen.getAllByText('memo.md').length).toBeGreaterThan(0);
     expect(await screen.findByText('Edited memo')).toBeTruthy();
     expect(screen.getByText('markup')).toBeTruthy();
-    expect(screen.getByText('Show all changes (2)')).toBeTruthy();
     expect(screen.getByText('old').className).toContain('atrium-critic-view-del');
     expect(screen.getByText('new').className).toContain('atrium-critic-view-ins');
+    // The toggle is measured, not assumed: a diff this short leaves nothing
+    // hidden, so neither a control nor a fade is offered for it.
+    expect(screen.queryByRole('button', { name: /Show all changes/ })).toBeNull();
+    expect(screen.queryByTestId('markup-clamp-fade')).toBeNull();
+  });
 
+  it('measures the clamp even though the markup mounts after the fetch resolves', async () => {
+    renderMarkupCard();
+    await screen.findByText('Edited memo');
+
+    const clamped = screen.getByText('old').closest('.overflow-hidden');
+    expect(clamped).toBeTruthy();
+    setMetrics(clamped!, 600, 314);
+    act(() => {
+      for (const observer of observers) observer.trigger();
+    });
+
+    expect(screen.getByTestId('markup-clamp-fade')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Show all changes (2)' }));
     expect(screen.getByRole('button', { name: 'Show fewer changes' })).toBeTruthy();
+    // Expanding releases the clip and the fade, so the whole diff is reachable.
+    expect(screen.getByText('old').closest('.overflow-hidden')).toBeNull();
+    expect(screen.queryByTestId('markup-clamp-fade')).toBeNull();
   });
 
   it('leaves non-markup artifact cards on the excerpt renderer', async () => {

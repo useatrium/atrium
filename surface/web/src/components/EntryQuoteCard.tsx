@@ -10,6 +10,7 @@ import { resolveEntryQuote, type ResolvedEntryQuote } from '../lib/entryLinks';
 import { attachmentMetaToPreviewFile } from '../lib/previewFiles';
 import { LEGACY_UNFURL_COLLAPSED_STORAGE_KEY, readWithLegacy, UNFURL_COLLAPSED_STORAGE_KEY } from '../storageKeys';
 import { ApplyMarkupMenu } from './ApplyMarkupMenu';
+import { useClamp } from './ClampedBlock';
 import { CriticMarkupView } from './CriticMarkupView';
 import { FileIcon } from './icons';
 import { Lightbox, type PreviewFile } from './media';
@@ -461,7 +462,9 @@ export function EntryQuoteCard({
   const contextApply = useContext(EntryQuoteApplyContext);
   const effectiveApplyContext = applyContext === undefined ? contextApply : applyContext;
   const markup = useMarkupArtifact(entry);
-  const [expanded, setExpanded] = useState(false);
+  // The toggle lives in the action row beside Apply, so this takes the clamp's
+  // measuring half and places the control itself.
+  const changes = useClamp();
   const storageKey = messageEventId != null ? `${messageEventId}:${entry.handle}` : null;
   const [collapsed, setCollapsed] = useState(
     () => storageKey != null && collapsedUnfurlStorageKeys().includes(storageKey),
@@ -520,24 +523,42 @@ export function EntryQuoteCard({
           </span>
         </div>
         <div className="relative mt-2">
-          <div className={expanded ? '' : 'max-h-[19.6rem] overflow-hidden'}>
-            <CriticMarkupView text={markup.body} blocks={markup.blocks} className="text-[0.82rem]" />
+          <div
+            ref={changes.contentRef}
+            // `relative` is load-bearing: `overflow: hidden` only clips
+            // descendants whose containing block runs through this box.
+            // CriticMarkupView renders a `sr-only` span (position: absolute), and
+            // with this box static it would anchor to the wrapper ABOVE the
+            // clamp, escape the clip, and inflate the scroll height (#544).
+            className={changes.clamped ? 'relative max-h-[19.6rem] overflow-hidden' : undefined}
+          >
+            <changes.ClampBoundary>
+              <CriticMarkupView text={markup.body} blocks={markup.blocks} className="text-[0.82rem]" />
+            </changes.ClampBoundary>
           </div>
-          {!expanded ? (
+          {/* Measured, so the fade means what it looks like: a diff that already
+              fits used to be veiled as though something were hidden below it. */}
+          {changes.clamped && changes.overflows ? (
             <div
               aria-hidden="true"
+              data-testid="markup-clamp-fade"
               className="pointer-events-none absolute inset-x-0 bottom-0 h-12 bg-gradient-to-b from-transparent to-surface-raised"
             />
           ) : null}
         </div>
         <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-          <button
-            type="button"
-            onClick={() => setExpanded((value) => !value)}
-            className="text-xs font-medium text-accent-text hover:underline"
-          >
-            {expanded ? 'Show fewer changes' : `Show all changes (${markup.changeCount})`}
-          </button>
+          {changes.overflows ? (
+            <button
+              type="button"
+              aria-expanded={changes.expanded}
+              onClick={changes.toggle}
+              className="text-xs font-medium text-accent-text hover:underline"
+            >
+              {changes.expanded ? 'Show fewer changes' : `Show all changes (${markup.changeCount})`}
+            </button>
+          ) : (
+            <span />
+          )}
           {effectiveApplyContext ? (
             <ApplyMarkupMenu
               artifactId={markup.artifactId}
