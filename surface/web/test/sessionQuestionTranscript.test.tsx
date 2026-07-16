@@ -76,6 +76,7 @@ function questionItem(overrides: Partial<QuestionItem> = {}): QuestionItem {
     status: 'pending',
     sourceEventIds: [10],
     ...overrides,
+    executionId: overrides.executionId ?? null,
   };
 }
 

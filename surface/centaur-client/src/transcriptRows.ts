@@ -16,8 +16,7 @@ export interface FoldedTurnRow {
   kind: 'fold';
   key: string;
   turn: number;
-  /** Zero-based position among completed assistant replies; null for a live turn. */
-  replyOrdinal: number | null;
+  executionId: string | null;
   items: TurnWorkItem[];
   toolNames: string[];
   startIndex: number;
@@ -61,7 +60,6 @@ export function foldedTurnRows(items: readonly SessionItem[]): FoldedTurnRow[] {
   let triggerOrdinal: number | null = null;
   let nextTriggerOrdinal = 0;
   let turn = 0;
-  let replyOrdinal = 0;
 
   const flush = (segmentEnd: number) => {
     let replyIndex: number | null = null;
@@ -82,11 +80,15 @@ export function foldedTurnRows(items: readonly SessionItem[]): FoldedTurnRow[] {
       const first = indexedWork[0]!;
       const lastIndex = replyIndex ?? indexedWork[indexedWork.length - 1]!.index;
       const durationMs = elapsedMs(first.item, items[lastIndex]);
+      const executionId =
+        (replyIndex === null ? null : items[replyIndex]?.executionId) ??
+        [...workItems].reverse().find((item) => item.executionId !== null)?.executionId ??
+        null;
       folds.push({
         kind: 'fold',
         key: `turn-${turn}-${first.item.id}`,
         turn,
-        replyOrdinal: replyIndex === null ? null : replyOrdinal,
+        executionId,
         items: workItems,
         toolNames,
         startIndex: first.index,
@@ -98,7 +100,6 @@ export function foldedTurnRows(items: readonly SessionItem[]): FoldedTurnRow[] {
         completed: replyIndex !== null,
       });
     }
-    if (replyIndex !== null) replyOrdinal += 1;
     turn += 1;
   };
 

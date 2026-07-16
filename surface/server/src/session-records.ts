@@ -660,6 +660,9 @@ function projectToolUse(
     id: block.id,
     name: block.name,
     input: block.input,
+    // This projection replays stored events, which carry no execution boundary —
+    // unlike the live stream, where execution_state frames stamp each item.
+    executionId: null,
     sourceEventIds: [eventId],
   };
   const change = fileChangeFromToolCall(toolItem);

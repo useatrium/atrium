@@ -2244,7 +2244,7 @@ export class SessionRuns {
       if (status === 'completed' && terminalAuthFailureEventId == null) {
         await this.markProviderConnectedIfProxy(id);
       }
-      await this.completeSession(id, status, resultText, frame.event_id);
+      await this.completeSession(id, status, resultText, frame.event_id, frame.data.execution_id);
     } else {
       await this.updateStatus(id, status);
     }
@@ -2623,6 +2623,7 @@ export class SessionRuns {
     status: SessionStatus,
     resultText: string | null,
     lastEventId: number,
+    executionId?: string,
   ): Promise<void> {
     const events = await withTx(this.pool, async (client) => {
       const before = await client.query<SessionRow>('SELECT * FROM sessions WHERE id = $1 FOR UPDATE', [id]);
@@ -2656,7 +2657,12 @@ export class SessionRuns {
               // the channel as an ordinary agent message, not only inside the
               // session thread. A NEW message (rather than an edit of the
               // card) is deliberate — edits don't notify or bump unread.
-              payload: { session_id: id, text: replyText, broadcast: true },
+              payload: {
+                session_id: id,
+                text: replyText,
+                broadcast: true,
+                ...(executionId !== undefined ? { execution_id: executionId } : {}),
+              },
             });
       const completedEvent = await appendEvent(client, {
         workspaceId: next.workspace_id,

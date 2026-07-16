@@ -1,10 +1,8 @@
 // Placing a session's work folds into a thread's message spine.
 //
-// Two clocks meet here, and they are not the same clock: the SSE stream counts
-// turns (segments between `user_message` echoes), while the thread counts
-// `session.replied` events (one per execution that finished with an answer). A
-// fold is assigned to the reply it produced when those line up, and otherwise
-// keeps a row of its own rather than attaching to someone else's answer.
+// The SSE transcript and thread event stream meet here through the execution id
+// shared by a work fold and the `session.replied` event it produced. Unmatched
+// work keeps a row of its own rather than attaching to someone else's answer.
 
 import { isLiveFold, type FoldedTurnRow } from '@atrium/centaur-client';
 import type { ChatMessage, TimelineItem } from '@atrium/surface-client';
@@ -32,37 +30,38 @@ function isAgentReply(message: ChatMessage, attachedSessionId: string | null): b
   return attachedSessionId != null && message.sessionId === attachedSessionId && message.sessionEventType === 'replied';
 }
 
-/**
- * Maps each reply-producing fold to that reply's zero-based position. Folds
- * beyond the thread's reply count are left unmapped: the stream knows about
- * turns the thread never heard an answer for (a failed execution posts no
- * `session.replied`), and guessing would nest one turn's work under another
- * turn's answer.
- */
-function foldsByReplyOrdinal(workFolds: readonly FoldedTurnRow[], agentReplyCount: number): Map<number, FoldedTurnRow> {
-  const byOrdinal = new Map<number, FoldedTurnRow>();
+function foldsByExecutionId(
+  workFolds: readonly FoldedTurnRow[],
+  replyExecutionIds: ReadonlySet<string>,
+): Map<string, FoldedTurnRow> {
+  const byExecutionId = new Map<string, FoldedTurnRow>();
   for (const fold of workFolds) {
-    if (fold.replyOrdinal == null || fold.replyOrdinal >= agentReplyCount) continue;
-    if (!byOrdinal.has(fold.replyOrdinal)) byOrdinal.set(fold.replyOrdinal, fold);
+    if (fold.executionId === null || !replyExecutionIds.has(fold.executionId)) continue;
+    // A steer can split one running execution into several folds. Its final
+    // answer belongs to the last fold; earlier folds remain standalone.
+    byExecutionId.set(fold.executionId, fold);
   }
-  return byOrdinal;
+  return byExecutionId;
 }
 
 export function buildSpineRows({ items, workFolds, attachedSessionId, sessionLive }: SpineInput): SpineRow[] {
   const rows: SpineRow[] = [];
-  let replyOrdinal = 0;
   let triggerOrdinal = 0;
 
-  const agentReplyCount = items.filter(
-    (item) => item.kind !== 'day' && item.message != null && isAgentReply(item.message, attachedSessionId),
-  ).length;
-  const byReplyOrdinal = foldsByReplyOrdinal(workFolds, agentReplyCount);
+  const replyExecutionIds = new Set<string>();
+  for (const item of items) {
+    if (item.kind === 'day' || !item.message || !isAgentReply(item.message, attachedSessionId)) continue;
+    if (item.message.sessionExecutionId !== null && item.message.sessionExecutionId !== undefined) {
+      replyExecutionIds.add(item.message.sessionExecutionId);
+    }
+  }
+  const byExecutionId = foldsByExecutionId(workFolds, replyExecutionIds);
 
   // Spoken for before any pass runs: a fold that belongs to a reply must never
   // ALSO be pushed as its own row. Seeding the set (rather than guarding one
   // pass) is what makes that hold for every pass below — the trigger pass used
   // to hoist a later reply's fold into a standalone row, rendering it twice.
-  const usedFolds = new Set<string>([...byReplyOrdinal.values()].map((fold) => fold.key));
+  const usedFolds = new Set<string>([...byExecutionId.values()].map((fold) => fold.key));
   const pushFold = (fold: FoldedTurnRow) => {
     rows.push({ kind: 'fold', key: fold.key, fold, live: isLiveFold(fold, workFolds, sessionLive) });
     usedFolds.add(fold.key);
@@ -79,9 +78,8 @@ export function buildSpineRows({ items, workFolds, attachedSessionId, sessionLiv
     if (item.kind === 'day' || !item.message) continue;
     const message = item.message;
     let fold: FoldedTurnRow | undefined;
-    if (isAgentReply(message, attachedSessionId)) {
-      fold = byReplyOrdinal.get(replyOrdinal);
-      replyOrdinal += 1;
+    if (isAgentReply(message, attachedSessionId) && message.sessionExecutionId != null) {
+      fold = byExecutionId.get(message.sessionExecutionId);
     }
     const aside =
       attachedSessionId != null &&

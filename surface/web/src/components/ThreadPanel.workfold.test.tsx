@@ -45,6 +45,7 @@ function message(overrides: Partial<ChatMessage> = {}): ChatMessage {
     createdAt: '2026-07-05T12:00:00.000Z',
     replyCount: 1,
     lastReplyId: 0,
+    sessionExecutionId: null,
     status: 'confirmed',
     ...overrides,
   };
@@ -58,6 +59,7 @@ function agentReply(overrides: Partial<ChatMessage> = {}): ChatMessage {
     author: agent,
     sessionId: 's-1',
     sessionEventType: 'replied',
+    sessionExecutionId: 'exe-1',
     ...overrides,
   });
 }
@@ -108,6 +110,7 @@ function workedTurn(): SessionItem[] {
       id: 't-1',
       name: 'Bash',
       input: { command: 'pnpm test' },
+      executionId: 'exe-1',
       result: { content: 'ok', is_error: false },
       ts: '2026-07-05T12:00:01.000Z',
       sourceEventIds: [2],
@@ -117,6 +120,7 @@ function workedTurn(): SessionItem[] {
       id: 't-2',
       name: 'Read',
       input: { file_path: 'migrations/081.sql' },
+      executionId: 'exe-1',
       result: { content: 'ok', is_error: false },
       ts: '2026-07-05T12:00:02.000Z',
       sourceEventIds: [3],
@@ -125,6 +129,7 @@ function workedTurn(): SessionItem[] {
       type: 'text',
       id: 'x-1',
       text: 'The migration is safe to ship.',
+      executionId: 'exe-1',
       ts: '2026-07-05T12:00:03.000Z',
       sourceEventIds: [4],
     },
@@ -134,28 +139,58 @@ function workedTurn(): SessionItem[] {
 /** Two steered turns, each: steer echo → work → the answer that closed it. */
 function twoSteeredTurns(): SessionItem[] {
   return [
-    { type: 'user_message', id: 'u-1', text: 'first steer', ts: '2026-07-05T12:00:00.000Z', sourceEventIds: [1] },
+    {
+      type: 'user_message',
+      id: 'u-1',
+      text: 'first steer',
+      executionId: 'exe-1',
+      ts: '2026-07-05T12:00:00.000Z',
+      sourceEventIds: [1],
+    },
     {
       type: 'tool_call',
       id: 't-1',
       name: 'Bash',
       input: { command: 'pnpm test' },
+      executionId: 'exe-1',
       result: { content: 'ok', is_error: false },
       ts: '2026-07-05T12:00:01.000Z',
       sourceEventIds: [2],
     },
-    { type: 'text', id: 'x-1', text: 'First answer.', ts: '2026-07-05T12:00:02.000Z', sourceEventIds: [3] },
-    { type: 'user_message', id: 'u-2', text: 'second steer', ts: '2026-07-05T12:00:03.000Z', sourceEventIds: [4] },
+    {
+      type: 'text',
+      id: 'x-1',
+      text: 'First answer.',
+      executionId: 'exe-1',
+      ts: '2026-07-05T12:00:02.000Z',
+      sourceEventIds: [3],
+    },
+    {
+      type: 'user_message',
+      id: 'u-2',
+      text: 'second steer',
+      executionId: 'exe-2',
+      ts: '2026-07-05T12:00:03.000Z',
+      sourceEventIds: [4],
+    },
     {
       type: 'tool_call',
       id: 't-2',
       name: 'Read',
       input: { file_path: 'a.ts' },
+      executionId: 'exe-2',
       result: { content: 'ok', is_error: false },
       ts: '2026-07-05T12:00:04.000Z',
       sourceEventIds: [5],
     },
-    { type: 'text', id: 'x-2', text: 'Second answer.', ts: '2026-07-05T12:00:05.000Z', sourceEventIds: [6] },
+    {
+      type: 'text',
+      id: 'x-2',
+      text: 'Second answer.',
+      executionId: 'exe-2',
+      ts: '2026-07-05T12:00:05.000Z',
+      sourceEventIds: [6],
+    },
   ];
 }
 
@@ -222,9 +257,9 @@ describe('ThreadPanel work folds', () => {
     renderPanel(
       [
         steer({ id: 43, text: 'first steer' }),
-        agentReply({ id: 44, text: 'First answer.' }),
+        agentReply({ id: 44, text: 'First answer.', sessionExecutionId: 'exe-1' }),
         steer({ id: 45, text: 'second steer' }),
-        agentReply({ id: 46, text: 'Second answer.' }),
+        agentReply({ id: 46, text: 'Second answer.', sessionExecutionId: 'exe-2' }),
       ],
       { 's-1': session() },
     );

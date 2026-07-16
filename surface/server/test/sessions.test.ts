@@ -2446,6 +2446,13 @@ describe('Phase 2 sessions', () => {
         resultExcerpt: 'PONG',
         permalink: `/s/${id}`,
       });
+      const reply = await pool.query('SELECT payload FROM events WHERE type = $1', ['session.replied']);
+      expect(reply.rows[0].payload).toMatchObject({
+        session_id: id,
+        text: 'PONG',
+        broadcast: true,
+        execution_id: 'exe_666ae19da2c6459f',
+      });
     });
     await app.close();
   });

@@ -23,6 +23,23 @@ const userMessageFrame = (eventId: number, id: string, text: string): CentaurEve
 });
 
 describe('reduceSession', () => {
+  it('stamps items with the execution that produced them', () => {
+    const running = reduceSession(initialSessionState(), {
+      event: 'execution_state',
+      event_id: 1,
+      data: {
+        type: 'execution.state',
+        status: 'running',
+        thread_key: 'thread-1',
+        execution_id: 'exe-1',
+      },
+    });
+    const state = reduceSession(running, userMessageFrame(2, 'item-1', 'do the thing'));
+
+    expect(state.executionId).toBe('exe-1');
+    expect(state.items[0]).toMatchObject({ type: 'user_message', executionId: 'exe-1' });
+  });
+
   it('reduces A_pong without duplicating observed text projections', () => {
     const state = reduceAll(fixture('A_pong'));
 

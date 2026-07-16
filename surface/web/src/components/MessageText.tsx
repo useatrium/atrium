@@ -18,6 +18,7 @@ import {
 } from '../lib/entryLinks';
 import { resolveUnfurls } from '../lib/unfurls';
 import { api } from '../api';
+import { ClampedBlock } from './ClampedBlock';
 import { EntryInlineChip, EntryQuoteCard } from './EntryQuoteCard';
 import { FilePathChip } from './FilePathChip';
 import { InternalLinkCard } from './InternalLinkCard';
@@ -776,7 +777,6 @@ export function MessageText({
   const shouldCollapse =
     collapsible &&
     (bodyText.length > COLLAPSE_CHAR_THRESHOLD || bodyText.split(/\r\n|\r|\n/).length > COLLAPSE_LINE_THRESHOLD);
-  const [expanded, setExpanded] = useState(!shouldCollapse);
   const content: ReactNode = (
     <MarkdownContent
       text={bodyText}
@@ -790,24 +790,21 @@ export function MessageText({
 
   return (
     <>
-      <div
-        className={
-          shouldCollapse && !expanded
-            ? 'relative max-h-80 overflow-hidden [mask-image:linear-gradient(to_bottom,black_70%,transparent)]'
-            : undefined
-        }
+      <ClampedBlock
+        enabled={shouldCollapse}
+        // `relative` is load-bearing, same as the compact reply's clamp: this
+        // box hides its overflow, which only clips descendants whose containing
+        // block runs through it. A `position: absolute` descendant with a static
+        // ancestor chain (GFM footnotes open with `<h3 class="sr-only">`) would
+        // otherwise anchor above the clamp, escape the clip, and inflate the
+        // scroll height into blank space (#544).
+        collapsedClassName="relative max-h-80 overflow-hidden [mask-image:linear-gradient(to_bottom,black_70%,transparent)]"
+        expandLabel="Show more"
+        collapseLabel="Show less"
+        toggleClassName="mt-1 text-xs font-medium text-accent-text hover:underline"
       >
         {content}
-      </div>
-      {shouldCollapse && (
-        <button
-          type="button"
-          onClick={() => setExpanded((value) => !value)}
-          className="mt-1 text-xs font-medium text-accent-text hover:underline"
-        >
-          {expanded ? 'Show less' : 'Show more'}
-        </button>
-      )}
+      </ClampedBlock>
       <MessageUnfurlCards
         descriptors={cardDescriptors}
         meId={meId}

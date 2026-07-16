@@ -194,6 +194,9 @@ export interface ChatMessage {
   sessionTask?: string;
   sessionEventType?: SessionEventRowType;
   sessionEventPayload?: Record<string, unknown>;
+  /** Execution that produced a session reply. Decoded to null for legacy
+   * events that predate execution identity. */
+  sessionExecutionId?: string | null;
   /** Thread-visible steer/suggestion provenance for future chips. */
   steeredSessionId?: string;
   suggestedSessionId?: string;
@@ -350,6 +353,8 @@ export function messageFromEvent(ev: WireEvent): ChatMessage {
   const attachments = parseAttachments(payload.attachments);
   const suppressedUnfurls = parseSuppressedUnfurls(payload.suppressed_unfurls);
   const broadcast = ev.broadcast === true || payload.broadcast === true;
+  const sessionExecutionId =
+    ev.type === 'session.replied' && typeof payload.execution_id === 'string' ? payload.execution_id : null;
   return {
     id: ev.id,
     clientMsgId: typeof payload.client_msg_id === 'string' ? payload.client_msg_id : null,
@@ -379,6 +384,7 @@ export function messageFromEvent(ev: WireEvent): ChatMessage {
     ...(sessionId !== undefined ? { sessionId } : {}),
     ...(sessionTask !== undefined ? { sessionTask } : {}),
     ...(sessionEventType !== undefined ? { sessionEventType, sessionEventPayload: payload } : {}),
+    sessionExecutionId,
     ...(typeof payload.steered_session_id === 'string' ? { steeredSessionId: payload.steered_session_id } : {}),
     ...(typeof payload.suggested_session_id === 'string' ? { suggestedSessionId: payload.suggested_session_id } : {}),
     ...(typeof payload.suggestion_id === 'string' ? { suggestionId: payload.suggestion_id } : {}),
@@ -411,6 +417,7 @@ function messageFromLastReply(root: WireEvent, preview: LastReplyPreview): ChatM
     lastReplyId: 0,
     lastModifierId: 0,
     status: 'confirmed',
+    sessionExecutionId: null,
     ...(preview.broadcast === true ? { broadcast: true } : {}),
     ...(sessionEventType ? { sessionEventType } : {}),
     ...(sessionId ? { sessionId } : {}),

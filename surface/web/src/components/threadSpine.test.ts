@@ -13,7 +13,7 @@ function fold(overrides: Partial<FoldedTurnRow> & { key: string }): FoldedTurnRo
   return {
     kind: 'fold',
     turn: 0,
-    replyOrdinal: null,
+    executionId: null,
     items: [],
     toolNames: ['Bash'],
     startIndex: 0,
@@ -40,12 +40,14 @@ function msg(id: number, overrides: Partial<ChatMessage> = {}): ChatMessage {
     createdAt: '2026-07-05T12:00:00.000Z',
     replyCount: 0,
     lastReplyId: 0,
+    sessionExecutionId: null,
     status: 'confirmed',
     ...overrides,
   };
 }
 
-const reply = (id: number) => msg(id, { sessionId: SESSION, sessionEventType: 'replied' });
+const reply = (id: number, executionId: string | null = null) =>
+  msg(id, { sessionId: SESSION, sessionEventType: 'replied', sessionExecutionId: executionId });
 const steer = (id: number) => msg(id, { steeredSessionId: SESSION });
 
 function timeline(messages: ChatMessage[]): TimelineItem[] {
@@ -62,61 +64,53 @@ const nestedOn = (result: SpineRow[], id: number) =>
   result.find((row) => row.kind === 'message' && row.message.id === id) as Extract<SpineRow, { kind: 'message' }>;
 
 describe('buildSpineRows', () => {
-  it('nests each turn’s fold in the reply it produced', () => {
+  it('nests a fold in the reply carrying its execution id', () => {
     const result = rows(
-      [steer(1), reply(2), steer(3), reply(4)],
-      [fold({ key: 'a', replyOrdinal: 0, triggerOrdinal: 0 }), fold({ key: 'b', replyOrdinal: 1, triggerOrdinal: 1 })],
+      [reply(2, 'exe-b'), reply(4, 'exe-a')],
+      [fold({ key: 'a', executionId: 'exe-a' }), fold({ key: 'b', executionId: 'exe-b' })],
     );
 
-    expect(nestedOn(result, 2).fold?.key).toBe('a');
-    expect(nestedOn(result, 4).fold?.key).toBe('b');
+    expect(nestedOn(result, 2).fold?.key).toBe('b');
+    expect(nestedOn(result, 4).fold?.key).toBe('a');
     // Nested means NOT also standalone.
     expect(result.filter((row) => row.kind === 'fold')).toHaveLength(0);
   });
 
-  it('renders a fold exactly once even when its steer precedes its reply', () => {
-    // Regression: the trigger pass hoisted fold `b` into a standalone row before
-    // reply 4 nested it, so the same work rendered twice.
-    const result = rows(
-      [steer(1), reply(2), steer(3), reply(4)],
-      [fold({ key: 'a', replyOrdinal: 0, triggerOrdinal: 0 }), fold({ key: 'b', replyOrdinal: 1, triggerOrdinal: 1 })],
-    );
+  it('does not nest a reply with no execution id and keeps its fold standalone', () => {
+    const result = rows([reply(2)], [fold({ key: 'legacy', executionId: 'exe-legacy', triggerOrdinal: 0 })]);
 
-    expect(foldKeysOf(result)).toEqual(['a', 'b']);
+    expect(nestedOn(result, 2).fold).toBeUndefined();
+    expect(result.filter((row) => row.kind === 'fold').map((row) => row.key)).toEqual(['legacy']);
   });
 
-  it('keeps work with no reply of its own as a standalone row', () => {
-    const result = rows([steer(1)], [fold({ key: 'orphan', replyOrdinal: null, triggerOrdinal: 0 })]);
-
-    expect(result.filter((row) => row.kind === 'fold').map((row) => row.key)).toEqual(['orphan']);
-  });
-
-  it('does not nest a turn the thread never heard an answer for', () => {
-    // The stream saw three answered turns; the thread only carries two replies
-    // (a failed execution posts no `session.replied`). The third fold must not
-    // borrow someone else's answer — it keeps its own row.
+  it('nests the last fold when several folds share one execution id', () => {
     const result = rows(
-      [reply(2), reply(4)],
-      [fold({ key: 'a', replyOrdinal: 0 }), fold({ key: 'b', replyOrdinal: 1 }), fold({ key: 'c', replyOrdinal: 2 })],
+      [steer(1), reply(2, 'exe-shared')],
+      [
+        fold({ key: 'early', executionId: 'exe-shared', triggerOrdinal: 0 }),
+        fold({ key: 'final', executionId: 'exe-shared', triggerOrdinal: 1 }),
+      ],
     );
 
-    expect(nestedOn(result, 2).fold?.key).toBe('a');
-    expect(nestedOn(result, 4).fold?.key).toBe('b');
-    expect(result.filter((row) => row.kind === 'fold').map((row) => row.key)).toEqual(['c']);
-    expect(foldKeysOf(result)).toHaveLength(3);
+    expect(nestedOn(result, 2).fold?.key).toBe('final');
+    expect(result.filter((row) => row.kind === 'fold').map((row) => row.key)).toEqual(['early']);
+    expect(foldKeysOf(result)).toEqual(['early', 'final']);
   });
 
   it('never drops a fold, whatever the shape', () => {
     const workFolds = [
-      fold({ key: 'a', replyOrdinal: 0, triggerOrdinal: null }),
-      fold({ key: 'b', replyOrdinal: 1, triggerOrdinal: 1 }),
-      fold({ key: 'c', replyOrdinal: null, triggerOrdinal: 2 }),
-      fold({ key: 'd', replyOrdinal: null, triggerOrdinal: 9 }),
+      fold({ key: 'matched', executionId: 'exe-a', triggerOrdinal: null }),
+      fold({ key: 'shared-early', executionId: 'exe-b', triggerOrdinal: 1 }),
+      fold({ key: 'shared-final', executionId: 'exe-b', triggerOrdinal: 2 }),
+      fold({ key: 'legacy', executionId: null, triggerOrdinal: 2 }),
+      fold({ key: 'unanswered', executionId: 'exe-c', triggerOrdinal: 9 }),
     ];
-    const result = rows([reply(2), steer(3), reply(4), steer(5)], workFolds);
+    const result = rows([reply(2, 'exe-a'), steer(3), reply(4, 'exe-b'), steer(5)], workFolds);
 
-    expect(new Set(foldKeysOf(result))).toEqual(new Set(['a', 'b', 'c', 'd']));
-    expect(foldKeysOf(result)).toHaveLength(4);
+    expect(new Set(foldKeysOf(result))).toEqual(
+      new Set(['matched', 'shared-early', 'shared-final', 'legacy', 'unanswered']),
+    );
+    expect(foldKeysOf(result)).toHaveLength(5);
   });
 
   it('leaves a thread with no attached session untouched', () => {

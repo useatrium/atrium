@@ -17,6 +17,7 @@ function tool(overrides: Partial<ToolCallItem> = {}): ToolCallItem {
     result: { content: Array.from({ length: 20 }, (_, index) => `line ${index}`).join('\n'), is_error: false },
     sourceEventIds: [1],
     ...overrides,
+    executionId: overrides.executionId ?? null,
   };
 }
 
@@ -25,7 +26,7 @@ function fold(item = tool()): FoldedTurnRow {
     kind: 'fold',
     key: 'turn-0',
     turn: 0,
-    replyOrdinal: 0,
+    executionId: item.executionId,
     items: [item],
     toolNames: [item.name],
     startIndex: 1,

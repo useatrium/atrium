@@ -24,6 +24,7 @@ export interface TextItem {
   type: 'text';
   id: string;
   text: string;
+  executionId: string | null;
   messageId?: string;
   uuid?: string;
   handle?: string | null;
@@ -37,6 +38,7 @@ export interface ToolCallItem {
   id: string;
   name: string;
   input: JsonObject;
+  executionId: string | null;
   result?: {
     content: string;
     is_error: boolean;
@@ -50,6 +52,7 @@ export interface ReasoningItem {
   type: 'reasoning';
   id: string;
   text: string;
+  executionId: string | null;
   summary?: string;
   messageId?: string;
   handle?: string | null;
@@ -61,6 +64,7 @@ export interface QuestionItem {
   type: 'question';
   id: string;
   questionId: string;
+  executionId: string | null;
   turnId?: string;
   questions: QuestionPrompt[];
   status: 'pending' | 'resolved';
@@ -74,6 +78,7 @@ export interface UserMessageItem {
   type: 'user_message';
   id: string;
   text: string;
+  executionId: string | null;
   handle?: string | null;
   ts?: string;
   sourceEventIds: number[];
@@ -149,6 +154,9 @@ export interface ArtifactPresentation {
 
 export interface SessionState {
   status: ExecutionStatus | 'idle';
+  /** Execution currently producing transcript items. Null for legacy frames
+   * that predate execution identity. */
+  executionId: string | null;
   /** Server-stamped start of the current turn — `turn/started` when the harness
    * emits it, else the execution_state frame that flipped us into running. */
   turnStartTs?: string;
@@ -198,6 +206,7 @@ export interface SessionState {
 export function initialSessionState(): SessionState {
   return {
     status: 'idle',
+    executionId: null,
     frameSeq: 0,
     deltaChars: 0,
     transport: 'ok',
@@ -249,6 +258,7 @@ function reduceSessionFrame(state: SessionState, frame: CentaurEventFrame): Sess
   if (frame.event === 'execution_state') {
     const wasActive = state.status !== 'idle' && !isTerminalExecutionStatus(state.status);
     next.status = frame.data.status;
+    next.executionId = frame.data.execution_id ?? null;
     if (frame.data.result_text) {
       next.resultText = frame.data.result_text;
     }
@@ -523,6 +533,7 @@ function upsertQuestionItem(
     type: 'question',
     id: `question:${event.question_id}`,
     questionId: event.question_id,
+    executionId: state.executionId,
     ...(event.turn_id !== undefined ? { turnId: event.turn_id } : {}),
     questions: event.questions,
     status: 'pending',
@@ -553,6 +564,7 @@ function resolveQuestionItem(
     type: 'question',
     id: `question:${questionId}`,
     questionId,
+    executionId: state.executionId,
     questions: [],
     status: 'resolved',
     reason,
@@ -640,6 +652,7 @@ function upsertClaudeReasoningItem(
     type: 'reasoning',
     id,
     text,
+    executionId: state.executionId,
     messageId: messageKey,
     ...(handle ? { handle } : {}),
     sourceEventIds: [eventId],
@@ -668,6 +681,7 @@ function appendStreamingText(state: SessionState, eventId: number, text: string,
     type: 'text',
     id: `text:${eventId}`,
     text,
+    executionId: state.executionId,
     ...(handle ? { handle } : {}),
     sourceEventIds: [eventId],
   });
@@ -709,6 +723,7 @@ function reconcileCompleteText(
     id: messageId ? `text:${messageId}` : `text:${uuid}`,
     text,
     uuid,
+    executionId: state.executionId,
     ...optionalProp('messageId', messageId),
     ...(handle ? { handle } : {}),
     sourceEventIds: [eventId],
@@ -738,6 +753,7 @@ function upsertToolCall(
     id: block.id,
     name: block.name,
     input: block.input,
+    executionId: state.executionId,
     ...(handle ? { handle } : {}),
     sourceEventIds: [eventId],
   };
@@ -1019,6 +1035,7 @@ function upsertReasoningItem(
     type: 'reasoning',
     id,
     text,
+    executionId: state.executionId,
     ...(summary !== undefined ? { summary } : {}),
     ...(itemId ? { messageId: itemId } : {}),
     ...(handle ? { handle } : {}),
@@ -1117,6 +1134,7 @@ function appendCodexStreamingText(
     type: 'text',
     id: itemId ? `text:codex:${itemId}` : `text:codex:${eventId}`,
     text,
+    executionId: state.executionId,
     ...optionalProp('messageId', itemId),
     sourceEventIds: [eventId],
   });
@@ -1155,6 +1173,7 @@ function reconcileCodexCompleteText(
     type: 'text',
     id: itemId ? `text:codex:${itemId}` : `text:codex:${eventId}`,
     text,
+    executionId: state.executionId,
     ...optionalProp('messageId', itemId),
     ...(handle ? { handle } : {}),
     sourceEventIds: [eventId],
@@ -1188,6 +1207,7 @@ function upsertCodexCommandExecution(
     id,
     name: 'command',
     input,
+    executionId: state.executionId,
     ...(handle ? { handle } : {}),
     sourceEventIds: [eventId],
   };
@@ -1234,6 +1254,7 @@ function upsertUserMessage(
     type: 'user_message',
     id,
     text,
+    executionId: state.executionId,
     ...(handle ? { handle } : {}),
     sourceEventIds: [eventId],
   };

@@ -451,7 +451,12 @@ describe('the final agent reply reaches the channel', () => {
       threadRootEventId: 7,
       type: 'session.replied',
       actorId: null,
-      payload: { session_id: 's1', text: 'Done — shipped the dashboard.', broadcast: true },
+      payload: {
+        session_id: 's1',
+        text: 'Done — shipped the dashboard.',
+        broadcast: true,
+        execution_id: 'exe-1',
+      },
       createdAt: '2026-07-13T00:01:00.000Z',
       author: { id: 'agent:s1', handle: 'agent', displayName: 'Agent' },
       broadcast: true,
@@ -461,6 +466,23 @@ describe('the final agent reply reaches the channel', () => {
     expect(main).toHaveLength(1);
     expect(main[0]!.text).toBe('Done — shipped the dashboard.');
     expect(main[0]!.sessionEventType).toBe('replied');
+    expect(main[0]!.sessionExecutionId).toBe('exe-1');
+  });
+
+  it('decodes a legacy reply with no execution id to null', () => {
+    const reply: WireEvent = {
+      id: 9,
+      workspaceId: 'w1',
+      channelId: 'c1',
+      threadRootEventId: 7,
+      type: 'session.replied',
+      actorId: null,
+      payload: { session_id: 's1', text: 'Legacy answer' },
+      createdAt: '2026-07-13T00:01:00.000Z',
+      author: null,
+    };
+
+    expect(messageFromEvent(reply).sessionExecutionId).toBeNull();
   });
 
   it('folds the newest live reply into the root preview', () => {

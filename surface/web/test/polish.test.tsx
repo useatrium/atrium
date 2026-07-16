@@ -21,6 +21,7 @@ import { clearUserDirectoryForTests, primeUserDirectory } from '../src/userDirec
 afterEach(() => {
   cleanup();
   clearUserDirectoryForTests();
+  vi.restoreAllMocks();
 });
 
 const me = { id: 'u-me', handle: 'me', displayName: 'Me' };
@@ -77,6 +78,8 @@ describe('MessageText formatting', () => {
   });
 
   it('skips unsafe inline html and collapses long markdown', () => {
+    vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(400);
+    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(320);
     render(
       <div data-testid="root">
         <MessageText
