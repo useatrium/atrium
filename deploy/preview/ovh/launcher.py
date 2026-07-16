@@ -228,6 +228,21 @@ class Store:
             row = db.execute("SELECT * FROM previews WHERE id = ?", (preview_id,)).fetchone()
         return dict(row) if row else None
 
+    def list_active(self) -> list[dict[str, Any]]:
+        """Every preview currently holding a slot, soonest-to-expire first.
+
+        Deliberately store-only. `status()` shells out to previewctl per preview,
+        which is fine for one but would make listing the whole box take minutes.
+        A caller who needs authoritative phase for a single preview asks for it.
+        """
+        placeholders = ",".join("?" for _ in ACTIVE_STATUSES)
+        with self.connect() as db:
+            rows = db.execute(
+                f"SELECT * FROM previews WHERE status IN ({placeholders}) ORDER BY expires_at",  # noqa: S608
+                ACTIVE_STATUSES,
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def list_expired(self) -> list[dict[str, Any]]:
         with self.connect() as db:
             rows = db.execute(
@@ -334,6 +349,14 @@ class Launcher:
                 }
             )
         self.store.upsert(record)
+
+    def list_active(self) -> dict[str, Any]:
+        records = self.store.list_active()
+        return {
+            "previews": [self.public_record(record) for record in records],
+            "active": len(records),
+            "max_concurrent": self.max_concurrent,
+        }
 
     def status(self, preview_id: str) -> dict[str, Any]:
         record = self.store.get(preview_id)
@@ -463,6 +486,8 @@ def make_handler(launcher: Launcher, token: str):
                 return self.send_json({"ok": True})
             if not self.authorized():
                 return self.send_error_json(401, "unauthorized")
+            if parsed.path == "/previews":
+                return self.send_json(launcher.list_active())
             match = re.fullmatch(r"/previews/([^/]+)", parsed.path)
             if match:
                 return self.handle_status(match.group(1))
