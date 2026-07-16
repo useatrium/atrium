@@ -1,6 +1,8 @@
 use std::{collections::BTreeMap, path::PathBuf};
 
-use crate::{IronProxyConfigError, ProxyFragment, Result};
+use serde_yaml::Value;
+
+use crate::{IronProxyConfigError, ProxyFragment, Result, Transform, TransformConfig};
 
 /// The shared infra secrets, embedded at compile time so the binary carries no
 /// runtime config-file dependency. The source lives in this crate so it's
@@ -11,6 +13,48 @@ pub fn load_fragment_str(contents: &str) -> Result<ProxyFragment> {
     serde_yaml::from_str(contents).map_err(|source| IronProxyConfigError::ParseFragment {
         path: PathBuf::from("<inline>"),
         source,
+    })
+}
+
+/// A deployment-configured `allowlist` transform: hosts a sandbox may reach that
+/// no credential vouches for.
+///
+/// Under iron-control (managed mode) a sandbox's egress allowlist is
+/// `union(baseline domains, hosts from granted credentials' rules)` — see
+/// centaur-console's `Proxy.merge_proxy_policy`. `domains_from_rules` only reads
+/// hosts off granted secrets, so a host with no credential (a package index, say)
+/// can only ever be reached by way of the baseline. This fragment is how a
+/// deployment puts one there.
+///
+/// Carries no secret deliberately, exactly like
+/// `CODEX_ACCESS_TOKEN_PER_USER_FRAGMENT`: allow the host, inject nothing.
+/// Because the console unions the domains of *every* transform named `allowlist`,
+/// appending this can only widen the allowlist — it cannot displace the harness's
+/// own entry.
+///
+/// Returns `None` when no domains are configured, so the default deployment adds
+/// no transform at all and its allowlist is unchanged.
+pub fn extra_allowlist_fragment(domains: &[String]) -> Option<ProxyFragment> {
+    let domains: Vec<Value> = domains
+        .iter()
+        .map(|domain| domain.trim())
+        .filter(|domain| !domain.is_empty())
+        .map(|domain| Value::String(domain.to_owned()))
+        .collect();
+    if domains.is_empty() {
+        return None;
+    }
+    Some(ProxyFragment {
+        transforms: vec![Transform {
+            name: "allowlist".to_owned(),
+            config: TransformConfig {
+                secrets: Vec::new(),
+                extra: BTreeMap::from([("domains".to_owned(), Value::Sequence(domains))]),
+            },
+            extra: BTreeMap::new(),
+        }],
+        postgres: Vec::new(),
+        top_level: BTreeMap::new(),
     })
 }
 
