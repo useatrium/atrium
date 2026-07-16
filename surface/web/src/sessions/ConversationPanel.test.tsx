@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, render } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatMessage, UserRef } from '@atrium/surface-client';
 import { ConversationPanel } from './ConversationPanel';
@@ -143,5 +143,62 @@ describe('ConversationPanel stream identity', () => {
       bodyMocks.work.mock.lastCall?.[0].visible,
     ].filter(Boolean);
     expect(enabledBodies).toHaveLength(1);
+  });
+});
+
+describe('ConversationPanel pending mode', () => {
+  beforeEach(() => {
+    openStream.mockReset();
+  });
+
+  afterEach(cleanup);
+
+  it('renders the loading shell with the split-pane sizing and close action', () => {
+    const onClose = vi.fn();
+    const { container } = render(
+      <ConversationPanel
+        mode="work"
+        pending={{
+          sessionId: 's-loading',
+          error: false,
+          onClose,
+          layout: 'split',
+          sizing: { className: 'w-pending-pane', style: { width: '444px' } },
+        }}
+      />,
+    );
+
+    expect(screen.getByText('Loading session…')).toBeTruthy();
+    const aside = container.querySelector('aside');
+    expect(aside?.className).toContain('shrink-0 w-pending-pane');
+    expect((aside as HTMLElement).style.width).toBe('444px');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close session details' }));
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it('renders the error shell at full width and closes from the body action', () => {
+    const onClose = vi.fn();
+    const { container } = render(
+      <ConversationPanel
+        mode="work"
+        pending={{
+          sessionId: 's-missing',
+          error: true,
+          onClose,
+          layout: 'focus',
+          sizing: { className: 'w-pending-pane', style: { width: '444px' } },
+        }}
+      />,
+    );
+
+    expect(screen.getByText('Agent not found')).toBeTruthy();
+    expect(screen.getByText('It may have been removed, or the link is wrong.')).toBeTruthy();
+    const aside = container.querySelector('aside');
+    expect(aside?.className).toContain('flex-1');
+    expect((aside as HTMLElement).style.width).toBe('');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    expect(onClose).toHaveBeenCalledOnce();
   });
 });

@@ -33,7 +33,6 @@ import {
 import { isMacDesktop } from '../desktop';
 import type { SessionSteerContext } from '../useSessionActions';
 import {
-  ApiError,
   api,
   type AgentProfile,
   type AgentProfileProposal,
@@ -133,30 +132,13 @@ import {
   WORK_DOCK_MIN_SIDE_WIDTH,
   WORK_DOCK_MIN_TOP_HEIGHT,
 } from './useWorkDock';
+import { useSessionActionError } from './useSessionActionError';
+import { useSessionSeat } from './useSessionSeat';
+import { useTurnControls } from './useTurnControls';
 
 // Skip offscreen rendering work so 500+ item transcripts scroll smoothly.
 const ITEM_VIS: CSSProperties = { contentVisibility: 'auto', containIntrinsicSize: 'auto 32px' };
 const ENTRY_REFERENCES_REFETCH_MS = 60_000;
-
-function isTextEditingEscapeTarget(target: EventTarget | null): boolean {
-  if (!(target instanceof Element)) return false;
-  if (target.closest('input, textarea, select, .ProseMirror')) return true;
-  if (target instanceof HTMLElement && target.isContentEditable) return true;
-  const editable = target.closest('[contenteditable]');
-  return editable instanceof HTMLElement && editable.isContentEditable;
-}
-
-function escapeHasLocalMeaning(event: KeyboardEvent): boolean {
-  const target = event.target instanceof Element ? event.target : document.activeElement;
-  if (isTextEditingEscapeTarget(target)) return true;
-  return Boolean(target?.closest('[role="dialog"], [role="menu"], [role="listbox"], [aria-modal="true"]'));
-}
-
-function isPlainEscape(event: KeyboardEvent): boolean {
-  return (
-    event.key === 'Escape' && !event.repeat && !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey
-  );
-}
 
 export { useIsHoverNone };
 
@@ -829,6 +811,7 @@ export function SessionPaneContent({
   const driverId = sessionDriverId(session);
   const isDriver = driverId === me.id;
   const driverPresent = isDriver || watchers.some((u) => u.id === driverId);
+  const reportSessionActionError = useSessionActionError(onApiError);
 
   const nameFor = (userId: string | null): string => {
     if (!userId) return 'someone';
@@ -940,54 +923,13 @@ export function SessionPaneContent({
     };
   };
 
-  // Spectator → driver ask state. 'confirm-take' = take clicked once, waiting
-  // for confirmation; 'seat-held' = a take bounced with 409 and we fell back
-  // to a request.
-  const [seatAsk, setSeatAsk] = useState<'idle' | 'confirm-take' | 'requested' | 'seat-held'>('idle');
-  useEffect(() => {
-    if (isDriver) setSeatAsk('idle');
-  }, [isDriver]);
-  // Unconfirmed take reverts on its own — it shouldn't linger as a landmine.
-  useEffect(() => {
-    if (seatAsk !== 'confirm-take') return;
-    const t = setTimeout(() => setSeatAsk('idle'), 5000);
-    return () => clearTimeout(t);
-  }, [seatAsk]);
-  const seatRequested =
-    seatAsk === 'requested' || seatAsk === 'seat-held' || session.pendingSeatRequests.some((r) => r.userId === me.id);
-  const reportSessionActionError = useCallback(
-    (err: unknown, fallback: string, options: { toast?: boolean } = {}) => {
-      onApiError(err);
-      if (err instanceof ApiError && err.status === 401) return;
-      if (options.toast === false) return;
-      showErrorToast(err instanceof ApiError && err.message ? err.message : fallback);
-    },
-    [onApiError],
-  );
-
-  const requestSeat = () => {
-    setSeatAsk('requested');
-    sessionsApi.requestSeat(session.id).catch((err: unknown) => {
-      setSeatAsk('idle');
-      reportSessionActionError(err, "Couldn't request the seat.");
-    });
-  };
-  const takeSeat = () => {
-    setSeatAsk('idle');
-    sessionsApi.takeSeat(session.id).catch((err: unknown) => {
-      if (err instanceof ApiError && err.status === 409) {
-        // Seat actually held (driver is watching after all) — note it and
-        // fall back to a polite request.
-        setSeatAsk('seat-held');
-        sessionsApi.requestSeat(session.id).catch((requestErr: unknown) => {
-          setSeatAsk('idle');
-          reportSessionActionError(requestErr, "Couldn't request the seat.");
-        });
-      } else {
-        reportSessionActionError(err, "Couldn't take the seat.");
-      }
-    });
-  };
+  const { seatAsk, setSeatAsk, seatRequested, requestSeat, takeSeat } = useSessionSeat({
+    sessionId: session.id,
+    isDriver,
+    pendingSeatRequests: session.pendingSeatRequests,
+    meId: me.id,
+    reportError: reportSessionActionError,
+  });
 
   // Driver steer sends: never swallow a lost instruction — keep the text and
   // surface a retry right where the action happened.
@@ -1168,57 +1110,18 @@ export function SessionPaneContent({
     }
   };
 
-  // Cancel is destructive and possibly shared — two-step inline confirm.
-  const [cancelAsk, setCancelAsk] = useState<'idle' | 'confirm' | 'failed'>('idle');
-  const displayCancelAsk = failedCancel ? 'failed' : cancelAsk;
-  useEffect(() => {
-    if (cancelAsk !== 'confirm') return;
-    const t = setTimeout(() => setCancelAsk('idle'), 5000);
-    return () => clearTimeout(t);
-  }, [cancelAsk]);
-  const onCancel = useCallback(() => {
-    if (canStopTurn) {
-      setCancelAsk('idle');
-      onClearFailedCancel();
-      onStopTurn(session.id).catch((err: unknown) => {
-        setCancelAsk('failed');
-        reportSessionActionError(err, "Couldn't stop the turn.", { toast: false });
-      });
-      return;
-    }
-    if (displayCancelAsk === 'idle') {
-      setCancelAsk('confirm');
-      return;
-    }
-    setCancelAsk('idle');
-    onClearFailedCancel();
-    onCancelSession(session.id).catch((err: unknown) => {
-      setCancelAsk('failed');
-      reportSessionActionError(err, "Couldn't cancel the session.", { toast: false });
-    });
-  }, [
+  const { displayCancelAsk, onCancel } = useTurnControls({
+    sessionId: session.id,
     canStopTurn,
-    displayCancelAsk,
+    isSpawner,
+    isDriver,
+    visible,
+    failedCancel,
+    onStopTurn,
     onCancelSession,
     onClearFailedCancel,
-    onStopTurn,
-    reportSessionActionError,
-    session.id,
-  ]);
-
-  useEffect(() => {
-    // A ConversationPanel keeps this body mounted-but-hidden in thread mode;
-    // its window-level Escape must not stop a turn from offscreen.
-    if (!visible || !canStopTurn || (!isSpawner && !isDriver)) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (!isPlainEscape(event) || escapeHasLocalMeaning(event)) return;
-      event.preventDefault();
-      event.stopPropagation();
-      onCancel();
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [canStopTurn, isDriver, isSpawner, onCancel, visible]);
+    reportError: reportSessionActionError,
+  });
 
   // Driver-side grant banner; Ignore is a local dismissal only.
   const [ignoredRequests, setIgnoredRequests] = useState<ReadonlySet<string>>(new Set());
