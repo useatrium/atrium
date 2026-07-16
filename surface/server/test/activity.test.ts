@@ -126,6 +126,22 @@ describe('/api/activity', () => {
     });
   });
 
+  it('resolves id-mention tokens in snippets to display names', async () => {
+    const alice = await login('alice', 'Alice');
+    const bob = await login('bob', 'Bob');
+    await post(alice.cookie, fx.channelId, `<@${bob.user.id}> this run failed — worth a retry?`);
+    const ghost = '00000000-0000-4000-8000-000000000000';
+    await post(alice.cookie, fx.channelId, `@bob also pinging <@${ghost}> who does not exist`);
+
+    const body = await activity(bob.cookie);
+
+    const resolved = body.items.find((item: any) => item.snippet.includes('worth a retry'));
+    expect(resolved.snippet).toBe('@Bob this run failed — worth a retry?');
+    // Unknown ids keep the raw token rather than inventing a name.
+    const unresolved = body.items.find((item: any) => item.snippet.includes('does not exist'));
+    expect(unresolved.snippet).toContain(`<@${ghost}>`);
+  });
+
   it('returns auth blocks and marks truncated snippets with an ellipsis', async () => {
     const alice = await login('alice', 'Alice');
     const bob = await login('bob', 'Bob');

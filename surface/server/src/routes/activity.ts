@@ -174,6 +174,31 @@ async function markActivityItemsRead(
   }
 }
 
+const MENTION_TOKEN_RE = /<@([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})>/gi;
+
+/** Snippets are raw message text, so id-mentions arrive as `<@uuid>` tokens.
+ * Resolve them to `@Display Name` here — every client renders snippets as
+ * plain text, and a token soup in the inbox row helps no one. Unknown ids
+ * (deleted users) keep the token rather than inventing a name. */
+async function resolveMentionTokensInSnippets(pool: Db, items: Array<{ snippet: string }>): Promise<void> {
+  const ids = new Set<string>();
+  for (const item of items) {
+    for (const match of item.snippet.matchAll(MENTION_TOKEN_RE)) ids.add(match[1]!.toLowerCase());
+  }
+  if (ids.size === 0) return;
+  const res = await pool.query<{ id: string; display_name: string }>(
+    `SELECT id, display_name FROM users WHERE id = ANY($1::uuid[])`,
+    [[...ids]],
+  );
+  const names = new Map(res.rows.map((row) => [row.id.toLowerCase(), row.display_name]));
+  for (const item of items) {
+    item.snippet = item.snippet.replace(MENTION_TOKEN_RE, (token, id: string) => {
+      const name = names.get(id.toLowerCase());
+      return name ? `@${name}` : token;
+    });
+  }
+}
+
 function incrementChannelCount(
   channelCounts: Map<string, ChannelActivityCounts>,
   channelId: string,
@@ -829,6 +854,7 @@ export function registerActivityRoutes(app: FastifyInstance, deps: ActivityRoute
 
     const result = res.rows[0]!;
     const items = Array.isArray(result.items) ? result.items.map(toActivityItem) : [];
+    await resolveMentionTokensInSnippets(pool, items);
     // These are deliberately separate from the paginated activity query: the
     // aggregate is over current session state, not whichever 50 activity rows
     // happened to be returned above.

@@ -19,7 +19,8 @@ export function glanceColor(kind: SessionGlanceKind, colors: Colors): string {
 
 /** Glance from a REST list row + optional live entity (live wins). */
 export function listItemGlance(
-  item: Pick<SessionListItem, 'status' | 'createdAt' | 'completedAt'>,
+  item: Pick<SessionListItem, 'status' | 'createdAt' | 'completedAt'> &
+    Partial<Pick<SessionListItem, 'needsAttention'>>,
   live: Session | undefined,
   now: number,
 ): SessionGlance {
@@ -29,5 +30,13 @@ export function listItemGlance(
     createdAt: item.createdAt,
     completedAt: item.completedAt,
   };
-  return deriveSessionGlance(input, now);
+  const glance = deriveSessionGlance(input, now);
+  // The REST row can flag needs-attention without carrying the live fields
+  // that prove it (pendingQuestion/providerAuthRequired live on the entity,
+  // not the list wire). Honor the flag so the chip never contradicts the
+  // group it renders in — same rule as the web Agents surface.
+  if (!live && item.needsAttention === true && glance.kind !== 'needs_you') {
+    return { ...glance, kind: 'needs_you', label: 'Needs you', clock: null };
+  }
+  return glance;
 }
