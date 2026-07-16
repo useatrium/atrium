@@ -12,6 +12,7 @@ import secrets
 import shutil
 import socket
 import subprocess
+import sys
 import tarfile
 import textwrap
 import time
@@ -27,7 +28,21 @@ REAL_FS_ROOT = Path(os.environ.get("ATRIUM_PREVIEW_REAL_FS_ROOT", "/var/lib/atri
 CADDY_CONF_DIR = Path(os.environ.get("ATRIUM_PREVIEW_CADDY_CONF_DIR", "/etc/caddy/conf.d"))
 REGISTRY_PUSH = os.environ.get("ATRIUM_PREVIEW_REGISTRY_PUSH", "localhost:5000")
 REGISTRY_PULL = os.environ.get("ATRIUM_PREVIEW_REGISTRY_PULL", "registry:5000")
+# The box registry container's real name (set by provision-box.sh) and the network
+# alias the chart's image references resolve through.
+REGISTRY_CONTAINER = os.environ.get("ATRIUM_PREVIEW_REGISTRY_CONTAINER", "atrium-preview-registry")
+REGISTRY_ALIAS = REGISTRY_PULL.split(":")[0]
+# The box's shared Caddy container (provision-box.sh). It only re-reads conf.d on
+# reload, so a new preview is not routed until we poke it.
+CADDY_CONTAINER = os.environ.get("ATRIUM_PREVIEW_CADDY_CONTAINER", "atrium-preview-caddy")
 PREVIEW_DOMAIN = os.environ.get("ATRIUM_PREVIEW_DOMAIN", "preview.useatrium.com")
+# Warm pnpm store from provision-box.sh, so the web build reuses downloads.
+PNPM_STORE = Path(os.environ.get("ATRIUM_PREVIEW_PNPM_STORE", "/var/cache/atrium-preview/pnpm/store"))
+# Set to 1 to keep a failed preview's cluster/stack for debugging instead of
+# reclaiming it. Off by default: leaked clusters hold RAM without occupying a
+# concurrency slot (the cap only counts provisioning/ready).
+KEEP_FAILED = os.environ.get("ATRIUM_PREVIEW_KEEP_FAILED", "0") == "1"
+WEB_BUILD_IMAGE = os.environ.get("ATRIUM_PREVIEW_WEB_BUILD_IMAGE", "node:24-alpine")
 PORT_RANGE = range(21000, 29000)
 NODE_PORT = 30080
 CENTAUR_IMAGES = {
@@ -158,6 +173,28 @@ def commit_build_lock(commit_sha: str) -> Iterator[None]:
             fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 
+def seed_git_repo(tree: Path, commit_sha: str) -> None:
+    """Give an exported source tree a throwaway git history.
+
+    `git archive` exports no .git, but centaur's Justfile evaluates
+    `git rev-parse HEAD` at parse time, so every `just build-one` aborts with
+    "not a git repository" without this. The AWS appliance bootstrap did the same
+    thing.
+
+    Note the OCI revision label on centaur images ends up as this synthetic SHA,
+    not the real commit: centaur's `build-one` dispatches to a fresh `just`
+    subprocess, which drops our `image_revision=<real sha>` override. That is
+    cosmetic only — previewctl tags every image into the registry as
+    <image>:<real commit sha>, and the chart pulls by that tag, so previews stay
+    pinned to the right commit.
+    """
+    run(["git", "init", "-q"], cwd=tree)
+    run(["git", "config", "user.email", "preview@atrium.local"], cwd=tree)
+    run(["git", "config", "user.name", "Atrium Preview"], cwd=tree)
+    run(["git", "add", "-A"], cwd=tree)
+    run(["git", "commit", "-qm", f"preview source {commit_sha}"], cwd=tree)
+
+
 def source_for_commit(commit_sha: str) -> Path:
     source = STATE_DIR / "sources" / commit_sha
     marker = source / ".atrium-preview-source"
@@ -171,8 +208,12 @@ def source_for_commit(commit_sha: str) -> Path:
         run(["git", "archive", "--format=tar", f"--output={archive}", commit_sha])
         with tarfile.open(archive) as bundle:
             bundle.extractall(temporary, filter="data")
+        # Write the marker before seeding so it lands inside the synthetic commit
+        # and the tree is clean. centaur's Justfile appends "-dirty" to image
+        # labels when `git status --porcelain` is non-empty.
         marker_in_temp = temporary / marker.name
         marker_in_temp.write_text(commit_sha + "\n")
+        seed_git_repo(temporary, commit_sha)
         if source.exists():
             shutil.rmtree(temporary)
         else:
@@ -229,6 +270,37 @@ def build_and_push_images(source: Path, commit_sha: str) -> None:
         target = f"{REGISTRY_PUSH}/library/{image}:{commit_sha}"
         run(["docker", "tag", f"{image}:latest", target])
         run(["docker", "push", target], capture=False)
+
+
+def build_web(source: Path) -> None:
+    """Build the web SPA into surface/web/dist.
+
+    The preview's caddy serves this as static files; without it the preview only
+    answers API routes and every page load 404s. Mirrors the AWS appliance, and
+    reuses the box's warm pnpm store so this is a cache hit after the first run.
+    """
+    PNPM_STORE.mkdir(parents=True, exist_ok=True)
+    run(
+        [
+            "docker",
+            "run",
+            "--rm",
+            "-v",
+            f"{source / 'surface'}:/app",
+            "-v",
+            f"{PNPM_STORE}:/pnpm-store",
+            "-w",
+            "/app",
+            "-e",
+            "CI=true",
+            WEB_BUILD_IMAGE,
+            "sh",
+            "-c",
+            "corepack enable && pnpm config set store-dir /pnpm-store --global "
+            "&& pnpm install --frozen-lockfile && pnpm --filter @atrium/web build",
+        ],
+        capture=False,
+    )
 
 
 def appliance_values_yaml(commit_sha: str, surface_port: int) -> str:
@@ -332,6 +404,9 @@ def compose_command(state: dict[str, Any], *args: str) -> list[str]:
     return [
         "docker",
         "compose",
+        # the prod compose gates its web-serving caddy behind this profile
+        "--profile",
+        "caddy",
         "-p",
         f"preview-{state['preview_id']}",
         "--env-file",
@@ -363,6 +438,10 @@ def write_surface_files(state: dict[str, Any]) -> None:
         "BIND_HOST": "127.0.0.1",
         "DB_BIND_HOST": "127.0.0.1",
         "SERVER_HOST_PORT": str(ports["surface"]),
+        # The per-preview caddy serves the web SPA and proxies API paths to the
+        # server. The box's shared caddy terminates TLS and proxies to this port.
+        "CADDY_HOST_PORT": str(ports["caddy"]),
+        "SITE_ADDRESS": ":80",
         "MINIO_HOST_PORT": str(ports["minio"]),
         "DB_HOST_PORT": str(ports["postgres"]),
         "AUTH_OPEN": "1",
@@ -386,6 +465,12 @@ def write_surface_files(state: dict[str, Any]) -> None:
                 environment:
                   APP_SIGNING_SECRET: ${{APP_SIGNING_SECRET}}
                   PROVIDER_CREDENTIAL_SECRET: ${{PROVIDER_CREDENTIAL_SECRET}}
+              caddy:
+                # !override, not a plain list: compose MERGES ports across files,
+                # so without it we would also inherit the prod 80/443 bindings and
+                # collide with the box's shared caddy and with other previews.
+                ports: !override
+                  - "127.0.0.1:${{CADDY_HOST_PORT}}:80"
             """
         )
     )
@@ -401,6 +486,20 @@ def create_k3d_cluster(state: dict[str, Any]) -> None:
         raise RuntimeError(
             f"required Centaur bind mount is on {filesystem or 'an unknown filesystem'}, not ext4: {real_fs}"
         )
+    # containerd defaults to HTTPS, but the box registry is plain HTTP on the
+    # docker network. Without this every pod ends in ImagePullBackOff on
+    #: Head "https://registry:5000/...".
+    registries_yaml = runtime_dir(preview_id) / "registries.yaml"
+    registries_yaml.write_text(
+        textwrap.dedent(
+            f"""\
+            mirrors:
+              "{REGISTRY_PULL}":
+                endpoint:
+                  - "http://{REGISTRY_PULL}"
+            """
+        )
+    )
     run(
         [
             "k3d",
@@ -408,20 +507,42 @@ def create_k3d_cluster(state: dict[str, Any]) -> None:
             "create",
             cluster,
             "--no-lb",
+            "--registry-config",
+            str(registries_yaml),
             "--k3s-arg",
             "--disable=traefik@server:0",
             "--k3s-arg",
             "--disable=servicelb@server:0",
             "--volume",
             f"{real_fs}:/var/lib/centaur@server:0",
+            # ":direct" binds the port straight to the server node. Without it k3d
+            # creates a "proxy" mapping through the loadbalancer, which --no-lb
+            # removed: "port-mapping of type 'proxy' specified, but loadbalancer
+            # is disabled".
             "--port",
-            f"127.0.0.1:{state['ports']['centaur']}:{NODE_PORT}@server:0",
+            f"127.0.0.1:{state['ports']['centaur']}:{NODE_PORT}@server:0:direct",
         ],
         capture=False,
     )
-    # The shared registry is provisioned once by box setup. Connecting it to this
-    # cluster's Docker network makes registry:5000 resolvable by the k3d node.
-    run(["docker", "network", "connect", f"k3d-{cluster}", "registry"], check=False)
+    # The shared registry is provisioned once by box setup under its own container
+    # name; attach it to this cluster's network under the alias the chart pulls
+    # from, so registry:5000 resolves inside the k3d node. Not check=False: a
+    # silent failure here only resurfaces minutes later as ImagePullBackOff.
+    try:
+        run(
+            [
+                "docker",
+                "network",
+                "connect",
+                "--alias",
+                REGISTRY_ALIAS,
+                f"k3d-{cluster}",
+                REGISTRY_CONTAINER,
+            ]
+        )
+    except RuntimeError as err:
+        if "already exists" not in str(err):
+            raise
     kubeconfig = run(["k3d", "kubeconfig", "get", cluster])
     path = runtime_dir(preview_id) / "kubeconfig.yaml"
     path.write_text(kubeconfig + "\n")
@@ -518,27 +639,71 @@ def wait_for_url(url: str, timeout: int = 400) -> None:
     raise RuntimeError(f"health check timed out for {url}: {last_error}")
 
 
+def reload_caddy() -> None:
+    """Make a written/removed vhost fragment take effect.
+
+    The shared Caddy imports conf.d/*.caddy but only re-reads it on reload, so
+    without this a preview reaches "ready" and its URL still 404s. Best-effort:
+    Caddy is not running until CF_API_TOKEN is configured, and that must not fail
+    an otherwise-healthy preview.
+    """
+    best_effort(
+        [
+            "docker",
+            "exec",
+            CADDY_CONTAINER,
+            "caddy",
+            "reload",
+            "--config",
+            "/etc/caddy/Caddyfile",
+            "--adapter",
+            "caddyfile",
+        ]
+    )
+
+
 def write_caddy_fragment(state: dict[str, Any]) -> None:
+    """Write this preview's routes into the shared Caddy's wildcard site block.
+
+    Emits host matchers + handle blocks, NOT a site block: a per-preview site
+    block would make Caddy manage a separate certificate per preview, and Let's
+    Encrypt rate-limits per registered domain. Named matchers share one namespace
+    inside the site block, hence the preview id in every matcher name.
+
+    The minio matcher MUST use the block form. Caddy's one-line named matcher
+    takes a single matcher token, so `@m host H path /b/*` parses as a host
+    matcher with hostnames [H, "path", "/b/*"] — the path constraint silently
+    disappears, no error, and the minio handle then swallows every request to
+    the host (GET /healthz answers with MinIO's AccessDenied XML).
+    """
     CADDY_CONF_DIR.mkdir(parents=True, exist_ok=True)
-    target = CADDY_CONF_DIR / f"{state['preview_id']}.caddy"
+    preview_id = state["preview_id"]
+    host = f"{preview_id}.{PREVIEW_DOMAIN}"
+    target = CADDY_CONF_DIR / f"{preview_id}.caddy"
     temporary = target.with_suffix(".tmp")
     temporary.write_text(
         textwrap.dedent(
             f"""\
-            {state['preview_id']}.{PREVIEW_DOMAIN} {{
+            # preview {preview_id} -> commit {state['commit_sha']}
+            @minio-{preview_id} {{
+                host {host}
+                path /{state['minio_bucket']}/*
+            }}
+            handle @minio-{preview_id} {{
+                # presigned S3 reads point at the public origin
+                reverse_proxy 127.0.0.1:{state['ports']['minio']}
+            }}
+            @{preview_id} host {host}
+            handle @{preview_id} {{
                 encode zstd gzip
-                @minio path /{state['minio_bucket']}/*
-                handle @minio {{
-                    reverse_proxy 127.0.0.1:{state['ports']['minio']}
-                }}
-                handle {{
-                    reverse_proxy 127.0.0.1:{state['ports']['surface']}
-                }}
+                # the preview's own caddy serves the web SPA and proxies its API
+                reverse_proxy 127.0.0.1:{state['ports']['caddy']}
             }}
             """
         )
     )
     temporary.replace(target)
+    reload_caddy()
     state["caddy_fragment"] = str(target)
     save_state(state)
 
@@ -590,8 +755,10 @@ def cmd_create(args: argparse.Namespace) -> None:
         "local_dev_api_key": secrets.token_hex(32),
     }
     with port_allocation_lock():
-        ports = reserve_ports(4)
-        state["ports"] = dict(zip(("surface", "minio", "postgres", "centaur"), ports, strict=True))
+        ports = reserve_ports(5)
+        state["ports"] = dict(
+            zip(("surface", "minio", "postgres", "centaur", "caddy"), ports, strict=True)
+        )
         write_phase(state, "packages")
     try:
         write_phase(state, "source")
@@ -603,6 +770,7 @@ def cmd_create(args: argparse.Namespace) -> None:
         with commit_build_lock(commit_sha):
             write_phase(state, "surface-build")
             build_and_push_images(source, commit_sha)
+            build_web(source)
 
         write_phase(state, "k3d-up")
         create_k3d_cluster(state)
@@ -613,7 +781,10 @@ def cmd_create(args: argparse.Namespace) -> None:
         write_phase(state, "surface-up")
         write_surface_files(state)
         run(compose_command(state, "up", "-d", "--no-build"), capture=False)
-        run(compose_command(state, "exec", "-T", "minio", "mc", "mb", "--ignore-existing", f"local/{state['minio_bucket']}"))
+        # No explicit bucket creation: the Surface server calls ensureBucket() on
+        # boot (surface/server/src/s3.ts) and creates it with the credentials it
+        # was configured with. The minio image's preconfigured "local" mc alias
+        # carries default creds, so `mc mb` here just fails with Access Denied.
 
         write_phase(state, "migrate")
         # Surface applies migrations before it starts listening. The table check
@@ -663,6 +834,13 @@ def cmd_create(args: argparse.Namespace) -> None:
             status="failed",
             failure_message=str(err),
         )
+        # A half-built preview still holds a k3d cluster, a compose stack and its
+        # bind-mount dir. Failed previews do not occupy a concurrency slot, so
+        # leaving them behind lets the box OOM well under MAX_CONCURRENT_PREVIEWS.
+        if KEEP_FAILED:
+            print(f"keeping failed preview {preview_id} for debugging", file=sys.stderr)
+        else:
+            teardown_resources(state)
         raise
     print(json.dumps(public_status(state), indent=2))
 
@@ -686,6 +864,28 @@ def best_effort(cmd: list[str], **kwargs: Any) -> None:
         pass
 
 
+def teardown_resources(state: dict[str, Any]) -> None:
+    """Best-effort reclaim of everything a preview holds. Safe to call twice."""
+    preview_id = state["preview_id"]
+    best_effort(["k3d", "cluster", "delete", f"preview-{preview_id}"], capture=False)
+    runtime = runtime_dir(preview_id)
+    if (
+        state.get("source_dir")
+        and (runtime / ".env").exists()
+        and (runtime / "docker-compose.preview.yml").exists()
+    ):
+        best_effort(compose_command(state, "down", "-v", "--remove-orphans"), capture=False)
+    fragment = (
+        Path(state["caddy_fragment"])
+        if state.get("caddy_fragment")
+        else CADDY_CONF_DIR / f"{preview_id}.caddy"
+    )
+    with contextlib.suppress(OSError):
+        fragment.unlink(missing_ok=True)
+    reload_caddy()
+    shutil.rmtree(REAL_FS_ROOT / preview_id, ignore_errors=True)
+
+
 def cmd_destroy(args: argparse.Namespace) -> None:
     validate_preview_id(args.preview_id)
     state = load_state(args.preview_id)
@@ -697,19 +897,8 @@ def cmd_destroy(args: argparse.Namespace) -> None:
     if state is not None and state.get("source_dir"):
         runtime = runtime_dir(args.preview_id)
         if (runtime / ".env").exists() and (runtime / "docker-compose.preview.yml").exists():
-            best_effort(
-                compose_command(
-                    state,
-                    "exec",
-                    "-T",
-                    "minio",
-                    "mc",
-                    "rm",
-                    "--recursive",
-                    "--force",
-                    f"local/{state['minio_bucket']}",
-                )
-            )
+            # `down -v` removes this project's minio volume, taking the bucket
+            # with it, so there is no separate bucket teardown to do.
             run(compose_command(state, "down", "-v", "--remove-orphans"), capture=False)
 
     fragment = (
@@ -718,6 +907,7 @@ def cmd_destroy(args: argparse.Namespace) -> None:
         else CADDY_CONF_DIR / f"{args.preview_id}.caddy"
     )
     fragment.unlink(missing_ok=True)
+    reload_caddy()
     shutil.rmtree(REAL_FS_ROOT / args.preview_id, ignore_errors=True)
 
     if state is not None:
