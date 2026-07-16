@@ -5,6 +5,7 @@ import type { ToolCallItem } from './reducer.js';
 const tool = (name: string, input: ToolCallItem['input'] = {}): ToolCallItem => ({
   type: 'tool_call',
   id: `tool:${name}`,
+  executionId: null,
   name,
   input,
   sourceEventIds: [1],
