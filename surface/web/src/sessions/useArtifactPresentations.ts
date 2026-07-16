@@ -7,7 +7,11 @@ import { sessionsApi } from './api';
 // metadata edit), so refetch whenever the set of shared/apps/<slug>/ files shifts.
 const APP_DIR_RE = /shared\/apps\/[^/]+\//;
 
-export function useArtifactPresentations(sessionId: string, stream: SessionState): ArtifactPresentation[] {
+export function useArtifactPresentations(
+  sessionId: string,
+  stream: SessionState,
+  { enabled = true }: { enabled?: boolean } = {},
+): ArtifactPresentation[] {
   const [hydrated, setHydrated] = useState<ArtifactPresentation[]>([]);
 
   const appDirKey = useMemo(
@@ -21,6 +25,7 @@ export function useArtifactPresentations(sessionId: string, stream: SessionState
   );
 
   useEffect(() => {
+    if (!enabled) return;
     let disposed = false;
     sessionsApi
       .listPresentations(sessionId)
@@ -33,7 +38,7 @@ export function useArtifactPresentations(sessionId: string, stream: SessionState
     return () => {
       disposed = true;
     };
-  }, [sessionId, appDirKey]);
+  }, [sessionId, appDirKey, enabled]);
 
   return hydrated;
 }

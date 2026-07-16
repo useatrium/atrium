@@ -21,6 +21,7 @@ import {
   collectSideEffects,
   deriveTurnStatus,
   foldedTurnRows,
+  isLiveFold,
   turnStatusLabel,
   isTerminalExecutionStatus,
   sideEffectCount,
@@ -467,7 +468,7 @@ export function SessionPaneContent({
   const sideEffectsN = useMemo(() => sideEffectCount(sideEffects), [sideEffects]);
   const sideEffectsDanger = useMemo(() => sideEffects.some((effect) => effect.risk === 'danger'), [sideEffects]);
   const artifacts = useMemo(() => collectArtifacts(stream), [stream.artifacts]);
-  const artifactPresentations = useArtifactPresentations(session.id, stream);
+  const artifactPresentations = useArtifactPresentations(session.id, stream, { enabled: visible });
   const artifactsN = useMemo(() => artifactCount(artifacts), [artifacts]);
   const changedWorkCount = changedFileCount + artifactsN;
   // Live conflict feed (A3): polls the ledger change-feed for status=conflict
@@ -475,7 +476,7 @@ export function SessionPaneContent({
   // Inert under unit tests (which assert exact global-fetch call counts); fully
   // live in dev/prod. The hook itself is covered in useConflicts.test.tsx.
   const { conflicts, resolve: resolveConflict } = useConflicts(session.id, {
-    enabled: import.meta.env.MODE !== 'test',
+    enabled: visible && import.meta.env.MODE !== 'test',
   });
   const conflictsN = conflicts.length;
   const isHoverNone = useIsHoverNone();
@@ -634,7 +635,7 @@ export function SessionPaneContent({
   // A completed session is idle/resumable (a steer regresses completed→queued),
   // NOT ended — only failed/cancelled are truly read-only.
   const isEnded = displayStatus === 'failed' || (displayStatus === 'cancelled' && !stoppedByUser);
-  const now = useNow(!displayTerminal);
+  const now = useNow(visible && !displayTerminal);
   const stalled = !displayTerminal && stream.status === 'idle' && isStalledSessionStatus(session, now);
   const costUsd = Math.max(session.costUsd, stream.costUsd);
   const resultText = stream.resultText || session.resultText || '';
@@ -1112,7 +1113,7 @@ export function SessionPaneContent({
   const [profileProposals, setProfileProposals] = useState<AgentProfileProposal[]>([]);
   const [profileActionBusy, setProfileActionBusy] = useState<string | null>(null);
   const [profileActionError, setProfileActionError] = useState<string | null>(null);
-  const profileProposalsEnabled = import.meta.env.MODE !== 'test';
+  const profileProposalsEnabled = visible && import.meta.env.MODE !== 'test';
   const loadProfileProposals = async () => {
     if (!profileProposalsEnabled) return;
     const { proposals } = await api.sessionProfileProposals(session.id);
@@ -1266,7 +1267,7 @@ export function SessionPaneContent({
           fold,
           index,
           endIndex: fold.endIndex,
-          live: activeTurn && !fold.completed && workFolds.at(-1)?.key === fold.key,
+          live: isLiveFold(fold, workFolds, Boolean(activeTurn)),
         });
       }
       if (!foldedWorkIds.has(item.id)) next.push({ kind: 'item', item, index });

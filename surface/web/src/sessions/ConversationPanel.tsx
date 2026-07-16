@@ -38,7 +38,7 @@ function ConversationPanelImpl({ mode, thread, session }: ConversationPanelProps
     <>
       {threadMatchesSession && (
         <div className={mode === 'thread' ? 'contents' : 'hidden'} aria-hidden={mode !== 'thread'}>
-          <ThreadPanelContent {...thread} sessionStream={sessionStream} />
+          <ThreadPanelContent {...thread} sessionStream={sessionStream} visible={mode === 'thread'} />
         </div>
       )}
       {session && (

@@ -2,18 +2,27 @@
 
 import { cleanup, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { UserRef } from '@atrium/surface-client';
+import type { ChatMessage, UserRef } from '@atrium/surface-client';
 import { ConversationPanel } from './ConversationPanel';
+import type { ThreadPanelProps } from '../components/ThreadPanel';
 import type { SessionPaneProps } from './SessionPane';
 import { sessionsApi } from './api';
 import type { Session } from './types';
 
+const bodyMocks = vi.hoisted(() => ({ thread: vi.fn(), work: vi.fn() }));
+
 vi.mock('../components/ThreadPanel', () => ({
-  ThreadPanelContent: () => <div data-testid="thread-mode" />,
+  ThreadPanelContent: (props: { visible?: boolean }) => {
+    bodyMocks.thread(props);
+    return <div data-testid="thread-mode" />;
+  },
 }));
 
 vi.mock('./SessionPane', () => ({
-  SessionPaneContent: () => <div data-testid="work-mode" />,
+  SessionPaneContent: (props: { visible?: boolean }) => {
+    bodyMocks.work(props);
+    return <div data-testid="work-mode" />;
+  },
 }));
 
 vi.mock('./api', () => ({
@@ -68,10 +77,41 @@ const sessionProps: SessionPaneProps = {
   onAnswerQuestion: vi.fn(async () => {}),
 };
 
+const root: ChatMessage = {
+  id: session.threadRootEventId!,
+  clientMsgId: null,
+  channelId: session.channelId,
+  threadRootEventId: null,
+  sessionId: session.id,
+  text: session.title,
+  edited: false,
+  reactions: [],
+  attachments: [],
+  author: me,
+  createdAt: session.createdAt,
+  replyCount: 0,
+  lastReplyId: session.threadRootEventId!,
+  status: 'confirmed',
+};
+
+const threadProps: ThreadPanelProps = {
+  root,
+  replies: [],
+  loaded: true,
+  sessions: { [session.id]: session },
+  spectators: {},
+  onClose: vi.fn(),
+  onSend: vi.fn(),
+  onOpenSession: vi.fn(),
+  onRetry: vi.fn(),
+};
+
 describe('ConversationPanel stream identity', () => {
   const close = vi.fn();
 
   beforeEach(() => {
+    bodyMocks.thread.mockReset();
+    bodyMocks.work.mockReset();
     close.mockReset();
     openStream.mockReset();
     openStream.mockReturnValue({ close });
@@ -91,5 +131,17 @@ describe('ConversationPanel stream identity', () => {
 
     view.unmount();
     expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  it('enables effects for exactly one mounted body in thread mode', () => {
+    render(<ConversationPanel mode="thread" thread={threadProps} session={sessionProps} />);
+
+    expect(bodyMocks.thread).toHaveBeenCalledWith(expect.objectContaining({ visible: true }));
+    expect(bodyMocks.work).toHaveBeenCalledWith(expect.objectContaining({ visible: false }));
+    const enabledBodies = [
+      bodyMocks.thread.mock.lastCall?.[0].visible,
+      bodyMocks.work.mock.lastCall?.[0].visible,
+    ].filter(Boolean);
+    expect(enabledBodies).toHaveLength(1);
   });
 });

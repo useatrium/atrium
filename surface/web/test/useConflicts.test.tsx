@@ -102,4 +102,16 @@ describe('useConflicts', () => {
     const post = fetchMock.mock.calls.find((c) => typeof c[0] === 'string' && c[0].includes('/resolve'));
     expect((post![1] as RequestInit).headers).toMatchObject({ 'x-artifact-delete': 'true' });
   });
+
+  it('refreshes immediately when polling is re-enabled', async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ rows: [], next_cursor: '0.0' }));
+    const { rerender } = renderHook(({ enabled }) => useConflicts('s-1', { enabled, pollMs: 100000 }), {
+      initialProps: { enabled: false },
+    });
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    rerender({ enabled: true });
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+  });
 });
