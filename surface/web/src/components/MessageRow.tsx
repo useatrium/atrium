@@ -1455,7 +1455,16 @@ function CompactReply({ message }: { message: ChatMessage }) {
         <div
           ref={textRef}
           className={`whitespace-pre-wrap break-words text-[13px] leading-relaxed text-fg-body ${
-            expanded ? '' : 'line-clamp-3'
+            // `relative` is load-bearing: line-clamp hides the overflow with
+            // `overflow: hidden`, which only clips descendants whose containing
+            // block chain runs through this div. An absolutely positioned
+            // descendant with a static ancestor chain (GFM footnotes open with
+            // `<h3 class="sr-only">`, and sr-only is position: absolute) would
+            // otherwise resolve its containing block to a positioned ancestor
+            // ABOVE the clamp, escape the clip, keep its static position
+            // thousands of px down, and inflate the transcript's scroll height
+            // into blank unreachable space.
+            expanded ? '' : 'relative line-clamp-3'
           }`}
         >
           {/* This row owns the clamp, so MessageText must not add its own — two
