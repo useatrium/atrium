@@ -12,6 +12,11 @@ SERVICE_USER="${ATRIUM_PREVIEW_SERVICE_USER:-atrium-preview}"
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "$SCRIPT_DIR/../../../.." && pwd)"
+# The launcher runs as $SERVICE_USER and must both read and `git fetch` into its
+# checkout. An operator's clone under /home is unreachable to it (home is mode
+# 0750 and the unit sets ProtectHome), so the service gets its own checkout at a
+# system path. Never point the unit at $REPO_ROOT.
+SERVICE_REPO="${ATRIUM_PREVIEW_REPO:-/opt/atrium}"
 STATE_DIR="/var/lib/atrium-preview/state"
 CACHE_ROOT="/var/cache/atrium-preview"
 CONFIG_DIR="/etc/atrium-preview"
@@ -236,12 +241,35 @@ EOF
   rm -f "$unit_tmp"
 }
 
+ensure_service_repo() {
+  local origin_url head_sha current
+  origin_url="$(git -C "$REPO_ROOT" remote get-url origin 2>/dev/null \
+    || echo 'https://github.com/useatrium/atrium.git')"
+  if [[ ! -d "$SERVICE_REPO/.git" ]]; then
+    sudo install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0755 "$SERVICE_REPO"
+    sudo -u "$SERVICE_USER" git clone --quiet "$origin_url" "$SERVICE_REPO"
+    log "cloned service repo to $SERVICE_REPO"
+  fi
+  sudo chown -R "$SERVICE_USER:$SERVICE_USER" "$SERVICE_REPO"
+  sudo -u "$SERVICE_USER" git -C "$SERVICE_REPO" fetch --quiet --all --prune || true
+  # Track whatever the operator provisioned from, so the service runs the same
+  # code. Only works for commits that exist on the remote.
+  head_sha="$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || true)"
+  if [[ -n "$head_sha" ]] && sudo -u "$SERVICE_USER" git -C "$SERVICE_REPO" cat-file -e "${head_sha}^{commit}" 2>/dev/null; then
+    sudo -u "$SERVICE_USER" git -C "$SERVICE_REPO" checkout --quiet --detach "$head_sha"
+  else
+    log "warning: $head_sha not on the remote; service repo left at its current HEAD"
+  fi
+  current="$(sudo -u "$SERVICE_USER" git -C "$SERVICE_REPO" rev-parse --short HEAD)"
+  log "service repo $SERVICE_REPO at $current"
+}
+
 install_launcher_and_janitor() {
   local unit_tmp cron_tmp
   unit_tmp="$(mktemp)"
   cron_tmp="$(mktemp)"
   sed \
-    -e "s|__ATRIUM_REPO_ROOT__|$REPO_ROOT|g" \
+    -e "s|__ATRIUM_REPO_ROOT__|$SERVICE_REPO|g" \
     -e "s|__ATRIUM_SERVICE_USER__|$SERVICE_USER|g" \
     -e "s|__ATRIUM_LAUNCHER_ENV__|$LAUNCHER_ENV|g" \
     "$SCRIPT_DIR/launcher.service" >"$unit_tmp"
@@ -249,7 +277,7 @@ install_launcher_and_janitor() {
   rm -f "$unit_tmp"
 
   sed \
-    -e "s|__ATRIUM_REPO_ROOT__|$REPO_ROOT|g" \
+    -e "s|__ATRIUM_REPO_ROOT__|$SERVICE_REPO|g" \
     -e "s|__ATRIUM_SERVICE_USER__|$SERVICE_USER|g" \
     "$SCRIPT_DIR/janitor.cron" >"$cron_tmp"
   sudo install -m 0644 "$cron_tmp" /etc/cron.d/atrium-preview-janitor
@@ -333,6 +361,7 @@ main() {
   install_k3s_cli
   ensure_service_user
   ensure_directories
+  ensure_service_repo
   ensure_registry
   ensure_caddy_image
   write_secret_envs
