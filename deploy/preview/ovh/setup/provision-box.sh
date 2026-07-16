@@ -2,6 +2,10 @@
 set -euo pipefail
 
 K3D_VERSION="v5.7.4"
+# previewctl shells out to helm and kubectl; centaur image builds shell out to
+# just. None ship with Ubuntu (except just), so pin them here.
+HELM_VERSION="v3.16.2"
+KUBECTL_VERSION="v1.30.4"
 K3S_RELEASE_VERSION="v1.30.4+k3s1"
 K3S_IMAGE_VERSION="v1.30.4-k3s1"
 REGISTRY_NAME="atrium-preview-registry"
@@ -95,7 +99,7 @@ install_docker() {
 install_packages() {
   local -a missing=()
   local package
-  for package in ca-certificates curl cron sqlite3; do
+  for package in ca-certificates curl cron sqlite3 just; do
     if ! dpkg-query -W -f='${Status}' "$package" 2>/dev/null | grep -q 'ok installed'; then
       missing+=("$package")
     fi
@@ -138,6 +142,32 @@ install_k3s_cli() {
   sudo install -m 0755 "$tmp" /usr/local/bin/k3s
   rm -f "$tmp"
   log "installed host k3s CLI $K3S_RELEASE_VERSION for validate-overlay.sh"
+}
+
+install_helm() {
+  if need_cmd helm && helm version --short 2>/dev/null | grep -Fq "$HELM_VERSION"; then
+    log "helm $HELM_VERSION already installed"
+    return
+  fi
+  local tmp
+  tmp="$(mktemp -d)"
+  curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz" | tar -xz -C "$tmp"
+  sudo install -m 0755 "$tmp/linux-amd64/helm" /usr/local/bin/helm
+  rm -rf "$tmp"
+  log "installed helm $HELM_VERSION"
+}
+
+install_kubectl() {
+  if need_cmd kubectl && kubectl version --client 2>/dev/null | grep -Fq "$KUBECTL_VERSION"; then
+    log "kubectl $KUBECTL_VERSION already installed"
+    return
+  fi
+  local tmp
+  tmp="$(mktemp)"
+  curl -fsSL "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" -o "$tmp"
+  sudo install -m 0755 "$tmp" /usr/local/bin/kubectl
+  rm -f "$tmp"
+  log "installed kubectl $KUBECTL_VERSION"
 }
 
 ensure_service_user() {
@@ -371,6 +401,8 @@ main() {
   install_packages
   install_k3d
   install_k3s_cli
+  install_helm
+  install_kubectl
   ensure_service_user
   ensure_directories
   ensure_service_repo
