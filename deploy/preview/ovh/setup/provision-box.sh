@@ -318,6 +318,7 @@ install_launcher_and_janitor() {
     -e "s|__ATRIUM_REPO_ROOT__|$SERVICE_REPO|g" \
     -e "s|__ATRIUM_SERVICE_USER__|$SERVICE_USER|g" \
     -e "s|__ATRIUM_LAUNCHER_ENV__|$LAUNCHER_ENV|g" \
+    -e "s|__ATRIUM_CADDY_CONF_DIR__|$CADDY_CONF_DIR|g" \
     "$SCRIPT_DIR/launcher.service" >"$unit_tmp"
   sudo install -m 0644 "$unit_tmp" /etc/systemd/system/atrium-preview-launcher.service
   rm -f "$unit_tmp"
