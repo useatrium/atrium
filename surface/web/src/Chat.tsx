@@ -47,7 +47,7 @@ import { Composer, type ComposerHandle } from './components/Composer';
 import { GitHubConnectionDialog } from './components/GitHubConnectionDialog';
 import { EntryQuoteApplyContextProvider } from './components/EntryQuoteCard';
 import { ShortcutsHelp, Tooltip } from './components/a11y';
-import { FileIcon, GearIcon, LockIcon, PhoneIcon, PlayIcon, PlusIcon, SearchIcon, XIcon } from './components/icons';
+import { FileIcon, GearIcon, LockIcon, PhoneIcon, PlayIcon, PlusIcon, SearchIcon } from './components/icons';
 import { splitMarkdownFrontmatter } from '@atrium/surface-client';
 import { MarkupPane, type MarkupPaneMode, type MarkupPaneSource } from './components/MarkupPane';
 import { showErrorToast } from './components/Toasts';
@@ -2630,7 +2630,7 @@ export function Chat({
         </main>
       )}
 
-      {conversationSession || (openThreadRoot && active) ? (
+      {conversationSession || openThreadRoot || state.openSessionId ? (
         <EntryQuoteApplyContextProvider
           value={
             active
@@ -2639,8 +2639,19 @@ export function Chat({
           }
         >
           <ConversationPanel
-            key={conversationSession?.id ?? `thread:${openThreadRoot?.id ?? 'none'}`}
+            key={conversationSession?.id ?? state.openSessionId ?? `thread:${openThreadRoot?.id ?? 'none'}`}
             mode={conversationMode}
+            pending={
+              state.openSessionId
+                ? {
+                    sessionId: state.openSessionId,
+                    error: state.openSessionError,
+                    onClose: closeSession,
+                    layout: sessionPaneLayout,
+                    sizing: placeholderPaneSizing,
+                  }
+                : undefined
+            }
             session={
               conversationSession
                 ? {
@@ -2739,42 +2750,6 @@ export function Chat({
             }
           />
         </EntryQuoteApplyContextProvider>
-      ) : state.openSessionId ? (
-        <aside
-          className={`flex min-w-0 flex-col border-l border-edge bg-surface ${
-            isMobileViewport || view === 'focus' ? 'flex-1' : `shrink-0 ${placeholderPaneSizing.className}`
-          }`}
-          style={isMobileViewport || view === 'focus' ? undefined : placeholderPaneSizing.style}
-        >
-          <header className="flex h-12 shrink-0 items-center justify-between border-b border-edge px-4">
-            <h2 className="text-sm font-semibold text-fg">Session</h2>
-            <Tooltip content="Close session details">
-              <button
-                type="button"
-                onClick={closeSession}
-                aria-label="Close session details"
-                className="rounded-md px-2 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg"
-              >
-                <XIcon />
-              </button>
-            </Tooltip>
-          </header>
-          {state.openSessionError ? (
-            <div className="flex flex-1 flex-col items-center justify-center gap-1.5 px-6 text-center">
-              <div className="text-sm font-medium text-fg-secondary">Agent not found</div>
-              <div className="text-xs text-fg-muted">It may have been removed, or the link is wrong.</div>
-              <button
-                type="button"
-                onClick={closeSession}
-                className="mt-2 rounded-md border border-edge-strong px-3 py-1 text-xs text-fg-secondary hover:bg-surface-overlay hover:text-fg"
-              >
-                Close
-              </button>
-            </div>
-          ) : (
-            <div className="flex flex-1 items-center justify-center text-sm text-fg-muted">Loading session…</div>
-          )}
-        </aside>
       ) : null}
 
       {switcherOpen && (
