@@ -253,6 +253,13 @@ describe('API transport failures', () => {
     expect(isNetworkFailure(error)).toBe(true);
     expect(connectionAwareError(error, 'fallback', 'server unavailable')).toBe('server unavailable');
   });
+
+  it('wraps fetch aborts in a typed network error', async () => {
+    const abort = Object.assign(new Error('The operation was aborted'), { name: 'AbortError' });
+    vi.stubGlobal('fetch', vi.fn<typeof fetch>().mockRejectedValue(abort));
+
+    await expect(createApi().me()).rejects.toMatchObject({ status: 0, code: NETWORK_UNREACHABLE_CODE });
+  });
 });
 
 describe('call API response decoding', () => {

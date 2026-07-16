@@ -1,5 +1,6 @@
 import {
   ApiError,
+  NETWORK_UNREACHABLE_CODE,
   type AgentAttachmentRef,
   type Api,
   type ReactionAction,
@@ -411,7 +412,7 @@ export function makeQueuedOp<T extends OpType>(input: EnqueueOpInput<T>, now = n
 }
 
 export function isNetworkFailure(err: unknown): boolean {
-  return isApiNetworkFailure(err) || !(err instanceof ApiError);
+  return err instanceof ApiError && isApiNetworkFailure(err);
 }
 
 function isRetryableServerError(err: unknown): boolean {
@@ -819,6 +820,12 @@ export class DurableOpQueue {
       return;
     }
 
+    if (!(error instanceof ApiError)) {
+      console.error('queued op failed with unexpected error', { opType: op.opType, opId: op.opId, error });
+      await this.rejectOpAndDependentsBeforeRemove(op, error);
+      return;
+    }
+
     const pending = { ...op, status: 'pending' as const, retryCount };
     await this.storage.putOp(pending);
   }
@@ -947,12 +954,21 @@ export function createDefaultOpRegistry(): OpRegistry {
           uploadUrl = refreshed.uploadUrl;
         }
 
-        const put = async (url: string) =>
-          context.uploadFetch(url, {
-            method: 'PUT',
-            headers: { 'content-type': currentPayload.contentType },
-            body: await context.readUploadBody(currentPayload),
-          });
+        const put = async (url: string) => {
+          const body = await context.readUploadBody(currentPayload);
+          try {
+            return await context.uploadFetch(url, {
+              method: 'PUT',
+              headers: { 'content-type': currentPayload.contentType },
+              body,
+            });
+          } catch (error) {
+            if (isApiNetworkFailure(error)) {
+              throw new ApiError(0, NETWORK_UNREACHABLE_CODE, 'Could not reach the server');
+            }
+            throw error;
+          }
+        };
 
         let res = await put(uploadUrl);
         if (res.status === 403) {
