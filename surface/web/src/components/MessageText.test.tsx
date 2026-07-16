@@ -381,6 +381,30 @@ describe('MessageText internal link cards', () => {
     expect(resolveUnfurlsMock).not.toHaveBeenCalled();
   });
 
+  it('still fetches a linked session the store already has, because snapshots are thin', async () => {
+    // A /sync snapshot entity hard-codes pendingQuestion/providerAuthRequired to
+    // null (appState sessionFromListSnapshot), so skipping the fetch when the id
+    // is present would render "Working" on a session that needs a person. The
+    // routed-session fetch in Chat.tsx is unconditional for the same reason.
+    const requestSession = vi.fn();
+    const thin = {
+      id: 'session-1',
+      channelId: 'channel-1',
+      status: 'running',
+      pendingQuestion: null,
+    } as unknown as Parameters<typeof SessionsContextProvider>[0]['value']['sessions'][string];
+
+    render(
+      <SessionsContextProvider
+        value={{ sessions: { 'session-1': thin }, channels: [channel('channel-1', 'one')], requestSession }}
+      >
+        <MessageText text="https://atrium.example.com/c/channel-1/s/session-1" />
+      </SessionsContextProvider>,
+    );
+
+    await waitFor(() => expect(requestSession).toHaveBeenCalledWith('session-1'));
+  });
+
   it('suppresses an internal card by its canonical key, not the pasted URL', async () => {
     // `unfurls_suppressed` is persisted and shared across surfaces, and native
     // keys by internalLinkKey. Keying by URL here would mean an author removing

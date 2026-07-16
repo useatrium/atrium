@@ -631,7 +631,10 @@ function MessageUnfurlCards({
   useEffect(() => {
     if (!sessionsContext) return;
     for (const id of internalSessionIds) {
-      if (!sessionsContext.sessions[id]) sessionsContext.requestSession(id);
+      // Ask even when the store already has it: a /sync snapshot entity is thin
+      // (no pendingQuestion), so it would render "Working" on work that is
+      // blocked on a person. requestSession dedupes per id.
+      sessionsContext.requestSession(id);
     }
   }, [internalSessionIdsKey, sessionsContext]);
 

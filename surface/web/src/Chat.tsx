@@ -801,12 +801,18 @@ export function Chat({
 
   // A link card names ONE session, so this fetches that session and nothing
   // else. It is not the N+1 heal loop #543 removed: that refetched every
-  // non-terminal session on every load and is now served by the /sync snapshot.
-  // The snapshot is bounded (SYNC_SESSION_LIMIT), so a link to an older session
-  // still misses — same targeted-fetch shape the routed session uses below.
+  // non-terminal session on every load, and the /sync snapshot serves that now.
+  //
+  // Deliberately does NOT skip when the session is already in the store, for the
+  // same reason the routed-session fetch below doesn't: a snapshot entity is
+  // thin — `sessionFromListSnapshot` hard-codes pendingQuestion and
+  // providerAuthRequired to null — so a card built from one would read "Working"
+  // on a session that is actually blocked on a person. Only the full GET carries
+  // those. Fetched once per id; `mergeSessionEntity` keeps it order-safe against
+  // a WS event that already advanced the status.
   const requestedLinkedSessionsRef = useRef(new Set<string>());
   const requestLinkedSession = useCallback((id: string) => {
-    if (stateRef.current.sessions[id] || requestedLinkedSessionsRef.current.has(id)) return;
+    if (requestedLinkedSessionsRef.current.has(id)) return;
     requestedLinkedSessionsRef.current.add(id);
     sessionsApi
       .get(id)
