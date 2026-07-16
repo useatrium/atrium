@@ -315,6 +315,44 @@ export async function injectSessionReply(args: {
   }
 }
 
+// Seed a human steer: a thread-rooted message.posted carrying steered_session_id
+// (the exact shape the server writes for POST /api/sessions/:id/messages). Used
+// to assert steers interleave with agent responses in the channel cluster.
+export async function injectSteer(args: {
+  handle: string;
+  channelId: string;
+  rootId: number;
+  sessionId: string;
+  text: string;
+}): Promise<number> {
+  const pool = new Pool({ connectionString: e2eDatabaseUrl });
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const user = await client.query<{ id: string }>('SELECT id FROM users WHERE handle = $1', [args.handle]);
+    const channel = await client.query<{ workspace_id: string }>('SELECT workspace_id FROM channels WHERE id = $1', [
+      args.channelId,
+    ]);
+    if (!user.rows[0] || !channel.rows[0]) throw new Error('missing e2e user or channel');
+    const steerId = await seedEvent(client, {
+      workspaceId: channel.rows[0].workspace_id,
+      channelId: args.channelId,
+      threadRootEventId: args.rootId,
+      type: 'message.posted',
+      actorId: user.rows[0].id,
+      payload: { text: args.text, steered_session_id: args.sessionId },
+    });
+    await client.query('COMMIT');
+    return steerId;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+    await pool.end();
+  }
+}
+
 // === mw78-overflow additions ===
 export async function uploadViaApi(
   ctx: APIRequestContext,

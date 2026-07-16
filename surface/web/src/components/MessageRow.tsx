@@ -1147,9 +1147,12 @@ function ChannelAnnotationCluster({
     latest?.sessionEventType === 'question_requested' &&
     latest.sessionId != null &&
     sessions.some((session) => session.id === latest.sessionId);
-  const shownEarlier = (replies ?? []).filter(
-    (reply) => reply.id !== latest?.id && (reply.id == null || !answers.some((answer) => answer.id === reply.id)),
-  );
+  // Expanded, the cluster becomes a mini thread: the full reply set — steers,
+  // agent answers, and human replies — rendered in one chronological list so a
+  // human's steers interleave with the agent's responses exactly as the thread
+  // panel shows them. Collapsed, the anchored answers + latest preview stand in
+  // for it. The server returns replies oldest-first; sort by id to be safe.
+  const expandedReplies = (replies ?? []).slice().sort((a, b) => (a.id ?? 0) - (b.id ?? 0));
 
   const toggleEarlier = () => {
     if (expanded) {
@@ -1188,7 +1191,7 @@ function ChannelAnnotationCluster({
           {loading ? (
             <div className="text-xs text-fg-muted">Loading replies…</div>
           ) : (
-            shownEarlier.map((reply) => <CompactReply key={reply.id ?? reply.clientMsgId} message={reply} />)
+            expandedReplies.map((reply) => <CompactReply key={reply.id ?? reply.clientMsgId} message={reply} />)
           )}
         </div>
       )}
@@ -1199,6 +1202,9 @@ function ChannelAnnotationCluster({
           answer={answers.find(
             (candidate) => candidate.sessionId === slotSession.id && candidate.sessionEventType === 'replied',
           )}
+          // Expanded, the answer lives in the interleaved list above; keep only
+          // the session's live/status strip here so it isn't rendered twice.
+          suppressAnswer={expanded}
           meId={meId}
           meHandle={meHandle}
           rootId={root.id!}
@@ -1209,24 +1215,25 @@ function ChannelAnnotationCluster({
           onMarkupEntry={onMarkupEntry}
         />
       ))}
-      {answers
-        .filter((answer) => answer.id == null || !claimedAnswerIds.has(answer.id))
-        .map((answer) => (
-          <MessageRow
-            key={answer.id ?? answer.clientMsgId}
-            message={answer}
-            grouped={false}
-            inThread
-            slotAnswer
-            meId={meId}
-            meHandle={meHandle}
-            onOpenSession={onOpenSession}
-            onReact={onReact}
-            resolveUser={resolveUser}
-            onMarkupEntry={onMarkupEntry}
-          />
-        ))}
-      {latest && !latestIsAnchored && !latestIsQuestionSlot && <CompactReply message={latest} />}
+      {!expanded &&
+        answers
+          .filter((answer) => answer.id == null || !claimedAnswerIds.has(answer.id))
+          .map((answer) => (
+            <MessageRow
+              key={answer.id ?? answer.clientMsgId}
+              message={answer}
+              grouped={false}
+              inThread
+              slotAnswer
+              meId={meId}
+              meHandle={meHandle}
+              onOpenSession={onOpenSession}
+              onReact={onReact}
+              resolveUser={resolveUser}
+              onMarkupEntry={onMarkupEntry}
+            />
+          ))}
+      {!expanded && latest && !latestIsAnchored && !latestIsQuestionSlot && <CompactReply message={latest} />}
       <button
         type="button"
         onClick={() => root.id != null && onOpenThread?.(root.id)}
@@ -1241,6 +1248,7 @@ function ChannelAnnotationCluster({
 function AgentSessionSlot({
   session,
   answer,
+  suppressAnswer = false,
   meId,
   meHandle,
   rootId,
@@ -1252,6 +1260,9 @@ function AgentSessionSlot({
 }: {
   session: Session;
   answer?: ChatMessage;
+  /** When the answer is rendered elsewhere (the expanded interleaved list), show
+   *  only the session's status strip here so the reply isn't rendered twice. */
+  suppressAnswer?: boolean;
   meId?: string;
   meHandle?: string;
   rootId: number;
@@ -1318,7 +1329,7 @@ function AgentSessionSlot({
     );
   }
 
-  if (terminal && answer) {
+  if (terminal && answer && !suppressAnswer) {
     return (
       <div data-testid="session-slot-answer">
         <MessageRow
@@ -1413,6 +1424,13 @@ function CompactReply({ message }: { message: ChatMessage }) {
         <div className="line-clamp-3 whitespace-pre-wrap break-words text-[13px] leading-relaxed text-fg-body">
           <MessageText text={message.text} />
         </div>
+        {message.steeredSessionId != null && (
+          <div className="mt-1 flex flex-wrap items-center gap-1.5 text-3xs">
+            <span className="rounded-full border border-edge bg-surface-raised px-1.5 py-0.5 font-medium text-fg-tertiary">
+              → agent
+            </span>
+          </div>
+        )}
       </div>
     </div>
   );

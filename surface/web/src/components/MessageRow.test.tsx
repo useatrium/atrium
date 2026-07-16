@@ -244,6 +244,101 @@ describe('MessageRow broadcast replies', () => {
     expect(await screen.findByText('Earlier fetched reply')).toBeTruthy();
     expect(fetch).toHaveBeenCalledWith('/api/threads/42/messages', expect.anything());
   });
+
+  it('interleaves human steers with agent responses when the cluster is expanded', async () => {
+    const agentAuthor: UserRef = { id: 'agent:s-1', handle: 'agent', displayName: 'Agent' };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            events: [
+              {
+                id: 51,
+                workspaceId: 'ws-1',
+                channelId: 'ch-1',
+                threadRootEventId: 42,
+                type: 'session.replied',
+                actorId: null,
+                payload: { session_id: 's-1', text: 'Agent first response' },
+                createdAt: '2026-07-05T12:00:10.000Z',
+                author: agentAuthor,
+              },
+              {
+                id: 52,
+                workspaceId: 'ws-1',
+                channelId: 'ch-1',
+                threadRootEventId: 42,
+                type: 'message.posted',
+                actorId: 'u-2',
+                payload: { text: 'Allan steer between responses', steered_session_id: 's-1' },
+                createdAt: '2026-07-05T12:00:20.000Z',
+                author: bea,
+              },
+              {
+                id: 53,
+                workspaceId: 'ws-1',
+                channelId: 'ch-1',
+                threadRootEventId: 42,
+                type: 'session.replied',
+                actorId: null,
+                payload: { session_id: 's-1', text: 'Agent second response' },
+                createdAt: '2026-07-05T12:00:30.000Z',
+                author: agentAuthor,
+              },
+            ],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        ),
+      ),
+    );
+    const answerOne = message({
+      id: 51,
+      threadRootEventId: 42,
+      text: 'Agent first response',
+      sessionId: 's-1',
+      sessionEventType: 'replied',
+      broadcast: true,
+      author: agentAuthor,
+      reactions: [],
+    });
+    const answerTwo = message({
+      id: 53,
+      threadRootEventId: 42,
+      text: 'Agent second response',
+      sessionId: 's-1',
+      sessionEventType: 'replied',
+      broadcast: true,
+      author: agentAuthor,
+      reactions: [],
+    });
+    renderRow({
+      row: message({ replyCount: 3, lastReplyId: 53, lastReply: answerTwo, reactions: [] }),
+      anchoredAnswers: [answerOne, answerTwo],
+    });
+
+    // Collapsed: agent responses are anchored/visible; the steer is hidden.
+    expect(screen.getByText('Agent first response')).toBeTruthy();
+    expect(screen.queryByText('Allan steer between responses')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: '▶ 2 earlier replies' }));
+
+    // Expanded: one chronological list — steer sits BETWEEN the two agent
+    // responses, carries the "→ agent" affordance, and its author is the human.
+    const cluster = screen.getByTestId('channel-annotation-cluster');
+    const steer = await within(cluster).findByText('Allan steer between responses');
+    const first = within(cluster).getByText('Agent first response');
+    const second = within(cluster).getByText('Agent second response');
+    expect(first.compareDocumentPosition(steer) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(steer.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(cluster).getByText('→ agent')).toBeTruthy();
+    expect(within(cluster).getByText('Bea Chan')).toBeTruthy();
+
+    // No double-render: each agent response appears exactly once (the anchored
+    // rows are suppressed while the interleaved list carries them).
+    expect(within(cluster).getAllByText('Agent first response')).toHaveLength(1);
+    expect(within(cluster).getAllByText('Agent second response')).toHaveLength(1);
+  });
 });
 
 describe('MessageRow actions', () => {
