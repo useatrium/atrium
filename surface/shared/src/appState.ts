@@ -130,6 +130,7 @@ export type AppAction =
   | { type: 'thread-loaded'; channelId: string; rootEventId: number; events: WireEvent[] }
   | { type: 'open-thread'; rootEventId: number }
   | { type: 'close-thread' }
+  | { type: 'route-conversation'; threadRootId: number | null; sessionId: string | null }
   | {
       type: 'server-event';
       event: WireEvent;
@@ -492,6 +493,23 @@ export function appReducer(state: AppState, action: AppAction): AppState {
 
     case 'close-thread':
       return { ...state, openThreadRootId: null };
+
+    case 'route-conversation':
+      // Route re-applies fire on every location change; a no-op pair must not
+      // mint a new state object (the old per-axis guards lived at call sites).
+      if (
+        state.openThreadRootId === action.threadRootId &&
+        state.openSessionId === action.sessionId &&
+        !state.openSessionError
+      ) {
+        return state;
+      }
+      return {
+        ...state,
+        openThreadRootId: action.threadRootId,
+        openSessionId: action.sessionId,
+        openSessionError: false,
+      };
 
     case 'server-event': {
       const ev = action.event;

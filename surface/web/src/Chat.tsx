@@ -90,6 +90,7 @@ import { useConnections } from './useConnections';
 import { useProviderCredentials } from './useProviderCredentials';
 import { useReadMarks } from './useReadMarks';
 import { useSessionActions } from './useSessionActions';
+import { useConversationSelection } from './useConversationSelection';
 import { useSessionPaneState } from './useSessionPaneState';
 import { useSessionQueueFailures } from './useSessionQueueFailures';
 import { useTypingIndicators } from './useTypingIndicators';
@@ -844,8 +845,37 @@ export function Chat({
 
   const active = state.channels.find((c) => c.id === state.activeChannelId) ?? null;
   const timeline = (active && state.timelines[active.id]) || emptyTimeline;
-  const openThreadRoot =
-    state.openThreadRootId != null ? (timeline.main.find((m) => m.id === state.openThreadRootId) ?? null) : null;
+  const currentRoute = useMemo(() => parseInAppRoute(locationState.pathname), [locationState.pathname]);
+  const sessionFocusFromUrl = useMemo(
+    () => new URLSearchParams(locationState.search).get(URL_PARAMS.view) === 'focus',
+    [locationState.search],
+  );
+  const {
+    focused,
+    paneSession,
+    paneWatchers,
+    sessionPaneLayout,
+    setFocused,
+    setView: setPaneView,
+    spectators,
+    toggleFocus: togglePaneFocus,
+    view,
+  } = useSessionPaneState({
+    activeChannel: active,
+    dispatch,
+    focusedFromUrl: sessionFocusFromUrl,
+    isMobileViewport,
+    openSessionId: state.openSessionId,
+    presence: state.presence,
+    sessions: state.sessions,
+  });
+  const { openThreadRoot, conversationSession, conversationMode } = useConversationSelection({
+    openThreadRootId: state.openThreadRootId,
+    paneSession,
+    routeSessionId: currentRoute?.sessionId,
+    sessions: state.sessions,
+    timeline,
+  });
   const threadReplies = state.openThreadRootId != null ? (timeline.threads[state.openThreadRootId] ?? []) : [];
   const threadLoaded = state.openThreadRootId != null && timeline.threads[state.openThreadRootId] !== undefined;
   const activeDraftKey = active ? `channel:${active.id}` : '';
@@ -1429,7 +1459,6 @@ export function Chat({
           locationState.hash,
         ),
       );
-      dispatch({ type: 'close-thread' });
       putTextInComposer(draft);
     },
     [locationState.hash, locationState.search, putTextInComposer],
@@ -1452,30 +1481,6 @@ export function Chat({
     }
     setConfigureRestore(null);
   }, [activeDraftKey, configureRestore, markDraftTouched, saveDraft]);
-  const sessionFocusFromUrl = useMemo(
-    () => new URLSearchParams(locationState.search).get(URL_PARAMS.view) === 'focus',
-    [locationState.search],
-  );
-
-  const {
-    focused,
-    paneSession,
-    paneWatchers,
-    sessionPaneLayout,
-    setFocused,
-    setView: setPaneView,
-    spectators,
-    toggleFocus: togglePaneFocus,
-    view,
-  } = useSessionPaneState({
-    activeChannel: active,
-    dispatch,
-    focusedFromUrl: sessionFocusFromUrl,
-    isMobileViewport,
-    openSessionId: state.openSessionId,
-    presence: state.presence,
-    sessions: state.sessions,
-  });
   const paneOptimisticThreadSteers = useMemo(() => {
     const root = paneSession?.threadRootEventId;
     if (!paneSession || root == null) return [];
@@ -1495,8 +1500,7 @@ export function Chat({
       if (route.surface !== 'chat') {
         if (route.channelId && current.activeChannelId !== route.channelId) selectChannel(route.channelId);
         legacyFocusedSessionIdRef.current = null;
-        if (current.openSessionId) dispatch({ type: 'close-session' });
-        if (current.openThreadRootId != null) dispatch({ type: 'close-thread' });
+        dispatch({ type: 'route-conversation', threadRootId: null, sessionId: null });
         if (mainSurfaceRef.current !== route.surface) setMainSurface(route.surface);
         return;
       }
@@ -1517,16 +1521,14 @@ export function Chat({
 
       if (route.membersOpen) {
         legacyFocusedSessionIdRef.current = null;
-        if (current.openSessionId) dispatch({ type: 'close-session' });
-        if (current.openThreadRootId != null) dispatch({ type: 'close-thread' });
+        dispatch({ type: 'route-conversation', threadRootId: null, sessionId: null });
         setFocused(false);
         return;
       }
 
       if (!route.sessionId) {
         legacyFocusedSessionIdRef.current = null;
-        if (current.openSessionId) dispatch({ type: 'close-session' });
-        if (current.openThreadRootId != null) dispatch({ type: 'close-thread' });
+        dispatch({ type: 'route-conversation', threadRootId: null, sessionId: null });
         setFocused(false);
         return;
       }
@@ -1534,7 +1536,13 @@ export function Chat({
       if (route.focusSession) legacyFocusedSessionIdRef.current = route.sessionId;
       const keepLegacyFocus = legacyFocusedSessionIdRef.current === route.sessionId;
       setFocused(route.focusSession || keepLegacyFocus || sessionFocusFromUrl);
-      if (current.openSessionId !== route.sessionId) dispatch({ type: 'open-session', sessionId: route.sessionId });
+      if (current.openSessionId !== route.sessionId) {
+        dispatch({
+          type: 'route-conversation',
+          threadRootId: current.openThreadRootId,
+          sessionId: route.sessionId,
+        });
+      }
 
       sessionsApi
         .get(route.sessionId)
@@ -2097,19 +2105,6 @@ export function Chat({
   const queueStatus = queueStatusBanner(state.wsStatus, queueSync, connectionServerHost);
   const sidebarWsStatus =
     connectionKind === 'open' ? 'open' : connectionKind === 'connecting' ? 'connecting' : 'closed';
-  const currentRoute = useMemo(() => parseInAppRoute(locationState.pathname), [locationState.pathname]);
-  const conversationMode = currentRoute?.sessionId ? 'work' : 'thread';
-  const attachedThreadSession = openThreadRoot
-    ? openThreadRoot.sessionId != null
-      ? state.sessions[openThreadRoot.sessionId]
-      : Object.values(state.sessions).find((session) => session.threadRootEventId === openThreadRoot.id)
-    : undefined;
-  // The conversation's identity must not depend on the mode: during a
-  // thread→work route flip paneSession settles a render later, and falling
-  // back to `undefined` would flip ConversationPanel's key (remount + a second
-  // SSE). The thread's attached session IS the same conversation — use it in
-  // both modes.
-  const conversationSession = paneSession ?? attachedThreadSession;
   const membersRouteOpen =
     currentRoute?.surface === 'chat' &&
     currentRoute.membersOpen === true &&
