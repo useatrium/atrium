@@ -5,6 +5,7 @@ import { Ionicons } from '@expo/vector-icons';
 import {
   formatExactTimestamp,
   formatCost,
+  formatOutcome,
   formatRelativeTimestamp,
   isTerminalSessionStatus,
   sessionGlanceClockLabel,
@@ -60,11 +61,16 @@ function displayFields(item: DisplaySession) {
     completedAt: live?.completedAt ?? item.completedAt,
     archivedAt: live?.archivedAt ?? item.archivedAt,
     pinned: live?.pinned ?? item.pinned,
+    resultText: live?.resultText ?? item.resultText,
   };
 }
 
 function needsAttention(item: DisplaySession): boolean {
-  return item.live?.pendingQuestion != null || item.live?.providerAuthRequired != null;
+  // The list endpoint carries the canonical attention reason. Live state only
+  // takes precedence while it is present so a just-arrived question can move
+  // immediately without waiting for the next list refresh.
+  if (item.live) return item.live.pendingQuestion != null || item.live.providerAuthRequired != null;
+  return item.needsAttention;
 }
 
 function freshness(item: DisplaySession): number {
@@ -204,10 +210,19 @@ export default function SessionsScreen() {
     const timestamp = fields.completedAt ?? fields.createdAt;
     const time = formatRelativeTimestamp(timestamp) || timestamp;
     const exactTime = formatExactTimestamp(timestamp) || timestamp;
+    const outcome = terminal
+      ? formatOutcome(
+          fields.status,
+          Math.max(
+            0,
+            new Date(fields.completedAt ?? fields.createdAt).getTime() - new Date(fields.createdAt).getTime(),
+          ),
+        )
+      : '';
     return (
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={`${fields.title}, ${fields.status}, #${item.channelName}, ${terminal ? exactTime : `started ${exactTime}`}${fields.costUsd > 0 ? `, ${formatCost(fields.costUsd)}` : ''}`}
+        accessibilityLabel={`${fields.title}, ${terminal ? outcome : fields.status}, #${item.channelName}, ${terminal ? exactTime : `started ${exactTime}`}${fields.costUsd > 0 ? `, ${formatCost(fields.costUsd)}` : ''}`}
         accessibilityHint="Long press for pin and archive actions"
         onPress={() => router.push(`/session/${item.id}`)}
         onLongPress={() => openRowActions(item)}
@@ -245,13 +260,18 @@ export default function SessionsScreen() {
           <Text style={{ flex: 1, color: colors.textMuted, fontSize: font.sm }} numberOfLines={1}>
             #{item.channelName}
           </Text>
-          <Text style={{ color: colors.textFaint, fontSize: font.xs }}>{terminal ? time : `started ${time}`}</Text>
+          <Text style={{ color: colors.textFaint, fontSize: font.xs }}>{terminal ? outcome : `started ${time}`}</Text>
           {fields.costUsd > 0 && (
             <Text style={{ color: colors.textMuted, fontSize: font.xs, fontWeight: '700' }}>
               {formatCost(fields.costUsd)}
             </Text>
           )}
         </View>
+        {terminal && fields.resultText && (
+          <Text style={{ color: colors.textSecondary, fontSize: font.sm, marginTop: 4 }} numberOfLines={1}>
+            {fields.resultText}
+          </Text>
+        )}
       </Pressable>
     );
   };

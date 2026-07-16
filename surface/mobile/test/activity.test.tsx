@@ -26,6 +26,7 @@ const chatMock = vi.hoisted(() => ({
     markActivityRead: vi.fn(),
     markActivityItemRead: vi.fn(),
     markActivityItemUnread: vi.fn(),
+    markSessionActivityRead: vi.fn(),
     messages: vi.fn(),
   },
   me: { id: 'u-me', handle: 'me', displayName: 'Me' },
@@ -69,11 +70,13 @@ beforeEach(() => {
   chatMock.api.markActivityRead.mockReset();
   chatMock.api.markActivityItemRead.mockReset();
   chatMock.api.markActivityItemUnread.mockReset();
+  chatMock.api.markSessionActivityRead.mockReset();
   chatMock.api.messages.mockReset();
   chatMock.state.sessions = {};
   chatMock.api.markActivityRead.mockResolvedValue({ lastReadEventId: '0', unreadExceptionIds: [] });
   chatMock.api.markActivityItemRead.mockResolvedValue({ lastReadEventId: '0', unreadExceptionIds: [] });
   chatMock.api.markActivityItemUnread.mockResolvedValue({ lastReadEventId: '0', unreadExceptionIds: [] });
+  chatMock.api.markSessionActivityRead.mockResolvedValue(undefined);
 });
 
 vi.mock('react-native-gesture-handler', () => {
@@ -210,7 +213,7 @@ describe('mobile Activity screen', () => {
 
     renderWithTheme(<ActivityScreen />);
 
-    expect(await screen.findByText('Needs attention · 1')).toBeInTheDocument();
+    expect(await screen.findByText('Needs you · 1')).toBeInTheDocument();
     expect(screen.getByText('Activity')).toBeInTheDocument();
     expect(screen.getByText('Build docs failed')).toBeInTheDocument();
     // GDM items name the group, not a private DM.
@@ -218,10 +221,111 @@ describe('mobile Activity screen', () => {
     // The failed row (31) is past the watermark (8): announced as unread.
     expect(screen.getByLabelText(/^Unread, Build docs failed/)).toBeInTheDocument();
     expect(screen.getByLabelText('Filter Inbox')).toBeInTheDocument();
-    expect(screen.getByLabelText('Filter Done')).toBeInTheDocument();
+    expect(screen.getByLabelText('Filter Reviewed')).toBeInTheDocument();
 
     await pressWhenReady(screen.findByLabelText('Mark all read'));
     await waitFor(() => expect(chatMock.api.markActivityRead).toHaveBeenCalledWith(31));
     await waitFor(() => expect(screen.queryByLabelText(/^Unread, Build docs failed/)).not.toBeInTheDocument());
+  });
+
+  it('shelves running work and terminal results, then composes source filtering with Inbox predicates', async () => {
+    chatMock.state.sessions = {
+      's-running': {
+        id: 's-running',
+        title: 'Keep the rollout moving',
+        status: 'running',
+        channelId: 'ch-agent',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        archivedAt: null,
+        pendingSeatRequests: [],
+      },
+    };
+    chatMock.api.listSessions.mockResolvedValue({
+      sessions: [
+        {
+          id: 's-running',
+          channelId: 'ch-agent',
+          channelName: 'agents',
+          title: 'Keep the rollout moving',
+          status: 'running',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          completedAt: null,
+          archivedAt: null,
+          pinned: false,
+          costUsd: 0,
+          needsAttention: false,
+          attentionReason: null,
+          resultText: null,
+        },
+        {
+          id: 's-done',
+          channelId: 'ch-agent',
+          channelName: 'agents',
+          title: 'Ship the fix',
+          status: 'completed',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          completedAt: '2026-01-01T00:00:42.000Z',
+          archivedAt: null,
+          pinned: false,
+          costUsd: 0,
+          needsAttention: false,
+          attentionReason: null,
+          resultText: 'All checks passed.',
+        },
+      ],
+    });
+    const items = [
+      {
+        eventId: '41',
+        kind: 'session_completed',
+        channelId: 'ch-agent',
+        channelName: 'agents',
+        actorId: 'u-me',
+        actorName: 'Me',
+        snippet: 'The session completed.',
+        createdAt: '2026-01-01T00:00:42.000Z',
+        sessionId: 's-done',
+        sessionTitle: 'Ship the fix',
+        sessionStatus: 'completed',
+        attention: false,
+      },
+      {
+        eventId: '40',
+        kind: 'mention',
+        channelId: 'ch-people',
+        channelName: 'general',
+        actorId: 'u-alice',
+        actorName: 'Alice',
+        snippet: 'Can you take a look?',
+        createdAt: '2026-01-01T00:00:01.000Z',
+        attention: false,
+      },
+    ];
+    chatMock.api.getActivity.mockResolvedValue({
+      items,
+      nextCursor: null,
+      lastReadEventId: '0',
+      counts: { attention: 0, unread: 2, needsYou: 0, running: 1, toReview: 1 },
+    });
+
+    renderWithTheme(<ActivityScreen />);
+
+    expect(await screen.findByText('Running · 1')).toBeInTheDocument();
+    expect(screen.getByText('To review · 1')).toBeInTheDocument();
+    expect(screen.getByText('Done in 42s')).toBeInTheDocument();
+    expect(screen.getByText('All checks passed.')).toBeInTheDocument();
+
+    await pressWhenReady(screen.findByLabelText('Filter source People'));
+    expect(screen.queryByText('Running · 1')).not.toBeInTheDocument();
+    expect(screen.queryByText('To review · 1')).not.toBeInTheDocument();
+    expect(screen.getByText('Alice mentioned you')).toBeInTheDocument();
+
+    await pressWhenReady(screen.findByLabelText('Filter source Agents'));
+    expect(screen.queryByText('Alice mentioned you')).not.toBeInTheDocument();
+    expect(screen.getByText('To review · 1')).toBeInTheDocument();
+
+    await pressWhenReady(screen.findByText('Ship the fix · completed'));
+    await waitFor(() => expect(chatMock.api.markSessionActivityRead).toHaveBeenCalledWith('s-done'));
+    expect(routerMock.push).toHaveBeenCalledWith('/session/s-done');
   });
 });
