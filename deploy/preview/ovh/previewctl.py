@@ -12,6 +12,7 @@ import secrets
 import shutil
 import socket
 import subprocess
+import sys
 import tarfile
 import textwrap
 import time
@@ -34,6 +35,10 @@ REGISTRY_ALIAS = REGISTRY_PULL.split(":")[0]
 PREVIEW_DOMAIN = os.environ.get("ATRIUM_PREVIEW_DOMAIN", "preview.useatrium.com")
 # Warm pnpm store from provision-box.sh, so the web build reuses downloads.
 PNPM_STORE = Path(os.environ.get("ATRIUM_PREVIEW_PNPM_STORE", "/var/cache/atrium-preview/pnpm/store"))
+# Set to 1 to keep a failed preview's cluster/stack for debugging instead of
+# reclaiming it. Off by default: leaked clusters hold RAM without occupying a
+# concurrency slot (the cap only counts provisioning/ready).
+KEEP_FAILED = os.environ.get("ATRIUM_PREVIEW_KEEP_FAILED", "0") == "1"
 WEB_BUILD_IMAGE = os.environ.get("ATRIUM_PREVIEW_WEB_BUILD_IMAGE", "node:24-alpine")
 PORT_RANGE = range(21000, 29000)
 NODE_PORT = 30080
@@ -782,6 +787,13 @@ def cmd_create(args: argparse.Namespace) -> None:
             status="failed",
             failure_message=str(err),
         )
+        # A half-built preview still holds a k3d cluster, a compose stack and its
+        # bind-mount dir. Failed previews do not occupy a concurrency slot, so
+        # leaving them behind lets the box OOM well under MAX_CONCURRENT_PREVIEWS.
+        if KEEP_FAILED:
+            print(f"keeping failed preview {preview_id} for debugging", file=sys.stderr)
+        else:
+            teardown_resources(state)
         raise
     print(json.dumps(public_status(state), indent=2))
 
@@ -803,6 +815,27 @@ def best_effort(cmd: list[str], **kwargs: Any) -> None:
         run(cmd, check=False, **kwargs)
     except (OSError, subprocess.SubprocessError):
         pass
+
+
+def teardown_resources(state: dict[str, Any]) -> None:
+    """Best-effort reclaim of everything a preview holds. Safe to call twice."""
+    preview_id = state["preview_id"]
+    best_effort(["k3d", "cluster", "delete", f"preview-{preview_id}"], capture=False)
+    runtime = runtime_dir(preview_id)
+    if (
+        state.get("source_dir")
+        and (runtime / ".env").exists()
+        and (runtime / "docker-compose.preview.yml").exists()
+    ):
+        best_effort(compose_command(state, "down", "-v", "--remove-orphans"), capture=False)
+    fragment = (
+        Path(state["caddy_fragment"])
+        if state.get("caddy_fragment")
+        else CADDY_CONF_DIR / f"{preview_id}.caddy"
+    )
+    with contextlib.suppress(OSError):
+        fragment.unlink(missing_ok=True)
+    shutil.rmtree(REAL_FS_ROOT / preview_id, ignore_errors=True)
 
 
 def cmd_destroy(args: argparse.Namespace) -> None:
