@@ -245,6 +245,43 @@ describe('/api/activity', () => {
     expect(aliceItems.find((item: any) => item.kind === 'reaction')).toBeUndefined();
   });
 
+  it('stops counting attention once a blocked session is archived', async () => {
+    const bob = await login('bob', 'Bob');
+    const sessionId = await createActivitySession(bob.user.id, 'blocked session');
+    await pool.query(`UPDATE sessions SET pending_question = $2::jsonb WHERE id = $1`, [
+      sessionId,
+      JSON.stringify({ questionId: 'q-arch', turnId: 'turn-arch', questions: [], eventId: 1 }),
+    ]);
+    expect((await activityCounts(bob.cookie)).attention).toBe(1);
+
+    // Archiving is how you say "stop asking me" — and the Inbox list drops
+    // archived rows, so a badge that keeps counting can never be cleared.
+    const archived = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${sessionId}/archive`,
+      headers: { cookie: bob.cookie },
+      payload: { archived: true },
+    });
+    expect(archived.statusCode).toBe(200);
+    expect((await activityCounts(bob.cookie)).attention).toBe(0);
+  });
+
+  it('stops counting a provider-auth flag once the session is no longer live', async () => {
+    const bob = await login('bob', 'Bob');
+    const sessionId = await createActivitySession(bob.user.id, 'auth session');
+    await pool.query(`UPDATE sessions SET provider_auth_required = $2::jsonb WHERE id = $1`, [
+      sessionId,
+      JSON.stringify({ provider: 'codex', message: 'reconnect', at: new Date().toISOString() }),
+    ]);
+    expect((await activityCounts(bob.cookie)).attention).toBe(1);
+
+    // provider_auth_required is only cleared on steer/resolve/assign, never on
+    // completion — so without a liveness guard a cancelled session pinned the
+    // badge forever.
+    await pool.query(`UPDATE sessions SET status = 'cancelled', completed_at = now() WHERE id = $1`, [sessionId]);
+    expect((await activityCounts(bob.cookie)).attention).toBe(0);
+  });
+
   it('keeps the counts route equivalent to the feed and counts a pending seat request as attention', async () => {
     const alice = await login('alice', 'Alice');
     const bob = await login('bob', 'Bob');

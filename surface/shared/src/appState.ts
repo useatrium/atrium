@@ -200,6 +200,11 @@ function mergeSessionEntity(existing: Session | undefined, incoming: Session): S
       ? incoming.questionEvents
       : (existing?.questionEvents ?? []);
   const seatEvents = incoming.seatEvents.length > 0 ? incoming.seatEvents : (existing?.seatEvents ?? []);
+  // Same shape as pendingQuestion's rule, for the same reason: a snapshot built
+  // before the request landed must not erase a seat request WS already folded.
+  // session.seat_changed is what clears these.
+  const pendingSeatRequests =
+    incoming.pendingSeatRequests.length > 0 ? incoming.pendingSeatRequests : (existing?.pendingSeatRequests ?? []);
   const session: Session = {
     ...incoming,
     // A slow snapshot must never roll back a status WS already advanced.
@@ -210,6 +215,7 @@ function mergeSessionEntity(existing: Session | undefined, incoming: Session): S
     // erase what WS already folded.
     answeredQuestion: incoming.answeredQuestion ?? existing?.answeredQuestion ?? null,
     providerAuthRequired: incoming.providerAuthRequired ?? existing?.providerAuthRequired ?? null,
+    pendingSeatRequests,
     ...(existing?.latestActivity ? { latestActivity: existing.latestActivity } : {}),
     questionEvents,
     // Snapshot list rows and GET /api/sessions/:id carry no audit history, so
@@ -236,7 +242,7 @@ function sessionFromListSnapshot(state: AppState, item: SessionSnapshotItem): Se
       harness: item.harness,
       spawnedBy: item.spawnedBy,
       driverId: null,
-      pendingSeatRequests: [],
+      pendingSeatRequests: item.pendingSeatRequests,
       suggestions: [],
       answerProposals: [],
       pendingQuestion: item.pendingQuestion,
@@ -262,6 +268,7 @@ function sessionFromListSnapshot(state: AppState, item: SessionSnapshotItem): Se
     spawnerName: item.spawnerName,
     pendingQuestion: item.pendingQuestion,
     providerAuthRequired: item.providerAuthRequired,
+    pendingSeatRequests: item.pendingSeatRequests,
     costUsd: item.costUsd,
     resultText: item.resultText ?? existing?.resultText ?? null,
     createdAt: item.createdAt,

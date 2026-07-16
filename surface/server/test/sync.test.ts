@@ -218,6 +218,31 @@ describe('/api/sync', () => {
     });
   });
 
+  it('ships pending seat requests so a seat-blocked session reads as needs-you, not running', async () => {
+    const alice = await login('alice', 'Alice');
+    const bob = await login('bob', 'Bob');
+    const session = await pool.query<{ id: string }>(
+      `INSERT INTO sessions (workspace_id, channel_id, centaur_thread_key, title, status, spawned_by, driver_id)
+       VALUES ($1, $2, $3, 'seat blocked', 'running', $4, $4)
+       RETURNING id`,
+      [fx.workspaceId, fx.channelId, `test:seat:${randomUUID()}`, alice.user.id],
+    );
+    const sessionId = session.rows[0]!.id;
+    await pool.query('INSERT INTO seat_requests (session_id, user_id) VALUES ($1, $2)', [sessionId, bob.user.id]);
+
+    const synced = await sync(alice.cookie, 0, 1);
+    const row = synced.state.sessions.find((s: any) => s.id === sessionId);
+
+    // Without the payload the client has nothing to go on: the flag alone never
+    // covered seat requests either, so a blocked agent rendered as plain
+    // "running" while the Inbox badge counted it.
+    expect(row).toMatchObject({
+      needsAttention: true,
+      attentionReason: 'seat',
+      pendingSeatRequests: [{ userId: bob.user.id, displayName: 'Bob' }],
+    });
+  });
+
   it('ships mentionedSinceRead for unread channel mentions only', async () => {
     const alice = await login('alice', 'Alice');
     const bob = await login('bob', 'Bob');

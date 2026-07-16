@@ -928,6 +928,10 @@ export function registerActivityRoutes(app: FastifyInstance, deps: ActivityRoute
               )
          ) latest_failure ON s.status = 'failed'
          WHERE s.spawned_by = $1
+           -- Archiving a session is how you say "stop asking me". The Inbox
+           -- list drops archived rows, so counting them here left a badge you
+           -- could never clear. needsYou/running/toReview already exclude them.
+           AND s.archived_at IS NULL
            AND NOT EXISTS (
              SELECT 1 FROM channel_mutes mt
              WHERE mt.channel_id = s.channel_id AND mt.user_id = $1
@@ -943,7 +947,14 @@ export function registerActivityRoutes(app: FastifyInstance, deps: ActivityRoute
                  SELECT 1 FROM seat_requests sr WHERE sr.session_id = s.id
                )
              )
-             OR s.provider_auth_required IS NOT NULL
+             OR (
+               -- provider_auth_required outlives the turn: it is only cleared on
+               -- steer, resolve, or assignment — never on completion. Without the
+               -- same liveness guard the other terms carry, a cancelled session
+               -- pinned the badge forever.
+               s.provider_auth_required IS NOT NULL
+               AND s.status IN ('spawning', 'queued', 'running')
+             )
              OR (
                s.status = 'failed'
                AND (

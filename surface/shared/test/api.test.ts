@@ -352,6 +352,7 @@ describe('wire event response decoding', () => {
           askedAt: '2026-07-16T12:00:00.000Z',
         },
         providerAuthRequired: null,
+        pendingSeatRequests: [{ userId: 'u-bob', displayName: 'Bob' }],
       } satisfies SessionSnapshotItem,
     ];
 
@@ -359,6 +360,7 @@ describe('wire event response decoding', () => {
       threadRootEventId: 42,
       pendingQuestion: { questionId: 'q-1' },
       providerAuthRequired: null,
+      pendingSeatRequests: [{ userId: 'u-bob', displayName: 'Bob' }],
     });
 
     const oldWire = syncResponse();
@@ -367,6 +369,7 @@ describe('wire event response decoding', () => {
       threadRootEventId: null,
       pendingQuestion: null,
       providerAuthRequired: null,
+      pendingSeatRequests: [],
     });
   });
 
