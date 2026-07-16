@@ -1,0 +1,4 @@
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+*/10 * * * * __ATRIUM_SERVICE_USER__ __ATRIUM_REPO_ROOT__/deploy/preview/ovh/setup/janitor.sh 2>&1 | /usr/bin/logger -t atrium-preview-janitor
