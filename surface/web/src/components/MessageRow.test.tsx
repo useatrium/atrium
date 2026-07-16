@@ -508,6 +508,43 @@ describe('MessageRow web presence', () => {
     expect(within(reply).queryByRole('button', { name: 'Show more' })).toBeNull();
   });
 
+  it('makes the compact reply clamp a containing block, so clamped content cannot escape the clip', () => {
+    // jsdom has no layout, so this asserts the CSS contract rather than the
+    // symptom. In a real browser the clamp's `overflow: hidden` does NOT clip
+    // an absolutely positioned descendant unless the clamp is itself a
+    // containing block. GFM footnotes render `<h3 class="sr-only">Footnotes</h3>`
+    // and Tailwind's sr-only is `position: absolute`, so without `relative` that
+    // 1x1px heading kept its static position ~3000px down inside the clamped
+    // markdown and dragged the channel's scroll height with it — the transcript
+    // scrolled to a blank void well past the last message.
+    const answer = message({
+      id: 99,
+      threadRootEventId: 42,
+      sessionId: 's-1',
+      sessionEventType: 'replied',
+      text: 'A markdown sampler with footnotes.[^1]\n\n[^1]: The footnote body.',
+      reactions: [],
+      author: { id: 'agent:s-1', handle: 'agent', displayName: 'Agent' },
+    });
+    renderRow({
+      row: message({
+        sessionId: 's-1',
+        sessionTask: 'Markdown sampler',
+        replyCount: 1,
+        lastReplyId: 99,
+        lastReply: answer,
+        reactions: [],
+      }),
+      session: session({ status: 'completed', completedAt: '2026-07-05T12:01:00.000Z' }),
+      slotSessions: [session({ status: 'completed', completedAt: '2026-07-05T12:01:00.000Z' })],
+      anchoredAnswers: [answer],
+    });
+
+    const clamped = screen.getByTestId('thread-compact-reply').querySelector('.line-clamp-3');
+    expect(clamped).toBeTruthy();
+    expect(clamped?.classList.contains('relative')).toBe(true);
+  });
+
   it('uses exactly the failed terminal slot and keeps driver recovery actions', () => {
     renderRow({
       row: message({ sessionId: 's-1', sessionTask: 'Risky task', reactions: [] }),
