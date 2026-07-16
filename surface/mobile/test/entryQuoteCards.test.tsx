@@ -2,6 +2,7 @@
 import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { Channel, Session } from '@atrium/surface-client';
 import { EntryQuoteCards, stripYamlFrontmatter } from '../src/components/EntryQuoteCards';
 import type { ResolvedEntry } from '../src/lib/entryResolve';
 import { pressWhenReady, renderWithTheme } from './rnTestUtils';
@@ -48,9 +49,89 @@ const baseEntry: ResolvedEntry = {
   },
 };
 
+const channel: Channel = {
+  id: 'ch-1',
+  workspaceId: 'ws-1',
+  name: 'mobile',
+  createdAt: '2026-07-16T09:00:00.000Z',
+  archivedAt: null,
+  pinned: false,
+  kind: 'public',
+};
+
+const completedSession: Session = {
+  id: 's-1',
+  workspaceId: 'ws-1',
+  channelId: 'ch-1',
+  threadRootEventId: 42,
+  title: 'Ship mobile cards',
+  status: 'completed',
+  harness: 'codex',
+  spawnedBy: 'u-1',
+  driverId: 'u-1',
+  pendingSeatRequests: [],
+  suggestions: [],
+  answerProposals: [],
+  pendingQuestion: null,
+  seatEvents: [],
+  costUsd: 0,
+  resultText: null,
+  createdAt: '2026-07-16T09:00:00.000Z',
+  completedAt: '2026-07-16T10:00:00.000Z',
+  archivedAt: null,
+  pinned: false,
+  lastEventId: 42,
+  permalink: '/c/ch-1/s/s-1',
+};
+
 afterEach(cleanup);
 
 describe('EntryQuoteCards', () => {
+  it('renders session and channel cards from live state with shared glance status', async () => {
+    const onOpenSession = vi.fn();
+    const onOpenChannel = vi.fn();
+    renderWithTheme(
+      <EntryQuoteCards
+        text=""
+        serverUrl="https://atrium.example.test"
+        handles={[]}
+        internalLinks={[
+          { kind: 'session', sessionId: 's-1', channelId: 'ch-1' },
+          { kind: 'channel', channelId: 'ch-1', membersOpen: true },
+        ]}
+        sessions={{ 's-1': completedSession }}
+        channels={[channel]}
+        meId="u-2"
+        resolveEntry={vi.fn()}
+        onOpenSession={onOpenSession}
+        onOpenChannel={onOpenChannel}
+      />,
+    );
+
+    expect(screen.getByText('Ship mobile cards')).toBeInTheDocument();
+    expect(screen.getByText('Done · 1h 00m')).toBeInTheDocument();
+    expect(screen.getByText('CHANNEL MEMBERS')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Open session Ship mobile cards/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open channel #mobile' }));
+    expect(onOpenSession).toHaveBeenCalledWith('s-1');
+    expect(onOpenChannel).toHaveBeenCalledWith('ch-1');
+  });
+
+  it('renders no internal card when the referenced entity is absent from live state', () => {
+    renderWithTheme(
+      <EntryQuoteCards
+        text=""
+        serverUrl="https://atrium.example.test"
+        handles={[]}
+        internalLinks={[{ kind: 'channel', channelId: 'invisible', membersOpen: false }]}
+        channels={[channel]}
+        resolveEntry={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByTestId('internal-link-channel')).toBeNull();
+  });
+
   it('renders nothing until resolve completes, then opens record links in-app to sessions', async () => {
     const resolveEntry = vi.fn<(handle: string) => Promise<ResolvedEntry | null>>().mockResolvedValue(baseEntry);
     const onOpenSession = vi.fn();

@@ -10,11 +10,34 @@ function nonNegativeIntEnv(name: string, fallback: number): number {
   return Number.isSafeInteger(value) && value >= 0 ? value : fallback;
 }
 
+function optionalHttpOriginEnv(name: string): string {
+  const raw = process.env[name]?.trim();
+  if (!raw) return '';
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new Error(`${name} must be a valid HTTP(S) origin`);
+  }
+  if (
+    (url.protocol !== 'http:' && url.protocol !== 'https:') ||
+    url.username ||
+    url.password ||
+    url.pathname !== '/' ||
+    url.search ||
+    url.hash
+  ) {
+    throw new Error(`${name} must be a valid HTTP(S) origin`);
+  }
+  return url.origin;
+}
+
 export const config = {
   nodeEnv: process.env.NODE_ENV ?? '',
   databaseUrl: process.env.DATABASE_URL ?? 'postgres://atrium:atrium@localhost:5433/atrium',
   port: Number(process.env.PORT ?? 3001),
   host: process.env.HOST ?? '127.0.0.1',
+  publicOrigin: optionalHttpOriginEnv('ATRIUM_PUBLIC_ORIGIN'),
   // Host-side Docker publications are distinct from the container's required
   // 0.0.0.0 listener. Production Compose passes these through so boot checks
   // and logs can describe what is actually exposed on the host.

@@ -65,6 +65,7 @@ import { ConversationPanel } from './sessions/ConversationPanel';
 import { TAB_SLUG } from './sessions/WorkDrawer';
 import { loadSessionPaneWidth, sessionPaneSizing } from './sessions/useSessionPaneWidth';
 import { ChannelStrip } from './sessions/ChannelStrip';
+import { SessionsContextProvider } from './sessions/SessionsContext';
 import { SpawnDialog } from './sessions/SpawnDialog';
 import { ViewToggle } from './sessions/ViewToggle';
 import { isPendingSessionId, sessionFromWire } from './sessions/types';
@@ -797,6 +798,25 @@ export function Chat({
     query.addEventListener('change', sync);
     return () => query.removeEventListener('change', sync);
   }, []);
+
+  // A link card names ONE session, so this fetches that session and nothing
+  // else. It is not the N+1 heal loop #543 removed: that refetched every
+  // non-terminal session on every load and is now served by the /sync snapshot.
+  // The snapshot is bounded (SYNC_SESSION_LIMIT), so a link to an older session
+  // still misses — same targeted-fetch shape the routed session uses below.
+  const requestedLinkedSessionsRef = useRef(new Set<string>());
+  const requestLinkedSession = useCallback((id: string) => {
+    if (stateRef.current.sessions[id] || requestedLinkedSessionsRef.current.has(id)) return;
+    requestedLinkedSessionsRef.current.add(id);
+    sessionsApi
+      .get(id)
+      .then(({ session: wire }) => dispatch({ type: 'session-upsert', session: sessionFromWire(wire) }))
+      .catch(() => {});
+  }, []);
+  const sessionsContextValue = useMemo(
+    () => ({ sessions: state.sessions, channels: state.channels, requestSession: requestLinkedSession }),
+    [state.sessions, state.channels, requestLinkedSession],
+  );
 
   // Live sessions blocked on a person pin into Attention immediately, before
   // (or without) the server feed item — parity with the mobile Attention tab.
@@ -2148,7 +2168,7 @@ export function Chat({
     openSettingsSurface();
     setIsSidebarOpen(false);
   }, [openSettingsSurface]);
-  return (
+  const shell = (
     <div className="flex h-dvh overflow-hidden">
       <Sidebar
         workspaceName={workspace.name}
@@ -2833,6 +2853,7 @@ export function Chat({
       )}
     </div>
   );
+  return <SessionsContextProvider value={sessionsContextValue}>{shell}</SessionsContextProvider>;
 }
 
 /** Fixed-height "X is typing…" line — always present so the layout never shifts. */

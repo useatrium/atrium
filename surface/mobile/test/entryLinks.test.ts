@@ -4,6 +4,7 @@ import {
   isEntryHandle,
   partitionEntryLinks,
   unsuppressedEntryHandles,
+  unsuppressedInternalLinks,
 } from '../src/lib/entryLinks';
 
 const SERVER_URL = 'https://atrium.example.test:3001';
@@ -50,8 +51,38 @@ describe('entry link extraction', () => {
       bodyText: ['See /e/evt_12 inline.', 'Keep this line.'].join('\n'),
       standaloneHandles: ['evt_13', 'rec_alpha-123'],
       allHandles: ['evt_12', 'evt_13', 'rec_alpha-123'],
+      internalLinks: [],
       externalUrls: [],
     });
+  });
+
+  it('intercepts session and channel URLs before external unfurl classification without stripping the body', () => {
+    const text = [
+      'Session https://prod.atrium.test/c/ch-1/s/s-1',
+      'Members https://localhost:5173/c/ch-2/members?from=chat',
+      'External https://example.com/story',
+    ].join('\n');
+
+    const partitioned = partitionEntryLinks(text, SERVER_URL);
+    expect(partitioned.bodyText).toBe(text);
+    expect(partitioned.internalLinks).toEqual([
+      { kind: 'session', channelId: 'ch-1', sessionId: 's-1' },
+      { kind: 'channel', channelId: 'ch-2', membersOpen: true },
+    ]);
+    expect(partitioned.externalUrls).toEqual(['https://example.com/story']);
+    expect(unsuppressedInternalLinks(partitioned.internalLinks, ['session:s-1'])).toEqual([
+      { kind: 'channel', channelId: 'ch-2', membersOpen: true },
+    ]);
+  });
+
+  it('routes thread permalinks through the existing evt_ entry pipeline and keeps their URL visible', () => {
+    const url = 'https://foreign.atrium.test/c/ch-1/t/42';
+    const partitioned = partitionEntryLinks(url, SERVER_URL);
+
+    expect(partitioned.bodyText).toBe(url);
+    expect(partitioned.allHandles).toEqual(['evt_42']);
+    expect(partitioned.internalLinks).toEqual([]);
+    expect(partitioned.externalUrls).toEqual([]);
   });
 
   it('collects external URLs in first-seen order without double-matching entry links', () => {

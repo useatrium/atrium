@@ -1,5 +1,11 @@
 import { tryDecodeHandle } from '@atrium/surface-client/handle';
 import { isUnfurlableUrl } from '@atrium/surface-client';
+import {
+  internalLinkKey,
+  parseInternalLinkUrl,
+  threadEntryHandle,
+  type InternalLinkRef,
+} from '@atrium/surface-client/internal-links';
 
 const MAX_ENTRY_LINKS = 3;
 const ENTRY_LINK_RE = /https?:\/\/[^\s<>()]+|\/e\/[^\s<>()]+/gi;
@@ -18,6 +24,7 @@ export interface PartitionedEntryLinks {
   bodyText: string;
   standaloneHandles: string[];
   allHandles: string[];
+  internalLinks: InternalLinkRef[];
   externalUrls: string[];
 }
 
@@ -95,27 +102,52 @@ export function extractEntryLinkHandles(text: string, _serverUrl: string, limit 
 }
 
 export function partitionEntryLinks(text: string, _serverUrl: string, limit = MAX_ENTRY_LINKS): PartitionedEntryLinks {
-  if (!text) return { bodyText: '', standaloneHandles: [], allHandles: [], externalUrls: [] };
+  if (!text) return { bodyText: '', standaloneHandles: [], allHandles: [], internalLinks: [], externalUrls: [] };
 
   const bodyLines: string[] = [];
   const standaloneHandles: string[] = [];
   const seen = new Set<string>();
   const allHandles: string[] = [];
+  const internalLinks: InternalLinkRef[] = [];
   const externalUrls: string[] = [];
+  const seenInternalLinks = new Set<string>();
   const seenExternalUrls = new Set<string>();
 
   for (const rawMatch of text.matchAll(ENTRY_LINK_RE)) {
     const candidate = stripTrailingPunctuation(rawMatch[0] ?? '');
-    if (entryHandleFromLinkCandidate(candidate) != null || !isUnfurlableUrl(candidate)) continue;
+    const entryHandle = entryHandleFromLinkCandidate(candidate);
+    if (entryHandle != null) {
+      if (isEntryHandle(entryHandle) && !seen.has(entryHandle)) {
+        seen.add(entryHandle);
+        allHandles.push(entryHandle);
+      }
+      continue;
+    }
+
+    // Internal-link parsing must win over the generic URL classifier: our own
+    // absolute URLs are otherwise valid external-unfurl candidates.
+    const internalRef = parseInternalLinkUrl(candidate);
+    if (internalRef) {
+      if (internalRef.kind === 'thread') {
+        const handle = threadEntryHandle(internalRef);
+        if (!seen.has(handle)) {
+          seen.add(handle);
+          allHandles.push(handle);
+        }
+      } else {
+        const key = internalLinkKey(internalRef);
+        if (!seenInternalLinks.has(key)) {
+          seenInternalLinks.add(key);
+          internalLinks.push(internalRef);
+        }
+      }
+      continue;
+    }
+
+    if (!isUnfurlableUrl(candidate)) continue;
     if (seenExternalUrls.has(candidate)) continue;
     seenExternalUrls.add(candidate);
     externalUrls.push(candidate);
-  }
-
-  for (const { handle } of findEntryLinkMatches(text)) {
-    if (seen.has(handle)) continue;
-    seen.add(handle);
-    allHandles.push(handle);
   }
 
   seen.clear();
@@ -142,11 +174,20 @@ export function partitionEntryLinks(text: string, _serverUrl: string, limit = MA
     }
   }
 
-  return { bodyText: bodyLines.join('\n'), standaloneHandles, allHandles, externalUrls };
+  return { bodyText: bodyLines.join('\n'), standaloneHandles, allHandles, internalLinks, externalUrls };
 }
 
 export function unsuppressedEntryHandles(handles: readonly string[], suppressed: readonly string[] = []): string[] {
   if (suppressed.length === 0) return [...handles];
   const hidden = new Set(suppressed);
   return handles.filter((handle) => !hidden.has(handle));
+}
+
+export function unsuppressedInternalLinks(
+  refs: readonly InternalLinkRef[],
+  suppressed: readonly string[] = [],
+): InternalLinkRef[] {
+  if (suppressed.length === 0) return [...refs];
+  const hidden = new Set(suppressed);
+  return refs.filter((ref) => !hidden.has(internalLinkKey(ref)));
 }

@@ -4,13 +4,20 @@ import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import {
   containsCriticMarkup,
+  channelLabel,
+  deriveSessionGlance,
   parseCriticMarkup,
+  sessionGlanceClockLabel,
   unfurlImageProxyUrl,
   type Api,
   type AttachmentMeta,
+  type Channel,
+  type Session,
   type UnfurlResult,
 } from '@atrium/surface-client';
+import { internalLinkKey, type InternalLinkRef } from '@atrium/surface-client/internal-links';
 import { font, radius, space, useTheme } from '../lib/theme';
+import { glanceColor } from '../lib/sessionGlance';
 import { extractEntryLinkHandles } from '../lib/entryLinks';
 import type { ArtifactContentResolver, EntryResolver, ResolvedEntry } from '../lib/entryResolve';
 import type { UnfurlResolver } from '../lib/unfurlResolve';
@@ -28,6 +35,12 @@ const MAX_IMAGE_THUMBNAILS = 4;
 const IMAGE_ARTIFACT_RE = /\.(?:png|jpe?g|gif|webp|svg|avif)$/i;
 
 type ResolvedLinkUnfurl = { key: string; result: UnfurlResult };
+type ResolvedInternalLink = {
+  key: string;
+  ref: Exclude<InternalLinkRef, { kind: 'thread' }>;
+  session?: Session;
+  channel?: Channel;
+};
 
 export interface UnfurlManagement {
   messageEventId?: number | null;
@@ -789,13 +802,142 @@ function LinkUnfurlCard({
   );
 }
 
+function InternalLinkCard({
+  link,
+  meId,
+  canManage,
+  onRemove,
+  onOpenChannel,
+  onOpenSession,
+}: {
+  link: ResolvedInternalLink;
+  meId: string;
+  canManage: boolean;
+  onRemove: (key: string) => void;
+  onOpenChannel?: (channelId: string) => void;
+  onOpenSession?: (sessionId: string) => void;
+}) {
+  const { colors } = useTheme();
+  const session = link.session;
+  const channel = link.channel;
+  const isSession = link.ref.kind === 'session' && session != null;
+  const now = Date.now();
+  const glance = session ? deriveSessionGlance(session, now) : null;
+  const clock = glance ? sessionGlanceClockLabel(glance, now) : null;
+  const status = glance ? [glance.label, glance.detail, clock].filter(Boolean).join(' · ') : null;
+  const channelName = channel ? channelLabel(channel, meId) : null;
+  const isConversation = channel?.kind === 'dm' || channel?.kind === 'gdm';
+  const title = isSession ? (session?.title ?? '') : `${isConversation ? '' : '#'}${channelName ?? ''}`;
+  const context = isSession
+    ? channelName
+      ? `${isConversation ? '' : '#'}${channelName}`
+      : null
+    : link.ref.kind === 'channel' && link.ref.membersOpen
+      ? 'Members'
+      : channel?.kind === 'private'
+        ? 'Private channel'
+        : isConversation
+          ? 'Conversation'
+          : 'Channel';
+  const canOpen = isSession ? onOpenSession != null : onOpenChannel != null;
+  const open = () => {
+    // Navigate with the resolved entity id. Never open the host-agnostic URL
+    // that produced this card.
+    if (isSession && session) onOpenSession?.(session.id);
+    else if (channel) onOpenChannel?.(channel.id);
+  };
+
+  return (
+    <View
+      testID={`internal-link-${link.ref.kind}`}
+      style={{
+        borderWidth: 1,
+        borderColor: colors.border,
+        backgroundColor: colors.bgElevated,
+        borderRadius: radius.md,
+        padding: space.sm,
+        gap: space.xxs,
+      }}
+    >
+      <View style={{ minHeight: 32, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+        <Ionicons
+          name={
+            isSession
+              ? 'flash-outline'
+              : link.ref.kind === 'channel' && link.ref.membersOpen
+                ? 'people-outline'
+                : 'chatbubbles-outline'
+          }
+          size={14}
+          color={colors.textMuted}
+        />
+        <Text style={{ flex: 1, color: colors.textMuted, fontSize: font.xs, fontWeight: '800' }} numberOfLines={1}>
+          {isSession ? 'SESSION' : link.ref.kind === 'channel' && link.ref.membersOpen ? 'CHANNEL MEMBERS' : 'CHANNEL'}
+        </Text>
+        {canManage ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Remove preview"
+            onPress={(event) => {
+              event.stopPropagation();
+              onRemove(link.key);
+            }}
+            style={({ pressed }) => ({
+              width: 44,
+              minHeight: 44,
+              alignItems: 'center',
+              justifyContent: 'center',
+              borderRadius: radius.sm,
+              backgroundColor: pressed ? colors.bgPressed : 'transparent',
+            })}
+          >
+            <Ionicons name="close" size={18} color={colors.textMuted} />
+          </Pressable>
+        ) : null}
+      </View>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`Open ${isSession ? 'session' : 'channel'} ${title}${status ? `, ${status}` : ''}`}
+        accessibilityState={{ disabled: !canOpen }}
+        disabled={!canOpen}
+        onPress={open}
+        style={({ pressed }) => ({
+          minHeight: 44,
+          justifyContent: 'center',
+          gap: 3,
+          borderRadius: radius.sm,
+          backgroundColor: pressed ? colors.bgPressed : 'transparent',
+        })}
+      >
+        <Text style={{ color: colors.text, fontSize: font.sm, lineHeight: 19, fontWeight: '800' }} numberOfLines={2}>
+          {title}
+        </Text>
+        {status ? (
+          <Text style={{ color: glance ? glanceColor(glance.kind, colors) : colors.textMuted, fontSize: font.xs }}>
+            {status}
+          </Text>
+        ) : null}
+        {context ? (
+          <Text style={{ color: colors.textFaint, fontSize: font.xs }} numberOfLines={1}>
+            {context}
+          </Text>
+        ) : null}
+      </Pressable>
+    </View>
+  );
+}
+
 export { EntryInlineChip } from './EntryInlineChip';
 
 export function EntryQuoteCards({
   text,
   serverUrl,
   handles: providedHandles,
+  internalLinks = [],
   externalUrls = [],
+  sessions = {},
+  channels = [],
+  meId = '',
   resolveEntry,
   resolveUnfurls,
   resolveArtifactContent,
@@ -809,7 +951,11 @@ export function EntryQuoteCards({
   text: string;
   serverUrl: string;
   handles?: string[];
+  internalLinks?: InternalLinkRef[];
   externalUrls?: string[];
+  sessions?: Readonly<Record<string, Session>>;
+  channels?: readonly Channel[];
+  meId?: string;
   resolveEntry: EntryResolver;
   resolveUnfurls?: UnfurlResolver;
   resolveArtifactContent?: ArtifactContentResolver;
@@ -826,6 +972,10 @@ export function EntryQuoteCards({
   const handlesKey = (providedHandles ?? extractedHandles)
     .filter((handle) => !(unfurlManagement?.suppressed ?? []).includes(handle))
     .join('\n');
+  const visibleInternalRefs = internalLinks.filter(
+    (ref) => ref.kind !== 'thread' && !(unfurlManagement?.suppressed ?? []).includes(internalLinkKey(ref)),
+  );
+  const internalLinksKey = visibleInternalRefs.map(internalLinkKey).join('\n');
   const externalUrlsKey = externalUrls.filter((url) => !(unfurlManagement?.suppressed ?? []).includes(url)).join('\n');
   const [entries, setEntries] = useState<ResolvedEntry[]>([]);
   const [linkUnfurls, setLinkUnfurls] = useState<ResolvedLinkUnfurl[]>([]);
@@ -838,7 +988,7 @@ export function EntryQuoteCards({
 
   useEffect(() => {
     setExpanded(false);
-  }, [handlesKey, externalUrlsKey]);
+  }, [handlesKey, internalLinksKey, externalUrlsKey]);
 
   useEffect(() => {
     let cancelled = false;
@@ -878,9 +1028,24 @@ export function EntryQuoteCards({
   }, [externalUrlsKey, resolveUnfurls]);
 
   const visibleEntries = entries.filter((entry) => !optimisticallyHidden.includes(entry.handle));
+  const resolvedInternalLinks = visibleInternalRefs.flatMap((ref): ResolvedInternalLink[] => {
+    const key = internalLinkKey(ref);
+    if (optimisticallyHidden.includes(key)) return [];
+    if (ref.kind === 'session') {
+      const session = sessions[ref.sessionId];
+      if (!session) return [];
+      return [{ key, ref, session, channel: channels.find((candidate) => candidate.id === session.channelId) }];
+    }
+    if (ref.kind === 'channel') {
+      const channel = channels.find((candidate) => candidate.id === ref.channelId);
+      return channel ? [{ key, ref, channel }] : [];
+    }
+    return [];
+  });
   const visibleLinkUnfurls = linkUnfurls.filter((unfurl) => !optimisticallyHidden.includes(unfurl.key));
   const visibleCards = [
     ...visibleEntries.map((entry) => ({ kind: 'entry' as const, key: entry.handle, entry })),
+    ...resolvedInternalLinks.map((link) => ({ kind: 'internal' as const, key: link.key, link })),
     ...visibleLinkUnfurls.map((unfurl) => ({ kind: 'link' as const, key: unfurl.key, unfurl })),
   ];
   if (visibleCards.length === 0) return null;
@@ -915,6 +1080,16 @@ export function EntryQuoteCards({
             canManage={canManage}
             onRemove={removePreview}
             onOpenAttachments={onOpenAttachments}
+            onOpenChannel={onOpenChannel}
+            onOpenSession={onOpenSession}
+          />
+        ) : card.kind === 'internal' ? (
+          <InternalLinkCard
+            key={card.key}
+            link={card.link}
+            meId={meId}
+            canManage={canManage}
+            onRemove={removePreview}
             onOpenChannel={onOpenChannel}
             onOpenSession={onOpenSession}
           />

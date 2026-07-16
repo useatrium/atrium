@@ -58,6 +58,11 @@ services:
       SERVER_HOST_PORT: ${SERVER_HOST_PORT:-3001}
       MINIO_HOST_PORT: ${MINIO_HOST_PORT:-9000}
       DB_HOST_PORT: ${DB_HOST_PORT:-5433}
+      # Our own public origin, so the link-unfurl fetcher refuses to fetch us.
+      # Unset = guard off. Behind an access proxy an unauthenticated loopback
+      # fetch returns the SIGN-IN page, whose <title> then caches as a perfectly
+      # ordinary-looking og card. Should match web's VITE_PUBLIC_URL.
+      ATRIUM_PUBLIC_ORIGIN: ${ATRIUM_PUBLIC_ORIGIN:-}
       DATABASE_URL: postgres://${DB_USER:-atrium}:${DB_PASSWORD:?set DB_PASSWORD in .env}@db:5432/${DB_NAME:-atrium}
       SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET in .env}
       S3_ENDPOINT: ${S3_ENDPOINT:?set S3_ENDPOINT to a phone-reachable URL}
