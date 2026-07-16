@@ -669,6 +669,12 @@ def write_caddy_fragment(state: dict[str, Any]) -> None:
     block would make Caddy manage a separate certificate per preview, and Let's
     Encrypt rate-limits per registered domain. Named matchers share one namespace
     inside the site block, hence the preview id in every matcher name.
+
+    The minio matcher MUST use the block form. Caddy's one-line named matcher
+    takes a single matcher token, so `@m host H path /b/*` parses as a host
+    matcher with hostnames [H, "path", "/b/*"] — the path constraint silently
+    disappears, no error, and the minio handle then swallows every request to
+    the host (GET /healthz answers with MinIO's AccessDenied XML).
     """
     CADDY_CONF_DIR.mkdir(parents=True, exist_ok=True)
     preview_id = state["preview_id"]
@@ -679,7 +685,10 @@ def write_caddy_fragment(state: dict[str, Any]) -> None:
         textwrap.dedent(
             f"""\
             # preview {preview_id} -> commit {state['commit_sha']}
-            @minio-{preview_id} host {host} path /{state['minio_bucket']}/*
+            @minio-{preview_id} {{
+                host {host}
+                path /{state['minio_bucket']}/*
+            }}
             handle @minio-{preview_id} {{
                 # presigned S3 reads point at the public origin
                 reverse_proxy 127.0.0.1:{state['ports']['minio']}
