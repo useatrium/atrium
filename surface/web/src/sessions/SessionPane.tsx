@@ -90,7 +90,7 @@ import {
   type Session,
   type SessionStatus,
 } from './types';
-import { useSessionStream, type SessionStream } from './useSessionStream';
+import type { SessionStream } from './useSessionStream';
 import {
   SESSION_PANE_FALLBACK_WIDTH,
   SESSION_PANE_MAX_VW,
@@ -390,12 +390,6 @@ export interface SessionPaneProps {
   onDiscussEntry?: (payload: TranscriptDiscussPayload) => void;
   /** Shared API error hook; invalidates auth on 401 in the app shell. */
   onApiError?: (err: unknown) => void;
-}
-
-/** Compatibility entry point for popouts and focused session-only hosts. */
-export function SessionPane(props: SessionPaneProps & { visible?: boolean }) {
-  const sessionStream = useSessionStream(props.session.id, !isTerminalSessionStatus(props.session.status));
-  return <SessionPaneContent {...props} sessionStream={sessionStream} />;
 }
 
 export function SessionPaneContent({

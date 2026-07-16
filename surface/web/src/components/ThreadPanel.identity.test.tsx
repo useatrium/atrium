@@ -5,7 +5,7 @@ import type { ChatMessage, UserRef } from '@atrium/surface-client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ThemeProvider } from '../theme';
 import type { Session } from '../sessions/types';
-import { ThreadPanel } from './ThreadPanel';
+import { ThreadPanelHarness as ThreadPanel } from '../../test/renderConversation';
 
 vi.mock('../sessions/useSessionStream', async () => {
   const { initialSessionState } = await import('@atrium/centaur-client');
