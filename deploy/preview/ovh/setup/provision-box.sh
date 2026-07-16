@@ -191,7 +191,11 @@ ensure_directories() {
     "$CACHE_ROOT/cargo/git" \
     "$CACHE_ROOT/cargo/target" \
     "$CACHE_ROOT/buildkit" \
-    "$SERVICE_DOCKER_CONFIG"
+    "$SERVICE_DOCKER_CONFIG" \
+    /var/lib/atrium-preview/.helm/cache \
+    /var/lib/atrium-preview/.helm/config \
+    /var/lib/atrium-preview/.helm/data \
+    /var/lib/atrium-preview/.kube/cache
   sudo install -d -m 0755 "$CONFIG_DIR" "$CADDY_CONFIG_DIR"
   sudo install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0755 "$CADDY_CONF_DIR"
 }

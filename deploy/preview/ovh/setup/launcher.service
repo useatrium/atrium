@@ -12,10 +12,17 @@ SupplementaryGroups=docker
 WorkingDirectory=__ATRIUM_REPO_ROOT__
 EnvironmentFile=__ATRIUM_LAUNCHER_ENV__
 Environment=PYTHONUNBUFFERED=1
-# ProtectHome=read-only makes the service user's home unwritable, and the docker
-# CLI writes buildx state under $DOCKER_CONFIG (default ~/.docker). Point it at a
-# writable, service-owned dir or every `docker build` fails instantly.
+# The docker CLI writes buildx state under $DOCKER_CONFIG (default ~/.docker).
+# Keep it on a persistent, service-owned path so the warm buildx builder and its
+# cache survive restarts (and so it never depends on $HOME being writable).
 Environment=DOCKER_CONFIG=/var/lib/atrium-preview/.docker
+# Same for helm's repo cache and kubectl's discovery cache: persist them rather
+# than losing them with the tmpfs home. Without this helm fails with
+# "no cached repository ... (try 'helm repo update')".
+Environment=HELM_CACHE_HOME=/var/lib/atrium-preview/.helm/cache
+Environment=HELM_CONFIG_HOME=/var/lib/atrium-preview/.helm/config
+Environment=HELM_DATA_HOME=/var/lib/atrium-preview/.helm/data
+Environment=KUBECACHEDIR=/var/lib/atrium-preview/.kube/cache
 ExecStart=/usr/bin/python3 __ATRIUM_REPO_ROOT__/deploy/preview/ovh/launcher.py
 Restart=on-failure
 RestartSec=5s
@@ -23,7 +30,11 @@ TimeoutStopSec=30s
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
-ProtectHome=read-only
+# tmpfs, not read-only: this service shells out to docker, helm, kubectl, git and
+# just, all of which write caches under $HOME. A read-only home makes each of them
+# fail at its first write. A private tmpfs home keeps the sandbox tight while
+# letting any tool scribble; the caches worth persisting are redirected above.
+ProtectHome=tmpfs
 ReadWritePaths=/var/lib/atrium-preview /var/cache/atrium-preview __ATRIUM_REPO_ROOT__/deploy/preview/ovh
 
 [Install]
