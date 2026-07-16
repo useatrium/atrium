@@ -798,7 +798,12 @@ export function MessageText({
         // ancestor chain (GFM footnotes open with `<h3 class="sr-only">`) would
         // otherwise anchor above the clamp, escape the clip, and inflate the
         // scroll height into blank space (#544).
-        collapsedClassName="relative max-h-80 overflow-hidden [mask-image:linear-gradient(to_bottom,black_70%,transparent)]"
+        collapsedClassName="relative max-h-80 overflow-hidden"
+        // The fade rides on measured overflow, not on the length heuristic: a
+        // message long enough to trip the threshold but short enough to fit used
+        // to render faded with no toggle to clear it, because the toggle asks
+        // "does it overflow?" and the fade only asked "is it collapsed?".
+        overflowingClassName="[mask-image:linear-gradient(to_bottom,black_70%,transparent)]"
         expandLabel="Show more"
         collapseLabel="Show less"
         toggleClassName="mt-1 text-xs font-medium text-accent-text hover:underline"

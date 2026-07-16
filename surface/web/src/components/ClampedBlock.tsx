@@ -14,14 +14,27 @@ export function ClampedBlock({
   contentClassName,
   enabled = true,
   expandLabel,
+  overflowingClassName,
   toggleClassName,
 }: {
   children: ReactNode;
+  /**
+   * The size constraint, applied whenever the block is collapsed. It has to be
+   * applied even when the content turns out to fit, because overflow is measured
+   * THROUGH it: without the constraint, scrollHeight === clientHeight and nothing
+   * would ever report as overflowing.
+   */
   collapsedClassName: string;
   collapseLabel: ReactNode;
   contentClassName?: string;
   enabled?: boolean;
   expandLabel: ReactNode;
+  /**
+   * Styling that advertises there is more to see (a fade, say). Applied only when
+   * the content actually overflows, so it stays in step with the toggle: content
+   * that fits gets no toggle, and so must not get the hint either.
+   */
+  overflowingClassName?: string;
   toggleClassName?: string;
 }) {
   const insideClamp = useContext(ClampContext);
@@ -51,7 +64,14 @@ export function ClampedBlock({
 
   return (
     <>
-      <div ref={contentRef} className={classes(contentClassName, clamped && collapsedClassName)}>
+      <div
+        ref={contentRef}
+        className={classes(
+          contentClassName,
+          clamped && collapsedClassName,
+          clamped && overflows && overflowingClassName,
+        )}
+      >
         <ClampContext.Provider value={insideClamp || canClamp}>{children}</ClampContext.Provider>
       </div>
       {showToggle ? (
