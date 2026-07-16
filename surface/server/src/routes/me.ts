@@ -185,7 +185,7 @@ export function registerMeRoutes(app: FastifyInstance, deps: MeRouteDeps): void 
     }
     const token = typeof body.token === 'string' ? body.token.trim() : '';
     let brokerCredentialId = typeof body.brokerCredentialId === 'string' ? body.brokerCredentialId.trim() : '';
-    let verifiedPatIdentity: { accountLogin: string; scopes: string[] } | null = null;
+    let verifiedPatIdentity: { accountLogin: string; accountId: string | null; scopes: string[] } | null = null;
     let verifiedInstallation: GitHubAppInstallationInfo | null = null;
     const installationId =
       typeof body.installationId === 'string'
@@ -254,6 +254,7 @@ export function registerMeRoutes(app: FastifyInstance, deps: MeRouteDeps): void 
           tokenKind,
           accountLogin:
             verifiedPatIdentity?.accountLogin ?? verifiedInstallation?.accountLogin ?? stringOrNull(body.accountLogin),
+          accountId: verifiedPatIdentity?.accountId,
           accountLabel:
             verifiedPatIdentity?.accountLogin ?? verifiedInstallation?.accountLogin ?? stringOrNull(body.accountLabel),
           scopes: verifiedPatIdentity?.scopes ?? stringArray(body.scopes),
@@ -413,7 +414,7 @@ export function registerMeRoutes(app: FastifyInstance, deps: MeRouteDeps): void 
           message: 'GitHub OAuth exchange returned no access token',
         });
       }
-      const accountLogin = await fetchGitHubTokenLogin(token.accessToken);
+      const { accountLogin, accountId } = await fetchGitHubTokenLogin(token.accessToken);
       const brokerCredentialId = githubAppUserBrokerCredentialForeignId(workspaceId, user.id);
       await ironControl.upsertBrokerCredential({
         foreignId: brokerCredentialId,
@@ -445,6 +446,7 @@ export function registerMeRoutes(app: FastifyInstance, deps: MeRouteDeps): void 
           status: 'connected',
           tokenKind: 'app_user',
           accountLogin,
+          accountId,
           accountLabel: accountLogin,
           scopes: token.scopes,
           capabilities: {},
@@ -861,7 +863,7 @@ async function exchangeGitHubAppUserCode(code: string): Promise<GitHubAppUserTok
   };
 }
 
-async function fetchGitHubTokenLogin(token: string): Promise<string> {
+async function fetchGitHubTokenLogin(token: string): Promise<{ accountLogin: string; accountId: string | null }> {
   const res = await fetch('https://api.github.com/user', {
     method: 'GET',
     headers: {
@@ -873,15 +875,17 @@ async function fetchGitHubTokenLogin(token: string): Promise<string> {
   if (!res.ok) {
     throw new RouteResponse(502, 'github_user_lookup_failed', 'Could not fetch GitHub user identity');
   }
-  const body = (await res.json().catch(() => null)) as { login?: unknown } | null;
-  const login = stringOrNull(body?.login);
-  if (!login) {
+  const body = (await res.json().catch(() => null)) as { login?: unknown; id?: unknown } | null;
+  const accountLogin = stringOrNull(body?.login);
+  if (!accountLogin) {
     throw new RouteResponse(502, 'github_user_lookup_failed', 'GitHub user lookup returned no login');
   }
-  return login;
+  return { accountLogin, accountId: githubAccountId(body?.id) };
 }
 
-async function validateGitHubPatToken(token: string): Promise<{ accountLogin: string; scopes: string[] }> {
+async function validateGitHubPatToken(
+  token: string,
+): Promise<{ accountLogin: string; accountId: string | null; scopes: string[] }> {
   const res = await fetch('https://api.github.com/user', {
     method: 'GET',
     headers: {
@@ -896,15 +900,22 @@ async function validateGitHubPatToken(token: string): Promise<{ accountLogin: st
   if (!res.ok) {
     throw new RouteResponse(502, 'github_token_validation_failed', 'Could not validate GitHub token');
   }
-  const body = (await res.json().catch(() => null)) as { login?: unknown } | null;
+  const body = (await res.json().catch(() => null)) as { login?: unknown; id?: unknown } | null;
   const accountLogin = stringOrNull(body?.login);
   if (!accountLogin) {
     throw new RouteResponse(502, 'github_token_validation_failed', 'GitHub token validation returned no login');
   }
   return {
     accountLogin,
+    accountId: githubAccountId(body?.id),
     scopes: scopesHeaderArray(res.headers.get('x-oauth-scopes')),
   };
+}
+
+function githubAccountId(value: unknown): string | null {
+  if (typeof value === 'number' && Number.isSafeInteger(value) && value > 0) return String(value);
+  if (typeof value === 'string' && /^[1-9]\d*$/.test(value.trim())) return value.trim();
+  return null;
 }
 
 function stringOrNull(value: unknown): string | null {

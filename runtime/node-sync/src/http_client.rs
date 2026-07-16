@@ -94,6 +94,58 @@ impl HttpAtriumClient {
             .map_err(|e| HttpFeedError::Parse(e.to_string()))?;
         parse_profile_bundles(&value, harness).map_err(HttpFeedError::Parse)
     }
+
+    pub fn get_git_identity(&self) -> Result<Option<GitIdentity>, HttpFeedError> {
+        let resp = self
+            .agent
+            .get(&self.url("/git-identity"))
+            .set(AUTH_HEADER, &self.api_key)
+            .call()
+            .map_err(|e| http_feed_error("get git identity", e))?;
+        if resp.status() == 204 {
+            return Ok(None);
+        }
+        let value: serde_json::Value = resp
+            .into_json()
+            .map_err(|e| HttpFeedError::Parse(e.to_string()))?;
+        parse_git_identity(value)
+            .map(Some)
+            .map_err(HttpFeedError::Parse)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitIdentity {
+    #[serde(default)]
+    pub author_name: String,
+    #[serde(default)]
+    pub author_email: String,
+    #[serde(default)]
+    pub session_id: String,
+    #[serde(default)]
+    pub harness: String,
+}
+
+pub fn parse_git_identity(value: serde_json::Value) -> Result<GitIdentity, String> {
+    let identity = serde_json::from_value::<GitIdentity>(value)
+        .map_err(|e| format!("parse git-identity response: {e}"))?;
+    let missing = [
+        ("authorName", identity.author_name.as_str()),
+        ("authorEmail", identity.author_email.as_str()),
+        ("sessionId", identity.session_id.as_str()),
+        ("harness", identity.harness.as_str()),
+    ]
+    .into_iter()
+    .filter_map(|(field, value)| value.is_empty().then_some(field))
+    .collect::<Vec<_>>();
+    if !missing.is_empty() {
+        return Err(format!(
+            "parse git-identity response: missing fields: {}",
+            missing.join(", ")
+        ));
+    }
+    Ok(identity)
 }
 
 #[derive(Debug)]

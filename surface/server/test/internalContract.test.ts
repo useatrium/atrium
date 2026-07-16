@@ -283,4 +283,32 @@ describe('node-sync wire contract (fixtures)', () => {
     expect(res.statusCode).toBe(200);
     expect(Array.isArray(res.json<{ bundles: unknown[] }>().bundles)).toBe(true);
   });
+
+  it('git identity carries the contract shape', async () => {
+    await pool.query(`UPDATE users SET display_name = 'Allan Niemerg', email = 'allan@example.com' WHERE id = $1`, [
+      fx.userId,
+    ]);
+    await pool.query(
+      `INSERT INTO user_connection_identities
+         (workspace_id, user_id, provider, identity_id, status, token_kind, account_login, account_id, active)
+       VALUES ($1, $2, 'github', 'github:pat', 'connected', 'pat', 'aniemerg', '123', true)`,
+      [fx.workspaceId, fx.userId],
+    );
+    const sid = await session();
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/internal/sessions/${sid}/git-identity`,
+      headers: { 'x-api-key': KEY },
+    });
+    expect(res.statusCode).toBe(200);
+    const { _comment, ...template } = loadFixture('git-identity.json') as Record<string, unknown>;
+    expect(typeof _comment).toBe('string');
+    expectShape(res.json(), template);
+    expect(res.json()).toMatchObject({
+      authorName: 'Allan Niemerg',
+      authorEmail: '123+aniemerg@users.noreply.github.com',
+      source: 'github_noreply',
+      sessionId: sid,
+    });
+  });
 });
