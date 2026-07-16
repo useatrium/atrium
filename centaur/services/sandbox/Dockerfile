@@ -250,7 +250,7 @@ RUN mkdir -p ~/.config/amp ~/.codex ~/.pi/agent ~/repos ~/workspace \
     && git config --global --add safe.directory '*' \
     && git config --global user.name "Centaur AI" \
     && git config --global user.email "ai@centaur.local" \
-    && git config --global include.path /home/agent/.config/git/atrium-identity
+    && git config --global include.path /home/agent/context/.atrium-git-identity
 
 # ==============================================================================
 # Final thin stage: only frequently-changing local files below.
