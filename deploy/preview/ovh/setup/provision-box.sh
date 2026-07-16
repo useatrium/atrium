@@ -288,14 +288,19 @@ After=docker.service network-online.target
 Requires=docker.service
 
 [Service]
-Type=oneshot
-RemainAfterExit=yes
+# Type=simple, not oneshot: ExecStart runs \`caddy run\` in the FOREGROUND and never
+# returns. Under Type=oneshot systemd waits for it to exit and then kills a
+# perfectly healthy Caddy at TimeoutStartSec.
+Type=simple
 EnvironmentFile=$CADDY_ENV
 ExecStartPre=-/usr/bin/docker rm -f $CADDY_CONTAINER
 ExecStart=/usr/bin/docker run --name $CADDY_CONTAINER --network host --env-file $CADDY_ENV --volume $CADDY_CONFIG_DIR/Caddyfile:/etc/caddy/Caddyfile:ro --volume $CADDY_CONF_DIR:/etc/caddy/conf.d:ro --volume atrium-preview-caddy-data:/data --volume atrium-preview-caddy-config:/config $CADDY_IMAGE caddy run --config /etc/caddy/Caddyfile --adapter caddyfile
 ExecReload=/usr/bin/docker exec $CADDY_CONTAINER caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
 ExecStop=/usr/bin/docker stop $CADDY_CONTAINER
-TimeoutStartSec=120
+Restart=on-failure
+RestartSec=5s
+# DNS-01 issuance can take a while on first boot; do not race it.
+TimeoutStartSec=0
 
 [Install]
 WantedBy=multi-user.target
