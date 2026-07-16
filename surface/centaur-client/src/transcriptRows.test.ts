@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import type { SessionItem, ToolCallItem } from './reducer.js';
-import { foldedTurnRows, focusTranscriptRows, fullTranscriptRows, toolDefaultOpen } from './transcriptRows.js';
+import {
+  foldedTurnRows,
+  focusTranscriptRows,
+  fullTranscriptRows,
+  isLiveFold,
+  toolDefaultOpen,
+} from './transcriptRows.js';
 
 const item = (id: string, type: SessionItem['type']): SessionItem => ({ id, type }) as SessionItem;
 
@@ -138,5 +144,35 @@ describe('turn work folds', () => {
 
     expect(foldedTurnRows(items)).toHaveLength(1);
     expect(foldedTurnRows(items)[0]).toMatchObject({ replyOrdinal: 1, replyIndex: 4 });
+  });
+});
+
+describe('live turn work folds', () => {
+  it('marks an incomplete newest fold live while the conversation is active', () => {
+    const folds = foldedTurnRows([
+      { ...item('ask', 'user_message'), text: 'Run it' },
+      { ...item('tool', 'tool_call'), name: 'Bash', input: {} },
+    ] as SessionItem[]);
+
+    expect(isLiveFold(folds[0]!, folds, true)).toBe(true);
+  });
+
+  it('does not mark a completed newest fold live', () => {
+    const folds = foldedTurnRows([
+      { ...item('ask', 'user_message'), text: 'Run it' },
+      { ...item('tool', 'tool_call'), name: 'Bash', input: {} },
+      { ...item('answer', 'text'), text: 'Done' },
+    ] as SessionItem[]);
+
+    expect(isLiveFold(folds[0]!, folds, true)).toBe(false);
+  });
+
+  it('does not mark an incomplete newest fold live while the conversation is inactive', () => {
+    const folds = foldedTurnRows([
+      { ...item('ask', 'user_message'), text: 'Run it' },
+      { ...item('tool', 'tool_call'), name: 'Bash', input: {} },
+    ] as SessionItem[]);
+
+    expect(isLiveFold(folds[0]!, folds, false)).toBe(false);
   });
 });

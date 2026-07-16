@@ -7,7 +7,6 @@ import {
   channelLabel,
   deriveSessionGlance,
   emptyTimeline,
-  formatDurationUnits,
   isTerminalSessionStatus,
   sessionDriverId,
   sessionGlanceClockLabel,
@@ -19,15 +18,16 @@ import {
   changedPaths,
   collectArtifacts,
   collectFileChanges,
+  foldedTurnRows,
   focusTranscriptRows,
   fullTranscriptRows,
+  isLiveFold,
   isTerminalExecutionStatus,
-  toolDisplay,
-  type SessionItem,
 } from '@atrium/centaur-client';
 import { useChat } from '../../../src/lib/chat';
 import { font, radius, space, useTheme } from '../../../src/lib/theme';
 import { useSessionStream } from '../../../src/lib/useSessionStream';
+import { mapFoldedTurnRow } from '../../../src/lib/threadWorkFold';
 import { glanceColor } from '../../../src/lib/sessionGlance';
 import { parseUnfurlPreviewArtifactId, unfurlPreviewContentUrl } from '../../../src/lib/unfurlPreview';
 import { attachmentToHubFile } from '../../../src/components/attachmentPreview';
@@ -38,7 +38,7 @@ import { MessageActions, MessageActionSheet } from '../../../src/components/Mess
 import { AgentModeConfig, type AgentEffort, type AgentModeTarget } from '../../../src/components/AgentModeConfig';
 import { Timeline } from '../../../src/components/Timeline';
 import { AgentMark } from '../../../src/components/AgentMark';
-import { HiddenWorkChip, type WorkFoldStep } from '../../../src/components/HiddenWorkChip';
+import { HiddenWorkChip } from '../../../src/components/HiddenWorkChip';
 import { ArtifactsSurface } from '../../../src/components/work/ArtifactsSurface';
 import { ChangesSurface } from '../../../src/components/work/ChangesSurface';
 import { MobileWorkSheet, type WorkSurfaceTab } from '../../../src/components/work/MobileWorkSheet';
@@ -47,51 +47,6 @@ import { WorkStrips, type WorkStripItem } from '../../../src/components/work/Wor
 interface AttachmentLightboxState {
   files: HubFile[];
   initialIndex: number;
-}
-
-function transcriptStep(item: SessionItem): WorkFoldStep | null {
-  if (item.type === 'user_message') return null;
-  if (item.type === 'tool_call') {
-    const descriptor = toolDisplay(item);
-    const detail = [JSON.stringify(item.input, null, 2), item.result?.content].filter(Boolean).join('\n\n');
-    return {
-      id: item.id,
-      label: descriptor.subtitle ? `${descriptor.title} · ${descriptor.subtitle}` : descriptor.title,
-      detail,
-      status: item.result === undefined ? 'running' : item.result.is_error ? 'failed' : 'done',
-    };
-  }
-  if (item.type === 'reasoning') {
-    return { id: item.id, label: item.summary || 'Reasoning', detail: item.text, status: 'done' };
-  }
-  if (item.type === 'question') {
-    return {
-      id: item.id,
-      label: item.questions[0]?.question || 'Asked for input',
-      status: item.status === 'pending' ? 'running' : 'done',
-    };
-  }
-  return { id: item.id, label: 'Agent response', detail: item.text, status: 'done' };
-}
-
-function itemDuration(items: SessionItem[]): string | undefined {
-  const timestamps = items.map((item) => (item.ts ? Date.parse(item.ts) : Number.NaN)).filter(Number.isFinite);
-  if (timestamps.length < 2) return undefined;
-  return formatDurationUnits(Math.max(...timestamps) - Math.min(...timestamps));
-}
-
-function groupWorkFolds(items: SessionItem[]): Array<{ steps: WorkFoldStep[]; duration?: string }> {
-  const groups: SessionItem[][] = [[]];
-  for (const item of items) {
-    if (item.type === 'user_message' && groups.at(-1)!.length > 0) groups.push([]);
-    if (item.type !== 'user_message') groups.at(-1)!.push(item);
-  }
-  return groups
-    .filter((group) => group.length > 0)
-    .map((group) => ({
-      steps: group.map(transcriptStep).filter((step): step is WorkFoldStep => step != null),
-      ...(itemDuration(group) ? { duration: itemDuration(group) } : {}),
-    }));
 }
 
 export default function ThreadScreen() {
@@ -148,7 +103,8 @@ export default function ThreadScreen() {
   const fullRows = useMemo(() => fullTranscriptRows(stream.items, () => []), [stream.items]);
   const focusRows = useMemo(() => focusTranscriptRows(stream.items, () => []), [stream.items]);
   const transcriptItems = useMemo(() => fullRows.flatMap((row) => (row.kind === 'item' ? [row.item] : [])), [fullRows]);
-  const workFolds = useMemo(() => groupWorkFolds(transcriptItems), [transcriptItems]);
+  const turnFolds = useMemo(() => foldedTurnRows(transcriptItems), [transcriptItems]);
+  const workFolds = useMemo(() => turnFolds.map(mapFoldedTurnRow), [turnFolds]);
   const fileChanges = useMemo(() => collectFileChanges(stream), [stream]);
   const changedFileCount = useMemo(() => changedPaths(fileChanges).length, [fileChanges]);
   const artifacts = useMemo(() => collectArtifacts(stream), [stream]);
@@ -229,17 +185,21 @@ export default function ThreadScreen() {
   );
   const workFoldNodes = useMemo(
     () =>
-      workFolds.map((fold, index) => (
-        <HiddenWorkChip
-          key={`fold-${index}`}
-          count={fold.steps.length}
-          duration={fold.duration}
-          steps={fold.steps}
-          live={!sessionTerminal && !isTerminalExecutionStatus(stream.status) && index === workFolds.length - 1}
-          onShowFull={() => setWorkTab('whatRan')}
-        />
-      )),
-    [sessionTerminal, stream.status, workFolds],
+      turnFolds.map((fold, index) => {
+        const view = workFolds[index];
+        if (!view) return null;
+        return (
+          <HiddenWorkChip
+            key={fold.key}
+            count={view.steps.length}
+            duration={view.duration}
+            steps={view.steps}
+            live={isLiveFold(fold, turnFolds, !sessionTerminal && !isTerminalExecutionStatus(stream.status))}
+            onShowFull={() => setWorkTab('whatRan')}
+          />
+        );
+      }),
+    [sessionTerminal, stream.status, turnFolds, workFolds],
   );
   // Canonical seat resolution: null driverId falls back to the spawner.
   const isDriver = attachedSession != null && sessionDriverId(attachedSession) === me.id;

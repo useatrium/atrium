@@ -30,6 +30,12 @@ export interface FoldedTurnRow {
   completed: boolean;
 }
 
+/** A fold renders live iff the conversation is active, the fold's turn hasn't
+ * completed, and it is the newest fold. */
+export function isLiveFold(fold: FoldedTurnRow, folds: readonly FoldedTurnRow[], active: boolean): boolean {
+  return active && !fold.completed && folds.at(-1)?.key === fold.key;
+}
+
 function isWorkItem(item: SessionItem): item is TurnWorkItem {
   return item.type === 'reasoning' || item.type === 'tool_call';
 }
