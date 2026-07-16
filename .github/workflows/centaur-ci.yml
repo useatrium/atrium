@@ -315,7 +315,7 @@ jobs:
         working-directory: runtime/node-sync
         run: |
           sudo -E env "PATH=$PATH" CARGO_TARGET_DIR=/tmp/privileged-target \
-            cargo test --test git_identity_overlay_visibility -- --nocapture
+            cargo test --test git_identity_visibility -- --nocapture
 
       # Real overlay + scan-demo: locks in the syscall proofs (whiteout→Delete,
       # symlink→metadata-only, openat2 NO_SYMLINKS blocks the /etc/shadow escape).

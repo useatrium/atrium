@@ -143,6 +143,21 @@ that reaches a claimed warm pod. On 204 the daemon writes nothing and the
 image's baked `Centaur AI` identity stands — that fallback is the pre-existing
 behavior, which is what makes this lane safe to ship dark.
 
+**The identity file MUST land in the session's context root** (`~/context/.atrium-git-identity`,
+the ext4 bind mount) and never in the agent's overlay home. This is load-bearing, not
+stylistic, and it shipped wrong twice before anyone measured it. `entrypoint.sh` runs
+`git config` at POD CREATION; git resolves the `[include]` target, gets ENOENT, and the
+kernel caches a NEGATIVE dentry minutes before the claim that knows who the user is. So
+the lookup has always already missed by the time the identity is written, and the only
+question is whether that negative entry is invalidated. Overlay mount instances keep
+independent dentry trees, so a node-side create — into `upper` OR through `merged`, both
+were shipped — never invalidates the pod's entry: readdir lists the file while lookup
+returns ENOENT, and the agent commits as `Centaur AI` with the file plainly on disk. A
+bind mount of one ext4 superblock shares the dentry tree, so the create is observed even
+after a failed lookup. `tests/git_identity_visibility.rs` pins exactly that ordering
+(mount, MISS, write, hit); a test that writes before looking up passes on the broken
+design too.
+
 Lanes covered by route-existence + daemon-side parsing only (their payloads
 are opaque blobs or one-way writes): `artifacts/raw`, `harness-transcript`,
 `harness-state-bundle`, `profile-candidates`, `profile-baseline`,

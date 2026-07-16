@@ -6,7 +6,6 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use crate::http_client::GitIdentity;
-use crate::overlay_mount::OverlayMountPlan;
 use crate::runtime::{AtriumChannel, AtriumClient, ContextDeltaRequest, ContextDocResponse};
 use crate::state::{ContextDocState, DaemonState};
 
@@ -86,26 +85,31 @@ If a listed path is missing, it is still materializing — wait a few seconds an
 "#;
 
 pub const CONTEXT_READY_MARKER: &str = ".atrium-context-ready";
-pub const GIT_IDENTITY_RELATIVE_PATH: &str = ".config/git/atrium-identity";
+/// Name of the identity file inside a session's CONTEXT root. The sandbox image
+/// includes `~/context/.atrium-git-identity` from /opt/centaur/gitconfig. Dotfile so
+/// it stays out of the context doc tree the agent browses.
+pub const GIT_IDENTITY_FILE: &str = ".atrium-git-identity";
 
-/// Authoritatively materialize the server-derived identity into a session's home.
+/// Authoritatively materialize the server-derived identity into a session's CONTEXT
+/// root — the ext4 bind mount the agent sees at `~/context`, never its overlay home.
 /// `None` is the 204 fallback and removes a prior identity so the image default wins.
 ///
-/// Takes the mounted `OverlayMountPlan` rather than a bare path ON PURPOSE: this must
-/// be written through `plan.merged`, and an earlier version took a `&Path` and got
-/// handed the overlay's `upper` instead. That compiled, passed every tempdir unit
-/// test, and was silently useless in production — a warm pod's overlay is already
-/// mounted long before the claim that gives it an identity, and writing to an
-/// upperdir behind a live mount is undefined: the file lands on disk while the merged
-/// view keeps serving its cached negative dentry, so the agent never sees it and
-/// commits as the baked "Centaur AI". Deriving the path here instead of accepting one
-/// makes that mistake unrepresentable rather than merely documented.
+/// `context_root` must be the same value `write_mount_readme` is given
+/// (`scoped_atrium_root(...)`). Passing an overlay path here is the bug this function
+/// has already shipped twice: `entrypoint.sh` runs `git config` at POD CREATION, git
+/// resolves the `[include]` target, gets ENOENT, and the kernel caches a NEGATIVE
+/// dentry for that path minutes before any claim. Overlay mount instances keep
+/// independent dentry trees, so a later create from the node side — upper OR merged —
+/// never invalidates the pod's negative entry, and the agent commits as the baked
+/// "Centaur AI" while the file plainly exists on disk. A bind mount of one ext4
+/// superblock shares the dentry tree, so the create is observed even after a failed
+/// lookup. Measured on a live pod, both ways; see tests/git_identity_visibility.rs.
 pub fn materialize_git_identity(
-    plan: &OverlayMountPlan,
+    context_root: &Path,
     identity: Option<&GitIdentity>,
     agent_uid: Option<u32>,
 ) -> Result<(), String> {
-    let dst = plan.merged.join(GIT_IDENTITY_RELATIVE_PATH);
+    let dst = context_root.join(GIT_IDENTITY_FILE);
     let Some(identity) = identity else {
         remove_file_if_present(&dst)?;
         return Ok(());
@@ -999,17 +1003,6 @@ mod tests {
         }
     }
 
-    // Build via the real constructor so the plan cannot drift from production's shape.
-    // `merged` is a plain tempdir here: these unit tests cover the FILE contract
-    // (escaping, idempotency, 204-removal). They CANNOT cover overlay visibility, which
-    // is what actually broke in production — see tests/git_identity_overlay_visibility.rs.
-    fn plan_for(home: &Path) -> OverlayMountPlan {
-        let overlays_root = home.join("overlays-root");
-        std::fs::create_dir_all(&overlays_root).unwrap();
-        crate::overlay_mount::plan_overlay_mount(&overlays_root, "unit", home, "", &[], None)
-            .unwrap()
-    }
-
     // Pinned to `/` for the same reason the writer is: git discovers a repository from
     // the cwd even for `--file` reads, so running the suite from inside a linked
     // worktree (whose .git is a gitfile) would fail these on repo discovery, not on
@@ -1027,11 +1020,11 @@ mod tests {
     #[test]
     fn git_identity_204_removes_a_stale_file() {
         let temp = tempfile::tempdir().unwrap();
-        let dst = temp.path().join(GIT_IDENTITY_RELATIVE_PATH);
+        let dst = temp.path().join(GIT_IDENTITY_FILE);
         std::fs::create_dir_all(dst.parent().unwrap()).unwrap();
         std::fs::write(&dst, b"stale").unwrap();
 
-        materialize_git_identity(&plan_for(temp.path()), None, None).unwrap();
+        materialize_git_identity(temp.path(), None, None).unwrap();
 
         assert!(!dst.exists());
     }
@@ -1040,9 +1033,9 @@ mod tests {
     fn git_identity_200_writes_exact_config() {
         let temp = tempfile::tempdir().unwrap();
         let identity = git_identity("Allan Niemerg");
-        let dst = temp.path().join(GIT_IDENTITY_RELATIVE_PATH);
+        let dst = temp.path().join(GIT_IDENTITY_FILE);
 
-        materialize_git_identity(&plan_for(temp.path()), Some(&identity), None).unwrap();
+        materialize_git_identity(temp.path(), Some(&identity), None).unwrap();
 
         assert_eq!(
             std::fs::read_to_string(&dst).unwrap(),
@@ -1063,9 +1056,9 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let hostile = "Eve \"quoted\" \\\\ path\n[include]\n\tpath = /etc/passwd";
         let identity = git_identity(hostile);
-        let dst = temp.path().join(GIT_IDENTITY_RELATIVE_PATH);
+        let dst = temp.path().join(GIT_IDENTITY_FILE);
 
-        materialize_git_identity(&plan_for(temp.path()), Some(&identity), None).unwrap();
+        materialize_git_identity(temp.path(), Some(&identity), None).unwrap();
 
         let output = git_config_get(&dst, "user.name");
         assert!(output.status.success());
@@ -1084,11 +1077,11 @@ mod tests {
     fn git_identity_materialization_is_idempotent() {
         let temp = tempfile::tempdir().unwrap();
         let identity = git_identity("Allan Niemerg");
-        let dst = temp.path().join(GIT_IDENTITY_RELATIVE_PATH);
+        let dst = temp.path().join(GIT_IDENTITY_FILE);
 
-        materialize_git_identity(&plan_for(temp.path()), Some(&identity), None).unwrap();
+        materialize_git_identity(temp.path(), Some(&identity), None).unwrap();
         let first = std::fs::read(&dst).unwrap();
-        materialize_git_identity(&plan_for(temp.path()), Some(&identity), None).unwrap();
+        materialize_git_identity(temp.path(), Some(&identity), None).unwrap();
 
         assert_eq!(std::fs::read(&dst).unwrap(), first);
     }

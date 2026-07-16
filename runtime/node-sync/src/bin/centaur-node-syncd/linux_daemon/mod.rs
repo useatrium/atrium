@@ -434,36 +434,46 @@ fn run_multi_session(global: GlobalConfig, overlays_root: PathBuf, once: bool, i
                             continue;
                         }
                     };
+                    let session = session_config_from_discovered(&discovered, &mounted);
+                    mounted_overlays.insert(discovered.session.clone(), mounted);
+                    let first_seen = !states.contains_key(&session.session);
+                    let atrium_root = scoped_atrium_root(&global.atrium_root, &session.session);
+                    if should_eager_poll_atrium(&session, &atrium_root) {
+                        eager_poll_sessions.insert(session.session.clone());
+                    }
                     // Git author identity is server-derived per CLAIM, and a claim is a
                     // mount — so refresh it only when the mount is being (re)established,
                     // never on every tick. An unconditional per-session GET per tick is
                     // exactly the steady-state cost the atrium delta protocol exists to
                     // avoid.
                     //
-                    // This MUST write through `mounted.merged`, never `discovered.upper`.
-                    // A warm pod's overlay is already mounted long before the claim that
-                    // gives it an identity, and modifying an overlay's upperdir behind a
-                    // live mount is undefined: the file lands on disk but the merged view
-                    // keeps serving its cached (negative) dentry, so the agent never sees
-                    // it — and the path is left so incoherent that a later mkdir through
-                    // the mount fails with ESTALE. Shipped exactly that way once: the
-                    // identity file was present in the upper and the agent still committed
-                    // as "Centaur AI". Same hazard the lowerdir comment above describes.
+                    // It lands in the CONTEXT root — an ext4 bind mount — and NOT in the
+                    // agent's overlay home, which is why `/opt/centaur/gitconfig` includes
+                    // `~/context/.atrium-git-identity`. This is not a stylistic choice; the
+                    // home cannot work:
+                    //
+                    //   entrypoint.sh runs `git config` at POD CREATION. git reads the
+                    //   global config, sees the [include], opens the target, gets ENOENT,
+                    //   and the kernel caches a NEGATIVE dentry for that path — minutes
+                    //   before any claim exists. Overlay mount INSTANCES keep independent
+                    //   dentry trees, so a later create from the node side (upper OR merged)
+                    //   never invalidates the pod's negative entry: readdir lists the file
+                    //   while lookup still returns ENOENT, and the agent commits as the
+                    //   baked "Centaur AI". Shipped that way twice. A bind mount of one ext4
+                    //   superblock shares the dentry tree, so the create IS observed even
+                    //   after a failed lookup — measured on a live pod, both ways.
                     //
                     // Failures here must NOT skip the mount. The image bakes a
-                    // "Centaur AI" identity and /opt/centaur/gitconfig includes this file
-                    // only if it exists, so an absent identity degrades to exactly the
-                    // pre-existing behavior. Gating the mount on identity would turn a
-                    // surface blip into "the agent's home never mounts" — trading a
-                    // recoverable misattributed commit for an unrecoverable dead session.
+                    // "Centaur AI" identity and only includes this file if it exists, so an
+                    // absent identity degrades to exactly the pre-existing behavior. Gating
+                    // the mount on identity would turn a surface blip into "the agent's home
+                    // never mounts" — trading a recoverable misattributed commit for an
+                    // unrecoverable dead session.
                     //
-                    // Ordering caveat: mount_overlay writes the ready marker, and a warm
-                    // pod's marker predates this claim entirely, so there is no
-                    // write-before-ready guarantee to be had here — the agent could in
-                    // principle commit in the seconds before this lands. That degrades to
-                    // the baked identity rather than a wrong one, which is why it is
-                    // acceptable; closing it for real needs the claim path itself to carry
-                    // the identity.
+                    // Ordering caveat: a warm pod's ready marker predates this claim, so
+                    // there is no write-before-ready guarantee — the agent could commit in
+                    // the seconds before this lands, degrading to the baked identity rather
+                    // than a wrong one. Closing that needs the claim path to carry it.
                     if wip_remounted {
                         let identity_client = HttpAtriumClient::new(
                             &global.base_url,
@@ -473,7 +483,7 @@ fn run_multi_session(global: GlobalConfig, overlays_root: PathBuf, once: bool, i
                         match identity_client.get_git_identity() {
                             Ok(identity) => {
                                 if let Err(error) = materialize_git_identity(
-                                    &mounted,
+                                    &atrium_root,
                                     identity.as_ref(),
                                     Some(discovered.manifest.agent_uid),
                                 ) {
@@ -490,13 +500,6 @@ fn run_multi_session(global: GlobalConfig, overlays_root: PathBuf, once: bool, i
                                 );
                             }
                         }
-                    }
-                    let session = session_config_from_discovered(&discovered, &mounted);
-                    mounted_overlays.insert(discovered.session.clone(), mounted);
-                    let first_seen = !states.contains_key(&session.session);
-                    let atrium_root = scoped_atrium_root(&global.atrium_root, &session.session);
-                    if should_eager_poll_atrium(&session, &atrium_root) {
-                        eager_poll_sessions.insert(session.session.clone());
                     }
                     if first_seen && let Err(error) = write_mount_readme(&atrium_root) {
                         eprintln!(
