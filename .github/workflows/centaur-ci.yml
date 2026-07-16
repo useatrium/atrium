@@ -304,6 +304,19 @@ jobs:
           cargo clippy --all-targets -- -D warnings
           cargo test
 
+      # `cargo test` above runs as the unprivileged runner, so every test that needs
+      # a real overlay mount SELF-SKIPS there — silently. That is how the git identity
+      # shipped writing to an overlay's upperdir behind a live mount: invisible to the
+      # agent, and green on every lane. Re-run those under sudo so they actually gate
+      # (ubuntu-latest supports overlayfs + sudo — same assumption ci/overlay-validation.sh
+      # makes). Separate CARGO_TARGET_DIR so root-owned artifacts cannot poison the
+      # rust-cache the runner saves at job end.
+      - name: Privileged overlay tests (real mounts, root)
+        working-directory: runtime/node-sync
+        run: |
+          sudo -E env "PATH=$PATH" CARGO_TARGET_DIR=/tmp/privileged-target \
+            cargo test --test git_identity_overlay_visibility -- --nocapture
+
       # Real overlay + scan-demo: locks in the syscall proofs (whiteout→Delete,
       # symlink→metadata-only, openat2 NO_SYMLINKS blocks the /etc/shadow escape).
       - name: Overlay scanner validation
