@@ -5,7 +5,8 @@ import type { ChatMessage, UserRef } from '@atrium/surface-client';
 import { encodeEventHandle } from '@atrium/surface-client/handle';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ThemeProvider } from '../theme';
-import { reconcileThreadSteerReplies, ThreadPanel } from './ThreadPanel';
+import { ThreadPanelHarness as ThreadPanel } from '../../test/renderConversation';
+import { reconcileThreadSteerReplies } from './ThreadPanel';
 
 const ada: UserRef = {
   id: 'u-1',

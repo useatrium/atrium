@@ -4,7 +4,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { initialSessionState, type SessionState } from '@atrium/centaur-client';
 import type { UserRef } from '@atrium/surface-client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { SessionPane } from '../src/sessions/SessionPane';
+import { SessionPaneHarness as SessionPane } from './renderConversation';
 import type { Session } from '../src/sessions/types';
 import { TRANSCRIPT_VIEW_STORAGE_KEY } from '../src/sessions/useTranscriptView';
 import { ThemeProvider } from '../src/theme';

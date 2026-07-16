@@ -7,7 +7,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { formatExactTimestamp, formatTurnTime } from '@atrium/surface-client';
 import type { CentaurEventFrame } from '@atrium/centaur-client';
-import { SessionPane } from '../src/sessions/SessionPane';
+import { SessionPaneHarness as SessionPane } from './renderConversation';
 import { sessionsApi } from '../src/sessions/api';
 import type { Session } from '../src/sessions/types';
 import { LEGACY_SESSION_PANE_WIDTH_STORAGE_KEY, SESSION_PANE_WIDTH_STORAGE_KEY } from '../src/storageKeys';

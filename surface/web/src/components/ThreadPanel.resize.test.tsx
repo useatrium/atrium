@@ -5,7 +5,7 @@ import type { ChatMessage, UserRef } from '@atrium/surface-client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LEGACY_THREAD_PANE_WIDTH_STORAGE_KEY, THREAD_PANE_WIDTH_STORAGE_KEY } from '../storageKeys';
 import { ThemeProvider } from '../theme';
-import { ThreadPanel } from './ThreadPanel';
+import { ThreadPanelHarness as ThreadPanel } from '../../test/renderConversation';
 
 const ada: UserRef = {
   id: 'u-1',

@@ -11,7 +11,7 @@ import { MessageText } from '../src/components/MessageText';
 import { Timeline } from '../src/components/Timeline';
 import type { ChatMessage, WireEvent } from '@atrium/surface-client';
 import { buildTimelineItems } from '@atrium/surface-client';
-import { SessionPane } from '../src/sessions/SessionPane';
+import { SessionPaneHarness as SessionPane } from './renderConversation';
 import { ThemeProvider } from '../src/theme';
 import { isStalledSessionStatus, STALLED_AFTER_MS, type Session } from '../src/sessions/types';
 import { FakeEventSource, installFakeEventSource } from './helpers/fakeEventSource';

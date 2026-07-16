@@ -34,7 +34,7 @@ import { MessageRow } from './MessageRow';
 import type { MentionContext } from './useMentionTypeahead';
 import { ConversationHeader } from '../sessions/ConversationHeader';
 import { useNow } from '../sessions/SessionCard';
-import { useSessionStream, type SessionStream } from '../sessions/useSessionStream';
+import type { SessionStream } from '../sessions/useSessionStream';
 import { useConflicts } from '../sessions/useConflicts';
 import { WorkFold } from '../sessions/WorkFold';
 import type { ActiveWorkTab } from '../sessions/WorkDrawer';
@@ -141,19 +141,6 @@ export interface ThreadPanelProps {
     attachments?: AttachmentMeta[],
     attachmentRefs?: AttachmentRef[],
   ) => void;
-}
-
-/** Compatibility entry point for focused thread tests and non-conversation hosts. */
-export function ThreadPanel(props: ThreadPanelProps) {
-  const attachedSession = useMemo(
-    () => attachedSessionForRoot(props.sessions, props.root, props.root.channelId),
-    [props.root, props.sessions],
-  );
-  const streamState = useSessionStream(
-    attachedSession?.id ?? null,
-    attachedSession != null && !isTerminalSessionStatus(attachedSession.status),
-  );
-  return <ThreadPanelContent {...props} sessionStream={streamState} />;
 }
 
 export function ThreadPanelContent({

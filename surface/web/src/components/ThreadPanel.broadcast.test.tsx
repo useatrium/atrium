@@ -4,7 +4,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import type { ChatMessage, UserRef } from '@atrium/surface-client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ThemeProvider } from '../theme';
-import { ThreadPanel } from './ThreadPanel';
+import { ThreadPanelHarness as ThreadPanel } from '../../test/renderConversation';
 
 const ada: UserRef = {
   id: 'u-1',

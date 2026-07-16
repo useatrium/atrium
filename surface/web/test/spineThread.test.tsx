@@ -4,7 +4,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { initialSessionState, type SessionState } from '@atrium/centaur-client';
 import type { ChatMessage, UserRef } from '@atrium/surface-client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ThreadPanel } from '../src/components/ThreadPanel';
+import { ThreadPanelHarness as ThreadPanel } from './renderConversation';
 import type { Session } from '../src/sessions/types';
 import { ThemeProvider } from '../src/theme';
 
