@@ -663,21 +663,32 @@ def reload_caddy() -> None:
 
 
 def write_caddy_fragment(state: dict[str, Any]) -> None:
+    """Write this preview's routes into the shared Caddy's wildcard site block.
+
+    Emits host matchers + handle blocks, NOT a site block: a per-preview site
+    block would make Caddy manage a separate certificate per preview, and Let's
+    Encrypt rate-limits per registered domain. Named matchers share one namespace
+    inside the site block, hence the preview id in every matcher name.
+    """
     CADDY_CONF_DIR.mkdir(parents=True, exist_ok=True)
-    target = CADDY_CONF_DIR / f"{state['preview_id']}.caddy"
+    preview_id = state["preview_id"]
+    host = f"{preview_id}.{PREVIEW_DOMAIN}"
+    target = CADDY_CONF_DIR / f"{preview_id}.caddy"
     temporary = target.with_suffix(".tmp")
     temporary.write_text(
         textwrap.dedent(
             f"""\
-            {state['preview_id']}.{PREVIEW_DOMAIN} {{
+            # preview {preview_id} -> commit {state['commit_sha']}
+            @minio-{preview_id} host {host} path /{state['minio_bucket']}/*
+            handle @minio-{preview_id} {{
+                # presigned S3 reads point at the public origin
+                reverse_proxy 127.0.0.1:{state['ports']['minio']}
+            }}
+            @{preview_id} host {host}
+            handle @{preview_id} {{
                 encode zstd gzip
-                @minio path /{state['minio_bucket']}/*
-                handle @minio {{
-                    reverse_proxy 127.0.0.1:{state['ports']['minio']}
-                }}
-                handle {{
-                    reverse_proxy 127.0.0.1:{state['ports']['caddy']}
-                }}
+                # the preview's own caddy serves the web SPA and proxies its API
+                reverse_proxy 127.0.0.1:{state['ports']['caddy']}
             }}
             """
         )
