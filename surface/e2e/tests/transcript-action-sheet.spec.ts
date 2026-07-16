@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { Pool } from 'pg';
-import { baseURL, channelId, createTestChannel, login, seedEvent, unique } from './helpers.js';
+import { channelId, createTestChannel, login, seedEvent, sseFrame, unique } from './helpers.js';
 
 const e2eDatabaseUrl = process.env.E2E_DATABASE_URL ?? 'postgres://atrium:atrium@localhost:5433/atrium_e2e';
 
@@ -59,10 +59,6 @@ async function injectSession(args: {
     client.release();
     await pool.end();
   }
-}
-
-function sseFrame(event: string, eventId: number, data: Record<string, unknown>): string {
-  return `event: ${event}\ndata: ${JSON.stringify({ ...data, event_id: eventId })}\n\n`;
 }
 
 async function gotoInjectedTranscript(page: Page): Promise<{
