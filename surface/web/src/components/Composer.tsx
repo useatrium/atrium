@@ -30,9 +30,8 @@ import {
   peopleDestination,
   randomId,
 } from '@atrium/surface-client';
-import { FileIcon, MessageSquareIcon, PaperclipIcon, XIcon } from './icons';
+import { BotIcon, FileIcon, MessageSquareIcon, PaperclipIcon, XIcon } from './icons';
 import { Tooltip } from './a11y';
-import { AgentMark } from './AgentMark';
 import { VoiceRecorder, type RecordedVoice } from '../VoiceRecorder';
 import { SHORTCUTS, matchesChord } from '../lib/shortcuts';
 import { extractEntryHandles } from '../lib/entryLinks';
@@ -683,7 +682,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           </button>
         </div>
       )}
-      {/* biome-ignore lint/a11y/noStaticElementInteractions: drop zone handles drag/drop events; keyboard file attachment uses the adjacent Attach button. */}
+      {/* biome-ignore lint/a11y/noStaticElementInteractions lint/a11y/noNoninteractiveElementInteractions: drop zone handles drag/drop events; keyboard file attachment uses the adjacent Attach button. */}
       <div
         title={disabled ? disabledHint : undefined}
         onDragOver={(e) => {
@@ -787,7 +786,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
                   aria-label="Attach a file"
-                  className="rounded-md px-1 py-1 text-sm text-fg-muted hover:bg-surface-overlay hover:text-fg-body"
+                  className="inline-flex size-8 shrink-0 items-center justify-center rounded-md text-sm text-fg-muted hover:bg-surface-overlay hover:text-fg-body [@media(pointer:coarse)]:size-11"
                 >
                   <PaperclipIcon />
                 </button>
@@ -804,9 +803,10 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               />
             </>
           )}
-          {allowAttachments && allowVoice && !agentAudience && !disabled && (
+          {allowAttachments && allowVoice && !disabled && (
             <VoiceRecorder
-              disabled={disabled || uploading || files.length > 0 || text.trim().length > 0}
+              disabled={agentAudience || disabled || uploading || files.length > 0 || text.trim().length > 0}
+              disabledTitle={agentAudience ? 'Voice messages are only available for People messages' : undefined}
               onSend={sendVoice}
               onActiveChange={setVoiceActive}
             />
@@ -826,21 +826,32 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                 <button
                   type="button"
                   data-testid="composer-audience-pill"
-                  aria-pressed={agentAudience}
-                  aria-label={
-                    agentAudience
-                      ? 'Prompting the agent. Switch to message people.'
-                      : 'Messaging people. Switch to prompt the agent.'
-                  }
+                  role="switch"
+                  aria-checked={agentAudience}
+                  aria-label="Agent prompt mode"
                   onClick={() => selectAudience(agentAudience ? 'people' : 'agent')}
-                  className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11 ${
+                  className={`relative h-8 w-14 shrink-0 rounded-lg border p-1 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-18 ${
                     agentAudience
-                      ? 'bg-accent/15 text-accent-text-strong hover:bg-accent/25'
-                      : 'bg-surface-overlay text-fg-secondary hover:bg-edge-strong hover:text-fg'
+                      ? 'border-accent/35 bg-accent/10 hover:bg-accent/15'
+                      : 'border-edge-strong bg-surface-overlay hover:bg-edge-strong'
                   }`}
                 >
-                  <span aria-hidden="true">
-                    {agentAudience ? <AgentMark size={18} /> : <MessageSquareIcon size={18} />}
+                  <span
+                    aria-hidden="true"
+                    className={`absolute left-1 top-1 size-6 rounded-md bg-surface-raised shadow-sm transition-transform [@media(pointer:coarse)]:size-9 ${
+                      agentAudience ? 'translate-x-6 [@media(pointer:coarse)]:translate-x-7' : 'translate-x-0'
+                    }`}
+                  />
+                  <span
+                    aria-hidden="true"
+                    className="relative grid h-full grid-cols-2 items-center justify-items-center"
+                  >
+                    <span className={agentAudience ? 'text-fg-faint' : 'text-fg-secondary'}>
+                      <MessageSquareIcon size={14} />
+                    </span>
+                    <span className={agentAudience ? 'text-accent-text-strong' : 'text-fg-faint'}>
+                      <BotIcon size={14} />
+                    </span>
                   </span>
                 </button>
               </Tooltip>
@@ -914,7 +925,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                     addFiles(e.clipboardData.files);
                   }
                 }}
-                className="max-h-40 min-w-40 flex-1 resize-none bg-transparent text-sm leading-relaxed text-fg placeholder-fg-muted outline-none disabled:cursor-not-allowed disabled:placeholder-fg-faint"
+                className="max-h-40 min-h-8 min-w-40 flex-1 resize-none bg-transparent py-1.5 text-sm leading-5 text-fg placeholder-fg-muted outline-none disabled:cursor-not-allowed disabled:placeholder-fg-faint"
               />
               <Tooltip content={sendTooltip} shortcut={SHORTCUTS.sendMessage.keys}>
                 <button
@@ -927,7 +938,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                     send();
                   }}
                   aria-disabled={sendDisabled || undefined}
-                  className="rounded-md bg-accent px-3 py-1 text-sm font-medium text-on-accent transition-colors hover:bg-accent-hover aria-disabled:cursor-default aria-disabled:bg-surface-overlay aria-disabled:text-fg-muted"
+                  className="inline-flex h-8 shrink-0 items-center justify-center rounded-md bg-accent px-3 text-sm font-medium text-on-accent transition-colors hover:bg-accent-hover aria-disabled:cursor-default aria-disabled:bg-surface-overlay aria-disabled:text-fg-muted [@media(pointer:coarse)]:h-11"
                 >
                   {destination?.sendLabel ?? 'Send'}
                 </button>

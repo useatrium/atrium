@@ -88,7 +88,7 @@ describe('agent-mode composer', () => {
     expect(screen.getByRole('textbox', { name: 'Message' })).toHaveAttribute('placeholder', 'Message people…');
   });
 
-  it('keeps Steer selected after send and does not expose voice in Agent mode', () => {
+  it('keeps Steer selected after send and preserves a disabled voice slot in Agent mode', () => {
     const onSubmit = vi.fn();
     renderWithTheme(
       <Composer
@@ -106,7 +106,7 @@ describe('agent-mode composer', () => {
       />,
     );
 
-    expect(screen.queryByLabelText('Record voice message')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Voice messages unavailable in Agent mode')).toBeDisabled();
     fireEvent.change(screen.getByLabelText('Prompt agent'), { target: { value: 'Check the failing test' } });
     fireEvent.click(screen.getByLabelText('Steer'));
 
@@ -205,7 +205,7 @@ describe('agent-mode composer', () => {
     );
 
     expect(screen.getByRole('textbox', { name: 'Prompt agent' })).toHaveAttribute('placeholder', 'Prompt agent…');
-    expect(screen.getByLabelText('Agent mode selected. Switch to People mode.')).toBeInTheDocument();
+    expect(screen.getByRole('switch', { name: 'Agent audience' })).toHaveAttribute('aria-checked', 'true');
   });
 
   it('restores a saved People draft in an attached thread', () => {
@@ -240,7 +240,7 @@ describe('agent-mode composer', () => {
     );
 
     const audienceToggle = screen.getByTestId('composer-audience-toggle');
-    expect(audienceToggle).toBeDisabled();
+    expect(audienceToggle).toHaveAttribute('aria-disabled', 'true');
     fireEvent.click(audienceToggle);
     expect(screen.getByRole('textbox', { name: 'Message' })).toHaveAttribute('placeholder', 'Message people…');
   });

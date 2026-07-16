@@ -182,10 +182,9 @@ test('empty destinations, keyboard focus, and deterministic contrast have eviden
   await expectComputedContrast(page.getByText('No reviewed sessions'), 4.5);
   await attachScreenshot(page, testInfo, 'empty-attention');
 
-  // The Agents entry folded into the Inbox; the directory is reached from the
-  // default tab's "All sessions →" link.
-  await page.getByRole('tab', { name: /^Inbox/ }).click();
-  await page.getByRole('button', { name: 'All sessions' }).click();
+  // The empty Inbox has no session shelf (and therefore no "All sessions"
+  // shortcut), so exercise the directory through its canonical route.
+  await page.goto('/agents');
   await expect(page.getByPlaceholder('Search agents')).toBeVisible();
   await attachScreenshot(page, testInfo, 'empty-agents');
 

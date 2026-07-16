@@ -26,7 +26,7 @@ describe('full-session composer audience', () => {
     expect(sessionComposerRoute('people', false, false)).toBe('suggest');
   });
 
-  it('keeps the toggle icon-only while exposing its full description', () => {
+  it('uses a binary switch with both audiences visible and checked state', () => {
     function Harness() {
       const [audience, setAudience] = useState<SessionComposerAudience>('agent');
       return (
@@ -40,10 +40,15 @@ describe('full-session composer audience', () => {
     }
 
     renderWithTheme(<Harness />);
-    const toggle = screen.getByLabelText('Agent mode selected. Switch to People mode.');
+    const toggle = screen.getByRole('switch', { name: 'Agent audience' });
+    expect(toggle).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByText('chatbubble-ellipses-outline')).toBeInTheDocument();
+    expect(screen.getByText('robot')).toBeInTheDocument();
     expect(screen.queryByText('Suggests a prompt for Gary.')).not.toBeInTheDocument();
 
     fireEvent.click(toggle);
-    expect(screen.getByLabelText('People mode selected. Switch to Agent mode.')).toBeInTheDocument();
+    expect(toggle).toHaveAttribute('aria-checked', 'false');
+    expect(screen.getByText('chatbubble-ellipses')).toBeInTheDocument();
+    expect(screen.getByText('robot-outline')).toBeInTheDocument();
   });
 });

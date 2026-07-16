@@ -50,7 +50,7 @@ import { font, radius, space, useTheme } from '../lib/theme';
 import { useAccessibilityAnnouncement } from '../lib/accessibility';
 import { createDraftChangeDebouncer } from '../lib/outbox';
 import { Avatar } from './Avatar';
-import { AgentMark } from './AgentMark';
+import { AudienceSwitch } from './SessionAudienceToggle';
 import { EntryInlineChip } from './EntryInlineChip';
 import { lightImpactHaptic } from '../lib/haptics';
 import { downsamplePeaks, formatVoiceDuration, normalizeMetering, type VoiceSendMeta } from '../lib/voice';
@@ -711,8 +711,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           style={{
             alignItems: 'center',
             flexDirection: 'row',
-            gap: 6,
-            minHeight: 34,
+            gap: space.sm,
+            minHeight: 32,
             paddingHorizontal: space.xs,
           }}
         >
@@ -723,11 +723,11 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             hitSlop={8}
             style={{
               backgroundColor: colors.bgElevated,
-              borderColor: colors.accent,
-              borderRadius: radius.sm,
+              borderColor: colors.border,
+              borderRadius: radius.md,
               borderWidth: 1,
               flex: 1,
-              minHeight: 30,
+              minHeight: 32,
               justifyContent: 'center',
               paddingHorizontal: space.sm,
             }}
@@ -871,7 +871,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                     borderColor: colors.warning,
                     borderRadius: radius.sm,
                     paddingHorizontal: space.sm,
-                    paddingVertical: space.xxs,
+                    paddingVertical: space.xs,
                     backgroundColor: pressed ? colors.warningSurface : 'transparent',
                   })}
                 >
@@ -931,11 +931,11 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                 hitSlop={13}
                 style={{
                   position: 'absolute',
-                  top: -6,
-                  right: -6,
-                  width: 18,
-                  height: 18,
-                  borderRadius: 9,
+                  top: -4,
+                  right: -4,
+                  width: 20,
+                  height: 20,
+                  borderRadius: radius.md,
                   backgroundColor: colors.bgPressed,
                   alignItems: 'center',
                   justifyContent: 'center',
@@ -1030,7 +1030,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             flexDirection: 'row',
             alignItems: 'center',
             flexWrap: 'wrap',
-            gap: 6,
+            gap: space.xs,
             paddingHorizontal: space.xs,
           }}
         >
@@ -1058,10 +1058,10 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               alignItems: 'center',
               backgroundColor: pressed ? colors.bgPressed : colors.accentBg,
               borderColor: colors.accent,
-              borderRadius: radius.lg,
+              borderRadius: radius.md,
               borderWidth: 1,
               flexDirection: 'row',
-              minHeight: 34,
+              minHeight: 32,
               paddingHorizontal: space.md,
               paddingVertical: space.xs,
             })}
@@ -1084,34 +1084,43 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             style={{
               minWidth: 48,
               minHeight: 48,
-              borderRadius: 24,
+              borderRadius: radius.md,
               backgroundColor: colors.bgElevated,
               alignItems: 'center',
               justifyContent: 'center',
-              marginBottom: space.xxs,
             }}
           >
             <Ionicons name="attach-outline" size={21} color={colors.textSecondary} />
           </Pressable>
         )}
-        {allowAttachments && !editing && uploadFile && !agentMode && (
+        {allowAttachments && !editing && uploadFile && (
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={recording ? 'Stop and send voice message' : 'Record voice message'}
-            accessibilityHint={
-              recording ? 'Stops recording and sends the voice message' : 'Starts recording a voice message'
+            accessibilityLabel={
+              agentMode
+                ? 'Voice messages unavailable in Agent mode'
+                : recording
+                  ? 'Stop and send voice message'
+                  : 'Record voice message'
             }
-            accessibilityState={{ disabled: recordingBusy || uploading }}
+            accessibilityHint={
+              agentMode
+                ? 'Voice messages are only available for People messages.'
+                : recording
+                  ? 'Stops recording and sends the voice message'
+                  : 'Starts recording a voice message'
+            }
+            accessibilityState={{ disabled: agentMode || recordingBusy || uploading }}
             onPress={() => {
               if (recording) void finishRecording(true);
               else void startRecording();
             }}
-            disabled={recordingBusy || uploading}
+            disabled={agentMode || recordingBusy || uploading}
             hitSlop={8}
             style={{
               minWidth: 48,
               minHeight: 48,
-              borderRadius: 24,
+              borderRadius: radius.md,
               backgroundColor: recording
                 ? colors.dangerSurface
                 : recordingBusy || uploading
@@ -1121,7 +1130,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               borderColor: recording ? colors.dangerBorder : 'transparent',
               alignItems: 'center',
               justifyContent: 'center',
-              marginBottom: space.xxs,
+              opacity: agentMode ? 0.45 : 1,
             }}
           >
             <Ionicons
@@ -1140,47 +1149,23 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             borderWidth: 2,
             flex: 1,
             flexDirection: 'row',
-            // Keep the toggle's 48pt target distinct from the multiline input.
-            gap: 6,
+            gap: space.xs,
+            minHeight: 48,
             paddingHorizontal: space.xs,
-            paddingVertical: 4,
           }}
         >
           {audienceAvailable && activeDestination ? (
-            <Pressable
+            <AudienceSwitch
               testID="composer-audience-toggle"
-              accessibilityRole="button"
-              accessibilityLabel={
-                agentMode
-                  ? 'Agent mode selected. Switch to People mode.'
-                  : 'People mode selected. Switch to Agent mode.'
-              }
               accessibilityHint={activeDestination.description}
-              accessibilityState={{ disabled: recording || recordingBusy, selected: agentMode }}
-              onPress={() => {
+              audience={agentMode ? 'agent' : 'people'}
+              onToggle={() => {
                 if (recording || recordingBusy) return;
                 if (agentMode) leaveAgentMode();
                 else enterAgentMode();
               }}
               disabled={recording || recordingBusy}
-              style={({ pressed }) => ({
-                alignItems: 'center',
-                backgroundColor: agentMode ? colors.accent : pressed ? colors.bgPressed : colors.bgElevated,
-                borderColor: agentMode ? colors.accent : colors.border,
-                borderRadius: 24,
-                borderWidth: 1,
-                height: 48,
-                justifyContent: 'center',
-                opacity: recording || recordingBusy ? 0.5 : pressed ? 0.82 : 1,
-                width: 48,
-              })}
-            >
-              {agentMode ? (
-                <AgentMark size={24} />
-              ) : (
-                <Ionicons name="chatbubbles-outline" size={23} color={colors.textSecondary} />
-              )}
-            </Pressable>
+            />
           ) : null}
           <TextInput
             accessibilityLabel={editing ? 'Edit message' : agentMode ? 'Prompt agent' : 'Message'}
@@ -1233,14 +1218,14 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             style={{
               flex: 1,
               minWidth: 0,
-              minHeight: 38,
+              minHeight: 44,
               maxHeight: 120,
               backgroundColor: 'transparent',
               color: colors.text,
               fontSize: font.md,
-              paddingHorizontal: space.xs,
-              paddingTop: 9,
-              paddingBottom: 9,
+              includeFontPadding: false,
+              paddingHorizontal: space.sm,
+              paddingVertical: space.md,
               textAlignVertical: 'top',
             }}
           />
@@ -1257,16 +1242,15 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           style={{
             minWidth: 48,
             minHeight: 48,
-            borderRadius: 24,
+            borderRadius: radius.md,
             backgroundColor: (editing ? text.trim().length > 0 : canSend) ? colors.accent : colors.bgElevated,
             alignItems: 'center',
             justifyContent: 'center',
-            marginBottom: space.xxs,
           }}
         >
           <Ionicons
-            name={editing ? 'checkmark-outline' : 'arrow-up-circle'}
-            size={editing ? 21 : 25}
+            name={editing ? 'checkmark-outline' : 'arrow-up-outline'}
+            size={21}
             color={(editing ? text.trim().length > 0 : canSend) ? colors.onAccent : colors.textFaint}
           />
         </Pressable>

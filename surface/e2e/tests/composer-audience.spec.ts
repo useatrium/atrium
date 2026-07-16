@@ -2,7 +2,7 @@ import { expect, test, type Locator, type Page } from '@playwright/test';
 import { createTestChannel, login, messageRow, openChannel, sendMessage, unique } from './helpers.js';
 
 /**
- * The audience pill shares the input frame with the textarea. A class-name test
+ * The audience switch shares the input frame with the textarea. A class-name test
  * cannot see the result of that fight — only real layout can — and the first cut
  * of this feature shipped a thread composer whose textarea was squeezed to
  * exactly 0px wide: the typed text was in the DOM and invisible on screen. These
@@ -10,7 +10,7 @@ import { createTestChannel, login, messageRow, openChannel, sendMessage, unique 
  */
 async function composerWidths(frame: Locator) {
   return {
-    pill: (await frame.getByTestId('composer-audience-pill').boundingBox())?.width ?? 0,
+    audienceSwitch: (await frame.getByTestId('composer-audience-pill').boundingBox())?.width ?? 0,
     input: (await frame.getByLabel('Message input').boundingBox())?.width ?? 0,
   };
 }
@@ -38,17 +38,17 @@ test('thread composer keeps a typable input next to the audience pill, in both a
   await expect(thread.getByTestId('composer-audience-pill')).toBeVisible();
 
   const chat = await composerWidths(thread);
-  expect(chat.pill).toBeGreaterThan(0);
+  expect(chat.audienceSwitch).toBeGreaterThan(0);
   expect(chat.input).toBeGreaterThan(80);
 
-  // Agent mode carries the longest label ("New agent · this thread"), which is
-  // where the pill previously ate the entire row.
+  // Agent mode used to carry a long label, which is where the old pill ate the
+  // entire row. The switch must remain compact in either state.
   await thread.getByLabel('Message input').fill('!!');
-  await expect(thread.getByTestId('composer-audience-pill')).toHaveAttribute('aria-pressed', 'true');
+  await expect(thread.getByTestId('composer-audience-pill')).toHaveAttribute('aria-checked', 'true');
   await thread.getByLabel('Message input').fill('rerun the failing test');
 
   const agent = await composerWidths(thread);
-  expect(agent.pill).toBeGreaterThan(0);
+  expect(agent.audienceSwitch).toBeGreaterThan(0);
   expect(agent.input).toBeGreaterThan(80);
   await expect(thread.getByLabel('Message input')).toHaveValue('rerun the failing test');
 });
@@ -77,24 +77,49 @@ test('thread composer survives the pane dragged to its narrowest', async ({ page
   await page.mouse.up();
 
   await thread.getByLabel('Message input').fill('!!');
-  await expect(thread.getByTestId('composer-audience-pill')).toHaveAttribute('aria-pressed', 'true');
+  await expect(thread.getByTestId('composer-audience-pill')).toHaveAttribute('aria-checked', 'true');
   await thread.getByLabel('Message input').fill('still typable');
 
   const agent = await composerWidths(thread);
-  expect(agent.pill).toBeGreaterThan(0);
+  expect(agent.audienceSwitch).toBeGreaterThan(0);
   expect(agent.input).toBeGreaterThan(80);
   await expect(thread.getByLabel('Message input')).toHaveValue('still typable');
 });
 
-test('the audience pill does not steal the channel sidebar button name', async ({ page }) => {
+test('the audience switch does not steal the channel sidebar button name', async ({ page }) => {
   const room = await createTestChannel('pillname');
   await login(page, unique('namer'), 'Namer');
   await openChannel(page, room);
 
-  // The pill's chat label is literally "#<channel>". If it were named by its own
-  // text it would collide with the sidebar's channel button — which is exactly
-  // how it broke openChannel across the suite.
+  // The control has its own stable accessible name rather than inheriting a
+  // channel label that would collide with the sidebar button.
   await expect(page.getByRole('button', { name: new RegExp(`^#?\\s*${room}(\\s|$)`) })).toHaveCount(1);
+});
+
+test('switching to Agent keeps the microphone slot and composer controls aligned', async ({ page }) => {
+  const room = await createTestChannel('switchgeometry');
+  await login(page, unique('switchgeometry'), 'Switch Geometry');
+  await openChannel(page, room);
+
+  const main = page.locator('main');
+  const audienceSwitch = main.getByTestId('composer-audience-pill');
+  const voice = main.getByTestId('composer-voice-button');
+  const attach = main.getByRole('button', { name: 'Attach a file' });
+  const input = main.getByLabel('Message input');
+  const send = main.getByRole('button', { name: 'Message', exact: true });
+
+  const beforeVoice = (await voice.boundingBox())!;
+  const controls = await Promise.all(
+    [attach, voice, audienceSwitch, input, send].map((control) => control.boundingBox()),
+  );
+  const bottoms = controls.map((box) => Math.round((box?.y ?? 0) + (box?.height ?? 0)));
+  expect(Math.max(...bottoms) - Math.min(...bottoms)).toBeLessThanOrEqual(1);
+
+  await audienceSwitch.click();
+  await expect(audienceSwitch).toHaveAttribute('aria-checked', 'true');
+  await expect(voice).toBeDisabled();
+  const afterVoice = (await voice.boundingBox())!;
+  expect(afterVoice).toEqual(beforeVoice);
 });
 
 test('typing !! then a task leaves no leading space in the draft', async ({ page }) => {
@@ -108,6 +133,6 @@ test('typing !! then a task leaves no leading space in the draft', async ({ page
   // lands on an otherwise-empty input.
   await page.keyboard.type('!! rerun the failing test');
 
-  await expect(page.getByTestId('composer-audience-pill')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByTestId('composer-audience-pill')).toHaveAttribute('aria-checked', 'true');
   await expect(input).toHaveValue('rerun the failing test');
 });

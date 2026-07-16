@@ -122,7 +122,7 @@ describe('ThreadPanel delegate to agent', () => {
     const actionMenu = screen.getByRole('dialog', { name: 'Message actions' });
     fireEvent.click(within(actionMenu).getByRole('button', { name: 'Delegate to agent…' }));
 
-    expect(screen.getByTestId('composer-audience-pill').getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByTestId('composer-audience-pill').getAttribute('aria-checked')).toBe('true');
     expect(screen.getByPlaceholderText('Prompt agent…')).toBeTruthy();
     expect(screen.getAllByText(`/e/${encodeEventHandle(reply.id!)}`).length).toBeGreaterThan(0);
   });

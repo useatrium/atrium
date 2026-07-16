@@ -46,11 +46,11 @@ test('an attached thread can round-trip through aside mode without steering the 
   const thread = threadPanel(page);
   const input = thread.getByLabel('Message input');
   const pill = thread.getByTestId('composer-audience-pill');
-  await expect(pill).toHaveAttribute('aria-pressed', 'true');
+  await expect(pill).toHaveAttribute('aria-checked', 'true');
   await expect(input).toHaveAttribute('placeholder', 'Prompt agent…');
 
   await input.press('Escape');
-  await expect(pill).toHaveAttribute('aria-pressed', 'false');
+  await expect(pill).toHaveAttribute('aria-checked', 'false');
   await expect(input).toHaveAttribute('placeholder', 'Message people…');
 
   const aside = unique('people-only-aside');
@@ -62,6 +62,6 @@ test('an attached thread can round-trip through aside mode without steering the 
   expect(sessionPosts).toEqual([]);
 
   await pill.click();
-  await expect(pill).toHaveAttribute('aria-pressed', 'true');
+  await expect(pill).toHaveAttribute('aria-checked', 'true');
   await expect(input).toHaveAttribute('placeholder', 'Prompt agent…');
 });

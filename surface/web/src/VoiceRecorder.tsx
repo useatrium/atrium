@@ -15,10 +15,12 @@ const SAMPLE_INTERVAL_MS = 80;
 
 export function VoiceRecorder({
   disabled,
+  disabledTitle,
   onSend,
   onActiveChange,
 }: {
   disabled?: boolean;
+  disabledTitle?: string;
   onSend: (voice: RecordedVoice) => Promise<void>;
   onActiveChange?: (active: boolean) => void;
 }) {
@@ -242,7 +244,7 @@ export function VoiceRecorder({
           onClick={stop}
           title="Stop recording"
           aria-label="Stop recording"
-          className="rounded-md bg-danger-tint px-2 py-1 text-danger-text hover:bg-danger-surface/70"
+          className="inline-flex size-8 shrink-0 items-center justify-center rounded-md bg-danger-tint text-danger-text hover:bg-danger-surface/70 [@media(pointer:coarse)]:size-11"
         >
           <SquareIcon />
         </button>
@@ -253,7 +255,7 @@ export function VoiceRecorder({
           onClick={cancel}
           title="Cancel recording"
           aria-label="Cancel recording"
-          className="rounded-md px-1 py-1 text-fg-muted hover:bg-surface-overlay hover:text-fg-body"
+          className="inline-flex size-8 shrink-0 items-center justify-center rounded-md text-fg-muted hover:bg-surface-overlay hover:text-fg-body [@media(pointer:coarse)]:size-11"
         >
           <XIcon />
         </button>
@@ -279,7 +281,7 @@ export function VoiceRecorder({
           onClick={togglePreview}
           title={previewPlaying ? 'Pause preview' : 'Play preview'}
           aria-label={previewPlaying ? 'Pause preview' : 'Play preview'}
-          className="rounded-md px-2 py-1 text-fg-secondary hover:bg-surface-overlay hover:text-fg-body"
+          className="inline-flex size-8 shrink-0 items-center justify-center rounded-md text-fg-secondary hover:bg-surface-overlay hover:text-fg-body [@media(pointer:coarse)]:size-11"
         >
           {previewPlaying ? <PauseIcon /> : <PlayIcon />}
         </button>
@@ -291,7 +293,7 @@ export function VoiceRecorder({
           disabled={sending}
           title="Re-record"
           aria-label="Re-record"
-          className="rounded-md px-1 py-1 text-fg-muted hover:bg-surface-overlay hover:text-fg-body disabled:opacity-50"
+          className="inline-flex size-8 shrink-0 items-center justify-center rounded-md text-fg-muted hover:bg-surface-overlay hover:text-fg-body disabled:opacity-50 [@media(pointer:coarse)]:size-11"
         >
           <RefreshCwIcon />
         </button>
@@ -301,7 +303,7 @@ export function VoiceRecorder({
           disabled={sending}
           title="Cancel voice message"
           aria-label="Cancel voice message"
-          className="rounded-md px-1 py-1 text-fg-muted hover:bg-surface-overlay hover:text-fg-body disabled:opacity-50"
+          className="inline-flex size-8 shrink-0 items-center justify-center rounded-md text-fg-muted hover:bg-surface-overlay hover:text-fg-body disabled:opacity-50 [@media(pointer:coarse)]:size-11"
         >
           <XIcon />
         </button>
@@ -311,7 +313,7 @@ export function VoiceRecorder({
           disabled={sending}
           title="Send voice message"
           aria-label="Send voice message"
-          className="rounded-md bg-accent px-2 py-1 text-on-accent hover:bg-accent-hover disabled:cursor-default disabled:bg-surface-overlay disabled:text-fg-muted"
+          className="inline-flex h-8 shrink-0 items-center justify-center rounded-md bg-accent px-2 text-on-accent hover:bg-accent-hover disabled:cursor-default disabled:bg-surface-overlay disabled:text-fg-muted [@media(pointer:coarse)]:h-11"
         >
           {sending ? <span className="text-xs">Sending…</span> : <SendIcon />}
         </button>
@@ -321,18 +323,23 @@ export function VoiceRecorder({
   }
 
   return (
-    <div className="flex items-center gap-2">
+    <div className="relative size-8 shrink-0 [@media(pointer:coarse)]:size-11">
       <button
         type="button"
+        data-testid="composer-voice-button"
         onClick={() => void start()}
         disabled={disabled || sending}
-        title="Record a voice message"
-        aria-label="Record a voice message"
-        className="rounded-md px-1 py-1 text-sm text-fg-muted hover:bg-surface-overlay hover:text-fg-body disabled:cursor-default disabled:text-fg-faint"
+        title={disabled && disabledTitle ? disabledTitle : 'Record a voice message'}
+        aria-label={disabled && disabledTitle ? disabledTitle : 'Record a voice message'}
+        className="inline-flex size-8 items-center justify-center rounded-md text-sm text-fg-muted hover:bg-surface-overlay hover:text-fg-body disabled:cursor-not-allowed disabled:text-fg-faint [@media(pointer:coarse)]:size-11"
       >
         <MicIcon />
       </button>
-      {error && <span className="text-3xs text-danger-text">{error}</span>}
+      {error && (
+        <span className="absolute bottom-full left-0 mb-1 w-48 rounded-md bg-danger-tint px-2 py-1 text-3xs text-danger-text">
+          {error}
+        </span>
+      )}
     </div>
   );
 }
@@ -374,7 +381,7 @@ function formatDuration(ms: number): string {
 function MiniWaveform({ peaks, active }: { peaks: number[]; active?: boolean }) {
   const bars = peaks.length > 0 ? peaks : Array.from({ length: 24 }, () => 0.08);
   return (
-    <div className="flex h-7 min-w-24 flex-1 items-center gap-0.5 overflow-hidden rounded-md border border-edge bg-surface px-1">
+    <div className="flex h-8 min-w-24 flex-1 items-center gap-0.5 overflow-hidden rounded-md border border-edge bg-surface px-1 [@media(pointer:coarse)]:h-11">
       {bars.map((peak, index) => (
         <span
           key={`${index}-${peak.toFixed(2)}`}

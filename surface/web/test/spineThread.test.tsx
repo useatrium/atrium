@@ -204,12 +204,12 @@ describe('thread spine integration', () => {
   it('defaults to Agent and Esc changes the attached composer to People', () => {
     renderPanel();
     const input = screen.getByLabelText('Message input');
-    expect(screen.getByTestId('composer-audience-pill').getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByTestId('composer-audience-pill').getAttribute('aria-checked')).toBe('true');
     expect(screen.getByPlaceholderText('Prompt agent…')).toBeTruthy();
     expect(screen.queryByRole('checkbox', { name: /also send to/i })).toBeNull();
 
     fireEvent.keyDown(input, { key: 'Escape' });
-    expect(screen.getByTestId('composer-audience-pill').getAttribute('aria-pressed')).toBe('false');
+    expect(screen.getByTestId('composer-audience-pill').getAttribute('aria-checked')).toBe('false');
     expect(screen.getByPlaceholderText('Message people…')).toBeTruthy();
   });
 
@@ -226,7 +226,7 @@ describe('thread spine integration', () => {
     mocks.conflicts = [];
     renderPanel({ attached: false });
 
-    expect(screen.getByTestId('composer-audience-pill').getAttribute('aria-pressed')).toBe('false');
+    expect(screen.getByTestId('composer-audience-pill').getAttribute('aria-checked')).toBe('false');
     expect(screen.getByPlaceholderText('Message people…')).toBeTruthy();
     expect(screen.getByRole('checkbox', { name: /also send to/i })).toBeTruthy();
     expect(screen.queryByTestId('spine-work-strips')).toBeNull();

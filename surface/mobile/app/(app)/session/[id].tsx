@@ -2124,7 +2124,7 @@ export default function SessionScreen() {
                 style={({ pressed }) => ({
                   minHeight: 48,
                   justifyContent: 'center',
-                  borderRadius: radius.sm,
+                  borderRadius: radius.md,
                   borderWidth: 1,
                   borderColor: colors.border,
                   backgroundColor: pressed ? colors.bgPressed : colors.bgElevated,
@@ -2145,8 +2145,9 @@ export default function SessionScreen() {
                 borderWidth: 2,
                 flex: 1,
                 flexDirection: 'row',
-                gap: 6,
-                padding: 4,
+                gap: space.xs,
+                minHeight: 48,
+                paddingHorizontal: space.xs,
               }}
             >
               {sessionPeopleAvailable ? (
@@ -2165,7 +2166,7 @@ export default function SessionScreen() {
                   }}
                 />
               ) : null}
-              <View style={{ flex: 1, gap: 6 }}>
+              <View style={{ flex: 1, gap: space.xs }}>
                 {steerEntryLinkHandles.length > 0 ? (
                   <View
                     testID="session-steer-entry-link-preview"
@@ -2173,8 +2174,8 @@ export default function SessionScreen() {
                       flexDirection: 'row',
                       alignItems: 'center',
                       flexWrap: 'wrap',
-                      gap: 6,
-                      paddingHorizontal: space.xs,
+                      gap: space.xs,
+                      paddingHorizontal: space.sm,
                     }}
                   >
                     <Text style={{ color: colors.textMuted, fontSize: font.xs, fontWeight: '700' }}>referencing:</Text>
@@ -2200,12 +2201,13 @@ export default function SessionScreen() {
                   multiline
                   style={{
                     alignSelf: 'stretch',
-                    minHeight: 38,
-                    maxHeight: 110,
+                    minHeight: 44,
+                    maxHeight: 120,
                     backgroundColor: 'transparent',
                     color: colors.text,
-                    paddingHorizontal: space.xs,
-                    paddingVertical: space.sm,
+                    includeFontPadding: false,
+                    paddingHorizontal: space.sm,
+                    paddingVertical: space.md,
                     fontSize: font.md,
                     textAlignVertical: 'top',
                   }}
@@ -2263,8 +2265,9 @@ export default function SessionScreen() {
                   borderWidth: 2,
                   flex: 1,
                   flexDirection: 'row',
-                  gap: 6,
-                  padding: 4,
+                  gap: space.xs,
+                  minHeight: 48,
+                  paddingHorizontal: space.xs,
                 }}
               >
                 {sessionPeopleAvailable ? (
@@ -2295,12 +2298,13 @@ export default function SessionScreen() {
                   style={{
                     flex: 1,
                     minWidth: 0,
-                    minHeight: 38,
-                    maxHeight: 110,
+                    minHeight: 44,
+                    maxHeight: 120,
                     backgroundColor: 'transparent',
                     color: colors.text,
-                    paddingHorizontal: space.xs,
-                    paddingVertical: space.sm,
+                    includeFontPadding: false,
+                    paddingHorizontal: space.sm,
+                    paddingVertical: space.md,
                     fontSize: font.md,
                     textAlignVertical: 'top',
                   }}

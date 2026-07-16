@@ -1,7 +1,6 @@
-import { Pressable } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
-import { useTheme } from '../lib/theme';
-import { AgentMark } from './AgentMark';
+import { Pressable, View } from 'react-native';
+import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import { radius, space, useTheme } from '../lib/theme';
 
 export type SessionComposerAudience = 'people' | 'agent';
 export type SessionComposerRoute = 'discussion' | 'steer' | 'suggest';
@@ -15,6 +14,93 @@ export function sessionComposerRoute(
   return isDriver ? 'steer' : 'suggest';
 }
 
+export function AudienceSwitch({
+  audience,
+  onToggle,
+  disabled = false,
+  accessibilityHint,
+  testID,
+}: {
+  audience: SessionComposerAudience;
+  onToggle: () => void;
+  disabled?: boolean;
+  accessibilityHint?: string;
+  testID?: string;
+}) {
+  const { colors } = useTheme();
+  const agentMode = audience === 'agent';
+
+  return (
+    <Pressable
+      testID={testID}
+      accessibilityRole="switch"
+      accessibilityLabel="Agent audience"
+      accessibilityHint={accessibilityHint ?? 'On prompts the agent. Off messages people.'}
+      accessibilityState={{ checked: agentMode, disabled }}
+      accessibilityValue={{ text: agentMode ? 'Agent' : 'People' }}
+      aria-checked={agentMode}
+      disabled={disabled}
+      hitSlop={space.xs}
+      onPress={onToggle}
+      style={({ pressed }) => ({
+        alignItems: 'center',
+        height: 40,
+        justifyContent: 'center',
+        opacity: disabled ? 0.45 : pressed ? 0.72 : 1,
+        width: 72,
+      })}
+    >
+      <View
+        style={{
+          alignItems: 'center',
+          backgroundColor: colors.bgElevated,
+          borderColor: colors.border,
+          borderRadius: radius.md,
+          borderWidth: 1,
+          flexDirection: 'row',
+          height: 32,
+          padding: space.xs,
+          pointerEvents: 'none',
+          width: 64,
+        }}
+      >
+        <View
+          style={{
+            alignItems: 'center',
+            backgroundColor: agentMode ? 'transparent' : colors.bgPressed,
+            borderRadius: radius.sm,
+            flex: 1,
+            height: 24,
+            justifyContent: 'center',
+          }}
+        >
+          <Ionicons
+            name={agentMode ? 'chatbubble-ellipses-outline' : 'chatbubble-ellipses'}
+            size={16}
+            color={agentMode ? colors.textMuted : colors.text}
+          />
+        </View>
+        <View
+          style={{
+            alignItems: 'center',
+            backgroundColor: agentMode ? colors.bgPressed : 'transparent',
+            borderRadius: radius.sm,
+            flex: 1,
+            height: 24,
+            justifyContent: 'center',
+          }}
+        >
+          <MaterialCommunityIcons
+            name={agentMode ? 'robot' : 'robot-outline'}
+            size={16}
+            color={agentMode ? colors.text : colors.textMuted}
+          />
+        </View>
+      </View>
+    </Pressable>
+  );
+}
+
 export function SessionAudienceToggle({
   audience,
   isDriver,
@@ -26,7 +112,6 @@ export function SessionAudienceToggle({
   driverName: string;
   onToggle: () => void;
 }) {
-  const { colors } = useTheme();
   const agentMode = audience === 'agent';
   const description = agentMode
     ? isDriver
@@ -34,32 +119,11 @@ export function SessionAudienceToggle({
       : `Suggests a prompt for ${driverName}.`
     : 'Posts to the discussion without prompting the agent.';
   return (
-    <Pressable
+    <AudienceSwitch
       testID="session-audience-toggle"
-      accessibilityRole="button"
-      accessibilityState={{ selected: agentMode }}
-      accessibilityLabel={
-        agentMode ? 'Agent mode selected. Switch to People mode.' : 'People mode selected. Switch to Agent mode.'
-      }
       accessibilityHint={description}
-      onPress={onToggle}
-      style={({ pressed }) => ({
-        alignItems: 'center',
-        backgroundColor: agentMode ? colors.accent : pressed ? colors.bgPressed : colors.bgElevated,
-        borderColor: agentMode ? colors.accent : colors.border,
-        borderRadius: 24,
-        borderWidth: 1,
-        height: 48,
-        justifyContent: 'center',
-        opacity: pressed ? 0.82 : 1,
-        width: 48,
-      })}
-    >
-      {agentMode ? (
-        <AgentMark size={24} />
-      ) : (
-        <Ionicons name="chatbubbles-outline" size={23} color={colors.textSecondary} />
-      )}
-    </Pressable>
+      audience={audience}
+      onToggle={onToggle}
+    />
   );
 }

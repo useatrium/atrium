@@ -31,14 +31,15 @@ describe('Composer audience control', () => {
     renderComposer();
 
     expect(toggle().textContent).toBe('');
-    expect(toggle().getAttribute('aria-pressed')).toBe('false');
-    expect(toggle().getAttribute('aria-label')).toContain('Messaging people');
+    expect(toggle().querySelectorAll('svg')).toHaveLength(2);
+    expect(toggle().getAttribute('role')).toBe('switch');
+    expect(toggle().getAttribute('aria-checked')).toBe('false');
+    expect(toggle().getAttribute('aria-label')).toBe('Agent prompt mode');
     expect(screen.getByPlaceholderText('Message people…')).toBeTruthy();
 
     fireEvent.click(toggle());
 
-    expect(toggle().getAttribute('aria-pressed')).toBe('true');
-    expect(toggle().getAttribute('aria-label')).toContain('Prompting the agent');
+    expect(toggle().getAttribute('aria-checked')).toBe('true');
     expect(screen.getByPlaceholderText('Prompt agent…')).toBeTruthy();
   });
 
@@ -49,7 +50,7 @@ describe('Composer audience control', () => {
     fireEvent.change(input, { target: { value: '!!Research this' } });
 
     expect(input.value).toBe('Research this');
-    expect(toggle().getAttribute('aria-pressed')).toBe('true');
+    expect(toggle().getAttribute('aria-checked')).toBe('true');
   });
 
   it('preserves Mod+J and Escape audience switching', () => {
@@ -57,10 +58,10 @@ describe('Composer audience control', () => {
     const input = screen.getByLabelText('Message input');
 
     fireEvent.keyDown(input, { key: 'j', metaKey: true });
-    expect(toggle().getAttribute('aria-pressed')).toBe('true');
+    expect(toggle().getAttribute('aria-checked')).toBe('true');
 
     fireEvent.keyDown(input, { key: 'Escape' });
-    expect(toggle().getAttribute('aria-pressed')).toBe('false');
+    expect(toggle().getAttribute('aria-checked')).toBe('false');
   });
 
   it('defaults an attached non-driver thread to Suggest and keeps it sticky after send', () => {
@@ -89,7 +90,7 @@ describe('Composer audience control', () => {
       undefined,
       undefined,
     );
-    expect(toggle().getAttribute('aria-pressed')).toBe('true');
+    expect(toggle().getAttribute('aria-checked')).toBe('true');
   });
 
   it('restores a saved People draft instead of applying the attached-thread Agent default', () => {
@@ -109,7 +110,7 @@ describe('Composer audience control', () => {
       },
     });
 
-    expect(toggle().getAttribute('aria-pressed')).toBe('false');
+    expect(toggle().getAttribute('aria-checked')).toBe('false');
     expect((screen.getByLabelText('Message input') as HTMLTextAreaElement).value).toBe('Keep this in the discussion');
   });
 
@@ -125,16 +126,20 @@ describe('Composer audience control', () => {
       undefined,
       undefined,
     );
-    expect(toggle().getAttribute('aria-pressed')).toBe('false');
+    expect(toggle().getAttribute('aria-checked')).toBe('false');
   });
 
-  it('hides voice recording while Agent is selected', () => {
+  it('reserves a disabled voice control while Agent is selected', () => {
     renderComposer({ allowAttachments: true, allowVoice: true });
     expect(screen.getByRole('button', { name: 'Record a voice message' })).toBeTruthy();
 
     fireEvent.click(toggle());
 
-    expect(screen.queryByRole('button', { name: 'Record a voice message' })).toBeNull();
+    const microphone = screen.getByRole('button', {
+      name: 'Voice messages are only available for People messages',
+    });
+    expect((microphone as HTMLButtonElement).disabled).toBe(true);
+    expect(microphone.getAttribute('title')).toBe('Voice messages are only available for People messages');
   });
 
   it('routes uploaded files through the agent handler', async () => {
@@ -179,7 +184,7 @@ describe('Composer draft audience', () => {
     renderComposer({ draftKey: 'channel:c1', initialDraft: 'fix the build', initialDraftAgentIntent: true });
 
     expect((screen.getByLabelText('Message input') as HTMLTextAreaElement).value).toBe('fix the build');
-    expect(toggle().getAttribute('aria-pressed')).toBe('true');
+    expect(toggle().getAttribute('aria-checked')).toBe('true');
     expect(screen.queryByTestId('composer-agent-intent-strip')).toBeNull();
   });
 });
