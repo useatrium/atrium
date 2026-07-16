@@ -46,8 +46,9 @@ sandbox:
     # turns on `vmetrics`/`cloudwatch`). An EMPTY value means "install all"
     # (upstream backward compat), so use a no-match placeholder. When a tool is
     # actually wired up (creds granted + deps installable), list its package
-    # name here, comma-separated.
-    TOOL_ALLOWLIST: "none"
+    # name here, comma-separated. The name matched is the tool's DIRECTORY name
+    # under centaur/tools (install_tool_shims.py compares package_dir.name).
+    TOOL_ALLOWLIST: "atrium-preview"
     # To surface Codex's live "thinking" in the transcript, set
     # CODEX_MODEL_REASONING_SUMMARY: "auto" here (Codex >= 0.139 emits no summaries
     # by default; consumed by services/sandbox/entrypoint.sh). Left off for now — the
