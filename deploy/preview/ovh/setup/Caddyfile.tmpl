@@ -1,33 +1,29 @@
 {
 	email {$ACME_EMAIL}
-	acme_dns cloudflare {env.CF_API_TOKEN}
-	auto_https prefer_wildcard
 }
 
-*.preview.useatrium.com {
+# ONE site block for every preview, so exactly one wildcard cert (DNS-01) covers
+# them all. Do not give each preview its own site block: Caddy would then manage a
+# separate cert per preview, and Let's Encrypt's 50-certs/week limit is per
+# registered domain — churning previews would exhaust it.
+*.__ATRIUM_PREVIEW_DOMAIN__ {
 	tls {
 		dns cloudflare {env.CF_API_TOKEN}
 	}
-	respond "preview route not found" 404
+
+	# previewctl writes one fragment per preview into conf.d and reloads Caddy.
+	# Each fragment defines host matchers + handle blocks (NOT a site block):
+	#
+	#   @prev-<id> host prev-<id>.__ATRIUM_PREVIEW_DOMAIN__
+	#   @minio-prev-<id> host prev-<id>.__ATRIUM_PREVIEW_DOMAIN__ path /atrium-prev-<id>/*
+	#   handle @minio-prev-<id> { reverse_proxy 127.0.0.1:<minio-port> }
+	#   handle @prev-<id> { reverse_proxy 127.0.0.1:<preview-caddy-port> }
+	#
+	# handle blocks are mutually exclusive and matched in order, so the imported
+	# per-preview handles win over the catch-all below.
+	import /etc/caddy/conf.d/*.caddy
+
+	handle {
+		respond "preview route not found" 404
+	}
 }
-
-# previewctl writes one file per preview into conf.d and reloads Caddy. Its
-# fragment follows this shape (ports are the preview's host-published ports):
-#
-# prev-<sha12>-<rand4hex>.preview.useatrium.com {
-#     @apps path /apps/*
-#     handle @apps {
-#         reverse_proxy 127.0.0.1:<apps-port>
-#     }
-#
-#     @server path /api/* /auth/* /ws /healthz
-#     handle @server {
-#         reverse_proxy 127.0.0.1:<server-port>
-#     }
-#
-#     handle {
-#         reverse_proxy 127.0.0.1:<web-port>
-#     }
-# }
-
-import /etc/caddy/conf.d/*.caddy
