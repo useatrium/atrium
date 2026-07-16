@@ -164,8 +164,14 @@ def seed_git_repo(tree: Path, commit_sha: str) -> None:
     `git archive` exports no .git, but centaur's Justfile evaluates
     `git rev-parse HEAD` at parse time, so every `just build-one` aborts with
     "not a git repository" without this. The AWS appliance bootstrap did the same
-    thing. The synthetic commit's SHA is never published: previewctl passes
-    image_revision=<real sha> explicitly to every build.
+    thing.
+
+    Note the OCI revision label on centaur images ends up as this synthetic SHA,
+    not the real commit: centaur's `build-one` dispatches to a fresh `just`
+    subprocess, which drops our `image_revision=<real sha>` override. That is
+    cosmetic only — previewctl tags every image into the registry as
+    <image>:<real commit sha>, and the chart pulls by that tag, so previews stay
+    pinned to the right commit.
     """
     run(["git", "init", "-q"], cwd=tree)
     run(["git", "config", "user.email", "preview@atrium.local"], cwd=tree)
@@ -187,9 +193,12 @@ def source_for_commit(commit_sha: str) -> Path:
         run(["git", "archive", "--format=tar", f"--output={archive}", commit_sha])
         with tarfile.open(archive) as bundle:
             bundle.extractall(temporary, filter="data")
-        seed_git_repo(temporary, commit_sha)
+        # Write the marker before seeding so it lands inside the synthetic commit
+        # and the tree is clean. centaur's Justfile appends "-dirty" to image
+        # labels when `git status --porcelain` is non-empty.
         marker_in_temp = temporary / marker.name
         marker_in_temp.write_text(commit_sha + "\n")
+        seed_git_repo(temporary, commit_sha)
         if source.exists():
             shutil.rmtree(temporary)
         else:
@@ -431,8 +440,12 @@ def create_k3d_cluster(state: dict[str, Any]) -> None:
             "--disable=servicelb@server:0",
             "--volume",
             f"{real_fs}:/var/lib/centaur@server:0",
+            # ":direct" binds the port straight to the server node. Without it k3d
+            # creates a "proxy" mapping through the loadbalancer, which --no-lb
+            # removed: "port-mapping of type 'proxy' specified, but loadbalancer
+            # is disabled".
             "--port",
-            f"127.0.0.1:{state['ports']['centaur']}:{NODE_PORT}@server:0",
+            f"127.0.0.1:{state['ports']['centaur']}:{NODE_PORT}@server:0:direct",
         ],
         capture=False,
     )
