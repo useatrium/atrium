@@ -1,9 +1,11 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
+use crate::http_client::GitIdentity;
 use crate::runtime::{AtriumChannel, AtriumClient, ContextDeltaRequest, ContextDocResponse};
 use crate::state::{ContextDocState, DaemonState};
 
@@ -83,6 +85,94 @@ If a listed path is missing, it is still materializing — wait a few seconds an
 "#;
 
 pub const CONTEXT_READY_MARKER: &str = ".atrium-context-ready";
+pub const GIT_IDENTITY_RELATIVE_PATH: &str = ".config/git/atrium-identity";
+
+/// Authoritatively materialize the server-derived identity into an overlay upper.
+/// `None` is the 204 fallback and removes a prior identity so the image default wins.
+pub fn materialize_git_identity(
+    home: &Path,
+    identity: Option<&GitIdentity>,
+    agent_uid: Option<u32>,
+) -> Result<(), String> {
+    let dst = home.join(GIT_IDENTITY_RELATIVE_PATH);
+    let Some(identity) = identity else {
+        remove_file_if_present(&dst)?;
+        return Ok(());
+    };
+    let parent = dst
+        .parent()
+        .ok_or_else(|| format!("git identity path has no parent: {}", dst.display()))?;
+    std::fs::create_dir_all(parent)
+        .map_err(|e| format!("create git identity dir {}: {e}", parent.display()))?;
+    set_owner_if_requested(parent, agent_uid)?;
+
+    let tmp = dst.with_extension("nodesync.tmp");
+    remove_file_if_present(&tmp)?;
+    let result = (|| {
+        for (key, value) in [
+            ("user.name", identity.author_name.as_str()),
+            ("user.email", identity.author_email.as_str()),
+            ("atrium.sessionId", identity.session_id.as_str()),
+            ("atrium.harness", identity.harness.as_str()),
+        ] {
+            // `git config --file` still performs repository DISCOVERY from the cwd, and
+            // hard-fails (exit 128) if it lands on a broken gitdir — even though writing
+            // a named file needs no repo at all. The daemon's cwd is ambient, and under
+            // the flat-~ layout the agent's home is itself a workspace, so discovery here
+            // is never something we want. Pin cwd to `/` to make this pure file I/O.
+            let output = Command::new("git")
+                .current_dir("/")
+                .args(["config", "--file"])
+                .arg(&tmp)
+                .arg(key)
+                .arg(value)
+                .output()
+                .map_err(|e| format!("spawn git config for {key}: {e}"))?;
+            if !output.status.success() {
+                return Err(format!(
+                    "git config for {key} failed (status {}): {}",
+                    output.status,
+                    String::from_utf8_lossy(&output.stderr).trim()
+                ));
+            }
+        }
+        set_owner_if_requested(&tmp, agent_uid)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600))
+                .map_err(|e| format!("chmod git identity {}: {e}", tmp.display()))?;
+        }
+        std::fs::rename(&tmp, &dst)
+            .map_err(|e| format!("rename {} -> {}: {e}", tmp.display(), dst.display()))
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    result
+}
+
+fn remove_file_if_present(path: &Path) -> Result<(), String> {
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!("remove {}: {error}", path.display())),
+    }
+}
+
+#[cfg(unix)]
+fn set_owner_if_requested(path: &Path, agent_uid: Option<u32>) -> Result<(), String> {
+    use std::os::unix::fs::chown;
+    let Some(uid) = agent_uid else {
+        return Ok(());
+    };
+    chown(path, Some(uid), Some(uid)).map_err(|e| format!("chown {} to {uid}: {e}", path.display()))
+}
+
+#[cfg(not(unix))]
+fn set_owner_if_requested(_path: &Path, _agent_uid: Option<u32>) -> Result<(), String> {
+    Ok(())
+}
 
 pub const ATRIUM_DOCS: &[(&str, &str)] = &[
     ("transcript", "transcript.md"),
@@ -759,6 +849,7 @@ fn staging_path(atrium_root: &Path, dst: &Path) -> Result<PathBuf, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::http_client::GitIdentity;
     use std::collections::HashSet;
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -886,6 +977,98 @@ mod tests {
             .into_bytes();
         }
         format!("{session_id}/{doc}").into_bytes()
+    }
+
+    fn git_identity(author_name: &str) -> GitIdentity {
+        GitIdentity {
+            author_name: author_name.to_string(),
+            author_email: "123+aniemerg@users.noreply.github.com".to_string(),
+            session_id: "de230f34-b9d9-42df-bce3-9270f2184294".to_string(),
+            harness: "claude".to_string(),
+        }
+    }
+
+    // Pinned to `/` for the same reason the writer is: git discovers a repository from
+    // the cwd even for `--file` reads, so running the suite from inside a linked
+    // worktree (whose .git is a gitfile) would fail these on repo discovery, not on
+    // anything they are meant to assert.
+    fn git_config_get(path: &Path, key: &str) -> std::process::Output {
+        Command::new("git")
+            .current_dir("/")
+            .args(["config", "--file"])
+            .arg(path)
+            .args(["--get", key])
+            .output()
+            .unwrap()
+    }
+
+    #[test]
+    fn git_identity_204_removes_a_stale_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let dst = temp.path().join(GIT_IDENTITY_RELATIVE_PATH);
+        std::fs::create_dir_all(dst.parent().unwrap()).unwrap();
+        std::fs::write(&dst, b"stale").unwrap();
+
+        materialize_git_identity(temp.path(), None, None).unwrap();
+
+        assert!(!dst.exists());
+    }
+
+    #[test]
+    fn git_identity_200_writes_exact_config() {
+        let temp = tempfile::tempdir().unwrap();
+        let identity = git_identity("Allan Niemerg");
+        let dst = temp.path().join(GIT_IDENTITY_RELATIVE_PATH);
+
+        materialize_git_identity(temp.path(), Some(&identity), None).unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(&dst).unwrap(),
+            "[user]\n\tname = Allan Niemerg\n\temail = 123+aniemerg@users.noreply.github.com\n\
+             [atrium]\n\tsessionId = de230f34-b9d9-42df-bce3-9270f2184294\n\
+             \tharness = claude\n"
+        );
+        let output = git_config_get(&dst, "user.email");
+        assert!(output.status.success());
+        assert_eq!(
+            String::from_utf8(output.stdout).unwrap().trim_end(),
+            identity.author_email
+        );
+    }
+
+    #[test]
+    fn git_identity_hostile_name_cannot_inject_config() {
+        let temp = tempfile::tempdir().unwrap();
+        let hostile = "Eve \"quoted\" \\\\ path\n[include]\n\tpath = /etc/passwd";
+        let identity = git_identity(hostile);
+        let dst = temp.path().join(GIT_IDENTITY_RELATIVE_PATH);
+
+        materialize_git_identity(temp.path(), Some(&identity), None).unwrap();
+
+        let output = git_config_get(&dst, "user.name");
+        assert!(output.status.success());
+        assert_eq!(
+            String::from_utf8(output.stdout)
+                .unwrap()
+                .trim_end_matches('\n'),
+            hostile
+        );
+        let include = git_config_get(&dst, "include.path");
+        assert!(!include.status.success());
+        assert!(include.stdout.is_empty());
+    }
+
+    #[test]
+    fn git_identity_materialization_is_idempotent() {
+        let temp = tempfile::tempdir().unwrap();
+        let identity = git_identity("Allan Niemerg");
+        let dst = temp.path().join(GIT_IDENTITY_RELATIVE_PATH);
+
+        materialize_git_identity(temp.path(), Some(&identity), None).unwrap();
+        let first = std::fs::read(&dst).unwrap();
+        materialize_git_identity(temp.path(), Some(&identity), None).unwrap();
+
+        assert_eq!(std::fs::read(&dst).unwrap(), first);
     }
 
     #[test]

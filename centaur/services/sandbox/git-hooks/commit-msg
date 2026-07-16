@@ -27,3 +27,23 @@ Remove the generated attribution footer and commit again.
 EOF
   exit 1
 fi
+
+session_id="$(git config --get atrium.sessionId || true)"
+harness="$(git config --get atrium.harness || true)"
+trailers=()
+
+if [[ -n "$session_id" ]]; then
+  trailers+=(--trailer "Atrium-Session: $session_id")
+fi
+if [[ -n "$harness" ]]; then
+  trailers+=(--trailer "Atrium-Harness: $harness")
+fi
+
+if [[ ${#trailers[@]} -gt 0 ]]; then
+  git interpret-trailers \
+    --in-place \
+    --if-exists=replace \
+    --if-missing=add \
+    "${trailers[@]}" \
+    "$message_file"
+fi

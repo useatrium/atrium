@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { Db } from '../db.js';
+import { resolveGitIdentity } from '../git-identity.js';
 import {
   isHarness,
   loadHarnessStateBundle,
@@ -148,6 +149,16 @@ export async function registerInternalSessionRuntimeRoutes(
     const { session, provider } = resolved;
     const bundles = await listSessionProfileBundles(pool, session.id, provider);
     return reply.send({ bundles });
+  });
+
+  app.get('/api/internal/sessions/:id/git-identity', async (req, reply) => {
+    if (!requireCaptureKey(req, reply)) return;
+    const { id } = req.params as { id: string };
+    const session = await resolveInternalSessionRef(id);
+    if (!session) return reply.code(404).send({ error: 'session_not_found' });
+    const identity = await resolveGitIdentity(pool, session.id);
+    if (!identity) return reply.code(204).send();
+    return reply.send(identity);
   });
 
   app.get('/api/internal/sessions/:id/profile-bundle-blob', async (req, reply) => {

@@ -13,7 +13,7 @@ use centaur_node_sync::feeds::{
 };
 use centaur_node_sync::http_client::{
     AUTH_HEADER, HEADER_EPOCH, HEADER_MODE, HEADER_NEXT_EVENT_ID, HEADER_NEXT_SEQ, QUERY_EPOCH,
-    QUERY_SINCE_EVENT_ID, QUERY_SINCE_SEQ, SESSION_PREFIX,
+    QUERY_SINCE_EVENT_ID, QUERY_SINCE_SEQ, SESSION_PREFIX, parse_git_identity,
 };
 use centaur_node_sync::materializer::CONTEXT_READY_MARKER;
 use centaur_node_sync::overlay_mount::{
@@ -227,6 +227,20 @@ fn profile_bundles_fixture_parses() {
     );
     assert_eq!(bundles[0].role, "skill");
     assert!(!bundles[0].executable);
+}
+
+#[test]
+fn git_identity_fixture_parses() {
+    let fixture: serde_json::Value =
+        serde_json::from_str(include_str!("../contract/fixtures/git-identity.json")).unwrap();
+    let identity = parse_git_identity(fixture).expect("git identity fixture must parse");
+    assert_eq!(identity.author_name, "Allan Niemerg");
+    assert_eq!(
+        identity.author_email,
+        "123+aniemerg@users.noreply.github.com"
+    );
+    assert_eq!(identity.session_id, "de230f34-b9d9-42df-bce3-9270f2184294");
+    assert_eq!(identity.harness, "claude");
 }
 
 #[test]

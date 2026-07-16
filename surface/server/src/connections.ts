@@ -50,6 +50,7 @@ interface ConnectionRow {
   status: ConnectionStatusValue;
   token_kind: string | null;
   account_login: string | null;
+  account_id: string | null;
   account_label: string | null;
   scopes: string[] | null;
   capabilities: unknown;
@@ -67,6 +68,7 @@ interface ConnectionIdentityRow {
   status: Exclude<ConnectionStatusValue, 'public_read' | 'unavailable'>;
   token_kind: Exclude<ConnectionTokenKind, 'public_read'>;
   account_login: string | null;
+  account_id: string | null;
   account_label: string | null;
   scopes: string[] | null;
   capabilities: unknown;
@@ -109,14 +111,14 @@ export class Connections {
 
   async list(userId: string, workspaceId: string, client: Queryable = this.pool): Promise<ConnectionStatusJson[]> {
     const connectionsRes = await client.query<ConnectionRow>(
-      `SELECT workspace_id, user_id, provider, status, token_kind, account_login, account_label,
+      `SELECT workspace_id, user_id, provider, status, token_kind, account_login, account_id, account_label,
               scopes, capabilities, metadata, last_validated_at, last_error, updated_at
          FROM user_connections
         WHERE workspace_id = $1 AND user_id = $2`,
       [workspaceId, userId],
     );
     const identitiesRes = await client.query<ConnectionIdentityRow>(
-      `SELECT workspace_id, user_id, provider, identity_id, status, token_kind, account_login, account_label,
+      `SELECT workspace_id, user_id, provider, identity_id, status, token_kind, account_login, account_id, account_label,
               scopes, capabilities, metadata, active, last_validated_at, last_error, updated_at
          FROM user_connection_identities
         WHERE workspace_id = $1 AND user_id = $2
@@ -148,6 +150,7 @@ export class Connections {
       status: Exclude<ConnectionStatusValue, 'public_read'>;
       tokenKind: Exclude<ConnectionTokenKind, 'public_read'>;
       accountLogin?: string | null;
+      accountId?: string | null;
       accountLabel?: string | null;
       scopes?: readonly string[];
       capabilities?: Record<string, unknown>;
@@ -166,14 +169,15 @@ export class Connections {
     );
     const res = await client.query<ConnectionRow>(
       `INSERT INTO user_connections
-         (workspace_id, user_id, provider, status, token_kind, account_login, account_label,
+         (workspace_id, user_id, provider, status, token_kind, account_login, account_id, account_label,
           scopes, capabilities, metadata, last_validated_at, last_error)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::text[], $9::jsonb, $10::jsonb,
-               CASE WHEN $4 = 'connected' THEN now() ELSE NULL END, $11)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::text[], $10::jsonb, $11::jsonb,
+               CASE WHEN $4 = 'connected' THEN now() ELSE NULL END, $12)
        ON CONFLICT (workspace_id, user_id, provider) DO UPDATE
        SET status = EXCLUDED.status,
            token_kind = EXCLUDED.token_kind,
            account_login = EXCLUDED.account_login,
+           account_id = EXCLUDED.account_id,
            account_label = EXCLUDED.account_label,
            scopes = EXCLUDED.scopes,
            capabilities = EXCLUDED.capabilities,
@@ -181,7 +185,7 @@ export class Connections {
            last_validated_at = CASE WHEN EXCLUDED.status = 'connected' THEN now() ELSE user_connections.last_validated_at END,
            last_error = EXCLUDED.last_error,
            updated_at = now()
-       RETURNING workspace_id, user_id, provider, status, token_kind, account_login, account_label,
+       RETURNING workspace_id, user_id, provider, status, token_kind, account_login, account_id, account_label,
                  scopes, capabilities, metadata, last_validated_at, last_error, updated_at`,
       [
         args.workspaceId,
@@ -190,6 +194,7 @@ export class Connections {
         args.status,
         args.tokenKind,
         args.accountLogin ?? null,
+        args.accountId ?? null,
         args.accountLabel ?? args.accountLogin ?? null,
         normalizeScopes(args.scopes ?? []),
         JSON.stringify(args.capabilities ?? {}),
@@ -199,14 +204,15 @@ export class Connections {
     );
     await client.query(
       `INSERT INTO user_connection_identities
-         (workspace_id, user_id, provider, identity_id, status, token_kind, account_login, account_label,
+         (workspace_id, user_id, provider, identity_id, status, token_kind, account_login, account_id, account_label,
           scopes, capabilities, metadata, active, last_validated_at, last_error)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::text[], $10::jsonb, $11::jsonb, true,
-               CASE WHEN $5 = 'connected' THEN now() ELSE NULL END, $12)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::text[], $11::jsonb, $12::jsonb, true,
+               CASE WHEN $5 = 'connected' THEN now() ELSE NULL END, $13)
        ON CONFLICT (workspace_id, user_id, provider, identity_id) DO UPDATE
        SET status = EXCLUDED.status,
            token_kind = EXCLUDED.token_kind,
            account_login = EXCLUDED.account_login,
+           account_id = EXCLUDED.account_id,
            account_label = EXCLUDED.account_label,
            scopes = EXCLUDED.scopes,
            capabilities = EXCLUDED.capabilities,
@@ -223,6 +229,7 @@ export class Connections {
         args.status,
         args.tokenKind,
         args.accountLogin ?? null,
+        args.accountId ?? null,
         args.accountLabel ?? args.accountLogin ?? null,
         normalizeScopes(args.scopes ?? []),
         JSON.stringify(args.capabilities ?? {}),
@@ -265,7 +272,7 @@ export class Connections {
     client: Queryable = this.pool,
   ): Promise<ConnectionStatusJson | null> {
     const selected = await client.query<ConnectionIdentityRow>(
-      `SELECT workspace_id, user_id, provider, identity_id, status, token_kind, account_login, account_label,
+      `SELECT workspace_id, user_id, provider, identity_id, status, token_kind, account_login, account_id, account_label,
               scopes, capabilities, metadata, active, last_validated_at, last_error, updated_at
          FROM user_connection_identities
         WHERE workspace_id = $1 AND user_id = $2 AND provider = $3 AND identity_id = $4
@@ -293,14 +300,15 @@ export class Connections {
     );
     const active = await client.query<ConnectionRow>(
       `INSERT INTO user_connections
-         (workspace_id, user_id, provider, status, token_kind, account_login, account_label,
+         (workspace_id, user_id, provider, status, token_kind, account_login, account_id, account_label,
           scopes, capabilities, metadata, last_validated_at, last_error)
-       VALUES ($1, $2, $3, 'connected', $4, $5, $6, $7::text[], $8::jsonb, $9::jsonb,
-               COALESCE($10::timestamptz, now()), NULL)
+       VALUES ($1, $2, $3, 'connected', $4, $5, $6, $7, $8::text[], $9::jsonb, $10::jsonb,
+               COALESCE($11::timestamptz, now()), NULL)
        ON CONFLICT (workspace_id, user_id, provider) DO UPDATE
        SET status = 'connected',
            token_kind = EXCLUDED.token_kind,
            account_login = EXCLUDED.account_login,
+           account_id = EXCLUDED.account_id,
            account_label = EXCLUDED.account_label,
            scopes = EXCLUDED.scopes,
            capabilities = EXCLUDED.capabilities,
@@ -308,7 +316,7 @@ export class Connections {
            last_validated_at = EXCLUDED.last_validated_at,
            last_error = NULL,
            updated_at = now()
-       RETURNING workspace_id, user_id, provider, status, token_kind, account_login, account_label,
+       RETURNING workspace_id, user_id, provider, status, token_kind, account_login, account_id, account_label,
                  scopes, capabilities, metadata, last_validated_at, last_error, updated_at`,
       [
         workspaceId,
@@ -316,6 +324,7 @@ export class Connections {
         GITHUB_CONNECTION_PROVIDER,
         identity.token_kind,
         identity.account_login,
+        identity.account_id,
         identity.account_label,
         normalizeScopes(identity.scopes ?? []),
         JSON.stringify(plainRecord(identity.capabilities)),
@@ -448,7 +457,7 @@ async function listConnectionIdentities(
   provider: ConnectionProvider,
 ): Promise<ConnectionIdentityJson[]> {
   const res = await client.query<ConnectionIdentityRow>(
-    `SELECT workspace_id, user_id, provider, identity_id, status, token_kind, account_login, account_label,
+    `SELECT workspace_id, user_id, provider, identity_id, status, token_kind, account_login, account_id, account_label,
             scopes, capabilities, metadata, active, last_validated_at, last_error, updated_at
        FROM user_connection_identities
       WHERE workspace_id = $1 AND user_id = $2 AND provider = $3

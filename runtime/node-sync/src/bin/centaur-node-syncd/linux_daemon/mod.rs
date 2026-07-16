@@ -42,7 +42,7 @@ use centaur_node_sync::eviction::{
 };
 use centaur_node_sync::fs_linux;
 use centaur_node_sync::http_client::HttpAtriumClient;
-use centaur_node_sync::materializer::write_mount_readme;
+use centaur_node_sync::materializer::{materialize_git_identity, write_mount_readme};
 use centaur_node_sync::overlay::RawEntry;
 use centaur_node_sync::overlay_mount::{OverlayMountPlan, mount_overlay, plan_overlay_mount};
 use centaur_node_sync::quiesce::{LeaseGate, apply_quiesced_writes};
@@ -427,6 +427,46 @@ fn run_multi_session(global: GlobalConfig, overlays_root: PathBuf, once: bool, i
                     };
                     let wip_remounted = !has_active_mount
                         || mounted_overlays.get(&discovered.session) != Some(&plan);
+                    // Git author identity is server-derived per CLAIM, and a claim is a
+                    // mount — so refresh it only when the mount is being (re)established,
+                    // never on every tick. An unconditional per-session GET per tick is
+                    // exactly the steady-state cost the atrium delta protocol exists to
+                    // avoid. Writing into the upper before mount_overlay is deliberate:
+                    // the agent must never observe a home without its identity.
+                    //
+                    // Failures here must NOT skip the mount. The image bakes a
+                    // "Centaur AI" identity and /opt/centaur/gitconfig includes this file
+                    // only if it exists, so an absent identity degrades to exactly the
+                    // pre-existing behavior. Gating the mount on identity would turn a
+                    // surface blip into "the agent's home never mounts" — trading a
+                    // recoverable misattributed commit for an unrecoverable dead session.
+                    if wip_remounted {
+                        let identity_client = HttpAtriumClient::new(
+                            &global.base_url,
+                            &global.api_key,
+                            &discovered.atrium_session,
+                        );
+                        match identity_client.get_git_identity() {
+                            Ok(identity) => {
+                                if let Err(error) = materialize_git_identity(
+                                    &discovered.upper,
+                                    identity.as_ref(),
+                                    Some(discovered.manifest.agent_uid),
+                                ) {
+                                    eprintln!(
+                                        "session {}: git identity materialize: {error} (falling back to the image identity)",
+                                        discovered.session
+                                    );
+                                }
+                            }
+                            Err(error) => {
+                                eprintln!(
+                                    "session {}: git identity fetch: {error} (falling back to the image identity)",
+                                    discovered.session
+                                );
+                            }
+                        }
+                    }
                     let mounted = match mount_overlay(plan, Some(discovered.manifest.agent_uid)) {
                         Ok(plan) => plan,
                         Err(e) => {

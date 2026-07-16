@@ -4,7 +4,7 @@
 //! The per-node daemon scans direct child directories of `<overlays-root>` and
 //! only runs sessions that have a readable sidecar manifest.
 
-use crate::overlay_mount::DEFAULT_AGENT_UID;
+use crate::overlay_mount::{DEFAULT_AGENT_UID, READY_MARKER_FILE};
 use std::path::{Component, Path, PathBuf};
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -173,11 +173,44 @@ pub fn write_manifest(overlays_root: &Path, manifest: &SessionManifest) -> Resul
     let dir = sessions_dir(overlays_root);
     std::fs::create_dir_all(&dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
     let path = manifest_path(overlays_root, &manifest.session);
+    let invalidate_ready = match std::fs::read(&path) {
+        Ok(bytes) => serde_json::from_slice::<SessionManifest>(&bytes).map_or(true, |previous| {
+            claim_identity(&previous) != claim_identity(manifest)
+        }),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+        Err(error) => return Err(format!("read {}: {error}", path.display())),
+    };
     let tmp = path.with_extension("json.tmp");
     let bytes = serde_json::to_vec_pretty(manifest).map_err(|e| e.to_string())?;
     std::fs::write(&tmp, bytes).map_err(|e| format!("write {}: {e}", tmp.display()))?;
     std::fs::rename(&tmp, &path)
-        .map_err(|e| format!("rename {} -> {}: {e}", tmp.display(), path.display()))
+        .map_err(|e| format!("rename {} -> {}: {e}", tmp.display(), path.display()))?;
+    if invalidate_ready {
+        // A claim rewrites the manifest of an already-mounted warm sandbox.
+        // Publish the claimed identity first, then invalidate the old readiness
+        // handshake. node-sync recreates the marker only after per-claim
+        // materialization. An unchanged post-mount canonicalization write must
+        // leave the freshly-created marker alone.
+        let ready_marker = overlays_root
+            .join(&manifest.session)
+            .join(READY_MARKER_FILE);
+        match std::fs::remove_file(&ready_marker) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(format!("remove {}: {error}", ready_marker.display())),
+        }
+    }
+    Ok(())
+}
+
+fn claim_identity(manifest: &SessionManifest) -> (&str, Option<&str>, &str, &str, bool) {
+    (
+        &manifest.atrium_session,
+        manifest.harness.as_deref(),
+        &manifest.harness_thread_id,
+        &manifest.harness_home,
+        manifest.flat_home,
+    )
 }
 
 pub fn discover_sessions(overlays_root: &Path) -> Result<SessionDiscovery, String> {
@@ -423,6 +456,67 @@ mod tests {
 
         let round_trip: SessionManifest = serde_json::from_value(value).unwrap();
         assert_eq!(round_trip, manifest);
+    }
+
+    #[test]
+    fn manifest_publication_invalidates_existing_ready_marker() {
+        let temp = tempfile::tempdir().unwrap();
+        let upper = temp.path().join("sess-1");
+        std::fs::create_dir_all(&upper).unwrap();
+        let mut manifest = SessionManifest {
+            session: "sess-1".to_string(),
+            atrium_session: "sess-1".to_string(),
+            merged: temp.path().join("merged/sess-1"),
+            harness: None,
+            harness_thread_id: String::new(),
+            harness_home: String::new(),
+            flat_home: true,
+            generic_home_lower: PathBuf::new(),
+            context_source: PathBuf::new(),
+            repo: String::new(),
+            repos: Vec::new(),
+            agent_uid: 1001,
+        };
+        write_manifest(temp.path(), &manifest).unwrap();
+        let ready = upper.join(READY_MARKER_FILE);
+        std::fs::write(&ready, b"ready\n").unwrap();
+        manifest.atrium_session = "surface:sess-1".to_string();
+        manifest.harness = Some("claude".to_string());
+        manifest.harness_thread_id = "thread-123".to_string();
+        manifest.harness_home = ".claude".to_string();
+
+        write_manifest(temp.path(), &manifest).unwrap();
+
+        assert!(!ready.exists());
+        assert_eq!(read_manifest(temp.path(), "sess-1").unwrap(), manifest);
+    }
+
+    #[test]
+    fn unchanged_manifest_write_preserves_ready_marker() {
+        let temp = tempfile::tempdir().unwrap();
+        let upper = temp.path().join("sess-1");
+        std::fs::create_dir_all(&upper).unwrap();
+        let manifest = SessionManifest {
+            session: "sess-1".to_string(),
+            atrium_session: "surface:sess-1".to_string(),
+            merged: temp.path().join("merged/sess-1"),
+            harness: Some("claude".to_string()),
+            harness_thread_id: "thread-123".to_string(),
+            harness_home: ".claude".to_string(),
+            flat_home: true,
+            generic_home_lower: PathBuf::new(),
+            context_source: PathBuf::new(),
+            repo: String::new(),
+            repos: Vec::new(),
+            agent_uid: 1001,
+        };
+        write_manifest(temp.path(), &manifest).unwrap();
+        let ready = upper.join(READY_MARKER_FILE);
+        std::fs::write(&ready, b"ready\n").unwrap();
+
+        write_manifest(temp.path(), &manifest).unwrap();
+
+        assert!(ready.is_file());
     }
 
     #[test]
