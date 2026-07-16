@@ -28,6 +28,41 @@ need_cmd() {
   command -v "$1" >/dev/null 2>&1
 }
 
+# Docker group membership only takes effect in a new login session, so on a
+# freshly provisioned box the invoking user cannot reach the socket during this
+# very run. Transparently fall back to sudo for the duration of provisioning.
+# shellcheck disable=SC2032,SC2033
+# `sudo docker` is deliberate: sudo does not inherit shell functions, so it
+# execs the real docker binary rather than recursing into this wrapper.
+docker() {
+  if [[ "${DOCKER_NEEDS_SUDO:-0}" == "1" ]]; then
+    sudo docker "$@"
+  else
+    command docker "$@"
+  fi
+}
+
+install_docker() {
+  if need_cmd docker; then
+    log "docker already installed ($(docker --version 2>/dev/null))"
+  else
+    log "installing docker.io"
+    sudo apt-get update
+    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y docker.io
+  fi
+  sudo systemctl enable --now docker
+  # The invoking admin needs group membership to run docker without sudo. This
+  # only takes effect in new sessions, so we do not rely on it during this run.
+  if ! id -nG "$USER" | tr ' ' '\n' | grep -qx docker; then
+    sudo usermod -aG docker "$USER"
+    log "added $USER to docker group (re-login required for it to take effect)"
+  fi
+  if ! command docker info >/dev/null 2>&1; then
+    DOCKER_NEEDS_SUDO=1
+    log "docker socket not reachable as $USER this session; using sudo for provisioning"
+  fi
+}
+
 install_packages() {
   local -a missing=()
   local package
@@ -279,11 +314,7 @@ main() {
     printf 'This provisioner expects x86_64; found %s\n' "$(uname -m)" >&2
     exit 1
   fi
-  if ! need_cmd docker; then
-    printf 'Docker must already be installed.\n' >&2
-    exit 1
-  fi
-
+  install_docker
   install_packages
   install_k3d
   install_k3s_cli
