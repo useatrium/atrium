@@ -473,6 +473,41 @@ describe('MessageRow web presence', () => {
     expect(screen.queryByTestId('session-card')).toBeNull();
   });
 
+  it('gives the compact reply exactly one clamp, so Show more grows the text', () => {
+    // Two nested clamps is the bug: the row's line-clamp-3 only started biting
+    // once MessageText's own max-height was released, so "Show more" SHRANK a
+    // long reply to three lines and a "…" instead of expanding it.
+    const answer = message({
+      id: 99,
+      threadRootEventId: 42,
+      sessionId: 's-1',
+      sessionEventType: 'replied',
+      text: Array.from({ length: 40 }, (_, i) => `Step ${i + 1}: inspected the launcher path.`).join('\n'),
+      reactions: [],
+      author: { id: 'agent:s-1', handle: 'agent', displayName: 'Agent' },
+    });
+    renderRow({
+      row: message({
+        sessionId: 's-1',
+        sessionTask: 'Long answer please',
+        replyCount: 1,
+        lastReplyId: 99,
+        lastReply: answer,
+        reactions: [],
+      }),
+      session: session({ status: 'completed', completedAt: '2026-07-05T12:01:00.000Z' }),
+      slotSessions: [session({ status: 'completed', completedAt: '2026-07-05T12:01:00.000Z' })],
+      anchoredAnswers: [answer],
+    });
+
+    const reply = screen.getByTestId('thread-compact-reply');
+    const clamped = reply.querySelector('.line-clamp-3');
+    expect(clamped).toBeTruthy();
+    // The row owns the only clamp: MessageText must not nest a second one.
+    expect(clamped?.querySelector('.max-h-80')).toBeNull();
+    expect(within(reply).queryByRole('button', { name: 'Show more' })).toBeNull();
+  });
+
   it('uses exactly the failed terminal slot and keeps driver recovery actions', () => {
     renderRow({
       row: message({ sessionId: 's-1', sessionTask: 'Risky task', reactions: [] }),

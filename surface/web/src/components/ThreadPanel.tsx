@@ -230,7 +230,15 @@ export function ThreadPanelContent({
   const items = useMemo(() => buildTimelineItems(reconciledReplies), [reconciledReplies]);
   const spineRows = useMemo(() => {
     const rows: Array<
-      | { kind: 'message'; key: string; message: ChatMessage; grouped: boolean; aside: boolean }
+      | {
+          kind: 'message';
+          key: string;
+          message: ChatMessage;
+          grouped: boolean;
+          aside: boolean;
+          fold?: FoldedTurnRow;
+          foldLive?: boolean;
+        }
       | { kind: 'fold'; key: string; fold: FoldedTurnRow; live: boolean }
     > = [];
     const usedFolds = new Set<string>();
@@ -245,9 +253,28 @@ export function ThreadPanelContent({
       });
       usedFolds.add(fold.key);
     };
+    // A turn's work belongs to the reply it produced, so those folds render
+    // inside that reply's row. Resolve them up front: the trigger-zero pass
+    // below would otherwise hoist the first reply's work to the top of the
+    // thread, detached from the answer it explains.
+    const agentReplyCount = items.filter(
+      (item) =>
+        item.kind !== 'day' &&
+        item.message != null &&
+        attachedSession != null &&
+        item.message.sessionId === attachedSession.id &&
+        item.message.sessionEventType === 'replied',
+    ).length;
+    const foldByReplyOrdinal = new Map<number, FoldedTurnRow>();
+    for (const fold of workFolds) {
+      if (fold.replyOrdinal == null || fold.replyOrdinal >= agentReplyCount) continue;
+      if (!foldByReplyOrdinal.has(fold.replyOrdinal)) foldByReplyOrdinal.set(fold.replyOrdinal, fold);
+    }
+    const attachedFoldKeys = new Set([...foldByReplyOrdinal.values()].map((fold) => fold.key));
     // The root ask is trigger zero. Harnesses that omit its user_message echo
     // produce a null trigger, which belongs at this same position.
     for (const fold of workFolds) {
+      if (attachedFoldKeys.has(fold.key)) continue;
       if (fold.triggerOrdinal === null || fold.triggerOrdinal === 0) pushFold(fold);
     }
     for (const item of items) {
@@ -255,9 +282,10 @@ export function ThreadPanelContent({
       const message = item.message;
       const agentReply =
         attachedSession != null && message.sessionId === attachedSession.id && message.sessionEventType === 'replied';
+      let fold: FoldedTurnRow | undefined;
       if (agentReply) {
-        const fold = workFolds.find((candidate) => candidate.replyOrdinal === replyOrdinal);
-        if (fold && !usedFolds.has(fold.key)) pushFold(fold);
+        fold = foldByReplyOrdinal.get(replyOrdinal);
+        if (fold) usedFolds.add(fold.key);
         replyOrdinal += 1;
       }
       const aside =
@@ -271,6 +299,7 @@ export function ThreadPanelContent({
         message,
         grouped: item.grouped ?? false,
         aside,
+        ...(fold ? { fold, foldLive: isLiveFold(fold, workFolds, sessionLive) } : {}),
       });
       const targetsAttachedSession =
         attachedSession != null &&
@@ -428,6 +457,18 @@ export function ThreadPanelContent({
               inThread
               session={sessionFor(row.message)}
               spectators={spectatorsFor(row.message)}
+              workFold={
+                row.fold ? (
+                  <WorkFold
+                    fold={row.fold}
+                    live={row.foldLive ?? false}
+                    nested
+                    onOpenWork={
+                      attachedSession ? () => onOpenSession(attachedSession.id, { workTab: 'sideEffects' }) : undefined
+                    }
+                  />
+                ) : undefined
+              }
               meId={meId}
               meHandle={meHandle}
               mentionContext={mentionContext}

@@ -69,3 +69,46 @@ test('expanding the channel cluster interleaves a human steer between agent resp
   expect(firstTop).toBeLessThan(steerTop);
   expect(steerTop).toBeLessThan(secondTop);
 });
+
+// jsdom has no layout, so only a real browser can prove what the user reported:
+// "Show more" CUT the reply to three lines and a "…" instead of expanding it.
+// The row's line-clamp-3 wrapped MessageText's own max-height, and releasing the
+// inner constraint is what finally let the outer clamp bite.
+test('Show more grows a long agent reply instead of shrinking it', async ({ page }) => {
+  const room = await createTestChannel('clamp-grow');
+  const handle = unique('clamper');
+  await login(page, handle, 'Clamp Human');
+  const roomId = await channelId(page.context().request, room);
+  await openChannel(page, room);
+
+  const root = unique('clamp-root');
+  await sendMessage(page, root, room);
+  const rootId = await messageId(page, root);
+
+  const sessionId = '11111111-1111-4111-8111-111111111111';
+  const longReply = Array.from(
+    { length: 30 },
+    (_, i) => `Step ${i + 1}: inspected the preview launcher path and confirmed the credential scope boundary holds.`,
+  ).join('\n');
+  await injectSessionReply({ channelId: roomId, rootId, sessionId, text: longReply });
+
+  await page.reload();
+  await expect(page.getByRole('heading', { name: `# ${room}` })).toBeVisible();
+
+  const reply = confirmedRowsWithText(page, root).first().getByTestId('thread-compact-reply').first();
+  await expect(reply).toBeVisible();
+
+  const showMore = reply.getByRole('button', { name: 'Show more' });
+  await expect(showMore).toBeVisible();
+  const clamped = (await reply.boundingBox())!.height;
+
+  await showMore.click();
+  const expanded = (await reply.boundingBox())!.height;
+  // The whole point: expanding must reveal more of the reply, never less.
+  expect(expanded).toBeGreaterThan(clamped);
+  await expect(reply.getByRole('button', { name: 'Show less' })).toBeVisible();
+
+  // ...and it collapses back, so the toggle works in both directions.
+  await reply.getByRole('button', { name: 'Show less' }).click();
+  expect((await reply.boundingBox())!.height).toBeCloseTo(clamped, 0);
+});
