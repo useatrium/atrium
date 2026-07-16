@@ -427,12 +427,28 @@ fn run_multi_session(global: GlobalConfig, overlays_root: PathBuf, once: bool, i
                     };
                     let wip_remounted = !has_active_mount
                         || mounted_overlays.get(&discovered.session) != Some(&plan);
+                    let mounted = match mount_overlay(plan, Some(discovered.manifest.agent_uid)) {
+                        Ok(plan) => plan,
+                        Err(e) => {
+                            eprintln!("session {}: overlay mount: {e}", discovered.session);
+                            continue;
+                        }
+                    };
                     // Git author identity is server-derived per CLAIM, and a claim is a
                     // mount — so refresh it only when the mount is being (re)established,
                     // never on every tick. An unconditional per-session GET per tick is
                     // exactly the steady-state cost the atrium delta protocol exists to
-                    // avoid. Writing into the upper before mount_overlay is deliberate:
-                    // the agent must never observe a home without its identity.
+                    // avoid.
+                    //
+                    // This MUST write through `mounted.merged`, never `discovered.upper`.
+                    // A warm pod's overlay is already mounted long before the claim that
+                    // gives it an identity, and modifying an overlay's upperdir behind a
+                    // live mount is undefined: the file lands on disk but the merged view
+                    // keeps serving its cached (negative) dentry, so the agent never sees
+                    // it — and the path is left so incoherent that a later mkdir through
+                    // the mount fails with ESTALE. Shipped exactly that way once: the
+                    // identity file was present in the upper and the agent still committed
+                    // as "Centaur AI". Same hazard the lowerdir comment above describes.
                     //
                     // Failures here must NOT skip the mount. The image bakes a
                     // "Centaur AI" identity and /opt/centaur/gitconfig includes this file
@@ -440,6 +456,14 @@ fn run_multi_session(global: GlobalConfig, overlays_root: PathBuf, once: bool, i
                     // pre-existing behavior. Gating the mount on identity would turn a
                     // surface blip into "the agent's home never mounts" — trading a
                     // recoverable misattributed commit for an unrecoverable dead session.
+                    //
+                    // Ordering caveat: mount_overlay writes the ready marker, and a warm
+                    // pod's marker predates this claim entirely, so there is no
+                    // write-before-ready guarantee to be had here — the agent could in
+                    // principle commit in the seconds before this lands. That degrades to
+                    // the baked identity rather than a wrong one, which is why it is
+                    // acceptable; closing it for real needs the claim path itself to carry
+                    // the identity.
                     if wip_remounted {
                         let identity_client = HttpAtriumClient::new(
                             &global.base_url,
@@ -449,7 +473,7 @@ fn run_multi_session(global: GlobalConfig, overlays_root: PathBuf, once: bool, i
                         match identity_client.get_git_identity() {
                             Ok(identity) => {
                                 if let Err(error) = materialize_git_identity(
-                                    &discovered.upper,
+                                    &mounted,
                                     identity.as_ref(),
                                     Some(discovered.manifest.agent_uid),
                                 ) {
@@ -467,13 +491,6 @@ fn run_multi_session(global: GlobalConfig, overlays_root: PathBuf, once: bool, i
                             }
                         }
                     }
-                    let mounted = match mount_overlay(plan, Some(discovered.manifest.agent_uid)) {
-                        Ok(plan) => plan,
-                        Err(e) => {
-                            eprintln!("session {}: overlay mount: {e}", discovered.session);
-                            continue;
-                        }
-                    };
                     let session = session_config_from_discovered(&discovered, &mounted);
                     mounted_overlays.insert(discovered.session.clone(), mounted);
                     let first_seen = !states.contains_key(&session.session);
