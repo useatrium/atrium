@@ -5,6 +5,7 @@ import type { ChatMessage, UserRef } from '@atrium/surface-client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ThemeProvider } from '../theme';
 import type { Session } from '../sessions/types';
+import { api } from '../api';
 import { MessageRow } from './MessageRow';
 
 const ada: UserRef = {
@@ -84,6 +85,7 @@ function renderRow({
   session: rowSession,
   slotSessions,
   anchoredAnswers,
+  meId = 'u-1',
 }: {
   resolveUser?: (id: string) => UserRef | undefined;
   onReact?: (message: ChatMessage, emoji: string) => Promise<void>;
@@ -93,6 +95,7 @@ function renderRow({
   session?: Session;
   slotSessions?: Session[];
   anchoredAnswers?: ChatMessage[];
+  meId?: string;
 } = {}) {
   const view = render(
     <ThemeProvider>
@@ -102,7 +105,7 @@ function renderRow({
         slotSessions={slotSessions}
         anchoredAnswers={anchoredAnswers}
         grouped={false}
-        meId="u-1"
+        meId={meId}
         meHandle="ada"
         onRetry={vi.fn()}
         onOpenThread={onOpenThread}
@@ -400,6 +403,54 @@ describe('MessageRow web presence', () => {
     expect(viewSession.className).toContain('[@media(pointer:coarse)]:min-h-11');
     expect(screen.queryByTestId('session-slot-working')).toBeNull();
     expect(screen.queryByTestId('session-slot-done')).toBeNull();
+  });
+
+  it('lets a spectator nudge the failed session driver through its thread', () => {
+    const postMessage = vi.spyOn(api, 'postMessage').mockResolvedValue({ event: {} as never });
+    const failed = session({
+      status: 'failed',
+      completedAt: '2026-07-05T12:00:30.000Z',
+      driverName: 'Ada Lovelace',
+    });
+    renderRow({
+      meId: 'u-2',
+      row: message({ sessionId: 's-1', sessionTask: 'Risky task', reactions: [] }),
+      session: failed,
+      slotSessions: [failed],
+    });
+
+    const nudge = screen.getByRole('button', { name: 'Nudge Ada Lovelace about Timeline migration' });
+    fireEvent.click(nudge);
+    expect(postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channelId: 'ch-1',
+        threadRootEventId: 42,
+        text: '<@u-1> this run failed — worth a retry?',
+      }),
+    );
+    expect(nudge.textContent).toContain('Nudged ✓');
+  });
+
+  it('does not show a nudge to the driver or for a completed session', () => {
+    const failed = session({ status: 'failed', completedAt: '2026-07-05T12:00:30.000Z' });
+    const { rerender } = renderRow({
+      row: message({ sessionId: 's-1', reactions: [] }),
+      session: failed,
+      slotSessions: [failed],
+    });
+    expect(screen.queryByRole('button', { name: /Nudge/ })).toBeNull();
+    const completed = { ...failed, status: 'completed' as const };
+    rerender(
+      <ThemeProvider>
+        <MessageRow
+          message={message({ sessionId: 's-1', reactions: [] })}
+          grouped={false}
+          meId="u-2"
+          slotSessions={[completed]}
+        />
+      </ThemeProvider>,
+    );
+    expect(screen.queryByRole('button', { name: /Nudge/ })).toBeNull();
   });
 
   it('moves the canonical question card into the needs-input slot', () => {

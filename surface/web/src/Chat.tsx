@@ -2510,6 +2510,8 @@ export function Chat({
                 void setSessionArchived(sessionId, true, previousArchivedAt).catch(() => {})
               }
               onCountsChange={handleActivityCountsChange}
+              meId={me.id}
+              onNudge={({ channelId, text, threadRootEventId }) => send(channelId, text, threadRootEventId)}
             />
           ) : showFilesSurface ? (
             <Gallery

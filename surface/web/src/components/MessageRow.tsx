@@ -62,6 +62,7 @@ import { type MentionContext, useMentionTypeahead } from './useMentionTypeahead'
 import { AgentMark } from './AgentMark';
 import { api } from '../api';
 import { deriveClusterPreview } from './clusterPreview';
+import { failedSessionNudge } from '../sessions/nudge';
 
 export { REACTION_EMOJI } from '@atrium/surface-client/reactions';
 
@@ -1267,6 +1268,21 @@ function AgentSessionSlot({
   const pending = !terminal && session.pendingQuestion?.questions[0] ? session.pendingQuestion : null;
   const answered = sessionAnsweredQuestion(session);
   const isDriver = meId != null && sessionDriverId(session) === meId;
+  const nudge = failedSessionNudge(session);
+  const [nudged, setNudged] = useState(false);
+
+  const sendNudge = () => {
+    if (!nudge || nudged) return;
+    setNudged(true);
+    void api
+      .postMessage({
+        channelId: nudge.channelId,
+        text: nudge.text,
+        clientMsgId: randomId(),
+        threadRootEventId: nudge.threadRootEventId,
+      })
+      .catch(() => setNudged(false));
+  };
 
   if (pending || (!terminal && answered)) {
     return (
@@ -1304,6 +1320,17 @@ function AgentSessionSlot({
                 <RetryTurnAction sessionId={session.id} nowrap />
                 <AskWhyAction sessionId={session.id} nowrap />
               </>
+            )}
+            {!isDriver && nudge && (
+              <button
+                type="button"
+                disabled={nudged}
+                onClick={sendNudge}
+                aria-label={`Nudge ${nudge.driverName} about ${nudge.title}`}
+                className="whitespace-nowrap text-danger hover:underline disabled:cursor-default disabled:text-fg-muted disabled:no-underline"
+              >
+                {nudged ? 'Nudged ✓' : `Nudge @${nudge.driverName} →`}
+              </button>
             )}
             <button
               type="button"
