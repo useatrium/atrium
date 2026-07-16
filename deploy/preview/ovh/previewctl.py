@@ -27,6 +27,10 @@ REAL_FS_ROOT = Path(os.environ.get("ATRIUM_PREVIEW_REAL_FS_ROOT", "/var/lib/atri
 CADDY_CONF_DIR = Path(os.environ.get("ATRIUM_PREVIEW_CADDY_CONF_DIR", "/etc/caddy/conf.d"))
 REGISTRY_PUSH = os.environ.get("ATRIUM_PREVIEW_REGISTRY_PUSH", "localhost:5000")
 REGISTRY_PULL = os.environ.get("ATRIUM_PREVIEW_REGISTRY_PULL", "registry:5000")
+# The box registry container's real name (set by provision-box.sh) and the network
+# alias the chart's image references resolve through.
+REGISTRY_CONTAINER = os.environ.get("ATRIUM_PREVIEW_REGISTRY_CONTAINER", "atrium-preview-registry")
+REGISTRY_ALIAS = REGISTRY_PULL.split(":")[0]
 PREVIEW_DOMAIN = os.environ.get("ATRIUM_PREVIEW_DOMAIN", "preview.useatrium.com")
 PORT_RANGE = range(21000, 29000)
 NODE_PORT = 30080
@@ -427,6 +431,20 @@ def create_k3d_cluster(state: dict[str, Any]) -> None:
         raise RuntimeError(
             f"required Centaur bind mount is on {filesystem or 'an unknown filesystem'}, not ext4: {real_fs}"
         )
+    # containerd defaults to HTTPS, but the box registry is plain HTTP on the
+    # docker network. Without this every pod ends in ImagePullBackOff on
+    #: Head "https://registry:5000/...".
+    registries_yaml = runtime_dir(preview_id) / "registries.yaml"
+    registries_yaml.write_text(
+        textwrap.dedent(
+            f"""\
+            mirrors:
+              "{REGISTRY_PULL}":
+                endpoint:
+                  - "http://{REGISTRY_PULL}"
+            """
+        )
+    )
     run(
         [
             "k3d",
@@ -434,6 +452,8 @@ def create_k3d_cluster(state: dict[str, Any]) -> None:
             "create",
             cluster,
             "--no-lb",
+            "--registry-config",
+            str(registries_yaml),
             "--k3s-arg",
             "--disable=traefik@server:0",
             "--k3s-arg",
@@ -449,9 +469,25 @@ def create_k3d_cluster(state: dict[str, Any]) -> None:
         ],
         capture=False,
     )
-    # The shared registry is provisioned once by box setup. Connecting it to this
-    # cluster's Docker network makes registry:5000 resolvable by the k3d node.
-    run(["docker", "network", "connect", f"k3d-{cluster}", "registry"], check=False)
+    # The shared registry is provisioned once by box setup under its own container
+    # name; attach it to this cluster's network under the alias the chart pulls
+    # from, so registry:5000 resolves inside the k3d node. Not check=False: a
+    # silent failure here only resurfaces minutes later as ImagePullBackOff.
+    try:
+        run(
+            [
+                "docker",
+                "network",
+                "connect",
+                "--alias",
+                REGISTRY_ALIAS,
+                f"k3d-{cluster}",
+                REGISTRY_CONTAINER,
+            ]
+        )
+    except RuntimeError as err:
+        if "already exists" not in str(err):
+            raise
     kubeconfig = run(["k3d", "kubeconfig", "get", cluster])
     path = runtime_dir(preview_id) / "kubeconfig.yaml"
     path.write_text(kubeconfig + "\n")
