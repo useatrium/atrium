@@ -7,6 +7,7 @@ import {
   applyLocalEditOverlay,
   applyLocalReactionOverlay,
   applyEvent,
+  CHANNEL_UNREAD_EVENT_TYPES,
   confirmLocalOverlay,
   emptyTimeline,
   markFailed,
@@ -340,6 +341,8 @@ function isMainTimelineVisibleEvent(ev: WireEvent): boolean {
   return ev.threadRootEventId == null || ev.broadcast === true || ev.payload?.broadcast === true;
 }
 
+const CHANNEL_UNREAD_EVENT_TYPE_SET = new Set<string>(CHANNEL_UNREAD_EVENT_TYPES);
+
 export function appReducer(state: AppState, action: AppAction): AppState {
   switch (action.type) {
     case 'init-me':
@@ -517,7 +520,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       for (const ev of action.events) {
         const alreadySeen = seenIds.has(ev.id);
         seenIds.add(ev.id);
-        const isNewMessage = (ev.type === 'message.posted' || ev.type === 'session.spawned') && !alreadySeen;
+        const isNewMessage = CHANNEL_UNREAD_EVENT_TYPE_SET.has(ev.type) && !alreadySeen;
         if (!isNewMessage || !ev.channelId) continue;
         if (isMainTimelineVisibleEvent(ev)) {
           next = {
@@ -644,7 +647,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
           applyEvent(t, ev, action.catchupCursor !== undefined ? { catchupCursor: action.catchupCursor } : {}),
         );
       }
-      const isNewMessage = (ev.type === 'message.posted' || ev.type === 'session.spawned') && !alreadySeen;
+      const isNewMessage = CHANNEL_UNREAD_EVENT_TYPE_SET.has(ev.type) && !alreadySeen;
       if (isNewMessage && isMainTimelineVisibleEvent(ev)) {
         // Live events must advance the cold counter — the unread divider and
         // unmute re-derivation compare latestEventId against lastReadEventId.

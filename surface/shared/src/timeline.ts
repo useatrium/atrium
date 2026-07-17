@@ -295,6 +295,19 @@ export type TimelineOverlay =
       previousHad: boolean;
     };
 
+/**
+ * Events that make a channel unread. The one list: the server's `latest_event_id`
+ * SQL and the live client reducer both read it, so the cold counter and the live
+ * badge cannot disagree about what counts.
+ *
+ * `session.replied` is here because an agent's answer is an ordinary channel
+ * message and marks the channel unread like one — leave it out and the very thing
+ * you asked for lands below the fold with nothing to say it arrived. A thread-rooted
+ * event still only counts when it is broadcast; that clause is applied separately by
+ * each caller.
+ */
+export const CHANNEL_UNREAD_EVENT_TYPES = ['message.posted', 'session.spawned', 'session.replied'] as const;
+
 /** Event types that produce a timeline row. */
 function isRowEvent(type: string): boolean {
   return (

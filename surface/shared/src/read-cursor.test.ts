@@ -207,6 +207,29 @@ describe('monotonic channel snapshots', () => {
   });
 });
 
+describe('live unread counters', () => {
+  it('advances latestEventId and unread for a broadcast session reply', () => {
+    const state = appReducer(seed(10, 10), { type: 'select-channel', channelId: null });
+    const reply: WireEvent = {
+      id: 21,
+      workspaceId: 'w1',
+      channelId: 'c1',
+      threadRootEventId: 7,
+      type: 'session.replied',
+      actorId: null,
+      payload: { session_id: 's1', text: 'Done', broadcast: true },
+      createdAt: '2026-07-16T12:00:00.000Z',
+      author: { id: 'agent:s1', handle: 'agent', displayName: 'Agent' },
+      broadcast: true,
+    };
+
+    const next = appReducer(state, { type: 'server-event', event: reply });
+
+    expect(next.channels[0]?.latestEventId).toBe(21);
+    expect(next.unread.c1).toBe(true);
+  });
+});
+
 describe('newestConfirmedMainEventId', () => {
   it('ignores a trailing invisible modifier and unconfirmed rows', () => {
     let state = appReducer(seed(), {
