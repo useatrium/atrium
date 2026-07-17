@@ -45,6 +45,17 @@ PNPM_STORE = Path(os.environ.get("ATRIUM_PREVIEW_PNPM_STORE", "/var/cache/atrium
 # concurrency slot (the cap only counts provisioning/ready).
 KEEP_FAILED = os.environ.get("ATRIUM_PREVIEW_KEEP_FAILED", "0") == "1"
 WEB_BUILD_IMAGE = os.environ.get("ATRIUM_PREVIEW_WEB_BUILD_IMAGE", "node:24-alpine")
+# Every preview vhost is gated at the shared Caddy with HTTP basic auth, so a
+# preview — which runs real agents against a connected credential in an
+# AUTH_OPEN app — is never reachable by a stranger who guesses the URL. The
+# containment boundary is this shared secret, deliberately in place of CF Access
+# (the box's free-plan wildcard cannot get a Cloudflare edge cert). It gates only
+# the app; the MinIO path stays open because presigned URLs are self-authenticating.
+# BASIC_AUTH_HASH is a bcrypt hash from `caddy hash-password` — safe to store; the
+# plaintext is shared out of band. Empty = refuse to create (fail closed), so a
+# misprovisioned box never publishes an unguarded preview.
+BASIC_AUTH_USER = os.environ.get("ATRIUM_PREVIEW_BASIC_AUTH_USER", "preview")
+BASIC_AUTH_HASH = os.environ.get("ATRIUM_PREVIEW_BASIC_AUTH_HASH", "")
 PORT_RANGE = range(21000, 29000)
 NODE_PORT = 30080
 # Console/iron-control NodePort inside each preview cluster.
@@ -781,6 +792,14 @@ def write_caddy_fragment(state: dict[str, Any]) -> None:
             }}
             @{preview_id} host {host}
             handle @{preview_id} {{
+                # Gate the app behind the shared preview secret. Not on the minio
+                # handle above: presigned URLs self-authenticate and a browser
+                # download carries no basic-auth header. The hash is baked in (not
+                # a {{$env}} ref) so it has a single source — the launcher env — and
+                # cmd_create fails closed when it is unset.
+                basic_auth {{
+                    {BASIC_AUTH_USER} {BASIC_AUTH_HASH}
+                }}
                 encode zstd gzip
                 # the preview's own caddy serves the web SPA and proxies its API
                 reverse_proxy 127.0.0.1:{state['ports']['caddy']}
@@ -812,6 +831,12 @@ def public_status(state: dict[str, Any]) -> dict[str, Any]:
 
 
 def cmd_create(args: argparse.Namespace) -> None:
+    if not BASIC_AUTH_HASH.strip():
+        raise RuntimeError(
+            "ATRIUM_PREVIEW_BASIC_AUTH_HASH is not set; refusing to create an "
+            "unguarded preview. Set it (a `caddy hash-password` bcrypt hash) in "
+            "the launcher environment before creating previews."
+        )
     commit_sha = commit_for_ref(args.ref)
     preview_id = args.preview_id or make_preview_id(commit_sha)
     validate_preview_id(preview_id)
