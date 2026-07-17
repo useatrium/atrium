@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ChatMessage, UserRef } from '@atrium/surface-client';
 import type { Session } from '../sessions/types';
-import { buildTimelineItems, isAgentVoiceBroadcast, isRenderableMessage } from '@atrium/surface-client';
+import { buildTimelineItems, countsAsUnread, isAgentVoiceBroadcast, isRenderableMessage } from '@atrium/surface-client';
 import { ChevronDownIcon } from './icons';
 import { MessageRow } from './MessageRow';
 import type { MentionContext } from './useMentionTypeahead';
@@ -144,6 +144,7 @@ function TimelineImpl({
     const anchoredUnread = messages.find(
       (message) =>
         (message.id ?? 0) > unreadDividerAfterId &&
+        countsAsUnread(message) &&
         isRenderableMessage(message) &&
         (message.sessionEventType === 'replied' ||
           message.sessionEventType === 'question_requested' ||
@@ -152,15 +153,18 @@ function TimelineImpl({
         loadedRootIds.has(message.threadRootEventId),
     );
     if (anchoredUnread?.threadRootEventId != null) return anchoredUnread.threadRootEventId;
-    return visibleMessages.find((message) => (message.id ?? 0) > unreadDividerAfterId)?.id ?? null;
+    return (
+      visibleMessages.find((message) => countsAsUnread(message) && (message.id ?? 0) > unreadDividerAfterId)?.id ?? null
+    );
   }, [loadedRootIds, messages, unreadDividerAfterId, visibleMessages]);
   // Counted over `messages`, not `visibleMessages`: an anchored answer is
   // presented inside its root's cluster, so it is genuinely something new to
-  // see. A message that paints nothing is not, and counting one strands the
-  // pill at "1 new" pointing at a row that does not exist.
+  // see. `countsAsUnread` subsumes the renderability question here — every
+  // message that paints no row is a deleted one, and a deleted message never
+  // counts, so the pill can't point at a row that isn't there.
   const unreadCount = useMemo(() => {
     if (unreadDividerAfterId == null || unreadDividerAfterId <= 0) return 0;
-    return messages.filter((m) => isRenderableMessage(m) && (m.id ?? 0) > unreadDividerAfterId).length;
+    return messages.filter((message) => countsAsUnread(message) && (message.id ?? 0) > unreadDividerAfterId).length;
   }, [messages, unreadDividerAfterId]);
 
   const isAtBottom = useCallback((el: HTMLElement) => {

@@ -469,7 +469,7 @@ describe('Timeline anchored agent answers', () => {
 // unread, scroll landing, and mark-read has to agree it isn't there — otherwise
 // deleting the newest message in a channel strands the read cursor forever.
 describe('Timeline deleted tail message', () => {
-  const deletedTail = () => message({ id: 3, text: '', deleted: true, replyCount: 0 });
+  const deletedTail = (replyCount = 0) => message({ id: 3, text: '', deleted: true, replyCount });
 
   function mockRowVisibility(visibleEid: string) {
     return vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
@@ -504,6 +504,21 @@ describe('Timeline deleted tail message', () => {
       unreadDividerAfterId: 2,
     });
 
+    const log = screen.getByRole('log', { name: 'Messages' });
+    setScrollMetrics(log, { scrollHeight: 1000, clientHeight: 200 });
+    log.scrollTop = 0;
+    fireEvent.scroll(log);
+
+    expect(screen.queryByTestId('jump-to-unread')).toBeNull();
+  });
+
+  it('does not count a deleted tombstone with replies as unread', () => {
+    const view = renderTimeline({
+      messages: [message({ id: 1, text: 'Message 1' }), message({ id: 2, text: 'Message 2' }), deletedTail(1)],
+      unreadDividerAfterId: 2,
+    });
+
+    expect(view.container.querySelector('[data-eid="3"]')).not.toBeNull();
     const log = screen.getByRole('log', { name: 'Messages' });
     setScrollMetrics(log, { scrollHeight: 1000, clientHeight: 200 });
     log.scrollTop = 0;
