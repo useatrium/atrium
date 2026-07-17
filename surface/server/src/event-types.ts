@@ -1,3 +1,5 @@
+import { CHANNEL_UNREAD_EVENT_TYPES } from '@atrium/surface-client/timeline';
+
 export const MODIFIER_EVENT_TYPES = [
   'message.edited',
   'message.deleted',
@@ -100,14 +102,6 @@ export const SYNC_CATCHUP_RAW_EVENT_TYPES = [
   ...SYNC_EVENT_TYPES.filter((type) => !TIMELINE_EVENT_TYPE_SET.has(type)),
 ];
 
-// === the unread rule ===
-
-// Events that make a channel unread. A thread reply counts only when it is
-// broadcast: the agent's answer is an ordinary channel message and marks the
-// channel unread like one, or the very thing you asked for lands below the fold
-// with nothing to say it arrived.
-const UNREAD_EVENT_TYPES = ['message.posted', 'session.spawned', 'session.replied'] as const;
-
 /**
  * Per-channel `latest_event_id` — the newest event that should draw attention.
  * Correlates against `c.id`, so it belongs inside a LATERAL over `channels c`.
@@ -127,6 +121,6 @@ export const CHANNEL_LATEST_EVENT_ID_SQL = `
        FROM events e
        LEFT JOIN message_state ms ON ms.event_id = e.id
        WHERE e.channel_id = c.id
-         AND e.type IN ${sqlTypeList(UNREAD_EVENT_TYPES)}
+         AND e.type IN ${sqlTypeList(CHANNEL_UNREAD_EVENT_TYPES)}
          AND (e.thread_root_event_id IS NULL OR (e.payload->>'broadcast')::boolean IS TRUE)
          AND NOT COALESCE(ms.is_deleted, false)`;
