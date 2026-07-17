@@ -294,6 +294,10 @@ def build_and_push_images(source: Path, commit_sha: str) -> None:
             ["just", f"image_revision={commit_sha}", "build-one", service],
             cwd=source / "centaur",
             capture=False,
+            env={
+                "CENTAUR_AGENT_DOCKERFILE": "services/sandbox/Dockerfile.agent",
+                "RUST_BUILD_PROFILE": "release",
+            },
         )
         target = f"{REGISTRY_PUSH}/library/{image}:{commit_sha}"
         run(["docker", "tag", f"{image}:latest", target])

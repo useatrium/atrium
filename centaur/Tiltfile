@@ -1,8 +1,9 @@
 REGISTRY = os.getenv("CENTAUR_LOCAL_REGISTRY", "localhost:5000")
 RELEASE = os.getenv("CENTAUR_RELEASE", "centaur")
 NAMESPACE = os.getenv("CENTAUR_NAMESPACE", "centaur")
+# Exercise prod's slim image for parity, but keep debug Rust for Tilt's fast inner loop.
 RUST_BUILD_PROFILE = os.getenv("RUST_BUILD_PROFILE", "debug")
-AGENT_DOCKERFILE = os.getenv("CENTAUR_AGENT_DOCKERFILE", "services/sandbox/Dockerfile")
+AGENT_DOCKERFILE = os.getenv("CENTAUR_AGENT_DOCKERFILE", "services/sandbox/Dockerfile.agent")
 AGENT_BUILD_TARGET = os.getenv("CENTAUR_AGENT_BUILD_TARGET", "sandbox")
 
 def local_image(name):
