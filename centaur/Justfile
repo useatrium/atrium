@@ -17,10 +17,12 @@ k3s_ctr := env_var_or_default("CENTAUR_K3S_CTR", "sudo k3s ctr")
 #         endpoint: ["http://localhost:5000"]
 registry := env_var_or_default("CENTAUR_LOCAL_REGISTRY", "localhost:5000")
 kind_cluster := env_var_or_default("CENTAUR_KIND_CLUSTER", "centaur")
-agent_dockerfile := env_var_or_default("CENTAUR_AGENT_DOCKERFILE", "services/sandbox/Dockerfile")
+# Match prod's slim image; local dev can still use fast builds with `export RUST_BUILD_PROFILE=debug`.
+agent_dockerfile := env_var_or_default("CENTAUR_AGENT_DOCKERFILE", "services/sandbox/Dockerfile.agent")
 agent_build_target := env_var_or_default("CENTAUR_AGENT_BUILD_TARGET", "sandbox")
 agent_image := env_var_or_default("CENTAUR_AGENT_IMAGE", "centaur-agent:latest")
-rust_build_profile := env_var_or_default("RUST_BUILD_PROFILE", "debug")
+# Match prod's Rust profile; local dev can opt back into fast builds with `export RUST_BUILD_PROFILE=debug`.
+rust_build_profile := env_var_or_default("RUST_BUILD_PROFILE", "release")
 git_sha := `git rev-parse HEAD`
 dirty_suffix := `if test -n "$(git status --porcelain)"; then printf %s -dirty; fi`
 image_revision := git_sha + dirty_suffix
