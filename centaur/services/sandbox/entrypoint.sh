@@ -56,6 +56,28 @@ if [ -n "${TOOL_DIRS:-}" ]; then
     install-tool-shims || echo "warning: failed to install Centaur tool CLI shims" >&2
 fi
 
+# Bootstrap mount-namespace diagnostics, emitted right before a preflight abort so
+# the NEXT overlay-missing / unwritable strand is fully diagnosable in Loki without
+# a live catch: which peer group /home and /home/agent are slaved to (shared:/
+# master:/propagate_from:), whether the node-sync overlay appears in THIS namespace
+# at all and at what path, home ownership, and the warm/repo shape of the pod. The
+# intermittent failure is a propagation-linkage miss (node has the overlay, the
+# agent ns doesn't); this snapshot is what pins it. All to stderr; bounded.
+_dump_bootstrap_mount_diagnostics() {
+    printf '{"timestamp":"%s","level":"error","service":"sandbox","event":"agent_home_bootstrap_diagnostics","for_event":"%s","warm_sandbox":"%s","flat_home":"%s","has_repos":"%s","whoami":"%s"}\n' \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "${CENTAUR_WARM_SANDBOX:-unset}" "${CENTAUR_FLAT_HOME:-unset}" \
+        "$([ -n "${AGENT_REPOS_JSON:-}" ] && echo yes || echo no)" "$(id -un 2>/dev/null || id -u 2>/dev/null || echo '?')" >&2
+    {
+        echo "--- bootstrap-diag: home ownership ($HOME_DIR + parent) ---"
+        ls -ldn "$HOME_DIR" "$(dirname "$HOME_DIR")" 2>&1
+        echo "--- bootstrap-diag: /, /home, /home/agent mounts (mountpoint | peer-groups | fstype) ---"
+        awk '($5=="/"||$5=="/home"||$5=="/home/agent"){peer="";fs="?";for(i=7;i<=NF;i++){if($i=="-"){fs=$(i+1);break}peer=peer" "$i}printf "  %-12s peer:%s  fstype:%s\n",$5,(peer==""?" none":peer),fs}' /proc/self/mountinfo 2>/dev/null
+        echo "--- bootstrap-diag: overlay mounts visible in THIS namespace ---"
+        awk '{for(i=7;i<=NF;i++){if($i=="-"){if($(i+1)=="overlay")print "  overlay @ "$5;break}}}' /proc/self/mountinfo 2>/dev/null | head -20
+        echo "--- bootstrap-diag: end ---"
+    } >&2
+}
+
 # ── Preflight: the agent home must be the session overlay, writable by us ─────
 # In flat-home mode /home/agent is an overlayfs mounted by node-sync. If that
 # overlay fails to reach this container's mount namespace (propagation miss, or a
@@ -91,6 +113,7 @@ if flat_home_enabled; then
         printf '{"timestamp":"%s","level":"error","service":"sandbox","event":"agent_home_overlay_missing","home":"%s","backing_mount":"%s","backing_fstype":"%s","home_owner":"%s","msg":"agent home %s is not backed by the node-sync session overlay (backing mount %s fstype %s, owner %s) — the overlay did not reach this container namespace, aborting sandbox bootstrap"}\n' \
             "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$HOME_DIR" "${_home_mp:-none}" "${_home_fs:-none}" "$_home_owner" "$HOME_DIR" "${_home_mp:-none}" "${_home_fs:-none}" "$_home_owner" >&2
         echo "FATAL: agent home $HOME_DIR is not the node-sync session overlay (backing mount ${_home_mp:-none} fstype ${_home_fs:-none}, owner $_home_owner). Overlay missing from this namespace; aborting sandbox bootstrap." >&2
+        _dump_bootstrap_mount_diagnostics agent_home_overlay_missing
         exit 78
     fi
 fi
@@ -105,6 +128,7 @@ if [ ! -w "$HOME_DIR" ] || ! mkdir -p "$HOME_DIR/.centaur-bootstrap-probe" 2>/de
     printf '{"timestamp":"%s","level":"error","service":"sandbox","event":"agent_home_not_writable","home":"%s","home_owner":"%s","home_mode":"%s","msg":"agent home %s is not writable by the agent user (%s); owned by %s mode %s — warm-home hydration likely missed, aborting sandbox bootstrap"}\n' \
         "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$HOME_DIR" "$_home_owner" "$_home_mode" "$HOME_DIR" "$_agent_id" "$_home_owner" "$_home_mode" >&2
     echo "FATAL: agent home $HOME_DIR is not writable by $(id -un 2>/dev/null || id -u) (owner $_home_owner, mode $_home_mode). Warm-home hydration missed; aborting sandbox bootstrap." >&2
+    _dump_bootstrap_mount_diagnostics agent_home_not_writable
     exit 78
 fi
 rmdir "$HOME_DIR/.centaur-bootstrap-probe" 2>/dev/null || true
