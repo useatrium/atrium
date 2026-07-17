@@ -1,6 +1,7 @@
 import type { Db, DbClient } from '../db.js';
 import {
   CATCHUP_RAW_EVENT_TYPES as CATCHUP_RAW_EVENT_TYPE_VALUES,
+  CHANNEL_LATEST_EVENT_ID_SQL,
   sqlTypeList,
   SYNC_CATCHUP_RAW_EVENT_TYPES as SYNC_CATCHUP_RAW_EVENT_TYPE_VALUES,
   SYNC_EVENT_TYPES as SYNC_EVENT_TYPE_VALUES,
@@ -476,14 +477,7 @@ export async function listChannelsFor(pool: Db | DbClient, userId: string): Prom
        WHERE m.channel_id = c.id
      ) member_counts ON c.kind IN ('private', 'gdm')
      LEFT JOIN LATERAL (
-       SELECT MAX(e.id) AS latest_event_id
-       FROM events e
-       WHERE e.channel_id = c.id
-         -- The agent's answer is an ordinary channel message, so it marks the
-         -- channel unread like one. Leaving it out would land the very thing
-         -- you asked for below the fold with nothing to say it had arrived.
-         AND e.type IN ('message.posted', 'session.spawned', 'session.replied')
-         AND (e.thread_root_event_id IS NULL OR (e.payload->>'broadcast')::boolean IS TRUE)
+       ${CHANNEL_LATEST_EVENT_ID_SQL}
      ) latest ON true
      -- === mentions-activity additions ===
      LEFT JOIN LATERAL (

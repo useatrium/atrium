@@ -6,6 +6,7 @@ import type { Db } from './db.js';
 import type { WsHub } from './hub.js';
 import type { WireEvent } from './events.js';
 import { config } from './config.js';
+import { CHANNEL_LATEST_EVENT_ID_SQL } from './event-types.js';
 import { memberUserIdsForChannel, resolveDirectMentionUserIds } from './mentions.js';
 import {
   getWebPushSender,
@@ -349,12 +350,7 @@ async function unreadChannelCountFor(pool: Db, userId: string): Promise<number> 
      LEFT JOIN channel_mutes mute
        ON mute.channel_id = c.id AND mute.user_id = $1
      LEFT JOIN LATERAL (
-       SELECT MAX(e.id) AS latest_event_id
-       FROM events e
-       WHERE e.channel_id = c.id
-         -- Matches the unread rule in events.ts: an agent's answer is a real
-         -- channel message and counts toward the badge like one.
-         AND e.type IN ('message.posted', 'session.spawned', 'session.replied')
+       ${CHANNEL_LATEST_EVENT_ID_SQL}
      ) latest ON true
      WHERE mute.user_id IS NULL
        AND COALESCE(latest.latest_event_id, 0) > COALESCE(rc.last_read_event_id, 0)

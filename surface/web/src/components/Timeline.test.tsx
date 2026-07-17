@@ -85,17 +85,19 @@ function renderTimeline({
   unreadDividerAfterId = 1,
   onReachBottom,
   sessions = {},
+  loaded = true,
 }: {
   messages?: ChatMessage[];
   unreadDividerAfterId?: number | null;
   onReachBottom?: () => void;
   sessions?: Record<string, Session>;
+  loaded?: boolean;
 } = {}) {
-  const renderElement = (nextMessages: ChatMessage[]) => (
+  const renderElement = (nextMessages: ChatMessage[], nextLoaded: boolean) => (
     <ThemeProvider>
       <Timeline
         messages={nextMessages}
-        loaded
+        loaded={nextLoaded}
         hasMoreBefore={false}
         sessions={sessions}
         spectators={{}}
@@ -111,8 +113,12 @@ function renderTimeline({
       />
     </ThemeProvider>
   );
-  const view = render(renderElement(messages));
-  return { ...view, rerenderMessages: (nextMessages: ChatMessage[]) => view.rerender(renderElement(nextMessages)) };
+  const view = render(renderElement(messages, loaded));
+  return {
+    ...view,
+    rerenderMessages: (nextMessages: ChatMessage[], nextLoaded = true) =>
+      view.rerender(renderElement(nextMessages, nextLoaded)),
+  };
 }
 
 function setScrollMetrics(
@@ -402,6 +408,99 @@ describe('Timeline anchored agent answers', () => {
     fireEvent.click(chip);
     expect(screen.queryByTestId('agent-answer-jump-chip')).toBeNull();
     expect(HTMLElement.prototype.scrollIntoView).toHaveBeenCalled();
+    rect.mockRestore();
+  });
+
+  // Timeline mounts before the first history page lands (that is what the
+  // skeleton is for), so the "have I seen an answer before?" baseline must not
+  // be taken from that empty first render — every reload would replay the chip
+  // for an answer that arrived days ago.
+  it('does not show the jump chip for the first history page after an empty mount', async () => {
+    const rect = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      if (this.getAttribute('role') === 'log') {
+        return { top: 0, bottom: 200, left: 0, right: 300, width: 300, height: 200, x: 0, y: 0, toJSON: vi.fn() };
+      }
+      if (this.getAttribute('data-eid') === '1') {
+        return { top: -120, bottom: -80, left: 0, right: 300, width: 300, height: 40, x: 0, y: -120, toJSON: vi.fn() };
+      }
+      return { top: 20, bottom: 60, left: 0, right: 300, width: 300, height: 40, x: 0, y: 20, toJSON: vi.fn() };
+    });
+    const root = message({ id: 1, text: 'Please ship this carefully' });
+    // The real mount order: the skeleton renders with no history, then the
+    // first page lands with the answer already in it.
+    const view = renderTimeline({ messages: [], loaded: false, unreadDividerAfterId: null });
+
+    view.rerenderMessages([{ ...root, replyCount: 1, lastReplyId: 9 }, answer()], true);
+
+    await act(async () => {});
+    expect(screen.queryByTestId('agent-answer-jump-chip')).toBeNull();
+    rect.mockRestore();
+  });
+});
+
+// A deleted message with no replies renders no row at all (buildTimelineItems
+// skips it), so nothing can scroll to it or mark it read. Every set that drives
+// unread, scroll landing, and mark-read has to agree it isn't there — otherwise
+// deleting the newest message in a channel strands the read cursor forever.
+describe('Timeline deleted tail message', () => {
+  const deletedTail = () => message({ id: 3, text: '', deleted: true, replyCount: 0 });
+
+  function mockRowVisibility(visibleEid: string) {
+    return vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      if (this.getAttribute('role') === 'log') {
+        return { top: 0, bottom: 200, left: 0, right: 300, width: 300, height: 200, x: 0, y: 0, toJSON: vi.fn() };
+      }
+      if (this.getAttribute('data-eid') === visibleEid) {
+        return { top: 150, bottom: 190, left: 0, right: 300, width: 300, height: 40, x: 0, y: 150, toJSON: vi.fn() };
+      }
+      return { top: 420, bottom: 460, left: 0, right: 300, width: 300, height: 40, x: 0, y: 420, toJSON: vi.fn() };
+    });
+  }
+
+  it('marks read when the newest rendered row is visible behind a deleted tail', () => {
+    const onReachBottom = vi.fn();
+    const rect = mockRowVisibility('2');
+
+    renderTimeline({
+      messages: [message({ id: 1, text: 'Message 1' }), message({ id: 2, text: 'Message 2' }), deletedTail()],
+      unreadDividerAfterId: 1,
+      onReachBottom,
+    });
+    fireEvent.scroll(screen.getByRole('log', { name: 'Messages' }));
+
+    expect(onReachBottom).toHaveBeenCalled();
+    rect.mockRestore();
+  });
+
+  it('does not count a deleted tail message as unread', () => {
+    renderTimeline({
+      messages: [message({ id: 1, text: 'Message 1' }), message({ id: 2, text: 'Message 2' }), deletedTail()],
+      unreadDividerAfterId: 2,
+    });
+
+    const log = screen.getByRole('log', { name: 'Messages' });
+    setScrollMetrics(log, { scrollHeight: 1000, clientHeight: 200 });
+    log.scrollTop = 0;
+    fireEvent.scroll(log);
+
+    expect(screen.queryByTestId('jump-to-unread')).toBeNull();
+  });
+
+  it('lands at the bottom when the only unread message is a deleted one', () => {
+    const rect = mockRowVisibility('2');
+    Object.defineProperty(HTMLDivElement.prototype, 'scrollHeight', { configurable: true, value: 1000 });
+    Object.defineProperty(HTMLDivElement.prototype, 'clientHeight', { configurable: true, value: 200 });
+
+    renderTimeline({
+      messages: [message({ id: 1, text: 'Message 1' }), message({ id: 2, text: 'Message 2' }), deletedTail()],
+      unreadDividerAfterId: 2,
+    });
+
+    expect(screen.getByRole('log', { name: 'Messages' }).scrollTop).toBe(1000);
+    Reflect.deleteProperty(HTMLDivElement.prototype, 'scrollHeight');
+    Reflect.deleteProperty(HTMLDivElement.prototype, 'clientHeight');
     rect.mockRestore();
   });
 });

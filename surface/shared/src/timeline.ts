@@ -226,6 +226,20 @@ export function isHumanBroadcastReply(m: ChatMessage): boolean {
   return m.broadcast === true && m.sessionId == null && m.sessionEventType == null;
 }
 
+/**
+ * Does this message produce a row in the feed? A deleted message keeps its
+ * tombstone only to host replies; with none left it renders nothing at all.
+ *
+ * It still lives in `main` (the delete folds onto the posted event rather than
+ * dropping it), so anything that asks "what is the newest message?" must ask
+ * this first. A row that can never paint can never be scrolled to, so keying
+ * mark-read or the unread count off one strands the read cursor permanently —
+ * deleting the newest message in a channel used to leave it unread forever.
+ */
+export function isRenderableMessage(m: ChatMessage): boolean {
+  return !(m.deleted === true && m.replyCount === 0);
+}
+
 export interface ChannelTimeline {
   /** Root messages: confirmed sorted by id asc, then pending/failed in send order. */
   main: ChatMessage[];
