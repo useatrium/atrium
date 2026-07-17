@@ -122,6 +122,19 @@ impl WarmPoolManager {
             self.store
                 .mark_warm_sandbox_failed(&sandbox_id, &failure)
                 .await?;
+            match self.manager.stop(&id).await {
+                Ok(()) | Err(SandboxError::NotFound(_)) => {
+                    info!(%sandbox_id, thread_key, "reaped failed claimed warm sandbox");
+                }
+                Err(error) => {
+                    warn!(
+                        %sandbox_id,
+                        thread_key,
+                        %error,
+                        "failed to reap failed claimed warm sandbox"
+                    );
+                }
+            }
         }
     }
 
@@ -296,6 +309,14 @@ impl WarmPoolManager {
             self.store
                 .mark_warm_sandbox_failed(&sandbox_id, &failure)
                 .await?;
+            match self.manager.stop(&id).await {
+                Ok(()) | Err(SandboxError::NotFound(_)) => {
+                    info!(%sandbox_id, "reaped failed ready warm sandbox");
+                }
+                Err(error) => {
+                    warn!(%sandbox_id, %error, "failed to reap failed ready warm sandbox");
+                }
+            }
         }
         Ok(())
     }
@@ -390,6 +411,55 @@ mod tests {
     /// does not observe — so two of these tests running concurrently prune
     /// each other's rows. Serialize them.
     static DB_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+    #[tokio::test]
+    async fn pruner_marks_stopped_ready_warm_sandbox_failed_and_stops_it() {
+        let Some(store) = test_store().await else {
+            return;
+        };
+        let _serial = DB_TEST_LOCK.lock().await;
+        let suffix = unique_suffix();
+        let workload_key = format!("test-stopped-ready-{suffix}");
+        let stopped_sandbox = format!("stopped-ready-{suffix}");
+
+        store
+            .insert_ready_warm_sandbox(&stopped_sandbox, &workload_key)
+            .await
+            .expect("insert stopped ready warm sandbox row");
+
+        let backend = Arc::new(TestBackend::new(format!("unused-{suffix}")));
+        backend.set_status(&stopped_sandbox, SandboxStatus::Stopped);
+        let pool = WarmPoolManager::new(
+            Arc::new(SandboxManager::new(backend.clone())),
+            store.clone(),
+            Arc::new({
+                let workload_key = workload_key.clone();
+                move || WarmSandboxWorkload {
+                    spec: SandboxSpec::new("image"),
+                    workload_key: workload_key.clone(),
+                }
+            }),
+            WarmPoolConfig {
+                target_size: 0,
+                replenish_interval: Duration::from_secs(60),
+                bootstrap_iron_control_principal: None,
+                max_running_sandboxes: None,
+            },
+        );
+
+        pool.prune_stale_ready_sandboxes()
+            .await
+            .expect("prune stopped ready warm sandbox");
+
+        let status: String =
+            sqlx::query_scalar("select status from session_warm_sandboxes where sandbox_id = $1")
+                .bind(&stopped_sandbox)
+                .fetch_one(store.pool())
+                .await
+                .expect("read stopped ready warm sandbox status");
+        assert_eq!(status, "failed");
+        assert_eq!(backend.stopped(), vec![stopped_sandbox]);
+    }
 
     #[tokio::test]
     async fn replenisher_prunes_missing_ready_rows_before_counting() {
@@ -574,6 +644,7 @@ mod tests {
         create_id: String,
         statuses: Mutex<BTreeMap<String, SandboxStatus>>,
         created: Mutex<Vec<String>>,
+        stopped: Mutex<Vec<String>>,
     }
 
     impl TestBackend {
@@ -582,11 +653,16 @@ mod tests {
                 create_id,
                 statuses: Mutex::new(BTreeMap::new()),
                 created: Mutex::new(Vec::new()),
+                stopped: Mutex::new(Vec::new()),
             }
         }
 
         fn created(&self) -> Vec<String> {
             self.created.lock().unwrap().clone()
+        }
+
+        fn stopped(&self) -> Vec<String> {
+            self.stopped.lock().unwrap().clone()
         }
 
         fn set_status(&self, sandbox_id: &str, status: SandboxStatus) {
@@ -650,6 +726,7 @@ mod tests {
         }
 
         async fn stop(&self, id: &SandboxId) -> SandboxResult<()> {
+            self.stopped.lock().unwrap().push(id.as_str().to_owned());
             self.statuses
                 .lock()
                 .unwrap()
