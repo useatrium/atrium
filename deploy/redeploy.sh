@@ -224,6 +224,14 @@ deploy_centaur(){
     case " ${to_build[*]:-} " in *" $svc "*) : ;; *) to_build+=("$svc") ;; esac
   done
   log "centaur: rebuild=[${to_build[*]:-none}] sha=$SHA"
+  # Prod build config, overriding the Justfile's dev-convenience defaults:
+  #  - RUST_BUILD_PROFILE=release: the api-rs/agent/node-sync Dockerfiles default
+  #    their ARG to release, but centaur/Justfile defaults the env override to
+  #    "debug" for fast local iteration. Prod must ship optimized binaries.
+  #  - CENTAUR_AGENT_DOCKERFILE: build the slimmed Atrium agent image (upstream's
+  #    services/sandbox/Dockerfile is left untouched for merge-clean subtree pulls).
+  export RUST_BUILD_PROFILE=release
+  export CENTAUR_AGENT_DOCKERFILE=services/sandbox/Dockerfile.agent
   for svc in "${to_build[@]:-}"; do [ -z "$svc" ] && continue
     ( cd "$REPO_DIR/centaur" && DOCKER_BUILDKIT=1 just build-one "$svc" ) || die "build $svc"; done
   # tag+push every image at $SHA (rebuilt = new; unchanged = cheap retag of existing

@@ -81,10 +81,9 @@
 |For a one-off dependency, use `uv run --with <pkg> python -c "..."` instead of installing globally.
 |If `uv` is unavailable, stop and ask before falling back to system Python.
 
-[Rust policy — ALWAYS use nightly for formatting and clippy]
-|When provisioning Rust tooling, install stable and nightly, with nightly as the default.
-|Run formatting and clippy through nightly: `cargo +nightly fmt <args>` and `cargo +nightly clippy <args>`.
-|For other cargo commands, prefer the repository's pinned/default toolchain unless the repo or user requests nightly.
+[Rust policy — use the stable toolchain]
+|The stable toolchain (with rustfmt and clippy) is installed and is the default. Use `cargo fmt` and `cargo clippy` directly.
+|Only install or invoke nightly if the repository pins it (`rust-toolchain.toml`) or the user asks — Atrium CI checks formatting with stable rustfmt, so nightly-formatted code is rejected.
 
 [Container lifecycle]
 |The container is ephemeral and may be recycled between turns after extended idle time.
