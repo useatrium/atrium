@@ -159,6 +159,7 @@ function SidebarImpl({
   onClose,
   createChannelRequestSeq,
   startDmRequestSeq,
+  now: nowProp,
 }: {
   workspaceName: string;
   channels: Channel[];
@@ -191,6 +192,10 @@ function SidebarImpl({
   onClose?: () => void;
   createChannelRequestSeq?: number;
   startDmRequestSeq?: number;
+  // Feeds the running-work elapsed label. Prod leaves it undefined and rides
+  // the ticking clock; tests pass a fixed value so an asserted "waiting 3m"
+  // can't drift against a hardcoded fixture on some future date.
+  now?: number;
 }) {
   const { width: sidebarWidth, resizing, startResize, resetWidth } = useSidebarWidth();
   const sizing = sidebarSizing(sidebarWidth);
@@ -238,7 +243,8 @@ function SidebarImpl({
   const toReview = activityCounts?.toReview ?? 0;
   const hasReview = toReview > 0;
   const visibleRunning = !agentWorkCollapsed && workRows.some((row) => row.kind === 'running');
-  const now = useAgentWorkNow(visibleRunning);
+  const ticking = useAgentWorkNow(visibleRunning);
+  const now = nowProp ?? ticking;
 
   useEffect(() => {
     window.localStorage.setItem(agentWorkStorageKey, String(agentWorkCollapsed));
