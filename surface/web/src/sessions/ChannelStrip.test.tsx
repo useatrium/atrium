@@ -1,9 +1,15 @@
 // @vitest-environment jsdom
 
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Session } from './types';
 import { ChannelStrip } from './ChannelStrip';
+
+// The strip only lists work completed within COMPLETED_RECENTLY_MS (48h), so
+// every `completedAt` below is meaningful only against a fixed now. Left on the
+// real clock these fixtures age past the window and the suite starts failing on
+// a date nobody touched it.
+const NOW = new Date('2026-07-15T18:00:00.000Z');
 
 function session(overrides: Partial<Session> = {}): Session {
   return {
@@ -32,7 +38,15 @@ function session(overrides: Partial<Session> = {}): Session {
   };
 }
 
-afterEach(cleanup);
+beforeEach(() => {
+  vi.useFakeTimers();
+  vi.setSystemTime(NOW);
+});
+
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+});
 
 describe('ChannelStrip', () => {
   it('uses server channel counts for the collapsed summary instead of local session derivation', () => {
