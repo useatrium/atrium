@@ -240,6 +240,15 @@ export function isRenderableMessage(m: ChatMessage): boolean {
   return !(m.deleted === true && m.replyCount === 0);
 }
 
+/**
+ * Does this message contribute to unread state? Unlike row rendering, deletion
+ * always removes the unread content; a tombstone may remain to host replies,
+ * which contribute to unread state through their own broadcast events.
+ */
+export function countsAsUnread(m: ChatMessage): boolean {
+  return m.deleted !== true;
+}
+
 export interface ChannelTimeline {
   /** Root messages: confirmed sorted by id asc, then pending/failed in send order. */
   main: ChatMessage[];
