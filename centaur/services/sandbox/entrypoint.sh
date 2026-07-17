@@ -56,6 +56,24 @@ if [ -n "${TOOL_DIRS:-}" ]; then
     install-tool-shims || echo "warning: failed to install Centaur tool CLI shims" >&2
 fi
 
+# ── Preflight: the agent home must be writable by the agent user ──────────────
+# The home is an overlayfs whose contents come from warm-home hydration. When
+# hydration silently no-ops (or leaves the upperdir root-owned), the non-root
+# agent user can't create ~/.config, and the very next `mkdir` below dies with a
+# bare "Permission denied" — which reaches users as a mysterious session hang.
+# Fail fast here with one greppable, structured diagnostic so operators (and the
+# api-rs bootstrap-failure surfacing) get a real reason, not a naked mkdir error.
+if [ ! -w "$HOME_DIR" ] || ! mkdir -p "$HOME_DIR/.centaur-bootstrap-probe" 2>/dev/null; then
+    _home_owner="$(stat -c '%U:%G (uid=%u gid=%g)' "$HOME_DIR" 2>/dev/null || echo 'unknown')"
+    _home_mode="$(stat -c '%a' "$HOME_DIR" 2>/dev/null || echo 'unknown')"
+    _agent_id="$(id 2>/dev/null || echo 'unknown')"
+    printf '{"timestamp":"%s","level":"error","service":"sandbox","event":"agent_home_not_writable","home":"%s","home_owner":"%s","home_mode":"%s","msg":"agent home %s is not writable by the agent user (%s); owned by %s mode %s — warm-home hydration likely missed, aborting sandbox bootstrap"}\n' \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$HOME_DIR" "$_home_owner" "$_home_mode" "$HOME_DIR" "$_agent_id" "$_home_owner" "$_home_mode" >&2
+    echo "FATAL: agent home $HOME_DIR is not writable by $(id -un 2>/dev/null || id -u) (owner $_home_owner, mode $_home_mode). Warm-home hydration missed; aborting sandbox bootstrap." >&2
+    exit 78
+fi
+rmdir "$HOME_DIR/.centaur-bootstrap-probe" 2>/dev/null || true
+
 if ! flat_home_enabled && [ -d "$STATE_DIR" ] && [ -w "$STATE_DIR" ]; then
     mkdir -p "$STATE_DIR/workspace" "$STATE_DIR/uploads" "$STATE_DIR/branches" "$STATE_DIR/codex" "$STATE_DIR/claude"
     rm -rf "$HOME_DIR/.codex" "$HOME_DIR/.claude" "$HOME_DIR/uploads" "$HOME_DIR/branches"
