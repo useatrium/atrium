@@ -1,0 +1,15 @@
+[Unit]
+Description=Sync the Atrium preview box to the repo and reload the launcher on change
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Root so it can restart the launcher unit; the script itself git-operates as
+# the service user to keep the checkout's ownership intact.
+Environment=ATRIUM_PREVIEW_REPO=__ATRIUM_REPO_ROOT__
+Environment=ATRIUM_PREVIEW_SERVICE_USER=__ATRIUM_SERVICE_USER__
+Environment=ATRIUM_PREVIEW_STATE_DIR=__ATRIUM_STATE_DIR__
+# Point at a different ref (e.g. origin/deploy) for deliberate promotion.
+Environment=ATRIUM_PREVIEW_DEPLOY_REF=origin/master
+ExecStart=__ATRIUM_REPO_ROOT__/deploy/preview/ovh/setup/deploy.sh

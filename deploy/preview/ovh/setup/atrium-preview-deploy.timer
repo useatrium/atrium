@@ -1,0 +1,12 @@
+[Unit]
+Description=Periodically sync the Atrium preview box to the repo
+
+[Timer]
+# A few minutes after boot, then every 10 minutes. The window bounds how long
+# the box can diverge from the repo; a hand-run of deploy.sh deploys immediately.
+OnBootSec=3min
+OnUnitActiveSec=10min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
