@@ -232,7 +232,37 @@ pub fn hydrate_artifact_lower_into_plan(
     fs::create_dir_all(&artifact_lower)
         .map_err(|e| format!("create artifact lower {}: {e}", artifact_lower.display()))?;
 
-    let outcome = hydrate_artifact_lower(client, cas_dir, &artifact_lower)?;
+    // A FAILED hydration must not leave the directory behind, or it becomes a booby trap for
+    // the next tick. The directory is created BEFORE the fetch, and `?` on the fetch used to
+    // return with it still on disk and `extra_lowers` untouched. But
+    // `reattach_artifact_lower_into_plan` decides purely on `is_dir()`, so that empty leftover
+    // reads as "already hydrated": the next tick attaches it, the overlay signature (which
+    // covers extra lowers) changes, and the session is unmounted+remounted UNDERNEATH a pod
+    // whose readiness gate has ALREADY passed. The agent's entrypoint then lands on the bare
+    // root:root mountpoint in the unmount window and dies with
+    // `mkdir: cannot create directory '/home/agent/.config': Permission denied`.
+    //
+    // Warm-pool pods hydrate-404 BY DESIGN (they are not Atrium sessions until claimed), so
+    // this fired on essentially every warm pod: 598 of 613 artifact lowers on the box were
+    // empty leftovers. Measured 2026-07-16, mount at 22:11:01 -> gate passes 22:11:02 ->
+    // unmount 22:11:05.081 -> agent starts 22:11:05 -> dead 22:11:06.
+    //
+    // The invariant `reattach` assumes, and that this restores: the artifact lower exists on
+    // disk IFF it was hydrated successfully. Keep the two functions agreeing.
+    let outcome = match hydrate_artifact_lower(client, cas_dir, &artifact_lower) {
+        Ok(outcome) => outcome,
+        Err(error) => {
+            if let Err(cleanup) = fs::remove_dir_all(&artifact_lower) {
+                // Report the hydration failure (the real cause), but do not hide a leaked
+                // lower: if this cleanup ever fails the remount race is back.
+                return Err(format!(
+                    "{error} (and failed to remove the partial artifact lower {}: {cleanup})",
+                    artifact_lower.display()
+                ));
+            }
+            return Err(error);
+        }
+    };
     plan.extra_lowers.push(artifact_lower);
     Ok(outcome)
 }
@@ -248,6 +278,10 @@ mod tests {
     struct FakeAtriumClient {
         entries: Vec<CasHydrateEntry>,
         bytes: HashMap<(String, u64), Vec<u8>>,
+        /// When set, `hydration_scope` fails with this message — the warm-pool reality
+        /// (`status code 404: {"error":"session_not_found"}`), which is how hydration
+        /// fails on nearly every warm pod.
+        hydration_scope_error: Option<String>,
     }
 
     impl AtriumClient for FakeAtriumClient {
@@ -272,7 +306,10 @@ mod tests {
         }
 
         fn hydration_scope(&self) -> Result<Vec<CasHydrateEntry>, String> {
-            Ok(self.entries.clone())
+            match &self.hydration_scope_error {
+                Some(error) => Err(error.clone()),
+                None => Ok(self.entries.clone()),
+            }
         }
 
         fn atrium_changes(&self, since: &str) -> Result<(Vec<String>, String), String> {
@@ -370,7 +407,11 @@ mod tests {
             ("scratch/sess-1/b.txt".to_string(), 12),
             b"scratch bytes".to_vec(),
         );
-        let mut client = FakeAtriumClient { entries, bytes };
+        let mut client = FakeAtriumClient {
+            entries,
+            bytes,
+            hydration_scope_error: None,
+        };
 
         let out = hydrate_artifact_lower(&mut client, &cas, &lower).unwrap();
 
@@ -394,6 +435,82 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
     }
 
+    /// A failed hydration must leave NO artifact lower behind, so the NEXT tick's reattach
+    /// does not mistake an empty leftover for a hydrated one, change the overlay signature,
+    /// and force an unmount+remount under a pod that has already passed its readiness gate.
+    ///
+    /// Shaped like the production failure, which is why it is two ticks rather than one
+    /// assertion: tick 1 hydrates and FAILS (warm pods 404 by design), tick 2 rebuilds the
+    /// plan and reattaches. The bug is only visible in tick 2 — asserting "the directory is
+    /// gone" alone would pass on a fix that still let the plans disagree.
+    #[test]
+    fn failed_hydration_leaves_no_lower_for_the_next_tick_to_reattach() {
+        let root = tmp("hydrate-fail");
+        let overlays_root = root.join("overlays");
+        let cas = overlays_root.join("cas");
+        let mut client = FakeAtriumClient {
+            hydration_scope_error: Some(
+                "hydration-scope: status code 404: {\"error\":\"session_not_found\"}".to_string(),
+            ),
+            ..FakeAtriumClient::default()
+        };
+        let base_plan = OverlayMountPlan {
+            session: "sess-1".to_string(),
+            upper: overlays_root.join("sess-1"),
+            merged: root.join("merged/sess-1"),
+            work: root.join("work/sess-1"),
+            lower: LowerSource {
+                path: root.join("lower/sess-1"),
+                kind: LowerKind::Fixture,
+            },
+            extra_lowers: Vec::new(),
+            context_source: None,
+            repo_mounts: Vec::new(),
+            repo_cache_root: PathBuf::from("/cache"),
+        };
+
+        // Tick 1: first mount hydrates, and hydration fails.
+        let mut first_tick = base_plan.clone();
+        let error = match hydrate_artifact_lower_into_plan(
+            &mut client,
+            &cas,
+            &overlays_root,
+            "sess-1",
+            &mut first_tick,
+        ) {
+            Ok(_) => panic!("hydration must surface the 404, not silently succeed"),
+            Err(error) => error,
+        };
+        assert!(
+            error.contains("session_not_found"),
+            "the hydration failure must be reported, not swallowed: {error}"
+        );
+        assert!(
+            first_tick.extra_lowers.is_empty(),
+            "a failed hydration must not attach a lower"
+        );
+        assert!(
+            !artifact_lower_path(&overlays_root, "sess-1").exists(),
+            "a failed hydration leaked its artifact lower — the next tick will attach this \
+             empty directory, change the overlay signature, and remount the session out from \
+             under a running agent"
+        );
+
+        // Tick 2: the daemon rebuilds the plan and reattaches. It must find nothing, so the
+        // plan is byte-identical to tick 1's and `mount_overlay` is a no-op instead of a
+        // remount.
+        let mut second_tick = base_plan.clone();
+        assert!(
+            !reattach_artifact_lower_into_plan(&overlays_root, "sess-1", &mut second_tick),
+            "nothing was hydrated, so nothing may be reattached"
+        );
+        assert_eq!(
+            first_tick.extra_lowers, second_tick.extra_lowers,
+            "the rebuilt plan must match the mounted one — a mismatch here IS the remount"
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
     #[test]
     fn hydrate_artifact_lower_into_plan_resets_lower_and_sets_extra_lower() {
         let root = tmp("plan");
@@ -406,6 +523,7 @@ mod tests {
         let mut bytes = HashMap::new();
         bytes.insert(("shared/hydrated.md".to_string(), 1), b"fresh".to_vec());
         let mut client = FakeAtriumClient {
+            hydration_scope_error: None,
             entries: vec![CasHydrateEntry {
                 path: "shared/hydrated.md".to_string(),
                 seq: 1,
@@ -459,6 +577,7 @@ mod tests {
         let mut client = FakeAtriumClient {
             entries: Vec::new(),
             bytes: HashMap::new(),
+            hydration_scope_error: None,
         };
         let mut plan = OverlayMountPlan {
             session: "sess-1".to_string(),
