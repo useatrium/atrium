@@ -96,34 +96,29 @@ function TimelineImpl({
         .filter((message) => message.threadRootEventId == null && message.id != null)
         .map((message) => message.id!),
     );
+    const anchorsIntoRootCluster = (message: ChatMessage): message is ChatMessage & { threadRootEventId: number } =>
+      isAgentVoiceBroadcast(message) &&
+      message.sessionEventType !== 'question_requested' &&
+      message.threadRootEventId != null &&
+      rootIds.has(message.threadRootEventId);
     const answers = new Map<number, ChatMessage[]>();
-    // Only AGENT-VOICE broadcast replies (session answers/questions) anchor
+    // Only AGENT-VOICE broadcast events the root cluster can present anchor
     // under their loaded root — the cluster's slot presentation carries the
     // agent identity. A human "also send to channel" reply stays in the feed
     // as its own row, attributed to its author; rendering one message twice
     // (cluster preview + standalone row) is still the failure mode, so the
     // cluster suppresses its compact preview for broadcast replies.
     for (const message of messages) {
-      if (
-        isAgentVoiceBroadcast(message) &&
-        message.sessionEventType !== 'question_requested' &&
-        message.threadRootEventId != null &&
-        rootIds.has(message.threadRootEventId)
-      ) {
-        const current = answers.get(message.threadRootEventId) ?? [];
-        current.push(message);
-        answers.set(message.threadRootEventId, current);
-      }
+      if (!anchorsIntoRootCluster(message)) continue;
+      const current = answers.get(message.threadRootEventId) ?? [];
+      current.push(message);
+      answers.set(message.threadRootEventId, current);
     }
-    const isAnchoredAnnotationEvent = (message: ChatMessage) =>
-      isAgentVoiceBroadcast(message) && message.threadRootEventId != null && rootIds.has(message.threadRootEventId);
     // `isRenderableMessage` keeps a message that paints nothing (a deleted one
     // with no replies left) out of every set derived from the feed — otherwise
     // it becomes a "newest message" no scroll can ever reach.
     return {
-      visibleMessages: messages.filter(
-        (message) => isRenderableMessage(message) && !isAnchoredAnnotationEvent(message),
-      ),
+      visibleMessages: messages.filter((message) => isRenderableMessage(message) && !anchorsIntoRootCluster(message)),
       answersByRoot: answers,
       loadedRootIds: rootIds,
     };
