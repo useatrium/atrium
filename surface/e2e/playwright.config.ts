@@ -43,8 +43,12 @@ const centaurPort = Number(process.env.E2E_CENTAUR_PORT ?? 18100 + portOffset);
 process.env.E2E_SERVER_PORT = String(serverPort);
 process.env.E2E_WEB_PORT = String(webPort);
 process.env.E2E_CENTAUR_PORT = String(centaurPort);
-
 const webServerTimeout = Number(process.env.E2E_WEBSERVER_TIMEOUT ?? 60_000);
+// Same reason as the ports above: `seedArtifact` calls the node capture endpoint
+// from a worker and must present the key the server was started with. Publishing
+// it back keeps the two ends from drifting into an unexplained 401.
+const captureApiKey = process.env.ARTIFACT_CAPTURE_API_KEY ?? 'e2e-capture-key';
+process.env.ARTIFACT_CAPTURE_API_KEY = captureApiKey;
 // The suite serves the web app as a static development-mode build (`vite build
 // --mode development` + `vite preview`) rather than from the dev server. The dev
 // server's on-demand transforms + dep optimizer compete with the tests for CPU on
@@ -143,7 +147,7 @@ export default defineConfig({
         LOG_LEVEL: process.env.LOG_LEVEL ?? 'error',
         ATRIUM_RATE_LIMIT: '0',
         ATRIUM_UNFURL_ALLOW_PRIVATE: '1',
-        ARTIFACT_CAPTURE_API_KEY: 'e2e-capture-key',
+        ARTIFACT_CAPTURE_API_KEY: captureApiKey,
       },
     },
     {
