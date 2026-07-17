@@ -177,26 +177,35 @@ alone.
 
 ## Who can reach a preview
 
-Every preview vhost is gated at the shared Caddy with HTTP basic auth (user
-`preview`), so a preview — which runs real agents against a credential connected
-inside it, in an `AUTH_OPEN` app — is never reachable by someone who merely
-guesses the URL. That shared secret is the containment boundary.
+Every preview vhost is gated at the shared Caddy, so a preview — which runs real
+agents against a credential connected inside it, in an `AUTH_OPEN` app — is never
+reachable by someone who merely guesses the URL. A shared token is the
+containment boundary.
+
+The gate is a **capability link**. An agent hands out
+`https://<preview>/?k=<token>`; the first click mints a `Secure; HttpOnly;
+SameSite=Lax` cookie and Caddy 302-redirects to the clean URL (the token is
+stripped from the address bar and history). Every later request is authorized by
+the cookie — one click, nothing to type. The cookie is matched with an anchored
+regexp so a crafted cookie cannot spoof it, and it lives 72 h (longer than any
+preview), so a session never expires mid-preview.
 
 Cloudflare Access would be the nicer gate (per-person email allowlist), but it
 requires the wildcard to be proxied through Cloudflare, and the box's free-plan
 zone cannot get a Cloudflare edge certificate for a second-level wildcard
-(`*.<preview-domain>`) without the paid Advanced Certificate Manager add-on.
-Basic auth keeps the model free and the wildcard DNS-only, with Caddy terminating
+(`*.<preview-domain>`) without the paid Advanced Certificate Manager add-on. The
+token gate keeps the model free and the wildcard DNS-only, with Caddy terminating
 TLS via its own certificate. It can be upgraded to Access later (proxy the
 wildcard + ACM, or move previews to a dedicated apex domain where the wildcard is
 first-level and free Universal SSL covers it) without touching the preview stack.
 
-The hash lives in the launcher environment as `ATRIUM_PREVIEW_BASIC_AUTH_HASH`
-(a `caddy hash-password` bcrypt). The launcher **refuses to create a preview**
-while it is unset, so a misprovisioned box cannot publish an unguarded preview.
-The MinIO object path is deliberately left open: presigned URLs self-authenticate
-(the signature is the gate) and a browser download carries no basic-auth header —
-the same posture as production's `atrium-files` host.
+The token lives in the launcher environment as `ATRIUM_PREVIEW_ACCESS_TOKEN` (a
+URL-safe shared secret, e.g. `openssl rand -hex 24`); the launcher decorates the
+reported preview URL with `?k=<token>` and **refuses to create a preview** while
+it is unset, so a misprovisioned box cannot publish an unguarded preview. The
+MinIO object path is deliberately left open: presigned URLs self-authenticate
+(the signature is the gate) and a browser download carries no cookie for that
+host anyway — the same posture as production's `atrium-files` host.
 
 Per-commit build locks prevent simultaneous previews of one SHA from rebuilding
 the same images twice. The warm host avoids the package installation, pnpm

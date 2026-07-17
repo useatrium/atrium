@@ -45,17 +45,23 @@ PNPM_STORE = Path(os.environ.get("ATRIUM_PREVIEW_PNPM_STORE", "/var/cache/atrium
 # concurrency slot (the cap only counts provisioning/ready).
 KEEP_FAILED = os.environ.get("ATRIUM_PREVIEW_KEEP_FAILED", "0") == "1"
 WEB_BUILD_IMAGE = os.environ.get("ATRIUM_PREVIEW_WEB_BUILD_IMAGE", "node:24-alpine")
-# Every preview vhost is gated at the shared Caddy with HTTP basic auth, so a
-# preview — which runs real agents against a connected credential in an
-# AUTH_OPEN app — is never reachable by a stranger who guesses the URL. The
-# containment boundary is this shared secret, deliberately in place of CF Access
-# (the box's free-plan wildcard cannot get a Cloudflare edge cert). It gates only
-# the app; the MinIO path stays open because presigned URLs are self-authenticating.
-# BASIC_AUTH_HASH is a bcrypt hash from `caddy hash-password` — safe to store; the
-# plaintext is shared out of band. Empty = refuse to create (fail closed), so a
-# misprovisioned box never publishes an unguarded preview.
-BASIC_AUTH_USER = os.environ.get("ATRIUM_PREVIEW_BASIC_AUTH_USER", "preview")
-BASIC_AUTH_HASH = os.environ.get("ATRIUM_PREVIEW_BASIC_AUTH_HASH", "")
+# Every preview vhost is gated at the shared Caddy, so a preview — which runs
+# real agents against a connected credential in an AUTH_OPEN app — is never
+# reachable by a stranger who guesses the URL. The containment boundary is this
+# shared token, deliberately in place of CF Access (the box's free-plan wildcard
+# cannot get a Cloudflare edge cert).
+#
+# The gate is a capability link: an agent hands out `https://<preview>/?k=<token>`,
+# Caddy validates the token, drops a cookie, and 302-redirects to the clean URL
+# (token stripped from the address bar). Every later request is authorized by the
+# cookie — one click, nothing to type. The token is a URL-safe secret; keep it to
+# [A-Za-z0-9._-] so it needs no escaping in the query match or the cookie regex.
+# Empty = refuse to create (fail closed), so a misprovisioned box never publishes
+# an unguarded preview. The MinIO path stays open (presigned URLs self-authenticate).
+ACCESS_COOKIE = "atrium_preview_access"
+# 72h, so the cookie always outlives a preview (max ttl_hours is 72).
+ACCESS_COOKIE_MAX_AGE = 72 * 3600
+ACCESS_TOKEN = os.environ.get("ATRIUM_PREVIEW_ACCESS_TOKEN", "")
 PORT_RANGE = range(21000, 29000)
 NODE_PORT = 30080
 # Console/iron-control NodePort inside each preview cluster.
@@ -790,19 +796,33 @@ def write_caddy_fragment(state: dict[str, Any]) -> None:
                 # presigned S3 reads point at the public origin
                 reverse_proxy 127.0.0.1:{state['ports']['minio']}
             }}
-            @{preview_id} host {host}
-            handle @{preview_id} {{
-                # Gate the app behind the shared preview secret. Not on the minio
-                # handle above: presigned URLs self-authenticate and a browser
-                # download carries no basic-auth header. The hash is baked in (not
-                # a {{$env}} ref) so it has a single source — the launcher env — and
-                # cmd_create fails closed when it is unset.
-                basic_auth {{
-                    {BASIC_AUTH_USER} {BASIC_AUTH_HASH}
-                }}
+            # Capability-link grant: ?k=<token> mints the access cookie, then
+            # redirects to the same path without the query so the token does not
+            # linger in the address bar or history.
+            @grant-{preview_id} {{
+                host {host}
+                query k={ACCESS_TOKEN}
+            }}
+            handle @grant-{preview_id} {{
+                header +Set-Cookie "{ACCESS_COOKIE}={ACCESS_TOKEN}; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age={ACCESS_COOKIE_MAX_AGE}"
+                redir {{http.request.uri.path}} 302
+            }}
+            # Authorized by the cookie. The regexp is anchored to a full cookie
+            # pair (start-of-header or "; ") so a crafted value like
+            # x{ACCESS_COOKIE}=… or foo={ACCESS_COOKIE}=… cannot spoof it.
+            @authed-{preview_id} {{
+                host {host}
+                header_regexp Cookie "(?:^|;\\s*){ACCESS_COOKIE}={ACCESS_TOKEN}(?:;|$)"
+            }}
+            handle @authed-{preview_id} {{
                 encode zstd gzip
                 # the preview's own caddy serves the web SPA and proxies its API
                 reverse_proxy 127.0.0.1:{state['ports']['caddy']}
+            }}
+            # No token, no cookie: the preview exists but needs its access link.
+            @{preview_id} host {host}
+            handle @{preview_id} {{
+                respond "This preview requires its access link." 401
             }}
             """
         )
@@ -831,11 +851,11 @@ def public_status(state: dict[str, Any]) -> dict[str, Any]:
 
 
 def cmd_create(args: argparse.Namespace) -> None:
-    if not BASIC_AUTH_HASH.strip():
+    if not ACCESS_TOKEN.strip():
         raise RuntimeError(
-            "ATRIUM_PREVIEW_BASIC_AUTH_HASH is not set; refusing to create an "
-            "unguarded preview. Set it (a `caddy hash-password` bcrypt hash) in "
-            "the launcher environment before creating previews."
+            "ATRIUM_PREVIEW_ACCESS_TOKEN is not set; refusing to create an "
+            "unguarded preview. Set it (a URL-safe shared secret) in the launcher "
+            "environment before creating previews."
         )
     commit_sha = commit_for_ref(args.ref)
     preview_id = args.preview_id or make_preview_id(commit_sha)
