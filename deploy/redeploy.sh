@@ -17,6 +17,18 @@ REG="localhost:${PORT}/library"
 SURF="$REPO_DIR/surface/deploy"
 REPO_PARENT="$(cd "$REPO_DIR/.." && pwd)"
 STATE="${ATRIUM_DEPLOY_STATE_DIR:-$REPO_PARENT/atrium-deploy}"; mkdir -p "$STATE"
+
+# Serialize deploys on this box. The GitHub-triggered deploy (deploy.yml, guarded
+# by `concurrency: deploy-box`) and a documented manual `redeploy.sh` run on the
+# box otherwise race: both `git reset --hard` the same checkout and stomp the
+# state files, and prune_images explicitly assumes deploys are serial. Re-exec
+# once under an flock; a second caller waits up to the timeout, then fails loudly
+# rather than running concurrently. Degrades to unlocked if flock is unavailable.
+if [ -z "${_ATRIUM_DEPLOY_LOCKED:-}" ] && command -v flock >/dev/null 2>&1; then
+  exec env _ATRIUM_DEPLOY_LOCKED=1 \
+    flock -w "${ATRIUM_DEPLOY_LOCK_WAIT:-1200}" "$STATE/deploy.lock" "$0" "$@"
+fi
+
 BK="$HOME/atrium-backups"; mkdir -p "$BK"
 SHA="$(git -C "$REPO_DIR" rev-parse --short HEAD 2>/dev/null || echo "manual-$(date +%s)")"
 PNPM_STORE_DIR="${ATRIUM_PNPM_STORE_DIR:-$STATE/pnpm-store}"
@@ -140,22 +152,38 @@ refresh_livekit_runtime(){
 }
 
 # ---- content-aware change detection (last-deployed SHA -> HEAD) ----
-LAST="$(cat "$STATE/last-deployed-sha" 2>/dev/null || true)"
-if [ -n "$LAST" ] && git -C "$REPO_DIR" cat-file -e "${LAST}^{commit}" 2>/dev/null; then
-  CHANGED="$(git -C "$REPO_DIR" diff --name-only "$LAST" HEAD)"
-  FIRST=0
-else
-  CHANGED=""; FIRST=1   # first deploy / unknown baseline -> rebuild everything
+# Baselines are tracked PER SIDE. A partial deploy (`redeploy.sh surface`) must
+# not advance the centaur baseline, or a later `centaur`/`all` still at the same
+# SHA would diff empty, see "no changes", and silently never rebuild pending
+# centaur images (symmetric for the surface side). Migrate the legacy single-file
+# baseline to both sides on the first run after this change.
+LAST_SURFACE="$(cat "$STATE/last-deployed-sha-surface" 2>/dev/null || true)"
+LAST_CENTAUR="$(cat "$STATE/last-deployed-sha-centaur" 2>/dev/null || true)"
+if [ -z "$LAST_SURFACE$LAST_CENTAUR" ]; then
+  _legacy="$(cat "$STATE/last-deployed-sha" 2>/dev/null || true)"
+  [ -n "$_legacy" ] && { LAST_SURFACE="$_legacy"; LAST_CENTAUR="$_legacy"; }
 fi
-changed(){ [ "$FIRST" = 1 ] && return 0; grep -qE "$1" <<<"$CHANGED"; }
+_valid_base(){ [ -n "$1" ] && git -C "$REPO_DIR" cat-file -e "${1}^{commit}" 2>/dev/null; }
+_changed_since(){ _valid_base "$1" && git -C "$REPO_DIR" diff --name-only "$1" HEAD; }
+CHANGED_SURFACE="$(_changed_since "$LAST_SURFACE")"
+CHANGED_CENTAUR="$(_changed_since "$LAST_CENTAUR")"
+# Unknown/invalid baseline -> rebuild everything on that side.
+FIRST_SURFACE=0; _valid_base "$LAST_SURFACE" || FIRST_SURFACE=1
+FIRST_CENTAUR=0; _valid_base "$LAST_CENTAUR" || FIRST_CENTAUR=1
+changed_surface(){ [ "$FIRST_SURFACE" = 1 ] && return 0; grep -qE "$1" <<<"$CHANGED_SURFACE"; }
+changed_centaur(){ [ "$FIRST_CENTAUR" = 1 ] && return 0; grep -qE "$1" <<<"$CHANGED_CENTAUR"; }
 
+# The centaur patterns must mirror each image's Docker COPY context, or a change
+# to a copied dir ships stale code: the agent image bakes centaur_sdk/ and
+# services/workflow-python/ (Dockerfile.agent), and api-rs bakes tools/ and
+# workflows/ (services/api-rs/Dockerfile) — so both dirs trigger BOTH images.
 need_surface=0; need_apirs=0; need_ironproxy=0; need_agent=0; need_nodesync=0
-changed '^surface/'                                                   && need_surface=1
-changed '^centaur/services/(api-rs|workflow-python)/|^centaur/Cargo'  && need_apirs=1
-changed '^centaur/services/iron-proxy/'                               && need_ironproxy=1
-changed '^centaur/services/sandbox/|^centaur/(tools|workflows|\.agents|harness|crates)/' && need_agent=1
+changed_surface '^surface/'                                          && need_surface=1
+changed_centaur '^centaur/services/(api-rs|workflow-python)/|^centaur/(tools|workflows)/|^centaur/Cargo'  && need_apirs=1
+changed_centaur '^centaur/services/iron-proxy/'                      && need_ironproxy=1
+changed_centaur '^centaur/services/(sandbox|workflow-python)/|^centaur/(tools|workflows|\.agents|harness|crates|centaur_sdk)/' && need_agent=1
 # node-sync is Atrium-owned and lives outside the subtree (its own workspace)
-changed '^runtime/node-sync/'                                         && need_nodesync=1
+changed_centaur '^runtime/node-sync/'                               && need_nodesync=1
 
 backup_db(){
   local f="$BK/surface-$(date +%Y%m%d-%H%M%S).sql.gz"
@@ -399,15 +427,29 @@ prune_images(){
   "$REPO_DIR/deploy/registry-gc.sh" || log "prune: registry-gc reported issues (see above)"
 }
 
-prepare_surface_runtime
-backup_db
+# Surface-only prep. A centaur-only deploy must not render the LiveKit config,
+# pg_dump the surface DB, or (below) bounce LiveKit — the config bounce would
+# force-recreate LiveKit and drop live calls during a deploy unrelated to surface.
+case "$TARGET" in
+  surface|all) prepare_surface_runtime; backup_db ;;
+esac
 case "$TARGET" in
   surface) deploy_surface ;;
   centaur) deploy_centaur ;;
   all)     deploy_surface; deploy_centaur ;;
   *) die "unknown target '$TARGET' (surface|centaur|all)" ;;
 esac
-refresh_livekit_runtime
-echo "$SHA" > "$STATE/last-deployed-sha"
+case "$TARGET" in
+  surface|all) refresh_livekit_runtime ;;
+esac
+# Advance only the baseline(s) for the side(s) actually deployed this run.
+case "$TARGET" in
+  surface|all) echo "$SHA" > "$STATE/last-deployed-sha-surface" ;;
+esac
+case "$TARGET" in
+  centaur|all) echo "$SHA" > "$STATE/last-deployed-sha-centaur" ;;
+esac
+# Keep the legacy combined file current when both sides advanced (external readers).
+[ "$TARGET" = all ] && echo "$SHA" > "$STATE/last-deployed-sha"
 prune_images
 log "redeploy DONE ($TARGET) @ $SHA"
