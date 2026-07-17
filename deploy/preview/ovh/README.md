@@ -95,6 +95,27 @@ and the local Docker registry. Run the external TTL janitor from
 [`setup/janitor.cron`](setup/janitor.cron); in-process expiry is only
 best-effort.
 
+## Keeping the box in sync (deploy path)
+
+The launcher runs from a git checkout at `/opt/atrium`. A systemd timer
+(`atrium-preview-deploy.timer`, every 10 min) runs
+[`setup/deploy.sh`](setup/deploy.sh), which fetches the repo, hard-resets the
+checkout to its deploy ref (`origin/master` by default), and restarts the
+launcher **only** when the preview code changed — deferred while any preview is
+provisioning, because a create runs in a launcher thread and a restart would
+orphan a half-built preview. This makes drift self-correcting: the box tracks
+the repo instead of accumulating un-pushed local edits.
+
+- **Immediate deploy:** `sudo systemctl start atrium-preview-deploy.service`
+  (or run `deploy.sh` directly).
+- **Deliberate promotion instead of latest-master:** point the unit's
+  `ATRIUM_PREVIEW_DEPLOY_REF` at `origin/deploy` and push to that branch, mirroring
+  the production box's `master → deploy` flow.
+- Any working-tree edit made on the box is saved to
+  `/var/lib/atrium-preview/drift-<ts>.patch` before it is reset away, so a hotfix
+  is recoverable — but commit it to the repo, or the next timer run discards it.
+- The deployed SHA is recorded in `/var/lib/atrium-preview/deployed-sha`.
+
 ## Launcher API
 
 The launcher is reached through the Cloudflare Tunnel. All endpoints except

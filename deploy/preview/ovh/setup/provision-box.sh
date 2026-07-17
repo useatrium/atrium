@@ -367,6 +367,20 @@ install_launcher_and_janitor() {
   sudo install -m 0644 "$cron_tmp" /etc/cron.d/atrium-preview-janitor
   rm -f "$cron_tmp"
   sudo systemctl enable --now cron >/dev/null
+
+  # Self-healing deploy: a timer syncs $SERVICE_REPO to the repo and reloads the
+  # launcher when its code changes, so the box can never silently drift.
+  local deploy_tmp
+  deploy_tmp="$(mktemp)"
+  sed \
+    -e "s|__ATRIUM_REPO_ROOT__|$SERVICE_REPO|g" \
+    -e "s|__ATRIUM_SERVICE_USER__|$SERVICE_USER|g" \
+    -e "s|__ATRIUM_STATE_DIR__|$STATE_DIR|g" \
+    "$SCRIPT_DIR/atrium-preview-deploy.service" >"$deploy_tmp"
+  sudo install -m 0644 "$deploy_tmp" /etc/systemd/system/atrium-preview-deploy.service
+  sudo install -m 0644 "$SCRIPT_DIR/atrium-preview-deploy.timer" \
+    /etc/systemd/system/atrium-preview-deploy.timer
+  rm -f "$deploy_tmp"
 }
 
 warm_images_and_buildkit() {
@@ -403,6 +417,8 @@ warm_images_and_buildkit() {
 start_configured_services() {
   sudo systemctl daemon-reload
   sudo systemctl enable atrium-preview-caddy.service atrium-preview-launcher.service >/dev/null
+  # Self-healing repo sync (idempotent; the timer keeps $SERVICE_REPO on the ref).
+  sudo systemctl enable --now atrium-preview-deploy.timer >/dev/null
 
   if sudo grep -Eq '^CF_API_TOKEN=.+$' "$CADDY_ENV" && sudo grep -Eq '^ACME_EMAIL=.+$' "$CADDY_ENV"; then
     sudo systemctl restart atrium-preview-caddy.service
