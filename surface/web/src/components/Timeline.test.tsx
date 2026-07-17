@@ -350,6 +350,30 @@ describe('Timeline anchored agent answers', () => {
     expect(screen.queryByRole('button', { name: '↳ replied to a thread' })).toBeNull();
   });
 
+  it('keeps a broadcast question request standalone when the root is loaded', () => {
+    renderTimeline({
+      messages: [
+        message({ id: 1, text: 'Please ship it' }),
+        message({
+          id: 10,
+          threadRootEventId: 1,
+          sessionId: 's-1',
+          sessionEventType: 'question_requested',
+          sessionEventPayload: {
+            questionId: 'q-1',
+            questions: [{ id: 'prompt-1', header: 'Scope', question: 'Should this include the migration?' }],
+          },
+          broadcast: true,
+          author: { id: 'agent:s-1', handle: 'agent', displayName: 'Agent' },
+        }),
+      ],
+      unreadDividerAfterId: null,
+    });
+
+    expect(screen.getByText('Should this include the migration?')).toBeTruthy();
+    expect(screen.queryByTestId('channel-annotation-cluster')).toBeNull();
+  });
+
   it('keeps the standalone answer when its root is outside the loaded window', () => {
     renderTimeline({ messages: [answer()], unreadDividerAfterId: null });
 
