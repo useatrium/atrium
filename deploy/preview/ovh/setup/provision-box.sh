@@ -259,8 +259,15 @@ write_secret_envs() {
 
   if [[ ! -e "$LAUNCHER_ENV" ]]; then
     sudo install -m 0600 /dev/null "$LAUNCHER_ENV"
-    printf 'ATRIUM_PREVIEW_LAUNCHER_TOKEN=%s\nMAX_CONCURRENT_PREVIEWS=%s\nATRIUM_PREVIEW_STATE_DIR=%s\nPREVIEW_LAUNCHER_DB=%s/launcher.sqlite3\nPREVIEW_LAUNCHER_HOST=127.0.0.1\nPREVIEW_LAUNCHER_PORT=8787\n' \
+    # ATRIUM_PREVIEW_BASIC_AUTH_HASH gates every preview vhost (see previewctl.py).
+    # A `caddy hash-password` bcrypt hash; the launcher REFUSES to create previews
+    # while it is empty, so no preview is ever published unguarded. Supply it the
+    # same way as the launcher token — generated/pasted by the operator, never a
+    # plaintext password in this script:
+    #   docker run --rm atrium-preview-caddy:2-cloudflare caddy hash-password --plaintext '<pw>'
+    printf 'ATRIUM_PREVIEW_LAUNCHER_TOKEN=%s\nATRIUM_PREVIEW_BASIC_AUTH_HASH=%s\nMAX_CONCURRENT_PREVIEWS=%s\nATRIUM_PREVIEW_STATE_DIR=%s\nPREVIEW_LAUNCHER_DB=%s/launcher.sqlite3\nPREVIEW_LAUNCHER_HOST=127.0.0.1\nPREVIEW_LAUNCHER_PORT=8787\n' \
       "${ATRIUM_PREVIEW_LAUNCHER_TOKEN:-}" \
+      "${ATRIUM_PREVIEW_BASIC_AUTH_HASH:-}" \
       "${MAX_CONCURRENT_PREVIEWS:-3}" \
       "$STATE_DIR" \
       "$STATE_DIR" | sudo tee "$LAUNCHER_ENV" >/dev/null
@@ -403,10 +410,11 @@ start_configured_services() {
     log "Caddy installed but not started: set CF_API_TOKEN and ACME_EMAIL in $CADDY_ENV"
   fi
 
-  if sudo grep -Eq '^ATRIUM_PREVIEW_LAUNCHER_TOKEN=.+$' "$LAUNCHER_ENV"; then
+  if sudo grep -Eq '^ATRIUM_PREVIEW_LAUNCHER_TOKEN=.+$' "$LAUNCHER_ENV" &&
+    sudo grep -Eq '^ATRIUM_PREVIEW_BASIC_AUTH_HASH=.+$' "$LAUNCHER_ENV"; then
     sudo systemctl restart atrium-preview-launcher.service
   else
-    log "launcher installed but not started: set ATRIUM_PREVIEW_LAUNCHER_TOKEN in $LAUNCHER_ENV"
+    log "launcher installed but not started: set ATRIUM_PREVIEW_LAUNCHER_TOKEN and ATRIUM_PREVIEW_BASIC_AUTH_HASH in $LAUNCHER_ENV"
   fi
 }
 
@@ -418,6 +426,11 @@ Provisioning complete. Human/secret checklist:
       It needs Zone:DNS:Edit for useatrium.com; also set ACME_EMAIL.
   [ ] Put a strong launcher bearer token in $LAUNCHER_ENV as
       ATRIUM_PREVIEW_LAUNCHER_TOKEN (and review MAX_CONCURRENT_PREVIEWS).
+  [ ] Put a bcrypt hash in $LAUNCHER_ENV as ATRIUM_PREVIEW_BASIC_AUTH_HASH;
+      every preview vhost is gated behind it (user 'preview'). Generate with:
+        docker run --rm atrium-preview-caddy:2-cloudflare caddy hash-password --plaintext '<pw>'
+      Share the plaintext with preview users out of band. The launcher refuses
+      to create previews while this is empty.
   [ ] Run $SCRIPT_DIR/validate-overlay.sh; require POC_RESULT=CONFIRMED.
   [ ] Point *.preview.useatrium.com at this box (DNS-only A/AAAA record).
   [ ] Create the cloudflared tunnel for preview-launcher.useatrium.com; see
