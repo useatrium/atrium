@@ -12,6 +12,7 @@ import {
   markFailed,
   mergeHistory,
   resetToLatest,
+  isRenderableMessage,
   mergeThread,
   removeByClientMsgId,
   rejectLocalOverlay,
@@ -310,7 +311,12 @@ export function newestConfirmedMainEventId(t: ChannelTimeline | undefined): numb
   if (!t) return 0;
   for (let index = t.main.length - 1; index >= 0; index--) {
     const message = t.main[index];
-    if (message?.status === 'confirmed' && typeof message.id === 'number') return message.id;
+    // Skip what never paints: callers compare this against a read cursor to ask
+    // "has that reader seen everything here?", and a deleted trailing message
+    // would answer no forever — nobody can read a row that renders nothing.
+    if (message?.status === 'confirmed' && typeof message.id === 'number' && isRenderableMessage(message)) {
+      return message.id;
+    }
   }
   return 0;
 }

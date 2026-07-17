@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type pg from 'pg';
 import { buildApp } from '../src/app.js';
@@ -196,6 +197,39 @@ describe('read cursors', () => {
     const channel = channels.json().channels.find((c: any) => c.id === fx.channelId);
     expect(channel.lastReadEventId).toBe(one.id);
     expect(channel.latestEventId).toBe(two.id);
+  });
+
+  // A deleted message renders no row, so no client can scroll to it to mark it
+  // read. Counting one strands the channel unread forever — every id this
+  // counter reports has to be an id a reader can actually reach.
+  it('does not count a deleted message toward latestEventId', async () => {
+    const { cookie } = await login('alice', 'Alice');
+    const kept = await post(cookie, fx.channelId, 'kept');
+    const doomed = await post(cookie, fx.channelId, 'doomed');
+
+    const removed = await app.inject({
+      method: 'DELETE',
+      url: `/api/messages/${doomed.id}`,
+      headers: { cookie },
+      payload: { opId: randomUUID() },
+    });
+    expect(removed.statusCode).toBe(200);
+
+    const channels = await app.inject({ method: 'GET', url: '/api/channels', headers: { cookie } });
+    expect(channels.statusCode).toBe(200);
+    const channel = channels.json().channels.find((c: any) => c.id === fx.channelId);
+    expect(channel.latestEventId).toBe(kept.id);
+
+    // The whole point: reading the newest surviving message clears the channel.
+    await app.inject({
+      method: 'POST',
+      url: `/api/channels/${fx.channelId}/read`,
+      headers: { cookie },
+      payload: { lastReadEventId: kept.id },
+    });
+    const settled = await app.inject({ method: 'GET', url: '/api/channels', headers: { cookie } });
+    const after = settled.json().channels.find((c: any) => c.id === fx.channelId);
+    expect(after.latestEventId).toBeLessThanOrEqual(after.lastReadEventId);
   });
 
   it('computes latestEventId from main-timeline-visible events only', async () => {

@@ -1,5 +1,5 @@
 import type { Channel } from './api';
-import type { ChatMessage, UserRef } from './timeline';
+import { isRenderableMessage, type ChatMessage, type UserRef } from './timeline';
 
 /** The person on the other side of a DM (yourself, for a self-DM). */
 export function dmPartner(c: Channel, meId: string): UserRef | null {
@@ -186,7 +186,7 @@ export function buildTimelineItems(messages: ChatMessage[]): TimelineItem[] {
   const items: TimelineItem[] = [];
   let prev: ChatMessage | null = null;
   for (const m of messages) {
-    if (m.deleted && m.replyCount === 0) continue;
+    if (!isRenderableMessage(m)) continue;
     const d = new Date(m.createdAt);
     if (!prev || !sameDay(new Date(prev.createdAt), d)) {
       items.push({ kind: 'day', key: `day-${d.toDateString()}`, label: formatDay(m.createdAt) });

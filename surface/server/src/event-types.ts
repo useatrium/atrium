@@ -99,3 +99,34 @@ export const SYNC_CATCHUP_RAW_EVENT_TYPES = [
   ...CATCHUP_RAW_EVENT_TYPES,
   ...SYNC_EVENT_TYPES.filter((type) => !TIMELINE_EVENT_TYPE_SET.has(type)),
 ];
+
+// === the unread rule ===
+
+// Events that make a channel unread. A thread reply counts only when it is
+// broadcast: the agent's answer is an ordinary channel message and marks the
+// channel unread like one, or the very thing you asked for lands below the fold
+// with nothing to say it arrived.
+const UNREAD_EVENT_TYPES = ['message.posted', 'session.spawned', 'session.replied'] as const;
+
+/**
+ * Per-channel `latest_event_id` — the newest event that should draw attention.
+ * Correlates against `c.id`, so it belongs inside a LATERAL over `channels c`.
+ *
+ * ONE definition on purpose. This rule lived as two copies (the channel list and
+ * the push badge) and they silently drifted: the badge never grew the broadcast
+ * clause, so it counted thread replies nobody could see in the feed.
+ *
+ * Deleted messages are excluded. The content is gone, so it must not light a
+ * channel — and a deleted message with no replies left renders no row at all,
+ * which made this counter unreachable: it named an id the client could never
+ * scroll to, so mark-read could never catch up and the channel stayed unread
+ * forever. Whatever id this returns, a client must be able to see and read it.
+ */
+export const CHANNEL_LATEST_EVENT_ID_SQL = `
+       SELECT MAX(e.id) AS latest_event_id
+       FROM events e
+       LEFT JOIN message_state ms ON ms.event_id = e.id
+       WHERE e.channel_id = c.id
+         AND e.type IN ${sqlTypeList(UNREAD_EVENT_TYPES)}
+         AND (e.thread_root_event_id IS NULL OR (e.payload->>'broadcast')::boolean IS TRUE)
+         AND NOT COALESCE(ms.is_deleted, false)`;

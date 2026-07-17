@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ChatMessage, UserRef } from '@atrium/surface-client';
 import type { Session } from '../sessions/types';
-import { buildTimelineItems, isAgentVoiceBroadcast } from '@atrium/surface-client';
+import { buildTimelineItems, isAgentVoiceBroadcast, isRenderableMessage } from '@atrium/surface-client';
 import { ChevronDownIcon } from './icons';
 import { MessageRow } from './MessageRow';
 import type { MentionContext } from './useMentionTypeahead';
@@ -117,8 +117,13 @@ function TimelineImpl({
     }
     const isAnchoredAnnotationEvent = (message: ChatMessage) =>
       isAgentVoiceBroadcast(message) && message.threadRootEventId != null && rootIds.has(message.threadRootEventId);
+    // `isRenderableMessage` keeps a message that paints nothing (a deleted one
+    // with no replies left) out of every set derived from the feed — otherwise
+    // it becomes a "newest message" no scroll can ever reach.
     return {
-      visibleMessages: messages.filter((message) => !isAnchoredAnnotationEvent(message)),
+      visibleMessages: messages.filter(
+        (message) => isRenderableMessage(message) && !isAnchoredAnnotationEvent(message),
+      ),
       answersByRoot: answers,
       loadedRootIds: rootIds,
     };
@@ -144,6 +149,7 @@ function TimelineImpl({
     const anchoredUnread = messages.find(
       (message) =>
         (message.id ?? 0) > unreadDividerAfterId &&
+        isRenderableMessage(message) &&
         (message.sessionEventType === 'replied' ||
           message.sessionEventType === 'question_requested' ||
           (message.sessionId != null && message.sessionTask != null)) &&
@@ -153,9 +159,13 @@ function TimelineImpl({
     if (anchoredUnread?.threadRootEventId != null) return anchoredUnread.threadRootEventId;
     return visibleMessages.find((message) => (message.id ?? 0) > unreadDividerAfterId)?.id ?? null;
   }, [loadedRootIds, messages, unreadDividerAfterId, visibleMessages]);
+  // Counted over `messages`, not `visibleMessages`: an anchored answer is
+  // presented inside its root's cluster, so it is genuinely something new to
+  // see. A message that paints nothing is not, and counting one strands the
+  // pill at "1 new" pointing at a row that does not exist.
   const unreadCount = useMemo(() => {
     if (unreadDividerAfterId == null || unreadDividerAfterId <= 0) return 0;
-    return messages.filter((m) => (m.id ?? 0) > unreadDividerAfterId).length;
+    return messages.filter((m) => isRenderableMessage(m) && (m.id ?? 0) > unreadDividerAfterId).length;
   }, [messages, unreadDividerAfterId]);
 
   const isAtBottom = useCallback((el: HTMLElement) => {
@@ -166,15 +176,22 @@ function TimelineImpl({
     return el.scrollHeight - el.scrollTop - el.clientHeight < PINNED_BOTTOM_SLOP_PX;
   }, []);
 
+  // `lastMessageId` is the newest message that actually paints, so its row is
+  // in the DOM whenever the feed has one. If it is missing anyway — nothing
+  // renderable loaded, or a row that went away between render and measure —
+  // trust the scroll position rather than reporting "not visible": a lookup
+  // that can never match would freeze the read cursor for good, which is
+  // exactly how a deleted trailing message used to make a channel permanently
+  // unread. Missing row + parked at the bottom means there is nothing below.
   const isNewestMessageVisible = useCallback(() => {
     const el = containerRef.current;
-    if (!el || lastMessageId == null) return false;
-    const latest = el.querySelector<HTMLElement>(`[data-eid="${lastMessageId}"]`);
-    if (!latest) return false;
+    if (!el) return false;
+    const latest = lastMessageId != null ? el.querySelector<HTMLElement>(`[data-eid="${lastMessageId}"]`) : null;
+    if (!latest) return isAtBottom(el);
     const latestRect = latest.getBoundingClientRect();
     const containerRect = el.getBoundingClientRect();
     return latestRect.bottom >= containerRect.top && latestRect.top <= containerRect.bottom;
-  }, [lastMessageId]);
+  }, [isAtBottom, lastMessageId]);
 
   const isRootVisible = useCallback((rootId: number) => {
     const container = containerRef.current;
@@ -186,6 +203,13 @@ function TimelineImpl({
   }, []);
 
   useEffect(() => {
+    // The chip announces an answer that arrives while you are looking. Timeline
+    // mounts before the first history page lands (that is what the skeleton is
+    // for), so a baseline taken from that empty render makes the whole first
+    // page read as "just arrived" — and every reload replayed the chip for an
+    // answer from days ago. `loaded` is the moment history is actually there:
+    // baseline from it, and only announce what shows up after.
+    if (!loaded) return;
     const latest = messages
       .filter(
         (message) =>
@@ -209,7 +233,7 @@ function TimelineImpl({
     setAnswerChip({ answerId: latest.id!, rootId: latest.threadRootEventId, ask });
     if (chipTimerRef.current) window.clearTimeout(chipTimerRef.current);
     chipTimerRef.current = window.setTimeout(() => setAnswerChip(null), 10_000);
-  }, [answersByRoot, isRootVisible, messages]);
+  }, [answersByRoot, isRootVisible, loaded, messages]);
 
   useEffect(
     () => () => {
