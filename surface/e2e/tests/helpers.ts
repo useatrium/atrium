@@ -11,6 +11,9 @@ import { Pool, type PoolClient } from 'pg';
 export const baseURL = `http://127.0.0.1:${Number(process.env.E2E_WEB_PORT ?? 5273)}`;
 export const apiURL = `http://127.0.0.1:${Number(process.env.E2E_SERVER_PORT ?? 3101)}`;
 export const e2eDatabaseUrl = process.env.E2E_DATABASE_URL ?? 'postgres://atrium:atrium@localhost:5433/atrium_e2e';
+// Kept in step with the server's key by playwright.config.ts, which publishes it
+// into the worker environment; the fallback only covers a bare `playwright test`.
+const captureApiKey = process.env.ARTIFACT_CAPTURE_API_KEY ?? 'e2e-capture-key';
 
 export async function seedEvent(
   client: PoolClient,
@@ -770,4 +773,93 @@ export async function questionState(sessionId: string): Promise<{
   } finally {
     await pool.end();
   }
+}
+
+/**
+ * Seeds a real artifact with real bytes.
+ *
+ * This goes through the node capture endpoint rather than inserting rows: that
+ * is the same path node-sync uses, so the artifact lands in CAS and the ledger
+ * exactly like a captured one, and `/api/files/artifact/:id/content` serves it
+ * for real. Hand-built rows would drift from the write path and pass while the
+ * product broke. Capture is session-scoped, so a throwaway session is created
+ * to own the write unless one is supplied.
+ *
+ * The path must be canonically shared (`shared/channels/<id>/…`) for a reader
+ * to see it — a `scratch/<session>/…` artifact is private to that session.
+ */
+export async function seedArtifact(args: {
+  channelId: string;
+  body: string;
+  path?: string;
+  mime?: string;
+  sessionId?: string;
+}): Promise<{ artifactId: string; handle: string; path: string; seq: number }> {
+  const path = args.path ?? `shared/channels/${args.channelId}/${unique('seeded')}.md`;
+  const pool = new Pool({ connectionString: e2eDatabaseUrl });
+  try {
+    const sessionId = args.sessionId ?? (await createCaptureSession(pool, args.channelId));
+    const ctx = await request.newContext({ baseURL: apiURL });
+    try {
+      const res = await ctx.post(
+        `/api/internal/sessions/${sessionId}/artifacts/capture?path=${encodeURIComponent(path)}`,
+        {
+          headers: {
+            // Published by playwright.config.ts, which starts the server with the
+            // same value — so this cannot drift into a 401.
+            'x-api-key': captureApiKey,
+            'content-type': args.mime ?? 'text/markdown',
+          },
+          data: args.body,
+        },
+      );
+      if (!res.ok()) throw new Error(`capture failed (${res.status()}): ${await res.text()}`);
+      const { seq } = (await res.json()) as { seq: number };
+      const row = await pool.query<{ id: string }>(
+        'SELECT id FROM artifacts WHERE channel_id = $1 AND path = $2 ORDER BY created_at DESC LIMIT 1',
+        [args.channelId, path],
+      );
+      const artifactId = row.rows[0]?.id;
+      if (!artifactId) throw new Error(`captured artifact not found for path ${path}`);
+      return { artifactId, handle: `art_${artifactId}`, path, seq };
+    } finally {
+      await ctx.dispose();
+    }
+  } finally {
+    await pool.end();
+  }
+}
+
+/** A minimal session for capture to write through; the harness never runs it. */
+async function createCaptureSession(pool: Pool, channelIdValue: string): Promise<string> {
+  const channel = await pool.query<{ workspace_id: string }>('SELECT workspace_id FROM channels WHERE id = $1', [
+    channelIdValue,
+  ]);
+  const workspaceId = channel.rows[0]?.workspace_id;
+  if (!workspaceId) throw new Error(`no such channel: ${channelIdValue}`);
+  // `spawned_by` is a NOT NULL reference to a real user, so the session is
+  // owned by a member of the channel's own workspace rather than any user
+  // that happens to exist.
+  const owner = await pool.query<{ user_id: string }>(
+    'SELECT user_id FROM workspace_members WHERE workspace_id = $1 ORDER BY user_id LIMIT 1',
+    [workspaceId],
+  );
+  const ownerId = owner.rows[0]?.user_id;
+  if (!ownerId) throw new Error(`workspace ${workspaceId} has no members to own a capture session`);
+  // `cancelled`, because this session exists only to authorize the write and is never
+  // run — claiming `running` would be a lie the product reads. Every e2e user shares one
+  // default workspace and the sidebar groups running sessions across it, so a seed stuck
+  // at `running` forever is a phantom agent row other specs can see. (No existing spec
+  // was observed to fail on it — they assert on their own titles, not on counts — so
+  // this is hygiene against a future count-based assertion, not a fix for a known flake.)
+  const session = await pool.query<{ id: string }>(
+    `INSERT INTO sessions (
+       workspace_id, channel_id, centaur_thread_key, harness, title, status, spawned_by, driver_id,
+       assignment_generation
+     )
+     VALUES ($1, $2, $3, 'codex', $4, 'cancelled', $5, $5, 1)
+     RETURNING id`,
+    [workspaceId, channelIdValue, `thread-${unique('seed-artifact')}`, unique('artifact-seed'), ownerId],
+  );
+  return session.rows[0]!.id;
 }

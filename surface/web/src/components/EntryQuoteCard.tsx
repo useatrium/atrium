@@ -525,6 +525,7 @@ export function EntryQuoteCard({
         <div className="relative mt-2">
           <div
             ref={changes.contentRef}
+            data-testid="markup-clamp"
             // `relative` is load-bearing: `overflow: hidden` only clips
             // descendants whose containing block runs through this box.
             // CriticMarkupView renders a `sr-only` span (position: absolute), and
