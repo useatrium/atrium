@@ -25,6 +25,19 @@ DEFAULT_DB = PREVIEW_STATE_DIR / "launcher.sqlite3"
 DEFAULT_TTL_HOURS = 24
 MAX_TTL_HOURS = 72
 DEFAULT_MAX_CONCURRENT_PREVIEWS = 3
+# The shared capability token (see previewctl.py). Reported URLs carry it as
+# `?k=<token>` so the link an agent hands out mints the access cookie on first
+# click. Same secret previewctl bakes into the Caddy gate; read here only to
+# decorate the URL, so keep the two in sync via one launcher-env value.
+ACCESS_TOKEN = os.environ.get("ATRIUM_PREVIEW_ACCESS_TOKEN", "")
+
+
+def with_access_token(url: str | None) -> str | None:
+    """Append the capability token to a preview URL so a click just works."""
+    if not url or not ACCESS_TOKEN:
+        return url
+    separator = "&" if "?" in url else "?"
+    return f"{url}{separator}k={ACCESS_TOKEN}"
 ALLOWED_REPOS = {"useatrium/atrium"}
 ACTIVE_STATUSES = ("provisioning", "ready")
 
@@ -466,8 +479,8 @@ class Launcher:
             "ref": record["ref"],
             "commit_sha": record.get("commit_sha"),
             "status": record["status"],
-            "url": record.get("url"),
-            "initial_url": record.get("initial_url"),
+            "url": with_access_token(record.get("url")),
+            "initial_url": with_access_token(record.get("initial_url")),
             "expires_at": record["expires_at"],
             "phase": record.get("phase"),
             "phase_time": record.get("phase_time"),

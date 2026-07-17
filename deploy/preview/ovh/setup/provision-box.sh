@@ -259,15 +259,15 @@ write_secret_envs() {
 
   if [[ ! -e "$LAUNCHER_ENV" ]]; then
     sudo install -m 0600 /dev/null "$LAUNCHER_ENV"
-    # ATRIUM_PREVIEW_BASIC_AUTH_HASH gates every preview vhost (see previewctl.py).
-    # A `caddy hash-password` bcrypt hash; the launcher REFUSES to create previews
-    # while it is empty, so no preview is ever published unguarded. Supply it the
-    # same way as the launcher token — generated/pasted by the operator, never a
-    # plaintext password in this script:
-    #   docker run --rm atrium-preview-caddy:2-cloudflare caddy hash-password --plaintext '<pw>'
-    printf 'ATRIUM_PREVIEW_LAUNCHER_TOKEN=%s\nATRIUM_PREVIEW_BASIC_AUTH_HASH=%s\nMAX_CONCURRENT_PREVIEWS=%s\nATRIUM_PREVIEW_STATE_DIR=%s\nPREVIEW_LAUNCHER_DB=%s/launcher.sqlite3\nPREVIEW_LAUNCHER_HOST=127.0.0.1\nPREVIEW_LAUNCHER_PORT=8787\n' \
+    # ATRIUM_PREVIEW_ACCESS_TOKEN gates every preview vhost (see previewctl.py):
+    # an agent hands out `https://<preview>/?k=<token>`, which mints the access
+    # cookie. The launcher REFUSES to create previews while it is empty, so no
+    # preview is ever published unguarded. A URL-safe shared secret — keep it to
+    # [A-Za-z0-9._-] so it needs no escaping. Generate one with e.g.:
+    #   openssl rand -hex 24
+    printf 'ATRIUM_PREVIEW_LAUNCHER_TOKEN=%s\nATRIUM_PREVIEW_ACCESS_TOKEN=%s\nMAX_CONCURRENT_PREVIEWS=%s\nATRIUM_PREVIEW_STATE_DIR=%s\nPREVIEW_LAUNCHER_DB=%s/launcher.sqlite3\nPREVIEW_LAUNCHER_HOST=127.0.0.1\nPREVIEW_LAUNCHER_PORT=8787\n' \
       "${ATRIUM_PREVIEW_LAUNCHER_TOKEN:-}" \
-      "${ATRIUM_PREVIEW_BASIC_AUTH_HASH:-}" \
+      "${ATRIUM_PREVIEW_ACCESS_TOKEN:-}" \
       "${MAX_CONCURRENT_PREVIEWS:-3}" \
       "$STATE_DIR" \
       "$STATE_DIR" | sudo tee "$LAUNCHER_ENV" >/dev/null
@@ -411,10 +411,10 @@ start_configured_services() {
   fi
 
   if sudo grep -Eq '^ATRIUM_PREVIEW_LAUNCHER_TOKEN=.+$' "$LAUNCHER_ENV" &&
-    sudo grep -Eq '^ATRIUM_PREVIEW_BASIC_AUTH_HASH=.+$' "$LAUNCHER_ENV"; then
+    sudo grep -Eq '^ATRIUM_PREVIEW_ACCESS_TOKEN=.+$' "$LAUNCHER_ENV"; then
     sudo systemctl restart atrium-preview-launcher.service
   else
-    log "launcher installed but not started: set ATRIUM_PREVIEW_LAUNCHER_TOKEN and ATRIUM_PREVIEW_BASIC_AUTH_HASH in $LAUNCHER_ENV"
+    log "launcher installed but not started: set ATRIUM_PREVIEW_LAUNCHER_TOKEN and ATRIUM_PREVIEW_ACCESS_TOKEN in $LAUNCHER_ENV"
   fi
 }
 
@@ -426,11 +426,10 @@ Provisioning complete. Human/secret checklist:
       It needs Zone:DNS:Edit for useatrium.com; also set ACME_EMAIL.
   [ ] Put a strong launcher bearer token in $LAUNCHER_ENV as
       ATRIUM_PREVIEW_LAUNCHER_TOKEN (and review MAX_CONCURRENT_PREVIEWS).
-  [ ] Put a bcrypt hash in $LAUNCHER_ENV as ATRIUM_PREVIEW_BASIC_AUTH_HASH;
-      every preview vhost is gated behind it (user 'preview'). Generate with:
-        docker run --rm atrium-preview-caddy:2-cloudflare caddy hash-password --plaintext '<pw>'
-      Share the plaintext with preview users out of band. The launcher refuses
-      to create previews while this is empty.
+  [ ] Put a URL-safe shared secret in $LAUNCHER_ENV as ATRIUM_PREVIEW_ACCESS_TOKEN;
+      every preview vhost is gated behind it. Generate with: openssl rand -hex 24
+      Agents hand out '<preview-url>/?k=<token>' links; the first click mints an
+      access cookie. The launcher refuses to create previews while this is empty.
   [ ] Run $SCRIPT_DIR/validate-overlay.sh; require POC_RESULT=CONFIRMED.
   [ ] Point *.preview.useatrium.com at this box (DNS-only A/AAAA record).
   [ ] Create the cloudflared tunnel for preview-launcher.useatrium.com; see
