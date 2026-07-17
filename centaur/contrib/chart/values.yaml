@@ -286,11 +286,14 @@ sandbox:
     enabled: false
     size: 10Gi
     storageClassName: ""
+  # Tunable per-sandbox node-OOM guard; keep enough headroom for coding builds.
   resources:
-    limits: {}
     requests:
-      cpu: 100m
-      memory: 512Mi
+      cpu: 250m
+      memory: 1Gi
+    limits:
+      cpu: "4"
+      memory: 6Gi
 
 repoCache:
   enabled: true

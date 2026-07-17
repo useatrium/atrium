@@ -70,6 +70,7 @@ ironProxy:
 sandbox:
   image:
     repository: localhost:5000/library/centaur-agent
+  # Shared dep cache is on by default and is single-tenant only; see values.yaml TODO.
   # Subscription mode: the box gets dummy chatgpt/claude creds; iron-proxy injects
   # the real per-user token on the wire.
   codexAuthMode: access_token

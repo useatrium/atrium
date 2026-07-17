@@ -280,6 +280,22 @@ spec:
             - name: SESSION_SANDBOX_DEP_CACHE_PATH
               value: {{ .Values.sandbox.depCachePath | quote }}
 {{- end }}
+{{- if and .Values.sandbox.resources .Values.sandbox.resources.requests .Values.sandbox.resources.requests.cpu }}
+            - name: SESSION_SANDBOX_CPU_REQUEST
+              value: {{ .Values.sandbox.resources.requests.cpu | quote }}
+{{- end }}
+{{- if and .Values.sandbox.resources .Values.sandbox.resources.requests .Values.sandbox.resources.requests.memory }}
+            - name: SESSION_SANDBOX_MEMORY_REQUEST
+              value: {{ .Values.sandbox.resources.requests.memory | quote }}
+{{- end }}
+{{- if and .Values.sandbox.resources .Values.sandbox.resources.limits .Values.sandbox.resources.limits.cpu }}
+            - name: SESSION_SANDBOX_CPU_LIMIT
+              value: {{ .Values.sandbox.resources.limits.cpu | quote }}
+{{- end }}
+{{- if and .Values.sandbox.resources .Values.sandbox.resources.limits .Values.sandbox.resources.limits.memory }}
+            - name: SESSION_SANDBOX_MEMORY_LIMIT
+              value: {{ .Values.sandbox.resources.limits.memory | quote }}
+{{- end }}
 {{- if .Values.sandbox.warmcacheToolchainId }}
             - name: SESSION_SANDBOX_WARMCACHE_TOOLCHAIN_ID
               value: {{ .Values.sandbox.warmcacheToolchainId | quote }}
