@@ -74,6 +74,12 @@ sandbox:
   # the real per-user token on the wire.
   codexAuthMode: access_token
   claudeCodeAuthMode: access_token
+  # Namespaces the node dep/compile cache keys away from entries the previous fat
+  # agent image populated. The slim image (Dockerfile.agent) drops the nightly Rust
+  # toolchain and other build inputs, so a cargo/sccache entry built under the fat
+  # image must not hydrate into a slim sandbox — the legacy (lockfile_hash, kind)
+  # key alone can't tell them apart. Bump this string on any future toolchain change.
+  warmcacheToolchainId: slim-v1
 
 nodeSync:
   enabled: true
