@@ -83,14 +83,20 @@ export function ChannelStrip({
   sessions,
   onOpenSession,
   onOpenInbox,
+  now: nowProp,
 }: {
   channelId: string | null;
   channelCounts?: ActivityChannelCounts;
   sessions: Record<string, Session>;
   onOpenSession: (sessionId: string) => void;
   onOpenInbox: () => void;
+  // The 48h `completedRecently` window is read against this. Prod leaves it
+  // undefined and rides the ticking clock; tests pass a fixed value so the
+  // window can't drift past a hardcoded fixture on some future date.
+  now?: number;
 }) {
-  const now = useNow(Object.values(sessions).some((session) => !isTerminalSessionStatus(session.status)));
+  const ticking = useNow(Object.values(sessions).some((session) => !isTerminalSessionStatus(session.status)));
+  const now = nowProp ?? ticking;
   const [expandedByChannel, setExpandedByChannel] = useState<Record<string, boolean>>({});
   const counts = {
     needs: channelCounts?.needsYou ?? 0,

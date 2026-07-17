@@ -41,10 +41,12 @@ function renderSidebar({
   sessions = {},
   activityCounts,
   onOpenSession = vi.fn(),
+  now = Date.parse(NOW),
 }: {
   sessions?: Record<string, Session>;
   activityCounts?: ActivityCounts;
   onOpenSession?: (id: string) => void;
+  now?: number;
 } = {}) {
   return {
     onOpenSession,
@@ -67,6 +69,7 @@ function renderSidebar({
           onOpenSession={onOpenSession}
           onLogout={vi.fn()}
           sessions={sessions}
+          now={now}
         />
       </ThemeProvider>,
     ),
@@ -80,6 +83,24 @@ afterEach(() => {
 });
 
 describe('Sidebar agent work', () => {
+  it('labels a running row with elapsed time measured against the injected now', () => {
+    const nowMs = Date.parse(NOW);
+    renderSidebar({
+      now: nowMs,
+      sessions: {
+        running: session({
+          id: 'running-3m',
+          title: 'Running here',
+          createdAt: new Date(nowMs - 3 * 60_000).toISOString(),
+        }),
+      },
+    });
+
+    // `now` is injected, so "3m" is pinned to the createdAt offset — not the
+    // wall clock. Without the prop this label drifts every minute the suite runs.
+    expect(screen.getByRole('button', { name: 'Running here — running, 3m' })).toBeTruthy();
+  });
+
   it('puts needs-you rows first and gives the active channel priority within each group', () => {
     const { onOpenSession } = renderSidebar({
       sessions: {
