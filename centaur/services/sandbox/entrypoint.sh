@@ -56,13 +56,48 @@ if [ -n "${TOOL_DIRS:-}" ]; then
     install-tool-shims || echo "warning: failed to install Centaur tool CLI shims" >&2
 fi
 
-# ── Preflight: the agent home must be writable by the agent user ──────────────
-# The home is an overlayfs whose contents come from warm-home hydration. When
-# hydration silently no-ops (or leaves the upperdir root-owned), the non-root
-# agent user can't create ~/.config, and the very next `mkdir` below dies with a
-# bare "Permission denied" — which reaches users as a mysterious session hang.
-# Fail fast here with one greppable, structured diagnostic so operators (and the
-# api-rs bootstrap-failure surfacing) get a real reason, not a naked mkdir error.
+# ── Preflight: the agent home must be the session overlay, writable by us ─────
+# In flat-home mode /home/agent is an overlayfs mounted by node-sync. If that
+# overlay fails to reach this container's mount namespace (propagation miss, or a
+# warm→claim remount pulled out from under us), the agent instead sees the bare
+# fallback dir: root-owned on cold pods (→ `mkdir ~/.config` EACCES, a fatal
+# "hang") or writable-but-EMPTY on warm pods (silently loses all session state
+# and capture). Both are currently invisible — an ordinary success log upstream
+# and either a cryptic mkdir error or nothing at all here. Detect them with one
+# greppable, structured diagnostic so operators (and api-rs bootstrap-failure
+# surfacing) get a real reason.
+#
+# (a) In flat-home mode, assert the home is backed by the node-sync overlay. The
+#     container rootfs ("/") is *also* overlay, so a bare "is it overlay?" check
+#     false-passes when the session overlay is missing; require the longest mount
+#     covering $HOME_DIR to be an overlay whose mountpoint is NOT "/" (it lands at
+#     /home/agent for cold, /home for the warm claim slot). tmpfs /home or the "/"
+#     rootfs overlay — the two missing-overlay fallbacks — both fail this.
+if flat_home_enabled; then
+    _home_mount="$(awk -v h="$HOME_DIR" '
+        { mp = $5 }
+        (mp == h) || (mp == "/") || (index(h, mp "/") == 1) {
+            if (length(mp) >= best_len) {
+                best_len = length(mp); best_mp = mp
+                for (i = 6; i <= NF; i++) if ($i == "-") { best_fs = $(i + 1); break }
+            }
+        }
+        END { print best_mp "|" best_fs }
+    ' /proc/self/mountinfo 2>/dev/null)"
+    _home_mp="${_home_mount%%|*}"
+    _home_fs="${_home_mount##*|}"
+    if [ "$_home_fs" != "overlay" ] || [ "$_home_mp" = "/" ] || [ -z "$_home_mp" ]; then
+        _home_owner="$(stat -c '%U:%G (uid=%u gid=%g)' "$HOME_DIR" 2>/dev/null || echo 'unknown')"
+        printf '{"timestamp":"%s","level":"error","service":"sandbox","event":"agent_home_overlay_missing","home":"%s","backing_mount":"%s","backing_fstype":"%s","home_owner":"%s","msg":"agent home %s is not backed by the node-sync session overlay (backing mount %s fstype %s, owner %s) — the overlay did not reach this container namespace, aborting sandbox bootstrap"}\n' \
+            "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$HOME_DIR" "${_home_mp:-none}" "${_home_fs:-none}" "$_home_owner" "$HOME_DIR" "${_home_mp:-none}" "${_home_fs:-none}" "$_home_owner" >&2
+        echo "FATAL: agent home $HOME_DIR is not the node-sync session overlay (backing mount ${_home_mp:-none} fstype ${_home_fs:-none}, owner $_home_owner). Overlay missing from this namespace; aborting sandbox bootstrap." >&2
+        exit 78
+    fi
+fi
+
+# (b) Regardless of mode, the home must be writable by the agent user. Catches a
+#     mounted overlay whose merged root ownership is wrong, and non-flat-home
+#     pods (where the home is the image's baked dir, not an overlay).
 if [ ! -w "$HOME_DIR" ] || ! mkdir -p "$HOME_DIR/.centaur-bootstrap-probe" 2>/dev/null; then
     _home_owner="$(stat -c '%U:%G (uid=%u gid=%g)' "$HOME_DIR" 2>/dev/null || echo 'unknown')"
     _home_mode="$(stat -c '%a' "$HOME_DIR" 2>/dev/null || echo 'unknown')"
