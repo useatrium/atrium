@@ -22,16 +22,27 @@ concurrency:
   group: deploy-box
   cancel-in-progress: false
 
+permissions:
+  contents: read
+
 jobs:
   deploy:
     runs-on: [self-hosted, atrium-box]
     timeout-minutes: 45
     steps:
       - name: Sync box source to the deploy branch
+        env:
+          TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           cd "$HOME/atrium"
-          git fetch "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" deploy
+          export GIT_CONFIG_COUNT=1
+          export GIT_CONFIG_KEY_0=http.extraheader
+          GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$TOKEN" | base64 | tr -d '\n')"
+          export GIT_CONFIG_VALUE_0
+          unset TOKEN
+          git fetch "https://github.com/${{ github.repository }}.git" deploy
+          unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0
           git reset --hard FETCH_HEAD
           clean_paths=(
             surface/web/src
@@ -51,3 +62,24 @@ jobs:
           set -euo pipefail
           chmod +x "$HOME/atrium/deploy/redeploy.sh"
           "$HOME/atrium/deploy/redeploy.sh" all
+
+      # redeploy.sh's internal auto-rollback exits 0, so this catches hard
+      # failures only. Rollback-path alerting belongs inside redeploy.sh.
+      - name: Alert on deploy failure
+        if: failure()
+        shell: bash
+        run: |
+          set -euo pipefail
+          ntfy_config="$HOME/atrium/infra/observability/alertmanager-ntfy.yaml"
+          ntfy_baseurl="$(awk '$1 == "baseurl:" { print $2; exit }' "$ntfy_config")"
+          ntfy_topic="$(awk '$1 == "topic:" { print $2; exit }' "$ntfy_config")"
+          test -n "$ntfy_baseurl"
+          test -n "$ntfy_topic"
+
+          message="Deploy failed for ${GITHUB_REPOSITORY} at ${GITHUB_SHA}. Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          printf 'url = "%s/%s"\n' "${ntfy_baseurl%/}" "$ntfy_topic" | \
+            curl --config - --fail-with-body --silent --show-error \
+              --header "Title: Atrium deploy failed" \
+              --header "Priority: urgent" \
+              --header "Tags: rotating_light" \
+              --data-binary "$message"
