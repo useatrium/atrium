@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import contextlib
 import datetime as dt
 import fcntl
+import functools
 import json
 import os
 import re
@@ -45,6 +47,8 @@ KEEP_FAILED = os.environ.get("ATRIUM_PREVIEW_KEEP_FAILED", "0") == "1"
 WEB_BUILD_IMAGE = os.environ.get("ATRIUM_PREVIEW_WEB_BUILD_IMAGE", "node:24-alpine")
 PORT_RANGE = range(21000, 29000)
 NODE_PORT = 30080
+# Console/iron-control NodePort inside each preview cluster.
+NODE_PORT_CONSOLE = 30300
 CENTAUR_IMAGES = {
     "api-rs": "centaur-api-rs",
     "iron-proxy": "centaur-iron-proxy",
@@ -85,6 +89,30 @@ def run(
         detail = (proc.stderr or proc.stdout or "").strip()
         raise RuntimeError(detail or f"command failed: {' '.join(cmd)}")
     return (proc.stdout or "").strip() if capture else ""
+
+
+@functools.cache
+def host_gateway_ip() -> str:
+    """The address every preview container uses to reach a host-published port.
+
+    A preview spans two container planes — the Surface compose project and the
+    k3d cluster — and each reaches the host on a *different* bridge gateway
+    (compose via docker0, k3d via its own cluster network). Publishing to
+    127.0.0.1 serves neither: a loopback-bound listener rejects anything
+    arriving over a bridge, which is why the surface never reached api-rs and
+    node-sync never reached the surface.
+
+    docker0's gateway is the one address both planes route to, and it is what
+    `host-gateway` (hence host.docker.internal) already resolves to. Bind and
+    address on it and the two agree by construction. It is not the box's public
+    address, so nothing published here is reachable from the internet.
+    """
+    gateway = run(
+        ["docker", "network", "inspect", "bridge", "-f", "{{(index .IPAM.Config 0).Gateway}}"]
+    ).strip()
+    if not gateway:
+        raise RuntimeError("could not resolve the docker bridge gateway address")
+    return gateway
 
 
 def ensure_state_dir() -> None:
@@ -351,7 +379,9 @@ def appliance_values_yaml(commit_sha: str, surface_port: int) -> str:
           overlayProvisioning:
             enabled: true
             flatHome: true
-          atriumBaseUrl: "http://host.k3d.internal:{surface_port}"
+          # host.k3d.internal resolves to this cluster's own network gateway, where
+          # nothing is published; the Surface API is on the docker0 gateway.
+          atriumBaseUrl: "http://{host_gateway_ip()}:{surface_port}"
           image:
             repository: {REGISTRY_PULL}/library/centaur-node-sync
             tag: {commit_sha}
@@ -448,8 +478,13 @@ def write_surface_files(state: dict[str, Any]) -> None:
         "AUTH_DEV_CODES": "1",
         "EMAIL_MODE": "log",
         "ARTIFACT_CAPTURE_API_KEY": state["artifact_capture_api_key"],
-        "CENTAUR_BASE_URL": f"http://host.docker.internal:{ports['centaur']}",
+        "CENTAUR_BASE_URL": f"http://{host_gateway_ip()}:{ports['centaur']}",
         "CENTAUR_API_KEY": state["local_dev_api_key"],
+        # The preview's surface uses its own console, so BYO credentials stay
+        # scoped to this preview and die with it.
+        "IRON_CONTROL_BASE_URL": f"http://{host_gateway_ip()}:{ports['console']}",
+        "IRON_CONTROL_API_KEY": state["iron_control_api_key"],
+        "IRON_CONTROL_NAMESPACE": "default",
     }
     (runtime / ".env").write_text("".join(f"{key}={value}\n" for key, value in env_values.items()))
     (runtime / ".env").chmod(0o600)
@@ -462,6 +497,15 @@ def write_surface_files(state: dict[str, Any]) -> None:
                 build: !reset null
                 extra_hosts:
                   - "host.docker.internal:host-gateway"
+                # A plain list, NOT !override: compose merges port lists, and that
+                # is the point. BIND_HOST keeps the 127.0.0.1 publish (the healthz
+                # poll and the box's host-network caddy use it); this adds a second
+                # publish on the gateway so node-sync, which runs as a pod inside
+                # k3d, can reach the Surface API to capture artifacts. BIND_HOST
+                # itself must not move — it also binds MinIO, and the shared caddy
+                # proxies MinIO at 127.0.0.1.
+                ports:
+                  - "{host_gateway_ip()}:{ports['surface']}:3001"
                 environment:
                   APP_SIGNING_SECRET: ${{APP_SIGNING_SECRET}}
                   PROVIDER_CREDENTIAL_SECRET: ${{PROVIDER_CREDENTIAL_SECRET}}
@@ -519,8 +563,12 @@ def create_k3d_cluster(state: dict[str, Any]) -> None:
             # creates a "proxy" mapping through the loadbalancer, which --no-lb
             # removed: "port-mapping of type 'proxy' specified, but loadbalancer
             # is disabled".
+            # Published on the docker0 gateway, not 127.0.0.1: the consumer is the
+            # Surface *container*, which cannot reach the host's loopback.
             "--port",
-            f"127.0.0.1:{state['ports']['centaur']}:{NODE_PORT}@server:0:direct",
+            f"{host_gateway_ip()}:{state['ports']['centaur']}:{NODE_PORT}@server:0:direct",
+            "--port",
+            f"{host_gateway_ip()}:{state['ports']['console']}:{NODE_PORT_CONSOLE}@server:0:direct",
         ],
         capture=False,
     )
@@ -579,6 +627,25 @@ def deploy_centaur(state: dict[str, Any]) -> None:
         ["kubectl", "-n", "centaur", "patch", "secret", "centaur-infra-env", "--type", "merge", "-p", patch],
         env=kube_env,
     )
+    encoded_iron_control_api_key = run(
+        [
+            "kubectl",
+            "-n",
+            "centaur",
+            "get",
+            "secret",
+            "centaur-infra-env",
+            "-o",
+            "jsonpath={.data.IRON_CONTROL_INITIAL_API_KEY}",
+        ],
+        env=kube_env,
+    )
+    if not encoded_iron_control_api_key.strip():
+        raise RuntimeError(
+            "centaur-infra-env secret is missing IRON_CONTROL_INITIAL_API_KEY"
+        )
+    state["iron_control_api_key"] = base64.b64decode(encoded_iron_control_api_key).decode()
+    save_state(state)
     run(
         [
             "helm",
@@ -612,6 +679,21 @@ def deploy_centaur(state: dict[str, Any]) -> None:
             "merge",
             "-p",
             json.dumps({"spec": {"type": "NodePort", "ports": [{"port": 8080, "targetPort": 8080, "nodePort": NODE_PORT}]}}),
+        ],
+        env=kube_env,
+    )
+    run(
+        [
+            "kubectl",
+            "-n",
+            "centaur",
+            "patch",
+            "svc",
+            "centaur-centaur-console",
+            "--type",
+            "merge",
+            "-p",
+            json.dumps({"spec": {"type": "NodePort", "ports": [{"port": 3000, "targetPort": 3000, "nodePort": NODE_PORT_CONSOLE}]}}),
         ],
         env=kube_env,
     )
@@ -755,9 +837,9 @@ def cmd_create(args: argparse.Namespace) -> None:
         "local_dev_api_key": secrets.token_hex(32),
     }
     with port_allocation_lock():
-        ports = reserve_ports(5)
+        ports = reserve_ports(6)
         state["ports"] = dict(
-            zip(("surface", "minio", "postgres", "centaur", "caddy"), ports, strict=True)
+            zip(("surface", "minio", "postgres", "centaur", "caddy", "console"), ports, strict=True)
         )
         write_phase(state, "packages")
     try:
@@ -913,6 +995,7 @@ def cmd_destroy(args: argparse.Namespace) -> None:
     if state is not None:
         state.pop("artifact_capture_api_key", None)
         state.pop("local_dev_api_key", None)
+        state.pop("iron_control_api_key", None)
         for sensitive_file in (".env", "kubeconfig.yaml", "centaur-values.yaml"):
             (runtime_dir(args.preview_id) / sensitive_file).unlink(missing_ok=True)
         write_phase(
