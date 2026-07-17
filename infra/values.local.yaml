@@ -6,6 +6,9 @@ api:
 
 apiRs:
   enabled: true
+  # Local-dev knobs (see centaur/ATRIUM_FORK.md "Deploy"): applied via
+  # CENTAUR_EXTRA_VALUES at `just deploy`, where no values.box.yaml layers on top.
+  # On the box these are overridden by deploy/values.box.yaml (1 / enabled).
   sandboxWarmPoolSize: 0
   ironProxy:
     mode: disabled
@@ -13,12 +16,9 @@ apiRs:
 secretManager:
   backend: env
   envPrefix: ""
-  existingSecretName: centaur-infra-env
 
 ironProxy:
   secretSource: env
-  manager:
-    secretSource: env
   # `centaur-tools run` executes each tool via `uvx --from`, which resolves the
   # tool's deps AND the hatchling build backend from a package index at first run.
   # Under iron-control (console.enabled) sandbox egress is deny-by-default —
@@ -63,14 +63,6 @@ sandbox:
     # CODEX_MODEL_REASONING_SUMMARY: "auto" here (Codex >= 0.139 emits no summaries
     # by default; consumed by services/sandbox/entrypoint.sh). Left off for now — the
     # transcript shows a content-independent "Thinking…" activity indicator instead.
-  resources:
-    requests:
-      cpu: 250m
-      memory: 768Mi
-    limits:
-      cpu: "2"
-      memory: 2Gi
-
 # node-sync's Surface address is topology-specific. Deliberately do not set
 # atriumBaseUrl or atriumEgress here: callers must provide them in their own
 # values layer (for example deploy/values.box.yaml) or with --set. A guessed

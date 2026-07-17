@@ -16,7 +16,10 @@ use centaur_sandbox_core::{
     FinalizeClaimedSession, MountKind, ObservedSandbox, PrepareClaimedOverlayHome, SandboxBackend,
     SandboxError, SandboxHandle, SandboxId, SandboxIo, SandboxResult, SandboxSpec, SandboxStatus,
 };
-use k8s_openapi::api::core::v1::{ContainerStatus, PersistentVolumeClaim, Pod};
+use k8s_openapi::api::core::v1::{
+    ContainerStatus, PersistentVolumeClaim, Pod, ResourceRequirements,
+};
+use k8s_openapi::apimachinery::pkg::api::resource::Quantity;
 use kube::api::{
     AttachParams, DeleteParams, ListParams, LogParams, Patch, PatchParams, PostParams,
 };
@@ -73,6 +76,7 @@ pub struct AgentSandboxConfig {
     pub annotations: BTreeMap<String, String>,
     pub image_pull_policy: Option<String>,
     pub image_pull_secrets: Vec<String>,
+    pub resources: Option<ResourceRequirements>,
     pub state_volume: Option<StateVolumeConfig>,
     pub iron_proxy: Option<IronProxyConfig>,
     pub iron_control: Option<IronControlSettings>,
@@ -127,6 +131,7 @@ impl AgentSandboxConfig {
             annotations: BTreeMap::new(),
             image_pull_policy: None,
             image_pull_secrets: Vec::new(),
+            resources: sandbox_resources_from_env(),
             state_volume: None,
             iron_proxy: None,
             iron_control: None,
@@ -1177,7 +1182,11 @@ fn build_agent_sandbox(
         }),
     );
     insert_optional(&mut container, "workingDir", spec.working_dir.clone());
-    insert_optional(&mut container, "resources", resources_json(spec));
+    insert_optional(
+        &mut container,
+        "resources",
+        resources_json(spec, config.resources.as_ref()),
+    );
 
     let (mut volumes, mut volume_mounts) = mount_json(spec);
     let mut init_containers = Vec::new();
@@ -1925,16 +1934,72 @@ fn warmcache_cas_volume_json(cas_host_path: &str) -> Value {
     })
 }
 
-fn resources_json(spec: &SandboxSpec) -> Option<Value> {
-    let resources = spec.resources.as_ref()?;
-    let mut limits = serde_json::Map::new();
-    if let Some(cpu_millis) = resources.cpu_millis {
-        limits.insert("cpu".to_owned(), json!(format!("{cpu_millis}m")));
+fn sandbox_resources_from_env() -> Option<ResourceRequirements> {
+    sandbox_resources_from_values(|name| std::env::var(name).ok())
+}
+
+fn sandbox_resources_from_values(
+    value_for: impl Fn(&str) -> Option<String>,
+) -> Option<ResourceRequirements> {
+    let mut requests = BTreeMap::new();
+    let mut limits = BTreeMap::new();
+    let clean_value = |name| {
+        value_for(name)
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty())
+    };
+    if let Some(value) = clean_value("SESSION_SANDBOX_CPU_REQUEST") {
+        requests.insert("cpu".to_owned(), Quantity(value));
     }
-    if let Some(memory_bytes) = resources.memory_bytes {
-        limits.insert("memory".to_owned(), json!(format!("{memory_bytes}")));
+    if let Some(value) = clean_value("SESSION_SANDBOX_MEMORY_REQUEST") {
+        requests.insert("memory".to_owned(), Quantity(value));
     }
-    (!limits.is_empty()).then(|| json!({ "limits": limits }))
+    if let Some(value) = clean_value("SESSION_SANDBOX_CPU_LIMIT") {
+        limits.insert("cpu".to_owned(), Quantity(value));
+    }
+    if let Some(value) = clean_value("SESSION_SANDBOX_MEMORY_LIMIT") {
+        limits.insert("memory".to_owned(), Quantity(value));
+    }
+    if requests.is_empty() && limits.is_empty() {
+        return None;
+    }
+    Some(ResourceRequirements {
+        requests: (!requests.is_empty()).then_some(requests),
+        limits: (!limits.is_empty()).then_some(limits),
+        ..ResourceRequirements::default()
+    })
+}
+
+fn resources_json(spec: &SandboxSpec, configured: Option<&ResourceRequirements>) -> Option<Value> {
+    let mut requirements = ResourceRequirements::default();
+    let resources = spec.resources.as_ref();
+    if let Some(cpu_millis) = resources.and_then(|resources| resources.cpu_millis) {
+        requirements
+            .limits
+            .get_or_insert_default()
+            .insert("cpu".to_owned(), Quantity(format!("{cpu_millis}m")));
+    }
+    if let Some(memory_bytes) = resources.and_then(|resources| resources.memory_bytes) {
+        requirements
+            .limits
+            .get_or_insert_default()
+            .insert("memory".to_owned(), Quantity(format!("{memory_bytes}")));
+    }
+    if let Some(configured) = configured {
+        if let Some(requests) = &configured.requests {
+            requirements
+                .requests
+                .get_or_insert_default()
+                .extend(requests.clone());
+        }
+        if let Some(limits) = &configured.limits {
+            requirements
+                .limits
+                .get_or_insert_default()
+                .extend(limits.clone());
+        }
+    }
+    (requirements.requests.is_some() || requirements.limits.is_some()).then(|| json!(requirements))
 }
 
 fn agent_run_as_user(container: &Value) -> Option<u32> {
@@ -2081,6 +2146,45 @@ mod tests {
                 .any(|volume| volume.name == RUNTIME_CONTEXT_VOLUME)
         );
         assert!(container.resources.as_ref().unwrap().limits.is_some());
+    }
+
+    #[test]
+    fn builds_agent_sandbox_with_configured_resources_and_omits_unset_resources() {
+        let spec = SandboxSpec::new("centaur-agent:latest");
+        let mut config = AgentSandboxConfig::new("centaur");
+        config.resources = sandbox_resources_from_values(|name| {
+            match name {
+                "SESSION_SANDBOX_CPU_REQUEST" => Some("250m"),
+                "SESSION_SANDBOX_MEMORY_REQUEST" => Some("1Gi"),
+                "SESSION_SANDBOX_CPU_LIMIT" => Some("4"),
+                "SESSION_SANDBOX_MEMORY_LIMIT" => Some("6Gi"),
+                _ => None,
+            }
+            .map(str::to_owned)
+        });
+
+        let sandbox = build_agent_sandbox(&SandboxId::new("asbx-resources"), &spec, &config)
+            .expect("sandbox with configured resources");
+        let resources = sandbox.spec.pod_template.spec.containers[0]
+            .resources
+            .as_ref()
+            .expect("agent resources");
+        assert_eq!(
+            serde_json::to_value(resources).unwrap(),
+            json!({
+                "requests": { "cpu": "250m", "memory": "1Gi" },
+                "limits": { "cpu": "4", "memory": "6Gi" },
+            })
+        );
+
+        config.resources = sandbox_resources_from_values(|_| Some("  ".to_owned()));
+        let sandbox = build_agent_sandbox(&SandboxId::new("asbx-no-resources"), &spec, &config)
+            .expect("sandbox without configured resources");
+        assert!(
+            sandbox.spec.pod_template.spec.containers[0]
+                .resources
+                .is_none()
+        );
     }
 
     #[test]
