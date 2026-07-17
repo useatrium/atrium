@@ -858,6 +858,7 @@ struct EnsureSessionSandboxInput<'a> {
     session_repos_json: Option<&'a str>,
     execution_id: &'a str,
     environment: &'a [(String, String)],
+    force_cold_create: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -2345,74 +2346,132 @@ impl SessionRuntime {
                 return Ok(execution);
             }
 
-            let sandbox_id = match self
-                .ensure_session_sandbox(EnsureSessionSandboxInput {
-                    thread_key,
-                    harness_type: &session.harness_type,
-                    persona_id: session.persona_id.as_deref(),
-                    existing_sandbox_id: session.sandbox_id.as_deref(),
-                    existing_sandbox_capabilities: session.sandbox_capabilities.as_ref(),
-                    iron_control_principal: session.iron_control_principal.as_deref(),
-                    desired_capabilities: &desired_capabilities,
-                    resume_thread_id,
-                    session_repos_json: session_repos_json.as_deref(),
-                    execution_id: &execution.execution_id,
-                    environment: &environment,
-                })
-                .instrument(execution_trace_span.clone())
-                .await
-            {
-                Ok(sandbox_id) => sandbox_id,
-                Err(error) => {
-                    self.record_execution_failure(thread_key, &execution.execution_id, &error)
-                        .await;
-                    return Err(error);
+            let mut existing_sandbox_id = session.sandbox_id.clone();
+            let mut existing_sandbox_capabilities = session.sandbox_capabilities.clone();
+            let mut terminal_bootstrap_retry_used = false;
+            let (sandbox_id, pipe) = loop {
+                let sandbox_id = match self
+                    .ensure_session_sandbox(EnsureSessionSandboxInput {
+                        thread_key,
+                        harness_type: &session.harness_type,
+                        persona_id: session.persona_id.as_deref(),
+                        existing_sandbox_id: existing_sandbox_id.as_deref(),
+                        existing_sandbox_capabilities: existing_sandbox_capabilities.as_ref(),
+                        iron_control_principal: session.iron_control_principal.as_deref(),
+                        desired_capabilities: &desired_capabilities,
+                        resume_thread_id,
+                        session_repos_json: session_repos_json.as_deref(),
+                        execution_id: &execution.execution_id,
+                        environment: &environment,
+                        force_cold_create: terminal_bootstrap_retry_used,
+                    })
+                    .instrument(execution_trace_span.clone())
+                    .await
+                {
+                    Ok(sandbox_id) => sandbox_id,
+                    Err(error) => {
+                        self.record_execution_failure(thread_key, &execution.execution_id, &error)
+                            .await;
+                        return Err(error);
+                    }
+                };
+                span.record("centaur.sandbox_id", sandbox_id.as_str());
+                span.record("sandbox_id", sandbox_id.as_str());
+                execution_trace_span.record("centaur.sandbox_id", sandbox_id.as_str());
+                execution_trace_span.record("sandbox_id", sandbox_id.as_str());
+                if let Err(error) = self
+                    .sandbox_runtime
+                    .manager
+                    .set_runtime_context(
+                        &SandboxId::new(sandbox_id.as_str()),
+                        thread_key.as_str(),
+                        &execution.execution_id,
+                    )
+                    .await
+                    && !matches!(error, SandboxError::Unsupported { .. })
+                {
+                    warn!(
+                        component = COMPONENT_SESSION_RUNTIME,
+                        event = "sandbox_runtime_context_update_failed",
+                        thread_key = %thread_key,
+                        execution_id = %execution.execution_id,
+                        sandbox_id = %sandbox_id,
+                        %error,
+                        "failed to publish runtime context to sandbox"
+                    );
                 }
-            };
-            span.record("centaur.sandbox_id", sandbox_id.as_str());
-            span.record("sandbox_id", sandbox_id.as_str());
-            execution_trace_span.record("centaur.sandbox_id", sandbox_id.as_str());
-            execution_trace_span.record("sandbox_id", sandbox_id.as_str());
-            if let Err(error) = self
-                .sandbox_runtime
-                .manager
-                .set_runtime_context(
-                    &SandboxId::new(sandbox_id.as_str()),
-                    thread_key.as_str(),
-                    &execution.execution_id,
-                )
-                .await
-                && !matches!(error, SandboxError::Unsupported { .. })
-            {
+
+                if let Some(execution) = self
+                    .inactive_execution_snapshot(
+                        thread_key,
+                        &execution.execution_id,
+                        Some(&sandbox_id),
+                    )
+                    .await?
+                {
+                    return Ok(execution);
+                }
+
+                let attach_error = match self
+                    .ensure_session_pipe(thread_key, &sandbox_id)
+                    .instrument(execution_trace_span.clone())
+                    .await
+                {
+                    Ok(pipe) => break (sandbox_id, pipe),
+                    Err(error) => error,
+                };
+
+                let terminal_observation = if terminal_bootstrap_retry_used {
+                    None
+                } else {
+                    let id = SandboxId::new(sandbox_id.as_str());
+                    match self.sandbox_runtime.manager.observe(&id).await {
+                        Ok(observed) if observed.status.is_terminal() => {
+                            Some((observed.status, observed.reason))
+                        }
+                        Err(SandboxError::NotFound(_)) => Some((SandboxStatus::Gone, None)),
+                        Ok(_) | Err(_) => None,
+                    }
+                };
+                let Some((status, sandbox_reason)) = terminal_observation else {
+                    self.record_execution_failure(
+                        thread_key,
+                        &execution.execution_id,
+                        &attach_error,
+                    )
+                    .await;
+                    return Err(attach_error);
+                };
+
+                terminal_bootstrap_retry_used = true;
+                let retirement_error = match sandbox_reason.as_deref() {
+                    Some(reason) => format!("{attach_error}; sandbox: {reason}"),
+                    None => attach_error.to_string(),
+                };
                 warn!(
                     component = COMPONENT_SESSION_RUNTIME,
-                    event = "sandbox_runtime_context_update_failed",
+                    event = "sandbox_terminal_bootstrap_retry",
                     thread_key = %thread_key,
                     execution_id = %execution.execution_id,
                     sandbox_id = %sandbox_id,
-                    %error,
-                    "failed to publish runtime context to sandbox"
+                    status = ?status,
+                    sandbox_reason = sandbox_reason.as_deref().unwrap_or(""),
+                    error = %attach_error,
+                    fallback = "cold_create",
+                    "retiring terminal sandbox after its first I/O attach failed and retrying once"
                 );
-            }
-
-            if let Some(execution) = self
-                .inactive_execution_snapshot(thread_key, &execution.execution_id, Some(&sandbox_id))
-                .await?
-            {
-                return Ok(execution);
-            }
-
-            let pipe = match self
-                .ensure_session_pipe(thread_key, &sandbox_id)
-                .instrument(execution_trace_span.clone())
-                .await
-            {
-                Ok(pipe) => pipe,
-                Err(error) => {
-                    self.record_execution_failure(thread_key, &execution.execution_id, &error)
-                        .await;
-                    return Err(error);
-                }
+                self.sandbox_pipes.remove(sandbox_id.as_str());
+                self.retire_claimed_warm_sandbox(
+                    thread_key,
+                    &execution.execution_id,
+                    &sandbox_id,
+                    &SandboxId::new(sandbox_id.as_str()),
+                    &retirement_error,
+                    "terminal bootstrap attach failure",
+                )
+                .await;
+                existing_sandbox_id = Some(sandbox_id);
+                existing_sandbox_capabilities = Some(desired_capabilities.clone());
             };
 
             if let Some(execution) = self
@@ -2980,6 +3039,7 @@ impl SessionRuntime {
             session_repos_json,
             execution_id,
             environment,
+            force_cold_create,
         } = input;
         let boot_mode = sandbox_boot_mode_for_thread(thread_key, iron_control_principal);
         let span = info_span!(
@@ -3262,7 +3322,8 @@ impl SessionRuntime {
                 .warm_pool
                 .as_ref()
                 .filter(|_| {
-                    boot_mode.uses_warm_pool()
+                    !force_cold_create
+                        && boot_mode.uses_warm_pool()
                         && warm_harness_matches
                         && warm_persona_matches
                         && environment.is_empty()
@@ -10180,6 +10241,7 @@ mod adoption_tests {
 
     struct MockBackend {
         ios: Mutex<VecDeque<SandboxIo>>,
+        open_io_failures: Mutex<VecDeque<(String, SandboxStatus)>>,
         recorded_output: std::sync::Mutex<Vec<String>>,
         created_specs: std::sync::Mutex<Vec<SandboxSpec>>,
         prepared_homes: std::sync::Mutex<Vec<PreparedHomeCall>>,
@@ -10235,6 +10297,7 @@ mod adoption_tests {
         fn new(status: SandboxStatus, recorded_output: Vec<String>) -> Self {
             Self {
                 ios: Mutex::new(VecDeque::new()),
+                open_io_failures: Mutex::new(VecDeque::new()),
                 recorded_output: std::sync::Mutex::new(recorded_output),
                 created_specs: std::sync::Mutex::new(Vec::new()),
                 prepared_homes: std::sync::Mutex::new(Vec::new()),
@@ -10258,6 +10321,13 @@ mod adoption_tests {
 
         async fn push_io(&self, io: SandboxIo) {
             self.ios.lock().await.push_back(io);
+        }
+
+        async fn fail_next_open(&self, error: impl Into<String>, status: SandboxStatus) {
+            self.open_io_failures
+                .lock()
+                .await
+                .push_back((error.into(), status));
         }
 
         fn opens(&self) -> usize {
@@ -10365,8 +10435,12 @@ mod adoption_tests {
             ))
         }
 
-        async fn open_io(&self, _id: &SandboxId) -> SandboxResult<SandboxIo> {
+        async fn open_io(&self, id: &SandboxId) -> SandboxResult<SandboxIo> {
             self.open_count.fetch_add(1, Ordering::SeqCst);
+            if let Some((error, status)) = self.open_io_failures.lock().await.pop_front() {
+                self.set_observed_status(id.as_str(), status);
+                return Err(SandboxError::io(error));
+            }
             self.ios
                 .lock()
                 .await
@@ -11029,6 +11103,7 @@ mod adoption_tests {
                 session_repos_json: None,
                 execution_id: &execution_id,
                 environment: &[],
+                force_cold_create: false,
             })
             .await
             .expect("replace sandbox");
@@ -11112,6 +11187,7 @@ mod adoption_tests {
                 session_repos_json: None,
                 execution_id: &execution_id,
                 environment: &[],
+                force_cold_create: false,
             })
             .await
             .expect("ensure sandbox");
@@ -11218,6 +11294,7 @@ mod adoption_tests {
                 session_repos_json: Some(r#"[{"repo":"acme/work","ref":"feature"}]"#),
                 execution_id: &execution_id,
                 environment: &[],
+                force_cold_create: false,
             })
             .await
             .expect("ensure sandbox");
@@ -11283,6 +11360,7 @@ mod adoption_tests {
                 session_repos_json: Some(r#"[{"repo":"acme/private","private":true}]"#),
                 execution_id: &execution_id,
                 environment: &[],
+                force_cold_create: false,
             })
             .await
             .expect("ensure sandbox");
@@ -11332,6 +11410,7 @@ mod adoption_tests {
                 session_repos_json: None,
                 execution_id: &execution_id,
                 environment: &[],
+                force_cold_create: false,
             })
             .await
             .expect("ensure sandbox");
@@ -11390,6 +11469,7 @@ mod adoption_tests {
                 session_repos_json: Some(r#"[{"repo":"acme/work","ref":"feature"}]"#),
                 execution_id: &execution_id,
                 environment: &[],
+                force_cold_create: false,
             })
             .await
             .expect("ensure sandbox");
@@ -11442,6 +11522,7 @@ mod adoption_tests {
                 session_repos_json: Some(r#"[{"repo":"acme/work","ref":"feature"}]"#),
                 execution_id: &execution_id,
                 environment: &[],
+                force_cold_create: false,
             })
             .await
             .expect("ensure sandbox");
@@ -11489,6 +11570,7 @@ mod adoption_tests {
                 session_repos_json: Some(r#"[{"repo":"acme/work","ref":"feature"}]"#),
                 execution_id: &execution_id,
                 environment: &[],
+                force_cold_create: false,
             })
             .await
             .expect("ensure sandbox");
@@ -11541,6 +11623,7 @@ mod adoption_tests {
                 session_repos_json: None,
                 execution_id: &execution_id,
                 environment: &[],
+                force_cold_create: false,
             })
             .await
             .expect("ensure sandbox");
@@ -11599,6 +11682,7 @@ mod adoption_tests {
                 session_repos_json: None,
                 execution_id: &execution_id,
                 environment: &[],
+                force_cold_create: false,
             })
             .await
             .expect("ensure sandbox");
@@ -11617,6 +11701,73 @@ mod adoption_tests {
                 && event.payload["sandbox_id"] == json!("warm-finalize-fails")
                 && event.payload["fallback"] == json!("cold_create")
         }));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn terminal_bootstrap_attach_failure_retires_warm_and_cold_spawns() {
+        let Some(store) = test_store().await else {
+            return;
+        };
+        let _serial = lock_clean_slate().await;
+        let thread_key = ThreadKey::parse(format!(
+            "test:warm-bootstrap-fallback-{}",
+            uuid::Uuid::new_v4()
+        ))
+        .unwrap();
+        create_test_session(&store, &thread_key, json!({})).await;
+
+        let backend = Arc::new(MockBackend::new(SandboxStatus::Running, Vec::new()));
+        backend
+            .fail_next_open("sandbox stopped before attach", SandboxStatus::Stopped)
+            .await;
+        backend.set_reason("agent terminated: Error (exit 78): event:agent_home_overlay_missing");
+        let (replacement_io, _replacement_stdout, replacement_stdin) = mock_io();
+        backend.push_io(replacement_io).await;
+        let runtime = runtime_with_warm_pool(&store, backend.clone(), SandboxSpec::new("mock"));
+        insert_ready_warm_for_runtime(&store, &runtime, "warm-bootstrap-fails").await;
+        insert_ready_warm_for_runtime(&store, &runtime, "warm-bootstrap-spare").await;
+
+        let execution = runtime
+            .execute_session(
+                &thread_key,
+                ExecuteSessionInput {
+                    idempotency_key: None,
+                    metadata: None,
+                    environment: BTreeMap::new(),
+                    input_lines: vec![
+                        json!({
+                            "type": "user",
+                            "message": {"content": [{"type": "text", "text": "retry me"}]}
+                        })
+                        .to_string(),
+                    ],
+                    idle_timeout_ms: None,
+                    max_duration_ms: None,
+                },
+            )
+            .await
+            .expect("terminal bootstrap sandbox should cold-recreate once");
+
+        assert_eq!(execution.status, ExecutionStatus::Running);
+        assert_eq!(backend.opens(), 2);
+        assert_eq!(backend.stopped(), vec!["warm-bootstrap-fails".to_owned()]);
+        assert_eq!(backend.created_specs().len(), 1);
+        assert_eq!(warm_status(&store, "warm-bootstrap-fails").await, "failed");
+        assert_eq!(warm_status(&store, "warm-bootstrap-spare").await, "ready");
+        assert_eq!(
+            store.get_session(&thread_key).await.unwrap().sandbox_id,
+            Some("mock-sbx".to_owned())
+        );
+        let mut reader = BufReader::new(replacement_stdin);
+        let mut delivered = String::new();
+        tokio::time::timeout(Duration::from_secs(5), reader.read_line(&mut delivered))
+            .await
+            .expect("read replacement input within timeout")
+            .expect("read replacement input");
+        assert!(
+            delivered.contains("retry me"),
+            "replacement did not receive execution input: {delivered}"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -11955,6 +12106,7 @@ mod adoption_tests {
                 session_repos_json: None,
                 execution_id: &execution_id,
                 environment: &[],
+                force_cold_create: false,
             })
             .await
             .expect("resume failure should fall through to replacement");
