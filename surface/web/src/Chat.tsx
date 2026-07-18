@@ -390,8 +390,15 @@ export function Chat({
   const [activityChannelCounts, setActivityChannelCounts] = useState<Record<string, ActivityChannelCounts>>({});
   const [activityLiveEvent, setActivityLiveEvent] = useState<WireEvent | null>(null);
   const [activityRefreshKey, setActivityRefreshKey] = useState(0);
-  const { clearFailedCancel, clearFailedSteer, failedCancels, failedSteers, rememberRejectedSessionOp } =
-    useSessionQueueFailures();
+  const {
+    clearFailedCancel,
+    clearFailedSteer,
+    failedCancels,
+    failedSteers,
+    pendingSteers,
+    markPendingSteer,
+    rememberRejectedSessionOp,
+  } = useSessionQueueFailures();
   const calls = useCall(me, state.channels);
   const callsAvailable = useCallsAvailable();
   const stateRef = useRef(state);
@@ -626,6 +633,7 @@ export function Chat({
     useSessionActions({
       clearFailedCancel,
       clearFailedSteer,
+      markPendingSteer,
       dispatch,
       enqueueOp,
       me,
@@ -2711,6 +2719,7 @@ export function Chat({
                     queueUpload,
                     failedSteer: failedSteers[conversationSession.id] ?? null,
                     onClearFailedSteer: () => clearFailedSteer(conversationSession.id),
+                    pendingSteerAt: pendingSteers[conversationSession.id] ?? null,
                     onCancelSession: cancelSession,
                     onStopTurn: stopTurn,
                     failedCancel: failedCancels[conversationSession.id] === true,

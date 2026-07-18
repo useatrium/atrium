@@ -25,16 +25,18 @@ function renderActions(
 ) {
   const clearFailedCancel = vi.fn();
   const clearFailedSteer = vi.fn();
+  const markPendingSteer = vi.fn();
   const view = renderHook(() =>
     useSessionActions({
       clearFailedCancel,
       clearFailedSteer,
+      markPendingSteer,
       dispatch,
       enqueueOp: enqueueOp as TestEnqueue,
       me,
     }),
   );
-  return { ...view, clearFailedCancel, clearFailedSteer, enqueueOp };
+  return { ...view, clearFailedCancel, clearFailedSteer, markPendingSteer, enqueueOp };
 }
 
 afterEach(() => {
@@ -56,6 +58,7 @@ describe('useSessionActions', () => {
         opType: 'session.steer',
         payload: { sessionId: 'session-1', text: 'try another approach' },
       }),
+      expect.objectContaining({ onStored: expect.any(Function) }),
     );
     expect(clearFailedSteer.mock.invocationCallOrder[0]).toBeLessThan(enqueueOp.mock.invocationCallOrder[0]!);
   });
@@ -84,7 +87,22 @@ describe('useSessionActions', () => {
           attachmentRefs: [{ uploadKey: 'upload-1' }],
         },
       }),
+      expect.objectContaining({ onStored: expect.any(Function) }),
     );
+  });
+
+  it('marks the session as pending-steer once the op is stored', async () => {
+    const enqueueOp = vi.fn(async (_input: unknown, options?: { onStored?: () => void }) => {
+      options?.onStored?.();
+      return { opId: 'op-1' };
+    });
+    const { result, markPendingSteer } = renderActions(enqueueOp);
+
+    await act(async () => {
+      await result.current.steerSession('session-1', 'revive it');
+    });
+
+    expect(markPendingSteer).toHaveBeenCalledWith('session-1');
   });
 
   it('uses one stable id and eagerly inserts a pane steer into its thread', async () => {
