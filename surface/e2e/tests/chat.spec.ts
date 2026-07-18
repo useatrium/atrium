@@ -308,7 +308,7 @@ test('command center: empty query shows suggested commands', async ({ page }) =>
   await login(page, unique('commander'), 'Commander');
 
   const dialog = await openCommandCenter(page);
-  for (const label of ['New agent in #general', 'Open Files', 'Open Agents', 'Open Inbox', 'Open settings']) {
+  for (const label of ['New agent in #general', 'Open Files', 'Open Inbox', 'Open settings']) {
     await expect(dialog.getByText(label, { exact: true })).toBeVisible();
   }
 });
@@ -316,9 +316,9 @@ test('command center: empty query shows suggested commands', async ({ page }) =>
 test('command center: opens Files from query', async ({ page }) => {
   await login(page, unique('files-commander'), 'Files Commander');
 
-  const dialog = await runCommandQuery(page, 'file');
+  const dialog = await runCommandQuery(page, 'Files');
   await expect(dialog.getByText('Open Files', { exact: true })).toBeVisible();
-  await page.keyboard.press('Enter');
+  await dialog.getByText('Open Files', { exact: true }).click();
   await expect(commandDialog(page)).toBeHidden();
   await expect(page.getByRole('heading', { name: /^Files(?: for| \/|$)/ }).first()).toBeVisible();
 });
@@ -347,9 +347,9 @@ test('command center: mobile opens Files from query', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await login(page, unique('mobile-commander'), 'Mobile Commander');
 
-  const dialog = await runCommandQuery(page, 'file', { allowButtonFallback: true });
+  const dialog = await runCommandQuery(page, 'Files', { allowButtonFallback: true });
   await expect(dialog.getByText('Open Files', { exact: true })).toBeVisible();
-  await page.keyboard.press('Enter');
+  await dialog.getByText('Open Files', { exact: true }).click();
   await expect(commandDialog(page)).toBeHidden();
   await expect(page.getByRole('heading', { name: /^Files(?: for| \/|$)/ }).first()).toBeVisible();
 });

@@ -4,7 +4,7 @@ import { login, unique } from './helpers.js';
 test('Claude Code spawn offers subscription auth without blocking default auth', async ({ page }) => {
   await login(page, unique('claude-user'), 'Claude User');
 
-  await page.getByRole('button', { name: 'New agent' }).click();
+  await page.locator('#main-content').getByRole('button', { name: 'New agent' }).click();
   await page.getByPlaceholder('What should the agent do?').fill('check claude provider wiring');
   // The message composer is also role=combobox (ARIA typeahead) — target the
   // harness <select> element specifically.

@@ -174,19 +174,10 @@ test('empty destinations, keyboard focus, and deterministic contrast have eviden
   const attention = page.getByRole('button', { name: /^Inbox/ });
   await expectVisibleFocus(attention);
   await attention.press('Enter');
-  // The Inbox mirrors workspace-global live sessions, so a brand-new user is
-  // not guaranteed an empty default view when other specs' agents are running.
-  // The Reviewed tab is deterministically empty for a fresh user.
-  await page.getByRole('tab', { name: /^Reviewed/ }).click();
-  await expect(page.getByText('No reviewed sessions')).toBeVisible();
-  await expectComputedContrast(page.getByText('No reviewed sessions'), 4.5);
-  await attachScreenshot(page, testInfo, 'empty-attention');
-
-  // The empty Inbox has no session shelf (and therefore no "All sessions"
-  // shortcut), so exercise the directory through its canonical route.
-  await page.goto('/agents');
-  await expect(page.getByPlaceholder('Search agents')).toBeVisible();
-  await attachScreenshot(page, testInfo, 'empty-agents');
+  const emptyInbox = page.getByText("You're all caught up");
+  await expect(emptyInbox).toBeVisible();
+  await expectComputedContrast(emptyInbox, 4.5);
+  await attachScreenshot(page, testInfo, 'empty-inbox');
 
   await page.getByRole('button', { name: 'Files', exact: true }).click();
   await expect(page.getByRole('heading', { name: /Files/ }).first()).toBeVisible();
@@ -247,9 +238,12 @@ test('dense chat, populated Files and a completed session Results state render',
 
   const sessionTitle = unique('completed-audit-session');
   const sessionId = await seedCompletedSession(handle, sessionTitle);
-  await page.goto('/agents');
-  await expect(page.getByTestId('agents-surface').getByText(sessionTitle, { exact: true })).toBeVisible();
-  await attachScreenshot(page, testInfo, 'populated-agents');
+  await page.reload();
+  const agentDock = page.getByTestId('agent-dock');
+  await agentDock.getByRole('button', { name: /Open agent dock/ }).click();
+  await agentDock.getByText('History', { exact: true }).click();
+  await expect(agentDock.getByText(sessionTitle, { exact: true })).toBeVisible();
+  await attachScreenshot(page, testInfo, 'populated-agent-dock');
 
   await page.goto(`/s/${sessionId}`);
   await expect(page.getByRole('heading', { name: sessionTitle })).toBeVisible();
