@@ -235,7 +235,7 @@ describe('SpawnDialog', () => {
   it.each([
     { harness: 'codex' as const, label: 'Codex' },
     { harness: 'claude-code' as const, label: 'Claude Code' },
-  ])('gates configured spawn when $label is disconnected', ({ harness, label }) => {
+  ])('offers default auth, connect, and demo when $label is disconnected — without blocking', ({ harness, label }) => {
     const onConnectProvider = vi.fn();
     const onSpawn = vi.fn();
     render(
@@ -251,12 +251,15 @@ describe('SpawnDialog', () => {
     );
     fireEvent.change(screen.getByLabelText('Harness'), { target: { value: harness } });
 
-    expect(screen.getByText(`Connect ${label} before starting this session.`, { exact: false })).toBeTruthy();
+    // Default agent auth is assumed server-side: an unconnected provider never
+    // hard-blocks the spawn (claude-provider.spec enforces this end to end).
+    expect(screen.getByText(/default agent auth/)).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Watch a demo agent' })).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: `Connect ${label} to start` }));
-
+    fireEvent.click(screen.getByRole('button', { name: `Connect ${label}` }));
     expect(onConnectProvider).toHaveBeenCalledWith(harness);
-    expect(onSpawn).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Start session' }));
+    expect(onSpawn).toHaveBeenCalledWith(expect.objectContaining({ task: 'Keep this draft', harness }));
   });
 
   it.each([
@@ -316,7 +319,7 @@ describe('SpawnDialog', () => {
     fireEvent.change(screen.getByPlaceholderText('What should the agent do?'), {
       target: { value: 'Draft survives connection' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Connect Codex to start' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Connect Codex' }));
     expect(onConnectProvider).toHaveBeenCalledWith('codex');
 
     view.rerender(<SpawnDialog {...props} providerStatuses={providerStatuses('codex')} />);

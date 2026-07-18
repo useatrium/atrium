@@ -88,16 +88,12 @@ export function SpawnDialog({
   const canSpawn = task.trim().length > 0 && !privateRepoBlocked;
   const providerProfiles = profiles.filter((profile) => profile.provider === harness && profile.currentVersionId);
   const selectedProfile = providerProfiles.find((profile) => profile.id === agentProfileId);
-  const spawnDisabled = providerConnected ? !canSpawn : onConnectProvider == null;
+  const spawnDisabled = !canSpawn;
   const spawnTooltip = spawnDisabled
-    ? !providerConnected
-      ? `Connect ${providerLabel} before starting an agent`
-      : privateRepoBlocked
-        ? 'Connect GitHub before starting a private repo agent'
-        : 'Add a task before starting an agent'
-    : !providerConnected
-      ? `Connect ${providerLabel} to start`
-      : 'Start agent';
+    ? privateRepoBlocked
+      ? 'Connect GitHub before starting a private repo agent'
+      : 'Add a task before starting an agent'
+    : 'Start agent';
   const activeReferenceCount = referenceRepos.filter((item) => item.repo.trim().length > 0).length;
   const repoScoped = repo.trim().length > 0 || activeReferenceCount > 0;
   const activeGitHubIdentityMode = githubConnection?.connected
@@ -149,10 +145,6 @@ export function SpawnDialog({
   function submit(e: FormEvent) {
     e.preventDefault();
     if (spawnDisabled) return;
-    if (!providerConnected) {
-      onConnectProvider?.(harness);
-      return;
-    }
     const trimmedRepo = repo.trim();
     const trimmedBranch = branch.trim();
     const repos = [
@@ -277,9 +269,21 @@ export function SpawnDialog({
           </label>
 
           {!providerConnected && (
+            // Default agent auth is a server-side concern the client can't
+            // verify, so an unconnected provider is NOT a hard block — the
+            // deliberate model is "default auth works; Connect is an opt-in
+            // upgrade" (enforced by claude-provider.spec). The demo path rides
+            // along for zero-setup first runs.
             <div className="rounded-md border border-edge bg-surface px-3 py-2 text-2xs leading-relaxed text-fg-muted">
-              Connect {providerLabel} before starting this session. Your task will stay here while you connect, or you
-              can watch a demo agent with no provider setup.
+              Using Atrium&rsquo;s default agent auth.{' '}
+              <button
+                type="button"
+                onClick={() => onConnectProvider?.(harness)}
+                className="font-medium text-accent-text hover:text-accent-text-strong hover:underline"
+              >
+                Connect {providerLabel}
+              </button>{' '}
+              to run on your own subscription — or watch a demo agent with no setup at all.
             </div>
           )}
 
@@ -514,7 +518,7 @@ export function SpawnDialog({
               aria-disabled={spawnDisabled || undefined}
               className="rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-on-accent hover:bg-accent-hover aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
             >
-              {providerConnected ? 'Start session' : `Connect ${providerLabel} to start`}
+              Start session
             </button>
           </Tooltip>
         </footer>

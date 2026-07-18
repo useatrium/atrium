@@ -318,9 +318,11 @@ function pathWithSearch(pathname: string, searchParams: URLSearchParams, hash = 
   return `${pathname}${search ? `?${search}` : ''}${hash}`;
 }
 
-function isInPaneSessionRoute(pathname: string, sessionId: string): boolean {
+function isInPaneSessionRoute(pathname: string, search: string, sessionId: string): boolean {
   const encoded = encodeURIComponent(sessionId);
-  return pathname === `/s/${encoded}` || new RegExp(`^/c/[^/]+/s/${encoded}$`).test(pathname);
+  if (pathname === `/s/${encoded}` || new RegExp(`^/c/[^/]+/s/${encoded}$`).test(pathname)) return true;
+  // Panel form: the session layers over a channel as /c/:id?agent=<sessionId>.
+  return /^\/c\/[^/]+$/.test(pathname) && new URLSearchParams(search).get('agent') === sessionId;
 }
 
 export interface TranscriptDiscussPayload {
@@ -512,7 +514,7 @@ export function SessionPaneContent({
       // Read the LIVE location: pin/focus flows write the URL twice in one
       // tick, and the render-captured search would clobber the earlier write.
       if (typeof window === 'undefined') return;
-      if (popout || !isInPaneSessionRoute(window.location.pathname, session.id)) return;
+      if (popout || !isInPaneSessionRoute(window.location.pathname, window.location.search, session.id)) return;
       const params = new URLSearchParams(window.location.search);
       if (tab) params.set(URL_PARAMS.work, TAB_SLUG[tab]);
       else params.delete(URL_PARAMS.work);
@@ -529,7 +531,7 @@ export function SessionPaneContent({
     if (wasPinned) writeWorkParam(null);
   }, [workPinned, writeWorkParam]);
   const urlWorkTab = useMemo(() => {
-    if (popout || !isInPaneSessionRoute(locationState.pathname, session.id)) return null;
+    if (popout || !isInPaneSessionRoute(locationState.pathname, locationState.search, session.id)) return null;
     const raw = new URLSearchParams(locationState.search).get(URL_PARAMS.work);
     return raw ? (SLUG_TAB[raw] ?? null) : null;
   }, [locationState.pathname, locationState.search, popout, session.id]);

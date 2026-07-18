@@ -871,7 +871,10 @@ export function Chat({
   const { openThreadRoot, conversationSession, conversationMode } = useConversationSelection({
     openThreadRootId: state.openThreadRootId,
     paneSession,
-    routeSessionId: currentRoute?.sessionId,
+    // A panel session (?agent=) is a session-shaped conversation: mode 'work'.
+    // Thread routes never carry panelSessionId (currentRoute strips it), so
+    // thread mode is unaffected.
+    routeSessionId: currentRoute?.sessionId ?? currentRoute?.panelSessionId,
     sessions: state.sessions,
     timeline,
   });
