@@ -2063,12 +2063,13 @@ export function SessionPaneContent({
           {workTab && !workPinned && renderWorkDrawer(false)}
           <div ref={scrollRef} onScroll={onScroll} className="h-full overflow-y-auto px-3 py-2">
             <PlanPanel todos={stream.todos} plan={stream.plan} />
-            {stream.items.length === 0 && visibleLinkedSteers.length === 0 && starting && (
-              // A cold start can spend ~90s scheduling the pod and pulling the
-              // agent image, during which the harness emits nothing. Without a
-              // marker here the transcript is blank and the turn looks dead, so
-              // say so where the reply will land (the pinned status line alone is
-              // easy to miss). This clears the instant the first item arrives.
+            {stream.items.length === 0 && visibleLinkedSteers.length === 0 && activeTurn && (
+              // The turn is live but the harness has produced nothing yet — a cold
+              // start spends ~90s scheduling the pod and pulling the agent image,
+              // emitting no frames. Gate on activeTurn, NOT `starting`: the status
+              // is already `running` during that pull (an early execution_state
+              // frame), so a `starting`-only gate leaves the transcript blank and
+              // the turn looks dead. This clears the instant the first item lands.
               <div className="flex h-full flex-col items-center justify-center gap-1 text-center text-xs text-fg-muted">
                 <span className="animate-pulse">Starting agent…</span>
                 <span className="text-fg-faint">The first run can take a minute.</span>
