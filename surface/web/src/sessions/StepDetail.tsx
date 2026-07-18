@@ -59,7 +59,7 @@ export function StepDetail({ item, onDiscuss }: { item: TurnWorkItem; onDiscuss?
   return (
     <div data-testid={`step-detail-${item.id}`} className="ml-6 mt-1 rounded-md border border-edge bg-surface/70 p-2">
       <SessionMarkdown text={item.text || item.summary || 'No detail recorded.'} />
-      <StepActions onOpenWork={onOpenWork} onDiscuss={onDiscuss} />
+      <StepActions onDiscuss={onDiscuss} />
     </div>
   );
 }
