@@ -21,6 +21,11 @@ export interface ExecutionState {
   result_text?: string;
   agent_thread_id?: string;
   terminal_reason?: string;
+  /** Stable low-cardinality failure class stamped by api-rs on a terminal failure
+   * (`timeout`/`orphaned`/`sandbox_io`/`harness`) — the same label it records in
+   * `centaur_session_failures_total`. Lets the UI attribute a failure without
+   * re-parsing `terminal_reason`. See `classifyFailure`. */
+  failure_class?: string;
   /** Centaur cancellation reason. `turn_interrupted` means the user stopped the
    * current turn; other cancellation reasons still represent cancelled
    * execution/session state. */
