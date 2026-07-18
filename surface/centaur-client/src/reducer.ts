@@ -192,6 +192,14 @@ export interface SessionState {
    * cleared when a new turn starts. Folded from the durable event, so it's the
    * same for every viewer and survives replay/reload. */
   stoppedByUser?: boolean;
+  /** Human failure reason from the terminal `execution_state` (`terminal_reason`),
+   * folded on a terminal `failed`/`failed_permanent` status so the UI can explain
+   * *why* a run died instead of only flagging status. Same for every viewer
+   * (durable event); cleared when a new turn starts. Pass to `classifyFailure`. */
+  failureReason?: string;
+  /** Machine failure code from the terminal `execution_state` (`reason`), e.g.
+   * `startup_turn_not_accepted`. Classifies infra vs agent failures. */
+  failureCode?: string;
   models: string[];
   costUsd: number;
   lastEventId: number;
@@ -270,14 +278,22 @@ function reduceSessionFrame(state: SessionState, frame: CentaurEventFrame): Sess
       next.pendingQuestion = null;
       if (frame.ts && next.turnEndTs === undefined) next.turnEndTs = frame.ts;
       if (isUserStoppedExecutionState(frame.data)) next.stoppedByUser = true;
+      // Fold the failure reason so the UI can explain a failed run. Only for
+      // real failures — a clean `completed`/`cancelled` carries no reason here.
+      if (frame.data.status === 'failed' || frame.data.status === 'failed_permanent') {
+        if (typeof frame.data.terminal_reason === 'string') next.failureReason = frame.data.terminal_reason;
+        if (typeof frame.data.reason === 'string') next.failureCode = frame.data.reason;
+      }
       resolveOpenQuestions(next, frame.event_id, 'cancelled');
     } else if (!wasActive) {
       // A fresh execution began (first turn, or a steer after completion).
       // `turn/started` refines this anchor when the harness emits one.
       if (frame.ts) next.turnStartTs = frame.ts;
       delete next.turnEndTs;
-      // A new turn supersedes the prior user-stop.
+      // A new turn supersedes the prior user-stop and any prior failure.
       next.stoppedByUser = false;
+      delete next.failureReason;
+      delete next.failureCode;
     }
     return next;
   }
