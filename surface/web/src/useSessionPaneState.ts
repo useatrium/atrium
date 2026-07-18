@@ -5,6 +5,7 @@ import { sessionsApi, type SessionApi } from './sessions/api';
 import type { SessionView } from './sessions/ViewToggle';
 
 const NO_WATCHERS: UserRef[] = [];
+export const AGENT_SPLIT_OPT_IN_KEY = 'atrium.agentSplitOptIn';
 
 type DispatchAppAction = (action: AppAction) => void;
 
@@ -35,22 +36,35 @@ export function useSessionPaneState({
   presence: AppState['presence'];
   sessions: AppState['sessions'];
 }) {
-  // Layout grammar: channel / split / focus. A permalink may set focus from Chat.
+  // Agent focus owns MAIN by default. Split remains a durable user opt-in.
   const [focused, setFocused] = useState(false);
+  const [splitOptIn, setSplitOptIn] = useState(
+    () => typeof window !== 'undefined' && window.localStorage.getItem(AGENT_SPLIT_OPT_IN_KEY) === 'true',
+  );
 
   useEffect(() => {
     setFocused(Boolean(openSessionId && focusedFromUrl));
   }, [focusedFromUrl, openSessionId]);
 
-  const view: SessionView = openSessionId ? (focused ? 'focus' : 'split') : 'channel';
-  const sessionPaneLayout: SessionView = isMobileViewport ? 'focus' : focused ? 'focus' : 'split';
+  const focusLayout = isMobileViewport || focusedFromUrl || !splitOptIn || focused;
+  const view: SessionView = openSessionId ? (focusLayout ? 'focus' : 'split') : 'channel';
+  const sessionPaneLayout: SessionView = focusLayout ? 'focus' : 'split';
+
+  const persistSplitOptIn = useCallback((enabled: boolean) => {
+    setSplitOptIn(enabled);
+    if (typeof window !== 'undefined') window.localStorage.setItem(AGENT_SPLIT_OPT_IN_KEY, String(enabled));
+  }, []);
 
   const setView = useCallback(
     (next: SessionView) => {
       if (next === 'channel') dispatch({ type: 'close-session' });
-      else if (openSessionId) setFocused(next === 'focus');
+      else if (openSessionId) {
+        const split = next === 'split';
+        persistSplitOptIn(split);
+        setFocused(!split);
+      }
     },
-    [dispatch, openSessionId],
+    [dispatch, openSessionId, persistSplitOptIn],
   );
 
   const openSession = useCallback(
@@ -77,10 +91,14 @@ export function useSessionPaneState({
 
   const spectators = useMemo(() => sessionSpectatorCounts(presence), [presence]);
 
-  const toggleFocus = useCallback(() => setFocused((value) => !value), []);
+  const toggleFocus = useCallback(() => {
+    const split = focusLayout;
+    persistSplitOptIn(split);
+    setFocused(!split);
+  }, [focusLayout, persistSplitOptIn]);
 
   return {
-    focused,
+    focused: focusLayout,
     hasChannelSessions,
     openSession,
     paneSession,

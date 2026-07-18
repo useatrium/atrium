@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from 'react';
 import { agentPathFromLocationPath, type AgentPathRef } from '@atrium/surface-client/agent-paths';
 
-export type MainSurface = 'chat' | 'files' | 'activity' | 'agents' | 'settings';
+export type MainSurface = 'chat' | 'files' | 'activity' | 'settings';
 
 // URL grammar. Paths are places; query params are view modifiers layered on a
 // place. Every navigational view state must be expressible here so it survives
@@ -9,11 +9,11 @@ export type MainSurface = 'chat' | 'files' | 'activity' | 'agents' | 'settings';
 //
 //   /                          default channel
 //   /c/:channelId              channel
-//   /c/:channelId/s/:sessionId channel + session pane (split)
+//   /c/:channelId/s/:sessionId channel + focused session
 //   /c/:channelId/t/:rootId    channel + open thread panel
 //   /c/:channelId/members      channel + members view
 //   /s/:sessionId              legacy session permalink (canonicalizes)
-//   /files /activity /agents   surfaces
+//   /files /activity           surfaces
 //   /settings[/:section]       settings, optionally scrolled to a section
 //
 // Query params (URL_PARAMS): `file` (open artifact lightbox), `panel`
@@ -42,7 +42,7 @@ export interface InAppRoute {
   membersOpen?: boolean;
   /** Settings section — /settings/:section. */
   settingsSection?: string | null;
-  /** Reserved for an explicit focus-on-load; permalinks now open in split. */
+  /** Reserved for legacy explicit focus-on-load links. Focus is now the default. */
   focusSession: boolean;
 }
 
@@ -124,7 +124,6 @@ export function parseInAppRoute(pathname: string): InAppRoute | null {
   if (pathname === '/') return DEFAULT_ROUTE;
   if (pathname === '/files') return { ...DEFAULT_ROUTE, surface: 'files' };
   if (pathname === '/activity') return { ...DEFAULT_ROUTE, surface: 'activity' };
-  if (pathname === '/agents') return { ...DEFAULT_ROUTE, surface: 'agents' };
   if (pathname === '/settings') return { ...DEFAULT_ROUTE, surface: 'settings' };
 
   const settingsSection = /^\/settings\/([^/]+)$/.exec(pathname);
@@ -135,9 +134,7 @@ export function parseInAppRoute(pathname: string): InAppRoute | null {
 
   const legacySession = /^\/s\/([^/]+)$/.exec(pathname);
   if (legacySession) {
-    // Legacy /s/:id opens the session pane in the default (split) layout —
-    // matching the prior permalink behavior the e2e suite locks in. Focus is a
-    // user-driven pane toggle, not a property of the permalink.
+    // Legacy /s/:id canonicalizes to the same focus-default session place.
     const sessionId = decodeSegment(legacySession[1]!);
     return sessionId ? { ...DEFAULT_ROUTE, sessionId } : null;
   }
@@ -184,7 +181,6 @@ export function filePathRefFromPath(pathname: string): Exclude<AgentPathRef, { k
 export function routePath(route: InAppRoute): string {
   if (route.surface === 'files') return '/files';
   if (route.surface === 'activity') return '/activity';
-  if (route.surface === 'agents') return '/agents';
   if (route.surface === 'settings') {
     return route.settingsSection ? `/settings/${encodeURIComponent(route.settingsSection)}` : '/settings';
   }

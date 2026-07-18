@@ -24,10 +24,7 @@ import { showNotification } from './notify';
 import {
   emptyTimeline,
   mentionsHandle,
-  sessionAttentionKind,
-  type ActivityChannelCounts,
   type ActivityCounts,
-  type ActivityItem,
   type Channel,
   type UserRef,
   type WireEvent,
@@ -35,7 +32,6 @@ import {
 import { useWs } from '@atrium/surface-client';
 import { encodeEventHandle } from '@atrium/surface-client/handle';
 import { Avatar } from './components/Avatar';
-import { AgentsSurface } from './components/AgentsSurface';
 import { ActivityView } from './components/ActivityView';
 import { labelForCallChannel, userForCall } from './callPresentation';
 import { notificationForWireEvent } from './chatNotifications';
@@ -61,10 +57,13 @@ import { sessionsApi } from './sessions/api';
 import { Gallery } from './sessions/Gallery';
 import type { TranscriptDiscussPayload } from './sessions/SessionPane';
 import { ConversationPanel } from './sessions/ConversationPanel';
+import { AgentAttentionView } from './sessions/AgentAttentionView';
+import { AgentDock } from './sessions/AgentDock';
+import { ChannelAgentPresence } from './sessions/ChannelAgentPresence';
+import { buildAgentCommands } from './sessions/agentCommands';
 // === spine additions === Reuse SessionPane's canonical work-tab URL grammar.
 import { TAB_SLUG } from './sessions/WorkDrawer';
 import { loadSessionPaneWidth, sessionPaneSizing } from './sessions/useSessionPaneWidth';
-import { ChannelStrip } from './sessions/ChannelStrip';
 import { SessionsContextProvider } from './sessions/SessionsContext';
 import { SpawnDialog } from './sessions/SpawnDialog';
 import { ViewToggle } from './sessions/ViewToggle';
@@ -361,7 +360,7 @@ export function Chat({
   initialChannelId?: string | null;
   /** From /files and /activity deep links — select the main surface on load. */
   initialMainSurface?: MainSurface;
-  /** Legacy /s/:id permalinks land focused; channel/session routes land split. */
+  /** Legacy explicit-focus hint; sessions now focus MAIN by default. */
   initialSessionFocus?: boolean;
   /** Entry handle from ?entry=... for one-shot scroll/highlight handling. */
   initialEntryHandle?: string | null;
@@ -378,7 +377,6 @@ export function Chat({
   const [state, dispatch] = useReducer(appReducer, initialChannelId, (channelId) =>
     channelId ? { ...initialAppState, activeChannelId: channelId } : initialAppState,
   );
-  const [sessionEventSeq, setSessionEventSeq] = useState(0);
   // === true-counts additions ===
   const [activityCounts, setActivityCounts] = useState<ActivityCounts>({
     attention: 0,
@@ -387,7 +385,6 @@ export function Chat({
     running: 0,
     toReview: 0,
   });
-  const [activityChannelCounts, setActivityChannelCounts] = useState<Record<string, ActivityChannelCounts>>({});
   const [activityLiveEvent, setActivityLiveEvent] = useState<WireEvent | null>(null);
   const [activityRefreshKey, setActivityRefreshKey] = useState(0);
   const {
@@ -431,13 +428,9 @@ export function Chat({
   const locationState = useLocation();
 
   // === true-counts additions ===
-  const handleActivityCountsChange = useCallback(
-    (next: ActivityCounts, channelCounts?: Record<string, ActivityChannelCounts>) => {
-      setActivityCounts(next);
-      if (channelCounts) setActivityChannelCounts(channelCounts);
-    },
-    [],
-  );
+  const handleActivityCountsChange = useCallback((next: ActivityCounts) => {
+    setActivityCounts(next);
+  }, []);
 
   const refreshActivityCounts = useCallback(() => {
     // Promise.resolve() guard: a transport that throws synchronously (e.g. a
@@ -453,7 +446,6 @@ export function Chat({
           running: Number(counts.running) || 0,
           toReview: Number(counts.toReview) || 0,
         });
-        setActivityChannelCounts(counts.channelCounts);
       })
       .catch(() => {});
   }, []);
@@ -552,7 +544,6 @@ export function Chat({
       if (action.type === 'server-event' && handleFilesChangedEvent(action.event)) return;
       dispatch(action);
       if (action.type === 'server-event') {
-        if (action.event.type.startsWith('session.')) setSessionEventSeq((n) => n + 1);
         if (action.event.channelId) eventCache.enqueueEvents(action.event.channelId, [action.event]);
         cacheSyncCursor(action.event.id);
       }
@@ -773,6 +764,9 @@ export function Chat({
   const [startDmRequestSeq, setStartDmRequestSeq] = useState(0);
   // Configured-spawn dialog (the summon sigil is the quick path).
   const [spawnOpen, setSpawnOpen] = useState(false);
+  const [immersed, setImmersed] = useState(false);
+  const [agentDockFilterChannel, setAgentDockFilterChannel] = useState<string | null>(null);
+  const [attentionOpen, setAttentionOpen] = useState(false);
   const [spawnInitialTask, setSpawnInitialTask] = useState('');
   const [configureRestore, setConfigureRestore] = useState<{ draftKey: string; text: string } | null>(null);
   const channelComposerRef = useRef<ComposerHandle>(null);
@@ -831,40 +825,6 @@ export function Chat({
     () => ({ sessions: state.sessions, channels: state.channels, requestSession: requestLinkedSession }),
     [state.sessions, state.channels, requestLinkedSession],
   );
-
-  // Live sessions blocked on a person pin into Attention immediately, before
-  // (or without) the server feed item — parity with the mobile Attention tab.
-  //
-  // Scoped to sessions you spawned, like every other Inbox row: the server's
-  // feed and its attention count are both `spawned_by = me`, and state.sessions
-  // is scoped by channel visibility, so synthesizing for anyone's session put
-  // rows in the shelf that the badge above it could never count.
-  const liveAttentionItems = useMemo(() => {
-    const items: ActivityItem[] = [];
-    for (const session of Object.values(state.sessions)) {
-      if (isPendingSessionId(session.id)) continue;
-      if (session.spawnedBy !== me.id) continue;
-      const kind = sessionAttentionKind(session);
-      if (!kind || kind === 'failed') continue;
-      const channel = state.channels.find((c) => c.id === session.channelId);
-      items.push({
-        eventId: `live:${session.id}`,
-        kind: kind === 'authentication' ? 'agent_auth' : kind === 'seat-request' ? 'seat_request' : 'agent_question',
-        channelId: session.channelId,
-        channelName: channel?.name ?? '',
-        actorId: null,
-        actorName: null,
-        snippet: session.pendingQuestion?.questions[0]?.question ?? session.providerAuthRequired?.message ?? '',
-        createdAt: session.pendingQuestion?.askedAt ?? session.createdAt,
-        sessionId: session.id,
-        sessionTitle: session.title,
-        sessionStatus: session.status,
-        attention: true,
-        unread: true,
-      });
-    }
-    return items;
-  }, [state.sessions, state.channels, me.id]);
 
   const active = state.channels.find((c) => c.id === state.activeChannelId) ?? null;
   const timeline = (active && state.timelines[active.id]) || emptyTimeline;
@@ -1068,7 +1028,6 @@ export function Chat({
         onPrefs: adoptPrefs,
         catchupCursor,
         onEvent: (event) => {
-          if (event.type.startsWith('session.')) setSessionEventSeq((n) => n + 1);
           if (event.channelId) eventCache.enqueueEvents(event.channelId, [event]);
           cacheSyncCursor(event.id);
         },
@@ -1116,7 +1075,6 @@ export function Chat({
     {
       onEvent: (event: WireEvent) => {
         if (handleFilesChangedEvent(event)) return;
-        if (event.type.startsWith('session.')) setSessionEventSeq((n) => n + 1);
         if (isActivityRefreshEvent(event, me, stateRef.current.channels, stateRef.current.sessions)) {
           setActivityLiveEvent(event);
           scheduleActivityCountsRefresh();
@@ -1674,10 +1632,6 @@ export function Chat({
     goToRoute({ surface: 'activity', channelId: null, sessionId: null, focusSession: false });
   }, [goToRoute]);
 
-  const openAgentsSurface = useCallback(() => {
-    goToRoute({ surface: 'agents', channelId: null, sessionId: null, focusSession: false });
-  }, [goToRoute]);
-
   const openSettingsSurface = useCallback(() => {
     goToRoute({ surface: 'settings', channelId: null, sessionId: null, focusSession: false });
   }, [goToRoute]);
@@ -1691,6 +1645,8 @@ export function Chat({
       focusSession: false,
     });
   }, [goToRoute]);
+
+  const onFocusAgent = useCallback((sessionId: string) => openSession(sessionId), [openSession]);
 
   const writeFocusViewParam = useCallback((nextFocused: boolean) => {
     // Read the LIVE location, not the render-captured one: pinning the work
@@ -1887,7 +1843,7 @@ export function Chat({
 
   // ---- unread badge in the tab title ----
   const channelUnreadCount = Object.values(state.unread).filter(Boolean).length;
-  const unreadCount = channelUnreadCount + activityCounts.attention;
+  const unreadCount = channelUnreadCount + activityCounts.unread;
   useEffect(() => {
     document.title = unreadCount > 0 ? `(${unreadCount}) Atrium` : 'Atrium';
     applyUnreadBadges(unreadCount);
@@ -1979,6 +1935,7 @@ export function Chat({
     }
 
     list.push(
+      ...buildAgentCommands(state.sessions, onFocusAgent),
       {
         id: 'open-files',
         label: 'Open Files',
@@ -1987,15 +1944,6 @@ export function Chat({
         keywords: ['files', 'artifacts', 'documents', 'workspace'],
         icon: <FileIcon size={14} />,
         run: openFilesSurface,
-      },
-      {
-        id: 'open-agents',
-        label: 'Open Agents',
-        subtitle: 'Browse agents',
-        group: 'Navigate',
-        keywords: ['agents', 'sessions', 'tasks', 'workspace'],
-        icon: <span className="text-xs font-bold leading-none">A</span>,
-        run: openAgentsSurface,
       },
       {
         id: 'open-activity',
@@ -2107,13 +2055,14 @@ export function Chat({
     mainSurface,
     me.id,
     openActivitySurface,
-    openAgentsSurface,
     openChatSurface,
     openFilesSurface,
     openSettingsSurface,
+    onFocusAgent,
     providerCredentials,
     startDemoSession,
     startVoiceCallForActiveChannel,
+    state.sessions,
   ]);
 
   const connectionKind = wsStatusKind(state.wsStatus);
@@ -2136,7 +2085,6 @@ export function Chat({
   const showFilesSurface = mainSurface === 'files';
   // === mentions-activity additions ===
   const showActivitySurface = mainSurface === 'activity';
-  const showAgentsSurface = mainSurface === 'agents';
   const showSettingsSurface = mainSurface === 'settings';
   const showNonChatSurface = mainSurface !== 'chat';
   const hideMainOnMobile = state.openSessionId != null || openThreadRoot != null;
@@ -2157,14 +2105,6 @@ export function Chat({
     ? labelForCallChannel(calls.activeCall.call, state.channels, me.id)
     : '';
   const closeSidebar = useCallback(() => setIsSidebarOpen(false), []);
-  // === sidebar agent-work additions ===
-  const openSessionFromSidebar = useCallback(
-    (sessionId: string) => {
-      openSession(sessionId);
-      setIsSidebarOpen(false);
-    },
-    [openSession],
-  );
   const selectFromSidebar = useCallback(
     (channelId: string) => {
       goToChannel(channelId);
@@ -2176,10 +2116,6 @@ export function Chat({
     openFilesSurface();
     setIsSidebarOpen(false);
   }, [openFilesSurface]);
-  const openAgentsFromSidebar = useCallback(() => {
-    openAgentsSurface();
-    setIsSidebarOpen(false);
-  }, [openAgentsSurface]);
   const openActivityFromSidebar = useCallback(() => {
     openActivitySurface();
     setIsSidebarOpen(false);
@@ -2206,13 +2142,9 @@ export function Chat({
         onStartDm={startDm}
         activeSurface={mainSurface}
         onOpenFiles={openFilesFromSidebar}
-        onOpenAgents={openAgentsFromSidebar}
         // === mentions-activity additions ===
         onOpenActivity={openActivityFromSidebar}
         activityCounts={activityCounts}
-        // === sidebar agent-work additions ===
-        sessions={state.sessions}
-        onOpenSession={openSessionFromSidebar}
         onOpenSettings={openSettingsFromSidebar}
         onLogout={onLogout}
         isOpen={isSidebarOpen}
@@ -2245,26 +2177,17 @@ export function Chat({
               aria-label={
                 showSettingsSurface
                   ? 'Settings'
-                  : showAgentsSurface
-                    ? 'Agents'
-                    : showActivitySurface
-                      ? 'Inbox'
-                      : showFilesSurface
-                        ? `Files for ${active ? channelLabel(active, me.id) : workspace.name}`
-                        : undefined
+                  : showActivitySurface
+                    ? 'Inbox'
+                    : showFilesSurface
+                      ? `Files for ${active ? channelLabel(active, me.id) : workspace.name}`
+                      : undefined
               }
             >
               {showSettingsSurface ? (
                 <>
                   <GearIcon size={16} className="shrink-0 text-fg-muted" />
                   <span className="truncate">Settings</span>
-                </>
-              ) : showAgentsSurface ? (
-                <>
-                  <span className="grid size-4 shrink-0 place-items-center rounded bg-surface-raised text-2xs font-bold text-fg-muted">
-                    A
-                  </span>
-                  <span className="truncate">Agents</span>
                 </>
               ) : showActivitySurface ? (
                 // === mentions-activity additions ===
@@ -2273,10 +2196,10 @@ export function Chat({
                     @
                   </span>
                   <span className="truncate">Inbox</span>
-                  {activityCounts.attention > 0 && (
-                    <span className="rounded-full bg-warning-tint px-1.5 py-px text-3xs font-bold text-warning-text-strong">
-                      {activityCounts.attention >= 99 ? '99+' : activityCounts.attention}
-                      <span className="sr-only"> needs attention</span>
+                  {activityCounts.unread > 0 && (
+                    <span className="rounded-full bg-surface-overlay px-1.5 py-px text-3xs font-bold text-fg-muted">
+                      {activityCounts.unread >= 99 ? '99+' : activityCounts.unread}
+                      <span className="sr-only"> unread activity</span>
                     </span>
                   )}
                 </>
@@ -2419,16 +2342,27 @@ export function Chat({
                 </span>
               </button>
             </Tooltip>
-            {!showNonChatSurface && presentUsers.length > 0 && (
+            {!showNonChatSurface && active && (
               <div className="hidden items-center gap-2 md:flex" title="Viewing this channel right now">
-                <div className="flex -space-x-1.5">
-                  {presentUsers.slice(0, 8).map((u) => (
-                    <div key={u.id} className="rounded-md ring-2 ring-surface">
-                      <Avatar name={u.displayName} seed={u.id} size={20} />
-                    </div>
-                  ))}
-                </div>
-                <span className="text-2xs tabular-nums text-fg-muted">{presentUsers.length} here</span>
+                {presentUsers.length > 0 && (
+                  <div className="flex -space-x-1.5">
+                    {presentUsers.slice(0, 8).map((u) => (
+                      <div key={u.id} className="rounded-md ring-2 ring-surface">
+                        <Avatar name={u.displayName} seed={u.id} size={20} />
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <ChannelAgentPresence
+                  channelId={active.id}
+                  sessions={state.sessions}
+                  presentUsers={presentUsers}
+                  now={Date.now()}
+                  onOpenDock={(channelId) => {
+                    setImmersed(false);
+                    setAgentDockFilterChannel(channelId);
+                  }}
+                />
               </div>
             )}
           </header>
@@ -2495,41 +2429,15 @@ export function Chat({
               onConnectClaude={() => setProviderDialog('claude-code')}
               onConnectCodex={() => setProviderDialog('codex')}
             />
-          ) : showAgentsSurface ? (
-            <AgentsSurface
-              liveSessions={state.sessions}
-              refreshKey={sessionEventSeq}
-              onOpenSession={(sessionId) => {
-                openSession(sessionId);
-              }}
-              onSetSessionPinned={(sessionId, pinned, previousPinned) =>
-                void setSessionPinned(sessionId, pinned, previousPinned).catch(() => {})
-              }
-              onSetSessionArchived={(sessionId, archived, previousArchivedAt) =>
-                void setSessionArchived(sessionId, archived, previousArchivedAt).catch(() => {})
-              }
-            />
           ) : showActivitySurface ? (
             // === inbox additions ===
             <ActivityView
               onSelectChannel={(channelId) => {
                 goToChannel(channelId);
               }}
-              onOpenSession={(sessionId) => {
-                openSession(sessionId);
-              }}
               liveEvent={activityLiveEvent}
               refreshKey={activityRefreshKey}
-              liveAttention={liveAttentionItems}
-              sessions={state.sessions}
-              channelNames={Object.fromEntries(state.channels.map((channel) => [channel.id, channel.name]))}
-              onOpenAgents={openAgentsSurface}
-              onArchiveSession={(sessionId, previousArchivedAt) =>
-                void setSessionArchived(sessionId, true, previousArchivedAt).catch(() => {})
-              }
               onCountsChange={handleActivityCountsChange}
-              meId={me.id}
-              onNudge={({ channelId, text, threadRootEventId }) => send(channelId, text, threadRootEventId)}
             />
           ) : showFilesSurface ? (
             <Gallery
@@ -2603,15 +2511,6 @@ export function Chat({
           {active && !showNonChatSurface && (
             <>
               <TypingLine typing={typing} />
-              {/* === channel strip additions === */}
-              <ChannelStrip
-                channelId={active.id}
-                // === true-counts additions ===
-                channelCounts={activityChannelCounts[active.id]}
-                sessions={state.sessions}
-                onOpenSession={openSession}
-                onOpenInbox={openActivitySurface}
-              />
               <Composer
                 ref={channelComposerRef}
                 placeholder={
@@ -2783,6 +2682,45 @@ export function Chat({
           />
         </EntryQuoteApplyContextProvider>
       ) : null}
+
+      <AgentDock
+        sessions={state.sessions}
+        channels={state.channels}
+        activeChannelId={activeChannelId}
+        focusedSessionId={state.openSessionId}
+        immersed={immersed}
+        onFocusAgent={onFocusAgent}
+        onToggleImmersed={() => setImmersed((value) => !value)}
+        onNewAgent={() => {
+          setSpawnInitialTask('');
+          setSpawnOpen(true);
+        }}
+        filterChannelId={agentDockFilterChannel}
+        onOpenAttention={() => setAttentionOpen(true)}
+      />
+
+      {attentionOpen && (
+        <div className="fixed inset-0 z-overlay flex bg-surface/80 p-4" role="dialog" aria-modal="true">
+          <div className="mx-auto flex w-full max-w-3xl flex-col overflow-hidden rounded-lg border border-edge bg-surface shadow-2xl">
+            <div className="flex justify-end border-b border-edge p-2">
+              <button
+                type="button"
+                onClick={() => setAttentionOpen(false)}
+                className="rounded px-2 py-1 text-xs text-fg-muted hover:bg-surface-overlay hover:text-fg"
+              >
+                Close
+              </button>
+            </div>
+            <AgentAttentionView
+              sessions={state.sessions}
+              onFocusAgent={(sessionId) => {
+                setAttentionOpen(false);
+                onFocusAgent(sessionId);
+              }}
+            />
+          </div>
+        </div>
+      )}
 
       {switcherOpen && (
         <QuickSwitcher
