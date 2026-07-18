@@ -59,7 +59,6 @@ export function WorkFold({
   nested = false,
   revealStepHandle = null,
   highlightedStepHandle = null,
-  onOpenWork,
   onDiscussStep,
 }: {
   fold: FoldedTurnRow;
@@ -72,7 +71,6 @@ export function WorkFold({
   /** Opens a linked step so SessionPane entry deep-links remain addressable. */
   revealStepHandle?: string | null;
   highlightedStepHandle?: string | null;
-  onOpenWork?: () => void;
   onDiscussStep?: (item: TurnWorkItem) => void;
 }) {
   const revealedStep = fold.items.find((item) => item.handle === revealStepHandle);
@@ -167,7 +165,6 @@ export function WorkFold({
               {stepOpen && (
                 <StepDetail
                   item={item}
-                  onOpenWork={onOpenWork}
                   onDiscuss={onDiscussStep && item.handle?.startsWith('rec_') ? () => onDiscussStep(item) : undefined}
                 />
               )}

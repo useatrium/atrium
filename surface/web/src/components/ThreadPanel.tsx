@@ -354,16 +354,7 @@ export function ThreadPanelContent({
         />
         {spineRows.map((row) => {
           if (row.kind === 'fold') {
-            return (
-              <WorkFold
-                key={row.key}
-                fold={row.fold}
-                live={row.live}
-                onOpenWork={
-                  attachedSession ? () => onOpenSession(attachedSession.id, { workTab: 'sideEffects' }) : undefined
-                }
-              />
-            );
+            return <WorkFold key={row.key} fold={row.fold} live={row.live} />;
           }
           const messageRow = (
             <MessageRow
@@ -372,18 +363,7 @@ export function ThreadPanelContent({
               inThread
               session={sessionFor(row.message)}
               spectators={spectatorsFor(row.message)}
-              workFold={
-                row.fold ? (
-                  <WorkFold
-                    fold={row.fold}
-                    live={row.foldLive ?? false}
-                    nested
-                    onOpenWork={
-                      attachedSession ? () => onOpenSession(attachedSession.id, { workTab: 'sideEffects' }) : undefined
-                    }
-                  />
-                ) : undefined
-              }
+              workFold={row.fold ? <WorkFold fold={row.fold} live={row.foldLive ?? false} nested /> : undefined}
               meId={meId}
               meHandle={meHandle}
               mentionContext={mentionContext}

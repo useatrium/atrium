@@ -2111,7 +2111,6 @@ export function SessionPaneContent({
                             expandAll={expandAllWork}
                             revealStepHandle={pendingEntryHandle}
                             highlightedStepHandle={flashEntryHandle}
-                            onOpenWork={() => onStrip('sideEffects')}
                             onDiscussStep={
                               discussContext && onDiscussEntry
                                 ? (item) => {

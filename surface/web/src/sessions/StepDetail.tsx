@@ -2,33 +2,18 @@ import { fileChangeFromToolCall, type TurnWorkItem } from '@atrium/centaur-clien
 import { InlineFileChange } from './fileChangeView';
 import { SessionMarkdown } from './Markdown';
 
-function StepActions({ onOpenWork, onDiscuss }: { onOpenWork?: () => void; onDiscuss?: () => void }) {
-  if (!onOpenWork && !onDiscuss) return null;
+function StepActions({ onDiscuss }: { onDiscuss?: () => void }) {
+  if (!onDiscuss) return null;
   return (
     <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1">
-      {onDiscuss && (
-        <button type="button" onClick={onDiscuss} className="text-xs font-medium text-accent-text hover:underline">
-          Discuss in thread
-        </button>
-      )}
-      {onOpenWork && (
-        <button type="button" onClick={onOpenWork} className="text-xs font-medium text-accent-text hover:underline">
-          full output → What it ran
-        </button>
-      )}
+      <button type="button" onClick={onDiscuss} className="text-xs font-medium text-accent-text hover:underline">
+        Discuss in thread
+      </button>
     </div>
   );
 }
 
-export function StepDetail({
-  item,
-  onOpenWork,
-  onDiscuss,
-}: {
-  item: TurnWorkItem;
-  onOpenWork?: () => void;
-  onDiscuss?: () => void;
-}) {
+export function StepDetail({ item, onDiscuss }: { item: TurnWorkItem; onDiscuss?: () => void }) {
   if (item.type === 'tool_call') {
     const fileChange = fileChangeFromToolCall(item);
     if (fileChange) {
@@ -36,7 +21,7 @@ export function StepDetail({
       return (
         <div data-testid={`step-detail-${item.id}`} className="ml-6 mt-1">
           <InlineFileChange change={fileChange} status={status} />
-          <StepActions onOpenWork={onOpenWork} onDiscuss={onDiscuss} />
+          <StepActions onDiscuss={onDiscuss} />
         </div>
       );
     }
@@ -66,7 +51,7 @@ export function StepDetail({
         {!hasCommand && !argumentsJson && !resultContent && (
           <span className="text-xs text-fg-muted">No detail recorded.</span>
         )}
-        <StepActions onOpenWork={onOpenWork} onDiscuss={onDiscuss} />
+        <StepActions onDiscuss={onDiscuss} />
       </div>
     );
   }
