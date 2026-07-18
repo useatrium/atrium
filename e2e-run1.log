@@ -1,0 +1,14 @@
+
+> atrium-surface@0.1.0 e2e /Users/garybasin/Code/atrium/.worktrees/_int-20260718121731-8204832f/surface
+> pnpm --filter @atrium/e2e e2e --reporter=line
+
+
+> @atrium/e2e@0.1.0 e2e /Users/garybasin/Code/atrium/.worktrees/_int-20260718121731-8204832f/surface/e2e
+> playwright test --reporter=line
+
+Error: Timed out waiting 60000ms from config.webServer.
+
+[1A[2K/Users/garybasin/Code/atrium/.worktrees/_int-20260718121731-8204832f/surface/e2e:
+ ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL  @atrium/e2e@0.1.0 e2e: `playwright test --reporter=line`
+Exit status 1
+ ELIFECYCLE  Command failed with exit code 1.

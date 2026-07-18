@@ -22,14 +22,16 @@ export function ChannelAgentPresence({
 
   return (
     <span data-testid="channel-agent-presence" className="inline-flex items-center gap-1">
-      <span className="text-2xs tabular-nums text-fg-muted">{presentUsers.length} people</span>
+      <span className="text-2xs tabular-nums text-fg-muted">
+        {presentUsers.length} {presentUsers.length === 1 ? 'person' : 'people'}
+      </span>
       {liveAgentCount > 0 && (
         <button
           type="button"
           onClick={() => onOpenDock(channelId)}
           className="text-2xs tabular-nums text-fg-muted hover:text-fg-body focus-visible:rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
         >
-          · {liveAgentCount} agents here <span aria-hidden="true">→</span>
+          · {liveAgentCount} {liveAgentCount === 1 ? 'agent' : 'agents'} here <span aria-hidden="true">→</span>
         </button>
       )}
     </span>

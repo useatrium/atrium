@@ -1,0 +1,8 @@
+
+> atrium-surface@0.1.0 e2e /Users/garybasin/Code/atrium/.worktrees/_int-20260718121731-8204832f/surface
+> pnpm --filter @atrium/e2e e2e --reporter=line
+
+
+> @atrium/e2e@0.1.0 e2e /Users/garybasin/Code/atrium/.worktrees/_int-20260718121731-8204832f/surface/e2e
+> playwright test --reporter=line
+

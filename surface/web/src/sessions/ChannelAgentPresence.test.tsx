@@ -102,7 +102,7 @@ describe('ChannelAgentPresence', () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: /1 agents here/ }));
+    fireEvent.click(screen.getByRole('button', { name: /1 agent here/ }));
 
     expect(onOpenDock).toHaveBeenCalledOnce();
     expect(onOpenDock).toHaveBeenCalledWith('ch-1');
