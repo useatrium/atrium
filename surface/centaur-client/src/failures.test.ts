@@ -67,10 +67,12 @@ describe('classifyFailure', () => {
     expect(info?.detail).toBe('weird custom message');
   });
 
-  it('omits detail when no reason was reported', () => {
-    const info = classifyFailure({ status: 'failed' });
-    expect(info?.class).toBe('unknown');
-    expect(info?.detail).toBeUndefined();
+  it('returns null when a failure carried no reason (nothing to surface)', () => {
+    // Purely additive: with no reason, the caller keeps its generic "Failed"
+    // fallback instead of a contentless card.
+    expect(classifyFailure({ status: 'failed' })).toBeNull();
+    expect(classifyFailure({ status: 'failed', failureReason: '   ' })).toBeNull();
+    expect(classifyFailure({ status: 'failed_permanent', failureReason: '', failureCode: '' })).toBeNull();
   });
 });
 

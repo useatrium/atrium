@@ -87,13 +87,18 @@ function make(cls: FailureClass, label: string, summary: string, detail: string 
 /**
  * Classify a terminal failure. Returns `null` for any non-failed status (idle,
  * running, completed, cancelled) — cancellation/stop is handled separately via
- * `SessionState.stoppedByUser`, not here.
+ * `SessionState.stoppedByUser`, not here — AND for a failure that carried no
+ * reason at all. The whole point is to surface *why* a run died, so with nothing
+ * to surface we return null and let the caller keep its generic "Failed" fallback
+ * rather than render a contentless card. This keeps the feature purely additive.
  */
 export function classifyFailure(input: FailureInput): FailureInfo | null {
   if (!isFailedStatus(input.status)) return null;
 
   const code = (input.failureCode ?? '').trim();
   const reason = (input.failureReason ?? '').trim();
+  if (!code && !reason) return null;
+
   const detail = cleanDetail(reason);
 
   // 1. Trust an explicit machine code first — it's the least ambiguous signal.
@@ -111,12 +116,7 @@ export function classifyFailure(input: FailureInput): FailureInfo | null {
     }
   }
 
-  // 3. Unknown: don't guess whose fault it was. Show a neutral label and let the
-  //    raw reason (if any) carry the specifics behind the detail affordance.
-  return make(
-    'unknown',
-    UNKNOWN_LABEL,
-    reason.length > 0 ? 'This run ended unexpectedly.' : 'This run failed to complete.',
-    detail,
-  );
+  // 3. We have a reason but can't attribute it. Don't guess whose fault it was:
+  //    a neutral label, with the raw reason behind the detail affordance.
+  return make('unknown', UNKNOWN_LABEL, 'This run ended unexpectedly.', detail);
 }
