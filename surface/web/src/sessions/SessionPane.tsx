@@ -15,6 +15,7 @@ import {
 import {
   artifactCount,
   changedPaths,
+  classifyFailure,
   codexInlineFileChanges,
   collectArtifacts,
   collectFileChanges,
@@ -112,6 +113,7 @@ import { SessionMarkdown } from './Markdown';
 import { SeatAuditLine, SessionTypingLine, TurnRail } from './SessionActivity';
 import { ProfileChangesBanner, ProviderAuthBanner, QuestionCard, profileProviderLabel } from './SessionBanners';
 import { groupQuestionEventsByQuestion, QuestionTranscriptCard } from './SessionQuestionTranscript';
+import { FailureNotice } from './FailureNotice';
 import { SuggestionStrip } from './SessionSuggestions';
 import { showErrorToast } from '../components/Toasts';
 import { TimestampDisclosure } from '../components/TimestampDisclosure';
@@ -621,6 +623,15 @@ export function SessionPaneContent({
     : stream.status !== 'idle'
       ? normalizeExecutionStatus(stream.status)
       : session.status;
+  const failure = useMemo(
+    () =>
+      classifyFailure({
+        status: displayStatus,
+        failureReason: stream.failureReason,
+        failureCode: stream.failureCode,
+      }),
+    [displayStatus, stream.failureReason, stream.failureCode],
+  );
   const displayTerminal = isTerminalSessionStatus(displayStatus);
   // A steer revives a terminal session, but the status regresses to `queued`
   // only when the server broadcasts back. Until then the pane still reads the
@@ -2016,7 +2027,9 @@ export function SessionPaneContent({
             </h3>
             <span className={`text-xs ${isEnded ? 'text-danger-text' : 'text-fg-muted'}`}>
               {displayStatus === 'failed'
-                ? 'Failed — review the transcript, then retry.'
+                ? failure
+                  ? `${failure.label} — ${failure.summary}`
+                  : 'Failed — review the transcript, then retry.'
                 : displayStatus === 'cancelled'
                   ? 'Cancelled — review completed work before continuing.'
                   : 'Completed — review the work before continuing.'}
@@ -2235,6 +2248,7 @@ export function SessionPaneContent({
                 <SteerAttachments attachments={p.attachments} />
               </div>
             ))}
+            {failure && <FailureNotice info={failure} />}
             {artifactPresentations.length > 0 && (
               <div className="pl-3.5">
                 <AppPresentationCards sessionId={session.id} presentations={artifactPresentations} />

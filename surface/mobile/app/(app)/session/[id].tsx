@@ -46,6 +46,7 @@ import {
 } from '@atrium/surface-client';
 import { HARNESS_EFFORT_PICKER_OPTIONS } from '@atrium/surface-client/effort';
 import {
+  classifyFailure,
   focusTranscriptRows,
   fullTranscriptRows,
   toolDefaultOpen,
@@ -81,6 +82,7 @@ import { SideEffectsSurface } from '../../../src/components/work/SideEffectsSurf
 import { MobileWorkSheet, type WorkSurfaceTab } from '../../../src/components/work/MobileWorkSheet';
 import { WorkStrips, type WorkStripItem } from '../../../src/components/work/WorkStrips';
 import { TurnsSheet } from '../../../src/components/work/TurnsSheet';
+import { FailureNotice } from '../../../src/components/work/FailureNotice';
 import { TurnCard } from '../../../src/components/work/TurnCard';
 import { TranscriptActiveEntryFrame } from '../../../src/components/work/TranscriptEntryActions';
 import { SteerRow, type SteerRowProvenance } from '../../../src/components/work/SteerRow';
@@ -809,6 +811,15 @@ export default function SessionScreen() {
   const session = snapshot ? mergeSpawnResponse(cached ?? undefined, snapshot) : cached;
   const streamStatus = stream.status !== 'idle' ? normalizeExecutionStatus(stream.status) : null;
   const displayStatus = (streamStatus ?? session?.status ?? 'spawning') as SessionStatus;
+  const failure = useMemo(
+    () =>
+      classifyFailure({
+        status: displayStatus,
+        failureReason: stream.failureReason,
+        failureCode: stream.failureCode,
+      }),
+    [displayStatus, stream.failureReason, stream.failureCode],
+  );
   const terminal = isTerminalSessionStatus(displayStatus);
   // Folded from the durable terminal event (reducer `stoppedByUser`) — same for
   // every viewer, survives replay/reload, clears when a new turn starts.
@@ -1865,6 +1876,7 @@ export default function SessionScreen() {
         >
           <PlanPanel todos={stream.todos} plan={stream.plan} />
 
+          {failure ? <FailureNotice info={failure} /> : null}
           {terminal ? <TurnCard status={displayStatus} resultText={resultText} costUsd={costUsd} /> : null}
 
           {pendingQuestion && pendingQuestion.questionId !== questionCleared && !terminal ? (
