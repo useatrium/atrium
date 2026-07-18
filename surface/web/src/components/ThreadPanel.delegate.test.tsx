@@ -2,7 +2,6 @@
 
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import type { ChatMessage, UserRef } from '@atrium/surface-client';
-import { encodeEventHandle } from '@atrium/surface-client/handle';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ThemeProvider } from '../theme';
 import { ThreadPanelHarness as ThreadPanel } from '../../test/renderConversation';
@@ -124,6 +123,6 @@ describe('ThreadPanel delegate to agent', () => {
 
     expect(screen.getByTestId('composer-audience-pill').getAttribute('aria-checked')).toBe('true');
     expect(screen.getByPlaceholderText('Prompt agent…')).toBeTruthy();
-    expect(screen.getAllByText(`/e/${encodeEventHandle(reply.id!)}`).length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Ada Lovelace: Reply message').length).toBeGreaterThan(0);
   });
 });

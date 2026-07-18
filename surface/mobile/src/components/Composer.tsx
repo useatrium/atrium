@@ -125,6 +125,7 @@ export interface ComposerProps {
   /** Attached-session threads start with the agent audience selected. */
   initialAgentMode?: boolean;
   onConfigureAgentMode?: () => void;
+  onJumpToEvent?: (eventId: number) => void;
 }
 
 export interface ComposerHandle {
@@ -184,6 +185,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     agentRouting,
     initialAgentMode = false,
     onConfigureAgentMode,
+    onJumpToEvent,
   }: ComposerProps,
   ref,
 ) {
@@ -726,7 +728,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               borderColor: colors.border,
               borderRadius: radius.md,
               borderWidth: 1,
-              flex: 1,
+              flex: agentAnchor ? undefined : 1,
               minHeight: 32,
               justifyContent: 'center',
               paddingHorizontal: space.sm,
@@ -737,12 +739,54 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             </Text>
           </Pressable>
           {agentAnchor ? (
-            <Text
-              numberOfLines={1}
-              style={{ color: colors.textSecondary, flexShrink: 1, fontSize: font.xs, maxWidth: 120 }}
+            <View
+              style={{
+                alignItems: 'stretch',
+                backgroundColor: colors.bgElevated,
+                borderColor: colors.border,
+                borderRadius: radius.md,
+                borderWidth: 1,
+                flex: 1,
+                flexDirection: 'row',
+                minWidth: 0,
+                overflow: 'hidden',
+              }}
             >
-              ⚓ {agentAnchor.label}
-            </Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Jump to anchored message"
+                accessibilityState={{ disabled: onJumpToEvent == null }}
+                disabled={onJumpToEvent == null}
+                onPress={() => onJumpToEvent?.(agentAnchor.eventId)}
+                style={({ pressed }) => ({
+                  backgroundColor: pressed ? colors.bgPressed : 'transparent',
+                  flex: 1,
+                  justifyContent: 'center',
+                  minHeight: 30,
+                  minWidth: 0,
+                  paddingHorizontal: space.sm,
+                })}
+              >
+                <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: font.xs }}>
+                  ⚓ {agentAnchor.label}
+                </Text>
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Clear anchor"
+                onPress={() => setAgentAnchor(null)}
+                hitSlop={8}
+                style={({ pressed }) => ({
+                  alignItems: 'center',
+                  backgroundColor: pressed ? colors.bgPressed : 'transparent',
+                  justifyContent: 'center',
+                  minHeight: 30,
+                  width: 32,
+                })}
+              >
+                <Text style={{ color: colors.textMuted, fontSize: font.xs, fontWeight: '700' }}>✕</Text>
+              </Pressable>
+            </View>
           ) : null}
         </View>
       ) : null}

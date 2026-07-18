@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { createRef } from 'react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { Composer } from './Composer';
+import { Composer, type ComposerHandle } from './Composer';
 
 const channelContext = { scope: 'channel' as const, channelLabel: '#engineering' };
 
@@ -27,6 +28,49 @@ afterEach(() => {
 });
 
 describe('Composer audience control', () => {
+  it('does not render an anchor chip without an explicit anchor', () => {
+    renderComposer();
+    fireEvent.click(toggle());
+
+    expect(screen.queryByRole('button', { name: 'Jump to anchored message' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Clear anchor' })).toBeNull();
+    expect(screen.queryByText('latest message')).toBeNull();
+  });
+
+  it('jumps from an explicit anchor without clearing it, then clears it separately', () => {
+    const ref = createRef<ComposerHandle>();
+    const onJumpToEvent = vi.fn();
+    const onAgentSend = vi.fn();
+    render(
+      <Composer
+        ref={ref}
+        placeholder="Message"
+        onSend={vi.fn()}
+        onJumpToEvent={onJumpToEvent}
+        routing={{ kind: 'managed', context: channelContext, onAgentSend }}
+      />,
+    );
+
+    act(() => ref.current?.activateAgentMode({ eventId: 42, label: 'Ada: Investigate the flaky test' }));
+    const jump = screen.getByRole('button', { name: 'Jump to anchored message' });
+    expect(jump.textContent).toContain('Ada: Investigate the flaky test');
+
+    fireEvent.click(jump);
+    expect(onJumpToEvent).toHaveBeenCalledWith(42);
+    expect(screen.getByRole('button', { name: 'Clear anchor' })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Clear anchor' }));
+    expect(screen.queryByRole('button', { name: 'Jump to anchored message' })).toBeNull();
+    fireEvent.change(screen.getByLabelText('Message input'), { target: { value: 'Continue without an anchor' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Start' }));
+    expect(onAgentSend).toHaveBeenCalledWith(
+      expect.not.objectContaining({ anchorEventId: expect.anything() }),
+      'Continue without an anchor',
+      undefined,
+      undefined,
+    );
+  });
+
   it('uses an icon-only switch plus persistent destination feedback', () => {
     renderComposer();
 

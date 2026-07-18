@@ -30,7 +30,6 @@ import {
   type WireEvent,
 } from '@atrium/surface-client';
 import { useWs } from '@atrium/surface-client';
-import { encodeEventHandle } from '@atrium/surface-client/handle';
 import { Avatar } from './components/Avatar';
 import { ActivityView } from './components/ActivityView';
 import { labelForCallChannel, userForCall } from './callPresentation';
@@ -73,6 +72,7 @@ import { channelAvatarName, channelLabel, dmPartner } from '@atrium/surface-clie
 import { clearCache, eventCache } from './cacheIdb';
 import { hydrateCachedTimelines } from './hydration';
 import { useAgentProfiles } from './useAgentProfiles';
+import { agentAnchorLabel } from './lib/agentAnchorLabel';
 import { useCall } from './useCall';
 import { useCallsAvailable } from './useCallsAvailable';
 import {
@@ -1754,7 +1754,7 @@ export function Chat({
     };
   }, [active, onApiError, openThreadInChannel, pendingEntryHandle, pendingEntryThreadRootId]);
 
-  const jumpToMessage = async (event: WireEvent) => {
+  const jumpToMessage = async (event: Pick<WireEvent, 'channelId' | 'id'>) => {
     const channelId = event.channelId;
     if (!channelId) return;
     goToChannel(channelId);
@@ -2494,7 +2494,7 @@ export function Chat({
                   message.id != null &&
                   channelComposerRef.current?.activateAgentMode({
                     eventId: message.id,
-                    label: `/e/${encodeEventHandle(message.id)}`,
+                    label: agentAnchorLabel({ ...message, id: message.id }),
                   })
                 }
                 unreadDividerAfterId={unreadDividerAfterId}
@@ -2541,6 +2541,7 @@ export function Chat({
                   onAgentSend: (request, text, attachments, attachmentRefs) =>
                     sendAgent(active.id, request, text, attachments, attachmentRefs),
                 }}
+                onJumpToEvent={(eventId) => void jumpToMessage({ channelId: active.id, id: eventId })}
                 previewEntryLinks
                 allowAttachments
                 mentionContext={{

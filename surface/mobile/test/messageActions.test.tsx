@@ -5,7 +5,7 @@ import { act, cleanup, fireEvent, screen } from '@testing-library/react';
 import { Text } from 'react-native';
 import type { ChatMessage } from '@atrium/surface-client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { MessageActions, MessageActionSheet } from '../src/components/MessageActions';
+import { agentAnchorLabel, MessageActions, MessageActionSheet } from '../src/components/MessageActions';
 import { renderWithTheme } from './rnTestUtils';
 
 const setStringAsync = vi.fn(async (_value: string) => {});
@@ -75,6 +75,24 @@ describe('MessageActions', () => {
   afterEach(() => {
     cleanup();
     vi.useRealTimers();
+  });
+
+  it('builds a human anchor label and falls back to the entry handle for attachment-only messages', () => {
+    expect(
+      agentAnchorLabel({
+        ...message({ text: 'Ship the mobile anchor chip\nwith a readable label that is deliberately too long' }),
+        id: 42,
+      }),
+    ).toBe('Riley: Ship the mobile anchor chip with a read…');
+    expect(
+      agentAnchorLabel({
+        ...message({
+          text: '',
+          attachments: [{ id: 'file-1', filename: 'plan.pdf', contentType: 'application/pdf', size: 12 }],
+        }),
+        id: 42,
+      }),
+    ).toBe('/e/evt_42');
   });
 
   it('copies visible block text and shows copied feedback before closing', async () => {
