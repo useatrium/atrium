@@ -131,8 +131,18 @@ def with_client(operation: Callable[[AtriumPreviewClient], None]) -> None:
 def create(
     ref: str = typer.Option(..., "--ref", help="Branch or ref already pushed to origin"),
     repo: str = typer.Option(DEFAULT_REPO, "--repo", help="GitHub repository"),
+    fresh: bool = typer.Option(
+        False,
+        "--fresh",
+        help="Force a brand-new stack instead of reusing/updating this branch's preview.",
+    ),
 ) -> None:
-    """Create a preview and wait until it is ready or failed."""
+    """Create a preview and wait until it is ready or failed.
+
+    Re-running for the same branch reuses that branch's preview and pushes the new
+    commit into it in place (keeping the warm agent image and Postgres data); pass
+    --fresh to build a separate new stack.
+    """
     if repo != DEFAULT_REPO:
         fail(PreviewError(f"--repo must be {DEFAULT_REPO}"))
     try:
@@ -142,7 +152,7 @@ def create(
 
     def run(client: AtriumPreviewClient) -> None:
         try:
-            current = client.create(repo, ref)
+            current = client.create(repo, ref, fresh=fresh)
         except LauncherHTTPError as exc:
             if exc.status_code == 429:
                 render_capacity(client, exc)
