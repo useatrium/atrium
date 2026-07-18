@@ -40,12 +40,28 @@ deploy/preview/ovh/
 ```
 
 ## Launcher API (KEEP identical to AWS launcher for drop-in tooling)
-- `POST /previews`  body `{repo, ref, ttl_hours, requested_by}` → `202 {id, phase}`
+- `POST /previews`  body `{repo, ref, ttl_hours, requested_by, fresh?}` → `202 {id, phase, action}`
 - `GET  /previews/<id>` → status object (fields below)
 - `DELETE /previews/<id>` → destroy
 - `GET  /healthz` → 200
 - Auth: `Authorization: Bearer <ATRIUM_PREVIEW_LAUNCHER_TOKEN>` on all but /healthz.
 - `repo` allowlist: `{"useatrium/atrium"}`. `ttl_hours` in [1, 72], default 24.
+
+### Reuse-by-branch + in-place update (default)
+`POST /previews` is **reuse-by-branch**: if a non-terminal preview already exists for
+`(repo, ref)`, the new commit is pushed into it **in place** rather than building a new
+stack — the k3d cluster, Postgres data, ports, MinIO bucket, caddy route, and the node's
+warm images (incl. the fat agent image → warm sandboxes) are all kept. `action` in the
+response is `created` | `updating`. The reuse decision is atomic under the store lock
+(two same-branch creates can't both build), and concurrent updates of one preview are
+serialized. Pass `fresh: true` to force a brand-new stack.
+
+The update is change-detected (`git diff old..new`, patterns mirror `deploy/redeploy.sh`):
+only the changed side rebuilds — surface swaps its image via `compose up` **preserving the
+`.env` secrets** (regenerating them would lock the server out of its own Postgres); centaur
+does `helm upgrade` with only changed images rebuilt and the rest retagged old→new (same
+digest = no re-pull). A docs-only commit is a no-op TTL bump. An update **never tears the
+preview down** — on failure it stays `ready` on the old code with `failure_message` set.
 
 ### Status object fields (KEEP)
 `id, repo, ref, commit_sha, status, url, initial_url, expires_at, phase, phase_time,

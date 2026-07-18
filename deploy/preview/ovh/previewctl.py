@@ -218,6 +218,20 @@ def commit_build_lock(commit_sha: str) -> Iterator[None]:
             fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 
+@contextlib.contextmanager
+def preview_update_lock(preview_id: str) -> Iterator[None]:
+    """Serialize in-place updates of one preview so two commits can't redeploy
+    the same stack at once."""
+    ensure_state_dir()
+    path = STATE_DIR / "locks" / f"update-{preview_id}.lock"
+    with path.open("a+") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
 def seed_git_repo(tree: Path, commit_sha: str) -> None:
     """Give an exported source tree a throwaway git history.
 
@@ -319,6 +333,98 @@ def build_and_push_images(source: Path, commit_sha: str) -> None:
         target = f"{REGISTRY_PUSH}/library/{image}:{commit_sha}"
         run(["docker", "tag", f"{image}:latest", target])
         run(["docker", "push", target], capture=False)
+
+
+# Which image each changed path affects — mirrors deploy/redeploy.sh's per-side
+# change detection (keep in sync). A change outside these rebuilds nothing, so a
+# docs-only commit costs an update nothing. Keys match CENTAUR_IMAGES.
+CENTAUR_IMAGE_TRIGGERS = {
+    "api-rs": r"^centaur/services/(api-rs|workflow-python)/|^centaur/(tools|workflows)/|^centaur/Cargo",
+    "iron-proxy": r"^centaur/services/iron-proxy/",
+    "sandbox": r"^centaur/services/(sandbox|workflow-python)/|^centaur/(tools|workflows|\.agents|harness|crates|centaur_sdk)/",
+    "node-sync": r"^runtime/node-sync/",
+    "console": r"^centaur/services/console/",
+}
+
+
+def plan_update(old_sha: str, new_sha: str) -> tuple[bool, set[str]]:
+    """Decide what a commit-to-commit update must rebuild.
+
+    Returns (surface_changed, {changed centaur service}). The diff runs in ROOT
+    (the launcher checkout, which has real history — the per-preview source is a
+    seeded throwaway repo). If either commit is unknown, rebuild everything: a
+    correct-but-slow update beats a fast one that ships stale code.
+    """
+    best_effort(["git", "fetch", "--quiet", "origin"])
+    try:
+        out = run(["git", "diff", "--name-only", old_sha, new_sha])
+    except RuntimeError:
+        return True, set(CENTAUR_IMAGES)
+    paths = {line.strip() for line in out.splitlines() if line.strip()}
+    surface = any(path.startswith("surface/") for path in paths)
+    centaur = {
+        service
+        for service, pattern in CENTAUR_IMAGE_TRIGGERS.items()
+        if any(re.match(pattern, path) for path in paths)
+    }
+    return surface, centaur
+
+
+def retag_registry_image(image: str, old_sha: str, new_sha: str) -> None:
+    """Republish an unchanged image under the new SHA. Same digest, so a later
+    `helm upgrade`/pod pull is a manifest-only no-op — no multi-GB transfer. This
+    is what keeps a same-image update from re-pulling the fat agent image."""
+    old_ref = f"{REGISTRY_PUSH}/library/{image}:{old_sha}"
+    new_ref = f"{REGISTRY_PUSH}/library/{image}:{new_sha}"
+    run(["docker", "pull", old_ref], capture=False)
+    run(["docker", "tag", old_ref, new_ref])
+    run(["docker", "push", new_ref], capture=False)
+
+
+def build_surface_image(source: Path, commit_sha: str) -> None:
+    if registry_has_image("atrium-surface", commit_sha):
+        return
+    target = f"{REGISTRY_PUSH}/library/atrium-surface:{commit_sha}"
+    run(
+        [
+            "docker",
+            "build",
+            "--label",
+            f"org.opencontainers.image.revision={commit_sha}",
+            "-f",
+            str(source / "surface" / "deploy" / "Dockerfile.server"),
+            "-t",
+            target,
+            str(source),
+        ],
+        capture=False,
+    )
+    run(["docker", "push", target], capture=False)
+
+
+def sync_centaur_images_for_update(source: Path, new_sha: str, old_sha: str, changed: set[str]) -> None:
+    """Make every centaur image resolvable at new_sha for the helm upgrade: build
+    the changed services, retag the rest from old_sha. deploy_centaur references
+    all five by one tag, so they must all exist — but only the changed ones pay a
+    real build."""
+    for service, image in CENTAUR_IMAGES.items():
+        if registry_has_image(image, new_sha):
+            continue
+        if service in changed:
+            run(
+                ["just", f"image_revision={new_sha}", "build-one", service],
+                cwd=source / "centaur",
+                capture=False,
+                env={
+                    "CENTAUR_AGENT_DOCKERFILE": "services/sandbox/Dockerfile.agent",
+                    "RUST_BUILD_PROFILE": "release",
+                },
+            )
+            target = f"{REGISTRY_PUSH}/library/{image}:{new_sha}"
+            run(["docker", "tag", f"{image}:latest", target])
+            run(["docker", "push", target], capture=False)
+        else:
+            retag_registry_image(image, old_sha, new_sha)
 
 
 def build_web(source: Path) -> None:
@@ -509,6 +615,19 @@ def write_surface_files(state: dict[str, Any]) -> None:
     }
     (runtime / ".env").write_text("".join(f"{key}={value}\n" for key, value in env_values.items()))
     (runtime / ".env").chmod(0o600)
+    write_compose_override(state)
+
+
+def write_compose_override(state: dict[str, Any]) -> None:
+    """Write the per-preview compose override (image tag + port publishing).
+
+    Carries NO secrets — every secret is a `${VAR}` read from the sibling `.env`.
+    That is what lets an in-place update swap the surface image tag here without
+    touching (and regenerating) the secrets in `.env`, which would otherwise
+    lock the server out of its own Postgres.
+    """
+    runtime = runtime_dir(state["preview_id"])
+    ports = state["ports"]
     (runtime / "docker-compose.preview.yml").write_text(
         textwrap.dedent(
             f"""\
@@ -976,6 +1095,87 @@ def cmd_create(args: argparse.Namespace) -> None:
     print(json.dumps(public_status(state), indent=2))
 
 
+def cmd_update(args: argparse.Namespace) -> None:
+    """Push a new commit into a running preview in place.
+
+    Reuses the k3d cluster, Postgres data, ports, MinIO bucket, caddy route, and
+    the node's warm images. Only the changed side rebuilds and redeploys; the
+    stack keeps serving the old version throughout (status stays `ready`) and is
+    never torn down, even on failure — a bad update leaves the preview standing
+    with a failure_message rather than deleting it.
+    """
+    validate_preview_id(args.preview_id)
+    with preview_update_lock(args.preview_id):
+        state = load_state(args.preview_id)
+        if state is None or state.get("status") == "destroyed":
+            raise RuntimeError(f"no preview to update: {args.preview_id}")
+        if not state.get("ports") or not state.get("source_dir"):
+            raise RuntimeError(f"preview {args.preview_id} was never fully provisioned; recreate it")
+
+        old_sha = state["commit_sha"]
+        new_sha = commit_for_ref(args.ref)
+        state["ref"] = args.ref
+        if args.ttl_hours:
+            state["expires_at"] = (now_utc() + dt.timedelta(hours=args.ttl_hours)).isoformat()
+        url = state.get("url") or f"https://{args.preview_id}.{PREVIEW_DOMAIN}"
+
+        if new_sha == old_sha:
+            write_phase(state, "ready", status="ready", url=url, failure_message=None)
+            print(json.dumps(public_status(state), indent=2))
+            return
+
+        surface_changed, centaur_changed = plan_update(old_sha, new_sha)
+        if not surface_changed and not centaur_changed:
+            # The commit moved but touched nothing this box builds (docs, unrelated
+            # dirs): adopt the new SHA so the next diff is against it, and stop.
+            state["commit_sha"] = new_sha
+            write_phase(state, "ready", status="ready", url=url, failure_message=None)
+            print(json.dumps(public_status(state), indent=2))
+            return
+
+        try:
+            write_phase(state, "source")
+            source = source_for_commit(new_sha)
+            state["source_dir"] = str(source)
+            save_state(state)
+
+            write_phase(state, "surface-build")
+            with commit_build_lock(new_sha):
+                if surface_changed:
+                    build_surface_image(source, new_sha)
+                    build_web(source)
+                if centaur_changed:
+                    sync_centaur_images_for_update(source, new_sha, old_sha, centaur_changed)
+
+            # Images exist at new_sha; adopt it so the deploy steps reference them.
+            state["commit_sha"] = new_sha
+            save_state(state)
+
+            if centaur_changed:
+                write_phase(state, "centaur-deploy")
+                deploy_centaur(state)
+
+            if surface_changed:
+                write_phase(state, "surface-up")
+                # Rewrite ONLY the compose override (new image tag). The .env — and
+                # its DB password / session secret — is left as-is; regenerating it
+                # would lock the server out of its own Postgres.
+                write_compose_override(state)
+                run(compose_command(state, "up", "-d", "--no-build"), capture=False)
+                write_phase(state, "healthz")
+                wait_for_url(f"http://127.0.0.1:{state['ports']['surface']}/healthz")
+
+            write_phase(
+                state, "ready", status="ready", url=url, ready_at=now_utc().isoformat(), failure_message=None
+            )
+        except Exception as err:
+            # Never tear down on a failed update — the preview is still standing
+            # (old or partially-updated). Keep it findable/reusable, flag the fault.
+            write_phase(state, "update-failed", status="ready", failure_message=str(err))
+            raise
+    print(json.dumps(public_status(state), indent=2))
+
+
 def cmd_status(args: argparse.Namespace) -> None:
     state = load_state(args.preview_id)
     if state is None:
@@ -1073,6 +1273,12 @@ def main() -> None:
     create.add_argument("--preview-id")
     create.add_argument("--ttl-hours", type=int, default=24)
     create.set_defaults(func=cmd_create)
+
+    update = sub.add_parser("update")
+    update.add_argument("preview_id")
+    update.add_argument("ref", nargs="?", default="HEAD")
+    update.add_argument("--ttl-hours", type=int, default=24)
+    update.set_defaults(func=cmd_update)
 
     status = sub.add_parser("status")
     status.add_argument("preview_id")
