@@ -2569,6 +2569,11 @@ impl SessionRuntime {
                     "execution_id": execution_id,
                     "thread_key": thread_key.as_str(),
                     "error": error_message,
+                    // Same low-cardinality class the failure metric records, so
+                    // the transcript can attribute the failure without re-parsing
+                    // the prose `error`. Rides the client frame via the `...data`
+                    // spread in centaur-client stream translation.
+                    "failure_class": runtime_error_failure_class(error),
                 }),
             )
             .await;
@@ -6575,6 +6580,10 @@ async fn record_terminal_output(
                         "execution_id": execution_id,
                         "thread_key": thread_key.as_str(),
                         "error": error.as_str(),
+                        // Low-cardinality class (mirrors the failure metric) so the
+                        // client can attribute the failure off a stable enum instead
+                        // of matching the prose `error`.
+                        "failure_class": failure_class,
                     }),
                 )
                 .await?;
@@ -6778,6 +6787,8 @@ async fn record_execution_startup_failure(
                 "error": error,
                 "reason": "startup_turn_not_accepted",
                 "startup_timeout_ms": startup_timeout_ms,
+                // Matches the "timeout" class recorded by the failure metric below.
+                "failure_class": "timeout",
             }),
         )
         .await?;
@@ -6875,6 +6886,8 @@ async fn record_max_duration_failure(
                 "error": error,
                 "reason": "max_duration_exceeded",
                 "max_duration_ms": max_duration_ms,
+                // Matches the "timeout" class recorded by the failure metric below.
+                "failure_class": "timeout",
             }),
         )
         .await?;

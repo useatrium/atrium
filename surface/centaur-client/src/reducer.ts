@@ -198,8 +198,11 @@ export interface SessionState {
    * (durable event); cleared when a new turn starts. Pass to `classifyFailure`. */
   failureReason?: string;
   /** Machine failure code from the terminal `execution_state` (`reason`), e.g.
-   * `startup_turn_not_accepted`. Classifies infra vs agent failures. */
+   * `startup_turn_not_accepted`. Retained for the `classifyFailure` legacy path. */
   failureCode?: string;
+  /** Stable low-cardinality failure class from api-rs (`failure_class`), folded on
+   * a terminal failure. The primary attribution signal for `classifyFailure`. */
+  failureClass?: string;
   models: string[];
   costUsd: number;
   lastEventId: number;
@@ -283,6 +286,7 @@ function reduceSessionFrame(state: SessionState, frame: CentaurEventFrame): Sess
       if (frame.data.status === 'failed' || frame.data.status === 'failed_permanent') {
         if (typeof frame.data.terminal_reason === 'string') next.failureReason = frame.data.terminal_reason;
         if (typeof frame.data.reason === 'string') next.failureCode = frame.data.reason;
+        if (typeof frame.data.failure_class === 'string') next.failureClass = frame.data.failure_class;
       }
       resolveOpenQuestions(next, frame.event_id, 'cancelled');
     } else if (!wasActive) {
@@ -294,6 +298,7 @@ function reduceSessionFrame(state: SessionState, frame: CentaurEventFrame): Sess
       next.stoppedByUser = false;
       delete next.failureReason;
       delete next.failureCode;
+      delete next.failureClass;
     }
     return next;
   }

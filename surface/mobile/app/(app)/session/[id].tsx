@@ -815,6 +815,7 @@ export default function SessionScreen() {
     () =>
       classifyFailure({
         status: displayStatus,
+        failureClass: stream.failureClass,
         failureReason: stream.failureReason,
         failureCode: stream.failureCode,
       }),
