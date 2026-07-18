@@ -95,6 +95,82 @@ describe('tool default visibility', () => {
 });
 
 describe('turn work folds', () => {
+  it('splits work into chronological runs around intermediate narration', () => {
+    const items = [
+      { ...item('ask', 'user_message', 'exe-1'), text: 'Ship it', ts: '2026-07-14T12:00:00.000Z' },
+      {
+        ...item('tool-1', 'tool_call', 'exe-1'),
+        name: 'Bash',
+        input: {},
+        result: { content: 'ok', is_error: false },
+        ts: '2026-07-14T12:00:01.000Z',
+      },
+      { ...item('narration', 'text', 'exe-1'), text: 'The first check passed.', ts: '2026-07-14T12:00:02.000Z' },
+      { ...item('thought-2', 'reasoning', 'exe-1'), text: 'Verify the build', ts: '2026-07-14T12:00:03.000Z' },
+      {
+        ...item('tool-2', 'tool_call', 'exe-1'),
+        name: 'Read',
+        input: {},
+        result: { content: 'clean', is_error: false },
+        ts: '2026-07-14T12:00:04.000Z',
+      },
+      { ...item('answer', 'text', 'exe-1'), text: 'Done', ts: '2026-07-14T12:00:07.000Z' },
+    ] as SessionItem[];
+
+    const folds = foldedTurnRows(items);
+
+    expect(folds).toHaveLength(2);
+    expect(folds[0]).toMatchObject({
+      key: 'turn-1-tool-1',
+      turn: 1,
+      executionId: 'exe-1',
+      items: [items[1]],
+      toolNames: ['Bash'],
+      startIndex: 1,
+      endIndex: 1,
+      triggerIndex: 0,
+      triggerOrdinal: 0,
+      replyIndex: null,
+      durationMs: 0,
+      completed: true,
+    });
+    expect(folds[1]).toMatchObject({
+      key: 'turn-1-thought-2',
+      turn: 1,
+      executionId: 'exe-1',
+      items: [items[3], items[4]],
+      toolNames: ['Read'],
+      startIndex: 3,
+      endIndex: 4,
+      triggerIndex: 0,
+      triggerOrdinal: 0,
+      replyIndex: 5,
+      durationMs: 4000,
+      completed: true,
+    });
+    expect(folds.map((fold) => fold.startIndex)).toEqual([1, 3]);
+  });
+
+  it('keeps uninterrupted work in exactly one fold', () => {
+    const items = [
+      { ...item('ask', 'user_message', 'exe-1'), text: 'Ship it' },
+      { ...item('thought', 'reasoning', 'exe-1'), text: 'Think' },
+      { ...item('tool', 'tool_call', 'exe-1'), name: 'Bash', input: {} },
+      { ...item('answer', 'text', 'exe-1'), text: 'Done' },
+    ] as SessionItem[];
+
+    const folds = foldedTurnRows(items);
+
+    expect(folds).toHaveLength(1);
+    expect(folds[0]).toMatchObject({
+      items: [items[1], items[2]],
+      startIndex: 1,
+      endIndex: 2,
+      replyIndex: 3,
+      completed: true,
+    });
+  });
+
   it('groups work after each human input and before that turn’s final answer', () => {
     const items = [
       { ...item('ask-1', 'user_message', 'exe-1'), text: 'First', ts: '2026-07-14T12:00:00.000Z' },
@@ -149,6 +225,27 @@ describe('turn work folds', () => {
 });
 
 describe('live turn work folds', () => {
+  it('keeps only the final run of the final unanswered turn incomplete and live', () => {
+    const folds = foldedTurnRows([
+      { ...item('ask-1', 'user_message', 'exe-1'), text: 'First' },
+      { ...item('tool-1a', 'tool_call', 'exe-1'), name: 'Bash', input: {} },
+      { ...item('narration-1', 'text', 'exe-1'), text: 'Still working' },
+      { ...item('tool-1b', 'tool_call', 'exe-1'), name: 'Read', input: {} },
+      { ...item('ask-2', 'user_message', 'exe-2'), text: 'Second' },
+      { ...item('tool-2a', 'tool_call', 'exe-2'), name: 'Bash', input: {} },
+      { ...item('narration-2', 'text', 'exe-2'), text: 'One more check' },
+      { ...item('tool-2b', 'tool_call', 'exe-2'), name: 'Read', input: {} },
+    ] as SessionItem[]);
+
+    expect(folds.map((fold) => [fold.key, fold.replyIndex, fold.completed])).toEqual([
+      ['turn-1-tool-1a', null, true],
+      ['turn-1-tool-1b', null, true],
+      ['turn-2-tool-2a', null, true],
+      ['turn-2-tool-2b', null, false],
+    ]);
+    expect(folds.map((fold) => isLiveFold(fold, folds, true))).toEqual([false, false, false, true]);
+  });
+
   it('marks an incomplete newest fold live while the conversation is active', () => {
     const folds = foldedTurnRows([
       { ...item('ask', 'user_message'), text: 'Run it' },

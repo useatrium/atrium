@@ -1,5 +1,6 @@
 import { fileChangeFromToolCall, type TurnWorkItem } from '@atrium/centaur-client';
 import { InlineFileChange } from './fileChangeView';
+import { SessionMarkdown } from './Markdown';
 
 function StepActions({ onOpenWork, onDiscuss }: { onOpenWork?: () => void; onDiscuss?: () => void }) {
   if (!onOpenWork && !onDiscuss) return null;
@@ -40,22 +41,18 @@ export function StepDetail({
       );
     }
 
-    const command = typeof item.input.command === 'string' ? item.input.command : null;
+    const hasCommand = typeof item.input.command === 'string';
     const rest = Object.fromEntries(Object.entries(item.input).filter(([key]) => key !== 'command'));
     const argumentsJson = Object.keys(rest).length > 0 ? JSON.stringify(rest, null, 2) : null;
+    const resultContent = item.result?.content.trim() ? item.result.content : null;
     return (
       <div data-testid={`step-detail-${item.id}`} className="ml-6 mt-1 rounded-md border border-edge bg-surface/70 p-2">
-        {command && (
-          <pre className="max-h-48 overflow-hidden whitespace-pre-wrap break-words font-mono text-xs leading-4 text-fg-secondary">
-            {command}
-          </pre>
-        )}
         {argumentsJson && (
           <pre className="mt-1 max-h-48 overflow-hidden whitespace-pre-wrap break-words font-mono text-xs leading-4 text-fg-muted">
             {argumentsJson}
           </pre>
         )}
-        {item.result && (
+        {item.result && resultContent && (
           <pre
             className={`mt-1.5 max-h-48 overflow-hidden whitespace-pre-wrap break-words rounded border px-2 py-1.5 font-mono text-xs leading-4 ${
               item.result.is_error
@@ -63,10 +60,10 @@ export function StepDetail({
                 : 'border-edge bg-surface text-fg-secondary'
             }`}
           >
-            {item.result.content}
+            {resultContent}
           </pre>
         )}
-        {!command && !argumentsJson && !item.result && (
+        {!hasCommand && !argumentsJson && !resultContent && (
           <span className="text-xs text-fg-muted">No detail recorded.</span>
         )}
         <StepActions onOpenWork={onOpenWork} onDiscuss={onDiscuss} />
@@ -76,9 +73,7 @@ export function StepDetail({
 
   return (
     <div data-testid={`step-detail-${item.id}`} className="ml-6 mt-1 rounded-md border border-edge bg-surface/70 p-2">
-      <pre className="max-h-48 overflow-hidden whitespace-pre-wrap break-words font-mono text-xs leading-4 text-fg-secondary">
-        {item.text || 'No detail recorded.'}
-      </pre>
+      <SessionMarkdown text={item.text || item.summary || 'No detail recorded.'} />
       <StepActions onOpenWork={onOpenWork} onDiscuss={onDiscuss} />
     </div>
   );

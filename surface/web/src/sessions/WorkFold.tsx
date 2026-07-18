@@ -30,8 +30,17 @@ function firstLine(value: string): string {
   return value.split(/\r?\n/, 1)[0]?.trim() ?? '';
 }
 
+function stripInlineMarkdown(value: string): string {
+  return value
+    .replace(/^\s*(?:[-*]\s+|#+\s*)/, '')
+    .replace(/\*\*(?=\S)(.+?\S)\*\*/g, '$1')
+    .replace(/\*(?=\S)(.+?\S)\*/g, '$1')
+    .replace(/`([^`]+)`/g, '$1')
+    .trim();
+}
+
 function stepSummary(item: TurnWorkItem): string {
-  if (item.type === 'reasoning') return firstLine(item.summary || item.text) || 'Reasoning';
+  if (item.type === 'reasoning') return stripInlineMarkdown(firstLine(item.summary || item.text)) || 'Reasoning';
   const descriptor = toolDisplay(item);
   return descriptor.subtitle ? `${descriptor.title} · ${descriptor.subtitle}` : descriptor.title;
 }

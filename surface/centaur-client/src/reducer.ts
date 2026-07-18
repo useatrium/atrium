@@ -2,7 +2,7 @@ import type {
   AmpAssistantEvent,
   CodexAgentMessageDeltaEvent,
   CodexCommandExecutionOutputDeltaEvent,
-  CodexItem,
+  CodexItem as BaseCodexItem,
   CodexItemCompletedEvent,
   CodexItemStartedEvent,
   CodexReasoningSummaryTextDeltaEvent,
@@ -19,6 +19,10 @@ import type {
   QuestionResolved,
 } from './types.js';
 import { isTerminalExecutionStatus, isUserStoppedExecutionState } from './types.js';
+
+type CodexItem = BaseCodexItem & {
+  aggregatedOutput?: string;
+};
 
 export interface TextItem {
   type: 'text';
@@ -1399,6 +1403,9 @@ function codexCommandOutput(item: CodexItem, fallback: string): string {
     return [item.stdout, item.stderr]
       .filter((part): part is string => typeof part === 'string' && part.length > 0)
       .join('');
+  }
+  if (typeof item.aggregatedOutput === 'string') {
+    return item.aggregatedOutput;
   }
   if (typeof item.text === 'string') {
     return item.text;
