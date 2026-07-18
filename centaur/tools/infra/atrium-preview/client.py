@@ -102,8 +102,12 @@ class AtriumPreviewClient:
             raise PreviewError("launcher returned an unexpected JSON value")
         return payload
 
-    def create(self, repo: str, ref: str) -> dict[str, Any]:
-        return self._request("POST", "/previews", {"repo": repo, "ref": ref})
+    def create(self, repo: str, ref: str, *, fresh: bool = False) -> dict[str, Any]:
+        body: dict[str, Any] = {"repo": repo, "ref": ref}
+        if fresh:
+            # Reuse-by-branch is the launcher default; opt out for a separate stack.
+            body["fresh"] = True
+        return self._request("POST", "/previews", body)
 
     def status(self, preview_id: str) -> dict[str, Any]:
         return self._request("GET", _preview_path(preview_id))
