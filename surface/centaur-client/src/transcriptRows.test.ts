@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { SessionItem, ToolCallItem } from './reducer.js';
 import {
+  coalesceTurnFolds,
   foldedTurnRows,
   focusTranscriptRows,
   fullTranscriptRows,
@@ -272,5 +273,62 @@ describe('live turn work folds', () => {
     ] as SessionItem[]);
 
     expect(isLiveFold(folds[0]!, folds, false)).toBe(false);
+  });
+});
+
+describe('coalesceTurnFolds', () => {
+  it('merges a turn`s interleaved runs into one fold, leaving separate turns alone', () => {
+    const items = [
+      { ...item('ask-1', 'user_message', 'exe-1'), text: 'First', ts: '2026-07-14T12:00:00.000Z' },
+      {
+        ...item('tool-1', 'tool_call', 'exe-1'),
+        name: 'Bash',
+        input: {},
+        result: { content: 'ok', is_error: false },
+        ts: '2026-07-14T12:00:01.000Z',
+      },
+      { ...item('narration', 'text', 'exe-1'), text: 'progress', ts: '2026-07-14T12:00:02.000Z' },
+      {
+        ...item('tool-2', 'tool_call', 'exe-1'),
+        name: 'Read',
+        input: {},
+        result: { content: 'clean', is_error: false },
+        ts: '2026-07-14T12:00:05.000Z',
+      },
+      { ...item('answer-1', 'text', 'exe-1'), text: 'Done', ts: '2026-07-14T12:00:06.000Z' },
+      { ...item('ask-2', 'user_message', 'exe-2'), text: 'Second', ts: '2026-07-14T12:00:07.000Z' },
+      {
+        ...item('tool-3', 'tool_call', 'exe-2'),
+        name: 'Bash',
+        input: {},
+        result: { content: 'ok2', is_error: false },
+        ts: '2026-07-14T12:00:08.000Z',
+      },
+    ] as SessionItem[];
+
+    const split = foldedTurnRows(items);
+    expect(split.map((fold) => fold.turn)).toEqual([1, 1, 2]);
+
+    const coalesced = coalesceTurnFolds(split);
+    expect(coalesced).toHaveLength(2);
+    expect(coalesced[0]!.items.map((entry) => entry.id)).toEqual(['tool-1', 'tool-2']);
+    expect(coalesced[0]!.toolNames).toEqual(['Bash', 'Read']);
+    expect(coalesced[0]!.startIndex).toBe(1);
+    expect(coalesced[0]!.endIndex).toBe(3);
+    expect(coalesced[0]!.durationMs).toBe(4000); // tool-1 12:00:01 → tool-2 12:00:05
+    expect(coalesced[0]!.completed).toBe(true);
+    expect(coalesced[1]!.items.map((entry) => entry.id)).toEqual(['tool-3']);
+  });
+
+  it('is a no-op when every turn already has a single fold', () => {
+    const items = [
+      { ...item('ask', 'user_message', 'exe-1'), text: 'Go' },
+      { ...item('reasoning', 'reasoning', 'exe-1'), text: 'Think' },
+      { ...item('tool', 'tool_call', 'exe-1'), name: 'Bash', input: {} },
+      { ...item('answer', 'text', 'exe-1'), text: 'Done' },
+    ] as SessionItem[];
+    const split = foldedTurnRows(items);
+    expect(split).toHaveLength(1);
+    expect(coalesceTurnFolds(split)).toHaveLength(1);
   });
 });

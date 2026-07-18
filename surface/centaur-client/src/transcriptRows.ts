@@ -138,6 +138,33 @@ export function foldedTurnRows(items: readonly SessionItem[]): FoldedTurnRow[] {
   return folds;
 }
 
+/**
+ * Merges a turn's contiguous work runs back into one fold per turn. The session
+ * pane keeps the split runs (they interleave with the narration shown between
+ * them); the thread reading view — which does not render that narration — uses
+ * this so a turn shows a single "N steps" chip instead of several stacked ones.
+ */
+export function coalesceTurnFolds(folds: readonly FoldedTurnRow[]): FoldedTurnRow[] {
+  const out: FoldedTurnRow[] = [];
+  for (const fold of folds) {
+    const prev = out[out.length - 1];
+    if (prev && prev.turn === fold.turn) {
+      prev.items = [...prev.items, ...fold.items];
+      prev.toolNames = [...new Set([...prev.toolNames, ...fold.toolNames])];
+      prev.endIndex = fold.endIndex;
+      prev.replyIndex = fold.replyIndex;
+      prev.executionId = fold.executionId ?? prev.executionId;
+      prev.completed = fold.completed;
+      const durationMs = elapsedMs(prev.items[0], prev.items[prev.items.length - 1]);
+      if (durationMs !== undefined) prev.durationMs = durationMs;
+      else delete prev.durationMs;
+    } else {
+      out.push({ ...fold });
+    }
+  }
+  return out;
+}
+
 export function fullTranscriptRows<TChange>(
   items: readonly SessionItem[],
   changesAt: (index: number) => readonly TChange[],

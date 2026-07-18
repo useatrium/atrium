@@ -11,6 +11,7 @@ import type {
 import {
   artifactCount,
   changedPaths,
+  coalesceTurnFolds,
   collectArtifacts,
   collectFileChanges,
   collectSideEffects,
@@ -199,8 +200,10 @@ export function ThreadPanelContent({
   const { stream } = sessionStream;
   // Belt to the hook's own null-reset: a thread with no attached session must
   // never render work folds, whatever state the stream is carrying.
+  // The thread view does not render the narration between a turn's runs, so it
+  // coalesces them into one chip per turn; the session pane keeps them split.
   const workFolds = useMemo(
-    () => (attachedSession != null ? foldedTurnRows(stream.items) : []),
+    () => (attachedSession != null ? coalesceTurnFolds(foldedTurnRows(stream.items)) : []),
     [attachedSession, stream.items],
   );
   const fileChanges = useMemo(() => collectFileChanges(stream), [stream.items, stream.fileChanges]);
