@@ -1095,6 +1095,9 @@ export function Chat({
       onRead: (channelId, lastReadEventId) => {
         noteReadCursor(channelId, lastReadEventId);
         dispatchWithReadCache({ type: 'read-cursor', channelId, lastReadEventId, source: 'remote' });
+        // Reading a channel can retire covered to-review items server-side; the
+        // server re-pushes `read` after that settles, so refetch inbox counts.
+        scheduleActivityCountsRefresh();
       },
       onMuted: (channelId, muted) => {
         dispatch({ type: 'mute-changed', channelId, muted });

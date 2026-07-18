@@ -18,6 +18,7 @@ import {
 import type { WsHub } from '../hub.js';
 import { workspaceMemberIds } from '../membership.js';
 import { decodeRouteBody } from '../route-schema.js';
+import { retireChannelTerminalActivity } from './activity.js';
 
 const CHANNEL_RE = /^[a-z0-9][a-z0-9_-]{0,31}$/;
 
@@ -177,7 +178,7 @@ export function registerChannelRoutes(app: FastifyInstance, deps: ChannelRouteDe
       return reply.code(404).send({ error: 'channel_not_found', message: 'channel not found' });
     }
     let advanced = false;
-    return runMutation({
+    const response = await runMutation({
       userId: user.id,
       opId,
       opType: 'read.mark',
@@ -223,6 +224,22 @@ export function registerChannelRoutes(app: FastifyInstance, deps: ChannelRouteDe
         }
       },
     });
+    // Best-effort: never fail the read ack over the inbox bookkeeping.
+    try {
+      const retiredCount = await retireChannelTerminalActivity(pool, user.id, id, response.lastReadEventId);
+      if (retiredCount > 0) {
+        // A second read push, sent only after the retire committed, so clients
+        // refresh their inbox counts against the settled state.
+        hub.sendToUsers([user.id], {
+          type: 'read',
+          channelId: id,
+          lastReadEventId: response.lastReadEventId,
+        });
+      }
+    } catch (err) {
+      req.log.warn({ err, channelId: id }, 'failed to retire covered to-review activity on channel read');
+    }
+    return response;
   });
 
   app.post('/api/channels/:id/mute', async (req, reply) => {

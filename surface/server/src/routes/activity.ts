@@ -186,6 +186,154 @@ async function markActivityItemsRead(
   }
 }
 
+/**
+ * Reading a channel also retires the reader's own terminal session rows
+ * ("to review" items) that the channel cursor now covers. Terminal events are
+ * thread events, so the timeline cursor may never pass them — coverage is
+ * judged by the session's root event, which is what the channel renders (the
+ * session card shows its terminal state inline). Uses the same watermark +
+ * preserve pattern as the per-session read endpoint so other still-unreviewed
+ * rows survive the watermark jump.
+ */
+export async function retireChannelTerminalActivity(
+  pool: Db,
+  userId: string,
+  channelId: string,
+  lastReadEventId: number,
+): Promise<number> {
+  if (!Number.isSafeInteger(lastReadEventId) || lastReadEventId <= 0) return 0;
+  // Channel reads are frequent and the terminal-item scan is not free; bail on
+  // the common nothing-to-retire case with two indexed existence probes.
+  const gate = await pool.query<{ has_candidates: boolean }>(
+    `SELECT (
+       EXISTS (
+         SELECT 1 FROM activity_unread_exceptions ue
+          JOIN events e ON e.id = ue.event_id
+         WHERE ue.user_id = $1 AND e.channel_id = $2
+       )
+       OR EXISTS (
+         SELECT 1 FROM events e
+          WHERE e.channel_id = $2
+            AND e.id > COALESCE((
+              SELECT last_read_event_id FROM activity_read_cursors WHERE user_id = $1
+            ), 0)
+            AND e.type IN ('session.completed', 'session.status_changed')
+       )
+     ) AS has_candidates`,
+    [userId, channelId],
+  );
+  if (!gate.rows[0]?.has_candidates) return 0;
+
+  const covered = await pool.query<{ event_id: number | string }>(
+    `WITH read_cursor AS (
+       SELECT COALESCE((
+         SELECT last_read_event_id FROM activity_read_cursors WHERE user_id = $1
+       ), 0)::bigint AS last_read_event_id
+     ), terminal_items AS (
+       SELECT e.id AS event_id, COALESCE(e.thread_root_event_id, e.id) AS root_event_id
+         FROM events e
+         JOIN sessions s ON s.id::text = e.payload->>'sessionId'
+        WHERE e.channel_id = $2
+          AND s.spawned_by = $1
+          AND e.type = 'session.completed'
+
+       UNION ALL
+
+       SELECT e.id AS event_id, COALESCE(e.thread_root_event_id, e.id) AS root_event_id
+         FROM events e
+         JOIN sessions s ON s.id::text = e.payload->>'sessionId'
+        WHERE e.channel_id = $2
+          AND s.spawned_by = $1
+          AND e.type = 'session.status_changed'
+          AND e.payload->>'status' = 'failed'
+          AND NOT EXISTS (
+            SELECT 1 FROM events completed
+             WHERE completed.type = 'session.completed'
+               AND completed.payload->>'sessionId' = e.payload->>'sessionId'
+               AND completed.id > e.id
+          )
+     )
+     SELECT ti.event_id
+       FROM terminal_items ti
+       CROSS JOIN read_cursor
+      WHERE ti.root_event_id <= $3::bigint
+        AND (
+          ti.event_id > read_cursor.last_read_event_id
+          OR EXISTS (
+            SELECT 1 FROM activity_unread_exceptions ue
+             WHERE ue.user_id = $1 AND ue.event_id = ti.event_id
+          )
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM channel_mutes mt
+           WHERE mt.user_id = $1 AND mt.channel_id = $2
+        )
+      ORDER BY ti.event_id ASC`,
+    [userId, channelId, lastReadEventId],
+  );
+  if (covered.rows.length === 0) return 0;
+  const retired = covered.rows.map((row) => Number(row.event_id));
+
+  // Per-item reads use a global watermark; keep every other still-unreviewed
+  // terminal row unread by pinning it as an exception first.
+  const visibleChannel = canSeeChannelSql();
+  const preserved = await pool.query<{ event_id: number | string }>(
+    `WITH read_cursor AS (
+       SELECT COALESCE((
+         SELECT last_read_event_id FROM activity_read_cursors WHERE user_id = $1
+       ), 0)::bigint AS last_read_event_id
+     ), terminal_items AS (
+       SELECT e.id AS event_id, s.channel_id
+         FROM events e
+         JOIN sessions s ON s.id::text = e.payload->>'sessionId'
+         JOIN channels c ON c.id = s.channel_id
+        WHERE s.spawned_by = $1
+          AND e.type = 'session.completed'
+          AND ${visibleChannel}
+
+       UNION ALL
+
+       SELECT e.id AS event_id, s.channel_id
+         FROM events e
+         JOIN sessions s ON s.id::text = e.payload->>'sessionId'
+         JOIN channels c ON c.id = s.channel_id
+        WHERE s.spawned_by = $1
+          AND e.type = 'session.status_changed'
+          AND e.payload->>'status' = 'failed'
+          AND NOT EXISTS (
+            SELECT 1 FROM events completed
+             WHERE completed.type = 'session.completed'
+               AND completed.payload->>'sessionId' = e.payload->>'sessionId'
+               AND completed.id > e.id
+          )
+          AND ${visibleChannel}
+     )
+     SELECT ti.event_id
+       FROM terminal_items ti
+       CROSS JOIN read_cursor
+      WHERE NOT (ti.event_id = ANY($2::bigint[]))
+        AND (
+          ti.event_id > read_cursor.last_read_event_id
+          OR EXISTS (
+            SELECT 1 FROM activity_unread_exceptions ue
+             WHERE ue.user_id = $1 AND ue.event_id = ti.event_id
+          )
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM channel_mutes mt
+           WHERE mt.user_id = $1 AND mt.channel_id = ti.channel_id
+        )`,
+    [userId, retired],
+  );
+  await markActivityItemsRead(
+    pool,
+    userId,
+    retired,
+    preserved.rows.map((row) => Number(row.event_id)),
+  );
+  return retired.length;
+}
+
 const MENTION_TOKEN_RE = /<@([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})>/gi;
 
 /** Snippets are raw message text, so id-mentions arrive as `<@uuid>` tokens.
