@@ -34,12 +34,14 @@ export type { SessionQuestionAnswers } from '@atrium/surface-client';
 export function useSessionActions({
   clearFailedCancel,
   clearFailedSteer,
+  markPendingSteer,
   dispatch,
   enqueueOp,
   me,
 }: {
   clearFailedCancel: (sessionId: string) => void;
   clearFailedSteer: (sessionId: string) => void;
+  markPendingSteer: (sessionId: string) => void;
   dispatch?: (action: AppAction) => void;
   enqueueOp: SessionActionEnqueue;
   me?: UserRef;
@@ -69,18 +71,20 @@ export function useSessionActions({
       };
       if (context && dispatch && me) {
         await enqueueOp(input, {
-          onStored: () =>
+          onStored: () => {
+            markPendingSteer(sessionId);
             dispatch({
               type: 'send-pending',
               channelId: context.channelId,
               message: pendingMessageFromThreadSteerPayload(payload as QueuedThreadSteerPayload, me),
-            }),
+            });
+          },
         });
       } else {
-        await enqueueOp(input);
+        await enqueueOp(input, { onStored: () => markPendingSteer(sessionId) });
       }
     },
-    [clearFailedSteer, dispatch, enqueueOp, me],
+    [clearFailedSteer, markPendingSteer, dispatch, enqueueOp, me],
   );
 
   const cancelSession = useCallback(

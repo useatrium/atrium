@@ -192,6 +192,10 @@ type SteerProvenanceView = {
 };
 
 const STEER_ECHO_WINDOW_MS = 5 * 60 * 1000;
+// How long an optimistic steer marker can read "Starting…" before the server's
+// status broadcast is expected. A generous ceiling on the submit→broadcast
+// round-trip; a lost broadcast falls back to the real status after this.
+const STEER_REVIVE_WINDOW_MS = 30 * 1000;
 
 function laterSteerEchoMatches(sentAt: string | undefined, echoedAt: string | undefined): boolean {
   if (!sentAt || !echoedAt) return false;
@@ -360,6 +364,9 @@ export interface SessionPaneProps {
   queueUpload?: (payload: UploadPayload) => Promise<{ fileId: string }>;
   failedSteer?: string | null;
   onClearFailedSteer?: () => void;
+  /** ms timestamp of an in-flight steer, so a just-revived terminal session
+   *  reads "Starting…" during the round-trip instead of "✓ Turn complete". */
+  pendingSteerAt?: number | null;
   onCancelSession?: (sessionId: string) => Promise<void>;
   onStopTurn?: (sessionId: string) => Promise<void>;
   failedCancel?: boolean;
@@ -413,6 +420,7 @@ export function SessionPaneContent({
   queueUpload,
   failedSteer = null,
   onClearFailedSteer = () => {},
+  pendingSteerAt = null,
   onCancelSession = async () => {},
   onStopTurn = async () => {},
   failedCancel = false,
@@ -614,6 +622,15 @@ export function SessionPaneContent({
       ? normalizeExecutionStatus(stream.status)
       : session.status;
   const displayTerminal = isTerminalSessionStatus(displayStatus);
+  // A steer revives a terminal session, but the status regresses to `queued`
+  // only when the server broadcasts back. Until then the pane still reads the
+  // finished status and would show "✓ Turn complete" right after you sent a
+  // message. Treat that round-trip as "Starting…". Bounded so a lost broadcast
+  // can never pin it; uses wall-clock (not `now`, which is frozen while the
+  // session still reads terminal). The window only matters until the server
+  // flips the status, which normally happens in well under a second.
+  const steerRevivePending =
+    pendingSteerAt != null && displayTerminal && Date.now() - pendingSteerAt < STEER_REVIVE_WINDOW_MS;
   // "stopped by you" is folded from the durable terminal event (reducer
   // `stoppedByUser`), so every viewer sees it and it survives replay/reload; it
   // clears automatically when a new turn starts.
@@ -621,7 +638,7 @@ export function SessionPaneContent({
   // A completed session is idle/resumable (a steer regresses completed→queued),
   // NOT ended — only failed/cancelled are truly read-only.
   const isEnded = displayStatus === 'failed' || (displayStatus === 'cancelled' && !stoppedByUser);
-  const now = useNow(visible && !displayTerminal);
+  const now = useNow(visible && (!displayTerminal || steerRevivePending));
   const stalled = !displayTerminal && stream.status === 'idle' && isStalledSessionStatus(session, now);
   const costUsd = Math.max(session.costUsd, stream.costUsd);
   const resultText = stream.resultText || session.resultText || '';
@@ -668,8 +685,11 @@ export function SessionPaneContent({
         clockSkewMs,
         mountedAt: mountedAtRef.current,
         disconnectedAt: disconnectedAtRef.current,
-        activeTurn,
-        starting,
+        // steerRevivePending only feeds the status line here — it does NOT touch
+        // the pane-level activeTurn (which gates folds, effects, and the empty
+        // state), keeping its blast radius to the one label.
+        activeTurn: activeTurn || steerRevivePending,
+        starting: starting || steerRevivePending,
         completed: displayStatus === 'completed',
         pendingQuestionId: pendingQuestion?.questionId ?? null,
         suppressed: Boolean(session.providerAuthRequired),
@@ -682,6 +702,7 @@ export function SessionPaneContent({
       clockSkewMs,
       activeTurn,
       starting,
+      steerRevivePending,
       displayStatus,
       pendingQuestion,
       session.providerAuthRequired,
@@ -2042,6 +2063,17 @@ export function SessionPaneContent({
           {workTab && !workPinned && renderWorkDrawer(false)}
           <div ref={scrollRef} onScroll={onScroll} className="h-full overflow-y-auto px-3 py-2">
             <PlanPanel todos={stream.todos} plan={stream.plan} />
+            {stream.items.length === 0 && visibleLinkedSteers.length === 0 && starting && (
+              // A cold start can spend ~90s scheduling the pod and pulling the
+              // agent image, during which the harness emits nothing. Without a
+              // marker here the transcript is blank and the turn looks dead, so
+              // say so where the reply will land (the pinned status line alone is
+              // easy to miss). This clears the instant the first item arrives.
+              <div className="flex h-full flex-col items-center justify-center gap-1 text-center text-xs text-fg-muted">
+                <span className="animate-pulse">Starting agent…</span>
+                <span className="text-fg-faint">The first run can take a minute.</span>
+              </div>
+            )}
             {stream.items.length === 0 && visibleLinkedSteers.length === 0 && !activeTurn && (
               <div className="flex h-full items-center justify-center text-xs text-fg-muted">
                 {!displayTerminal ? (
