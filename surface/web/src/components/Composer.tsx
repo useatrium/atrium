@@ -138,6 +138,8 @@ type ComposerProps = {
   mentionContext?: MentionContext;
   /** Observes agent destination entry/exit (e.g. the thread panel hides its broadcast checkbox). */
   onAgentModeChange?: (active: boolean) => void;
+  /** Navigates to an explicitly anchored message. */
+  onJumpToEvent?: (eventId: number) => void;
 };
 
 export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Composer(
@@ -165,6 +167,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     routing,
     mentionContext,
     onAgentModeChange,
+    onJumpToEvent,
   },
   imperativeRef,
 ) {
@@ -225,7 +228,6 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       : effectiveAgentTarget === 'spawn-thread'
         ? 'an agent in this thread'
         : `“${attachedSession?.title ?? 'agent'}”`;
-  const anchorLabel = agentAnchor?.label ?? (agentModeContext?.scope === 'thread' ? 'this thread' : 'latest message');
   let managedAgentRequest: AgentComposerRequest | null = null;
   if (agentModeContext?.scope === 'channel') {
     managedAgentRequest = {
@@ -639,15 +641,35 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               )}
             </div>
           )}
-          <button
-            type="button"
-            onClick={() => setAgentAnchor(undefined)}
-            className="max-w-40 shrink-0 truncate rounded-full border border-edge-strong px-2 py-1 text-xs text-fg-secondary hover:bg-surface-overlay"
-            title={agentAnchor ? 'Clear anchor' : undefined}
-          >
-            <span aria-hidden>⚓ </span>
-            {anchorLabel}
-          </button>
+          {agentAnchor && (
+            <div className="flex max-w-40 shrink-0 items-center rounded-full border border-edge-strong text-xs text-fg-secondary">
+              {onJumpToEvent ? (
+                <button
+                  type="button"
+                  onClick={() => onJumpToEvent(agentAnchor.eventId)}
+                  aria-label="Jump to anchored message"
+                  title="Agent will be pointed at this message"
+                  className="min-w-0 truncate rounded-l-full py-1 pl-2 pr-1 hover:bg-surface-overlay"
+                >
+                  <span aria-hidden>⚓ </span>
+                  {agentAnchor.label}
+                </button>
+              ) : (
+                <span title="Agent will be pointed at this message" className="min-w-0 truncate py-1 pl-2 pr-1">
+                  <span aria-hidden>⚓ </span>
+                  {agentAnchor.label}
+                </span>
+              )}
+              <button
+                type="button"
+                onClick={() => setAgentAnchor(undefined)}
+                aria-label="Clear anchor"
+                className="shrink-0 rounded-r-full px-1.5 py-1 hover:bg-surface-overlay hover:text-fg"
+              >
+                <span aria-hidden>✕</span>
+              </button>
+            </div>
+          )}
           <label
             className={`flex shrink-0 items-center gap-1 rounded-full border border-edge-strong px-2 py-1 text-xs text-fg-secondary ${
               effectiveAgentTarget === 'suggest' ? 'hidden' : ''
@@ -677,8 +699,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             aria-label="Agent mode options"
             className="min-w-0 flex-1 truncate text-left font-medium"
           >
-            <span aria-hidden>⚓ </span>
-            {anchorLabel} · Options ▾
+            {agentAnchor ? `⚓ ${agentAnchor.label} · Options ▾` : 'Agent options ▾'}
           </button>
         </div>
       )}
@@ -1044,21 +1065,35 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             <div className="mb-2 text-xs leading-5 text-fg-muted">
               The agent reads this conversation before starting (⚓ anchor).
             </div>
-            <div className="flex items-center justify-between text-sm text-fg-secondary">
-              <span>
-                <span aria-hidden>⚓ </span>
-                {anchorLabel}
-              </span>
-              {agentAnchor && (
+            {agentAnchor && (
+              <div className="flex items-center justify-between gap-2 text-sm text-fg-secondary">
+                {onJumpToEvent ? (
+                  <button
+                    type="button"
+                    onClick={() => onJumpToEvent(agentAnchor.eventId)}
+                    aria-label="Jump to anchored message"
+                    title="Agent will be pointed at this message"
+                    className="min-w-0 truncate rounded px-1 py-1 text-left hover:bg-edge-strong"
+                  >
+                    <span aria-hidden>⚓ </span>
+                    {agentAnchor.label}
+                  </button>
+                ) : (
+                  <span title="Agent will be pointed at this message" className="min-w-0 truncate">
+                    <span aria-hidden>⚓ </span>
+                    {agentAnchor.label}
+                  </span>
+                )}
                 <button
                   type="button"
                   onClick={() => setAgentAnchor(undefined)}
-                  className="rounded px-2 py-1 text-xs text-accent-text-strong hover:bg-accent/10"
+                  aria-label="Clear anchor"
+                  className="shrink-0 rounded px-2 py-1 text-xs text-accent-text-strong hover:bg-accent/10"
                 >
-                  Clear
+                  <span aria-hidden>✕</span>
                 </button>
-              )}
-            </div>
+              </div>
+            )}
           </section>
         </div>
       )}

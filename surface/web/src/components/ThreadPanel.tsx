@@ -26,7 +26,6 @@ import {
   formatTime,
   normalizeSteerProvenanceText,
 } from '@atrium/surface-client';
-import { encodeEventHandle } from '@atrium/surface-client/handle';
 import { Composer } from './Composer';
 import type { ComposerHandle } from './Composer';
 import { XIcon } from './icons';
@@ -47,6 +46,7 @@ import {
   threadPaneSizing,
   useThreadPaneWidth,
 } from '../sessions/useSessionPaneWidth';
+import { agentAnchorLabel } from '../lib/agentAnchorLabel';
 
 const STEER_ECHO_WINDOW_MS = 5 * 60 * 1000;
 
@@ -225,6 +225,12 @@ export function ThreadPanelContent({
   const composerRef = useRef<ComposerHandle>(null);
   const reconciledReplies = useMemo(() => reconcileThreadSteerReplies(replies), [replies]);
   const count = reconciledReplies.length;
+  const jumpToEvent = (eventId: number) => {
+    scrollRef.current?.querySelector<HTMLElement>(`[data-eid="${eventId}"]`)?.scrollIntoView({
+      behavior: 'smooth',
+      block: 'center',
+    });
+  };
   useLayoutEffect(() => {
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
@@ -351,7 +357,7 @@ export function ThreadPanelContent({
             m.id != null &&
             composerRef.current?.activateAgentMode({
               eventId: m.id,
-              label: `/e/${encodeEventHandle(m.id)}`,
+              label: agentAnchorLabel({ ...m, id: m.id }),
             })
           }
         />
@@ -381,7 +387,7 @@ export function ThreadPanelContent({
                 m.id != null &&
                 composerRef.current?.activateAgentMode({
                   eventId: m.id,
-                  label: `/e/${encodeEventHandle(m.id)}`,
+                  label: agentAnchorLabel({ ...m, id: m.id }),
                 })
               }
             />
@@ -457,6 +463,7 @@ export function ThreadPanelContent({
           setComposerAgentMode(active);
           if (active) setAlsoSendToChannel(false);
         }}
+        onJumpToEvent={jumpToEvent}
         queueUpload={queueUpload}
         autoFocus
         routing={

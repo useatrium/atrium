@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
 import { Alert, Text, View } from 'react-native';
+import { createRef } from 'react';
 import * as DocumentPicker from 'expo-document-picker';
-import { Composer } from '../src/components/Composer';
+import { Composer, type ComposerHandle } from '../src/components/Composer';
 import { agentDestination, peopleDestination } from '@atrium/surface-client';
 import { AgentModeConfig } from '../src/components/AgentModeConfig';
 import { MessageRow } from '../src/components/MessageRow';
@@ -86,6 +87,85 @@ describe('agent-mode composer', () => {
     fireEvent.click(screen.getByLabelText('Start'));
     expect(onAgentSend).toHaveBeenCalledWith({ target: 'spawn-channel' }, { text: 'fix the mobile app' });
     expect(screen.getByRole('textbox', { name: 'Message' })).toHaveAttribute('placeholder', 'Message people…');
+  });
+
+  it('shows an explicit anchor chip and no anchor UI by default', () => {
+    const ref = createRef<ComposerHandle>();
+    renderWithTheme(
+      <Composer
+        ref={ref}
+        placeholder="Message"
+        onSend={vi.fn()}
+        onTyping={vi.fn()}
+        peopleDestination={peopleDestination('channel', '#engineering')}
+        agentRouting={{
+          destination: agentDestination({ target: 'spawn-channel' }, 'New agent · #engineering'),
+          onSubmit: vi.fn(),
+        }}
+        initialAgentMode
+      />,
+    );
+
+    expect(screen.queryByRole('button', { name: 'Clear anchor' })).not.toBeInTheDocument();
+    act(() => ref.current?.activateAgentMode({ eventId: 42, label: 'Riley: Fix the mobile composer' }));
+
+    expect(screen.getByText('⚓ Riley: Fix the mobile composer')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Jump to anchored message' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Clear anchor' })).toBeInTheDocument();
+  });
+
+  it('jumps to the anchored event without clearing it', () => {
+    const ref = createRef<ComposerHandle>();
+    const onJumpToEvent = vi.fn();
+    const onSubmit = vi.fn();
+    renderWithTheme(
+      <Composer
+        ref={ref}
+        placeholder="Message"
+        onSend={vi.fn()}
+        onTyping={vi.fn()}
+        peopleDestination={peopleDestination('channel', '#engineering')}
+        agentRouting={{
+          destination: agentDestination({ target: 'spawn-channel' }, 'New agent · #engineering'),
+          onSubmit,
+        }}
+        onJumpToEvent={onJumpToEvent}
+      />,
+    );
+    act(() => ref.current?.activateAgentMode({ eventId: 42, label: 'Riley: Fix the mobile composer' }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Jump to anchored message' }));
+    expect(onJumpToEvent).toHaveBeenCalledWith(42);
+    fireEvent.change(screen.getByRole('textbox', { name: 'Prompt agent' }), { target: { value: 'Continue here' } });
+    fireEvent.click(screen.getByLabelText('Start'));
+
+    expect(onSubmit).toHaveBeenCalledWith({ target: 'spawn-channel', anchorEventId: 42 }, { text: 'Continue here' });
+  });
+
+  it('clears an explicit anchor before the next agent send', () => {
+    const ref = createRef<ComposerHandle>();
+    const onSubmit = vi.fn();
+    renderWithTheme(
+      <Composer
+        ref={ref}
+        placeholder="Message"
+        onSend={vi.fn()}
+        onTyping={vi.fn()}
+        peopleDestination={peopleDestination('channel', '#engineering')}
+        agentRouting={{
+          destination: agentDestination({ target: 'spawn-channel' }, 'New agent · #engineering'),
+          onSubmit,
+        }}
+      />,
+    );
+    act(() => ref.current?.activateAgentMode({ eventId: 42, label: 'Riley: Fix the mobile composer' }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Clear anchor' }));
+    expect(screen.queryByText('⚓ Riley: Fix the mobile composer')).not.toBeInTheDocument();
+    fireEvent.change(screen.getByRole('textbox', { name: 'Prompt agent' }), { target: { value: 'Start fresh' } });
+    fireEvent.click(screen.getByLabelText('Start'));
+
+    expect(onSubmit).toHaveBeenCalledWith({ target: 'spawn-channel' }, { text: 'Start fresh' });
   });
 
   it('keeps Steer selected after send and preserves a disabled voice slot in Agent mode', () => {

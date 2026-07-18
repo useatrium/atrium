@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Clipboard from 'expo-clipboard';
 import { Ionicons } from '@expo/vector-icons';
 import type { ChatMessage } from '@atrium/surface-client';
+import { encodeEventHandle } from '@atrium/surface-client/handle';
 import { QUICK_REACTIONS } from '@atrium/surface-client/reactions';
 import { useAccessibilityAnnouncement, useModalAccessibilityFocus } from '../lib/accessibility';
 import { font, radius, space, useTheme } from '../lib/theme';
@@ -16,6 +17,17 @@ type MessageActionMetadata = {
   actionCopyText?: unknown;
   actionCopyLink?: unknown;
 };
+
+const AGENT_ANCHOR_SNIPPET_LENGTH = 40;
+
+export function agentAnchorLabel(message: ChatMessage & { id: number }): string {
+  const text = message.text.replace(/\s+/g, ' ').trim();
+  if (!text) return `/e/${encodeEventHandle(message.id)}`;
+  const snippet =
+    text.length <= AGENT_ANCHOR_SNIPPET_LENGTH ? text : `${text.slice(0, AGENT_ANCHOR_SNIPPET_LENGTH - 1).trimEnd()}…`;
+  const author = message.author.displayName.trim() || message.author.handle;
+  return `${author}: ${snippet}`;
+}
 
 export type MessageActionListItem = {
   key: string;

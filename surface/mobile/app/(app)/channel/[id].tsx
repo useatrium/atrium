@@ -22,7 +22,7 @@ import { ConnectionBanner, TypingLine } from '../../../src/components/bits';
 import { Composer, type ComposerHandle } from '../../../src/components/Composer';
 import { MediaLightbox } from '../../../src/components/MediaLightbox';
 import { AgentFileMarkdownProvider } from '../../../src/components/FilePathChip';
-import { MessageActions } from '../../../src/components/MessageActions';
+import { agentAnchorLabel, MessageActions } from '../../../src/components/MessageActions';
 import { MessageActionSheet } from '../../../src/components/MessageActions';
 import { AgentModeConfig, type AgentEffort } from '../../../src/components/AgentModeConfig';
 import { SpawnSheet, type SpawnSheetConfig } from '../../../src/components/SpawnSheet';
@@ -548,6 +548,10 @@ export default function ChannelScreen() {
             },
           }}
           onConfigureAgentMode={() => setAgentConfigVisible(true)}
+          onJumpToEvent={(eventId) => {
+            // The anchor always lives in this channel; jumpToMessage pages back if it left loaded state.
+            if (id) void chat.jumpToMessage({ id: eventId, channelId: id });
+          }}
         />
       </KeyboardAvoidingView>
 
@@ -573,7 +577,7 @@ export default function ChannelScreen() {
         onDelete={(m) => void chat.deleteMessage(m)}
         onDelegate={(m) => {
           if (m.id == null) return;
-          composerRef.current?.activateAgentMode({ eventId: m.id, label: m.text || 'message' });
+          composerRef.current?.activateAgentMode({ eventId: m.id, label: agentAnchorLabel({ ...m, id: m.id }) });
         }}
       />
       <MessageActionSheet

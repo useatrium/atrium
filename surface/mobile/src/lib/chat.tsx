@@ -207,8 +207,8 @@ interface ChatContextValue {
   enqueueDraft: (key: string, text: string, agentIntent?: boolean) => void;
   markDraftTouched: (key: string) => void;
   setActiveDraftKey: (key: string, active: boolean) => void;
-  /** From search: load the message's channel (paging back as needed) + highlight. */
-  jumpToMessage: (event: WireEvent) => Promise<void>;
+  /** Load the message's channel (paging back as needed) + highlight it. */
+  jumpToMessage: (event: Pick<WireEvent, 'channelId' | 'id'>) => Promise<void>;
   highlightId: number | null;
   filesEventSeq: number;
 }
@@ -1855,13 +1855,18 @@ export function ChatProvider({ session, children }: { session: Session; children
   }, [highlightId]);
 
   const jumpToMessage = useCallback(
-    async (event: WireEvent) => {
+    async (event: Pick<WireEvent, 'channelId' | 'id'>) => {
       const channelId = event.channelId;
       if (!channelId) return;
       loadHistory(channelId);
       for (let tries = 0; tries < 30; tries++) {
         const t = stateRef.current.timelines[channelId];
-        if (t?.main.some((m) => m.id === event.id)) break;
+        if (
+          t?.main.some((m) => m.id === event.id) ||
+          Object.values(t?.threads ?? {}).some((messages) => messages.some((message) => message.id === event.id))
+        ) {
+          break;
+        }
         if (!t?.loaded) {
           await new Promise((r) => setTimeout(r, 150));
           continue;

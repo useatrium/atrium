@@ -37,7 +37,7 @@ import { attachmentToHubFile } from '../../../src/components/attachmentPreview';
 import { Composer, type ComposerHandle } from '../../../src/components/Composer';
 import { MediaLightbox } from '../../../src/components/MediaLightbox';
 import { AgentFileMarkdownProvider } from '../../../src/components/FilePathChip';
-import { MessageActions, MessageActionSheet } from '../../../src/components/MessageActions';
+import { agentAnchorLabel, MessageActions, MessageActionSheet } from '../../../src/components/MessageActions';
 import { AgentModeConfig, type AgentEffort, type AgentModeTarget } from '../../../src/components/AgentModeConfig';
 import { Timeline } from '../../../src/components/Timeline';
 import { AgentMark } from '../../../src/components/AgentMark';
@@ -345,7 +345,7 @@ export default function ThreadScreen() {
               threadWorkFolds={workFoldNodes}
               meId={me.id}
               meHandle={state.meHandle}
-              highlightId={null}
+              highlightId={chat.highlightId}
               inThread
               emptyLabel="No replies yet."
               fileUrl={chat.fileUrl}
@@ -445,6 +445,10 @@ export default function ThreadScreen() {
           }}
           initialAgentMode={attachedSession != null}
           onConfigureAgentMode={() => setAgentConfigVisible(true)}
+          onJumpToEvent={(eventId) => {
+            // The anchor always lives in this thread's channel.
+            if (channelId) void chat.jumpToMessage({ id: eventId, channelId });
+          }}
         />
       </KeyboardAvoidingView>
 
@@ -460,7 +464,7 @@ export default function ThreadScreen() {
         onDelete={(m) => void chat.deleteMessage(m)}
         onDelegate={(m) => {
           if (m.id == null) return;
-          composerRef.current?.activateAgentMode({ eventId: m.id, label: m.text || 'message' });
+          composerRef.current?.activateAgentMode({ eventId: m.id, label: agentAnchorLabel({ ...m, id: m.id }) });
         }}
       />
       <MessageActionSheet
