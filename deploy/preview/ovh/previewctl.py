@@ -481,7 +481,14 @@ def appliance_values_yaml(commit_sha: str, surface_port: int) -> str:
             tag: {commit_sha}
 
         apiRs:
-          sandboxWarmPoolSize: 0
+          # Warm ONE pod per preview (chart default is 3). With 0, every first
+          # turn cold-creates and cold-pulls the ~1.6GB agent image, and that
+          # pull loses the race with SESSION_SANDBOX_READY_TIMEOUT_SECS (~90s),
+          # so the first turn on a fresh preview *fails*. A warm pod pre-pulls the
+          # image and stays ready to claim, making the first turn instant. Kept at
+          # 1 (not 3) to bound RAM on the shared box; reuse-by-branch keeps it warm
+          # across updates.
+          sandboxWarmPoolSize: 1
           image:
             repository: {REGISTRY_PULL}/library/centaur-api-rs
             tag: {commit_sha}

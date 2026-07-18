@@ -409,7 +409,20 @@ export function ThreadPanelContent({
         })}
         {reconciledReplies.length === 0 && (
           <div className="px-4 py-6 text-center text-xs text-fg-muted">
-            {loaded ? 'No replies yet. Start the thread.' : 'Loading replies…'}
+            {attachedSession && sessionLive && stream.items.length === 0 ? (
+              // The agent's turn is live but it has produced nothing yet — a cold
+              // start spends ~90s pulling the sandbox image. Say so here too, not
+              // just in the session pane: the thread is where people watch, and a
+              // blank "No replies yet" reads as dead. Clears on the first item.
+              <span className="flex flex-col items-center gap-1">
+                <span className="animate-pulse">Starting agent…</span>
+                <span className="text-fg-faint">The first run can take a minute.</span>
+              </span>
+            ) : loaded ? (
+              'No replies yet. Start the thread.'
+            ) : (
+              'Loading replies…'
+            )}
           </div>
         )}
       </div>
