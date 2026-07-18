@@ -1209,10 +1209,23 @@ def best_effort(cmd: list[str], **kwargs: Any) -> None:
         pass
 
 
+def delete_cluster(preview_id: str) -> None:
+    """Delete a preview's k3d cluster and reclaim its docker network.
+
+    k3d deletes the cluster network too, but only if no foreign container is still
+    attached. cmd_create joins the shared registry so pods can pull, so without an
+    explicit detach every teardown silently leaks the network (19 had piled up).
+    Idempotent — safe when the cluster or network is already gone.
+    """
+    cluster = f"preview-{preview_id}"
+    best_effort(["docker", "network", "disconnect", "-f", f"k3d-{cluster}", REGISTRY_CONTAINER])
+    best_effort(["k3d", "cluster", "delete", cluster], capture=False)
+
+
 def teardown_resources(state: dict[str, Any]) -> None:
     """Best-effort reclaim of everything a preview holds. Safe to call twice."""
     preview_id = state["preview_id"]
-    best_effort(["k3d", "cluster", "delete", f"preview-{preview_id}"], capture=False)
+    delete_cluster(preview_id)
     runtime = runtime_dir(preview_id)
     if (
         state.get("source_dir")
@@ -1231,13 +1244,31 @@ def teardown_resources(state: dict[str, Any]) -> None:
     shutil.rmtree(REAL_FS_ROOT / preview_id, ignore_errors=True)
 
 
+def sha_referenced_by_live_preview(sha: str, *, exclude_id: str) -> bool:
+    """True if a non-destroyed preview other than exclude_id pins this commit.
+
+    Guards image reclamation on teardown: two previews can share a SHA (reuse a
+    branch, or two refs at the same commit), so destroying one must not drop tags
+    another live preview still builds or retags from.
+    """
+    for path in STATE_DIR.glob("prev-*.json"):
+        try:
+            other = json.loads(path.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        if other.get("preview_id") == exclude_id or other.get("status") == "destroyed":
+            continue
+        if other.get("commit_sha") == sha:
+            return True
+    return False
+
+
 def cmd_destroy(args: argparse.Namespace) -> None:
     validate_preview_id(args.preview_id)
     state = load_state(args.preview_id)
-    cluster = f"preview-{args.preview_id}"
 
-    # Cluster deletion is safe and idempotent even if the state file was lost.
-    best_effort(["k3d", "cluster", "delete", cluster], capture=False)
+    # Cluster + network deletion is safe and idempotent even if the state was lost.
+    delete_cluster(args.preview_id)
 
     if state is not None and state.get("source_dir"):
         runtime = runtime_dir(args.preview_id)
@@ -1254,6 +1285,16 @@ def cmd_destroy(args: argparse.Namespace) -> None:
     fragment.unlink(missing_ok=True)
     reload_caddy()
     shutil.rmtree(REAL_FS_ROOT / args.preview_id, ignore_errors=True)
+
+    # Drop this commit's box-docker image tags unless another live preview still
+    # pins the same SHA. These localhost:5000/library/* tags are only build/push
+    # sources — pods pull from the registry container, not here — so removing them
+    # only frees disk (a later rebuild or retag repopulates). Without this, every
+    # teardown left ~6 multi-GB tags behind; 60 had accumulated (~50GB).
+    sha = state.get("commit_sha") if state else None
+    if sha and not sha_referenced_by_live_preview(sha, exclude_id=args.preview_id):
+        for image in ("atrium-surface", *CENTAUR_IMAGES.values()):
+            best_effort(["docker", "rmi", f"{REGISTRY_PUSH}/library/{image}:{sha}"])
 
     if state is not None:
         state.pop("artifact_capture_api_key", None)
