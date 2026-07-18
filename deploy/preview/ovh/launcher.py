@@ -189,6 +189,34 @@ class Store:
                 raise CapacityExceeded(f"maximum concurrent previews ({cap}) reached")
             self._execute_upsert(db, fields)
 
+    def claim_or_existing(self, preview: dict[str, Any], cap: int) -> dict[str, Any] | None:
+        """Atomically reuse-or-reserve, keyed on (repo, ref).
+
+        If a non-terminal preview already exists for this branch, return it (the
+        caller updates it in place). Otherwise reserve a slot for the new one and
+        return None. Done in one transaction so two same-branch creates can't both
+        slip past the check and build two stacks.
+        """
+        fields = self._fields(preview)
+        with self.lock, self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            placeholders = ",".join("?" for _ in ACTIVE_STATUSES)
+            existing = db.execute(
+                f"SELECT * FROM previews WHERE repo = ? AND ref = ? AND status IN ({placeholders}) "  # noqa: S608
+                "ORDER BY created_at LIMIT 1",
+                (preview["repo"], preview["ref"], *ACTIVE_STATUSES),
+            ).fetchone()
+            if existing:
+                return dict(existing)
+            active = db.execute(
+                f"SELECT COUNT(*) FROM previews WHERE status IN ({placeholders})",  # noqa: S608
+                ACTIVE_STATUSES,
+            ).fetchone()[0]
+            if active >= cap:
+                raise CapacityExceeded(f"maximum concurrent previews ({cap}) reached")
+            self._execute_upsert(db, fields)
+            return None
+
     def upsert(self, preview: dict[str, Any]) -> None:
         with self.lock, self.connect() as db:
             self._execute_upsert(db, self._fields(preview))
@@ -271,6 +299,10 @@ class Launcher:
             raise ValueError("MAX_CONCURRENT_PREVIEWS must be at least 1")
         self.store = store
         self.max_concurrent = max_concurrent
+        # Preview ids with an in-flight in-place update, so a second same-branch
+        # request doesn't dispatch a concurrent redeploy of the same stack.
+        self._updating: set[str] = set()
+        self._updating_lock = threading.Lock()
 
     def create(self, body: dict[str, Any]) -> dict[str, Any]:
         repo = str(body.get("repo") or "useatrium/atrium")
@@ -324,15 +356,72 @@ class Launcher:
             "phase_time": iso(now),
             "ready_at": None,
         }
-        self.store.reserve(record, self.max_concurrent)
+        # Reuse-by-branch (default): if this branch already has a live preview,
+        # push the new commit into it in place instead of building a new stack —
+        # keeps the k3d node, Postgres, and warm images. `fresh` forces a new one.
+        if body.get("fresh"):
+            self.store.reserve(record, self.max_concurrent)
+            existing = None
+        else:
+            existing = self.store.claim_or_existing(record, self.max_concurrent)
+
+        if existing is None:
+            thread = threading.Thread(
+                target=self._create_worker,
+                args=(record, ttl_hours),
+                name=f"create-{preview_id}",
+                daemon=True,
+            )
+            thread.start()
+            return {"id": preview_id, "phase": "packages", "action": "created"}
+
+        with self._updating_lock:
+            already = existing["id"] in self._updating
+            if not already:
+                self._updating.add(existing["id"])
+        if already:
+            # An update is already in flight for this preview; don't stack a second.
+            return {**self.public_record(existing), "action": "updating"}
         thread = threading.Thread(
-            target=self._create_worker,
-            args=(record, ttl_hours),
-            name=f"create-{preview_id}",
+            target=self._update_worker,
+            args=(existing, commit_sha, ttl_hours),
+            name=f"update-{existing['id']}",
             daemon=True,
         )
         thread.start()
-        return {"id": preview_id, "phase": "packages"}
+        return {**self.public_record(existing), "commit_sha": commit_sha, "action": "updating"}
+
+    def _update_worker(self, record: dict[str, Any], commit_sha: str, ttl_hours: int) -> None:
+        try:
+            output = run(
+                [
+                    sys.executable,
+                    str(PREVIEWCTL),
+                    "update",
+                    record["id"],
+                    commit_sha,
+                    "--ttl-hours",
+                    str(ttl_hours),
+                ],
+                timeout=7200,
+            )
+            self._merge_controller_status(record, first_json_object(output))
+        except Exception as err:
+            # An update never destroys the preview — it stays `ready` on the old
+            # code with the failure recorded, so it's still reusable/retryable.
+            record.update(
+                {
+                    "status": "ready",
+                    "phase": "update-failed",
+                    "phase_time": iso(utc_now()),
+                    "updated_at": iso(utc_now()),
+                    "failure_message": str(err),
+                }
+            )
+        finally:
+            with self._updating_lock:
+                self._updating.discard(record["id"])
+        self.store.upsert(record)
 
     def _create_worker(self, record: dict[str, Any], ttl_hours: int) -> None:
         try:
