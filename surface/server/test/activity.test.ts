@@ -657,6 +657,118 @@ describe('/api/activity', () => {
     expect(res.json()).toMatchObject({ error: 'bad_request' });
   });
 
+  it('reading a channel retires the reader’s covered to-review rows and preserves the rest', async () => {
+    const bob = await login('bob', 'Bob');
+    const other = await createPrivate(bob.cookie, 'other-agent-work');
+
+    // Two sessions in the read channel whose terminal events are thread events
+    // ABOVE the timeline cursor; their roots sit below it. One completed, one
+    // crashed (status_changed failed with no later completion).
+    const completedSession = await createActivitySession(bob.user.id, 'covered completed', 'completed');
+    const completedRoot = await seedEvent(pool, {
+      workspaceId: fx.workspaceId,
+      channelId: fx.channelId,
+      type: 'session.spawned',
+      actorId: bob.user.id,
+      payload: { sessionId: completedSession },
+    });
+    const crashedSession = await createActivitySession(bob.user.id, 'covered crash', 'failed');
+    const crashedRoot = await seedEvent(pool, {
+      workspaceId: fx.workspaceId,
+      channelId: fx.channelId,
+      type: 'session.spawned',
+      actorId: bob.user.id,
+      payload: { sessionId: crashedSession },
+    });
+    // A still-unreviewed session in another channel, older than the retired
+    // terminals: the watermark jump must not swallow it.
+    const preservedSession = await createActivitySession(bob.user.id, 'still unreviewed', 'completed', other.id);
+    const preservedEvent = await insertSessionEventFor(
+      preservedSession,
+      bob.user.id,
+      'session.completed',
+      { status: 'completed' },
+      other.id,
+    );
+    const lastTimeline = await post(bob.cookie, fx.channelId, 'reading down to here');
+    const completedTerminal = await seedEvent(pool, {
+      workspaceId: fx.workspaceId,
+      channelId: fx.channelId,
+      threadRootEventId: completedRoot,
+      type: 'session.completed',
+      actorId: bob.user.id,
+      payload: { status: 'completed', sessionId: completedSession },
+    });
+    const crashedTerminal = await seedEvent(pool, {
+      workspaceId: fx.workspaceId,
+      channelId: fx.channelId,
+      threadRootEventId: crashedRoot,
+      type: 'session.status_changed',
+      actorId: bob.user.id,
+      payload: { status: 'failed', sessionId: crashedSession },
+    });
+
+    const before = await activity(bob.cookie);
+    expect(before.items.find((item: any) => Number(item.eventId) === completedTerminal)).toMatchObject({
+      unread: true,
+    });
+    expect(before.counts).toMatchObject({ toReview: 3 });
+
+    const read = await app.inject({
+      method: 'POST',
+      url: `/api/channels/${fx.channelId}/read`,
+      headers: { cookie: bob.cookie },
+      payload: { lastReadEventId: lastTimeline.id },
+    });
+    expect(read.statusCode).toBe(200);
+
+    const after = await activity(bob.cookie);
+    expect(after.items.find((item: any) => Number(item.eventId) === completedTerminal)).toMatchObject({
+      unread: false,
+    });
+    expect(after.items.find((item: any) => Number(item.eventId) === crashedTerminal)).toMatchObject({
+      unread: false,
+    });
+    expect(after.items.find((item: any) => Number(item.eventId) === preservedEvent)).toMatchObject({
+      unread: true,
+    });
+    expect(after.counts).toMatchObject({ toReview: 1 });
+    expect(after.unreadExceptionIds.map(String)).toContain(String(preservedEvent));
+  });
+
+  it('leaves a to-review row unread until the channel cursor reaches its session root', async () => {
+    const bob = await login('bob', 'Bob');
+    const early = await post(bob.cookie, fx.channelId, 'read up to here only');
+    const sessionId = await createActivitySession(bob.user.id, 'not yet covered', 'completed');
+    const root = await seedEvent(pool, {
+      workspaceId: fx.workspaceId,
+      channelId: fx.channelId,
+      type: 'session.spawned',
+      actorId: bob.user.id,
+      payload: { sessionId },
+    });
+    const terminal = await seedEvent(pool, {
+      workspaceId: fx.workspaceId,
+      channelId: fx.channelId,
+      threadRootEventId: root,
+      type: 'session.completed',
+      actorId: bob.user.id,
+      payload: { status: 'completed', sessionId },
+    });
+
+    const read = await app.inject({
+      method: 'POST',
+      url: `/api/channels/${fx.channelId}/read`,
+      headers: { cookie: bob.cookie },
+      payload: { lastReadEventId: early.id },
+    });
+    expect(read.statusCode).toBe(200);
+
+    const after = await activity(bob.cookie);
+    expect(after.items.find((item: any) => Number(item.eventId) === terminal)).toMatchObject({ unread: true });
+    expect(after.counts).toMatchObject({ toReview: 1 });
+  });
+
   it('supports per-item mark read/unread via watermark exceptions', async () => {
     const bob = await login('bob', 'Bob');
     const alice = await login('alice', 'Alice');
