@@ -45,6 +45,17 @@ function stepSummary(item: TurnWorkItem): string {
   return descriptor.subtitle ? `${descriptor.title} · ${descriptor.subtitle}` : descriptor.title;
 }
 
+/** A reasoning summary with no fuller `text` has nothing to expand — codex only
+ *  ever sends the one-line summary — so it renders as a flat line rather than a
+ *  disclosure with a box that just repeats it. Reasoning that carries longer
+ *  text (e.g. Claude) stays expandable. */
+function isFlatStep(item: TurnWorkItem): boolean {
+  if (item.type !== 'reasoning') return false;
+  const text = item.text?.trim() ?? '';
+  const summary = item.summary?.trim() ?? '';
+  return text.length === 0 || text === summary;
+}
+
 function StepGlyph({ item }: { item: TurnWorkItem }) {
   if (item.type === 'reasoning') return <span className="text-accent-text">✳</span>;
   if (item.result?.is_error) return <span className="text-danger-text">✕</span>;
@@ -150,23 +161,34 @@ export function WorkFold({
                 item.handle != null && item.handle === highlightedStepHandle ? 'entry-flash bg-accent-hover/10' : ''
               }`}
             >
-              <button
-                type="button"
-                aria-expanded={stepOpen}
-                onClick={() => setOpenSteps((current) => ({ ...current, [item.id]: !stepOpen }))}
-                className="flex w-full min-w-0 items-center gap-1.5 text-left text-fg-secondary hover:text-fg"
-              >
-                <StepGlyph item={item} />
-                <span className="truncate">{stepSummary(item)}</span>
-                <span aria-hidden className="ml-auto text-fg-muted">
-                  {stepOpen ? '▼' : '▶'}
-                </span>
-              </button>
-              {stepOpen && (
-                <StepDetail
-                  item={item}
-                  onDiscuss={onDiscussStep && item.handle?.startsWith('rec_') ? () => onDiscussStep(item) : undefined}
-                />
+              {isFlatStep(item) ? (
+                <div className="flex w-full min-w-0 items-center gap-1.5 text-fg-secondary">
+                  <StepGlyph item={item} />
+                  <span className="truncate">{stepSummary(item)}</span>
+                </div>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    aria-expanded={stepOpen}
+                    onClick={() => setOpenSteps((current) => ({ ...current, [item.id]: !stepOpen }))}
+                    className="flex w-full min-w-0 items-center gap-1.5 text-left text-fg-secondary hover:text-fg"
+                  >
+                    <StepGlyph item={item} />
+                    <span className="truncate">{stepSummary(item)}</span>
+                    <span aria-hidden className="ml-auto text-fg-muted">
+                      {stepOpen ? '▼' : '▶'}
+                    </span>
+                  </button>
+                  {stepOpen && (
+                    <StepDetail
+                      item={item}
+                      onDiscuss={
+                        onDiscussStep && item.handle?.startsWith('rec_') ? () => onDiscussStep(item) : undefined
+                      }
+                    />
+                  )}
+                </>
               )}
             </div>
           );
