@@ -1,9 +1,14 @@
 // @vitest-environment jsdom
 
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppAction, Channel, Session, SessionWire, UserRef } from '@atrium/surface-client';
-import { useSessionPaneState, sessionSpectatorCounts } from '../src/useSessionPaneState';
+import {
+  AGENT_FOCUS_OPT_IN_KEY,
+  AGENT_SPLIT_OPT_IN_KEY,
+  useSessionPaneState,
+  sessionSpectatorCounts,
+} from '../src/useSessionPaneState';
 
 const createdAt = '2026-06-28T17:00:00.000Z';
 const user: UserRef = { id: 'u-1', handle: 'alice', displayName: 'Alice' };
@@ -74,6 +79,7 @@ function wire(overrides: Partial<SessionWire> = {}): SessionWire {
 function renderPaneState({
   activeChannel = channel(),
   client = { get: vi.fn(async () => ({ session: wire() })) },
+  focusedFromUrl = false,
   isMobileViewport = false,
   openSessionId = 's-1',
   presence = {},
@@ -85,6 +91,7 @@ function renderPaneState({
       activeChannel,
       client,
       dispatch,
+      focusedFromUrl,
       isMobileViewport,
       openSessionId,
       presence,
@@ -93,6 +100,10 @@ function renderPaneState({
   });
   return { ...view, client, dispatch };
 }
+
+beforeEach(() => {
+  window.localStorage.clear();
+});
 
 afterEach(() => {
   cleanup();
@@ -117,9 +128,8 @@ describe('useSessionPaneState', () => {
       presence: { 'session:s-1': [user] },
     });
 
-    // Focus (MAIN-swap) is the default; split is an opt-in (see split test below).
-    expect(result.current.view).toBe('focus');
-    expect(result.current.sessionPaneLayout).toBe('focus');
+    expect(result.current.view).toBe('split');
+    expect(result.current.sessionPaneLayout).toBe('split');
     expect(result.current.paneSession?.id).toBe('s-1');
     expect(result.current.paneWatchers).toEqual([user]);
     expect(result.current.hasChannelSessions).toBe(true);
@@ -131,6 +141,45 @@ describe('useSessionPaneState', () => {
 
     expect(result.current.view).toBe('focus');
     expect(result.current.sessionPaneLayout).toBe('focus');
+  });
+
+  it('keeps focused deep links focused', () => {
+    const { result } = renderPaneState({ focusedFromUrl: true });
+
+    expect(result.current.view).toBe('focus');
+    expect(result.current.sessionPaneLayout).toBe('focus');
+  });
+
+  it('persists focus as an opt-in', () => {
+    const first = renderPaneState();
+
+    act(() => first.result.current.setView('focus'));
+
+    expect(first.result.current.view).toBe('focus');
+    expect(window.localStorage.getItem(AGENT_FOCUS_OPT_IN_KEY)).toBe('true');
+    first.unmount();
+
+    const reopened = renderPaneState();
+    expect(reopened.result.current.view).toBe('focus');
+  });
+
+  it('migrates the legacy split opt-in to the new panel default', () => {
+    window.localStorage.setItem(AGENT_SPLIT_OPT_IN_KEY, 'true');
+
+    const { result } = renderPaneState();
+
+    expect(result.current.view).toBe('split');
+    expect(window.localStorage.getItem(AGENT_SPLIT_OPT_IN_KEY)).toBeNull();
+    expect(window.localStorage.getItem(AGENT_FOCUS_OPT_IN_KEY)).toBeNull();
+  });
+
+  it('does not treat a legacy split opt-out as a focus preference', () => {
+    window.localStorage.setItem(AGENT_SPLIT_OPT_IN_KEY, 'false');
+
+    const { result } = renderPaneState();
+
+    expect(result.current.view).toBe('split');
+    expect(window.localStorage.getItem(AGENT_SPLIT_OPT_IN_KEY)).toBeNull();
   });
 
   it('opens confirmed sessions as a peek and upserts the fetched session', async () => {
@@ -150,6 +199,28 @@ describe('useSessionPaneState', () => {
         }),
       ),
     );
+  });
+
+  it('opens a cross-channel session without replacing the active channel', () => {
+    const otherChannelSession = session({ id: 's-2', channelId: 'ch-2' });
+    const { result, rerender, dispatch, client } = renderPaneState({ openSessionId: null, sessions: {} });
+
+    act(() => result.current.openSession('s-2'));
+    rerender({
+      activeChannel: channel(),
+      client,
+      dispatch,
+      focusedFromUrl: false,
+      isMobileViewport: false,
+      openSessionId: 's-2',
+      presence: {},
+      sessions: { 's-2': otherChannelSession },
+    });
+
+    expect(result.current.view).toBe('split');
+    expect(result.current.paneSession).toBe(otherChannelSession);
+    expect(result.current.hasChannelSessions).toBe(false);
+    expect(dispatch).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'select-channel' }));
   });
 
   it('ignores pending optimistic session ids', () => {
@@ -179,7 +250,7 @@ describe('useSessionPaneState', () => {
     );
   });
 
-  it('switches views and resets focus after the pane closes', async () => {
+  it('switches views and retains the focus opt-in after the pane closes', async () => {
     const { result, rerender, dispatch } = renderPaneState();
 
     act(() => result.current.setView('focus'));
@@ -192,6 +263,7 @@ describe('useSessionPaneState', () => {
       activeChannel: channel(),
       client: { get: vi.fn(async () => ({ session: wire() })) },
       dispatch,
+      focusedFromUrl: false,
       isMobileViewport: false,
       openSessionId: null,
       presence: {},
@@ -204,6 +276,7 @@ describe('useSessionPaneState', () => {
       activeChannel: channel(),
       client: { get: vi.fn(async () => ({ session: wire() })) },
       dispatch,
+      focusedFromUrl: false,
       isMobileViewport: false,
       openSessionId: 's-1',
       presence: {},
@@ -212,12 +285,15 @@ describe('useSessionPaneState', () => {
     expect(result.current.view).toBe('focus');
   });
 
-  it('switches to split as an opt-in and reports the split layout', () => {
+  it('demotes focus back to split and reports the split layout', () => {
     const { result } = renderPaneState();
 
+    expect(result.current.view).toBe('split');
+    act(() => result.current.setView('focus'));
     expect(result.current.view).toBe('focus');
     act(() => result.current.setView('split'));
     expect(result.current.view).toBe('split');
     expect(result.current.sessionPaneLayout).toBe('split');
+    expect(window.localStorage.getItem(AGENT_FOCUS_OPT_IN_KEY)).toBe('false');
   });
 });

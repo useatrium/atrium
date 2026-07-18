@@ -5,7 +5,11 @@
 // resize handle lives.
 
 import { useCallback, useState } from 'react';
-import { AGENT_DOCK_IMMERSED_STORAGE_KEY, AGENT_DOCK_OPEN_STORAGE_KEY } from '../storageKeys';
+import {
+  AGENT_DOCK_IMMERSED_STORAGE_KEY,
+  AGENT_DOCK_MINE_FILTER_STORAGE_KEY,
+  AGENT_DOCK_OPEN_STORAGE_KEY,
+} from '../storageKeys';
 
 function readBoolean(key: string): boolean {
   return typeof window !== 'undefined' && window.localStorage.getItem(key) === 'true';
@@ -32,4 +36,8 @@ export function useAgentDockOpen() {
 
 export function useAgentDockImmersed() {
   return usePersistedBoolean(AGENT_DOCK_IMMERSED_STORAGE_KEY);
+}
+
+export function useAgentDockMineFilter() {
+  return usePersistedBoolean(AGENT_DOCK_MINE_FILTER_STORAGE_KEY);
 }

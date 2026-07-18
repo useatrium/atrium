@@ -7,6 +7,7 @@
 import { useCallback, useRef, useState } from 'react';
 import type { CSSProperties, PointerEvent as ReactPointerEvent, RefObject } from 'react';
 import {
+  AGENT_DOCK_WIDTH_STORAGE_KEY,
   LEGACY_SESSION_PANE_WIDTH_STORAGE_KEY,
   LEGACY_SIDEBAR_WIDTH_STORAGE_KEY,
   LEGACY_THREAD_PANE_WIDTH_STORAGE_KEY,
@@ -281,3 +282,21 @@ export function useSidebarWidth(): {
   const { size, resizing, startResize, resetSize } = usePaneSize(sidebarWidthConfig);
   return { width: size, resizing, startResize, resetWidth: resetSize };
 }
+
+// === agent dock resize additions ===
+export const AGENT_DOCK_MIN_WIDTH = 224;
+export const AGENT_DOCK_MAX_VW = 40;
+export const AGENT_DOCK_FALLBACK_WIDTH = 256;
+
+export const agentDockWidthConfig: PaneSizeConfig = {
+  storageKey: AGENT_DOCK_WIDTH_STORAGE_KEY,
+  // The key was reserved before resize shipped, so there is no legacy value
+  // to migrate. Using the same key keeps the generic config shape additive.
+  legacyStorageKey: AGENT_DOCK_WIDTH_STORAGE_KEY,
+  defaultClassName: '',
+  minSize: AGENT_DOCK_MIN_WIDTH,
+  maxVw: AGENT_DOCK_MAX_VW,
+  fallbackSize: AGENT_DOCK_FALLBACK_WIDTH,
+  cssVar: '--agent-dock-w',
+  dragDirection: 'left',
+};

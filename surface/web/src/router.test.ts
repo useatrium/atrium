@@ -72,6 +72,15 @@ describe('router', () => {
     expect(routePath({ surface: 'chat', channelId: 'ch_1', sessionId: 'sess_1', focusSession: false })).toBe(
       '/c/ch_1/s/sess_1',
     );
+    expect(
+      routePath({
+        surface: 'chat',
+        channelId: 'ch_1',
+        sessionId: null,
+        panelSessionId: 'sess_1',
+        focusSession: false,
+      }),
+    ).toBe('/c/ch_1');
     expect(routePath({ surface: 'files', channelId: null, sessionId: null, focusSession: false })).toBe('/files');
     expect(routePath({ surface: 'activity', channelId: null, sessionId: null, focusSession: false })).toBe('/activity');
     expect(routePath({ surface: 'settings', channelId: null, sessionId: null, focusSession: false })).toBe('/settings');

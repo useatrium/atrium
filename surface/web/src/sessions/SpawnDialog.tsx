@@ -15,7 +15,7 @@ import { PlusIcon, XIcon } from '../components/icons';
 import { SHORTCUTS } from '../lib/shortcuts';
 import { useDialog } from '../useDialog';
 
-const HARNESSES: { value: string; label: string }[] = [
+const HARNESSES: { value: ProviderCredentialProvider; label: string }[] = [
   { value: 'codex', label: 'Codex' },
   { value: 'claude-code', label: 'Claude Code' },
 ];
@@ -52,6 +52,7 @@ export function SpawnDialog({
   profiles = [],
   onConnectGitHub,
   onConnectProvider,
+  onRunDemo,
   initialTask = '',
 }: {
   channelName: string;
@@ -63,6 +64,7 @@ export function SpawnDialog({
   profiles?: AgentProfile[];
   onConnectGitHub?: () => void;
   onConnectProvider?: (provider: ProviderCredentialProvider) => void;
+  onRunDemo?: () => void;
   initialTask?: string;
 }) {
   const containerRef = useRef<HTMLFormElement>(null);
@@ -76,10 +78,8 @@ export function SpawnDialog({
   const [githubIdentitySelection, setGitHubIdentitySelection] = useState('automatic');
   const [agentProfileId, setAgentProfileId] = useState('');
 
-  const claudeStatus = providerStatuses?.['claude-code'];
-  const codexStatus = providerStatuses?.codex;
-  const claudeUsesDefaultAuth = harness === 'claude-code' && claudeStatus?.connected !== true;
-  const codexUsesDefaultAuth = harness === 'codex' && codexStatus?.connected !== true;
+  const providerConnected = providerStatuses?.[harness]?.connected === true;
+  const providerLabel = HARNESSES.find((item) => item.value === harness)?.label ?? harness;
   const privateRepoRequested =
     (repo.trim().length > 0 && repoPrivate) ||
     referenceRepos.some((item) => item.repo.trim().length > 0 && item.private);
@@ -88,12 +88,16 @@ export function SpawnDialog({
   const canSpawn = task.trim().length > 0 && !privateRepoBlocked;
   const providerProfiles = profiles.filter((profile) => profile.provider === harness && profile.currentVersionId);
   const selectedProfile = providerProfiles.find((profile) => profile.id === agentProfileId);
-  const spawnDisabled = !canSpawn;
+  const spawnDisabled = providerConnected ? !canSpawn : onConnectProvider == null;
   const spawnTooltip = spawnDisabled
-    ? privateRepoBlocked
-      ? 'Connect GitHub before starting a private repo agent'
-      : 'Add a task before starting an agent'
-    : 'Start agent';
+    ? !providerConnected
+      ? `Connect ${providerLabel} before starting an agent`
+      : privateRepoBlocked
+        ? 'Connect GitHub before starting a private repo agent'
+        : 'Add a task before starting an agent'
+    : !providerConnected
+      ? `Connect ${providerLabel} to start`
+      : 'Start agent';
   const activeReferenceCount = referenceRepos.filter((item) => item.repo.trim().length > 0).length;
   const repoScoped = repo.trim().length > 0 || activeReferenceCount > 0;
   const activeGitHubIdentityMode = githubConnection?.connected
@@ -145,6 +149,10 @@ export function SpawnDialog({
   function submit(e: FormEvent) {
     e.preventDefault();
     if (spawnDisabled) return;
+    if (!providerConnected) {
+      onConnectProvider?.(harness);
+      return;
+    }
     const trimmedRepo = repo.trim();
     const trimmedBranch = branch.trim();
     const repos = [
@@ -257,7 +265,7 @@ export function SpawnDialog({
             <span className="mb-1 block text-2xs font-semibold uppercase tracking-wider text-fg-muted">Harness</span>
             <select
               value={harness}
-              onChange={(e) => setHarness(e.target.value)}
+              onChange={(e) => setHarness(e.target.value as ProviderCredentialProvider)}
               className="w-full rounded-md border border-edge bg-surface px-2.5 py-2 text-sm text-fg outline-none focus:border-edge-strong"
             >
               {HARNESSES.map((h) => (
@@ -268,33 +276,10 @@ export function SpawnDialog({
             </select>
           </label>
 
-          {/* Calm, neutral note (not a warning / live region): the default auth
-              already works; Connect is an opt-in upgrade, not an error. */}
-          {claudeUsesDefaultAuth && (
+          {!providerConnected && (
             <div className="rounded-md border border-edge bg-surface px-3 py-2 text-2xs leading-relaxed text-fg-muted">
-              Using Atrium&rsquo;s default agent auth.{' '}
-              <button
-                type="button"
-                onClick={() => onConnectProvider?.('claude-code')}
-                className="font-medium text-accent-text hover:text-accent-text-strong hover:underline"
-              >
-                Connect Claude
-              </button>{' '}
-              to run on your own subscription.
-            </div>
-          )}
-
-          {codexUsesDefaultAuth && (
-            <div className="rounded-md border border-edge bg-surface px-3 py-2 text-2xs leading-relaxed text-fg-muted">
-              Using Atrium&rsquo;s default agent auth.{' '}
-              <button
-                type="button"
-                onClick={() => onConnectProvider?.('codex')}
-                className="font-medium text-accent-text hover:text-accent-text-strong hover:underline"
-              >
-                Connect Codex
-              </button>{' '}
-              to run on your own subscription.
+              Connect {providerLabel} before starting this session. Your task will stay here while you connect, or you
+              can watch a demo agent with no provider setup.
             </div>
           )}
 
@@ -514,13 +499,22 @@ export function SpawnDialog({
           >
             Cancel
           </button>
+          {!providerConnected && onRunDemo && (
+            <button
+              type="button"
+              onClick={onRunDemo}
+              className="rounded-md border border-edge-strong bg-surface px-3 py-1.5 text-xs font-semibold text-fg-secondary hover:bg-surface-overlay hover:text-fg"
+            >
+              Watch a demo agent
+            </button>
+          )}
           <Tooltip content={spawnTooltip} shortcut={SHORTCUTS.spawnSession.keys}>
             <button
               type="submit"
               aria-disabled={spawnDisabled || undefined}
               className="rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-on-accent hover:bg-accent-hover aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
             >
-              Start session
+              {providerConnected ? 'Start session' : `Connect ${providerLabel} to start`}
             </button>
           </Tooltip>
         </footer>
