@@ -1,27 +1,15 @@
+// The Agent Dock frame: resting spine ↔ open list ↔ immersed. The list layer
+// (groups/rows) lives in AgentDockRows.tsx and receives everything it needs via
+// AgentRowContext — frame work and row work stay in separate files.
+
 import { useEffect, useMemo, useState } from 'react';
 import type { Channel } from '@atrium/surface-client';
-import {
-  BotIcon,
-  ChevronDownIcon,
-  ChevronRightIcon,
-  ExpandIcon,
-  PinIcon,
-  PlusIcon,
-  SearchIcon,
-  ShrinkIcon,
-  XIcon,
-} from '../components/icons';
-import { GlanceChip } from './GlanceChip';
+import { BotIcon, ChevronRightIcon, ExpandIcon, PlusIcon, SearchIcon, ShrinkIcon, XIcon } from '../components/icons';
+import { AgentGroup, type AgentRowContext } from './AgentDockRows';
 import { useNow } from './SessionCard';
-import { SessionPresenceTicker } from './SessionPresenceTicker';
-import {
-  deriveSessionGlance,
-  isLiveAgentWork,
-  isTerminalSessionStatus,
-  sessionAttentionKind,
-  type Session,
-} from './types';
-import { agentDockCounts, agentDockGroups, type AgentDockGroup } from './useAgentDock';
+import { deriveSessionGlance, isLiveAgentWork, type Session } from './types';
+import { useAgentDockOpen } from './useAgentDockPrefs';
+import { agentDockCounts, agentDockGroups } from './useAgentDock';
 
 export type AgentDockProps = {
   sessions: Record<string, Session>;
@@ -29,11 +17,17 @@ export type AgentDockProps = {
   activeChannelId: string | null;
   focusedSessionId: string | null;
   immersed: boolean;
+  /** The viewing user, for mine-vs-others treatment in rows and counts. */
+  meId: string | null;
   onFocusAgent: (id: string) => void;
   onToggleImmersed: () => void;
   onNewAgent: () => void;
   filterChannelId?: string | null;
   onClearFilter?: () => void;
+  /** Filter the dock to a workstream (rows' channel tags reuse the presence-link behavior). */
+  onFilterChannel?: (channelId: string) => void;
+  onSetArchived?: (sessionId: string, archived: boolean, previousArchivedAt: string | null) => void;
+  onSetPinned?: (sessionId: string, pinned: boolean, previousPinned: boolean) => void;
   /** Foundation seam for the full Needs-you view; the dock lane will place it. */
   onOpenAttention?: () => void;
 };
@@ -47,179 +41,30 @@ const DOT_STYLES = {
   stopped: 'bg-fg-faint',
 } as const;
 
-function sessionAge(session: Session, now: number): { short: string; full: string } {
-  const value = session.latestActivity?.at ?? session.completedAt ?? session.createdAt;
-  const timestamp = Date.parse(value);
-  if (!Number.isFinite(timestamp)) return { short: '—', full: value };
-
-  const elapsedSeconds = Math.max(0, Math.floor((now - timestamp) / 1_000));
-  const full = new Date(timestamp).toLocaleString();
-  if (elapsedSeconds < 60) return { short: 'now', full };
-  const minutes = Math.floor(elapsedSeconds / 60);
-  if (minutes < 60) return { short: `${minutes}m`, full };
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return { short: `${hours}h`, full };
-  const days = Math.floor(hours / 24);
-  if (days < 7) return { short: `${days}d`, full };
-  return {
-    short: new Date(timestamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
-    full,
-  };
-}
-
-function fallbackActivity(session: Session): string {
-  if (session.resultText?.trim()) return session.resultText.trim();
-  if (isTerminalSessionStatus(session.status)) return 'Run finished';
-  if (session.status === 'queued' || session.status === 'spawning') return 'Starting up…';
-  return 'Waiting for activity…';
-}
-
-function AgentRow({
-  session,
-  now,
-  selected,
-  onFocus,
-}: {
-  session: Session;
-  now: number;
-  selected: boolean;
-  onFocus: () => void;
-}) {
-  const age = sessionAge(session, now);
-  const canAnswer = sessionAttentionKind(session) === 'question';
-
-  return (
-    <li
-      data-testid={`agent-dock-row-${session.id}`}
-      className={`group/agent-row relative border-b border-edge/70 last:border-b-0 ${
-        selected ? 'bg-accent/15' : 'hover:bg-surface-overlay/70'
-      }`}
-    >
-      <button
-        type="button"
-        aria-current={selected ? 'true' : undefined}
-        aria-label={`Focus agent ${session.title}`}
-        onClick={onFocus}
-        className="grid w-full min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-2 gap-y-1 px-2 py-2 text-left focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-accent"
-      >
-        <GlanceChip session={session} now={now} showClock={false} className="max-w-24 overflow-hidden text-2xs" />
-        <span className="flex min-w-0 items-center gap-1.5">
-          {session.pinned && (
-            <span role="img" aria-label="Pinned" title="Pinned" className="shrink-0 text-fg-muted">
-              <PinIcon size={11} />
-            </span>
-          )}
-          <span className="truncate text-xs font-semibold text-fg" title={session.title}>
-            {session.title}
-          </span>
-        </span>
-        <span
-          title={age.full}
-          className={`text-3xs tabular-nums text-fg-muted transition-opacity ${
-            canAnswer ? 'group-hover/agent-row:opacity-0 group-focus-within/agent-row:opacity-0' : ''
-          }`}
-        >
-          {age.short}
-        </span>
-        <span className="col-start-2 col-end-4 min-w-0">
-          {session.latestActivity && !isTerminalSessionStatus(session.status) ? (
-            <SessionPresenceTicker session={session} />
-          ) : (
-            <span className="block truncate text-2xs text-fg-muted">{fallbackActivity(session)}</span>
-          )}
-        </span>
-      </button>
-      {canAnswer && (
-        <button
-          type="button"
-          onClick={onFocus}
-          className="absolute right-1.5 top-1.5 rounded px-1.5 py-1 text-3xs font-semibold text-warning-text-strong opacity-0 hover:bg-warning-tint/50 focus:opacity-100 focus-visible:outline-2 focus-visible:outline-warning group-hover/agent-row:opacity-100"
-        >
-          Answer
-        </button>
-      )}
-    </li>
-  );
-}
-
-function AgentGroup({
-  group,
-  now,
-  focusedSessionId,
-  onFocusAgent,
-}: {
-  group: AgentDockGroup;
-  now: number;
-  focusedSessionId: string | null;
-  onFocusAgent: (id: string) => void;
-}) {
-  const rows = (
-    <ul className="overflow-hidden rounded-md border border-edge bg-surface/45">
-      {group.sessions.map((session) => (
-        <AgentRow
-          key={session.id}
-          session={session}
-          now={now}
-          selected={session.id === focusedSessionId}
-          onFocus={() => onFocusAgent(session.id)}
-        />
-      ))}
-    </ul>
-  );
-
-  if (group.kind === 'hibernating' || group.kind === 'recent') {
-    return (
-      <details
-        data-testid="agent-dock-group"
-        data-kind={group.kind}
-        className="group/disclosure border-t border-edge pt-2"
-      >
-        <summary className="flex cursor-pointer list-none items-center gap-1.5 rounded px-1 py-1 text-xs font-semibold text-fg-muted hover:bg-surface-overlay hover:text-fg-secondary focus-visible:outline-2 focus-visible:outline-accent [&::-webkit-details-marker]:hidden">
-          <ChevronRightIcon size={12} className="group-open/disclosure:hidden" />
-          <ChevronDownIcon size={12} className="hidden group-open/disclosure:block" />
-          <span>{group.label}</span>
-          <span className="tabular-nums text-fg-faint">{group.sessions.length}</span>
-        </summary>
-        <div className="mt-1">{rows}</div>
-      </details>
-    );
-  }
-
-  return (
-    <section data-testid="agent-dock-group" data-kind={group.kind} className="space-y-1.5">
-      <h2
-        className={`flex items-center gap-1.5 px-1 text-xs font-semibold ${
-          group.kind === 'needs' ? 'text-warning-text-strong' : 'text-fg-muted'
-        }`}
-      >
-        <span>{group.label}</span>
-        <span className="tabular-nums text-fg-faint">{group.sessions.length}</span>
-      </h2>
-      {rows}
-    </section>
-  );
-}
-
 export function AgentDock({
   sessions,
   channels,
   activeChannelId,
   focusedSessionId,
   immersed,
+  meId,
   onFocusAgent,
   onToggleImmersed,
   onNewAgent,
   filterChannelId,
   onClearFilter,
+  onFilterChannel,
+  onSetArchived,
+  onSetPinned,
   onOpenAttention,
 }: AgentDockProps) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useAgentDockOpen();
   const [query, setQuery] = useState('');
   const now = useNow(Object.values(sessions).some(isLiveAgentWork));
 
   useEffect(() => {
     if (immersed || filterChannelId) setOpen(true);
-  }, [filterChannelId, immersed]);
+  }, [filterChannelId, immersed, setOpen]);
 
   const filteredSessions = useMemo(
     () =>
@@ -228,7 +73,11 @@ export function AgentDock({
         : sessions,
     [filterChannelId, sessions],
   );
-  const counts = agentDockCounts(filteredSessions);
+  // Attention is GLOBAL: the spine badge and the Triage entry always reflect
+  // every workstream, matching the Attention view they open. The workstream
+  // filter scopes the LIST below, never the attention counts — splitting the
+  // two is what produced "Triage 1 →" opening a view that says 3 are waiting.
+  const counts = agentDockCounts(sessions);
   const groups = useMemo(
     () => agentDockGroups(filteredSessions, { activeChannelId, now, channels }),
     [activeChannelId, channels, filteredSessions, now],
@@ -253,6 +102,17 @@ export function AgentDock({
         .sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt))
         .slice(0, 6),
     [filteredSessions],
+  );
+  const channelNames = useMemo(() => new Map(channels.map((channel) => [channel.id, channel.name])), [channels]);
+  const rowContext = useMemo<AgentRowContext>(
+    () => ({
+      meId,
+      channelNames,
+      ...(onFilterChannel ? { onFilterChannel } : {}),
+      ...(onSetArchived ? { onSetArchived } : {}),
+      ...(onSetPinned ? { onSetPinned } : {}),
+    }),
+    [channelNames, meId, onFilterChannel, onSetArchived, onSetPinned],
   );
   const filterChannel = filterChannelId ? channels.find((channel) => channel.id === filterChannelId) : undefined;
   const state = immersed ? 'immersed' : open ? 'open' : 'resting';
@@ -398,6 +258,7 @@ export function AgentDock({
                     now={now}
                     focusedSessionId={focusedSessionId}
                     onFocusAgent={onFocusAgent}
+                    context={rowContext}
                   />
                 ))}
               </div>

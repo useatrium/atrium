@@ -58,6 +58,7 @@ import type { TranscriptDiscussPayload } from './sessions/SessionPane';
 import { ConversationPanel } from './sessions/ConversationPanel';
 import { AgentAttentionView } from './sessions/AgentAttentionView';
 import { AgentDock } from './sessions/AgentDock';
+import { useAgentDockImmersed } from './sessions/useAgentDockPrefs';
 import { ChannelAgentPresence } from './sessions/ChannelAgentPresence';
 import { buildAgentCommands } from './sessions/agentCommands';
 // === spine additions === Reuse SessionPane's canonical work-tab URL grammar.
@@ -764,7 +765,7 @@ export function Chat({
   const [startDmRequestSeq, setStartDmRequestSeq] = useState(0);
   // Configured-spawn dialog (the summon sigil is the quick path).
   const [spawnOpen, setSpawnOpen] = useState(false);
-  const [immersed, setImmersed] = useState(false);
+  const [immersed, setImmersed] = useAgentDockImmersed();
   const [agentDockFilterChannel, setAgentDockFilterChannel] = useState<string | null>(null);
   const [attentionOpen, setAttentionOpen] = useState(false);
   const [spawnInitialTask, setSpawnInitialTask] = useState('');
@@ -2717,6 +2718,7 @@ export function Chat({
         activeChannelId={activeChannelId}
         focusedSessionId={state.openSessionId}
         immersed={immersed}
+        meId={me.id}
         onFocusAgent={onFocusAgent}
         onToggleImmersed={() => setImmersed((value) => !value)}
         onNewAgent={() => {
@@ -2725,6 +2727,13 @@ export function Chat({
         }}
         filterChannelId={agentDockFilterChannel}
         onClearFilter={() => setAgentDockFilterChannel(null)}
+        onFilterChannel={(channelId) => setAgentDockFilterChannel(channelId)}
+        onSetArchived={(sessionId, archived, previousArchivedAt) =>
+          void setSessionArchived(sessionId, archived, previousArchivedAt).catch(() => {})
+        }
+        onSetPinned={(sessionId, pinned, previousPinned) =>
+          void setSessionPinned(sessionId, pinned, previousPinned).catch(() => {})
+        }
         onOpenAttention={() => setAttentionOpen(true)}
       />
 

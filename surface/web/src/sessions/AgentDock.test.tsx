@@ -47,6 +47,7 @@ function props(overrides: Partial<AgentDockProps> = {}): AgentDockProps {
     activeChannelId: 'channel-1',
     focusedSessionId: null,
     immersed: false,
+    meId: null,
     onFocusAgent: vi.fn(),
     onToggleImmersed: vi.fn(),
     onNewAgent: vi.fn(),
