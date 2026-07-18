@@ -481,14 +481,21 @@ def appliance_values_yaml(commit_sha: str, surface_port: int) -> str:
             tag: {commit_sha}
 
         apiRs:
-          # Warm ONE pod per preview (chart default is 3). With 0, every first
-          # turn cold-creates and cold-pulls the ~1.6GB agent image, and that
-          # pull loses the race with SESSION_SANDBOX_READY_TIMEOUT_SECS (~90s),
-          # so the first turn on a fresh preview *fails*. A warm pod pre-pulls the
-          # image and stays ready to claim, making the first turn instant. Kept at
-          # 1 (not 3) to bound RAM on the shared box; reuse-by-branch keeps it warm
-          # across updates.
+          # Warm ONE pod per preview (chart default is 3) so the first turn claims
+          # a ready pod instead of cold-creating one. But a cold node must unpack
+          # the agent image first, and on this box that is unpack-bound (~90-100s
+          # per GB, measured): even the slim ~1.6GB image takes ~140s to pull+unpack
+          # — past the 94s SESSION_SANDBOX_READY_TIMEOUT_SECS default. Left at that
+          # default the warm pod is killed mid-unpack at 94s and replaced, and the
+          # pool churns 2-3 pods before one finds enough cached layers to finish
+          # (the fat pre-slim image measured 246s, making the failure certain).
+          # Raise the timeout so the single warm pod unpacks once, uninterrupted;
+          # after that every claim and re-pull is a cache hit (~1s). 300s leaves
+          # headroom over the slim pull and covers a pinned pre-slim SHA too. Kept
+          # at size 1 (not 3) to bound RAM on the shared box; reuse-by-branch keeps
+          # it warm across updates.
           sandboxWarmPoolSize: 1
+          sandboxReadyTimeoutSecs: 300
           image:
             repository: {REGISTRY_PULL}/library/centaur-api-rs
             tag: {commit_sha}
