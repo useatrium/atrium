@@ -161,4 +161,23 @@ describe('AgentDock', () => {
     expect(screen.queryByText('Engineering agent')).toBeNull();
     expect(screen.getByText('Workstream: #launch')).toBeTruthy();
   });
+
+  it('clears the workstream filter from the chip', () => {
+    const onClearFilter = vi.fn();
+    render(
+      <AgentDock
+        {...props({
+          sessions: {
+            launch: session({ id: 'launch', channelId: 'channel-2', title: 'Launch agent' }),
+          },
+          filterChannelId: 'channel-2',
+          onClearFilter,
+        })}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Clear workstream filter' }));
+
+    expect(onClearFilter).toHaveBeenCalledTimes(1);
+  });
 });

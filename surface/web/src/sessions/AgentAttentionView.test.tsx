@@ -2,8 +2,14 @@
 
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { Channel } from '@atrium/surface-client';
 import type { Session } from './types';
 import { AgentAttentionView } from './AgentAttentionView';
+
+const channels = [
+  { id: 'engineering', name: 'eng-agents' },
+  { id: 'releases', name: 'release-train' },
+] as Channel[];
 
 function session(overrides: Partial<Session> = {}): Session {
   return {
@@ -75,7 +81,7 @@ afterEach(cleanup);
 
 describe('AgentAttentionView', () => {
   it('lists needs-you sessions grouped by reason with their waiting details', () => {
-    render(<AgentAttentionView sessions={attentionSessions()} onFocusAgent={() => {}} />);
+    render(<AgentAttentionView sessions={attentionSessions()} channels={channels} onFocusAgent={() => {}} />);
 
     expect(screen.getByRole('heading', { name: 'Blocked questions' })).toBeTruthy();
     expect(screen.getByRole('heading', { name: 'Provider authentication' })).toBeTruthy();
@@ -84,26 +90,46 @@ describe('AgentAttentionView', () => {
     expect(screen.getByText('Should I use Postgres or SQLite?')).toBeTruthy();
     expect(screen.getByText('GitHub access expired.')).toBeTruthy();
     expect(screen.getByText('Mina requested control of this agent.')).toBeTruthy();
-    expect(screen.getByText('#releases')).toBeTruthy();
+    expect(screen.getByText('#release-train')).toBeTruthy();
+    expect(screen.queryByText('#releases')).toBeNull();
     expect(screen.queryByText('Still working')).toBeNull();
     expect(screen.getAllByTestId('glance-chip')).toHaveLength(4);
   });
 
+  it('falls back to the raw channel id when the channel is unknown', () => {
+    render(
+      <AgentAttentionView
+        sessions={{
+          failed: session({
+            id: 'failed',
+            channelId: 'ch_01UNKNOWN',
+            status: 'failed',
+            completedAt: '2026-07-18T11:00:00.000Z',
+          }),
+        }}
+        channels={channels}
+        onFocusAgent={() => {}}
+      />,
+    );
+
+    expect(screen.getByText('#ch_01UNKNOWN')).toBeTruthy();
+  });
+
   it('opens the selected agent from its inline action', () => {
     const onFocusAgent = vi.fn();
-    render(<AgentAttentionView sessions={attentionSessions()} onFocusAgent={onFocusAgent} />);
+    render(<AgentAttentionView sessions={attentionSessions()} channels={channels} onFocusAgent={onFocusAgent} />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Reconnect →' }));
     expect(onFocusAgent).toHaveBeenCalledWith('auth');
   });
 
   it('shows an empty state when no sessions need attention', () => {
-    render(<AgentAttentionView sessions={{ working: session() }} onFocusAgent={() => {}} />);
+    render(<AgentAttentionView sessions={{ working: session() }} channels={channels} onFocusAgent={() => {}} />);
     expect(screen.getByText('No agents need you.')).toBeTruthy();
   });
 
   it('filters the list between blocked and failed sessions', () => {
-    render(<AgentAttentionView sessions={attentionSessions()} onFocusAgent={() => {}} />);
+    render(<AgentAttentionView sessions={attentionSessions()} channels={channels} onFocusAgent={() => {}} />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Failed' }));
     expect(screen.getByText('Deploy preview')).toBeTruthy();

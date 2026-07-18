@@ -91,7 +91,7 @@ import { useProviderCredentials } from './useProviderCredentials';
 import { useReadMarks } from './useReadMarks';
 import { useSessionActions } from './useSessionActions';
 import { useConversationSelection } from './useConversationSelection';
-import { useSessionPaneState } from './useSessionPaneState';
+import { channelMainVisible, useSessionPaneState } from './useSessionPaneState';
 import { useSessionQueueFailures } from './useSessionQueueFailures';
 import { useTypingIndicators } from './useTypingIndicators';
 import { useUploadQueue } from './useUploadQueue';
@@ -829,6 +829,7 @@ export function Chat({
   const active = state.channels.find((c) => c.id === state.activeChannelId) ?? null;
   const timeline = (active && state.timelines[active.id]) || emptyTimeline;
   const currentRoute = useMemo(() => parseInAppRoute(locationState.pathname), [locationState.pathname]);
+  const threadRouteOpen = currentRoute?.surface === 'chat' && currentRoute.threadRootId != null;
   const sessionFocusFromUrl = useMemo(
     () => new URLSearchParams(locationState.search).get(URL_PARAMS.view) === 'focus',
     [locationState.search],
@@ -1230,14 +1231,33 @@ export function Chat({
   };
 
   const ensureTopLevelEventLoaded = useCallback(async (channelId: string, eventId: number): Promise<boolean> => {
-    for (let tries = 0; tries < 30; tries++) {
+    // Waiting for the initial page and paging back share this loop, but only
+    // paging counts against `pagesFetched`: a route-driven open (reload on a
+    // thread URL, thread crumb from a focused agent) can land before the
+    // channel's first fetch settles, and burning the whole budget on that wait
+    // made the open silently give up under load.
+    let pagesFetched = 0;
+    let settledMisses = 0;
+    for (let tries = 0; tries < 100; tries++) {
       const t = stateRef.current.timelines[channelId];
       if (t?.main.some((m) => m.id === eventId)) return true;
       if (!t?.loaded) {
         await new Promise((r) => setTimeout(r, 150));
         continue;
       }
-      if (!t.hasMoreBefore) return false;
+      if (!t.hasMoreBefore) {
+        // A warm boot hydrates the cached timeline as `loaded` while the
+        // freshness repair (after_id delta / history-reset) is still in
+        // flight, so a deep-linked root that's missing from the cached window
+        // looks permanently absent for a beat. Poll briefly before giving up
+        // or reload-restoring a thread URL fails whenever the cache is stale.
+        settledMisses += 1;
+        if (settledMisses > 20) return false;
+        await new Promise((r) => setTimeout(r, 150));
+        continue;
+      }
+      if (pagesFetched >= 30) return false;
+      pagesFetched += 1;
       const oldest = t.main.find((m) => m.status === 'confirmed');
       if (!oldest?.id) return false;
       const expectedTimelineEpoch = stateRef.current.timelineEpochs[channelId] ?? 0;
@@ -1495,7 +1515,11 @@ export function Chat({
         setFocused(false);
         const rootEventId = Number(route.threadRootId);
         if (nextChannelId && Number.isSafeInteger(rootEventId)) {
-          void openThreadInChannel(nextChannelId, rootEventId).catch(onApiError);
+          void openThreadInChannel(nextChannelId, rootEventId)
+            .then((opened) => {
+              if (!opened) showErrorToast('Could not open that thread.');
+            })
+            .catch(onApiError);
         }
         return;
       }
@@ -2153,7 +2177,7 @@ export function Chat({
         startDmRequestSeq={startDmRequestSeq}
       />
 
-      {view !== 'focus' && (
+      {channelMainVisible(view, threadRouteOpen) && (
         <main id="main-content" className={`${hideMainOnMobile ? 'hidden md:flex' : 'flex'} min-w-0 flex-1 flex-col`}>
           <header
             className={`flex h-12 shrink-0 items-center gap-2 border-b border-edge px-2 md:gap-3 md:px-4 ${
@@ -2504,10 +2528,10 @@ export function Chat({
             </EntryQuoteApplyContextProvider>
           )}
 
-          {/* Composer follows the channel <main>: shown in both channel and split
-            views (this block is already inside `view !== 'focus'`). Gating it on
-            `!openSessionId` used to blank the composer in split view, leaving the
-            channel with no way to type. */}
+          {/* Composer follows the channel <main>: shown whenever the channel
+            renders (this block is already inside `channelMainVisible`). Gating
+            it on `!openSessionId` used to blank the composer in split view,
+            leaving the channel with no way to type. */}
           {active && !showNonChatSurface && (
             <>
               <TypingLine typing={typing} />
@@ -2696,6 +2720,7 @@ export function Chat({
           setSpawnOpen(true);
         }}
         filterChannelId={agentDockFilterChannel}
+        onClearFilter={() => setAgentDockFilterChannel(null)}
         onOpenAttention={() => setAttentionOpen(true)}
       />
 
@@ -2713,6 +2738,7 @@ export function Chat({
             </div>
             <AgentAttentionView
               sessions={state.sessions}
+              channels={state.channels}
               onFocusAgent={(sessionId) => {
                 setAttentionOpen(false);
                 onFocusAgent(sessionId);
