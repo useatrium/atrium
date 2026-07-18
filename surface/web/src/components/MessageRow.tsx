@@ -1180,7 +1180,7 @@ function ChannelAnnotationCluster({
     <div data-testid="channel-annotation-cluster" className="relative mt-2 space-y-2 pl-1">
       <span
         aria-hidden="true"
-        className="absolute -left-[27px] top-0 h-[14px] w-[13px] rounded-bl-md border-b border-l border-edge-strong"
+        className="absolute -left-8 top-0 h-[14px] w-[13px] rounded-bl-md border-b border-l border-edge-strong"
       />
       {/* Reading order is chronological: the collapsed middle first, then the
           freshest content (latest reply / answer / live strip) bottom-most. */}
@@ -1367,7 +1367,7 @@ function AgentSessionSlot({
   if (terminal) {
     return (
       <div data-testid="session-slot-done" className="flex min-w-0 items-start gap-2 text-xs text-fg-muted">
-        <AgentMark size={20} />
+        <AgentMark size={24} />
         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-0.5">
           <span className="min-w-0 flex-[1_1_16rem] truncate">
             <span className="text-success">✓</span>{' '}

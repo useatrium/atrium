@@ -5,7 +5,7 @@ import { mapFoldedTurnRow } from '../src/lib/threadWorkFold';
 const sourceEventIds: number[] = [];
 
 describe('thread work fold view mapping', () => {
-  it('maps completed reasoning and tool work while leaving questions outside the fold', () => {
+  it('splits work around a question, keeping it outside the folds', () => {
     const items: SessionItem[] = [
       {
         id: 'ask',
@@ -54,11 +54,15 @@ describe('thread work fold view mapping', () => {
       },
     ];
 
+    // The question is a non-work item, so the surrounding reasoning and tool
+    // work split into two folds that render on either side of it — keeping the
+    // transcript chronological rather than hoisting all work above the question.
     const folds = foldedTurnRows(items);
-    expect(folds).toHaveLength(1);
-    expect(folds[0]!.items.map((item) => item.id)).toEqual(['reasoning', 'read']);
+    expect(folds).toHaveLength(2);
+    expect(folds[0]!.items.map((item) => item.id)).toEqual(['reasoning']);
+    expect(folds[1]!.items.map((item) => item.id)).toEqual(['read']);
     expect(mapFoldedTurnRow(folds[0]!)).toEqual({
-      duration: '4s',
+      duration: '0s',
       steps: [
         {
           id: 'reasoning',
@@ -66,6 +70,11 @@ describe('thread work fold view mapping', () => {
           detail: 'I will read the file.',
           status: 'done',
         },
+      ],
+    });
+    expect(mapFoldedTurnRow(folds[1]!)).toEqual({
+      duration: '2s',
+      steps: [
         {
           id: 'read',
           label: 'Read · src/file.ts',

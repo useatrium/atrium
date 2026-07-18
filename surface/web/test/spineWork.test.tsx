@@ -43,7 +43,6 @@ function renderFold(
   props: {
     live?: boolean;
     expandAll?: boolean;
-    onOpenWork?: () => void;
     onDiscussStep?: (item: TurnWorkItem) => void;
     item?: ToolCallItem;
   } = {},
@@ -55,7 +54,6 @@ function renderFold(
         fold={renderedFold}
         live={props.live ?? false}
         expandAll={props.expandAll}
-        onOpenWork={props.onOpenWork}
         onDiscussStep={props.onDiscussStep}
       />
     </ThemeProvider>,
@@ -94,9 +92,8 @@ describe('spine work fold disclosure', () => {
     expect(screen.getByTestId('work-fold-collapsed')).toBeTruthy();
   });
 
-  it('expands fold, step, and clipped detail, then opens What it ran', () => {
-    const onOpenWork = vi.fn();
-    renderFold({ onOpenWork });
+  it('expands fold, step, and clipped detail with the command output inline', () => {
+    renderFold();
 
     fireEvent.click(screen.getByTestId('work-fold-collapsed'));
     fireEvent.click(screen.getByRole('button', { name: /pnpm test/i }));
@@ -104,8 +101,7 @@ describe('spine work fold disclosure', () => {
     const detail = screen.getByTestId('step-detail-tool-1');
     expect(detail.querySelector('pre')?.className).toContain('overflow-hidden');
     expect(detail.textContent).toContain('line 19');
-    fireEvent.click(screen.getByRole('button', { name: 'full output → What it ran' }));
-    expect(onOpenWork).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('button', { name: 'full output → What it ran' })).toBeNull();
   });
 
   it('keeps the pane discuss affordance on addressable work steps', () => {

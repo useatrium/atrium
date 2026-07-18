@@ -30,8 +30,17 @@ function firstLine(value: string): string {
   return value.split(/\r?\n/, 1)[0]?.trim() ?? '';
 }
 
+function stripInlineMarkdown(value: string): string {
+  return value
+    .replace(/^\s*(?:[-*]\s+|#+\s*)/, '')
+    .replace(/\*\*(?=\S)(.+?\S)\*\*/g, '$1')
+    .replace(/\*(?=\S)(.+?\S)\*/g, '$1')
+    .replace(/`([^`]+)`/g, '$1')
+    .trim();
+}
+
 function stepSummary(item: TurnWorkItem): string {
-  if (item.type === 'reasoning') return firstLine(item.summary || item.text) || 'Reasoning';
+  if (item.type === 'reasoning') return stripInlineMarkdown(firstLine(item.summary || item.text)) || 'Reasoning';
   const descriptor = toolDisplay(item);
   return descriptor.subtitle ? `${descriptor.title} · ${descriptor.subtitle}` : descriptor.title;
 }
@@ -50,7 +59,6 @@ export function WorkFold({
   nested = false,
   revealStepHandle = null,
   highlightedStepHandle = null,
-  onOpenWork,
   onDiscussStep,
 }: {
   fold: FoldedTurnRow;
@@ -63,7 +71,6 @@ export function WorkFold({
   /** Opens a linked step so SessionPane entry deep-links remain addressable. */
   revealStepHandle?: string | null;
   highlightedStepHandle?: string | null;
-  onOpenWork?: () => void;
   onDiscussStep?: (item: TurnWorkItem) => void;
 }) {
   const revealedStep = fold.items.find((item) => item.handle === revealStepHandle);
@@ -158,7 +165,6 @@ export function WorkFold({
               {stepOpen && (
                 <StepDetail
                   item={item}
-                  onOpenWork={onOpenWork}
                   onDiscuss={onDiscussStep && item.handle?.startsWith('rec_') ? () => onDiscussStep(item) : undefined}
                 />
               )}

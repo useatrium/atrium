@@ -11,7 +11,7 @@ export type TranscriptRow<TChange> =
 
 export type TurnWorkItem = ReasoningItem | ToolCallItem;
 
-/** The work hidden between one human input and that turn's final answer. */
+/** One contiguous run of work hidden within a human/agent turn. */
 export interface FoldedTurnRow {
   kind: 'fold';
   key: string;
@@ -50,8 +50,8 @@ function elapsedMs(first: SessionItem | undefined, last: SessionItem | undefined
 /**
  * Projects the transcript into turn-scoped work folds. A turn is the segment
  * after a `user_message` (or the initial pre-user segment) and before the next
- * `user_message`; its fold contains only reasoning/tool items before the
- * segment's final assistant `text` item.
+ * `user_message`. Each contiguous reasoning/tool run becomes its own fold, so
+ * intervening narration remains chronologically interleaved.
  */
 export function foldedTurnRows(items: readonly SessionItem[]): FoldedTurnRow[] {
   const folds: FoldedTurnRow[] = [];
@@ -62,26 +62,49 @@ export function foldedTurnRows(items: readonly SessionItem[]): FoldedTurnRow[] {
   let turn = 0;
 
   const flush = (segmentEnd: number) => {
-    let replyIndex: number | null = null;
+    let lastWorkIndex: number | null = null;
     for (let index = segmentEnd - 1; index >= segmentStart; index -= 1) {
+      if (isWorkItem(items[index]!)) {
+        lastWorkIndex = index;
+        break;
+      }
+    }
+    if (lastWorkIndex === null) {
+      turn += 1;
+      return;
+    }
+
+    let replyIndex: number | null = null;
+    for (let index = segmentEnd - 1; index > lastWorkIndex; index -= 1) {
       if (items[index]?.type === 'text') {
         replyIndex = index;
         break;
       }
     }
     const workEnd = replyIndex ?? segmentEnd;
-    const indexedWork = items
-      .slice(segmentStart, workEnd)
-      .map((item, offset) => ({ item, index: segmentStart + offset }))
-      .filter((entry): entry is { item: TurnWorkItem; index: number } => isWorkItem(entry.item));
-    if (indexedWork.length > 0) {
+    const runs: Array<Array<{ item: TurnWorkItem; index: number }>> = [];
+    let run: Array<{ item: TurnWorkItem; index: number }> = [];
+    for (let index = segmentStart; index < workEnd; index += 1) {
+      const item = items[index]!;
+      if (isWorkItem(item)) {
+        run.push({ item, index });
+        continue;
+      }
+      if (run.length > 0) runs.push(run);
+      run = [];
+    }
+    if (run.length > 0) runs.push(run);
+
+    runs.forEach((indexedWork, runIndex) => {
+      const isLastRun = runIndex === runs.length - 1;
+      const runReplyIndex = isLastRun ? replyIndex : null;
       const workItems = indexedWork.map(({ item }) => item);
       const toolNames = [...new Set(workItems.flatMap((item) => (item.type === 'tool_call' ? [item.name] : [])))];
       const first = indexedWork[0]!;
-      const lastIndex = replyIndex ?? indexedWork[indexedWork.length - 1]!.index;
+      const lastIndex = runReplyIndex ?? indexedWork[indexedWork.length - 1]!.index;
       const durationMs = elapsedMs(first.item, items[lastIndex]);
       const executionId =
-        (replyIndex === null ? null : items[replyIndex]?.executionId) ??
+        (runReplyIndex === null ? null : items[runReplyIndex]?.executionId) ??
         [...workItems].reverse().find((item) => item.executionId !== null)?.executionId ??
         null;
       folds.push({
@@ -95,11 +118,11 @@ export function foldedTurnRows(items: readonly SessionItem[]): FoldedTurnRow[] {
         endIndex: indexedWork[indexedWork.length - 1]!.index,
         triggerIndex,
         triggerOrdinal,
-        replyIndex,
+        replyIndex: runReplyIndex,
         ...(durationMs !== undefined ? { durationMs } : {}),
-        completed: replyIndex !== null,
+        completed: segmentEnd < items.length || replyIndex !== null || !isLastRun,
       });
-    }
+    });
     turn += 1;
   };
 
