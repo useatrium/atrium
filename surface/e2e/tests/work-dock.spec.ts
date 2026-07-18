@@ -17,6 +17,7 @@ test('the pinned work surface docks top in a split pane and side in focus', asyn
   const room = await createTestChannel('workdock');
   const handle = unique('docker');
   await login(page, handle, 'Dock Tester');
+  await page.evaluate(() => window.localStorage.setItem('atrium.agentSplitOptIn', 'true'));
   const roomId = await channelId(page.context().request, room);
   const { rootId, sessionId } = await injectSession({ handle, channelId: roomId, title: unique('dock-session') });
   await injectSessionReply({ channelId: roomId, rootId, sessionId, text: unique('dock-reply') });

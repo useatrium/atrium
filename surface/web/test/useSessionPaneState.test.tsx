@@ -117,18 +117,19 @@ describe('useSessionPaneState', () => {
       presence: { 'session:s-1': [user] },
     });
 
-    expect(result.current.view).toBe('split');
-    expect(result.current.sessionPaneLayout).toBe('split');
+    // Focus (MAIN-swap) is the default; split is an opt-in (see split test below).
+    expect(result.current.view).toBe('focus');
+    expect(result.current.sessionPaneLayout).toBe('focus');
     expect(result.current.paneSession?.id).toBe('s-1');
     expect(result.current.paneWatchers).toEqual([user]);
     expect(result.current.hasChannelSessions).toBe(true);
     expect(result.current.spectators).toEqual({ 's-1': 1 });
   });
 
-  it('uses focus layout on mobile even when the desktop view is split', () => {
+  it('forces focus layout on mobile regardless of split opt-in', () => {
     const { result } = renderPaneState({ isMobileViewport: true });
 
-    expect(result.current.view).toBe('split');
+    expect(result.current.view).toBe('focus');
     expect(result.current.sessionPaneLayout).toBe('focus');
   });
 
@@ -208,6 +209,15 @@ describe('useSessionPaneState', () => {
       presence: {},
       sessions: { 's-1': session() },
     });
+    expect(result.current.view).toBe('focus');
+  });
+
+  it('switches to split as an opt-in and reports the split layout', () => {
+    const { result } = renderPaneState();
+
+    expect(result.current.view).toBe('focus');
+    act(() => result.current.setView('split'));
     expect(result.current.view).toBe('split');
+    expect(result.current.sessionPaneLayout).toBe('split');
   });
 });

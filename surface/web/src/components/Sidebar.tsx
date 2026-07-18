@@ -12,16 +12,7 @@ import {
 import { useIsHoverNone } from '../lib/useIsHoverNone';
 import { api, type Channel } from '../api';
 import { MessageActionMenu, type MessageActionMenuState } from './MessageActionMenu';
-import {
-  deriveSessionGlance,
-  formatOutcome,
-  formatWaiting,
-  isLiveAgentWork,
-  isPendingSessionId,
-  isTerminalSessionStatus,
-  type ActivityCounts,
-  type QueueSyncState,
-} from '@atrium/surface-client';
+import type { ActivityCounts, QueueSyncState } from '@atrium/surface-client';
 import type { UnreadLevel, UserRef } from '@atrium/surface-client';
 import { channelAvatarName, channelLabel, dmPartner } from '@atrium/surface-client';
 import { Avatar } from './Avatar';
@@ -44,80 +35,11 @@ import {
   sidebarSizing,
   useSidebarWidth,
 } from '../sessions/useSessionPaneWidth';
-import type { Session } from '../sessions/types';
-import {
-  legacySidebarAgentWorkCollapsedKey,
-  readWithLegacy,
-  sidebarAgentWorkCollapsedKey,
-  sidebarAgentWorkRecentCollapsedKey,
-} from '../storageKeys';
 const SIDEBAR_GROUP_TITLE_CLASS = 'px-2 pb-1 text-2xs font-semibold uppercase tracking-wider text-fg-muted';
 const SIDEBAR_PANEL_CLASS = 'rounded-md border border-edge bg-surface-raised py-1';
 const SIDEBAR_SUBHEAD_CLASS = 'flex items-center justify-between px-3 pb-1 pt-1 text-2xs font-semibold text-fg-muted';
 const SIDEBAR_ITEM_BASE_CLASS = 'group mx-1 flex min-h-7 items-center rounded-md';
 const SIDEBAR_ROW_BUTTON_CLASS = 'flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm';
-const SIDEBAR_RECENT_CAP = 8;
-
-type AgentWorkRow = {
-  session: Session;
-  kind: 'needs-answer' | 'needs-auth' | 'running';
-  detail: string;
-  blockedAt: number;
-};
-
-function agentWorkRows(sessions: Record<string, Session>, activeChannelId: string | null): AgentWorkRow[] {
-  const rows: AgentWorkRow[] = [];
-  for (const session of Object.values(sessions)) {
-    if (isPendingSessionId(session.id) || !isLiveAgentWork(session)) continue;
-    const question = session.pendingQuestion?.questions[0]?.question;
-    const auth = session.providerAuthRequired;
-    const kind = question || session.pendingSeatRequests.length > 0 ? 'needs-answer' : auth ? 'needs-auth' : 'running';
-    const detail =
-      question ??
-      auth?.message ??
-      (session.pendingSeatRequests.length > 0 ? 'A collaborator is waiting for a seat' : session.title);
-    const blockedAt = Date.parse(session.pendingQuestion?.askedAt ?? session.createdAt);
-    rows.push({ session, kind, detail, blockedAt: Number.isFinite(blockedAt) ? blockedAt : 0 });
-  }
-  return rows.sort((a, b) => {
-    const group = (a.kind === 'running' ? 1 : 0) - (b.kind === 'running' ? 1 : 0);
-    if (group) return group;
-    const channel = Number(a.session.channelId !== activeChannelId) - Number(b.session.channelId !== activeChannelId);
-    if (channel) return channel;
-    return a.blockedAt - b.blockedAt;
-  });
-}
-
-function recentAgentSessions(sessions: Record<string, Session>): Session[] {
-  return Object.values(sessions)
-    .filter(
-      (session) =>
-        !isPendingSessionId(session.id) &&
-        session.archivedAt === null &&
-        session.completedAt !== null &&
-        isTerminalSessionStatus(session.status),
-    )
-    .sort((a, b) => Date.parse(b.completedAt ?? '') - Date.parse(a.completedAt ?? ''))
-    .slice(0, SIDEBAR_RECENT_CAP);
-}
-
-function terminalElapsedMs(session: Session): number {
-  const startedAt = Date.parse(session.createdAt);
-  const completedAt = Date.parse(session.completedAt ?? session.createdAt);
-  return Number.isFinite(startedAt) && Number.isFinite(completedAt) ? Math.max(0, completedAt - startedAt) : 0;
-}
-
-/** A sidebar-local clock that stays asleep until an expanded live row needs it. */
-function useAgentWorkNow(active: boolean): number {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (!active) return;
-    setNow(Date.now());
-    const timer = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(timer);
-  }, [active]);
-  return now;
-}
 
 function sidebarItemClass(active: boolean, level: UnreadLevel | false, muted = false): string {
   return `${SIDEBAR_ITEM_BASE_CLASS} ${
@@ -150,16 +72,12 @@ function SidebarImpl({
   // === mentions-activity additions ===
   onOpenActivity,
   activityCounts,
-  // === sidebar agent-work additions ===
-  sessions = {},
-  onOpenSession,
   onOpenSettings,
   onLogout,
   isOpen = false,
   onClose,
   createChannelRequestSeq,
   startDmRequestSeq,
-  now: nowProp,
 }: {
   workspaceName: string;
   channels: Channel[];
@@ -176,26 +94,17 @@ function SidebarImpl({
   onSetPinned?: (channelId: string, pinned: boolean) => void;
   onCreateChannel: (name: string, isPrivate?: boolean) => Promise<void>;
   onStartDm: (userIds: string[]) => void;
-  activeSurface?: 'chat' | 'files' | 'activity' | 'agents' | 'settings';
+  activeSurface?: 'chat' | 'files' | 'activity' | 'settings';
   onOpenFiles?: () => void;
-  /** Kept for callers that expose the Agents directory elsewhere. */
-  onOpenAgents?: () => void;
   // === mentions-activity additions ===
   onOpenActivity?: () => void;
   activityCounts?: ActivityCounts;
-  // === sidebar agent-work additions ===
-  sessions?: Record<string, Session>;
-  onOpenSession?: (sessionId: string) => void;
   onOpenSettings?: () => void;
   onLogout: () => void;
   isOpen?: boolean;
   onClose?: () => void;
   createChannelRequestSeq?: number;
   startDmRequestSeq?: number;
-  // Feeds the running-work elapsed label. Prod leaves it undefined and rides
-  // the ticking clock; tests pass a fixed value so an asserted "waiting 3m"
-  // can't drift against a hardcoded fixture on some future date.
-  now?: number;
 }) {
   const { width: sidebarWidth, resizing, startResize, resetWidth } = useSidebarWidth();
   const sizing = sidebarSizing(sidebarWidth);
@@ -218,18 +127,6 @@ function SidebarImpl({
   const channelMenuButtonRef = useRef<HTMLButtonElement | null>(null);
   const createChannelErrorId = 'sidebar-create-channel-error';
   const isHoverNone = useIsHoverNone();
-  const agentWorkStorageKey = sidebarAgentWorkCollapsedKey(me.id);
-  const agentWorkRecentStorageKey = sidebarAgentWorkRecentCollapsedKey(me.id);
-  const [agentWorkCollapsed, setAgentWorkCollapsed] = useState(
-    () =>
-      typeof window !== 'undefined' &&
-      readWithLegacy(agentWorkStorageKey, legacySidebarAgentWorkCollapsedKey(me.id)) === 'true',
-  );
-  // Recent is finished work — it rests collapsed until asked for.
-  const [agentWorkRecentCollapsed, setAgentWorkRecentCollapsed] = useState(
-    () => typeof window === 'undefined' || window.localStorage.getItem(agentWorkRecentStorageKey) !== 'false',
-  );
-
   const activeChannels = channels.filter((c) => c.archivedAt == null);
   const pinnedChannels = activeChannels.filter((c) => c.pinned);
   const publicChannels = activeChannels.filter((c) => !c.pinned && c.kind !== 'dm' && c.kind !== 'gdm');
@@ -237,23 +134,6 @@ function SidebarImpl({
   const archivedChannels = channels.filter((c) => c.archivedAt != null);
   const [archivedOpen, setArchivedOpen] = useState(false);
   const [channelMenu, setChannelMenu] = useState<{ channel: Channel; state: MessageActionMenuState } | null>(null);
-  const workRows = useMemo(() => agentWorkRows(sessions, activeChannelId), [activeChannelId, sessions]);
-  const recentSessions = useMemo(() => recentAgentSessions(sessions), [sessions]);
-  const hasNeedsYou = workRows.some((row) => row.kind !== 'running');
-  const toReview = activityCounts?.toReview ?? 0;
-  const hasReview = toReview > 0;
-  const visibleRunning = !agentWorkCollapsed && workRows.some((row) => row.kind === 'running');
-  const ticking = useAgentWorkNow(visibleRunning);
-  const now = nowProp ?? ticking;
-
-  useEffect(() => {
-    window.localStorage.setItem(agentWorkStorageKey, String(agentWorkCollapsed));
-  }, [agentWorkCollapsed, agentWorkStorageKey]);
-
-  useEffect(() => {
-    window.localStorage.setItem(agentWorkRecentStorageKey, String(agentWorkRecentCollapsed));
-  }, [agentWorkRecentCollapsed, agentWorkRecentStorageKey]);
-
   const openChannelMenu = useCallback(
     (channel: Channel, event: MouseEvent<HTMLButtonElement>) => {
       channelMenuButtonRef.current = event.currentTarget;
@@ -342,26 +222,7 @@ function SidebarImpl({
   };
 
   const inboxBadge = () => {
-    // `attention` is scoped to agents you spawned, matching the Needs-you shelf
-    // this badge opens. `needsYou` is scoped by channel visibility — it counts
-    // the whole workspace's blocked agents, so it read 4 over a list of 1.
-    const needsYou = activityCounts?.attention ?? 0;
-    const toReview = activityCounts?.toReview ?? 0;
     const unreadCount = activityCounts?.unread ?? 0;
-    const pill = (count: number, description: string, className: string) => (
-      <span className={`shrink-0 rounded-full px-1.5 py-px text-3xs font-bold leading-4 ${className}`}>
-        {count >= 99 ? '99+' : count}
-        <span className="sr-only"> {description}</span>
-      </span>
-    );
-    if (needsYou > 0 || toReview > 0) {
-      return (
-        <span className="ml-auto flex shrink-0 items-center gap-1">
-          {needsYou > 0 && pill(needsYou, 'need you', 'bg-warning-tint text-warning-text-strong')}
-          {toReview > 0 && pill(toReview, 'to review', 'bg-surface-overlay text-fg-muted')}
-        </span>
-      );
-    }
     if (unreadCount <= 0) return null;
     return (
       <span className="ml-auto shrink-0 rounded-full bg-surface-overlay px-1.5 py-px text-3xs font-bold leading-4 text-fg-muted">
@@ -573,126 +434,6 @@ function SidebarImpl({
                 {inboxBadge()}
               </button>
             </div>
-          </section>
-
-          <section className="mt-3">
-            <h2 className={SIDEBAR_GROUP_TITLE_CLASS}>
-              <button
-                type="button"
-                aria-expanded={!agentWorkCollapsed}
-                onClick={() => setAgentWorkCollapsed((collapsed) => !collapsed)}
-                className="flex w-full items-center gap-1.5 rounded text-left hover:text-fg-body focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-              >
-                <span>Agent work</span>
-                {hasNeedsYou && <span aria-hidden="true" className="size-1.5 rounded-full bg-warning" />}
-                {agentWorkCollapsed && workRows.length > 0 && (
-                  <span className={`tabular-nums ${hasNeedsYou ? 'text-warning-text' : 'text-fg-faint'}`}>
-                    · {hasNeedsYou ? workRows.filter((row) => row.kind !== 'running').length : workRows.length}
-                  </span>
-                )}
-                <span aria-hidden="true" className="ml-auto text-fg-faint">
-                  {agentWorkCollapsed ? '▸' : '▾'}
-                </span>
-              </button>
-            </h2>
-            {!agentWorkCollapsed && (
-              <div className={SIDEBAR_PANEL_CLASS}>
-                {workRows.map((row) => {
-                  const elapsed = formatWaiting(Math.max(0, now - new Date(row.session.createdAt).getTime()));
-                  const stateLabel =
-                    row.kind === 'needs-auth'
-                      ? 'needs provider auth'
-                      : row.kind === 'needs-answer'
-                        ? 'needs your answer'
-                        : `running, ${elapsed}`;
-                  return (
-                    <button
-                      key={row.session.id}
-                      type="button"
-                      aria-label={`${row.session.title} — ${stateLabel}`}
-                      title={row.detail}
-                      onClick={() => onOpenSession?.(row.session.id)}
-                      className={`${SIDEBAR_ROW_BUTTON_CLASS} mx-1 w-[calc(100%-0.5rem)] text-fg-tertiary hover:bg-surface-overlay/70 hover:text-fg-body`}
-                    >
-                      {row.kind === 'running' ? (
-                        <span
-                          aria-hidden="true"
-                          className="w-4 shrink-0 text-center text-[9px] text-success-text motion-safe:animate-pulse"
-                        >
-                          ●
-                        </span>
-                      ) : (
-                        <span
-                          aria-hidden="true"
-                          className="w-4 shrink-0 text-center text-xs font-bold text-warning-text"
-                        >
-                          ⚠
-                        </span>
-                      )}
-                      <span className={`truncate ${row.kind === 'running' ? '' : 'font-medium text-fg-body'}`}>
-                        {row.session.title}
-                      </span>
-                      {row.kind === 'running' && (
-                        <span className="ml-auto shrink-0 pl-1 text-3xs tabular-nums text-fg-faint">{elapsed}</span>
-                      )}
-                    </button>
-                  );
-                })}
-                {hasReview && (
-                  <button
-                    type="button"
-                    onClick={onOpenActivity}
-                    className={`${SIDEBAR_ROW_BUTTON_CLASS} mx-1 w-[calc(100%-0.5rem)] text-fg-muted hover:bg-surface-overlay/70 hover:text-fg-body`}
-                  >
-                    <span aria-hidden="true" className="w-4 shrink-0 text-center text-xs">
-                      ✓
-                    </span>
-                    <span className="truncate">{toReview} to review →</span>
-                  </button>
-                )}
-                {recentSessions.length > 0 && (
-                  <div className={workRows.length > 0 || hasReview ? 'mt-1 border-t border-edge pt-1' : ''}>
-                    <button
-                      type="button"
-                      aria-expanded={!agentWorkRecentCollapsed}
-                      onClick={() => setAgentWorkRecentCollapsed((collapsed) => !collapsed)}
-                      className={`${SIDEBAR_SUBHEAD_CLASS} w-full rounded text-left hover:text-fg-body focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-accent`}
-                    >
-                      <span className="flex items-center gap-1.5">
-                        <span aria-hidden="true" className="inline-block w-2.5 text-center">
-                          {agentWorkRecentCollapsed ? '▸' : '▾'}
-                        </span>
-                        <span>Recent</span>
-                      </span>
-                    </button>
-                    {!agentWorkRecentCollapsed &&
-                      recentSessions.map((session) => {
-                        const completedAt = Date.parse(session.completedAt ?? session.createdAt);
-                        const glance = deriveSessionGlance(session, completedAt);
-                        const outcome = formatOutcome(session.status, terminalElapsedMs(session));
-                        return (
-                          <button
-                            key={session.id}
-                            type="button"
-                            aria-label={`${session.title} — ${outcome}`}
-                            onClick={() => onOpenSession?.(session.id)}
-                            className={`${SIDEBAR_ROW_BUTTON_CLASS} mx-1 w-[calc(100%-0.5rem)] text-fg-tertiary hover:bg-surface-overlay/70 hover:text-fg-body`}
-                          >
-                            <span aria-hidden="true" className="w-4 shrink-0 text-center text-xs text-fg-muted">
-                              {glance.kind === 'done' ? '✓' : '✕'}
-                            </span>
-                            <span className="truncate">{session.title}</span>
-                            <span className="ml-auto shrink-0 pl-1 text-3xs tabular-nums text-fg-faint">{outcome}</span>
-                          </button>
-                        );
-                      })}
-                  </div>
-                )}
-                {workRows.length === 0 && !hasReview && recentSessions.length === 0 && (
-                  <div className="px-3 py-1.5 text-xs text-fg-muted">No agent work yet.</div>
-                )}
-              </div>
-            )}
           </section>
 
           <section className="mt-3">

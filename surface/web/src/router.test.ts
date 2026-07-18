@@ -36,8 +36,6 @@ describe('router', () => {
       sessionId: 'sess_1',
       focusSession: false,
     });
-    // Legacy /s/:id opens the session in the default split layout (not focus) —
-    // focus is a user-driven pane toggle, matching prior permalink behavior.
     expect(parseInAppRoute('/s/sess_1')).toMatchObject({
       surface: 'chat',
       channelId: null,
@@ -46,7 +44,7 @@ describe('router', () => {
     });
     expect(parseInAppRoute('/files')).toMatchObject({ surface: 'files' });
     expect(parseInAppRoute('/activity')).toMatchObject({ surface: 'activity' });
-    expect(parseInAppRoute('/agents')).toMatchObject({ surface: 'agents' });
+    expect(parseInAppRoute('/agents')).toBeNull();
     expect(parseInAppRoute('/settings')).toMatchObject({ surface: 'settings', settingsSection: null });
     expect(parseInAppRoute('/settings/connections')).toMatchObject({
       surface: 'settings',
@@ -76,7 +74,6 @@ describe('router', () => {
     );
     expect(routePath({ surface: 'files', channelId: null, sessionId: null, focusSession: false })).toBe('/files');
     expect(routePath({ surface: 'activity', channelId: null, sessionId: null, focusSession: false })).toBe('/activity');
-    expect(routePath({ surface: 'agents', channelId: null, sessionId: null, focusSession: false })).toBe('/agents');
     expect(routePath({ surface: 'settings', channelId: null, sessionId: null, focusSession: false })).toBe('/settings');
     expect(
       routePath({

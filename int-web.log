@@ -1,0 +1,11 @@
+
+  VITE v8.0.16  ready in 472 ms
+
+  ➜  Local:   http://localhost:49717/
+  ➜  Network: use --host to expose
+1:50:43 PM [vite] (client) ✨ new dependencies optimized: effect
+1:50:43 PM [vite] (client) ✨ optimized dependencies changed. reloading
+1:55:03 PM [vite] (client) hmr update /src/index.css, /src/sessions/ChannelAgentPresence.tsx
+undefined
+/Users/garybasin/Code/atrium/.worktrees/_int-20260718121731-8204832f/surface/web:
+ ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL  Command failed with exit code 143: vite --port 49717 --strictPort

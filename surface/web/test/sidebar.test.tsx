@@ -95,7 +95,7 @@ describe('Sidebar', () => {
     expect(onSetArchived).toHaveBeenCalledWith('ch-old', false);
   });
 
-  it('shows the needs-you badge alongside to-review and caps its display', () => {
+  it('shows only the people Inbox unread badge and caps its display', () => {
     const channel = {
       id: 'ch-general',
       workspaceId: 'ws-1',
@@ -107,12 +107,12 @@ describe('Sidebar', () => {
       createdAt: '2026-01-01T00:00:00.000Z',
     };
     const { unmount } = renderSidebar([channel], {
-      activityCounts: { attention: 99, unread: 12, needsYou: 99, toReview: 2 },
+      activityCounts: { attention: 99, unread: 120, needsYou: 99, toReview: 2 },
     });
 
-    const attentionRow = screen.getByRole('button', { name: /Inbox.*99\+ need you.*2 to review/ });
+    const attentionRow = screen.getByRole('button', { name: /Inbox.*99\+ unread activity/ });
     const attentionBadge = within(attentionRow).getByText('99+');
-    expect(attentionBadge.className).toContain('bg-warning-tint');
+    expect(attentionBadge.className).toContain('bg-surface-overlay');
 
     unmount();
     renderSidebar([channel], { activityCounts: { attention: 0, unread: 3, needsYou: 0, toReview: 0 } });
@@ -303,7 +303,7 @@ describe('Sidebar', () => {
           createdAt: '2026-01-01T00:00:00.000Z',
         },
       ],
-      { activeSurface: 'agents', activeChannelId: null },
+      { activeSurface: 'chat', activeChannelId: null },
     );
 
     expect(screen.queryByRole('button', { name: 'Agents' })).toBeNull();

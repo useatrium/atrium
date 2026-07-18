@@ -76,10 +76,12 @@ export function QuickSwitcher({
     return [...list].sort((a, b) => Number(label(b).startsWith(q)) - Number(label(a).startsWith(q)));
   }, [channels, query, meId]);
 
-  const commandMatches = useMemo(
-    () => commands.filter((command) => commandMatchesQuery(command, query)),
-    [commands, query],
-  );
+  const commandMatches = useMemo(() => {
+    const matches = commands.filter((command) => commandMatchesQuery(command, query));
+    if (query.trim()) return matches;
+    let visibleAgents = 0;
+    return matches.filter((command) => command.group !== 'Agents' || ++visibleAgents <= 8);
+  }, [commands, query]);
 
   // Debounced message search once the query is meaningful.
   useEffect(() => {

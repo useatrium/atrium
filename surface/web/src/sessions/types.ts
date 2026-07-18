@@ -50,6 +50,8 @@ export {
   formatWaiting,
   deriveSessionGlance,
   sessionGlanceClockLabel,
+  isLiveAgentWork,
+  sessionAttentionKind,
 } from '@atrium/surface-client';
 
 /** Map a Centaur execution status (stream) onto the session status vocabulary. */

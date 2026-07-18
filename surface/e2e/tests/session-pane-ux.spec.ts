@@ -154,6 +154,7 @@ test('transcript turns show a wall-clock timestamp on hover', async ({ page }) =
 });
 
 test('session pane resizes by dragging its left edge and the width persists across reload', async ({ page }) => {
+  await page.addInitScript(() => window.localStorage.setItem('atrium.agentSplitOptIn', 'true'));
   await openSeededSession(page, 'resize');
 
   const handle = page.getByTestId('pane-resize-handle');
@@ -187,6 +188,7 @@ test('undragged pane keeps the adaptive default on narrow desktop windows', asyn
   // 900px is non-mobile (≥768) → split view. With no stored width the pane
   // must scale with the viewport (min(520px, 42vw) = 378), not sit at 520px.
   await page.setViewportSize({ width: 900, height: 700 });
+  await page.addInitScript(() => window.localStorage.setItem('atrium.agentSplitOptIn', 'true'));
   await openSeededSession(page, 'narrow');
 
   const handle = page.getByTestId('pane-resize-handle');

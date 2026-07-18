@@ -56,7 +56,7 @@ test('configured spawn posts working and reference repo specs', async ({ page })
     });
   });
 
-  await page.getByRole('button', { name: 'New agent' }).click();
+  await page.locator('#main-content').getByRole('button', { name: 'New agent' }).click();
   const dialog = page.getByRole('dialog', { name: 'Start an agent' });
   await expect(dialog).toBeVisible();
 
@@ -186,7 +186,7 @@ test('configured spawn posts private repo flags and GitHub identity override', a
     });
   });
 
-  await page.getByRole('button', { name: 'New agent' }).click();
+  await page.locator('#main-content').getByRole('button', { name: 'New agent' }).click();
   await fillField(page.getByPlaceholder('What should the agent do?'), 'inspect private repo wiring');
   await fillField(page.getByPlaceholder('owner/name').first(), ' acme/private ');
   await page.getByRole('checkbox', { name: 'Private repo' }).check();
@@ -227,7 +227,7 @@ test('configured spawn blocks private repos until GitHub is connected', async ({
   });
   await login(page, unique('repoer-blocked'), 'Repo Blocked Tester');
 
-  await page.getByRole('button', { name: 'New agent' }).click();
+  await page.locator('#main-content').getByRole('button', { name: 'New agent' }).click();
   await fillField(page.getByPlaceholder('What should the agent do?'), 'inspect private repo');
   await fillField(page.getByPlaceholder('owner/name').first(), ' acme/private ');
   await page.getByRole('checkbox', { name: 'Private repo' }).check();
