@@ -16,7 +16,7 @@ import {
   ShrinkIcon,
   XIcon,
 } from '../components/icons';
-import { AgentGroup, type AgentRowContext } from './AgentDockRows';
+import { AgentDockRovingProvider, AgentGroup, type AgentRowContext } from './AgentDockRows';
 import { useNow } from './SessionCard';
 import { deriveSessionGlance, isLiveAgentWork, isTerminalSessionStatus, type Session } from './types';
 import { useAgentDockMineFilter, useAgentDockOpen } from './useAgentDockPrefs';
@@ -49,6 +49,13 @@ export type AgentDockProps = {
   onSetPinned?: (sessionId: string, pinned: boolean, previousPinned: boolean) => void;
   /** Foundation seam for the full Needs-you view; the dock lane will place it. */
   onOpenAttention?: () => void;
+  /**
+   * Monotonic counter Chat bumps to toggle the dock open/closed from the global
+   * `Mod+.` shortcut and the command palette. The open state itself stays owned
+   * by the dock (persisted via useAgentDockOpen); the counter is just a request
+   * signal, mirroring the sidebar's create-channel/start-dm request seqs.
+   */
+  toggleOpenSeq?: number;
 };
 
 const DOT_STYLES = {
@@ -269,6 +276,7 @@ export function AgentDock({
   onSetArchived,
   onSetPinned,
   onOpenAttention,
+  toggleOpenSeq,
 }: AgentDockProps) {
   const [open, setOpen] = useAgentDockOpen();
   const [mineFilter, setMineFilter] = useAgentDockMineFilter();
@@ -280,6 +288,15 @@ export function AgentDock({
   useEffect(() => {
     if (immersed || filterChannelId) setOpen(true);
   }, [filterChannelId, immersed, setOpen]);
+
+  // Respond to Chat's toggle requests (Mod+. and the palette command). Skip the
+  // initial value so the dock doesn't flip open on mount.
+  const lastToggleSeq = useRef(toggleOpenSeq);
+  useEffect(() => {
+    if (toggleOpenSeq == null || lastToggleSeq.current === toggleOpenSeq) return;
+    lastToggleSeq.current = toggleOpenSeq;
+    setOpen((value) => !value);
+  }, [setOpen, toggleOpenSeq]);
 
   // Lowest of the dismiss layers: Escape only collapses the dock once nothing
   // above it (a running turn, an open pane, the filter query) claims the press.
@@ -335,6 +352,12 @@ export function AgentDock({
       .filter((group) => group.sessions.length > 0);
   }, [filterChannelId, groups, query]);
   const total = visibleGroups.reduce((sum, group) => sum + group.sessions.length, 0);
+  // Flattened session order across every visible group, in render (DOM) order —
+  // the roving-tabindex coordinator narrows this to the rows actually mounted.
+  const orderedRowIds = useMemo(
+    () => visibleGroups.flatMap((group) => group.sessions.map((session) => session.id)),
+    [visibleGroups],
+  );
   const liveDots = useMemo(
     () =>
       Object.values(sessions)
@@ -607,7 +630,9 @@ export function AgentDock({
 
             <div className="min-h-0 flex-1 overflow-y-auto px-2 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] md:pb-3">
               {visibleGroups.length > 0 ? (
-                <div className="space-y-4">{visibleGroups.map(renderGroup)}</div>
+                <AgentDockRovingProvider orderedIds={orderedRowIds} focusedSessionId={focusedSessionId}>
+                  <div className="space-y-4">{visibleGroups.map(renderGroup)}</div>
+                </AgentDockRovingProvider>
               ) : (
                 <div className="px-3 py-8 text-center">
                   <p className="text-xs font-medium text-fg-secondary">

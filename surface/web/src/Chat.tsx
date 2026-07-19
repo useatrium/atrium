@@ -42,7 +42,7 @@ import { Composer, type ComposerHandle } from './components/Composer';
 import { GitHubConnectionDialog } from './components/GitHubConnectionDialog';
 import { EntryQuoteApplyContextProvider } from './components/EntryQuoteCard';
 import { ShortcutsHelp, Tooltip } from './components/a11y';
-import { FileIcon, GearIcon, LockIcon, PhoneIcon, PlayIcon, PlusIcon, SearchIcon } from './components/icons';
+import { BotIcon, FileIcon, GearIcon, LockIcon, PhoneIcon, PlayIcon, PlusIcon, SearchIcon } from './components/icons';
 import { splitMarkdownFrontmatter } from '@atrium/surface-client';
 import { MarkupPane, type MarkupPaneMode, type MarkupPaneSource } from './components/MarkupPane';
 import { showErrorToast } from './components/Toasts';
@@ -770,6 +770,8 @@ export function Chat({
   const channelMemberRequestsRef = useRef<Set<string>>(new Set());
   const [createChannelRequestSeq, setCreateChannelRequestSeq] = useState(0);
   const [startDmRequestSeq, setStartDmRequestSeq] = useState(0);
+  // Bumped to ask the Agent Dock to toggle open/closed (Mod+. and palette).
+  const [dockToggleSeq, setDockToggleSeq] = useState(0);
   // Configured-spawn dialog (the summon sigil is the quick path).
   const [spawnOpen, setSpawnOpen] = useState(false);
   const [immersed, setImmersed] = useAgentDockImmersed();
@@ -1931,6 +1933,14 @@ export function Chat({
         if (isModalDialogOpen() && !shortcutsHelpOpen) return;
         e.preventDefault();
         setShortcutsHelpOpen((v) => !v);
+        return;
+      }
+      // Mod+. toggles the agent dock. It's a chord, so it's safe inside editable
+      // fields; blocked only while a modal dialog is open.
+      if (matchesChord(e, SHORTCUTS.toggleAgentDock.keys)) {
+        if (isModalDialogOpen()) return;
+        e.preventDefault();
+        setDockToggleSeq((n) => n + 1);
       }
     };
     window.addEventListener('keydown', onKeyDown);
@@ -2045,6 +2055,16 @@ export function Chat({
         },
       });
     }
+
+    list.push({
+      id: 'toggle-agent-dock',
+      label: 'Toggle agent dock',
+      subtitle: 'Show or hide the agents panel',
+      group: 'Navigate',
+      keywords: ['agent', 'dock', 'panel', 'agents', 'toggle', 'show', 'hide', 'sidebar'],
+      icon: <BotIcon size={14} />,
+      run: () => setDockToggleSeq((n) => n + 1),
+    });
 
     if (mainSurface === 'chat' && active) {
       list.push({
@@ -2865,6 +2885,7 @@ export function Chat({
           void setSessionPinned(sessionId, pinned, previousPinned).catch(() => {})
         }
         onOpenAttention={() => setAttentionOpen(true)}
+        toggleOpenSeq={dockToggleSeq}
       />
 
       {attentionOpen && (

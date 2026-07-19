@@ -46,6 +46,17 @@ describe('matchesChord', () => {
     // A modifier + ? should not trigger the bare help shortcut.
     expect(matchesChord(ev({ key: '?', metaKey: true }), SHORTCUTS.shortcutsHelp.keys)).toBe(false);
   });
+
+  it('matches Mod+. (agent dock toggle) on either Cmd or Ctrl and not bare "."', () => {
+    expect(SHORTCUTS.toggleAgentDock.keys).toEqual(['Mod', '.']);
+    expect(matchesChord(ev({ metaKey: true, key: '.' }), SHORTCUTS.toggleAgentDock.keys)).toBe(true);
+    expect(matchesChord(ev({ ctrlKey: true, key: '.' }), SHORTCUTS.toggleAgentDock.keys)).toBe(true);
+    // no modifier -> no match (so it stays out of the way while typing a period)
+    expect(matchesChord(ev({ key: '.' }), SHORTCUTS.toggleAgentDock.keys)).toBe(false);
+    // does not collide with the command palette (Mod+K)
+    expect(matchesChord(ev({ metaKey: true, key: 'k' }), SHORTCUTS.toggleAgentDock.keys)).toBe(false);
+    expect(matchesChord(ev({ metaKey: true, key: '.' }), SHORTCUTS.commandPalette.keys)).toBe(false);
+  });
 });
 
 describe('groupedShortcuts', () => {
@@ -54,5 +65,12 @@ describe('groupedShortcuts', () => {
     expect(groups.map((g) => g.group)).toEqual(['General', 'Navigation', 'Composer', 'Sessions']);
     const total = groups.reduce((n, g) => n + g.items.length, 0);
     expect(total).toBe(Object.keys(SHORTCUTS).length);
+  });
+
+  it('surfaces the agent-dock toggle so the ShortcutsHelp cheatsheet renders it', () => {
+    // ShortcutsHelp maps groupedShortcuts() directly, so registry membership is
+    // all the dialog needs to pick up the new chord.
+    const navigation = groupedShortcuts().find((g) => g.group === 'Navigation');
+    expect(navigation?.items.some((s) => s.id === 'toggleAgentDock' && s.label === 'Toggle agent dock')).toBe(true);
   });
 });

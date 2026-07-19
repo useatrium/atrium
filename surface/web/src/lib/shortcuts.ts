@@ -109,6 +109,12 @@ export const SHORTCUTS = {
     label: 'Open command palette',
     group: 'Navigation',
   },
+  toggleAgentDock: {
+    id: 'toggleAgentDock',
+    keys: ['Mod', '.'],
+    label: 'Toggle agent dock',
+    group: 'Navigation',
+  },
   shortcutsHelp: {
     id: 'shortcutsHelp',
     keys: ['?'],
