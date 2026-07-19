@@ -860,8 +860,9 @@ function projectCodexCompletedItem(
 
   if (isLikelyDynamicToolItem(item)) {
     const toolName = codexToolName(item);
-    const input = objectField(item, 'input') ?? objectField(item, 'args') ?? {};
-    const output = codexCommandOutput(item);
+    const input = objectField(item, 'input') ?? objectField(item, 'args') ?? objectField(item, 'arguments') ?? {};
+    const output = codexToolOutput(item);
+    const isError = codexToolIsError(item);
     pushRecord(state, {
       eventId,
       ts,
@@ -870,13 +871,14 @@ function projectCodexCompletedItem(
       driver,
       viewTier: isShellToolName(toolName) ? 'lean' : 'full',
       text: isShellToolName(toolName)
-        ? renderCommand(commandFromInput(input) ?? toolName, output)
-        : renderToolCall(toolName, input, output),
+        ? renderCommand(commandFromInput(input) ?? toolName, output, undefined, isError)
+        : renderToolCall(toolName, input, output, isError),
       meta: compactJsonObject({
         itemId: item.id,
         toolName,
         argsExcerpt: redactText(excerpt(stableJson(input), MAX_META_EXCERPT)),
         resultExcerpt: output ? redactText(excerpt(output, MAX_META_EXCERPT)) : undefined,
+        isError: isError || undefined,
         sourceEventIds: [eventId],
       }),
     });
@@ -1235,14 +1237,59 @@ function isLikelyDynamicToolItem(item: CodexItem): boolean {
   return (
     objectField(item, 'input') !== null ||
     objectField(item, 'args') !== null ||
+    objectField(item, 'arguments') !== null ||
     stringField(item, 'toolName') !== null ||
     stringField(item, 'tool_name') !== null ||
+    stringField(item, 'tool') !== null ||
     stringField(item, 'name') !== null
   );
 }
 
 function codexToolName(item: CodexItem): string {
-  return stringField(item, 'toolName') ?? stringField(item, 'tool_name') ?? stringField(item, 'name') ?? item.type;
+  const tool = stringField(item, 'tool');
+  if (item.type === 'mcpToolCall' && tool) {
+    const server = stringField(item, 'server');
+    return server ? `mcp:${server}.${tool}` : `mcp:${tool}`;
+  }
+  return (
+    stringField(item, 'toolName') ?? stringField(item, 'tool_name') ?? tool ?? stringField(item, 'name') ?? item.type
+  );
+}
+
+/** Tool output for dynamic/MCP items: fall through the command-shaped fields
+ * first, then `dynamicToolCall.contentItems` inputText parts, then
+ * `mcpToolCall.result.content` text parts plus any error message. */
+function codexToolOutput(item: CodexItem): string {
+  const base = codexCommandOutput(item);
+  if (base) return base;
+
+  const contentItems = (item as { contentItems?: unknown }).contentItems;
+  if (Array.isArray(contentItems)) {
+    const text = contentItems
+      .filter((entry): entry is JsonObject => isJsonObject(entry) && entry.type === 'inputText')
+      .map((entry) => (typeof entry.text === 'string' ? entry.text : ''))
+      .join('');
+    if (text) return text;
+  }
+
+  const result = objectField(item, 'result');
+  const content = result && Array.isArray(result.content) ? result.content : [];
+  const resultText = content
+    .filter((entry): entry is JsonObject => isJsonObject(entry) && typeof entry.text === 'string')
+    .map((entry) => entry.text as string)
+    .join('');
+  const errorMessage = (() => {
+    const error = objectField(item, 'error');
+    return error && typeof error.message === 'string' ? error.message : '';
+  })();
+  return [resultText, errorMessage].filter((part) => part.length > 0).join(resultText && errorMessage ? '\n' : '');
+}
+
+function codexToolIsError(item: CodexItem): boolean {
+  if ((item as { success?: unknown }).success === false) return true;
+  if (objectField(item, 'error') !== null) return true;
+  const status = stringField(item, 'status');
+  return status === 'failed' || status === 'error';
 }
 
 function projectUserMessageEcho(

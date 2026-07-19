@@ -214,6 +214,105 @@ describe('projectFrames', () => {
     expect(toolCall?.text).toContain('Fetched docs');
   });
 
+  it('projects a completed dynamicToolCall into a tool_call record with args and result', () => {
+    const records = projectFrames(
+      [
+        {
+          event: 'amp_raw_event',
+          event_id: 1,
+          data: {
+            method: 'item/completed',
+            params: {
+              item: {
+                id: 'dyn-1',
+                type: 'dynamicToolCall',
+                namespace: null,
+                tool: 'Edit',
+                arguments: { file_path: 'src/app.ts', old_string: 'a', new_string: 'b' },
+                status: 'completed',
+                success: true,
+                contentItems: [{ type: 'inputText', text: 'Applied edit to src/app.ts' }],
+              },
+            },
+          } as unknown as Extract<CentaurEventFrame, { event: 'amp_raw_event' }>['data'],
+        },
+      ],
+      { driver: 'claude' },
+    );
+
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({ kind: 'tool_call', viewTier: 'full', meta: { toolName: 'Edit' } });
+    expect(records[0]?.text).toContain('Tool: Edit');
+    expect(records[0]?.text).toContain('Applied edit to src/app.ts');
+  });
+
+  it('projects a failed dynamicToolCall as an error tool_call', () => {
+    const records = projectFrames(
+      [
+        {
+          event: 'amp_raw_event',
+          event_id: 1,
+          data: {
+            method: 'item/completed',
+            params: {
+              item: {
+                id: 'dyn-2',
+                type: 'dynamicToolCall',
+                tool: 'Read',
+                arguments: { file_path: '/missing' },
+                status: 'failed',
+                success: false,
+                contentItems: [{ type: 'inputText', text: 'File not found' }],
+              },
+            },
+          } as unknown as Extract<CentaurEventFrame, { event: 'amp_raw_event' }>['data'],
+        },
+      ],
+      { driver: 'claude' },
+    );
+
+    expect(records[0]).toMatchObject({ kind: 'tool_call', meta: { isError: true } });
+    expect(records[0]?.text).toContain('[error]');
+  });
+
+  it('projects an mcpToolCall into an mcp-prefixed tool_call record', () => {
+    const records = projectFrames(
+      [
+        {
+          event: 'amp_raw_event',
+          event_id: 1,
+          data: {
+            method: 'item/completed',
+            params: {
+              item: {
+                id: 'mcp-1',
+                type: 'mcpToolCall',
+                server: 'github',
+                tool: 'search_issues',
+                status: 'completed',
+                arguments: { query: 'is:open' },
+                result: {
+                  content: [
+                    { type: 'text', text: 'Issue 1' },
+                    { type: 'text', text: 'Issue 2' },
+                  ],
+                  structuredContent: null,
+                },
+                error: null,
+              },
+            },
+          } as unknown as Extract<CentaurEventFrame, { event: 'amp_raw_event' }>['data'],
+        },
+      ],
+      { driver: 'codex' },
+    );
+
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({ kind: 'tool_call', meta: { toolName: 'mcp:github.search_issues' } });
+    expect(records[0]?.text).toContain('Tool: mcp:github.search_issues');
+    expect(records[0]?.text).toContain('Issue 1');
+  });
+
   it('drops separate steer context echoes and applies their author to the next user message', () => {
     const context =
       '<context>[atrium context]\n' +
