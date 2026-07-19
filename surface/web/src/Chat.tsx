@@ -1892,24 +1892,24 @@ export function Chat({
   const [shortcutsHelpOpen, setShortcutsHelpOpen] = useState(false);
   useEffect(() => {
     const onKeyDown = (e: globalThis.KeyboardEvent) => {
-      // Don't stack a global chord on top of an open modal — it would fight the
-      // dialog's focus trap. Escape (handled by the layered dispatcher below)
-      // is what closes the dialog.
-      if (isModalDialogOpen()) return;
+      // A chord may still toggle its OWN dialog closed, but must not stack on
+      // top of a DIFFERENT open modal (it would fight that dialog's focus trap).
       if (matchesChord(e, SHORTCUTS.commandPalette.keys)) {
+        if (isModalDialogOpen() && !switcherOpen) return;
         e.preventDefault();
         setSwitcherOpen((v) => !v);
         return;
       }
       if (matchesChord(e, SHORTCUTS.shortcutsHelp.keys)) {
         if (isEditableShortcutTarget(e.target)) return;
+        if (isModalDialogOpen() && !shortcutsHelpOpen) return;
         e.preventDefault();
         setShortcutsHelpOpen((v) => !v);
       }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, []);
+  }, [shortcutsHelpOpen, switcherOpen]);
 
   // Escape closes the innermost thing first: a non-chat surface, then the open
   // session pane, then the thread panel — one press, one layer. Yields to any
