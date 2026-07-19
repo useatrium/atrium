@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::env;
 use std::path::PathBuf;
 use std::process::Command as ProcessCommand;
@@ -9,7 +10,7 @@ use serde_json::json;
 use crate::{
     HarnessKind, HarnessServer, NormalizedContent, NormalizedEvent, Result, ThreadState,
     anthropic::{AnthropicEventNormalizer, AnthropicStreamEvent},
-    command_from_override, user_input_to_anthropic_content,
+    command_from_override, subagent_item_id, user_input_to_anthropic_content,
 };
 
 /// Defers agent text until the owning message's fate is known, so agentMessage
@@ -26,6 +27,11 @@ use crate::{
 pub struct ClaudeEventNormalizer {
     inner: AnthropicEventNormalizer,
     pending: Vec<PendingAgentMessage>,
+    /// One isolated normalizer per Task-tool subagent, keyed by
+    /// `parent_tool_use_id`. Keeping sidechains out of `inner`/`pending` is what
+    /// stops their message ids clobbering the main chain's deferred-text state
+    /// and their `end_turn` from settling the parent turn.
+    sidechains: HashMap<String, ClaudeEventNormalizer>,
 }
 
 #[derive(Debug)]
@@ -44,6 +50,25 @@ impl PendingAgentMessage {
 }
 
 impl ClaudeEventNormalizer {
+    /// Entry point for a raw stream line. Main-chain events go through
+    /// `normalize`; subagent sidechain events are routed to an isolated
+    /// per-`parent_tool_use_id` normalizer and wrapped as
+    /// `NormalizedEvent::Subagent` with their item ids namespaced.
+    pub fn normalize_line(&mut self, event: AnthropicStreamEvent) -> Vec<NormalizedEvent> {
+        let Some(parent_id) = event.parent_tool_use_id().map(str::to_string) else {
+            return self.normalize(event);
+        };
+        let sidechain = self.sidechains.entry(parent_id.clone()).or_default();
+        sidechain
+            .normalize(event)
+            .into_iter()
+            .map(|inner| NormalizedEvent::Subagent {
+                parent_id: parent_id.clone(),
+                event: Box::new(namespace_event_ids(&parent_id, inner)),
+            })
+            .collect()
+    }
+
     pub fn normalize(&mut self, event: AnthropicStreamEvent) -> Vec<NormalizedEvent> {
         let token_usage = event.token_usage();
         let message_stop_reason = event.message_stop_reason().map(str::to_string);
@@ -156,6 +181,74 @@ impl ClaudeEventNormalizer {
 
     fn flush_pending(&mut self, stop_reason: Option<String>, out: &mut Vec<NormalizedEvent>) {
         flush_messages(std::mem::take(&mut self.pending), stop_reason, out);
+    }
+}
+
+/// Rewrites every item id carried by a subagent's normalized event so it is
+/// namespaced under the parent tool-use id. Variants without ids pass through.
+fn namespace_event_ids(parent_id: &str, event: NormalizedEvent) -> NormalizedEvent {
+    match event {
+        NormalizedEvent::AgentMessageStarted {
+            item_id,
+            stop_reason,
+        } => NormalizedEvent::AgentMessageStarted {
+            item_id: subagent_item_id(parent_id, &item_id),
+            stop_reason,
+        },
+        NormalizedEvent::AgentTextDelta { item_id, delta } => NormalizedEvent::AgentTextDelta {
+            item_id: subagent_item_id(parent_id, &item_id),
+            delta,
+        },
+        NormalizedEvent::ReasoningTextDelta { item_id, delta } => {
+            NormalizedEvent::ReasoningTextDelta {
+                item_id: subagent_item_id(parent_id, &item_id),
+                delta,
+            }
+        }
+        NormalizedEvent::AssistantMessage {
+            partial,
+            stop_reason,
+            content,
+        } => NormalizedEvent::AssistantMessage {
+            partial,
+            stop_reason,
+            content: content
+                .into_iter()
+                .map(|part| namespace_content_ids(parent_id, part))
+                .collect(),
+        },
+        NormalizedEvent::ToolResults(results) => NormalizedEvent::ToolResults(
+            results
+                .into_iter()
+                .map(|mut result| {
+                    result.tool_use_id = subagent_item_id(parent_id, &result.tool_use_id);
+                    result
+                })
+                .collect(),
+        ),
+        other => other,
+    }
+}
+
+fn namespace_content_ids(parent_id: &str, content: NormalizedContent) -> NormalizedContent {
+    match content {
+        NormalizedContent::AgentText { item_id, text } => NormalizedContent::AgentText {
+            item_id: subagent_item_id(parent_id, &item_id),
+            text,
+        },
+        NormalizedContent::ReasoningText { item_id, text } => NormalizedContent::ReasoningText {
+            item_id: subagent_item_id(parent_id, &item_id),
+            text,
+        },
+        NormalizedContent::ToolUse {
+            raw_id,
+            tool,
+            arguments,
+        } => NormalizedContent::ToolUse {
+            raw_id: subagent_item_id(parent_id, &raw_id),
+            tool,
+            arguments,
+        },
     }
 }
 
@@ -288,15 +381,12 @@ impl HarnessServer for ClaudeCodeHarness {
     ) -> Result<Vec<NormalizedEvent>> {
         // Subagent sidechains (Task tool) interleave their own messages into
         // the stream, ending with their own `end_turn` while the parent turn
-        // keeps running. Letting them through corrupts the pending-text state
-        // (their message ids clobber the main chain's) and their stop reasons
-        // would settle — and with the stop fallback, terminate — the parent
-        // turn. The subagent's report reaches the turn through the main
-        // chain's Task tool result.
-        if event.is_sidechain() {
-            return Ok(Vec::new());
-        }
-        Ok(normalizer.normalize(event))
+        // keeps running. `normalize_line` routes them to an isolated
+        // per-`parent_tool_use_id` normalizer (so their message ids can't clobber
+        // the main chain's pending-text state) and wraps them as
+        // `NormalizedEvent::Subagent`, which is opaque to the turn-settling
+        // checks — so a subagent's `end_turn` never settles the parent turn.
+        Ok(normalizer.normalize_line(event))
     }
 
     /// Claude Code normally ends a turn with a native `result` line, but
@@ -321,6 +411,194 @@ mod tests {
 
     fn normalize(normalizer: &mut ClaudeEventNormalizer, event: Value) -> Vec<NormalizedEvent> {
         normalizer.normalize(serde_json::from_value(event).unwrap())
+    }
+
+    fn normalize_line(
+        normalizer: &mut ClaudeEventNormalizer,
+        event: Value,
+    ) -> Vec<NormalizedEvent> {
+        normalizer.normalize_line(serde_json::from_value(event).unwrap())
+    }
+
+    /// Unwraps a single `Subagent` event, asserting its parent id.
+    fn unwrap_subagent<'a>(
+        events: &'a [NormalizedEvent],
+        parent_id: &str,
+    ) -> Vec<&'a NormalizedEvent> {
+        events
+            .iter()
+            .map(|event| match event {
+                NormalizedEvent::Subagent {
+                    parent_id: got,
+                    event,
+                } => {
+                    assert_eq!(got, parent_id);
+                    event.as_ref()
+                }
+                other => panic!("expected Subagent, got {other:?}"),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn sidechain_tool_use_routes_to_isolated_normalizer_and_namespaces_ids() {
+        let mut normalizer = ClaudeEventNormalizer::default();
+        let events = normalize_line(
+            &mut normalizer,
+            json!({
+                "type": "assistant",
+                "parent_tool_use_id": "toolu_task1",
+                "message": {"id": "msg_s1", "content": [
+                    {"type": "tool_use", "id": "toolu_bash", "name": "Bash", "input": {"command": "ls"}}
+                ]}
+            }),
+        );
+
+        let inner = unwrap_subagent(&events, "toolu_task1");
+        assert_eq!(inner.len(), 1);
+        assert!(matches!(
+            inner[0],
+            NormalizedEvent::AssistantMessage { content, .. }
+                if matches!(
+                    content.as_slice(),
+                    [NormalizedContent::ToolUse { raw_id, tool, .. }]
+                        if raw_id == "sub~toolu_task1~toolu_bash" && tool == "Bash"
+                )
+        ));
+    }
+
+    #[test]
+    fn sidechain_end_turn_events_are_non_terminal() {
+        let mut normalizer = ClaudeEventNormalizer::default();
+        // Deferred subagent text.
+        normalize_line(
+            &mut normalizer,
+            json!({
+                "type": "assistant",
+                "parent_tool_use_id": "toolu_task1",
+                "message": {"id": "msg_s1", "content": [{"type": "text", "text": "subagent done"}]}
+            }),
+        );
+        // The subagent's own end_turn flushes its message but must not settle the
+        // parent turn: every emitted event is Subagent-wrapped, hence opaque to
+        // the turn-settling checks.
+        let events = normalize_line(
+            &mut normalizer,
+            json!({
+                "type": "stream_event",
+                "parent_tool_use_id": "toolu_task1",
+                "event": {"type": "message_delta", "delta": {"stop_reason": "end_turn"}}
+            }),
+        );
+        assert!(!events.is_empty());
+        for event in &events {
+            assert!(matches!(event, NormalizedEvent::Subagent { .. }));
+            assert!(!event.is_terminal());
+            assert!(!event.is_terminal_assistant_stop());
+        }
+    }
+
+    #[test]
+    fn parallel_sidechains_keep_separate_pending_text() {
+        let mut normalizer = ClaudeEventNormalizer::default();
+        // Two subagents each defer their own text.
+        normalize_line(
+            &mut normalizer,
+            json!({
+                "type": "assistant",
+                "parent_tool_use_id": "toolu_a",
+                "message": {"id": "msg_a", "content": [{"type": "text", "text": "from A"}]}
+            }),
+        );
+        normalize_line(
+            &mut normalizer,
+            json!({
+                "type": "assistant",
+                "parent_tool_use_id": "toolu_b",
+                "message": {"id": "msg_b", "content": [{"type": "text", "text": "from B"}]}
+            }),
+        );
+
+        // A's end_turn flushes only A's text, namespaced under A.
+        let events = normalize_line(
+            &mut normalizer,
+            json!({
+                "type": "stream_event",
+                "parent_tool_use_id": "toolu_a",
+                "event": {"type": "message_delta", "delta": {"stop_reason": "end_turn"}}
+            }),
+        );
+        let inner = unwrap_subagent(&events, "toolu_a");
+        let flushed: Vec<&str> = inner
+            .iter()
+            .filter_map(|event| match event {
+                NormalizedEvent::AssistantMessage { content, .. } => {
+                    content.iter().find_map(|part| match part {
+                        NormalizedContent::AgentText { item_id, text } => {
+                            assert_eq!(item_id, "sub~toolu_a~msg_a");
+                            Some(text.as_str())
+                        }
+                        _ => None,
+                    })
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(flushed, vec!["from A"]);
+    }
+
+    #[test]
+    fn sidechain_does_not_disturb_main_chain_pending_text() {
+        let mut normalizer = ClaudeEventNormalizer::default();
+        // Main chain defers text.
+        assert!(
+            normalize(
+                &mut normalizer,
+                json!({"type": "assistant", "message": {"id": "msg_main", "stop_reason": null, "content": [{"type": "text", "text": "main answer"}]}}),
+            )
+            .is_empty()
+        );
+        // A whole subagent turn interleaves; the main pending text is untouched.
+        normalize_line(
+            &mut normalizer,
+            json!({
+                "type": "assistant",
+                "parent_tool_use_id": "toolu_task1",
+                "message": {"id": "msg_s1", "content": [{"type": "text", "text": "subagent noise"}]}
+            }),
+        );
+        normalize_line(
+            &mut normalizer,
+            json!({
+                "type": "stream_event",
+                "parent_tool_use_id": "toolu_task1",
+                "event": {"type": "message_delta", "delta": {"stop_reason": "end_turn"}}
+            }),
+        );
+        // The native result settles the main chain: its deferred text survives as
+        // the final answer.
+        let events = normalize_line(
+            &mut normalizer,
+            json!({"type": "result", "subtype": "success", "result": "main answer"}),
+        );
+        let final_text = events.iter().find_map(|event| match event {
+            NormalizedEvent::AssistantMessage {
+                stop_reason,
+                content,
+                ..
+            } => content.iter().find_map(|part| match part {
+                NormalizedContent::AgentText { item_id, text } => {
+                    assert_eq!(item_id, "msg_main");
+                    Some((stop_reason.clone(), text.clone()))
+                }
+                _ => None,
+            }),
+            _ => None,
+        });
+        assert_eq!(
+            final_text,
+            Some((Some("end_turn".to_string()), "main answer".to_string()))
+        );
     }
 
     #[test]

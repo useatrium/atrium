@@ -90,6 +90,16 @@ export interface UserMessageItem {
 
 export type SessionItem = TextItem | ReasoningItem | ToolCallItem | QuestionItem | UserMessageItem;
 
+/** A Claude Code Task-tool subagent's own activity stream, kept out of the main
+ * transcript so its steps never interleave the parent turn's fold. Keyed by the
+ * parent Task tool-use id; correlated on the wire by item ids namespaced
+ * `sub~<parentId>~<childId>`. Descriptor (subagent_type/description) and status
+ * are derived at render time from the parent Task `tool_call` in `state.items`. */
+export interface SubagentState {
+  parentId: string;
+  items: SessionItem[];
+}
+
 export interface TodoEntry {
   content: string;
   status: 'pending' | 'in_progress' | 'completed';
@@ -216,6 +226,10 @@ export interface SessionState {
     turnId?: string;
     questions: QuestionPrompt[];
   } | null;
+  /** Per-subagent (Task-tool sidechain) activity streams, keyed by parent Task
+   * tool-use id. Populated only when a session spawns subagents; the parent Task
+   * `tool_call` stays in `items`. `subagentGroups` (transcriptRows) joins the two. */
+  subagents?: Record<string, SubagentState>;
 }
 
 export function initialSessionState(): SessionState {
@@ -363,7 +377,12 @@ function reduceSessionFrame(state: SessionState, frame: CentaurEventFrame): Sess
   next.transport = 'ok';
 
   const raw = normalizeRawEvent(frame.data);
-  if (raw.type === 'turn.started') {
+  if (subagentParentIdFromRaw(raw) !== null) {
+    // Subagent (Task-tool sidechain) items carry ids namespaced `sub~<parent>~…`.
+    // Divert them into their own stream so their steps never touch the parent
+    // turn's transcript or derived aggregates (todos/plan/fileChanges/reply).
+    reduceSubagentFrame(next, frame.event_id, raw, recordHandles);
+  } else if (raw.type === 'turn.started') {
     if (frame.ts) next.turnStartTs = frame.ts;
     delete next.turnEndTs;
   } else if (raw.type === 'thread.tokenUsage') {
@@ -444,6 +463,69 @@ function isJsonObject(value: unknown): value is JsonObject {
 
 function stringValue(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined;
+}
+
+/** Parses a subagent-namespaced wire id `sub~<parentId>~<childId>`, else null.
+ * The `~` delimiter survives the harness's `stable_id` (which rewrites `:` `/`
+ * and spaces) verbatim, so the correlation reaches the client intact. */
+export function parseSubagentId(id: unknown): { parentId: string; childId: string } | null {
+  if (typeof id !== 'string' || !id.startsWith('sub~')) return null;
+  const rest = id.slice('sub~'.length);
+  const sep = rest.indexOf('~');
+  if (sep <= 0 || sep >= rest.length - 1) return null;
+  return { parentId: rest.slice(0, sep), childId: rest.slice(sep + 1) };
+}
+
+/** The parent Task tool-use id when a normalized item frame belongs to a
+ * subagent, else null. Reads a started/completed `item.id` or a delta `itemId`. */
+function subagentParentIdFromRaw(raw: CentaurEventFrame['data']): string | null {
+  const rawObj = raw as unknown as JsonObject;
+  const itemId = (isJsonObject(rawObj.item) ? stringValue(rawObj.item.id) : undefined) ?? stringValue(rawObj.itemId);
+  return parseSubagentId(itemId)?.parentId ?? null;
+}
+
+/** Runs one subagent item frame through the ordinary item pipeline against an
+ * isolated scratch state, reusing every projection (command/dynamic/mcp/
+ * reasoning/agentMessage + deltas) verbatim. All parent-level side effects
+ * (todos, plan, fileChanges, reply text) land in the throwaway scratch and are
+ * discarded; only the resulting item list is retained, keyed by parent id. */
+function reduceSubagentFrame(
+  state: SessionState,
+  eventId: number,
+  raw: CentaurEventFrame['data'],
+  handles: RecordHandleHint[],
+): void {
+  const parentId = subagentParentIdFromRaw(raw);
+  if (parentId === null) return;
+  const existing = state.subagents?.[parentId];
+  const scratch: SessionState = {
+    ...initialSessionState(),
+    executionId: state.executionId,
+    items: (existing?.items ?? []).map((item) => ({ ...item, sourceEventIds: [...item.sourceEventIds] })),
+  };
+  applySubagentItemFrame(scratch, eventId, raw, handles);
+  state.subagents = { ...(state.subagents ?? {}), [parentId]: { parentId, items: scratch.items } };
+}
+
+function applySubagentItemFrame(
+  scratch: SessionState,
+  eventId: number,
+  raw: CentaurEventFrame['data'],
+  handles: RecordHandleHint[],
+): void {
+  if (raw.type === 'item.started') {
+    reduceCodexItemStarted(scratch, eventId, raw);
+  } else if (raw.type === 'item.completed') {
+    reduceCodexItemCompleted(scratch, eventId, raw, handles);
+  } else if (raw.type === 'item.agentMessage.delta') {
+    reduceCodexAgentMessageDelta(scratch, eventId, raw);
+  } else if (raw.type === 'item.reasoning.textDelta') {
+    reduceReasoningTextDelta(scratch, eventId, raw);
+  } else if (raw.type === 'item.reasoning.summaryTextDelta') {
+    reduceReasoningSummaryTextDelta(scratch, eventId, raw);
+  } else if (raw.type === 'item.commandExecution.outputDelta') {
+    reduceCodexCommandOutputDelta(scratch, eventId, raw);
+  }
 }
 
 function recordHandleHints(frame: CentaurEventFrame): RecordHandleHint[] {

@@ -1,4 +1,4 @@
-import type { ReasoningItem, SessionItem, ToolCallItem } from './reducer.js';
+import type { ReasoningItem, SessionItem, SubagentState, ToolCallItem } from './reducer.js';
 
 export function toolDefaultOpen(item: ToolCallItem): boolean {
   return item.result === undefined;
@@ -37,6 +37,82 @@ export function isLiveFold(fold: FoldedTurnRow, folds: readonly FoldedTurnRow[],
 
 function isWorkItem(item: SessionItem): item is TurnWorkItem {
   return item.type === 'reasoning' || item.type === 'tool_call';
+}
+
+export type SubagentStatus = 'running' | 'completed' | 'failed';
+
+/** A Task-tool subagent surfaced in the live "Agents" strip: its descriptor
+ * (from the parent Task `tool_call` input), status, and its own work items for
+ * the drill-in. */
+export interface SubagentGroup {
+  parentId: string;
+  subagentType: string | null;
+  description: string | null;
+  status: SubagentStatus;
+  items: TurnWorkItem[];
+  stepCount: number;
+}
+
+function subagentStringField(input: ToolCallItem['input'] | undefined, key: string): string | null {
+  const value = input?.[key];
+  return typeof value === 'string' && value.trim() ? value : null;
+}
+
+/** A subagent runs until its parent Task `tool_call` reports a result; the
+ * result's `is_error` then settles it completed/failed. */
+function subagentStatus(parent: ToolCallItem | undefined): SubagentStatus {
+  if (parent?.result) return parent.result.is_error ? 'failed' : 'completed';
+  return 'running';
+}
+
+/**
+ * Joins the parent Task `tool_call`s in the transcript with their subagent
+ * activity streams (`state.subagents`). Subagents are listed in spawn order —
+ * the position of their Task call in `items` — with any not-yet-seen parents
+ * appended. The parent Task step itself stays in the main transcript/fold; only
+ * the subagent's own steps live here.
+ */
+export function subagentGroups(
+  items: readonly SessionItem[],
+  subagents: Record<string, SubagentState> | undefined,
+): SubagentGroup[] {
+  if (!subagents || Object.keys(subagents).length === 0) return [];
+
+  const parentById = new Map<string, ToolCallItem>();
+  for (const item of items) {
+    if (item.type === 'tool_call') parentById.set(item.id, item);
+  }
+  const parentFor = (parentId: string): ToolCallItem | undefined => parentById.get(`tool:codex:${parentId}`);
+
+  const order: string[] = [];
+  const seen = new Set<string>();
+  for (const item of items) {
+    if (item.type !== 'tool_call' || !item.id.startsWith('tool:codex:')) continue;
+    const parentId = item.id.slice('tool:codex:'.length);
+    if (subagents[parentId] && !seen.has(parentId)) {
+      seen.add(parentId);
+      order.push(parentId);
+    }
+  }
+  for (const parentId of Object.keys(subagents)) {
+    if (!seen.has(parentId)) {
+      seen.add(parentId);
+      order.push(parentId);
+    }
+  }
+
+  return order.map((parentId) => {
+    const parent = parentFor(parentId);
+    const work = (subagents[parentId]?.items ?? []).filter(isWorkItem);
+    return {
+      parentId,
+      subagentType: subagentStringField(parent?.input, 'subagent_type'),
+      description: subagentStringField(parent?.input, 'description'),
+      status: subagentStatus(parent),
+      items: work,
+      stepCount: work.length,
+    };
+  });
 }
 
 function elapsedMs(first: SessionItem | undefined, last: SessionItem | undefined): number | undefined {

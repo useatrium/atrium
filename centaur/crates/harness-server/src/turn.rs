@@ -58,6 +58,12 @@ pub struct CodexTurnNormalizer {
     started_items: HashMap<String, ThreadItem>,
     completed_items: Vec<ThreadItem>,
     user_message_count: usize,
+    /// One isolated projector per Task-tool subagent, keyed by
+    /// `parent_tool_use_id`. Each projects the subagent's own item stream (with
+    /// ids already namespaced `sub~<parent>~…` upstream) without polluting the
+    /// parent turn's `completed_items`, and its lifecycle/token notifications are
+    /// never forwarded — so a subagent can't settle or bill the parent turn.
+    subagents: HashMap<String, CodexTurnNormalizer>,
 }
 
 #[derive(Debug, Clone)]
@@ -94,6 +100,7 @@ impl CodexTurnNormalizer {
             started_items: HashMap::new(),
             completed_items: Vec::new(),
             user_message_count: 0,
+            subagents: HashMap::new(),
         }
     }
 
@@ -202,6 +209,9 @@ impl CodexTurnNormalizer {
             NormalizedEvent::TokenUsage { usage } => {
                 out.push(self.token_usage_notification(usage));
             }
+            NormalizedEvent::Subagent { parent_id, event } => {
+                self.process_subagent_event(parent_id, event, &mut out)?;
+            }
             NormalizedEvent::Result { error } => {
                 if let Some(error) = error {
                     self.last_error = Some(error.clone());
@@ -215,6 +225,55 @@ impl CodexTurnNormalizer {
         }
 
         Ok(out)
+    }
+
+    /// Projects one subagent (Task-tool sidechain) event through an isolated
+    /// per-subagent projector, reusing the full item pipeline (reasoning,
+    /// commandExecution, fileChange, dynamicToolCall, agentMessage). The
+    /// subagent's item ids are already namespaced `sub~<parent>~…` upstream, so
+    /// no rewriting is needed here — the client attributes them by id prefix.
+    ///
+    /// A subagent's terminal, token-usage, and session events are dropped: they
+    /// must never settle or bill the parent turn. The per-subagent projector is
+    /// pre-marked started so it never emits its own `thread/started` /
+    /// `turn/started`; only item and delta notifications are forwarded.
+    fn process_subagent_event(
+        &mut self,
+        parent_id: &str,
+        event: &NormalizedEvent,
+        out: &mut Vec<ServerNotification>,
+    ) -> Result<()> {
+        if matches!(
+            event,
+            NormalizedEvent::Result { .. }
+                | NormalizedEvent::Error { .. }
+                | NormalizedEvent::TokenUsage { .. }
+                | NormalizedEvent::SessionStarted { .. }
+                | NormalizedEvent::Subagent { .. }
+        ) {
+            return Ok(());
+        }
+        let subagent = self
+            .subagents
+            .entry(parent_id.to_string())
+            .or_insert_with(|| {
+                let mut projector = CodexTurnNormalizer::new(BridgeConfig {
+                    thread_id: self.thread_id.clone(),
+                    turn_id: self.turn_id.clone(),
+                    cwd: self.cwd.clone(),
+                    cli_version: self.cli_version.clone(),
+                    model_provider: self.model_provider.clone(),
+                });
+                projector.thread_started = true;
+                projector.turn_started = true;
+                projector
+            });
+        for notification in subagent.process_event(event)? {
+            if is_subagent_forwardable(&notification) {
+                out.push(notification);
+            }
+        }
+        Ok(())
     }
 
     pub fn emit_user_message(
@@ -749,6 +808,19 @@ impl CodexTurnNormalizer {
 /// work follows in the same turn (commentary), while `end_turn`/`stop_sequence`
 /// terminate the turn (final answer). Unknown reasons stay unphased so
 /// downstream keeps its compatibility behavior.
+/// Only item lifecycle and streaming-delta notifications from a subagent's
+/// projector reach the wire. Its thread/turn lifecycle and token-usage
+/// notifications are the parent turn's concern and are suppressed.
+fn is_subagent_forwardable(notification: &ServerNotification) -> bool {
+    matches!(
+        notification,
+        ServerNotification::ItemStarted(_)
+            | ServerNotification::ItemCompleted(_)
+            | ServerNotification::AgentMessageDelta(_)
+            | ServerNotification::ReasoningTextDelta(_)
+    )
+}
+
 fn phase_from_stop_reason(stop_reason: Option<&str>) -> Option<MessagePhase> {
     match stop_reason {
         Some("tool_use") => Some(MessagePhase::Commentary),
@@ -1559,6 +1631,195 @@ mod tests {
         let params = completed.params.unwrap();
         assert_eq!(params["item"]["type"], "fileChange");
         assert_eq!(params["item"]["status"], "failed");
+    }
+
+    fn subagent(parent_id: &str, event: NormalizedEvent) -> NormalizedEvent {
+        NormalizedEvent::Subagent {
+            parent_id: parent_id.to_string(),
+            event: Box::new(event),
+        }
+    }
+
+    fn methods(events: &[ServerNotification]) -> Vec<String> {
+        events
+            .iter()
+            .map(|event| notification_to_jsonrpc(event).unwrap().method)
+            .collect()
+    }
+
+    #[test]
+    fn subagent_tool_use_projects_namespaced_item_reusing_the_pipeline() {
+        let mut normalizer = normalizer();
+
+        let started = normalizer
+            .process_event(&subagent(
+                "toolu_task1",
+                NormalizedEvent::AssistantMessage {
+                    partial: false,
+                    stop_reason: None,
+                    content: vec![NormalizedContent::ToolUse {
+                        raw_id: "sub~toolu_task1~toolu_bash".to_string(),
+                        tool: "Bash".to_string(),
+                        arguments: json!({"command": "ls"}),
+                    }],
+                },
+            ))
+            .unwrap();
+
+        // Parent lifecycle emits once; the subagent's own projector is pre-marked
+        // started, so only the item notification is added.
+        assert_eq!(
+            methods(&started),
+            vec!["thread/started", "turn/started", "item/started"]
+        );
+        let item = notification_to_jsonrpc(&started[2])
+            .unwrap()
+            .params
+            .unwrap();
+        assert_eq!(item["item"]["type"], "commandExecution");
+        assert_eq!(item["item"]["id"], "sub~toolu_task1~toolu_bash");
+        assert_eq!(item["item"]["command"], "ls");
+
+        let completed = normalizer
+            .process_event(&subagent(
+                "toolu_task1",
+                NormalizedEvent::ToolResults(vec![NormalizedToolResult {
+                    tool_use_id: "sub~toolu_task1~toolu_bash".to_string(),
+                    content: "ok".to_string(),
+                    is_error: false,
+                    exit_code: Some(0),
+                }]),
+            ))
+            .unwrap();
+        assert_eq!(methods(&completed), vec!["item/completed"]);
+        let item = notification_to_jsonrpc(&completed[0])
+            .unwrap()
+            .params
+            .unwrap();
+        assert_eq!(item["item"]["type"], "commandExecution");
+        assert_eq!(item["item"]["id"], "sub~toolu_task1~toolu_bash");
+        assert_eq!(item["item"]["status"], "completed");
+        assert_eq!(item["item"]["aggregatedOutput"], "ok");
+    }
+
+    #[test]
+    fn subagent_activity_never_settles_or_pollutes_the_parent_turn() {
+        let mut normalizer = normalizer();
+
+        // A full subagent message that ends with `end_turn`.
+        normalizer
+            .process_event(&subagent(
+                "toolu_task1",
+                NormalizedEvent::AgentMessageStarted {
+                    item_id: "sub~toolu_task1~msg_s".to_string(),
+                    stop_reason: Some("end_turn".to_string()),
+                },
+            ))
+            .unwrap();
+        normalizer
+            .process_event(&subagent(
+                "toolu_task1",
+                NormalizedEvent::AssistantMessage {
+                    partial: false,
+                    stop_reason: Some("end_turn".to_string()),
+                    content: vec![NormalizedContent::AgentText {
+                        item_id: "sub~toolu_task1~msg_s".to_string(),
+                        text: "subagent report".to_string(),
+                    }],
+                },
+            ))
+            .unwrap();
+
+        // The parent turn is still driven by the parent stream: its own completed
+        // items list carries none of the subagent's work.
+        let turn = normalizer.finish_turn(None).unwrap().unwrap();
+        let params = notification_to_jsonrpc(&turn).unwrap().params.unwrap();
+        assert_eq!(params["turn"]["status"], "completed");
+        assert!(
+            params["turn"]["items"].as_array().unwrap().is_empty(),
+            "subagent items must not appear in the parent turn snapshot: {}",
+            params["turn"]["items"]
+        );
+    }
+
+    #[test]
+    fn subagent_lifecycle_and_token_notifications_are_suppressed() {
+        let mut normalizer = normalizer();
+        normalizer.start_notifications(false).unwrap();
+
+        // Token usage from a subagent is dropped — it must not bill the parent.
+        let usage = normalizer
+            .process_event(&subagent(
+                "toolu_task1",
+                NormalizedEvent::TokenUsage {
+                    usage: NormalizedTokenUsage {
+                        output_tokens: Some(5),
+                        ..Default::default()
+                    },
+                },
+            ))
+            .unwrap();
+        assert!(usage.is_empty());
+
+        // A subagent item after the parent has started emits only the item — no
+        // second thread/started or turn/started from the subagent's projector.
+        let events = normalizer
+            .process_event(&subagent(
+                "toolu_task1",
+                NormalizedEvent::AssistantMessage {
+                    partial: false,
+                    stop_reason: None,
+                    content: vec![NormalizedContent::ToolUse {
+                        raw_id: "sub~toolu_task1~toolu_read".to_string(),
+                        tool: "Read".to_string(),
+                        arguments: json!({"file_path": "x"}),
+                    }],
+                },
+            ))
+            .unwrap();
+        assert_eq!(methods(&events), vec!["item/started"]);
+    }
+
+    #[test]
+    fn parallel_subagents_keep_isolated_projection_state() {
+        let mut normalizer = normalizer();
+        normalizer.start_notifications(false).unwrap();
+
+        // Two subagents each run an identically-named tool; separate projectors
+        // keep their tool-call correlation from colliding.
+        for parent in ["toolu_a", "toolu_b"] {
+            normalizer
+                .process_event(&subagent(
+                    parent,
+                    NormalizedEvent::AssistantMessage {
+                        partial: false,
+                        stop_reason: None,
+                        content: vec![NormalizedContent::ToolUse {
+                            raw_id: format!("sub~{parent}~toolu_read"),
+                            tool: "Read".to_string(),
+                            arguments: json!({"file_path": "x"}),
+                        }],
+                    },
+                ))
+                .unwrap();
+        }
+        let completed_a = normalizer
+            .process_event(&subagent(
+                "toolu_a",
+                NormalizedEvent::ToolResults(vec![NormalizedToolResult {
+                    tool_use_id: "sub~toolu_a~toolu_read".to_string(),
+                    content: "A output".to_string(),
+                    is_error: false,
+                    exit_code: None,
+                }]),
+            ))
+            .unwrap();
+        let item = notification_to_jsonrpc(&completed_a[0])
+            .unwrap()
+            .params
+            .unwrap();
+        assert_eq!(item["item"]["id"], "sub~toolu_a~toolu_read");
+        assert_eq!(item["item"]["contentItems"][0]["text"], "A output");
     }
 
     #[test]

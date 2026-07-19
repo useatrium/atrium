@@ -23,4 +23,6 @@ pub use wire::{
     is_known_untyped_server_notification, notification_to_jsonrpc, notification_to_wire_value,
 };
 
-pub(crate) use util::{command_from_override, stable_id, user_input_to_anthropic_content};
+pub(crate) use util::{
+    command_from_override, stable_id, subagent_item_id, user_input_to_anthropic_content,
+};
