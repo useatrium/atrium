@@ -6,6 +6,7 @@ import {
   focusTranscriptRows,
   fullTranscriptRows,
   isLiveFold,
+  subagentGroups,
   toolDefaultOpen,
 } from './transcriptRows.js';
 
@@ -330,5 +331,67 @@ describe('coalesceTurnFolds', () => {
     const split = foldedTurnRows(items);
     expect(split).toHaveLength(1);
     expect(coalesceTurnFolds(split)).toHaveLength(1);
+  });
+});
+
+describe('subagent groups', () => {
+  const task = (parentId: string, extra: Partial<ToolCallItem> = {}): ToolCallItem =>
+    ({
+      type: 'tool_call',
+      id: `tool:codex:${parentId}`,
+      name: 'Task',
+      input: { subagent_type: 'Explore', description: 'map the seam' },
+      executionId: null,
+      sourceEventIds: [],
+      ...extra,
+    }) as ToolCallItem;
+
+  const workItem = (id: string): SessionItem =>
+    ({ type: 'tool_call', id, name: 'Read', input: {}, executionId: null, sourceEventIds: [] }) as SessionItem;
+
+  const subagents = (parentId: string, items: SessionItem[]) => ({ [parentId]: { parentId, items } });
+
+  it('joins a parent Task with its subagent stream and its descriptor', () => {
+    const groups = subagentGroups(
+      [task('toolu_task1')],
+      subagents('toolu_task1', [
+        workItem('sub~toolu_task1~a'),
+        { type: 'reasoning', id: 'r', text: 'x', executionId: null, sourceEventIds: [] } as SessionItem,
+      ]),
+    );
+    expect(groups).toHaveLength(1);
+    expect(groups[0]).toMatchObject({
+      parentId: 'toolu_task1',
+      subagentType: 'Explore',
+      description: 'map the seam',
+      status: 'running',
+      stepCount: 2,
+    });
+  });
+
+  it('derives completed/failed status from the parent Task result', () => {
+    const completed = subagentGroups([task('t1', { result: { content: 'ok', is_error: false } })], subagents('t1', []));
+    expect(completed[0]!.status).toBe('completed');
+    const failed = subagentGroups([task('t2', { result: { content: 'boom', is_error: true } })], subagents('t2', []));
+    expect(failed[0]!.status).toBe('failed');
+  });
+
+  it('lists subagents in spawn order and only includes work items', () => {
+    const items = [task('t1'), task('t2')];
+    const groups = subagentGroups(items, {
+      ...subagents('t2', [workItem('sub~t2~a')]),
+      ...subagents('t1', [
+        workItem('sub~t1~a'),
+        { type: 'text', id: 'txt', text: 'report', executionId: null, sourceEventIds: [] } as SessionItem,
+      ]),
+    });
+    expect(groups.map((group) => group.parentId)).toEqual(['t1', 't2']);
+    // The subagent's final text message is not a work item, so it is excluded.
+    expect(groups[0]!.stepCount).toBe(1);
+  });
+
+  it('is empty when there are no subagents', () => {
+    expect(subagentGroups([task('t1')], undefined)).toEqual([]);
+    expect(subagentGroups([task('t1')], {})).toEqual([]);
   });
 });

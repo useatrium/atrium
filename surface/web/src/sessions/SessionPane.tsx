@@ -26,6 +26,7 @@ import {
   turnStatusLabel,
   isTerminalExecutionStatus,
   sideEffectCount,
+  subagentGroups,
   type FoldedTurnRow,
   type SessionItem,
   type TextItem,
@@ -105,6 +106,7 @@ import {
   sessionPaneSizing,
   useSessionPaneWidth,
 } from './useSessionPaneWidth';
+import { AgentsStrip } from './AgentsStrip';
 import { TurnStatusLine } from './TurnStatus';
 import { useArtifactPresentations } from './useArtifactPresentations';
 import { AppPresentationCards } from './AppPresentationCard';
@@ -1202,6 +1204,10 @@ export function SessionPaneContent({
     [inlineCodexChanges],
   );
   const workFolds = useMemo(() => foldedTurnRows(stream.items), [stream.items]);
+  const subagentRoster = useMemo(
+    () => subagentGroups(stream.items, stream.subagents),
+    [stream.items, stream.subagents],
+  );
   const rows = useMemo(() => {
     const next: PaneSpineRow[] = [];
     const foldsByStart = new Map(workFolds.map((fold) => [fold.startIndex, fold]));
@@ -2311,6 +2317,8 @@ export function SessionPaneContent({
           onSent={() => showMarkupNotice('Markup sent to agent')}
         />
       )}
+
+      <AgentsStrip groups={subagentRoster} />
 
       {!isEnded && turnPhase && (
         <TurnStatusLine

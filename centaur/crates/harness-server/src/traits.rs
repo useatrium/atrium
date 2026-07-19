@@ -138,6 +138,16 @@ pub enum NormalizedEvent {
     TokenUsage {
         usage: NormalizedTokenUsage,
     },
+    /// Activity from a Claude Code Task-tool subagent ("sidechain"), correlated
+    /// to the parent tool-use id that spawned it. The inner event is a normal
+    /// event whose item ids are already namespaced (`sub~<parent>~…`) so it
+    /// projects through the standard item pipeline while staying attributable to
+    /// its subagent. Deliberately opaque to `is_terminal`/`is_terminal_assistant_stop`:
+    /// a subagent's `end_turn` must never settle the parent turn.
+    Subagent {
+        parent_id: String,
+        event: Box<NormalizedEvent>,
+    },
     Result {
         error: Option<String>,
     },

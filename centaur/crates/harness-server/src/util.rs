@@ -77,6 +77,16 @@ pub(crate) fn suffix_delta(previous: &str, current: &str) -> String {
         .to_string()
 }
 
+/// Namespaces a subagent (Task-tool sidechain) item id under its parent
+/// tool-use id, so the client can attribute the item to its subagent and keep it
+/// out of the main transcript. The `~` delimiter is deliberate: `stable_id`
+/// rewrites `:` `/` and spaces but leaves `~` intact, and Anthropic item ids
+/// never contain `~`, so the prefix survives `stable_id` verbatim and parses
+/// unambiguously as `sub~<parentToolUseId>~<childItemId>`.
+pub(crate) fn subagent_item_id(parent_id: &str, item_id: &str) -> String {
+    format!("sub~{parent_id}~{item_id}")
+}
+
 pub(crate) fn stable_id(raw: &str, prefix: &str) -> String {
     let clean = raw.trim();
     if clean.is_empty() {
