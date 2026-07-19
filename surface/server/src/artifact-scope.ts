@@ -28,14 +28,6 @@ export function isCanonicalSharedPath(path: string): boolean {
   );
 }
 
-export function isSessionScratchPath(path: string, sessionId: string): boolean {
-  return path.startsWith(`scratch/${sessionId}/`);
-}
-
-export function userCanReadSessionArtifactPath(path: string, sessionId: string): boolean {
-  return isCanonicalSharedPath(path) || isSessionScratchPath(path, sessionId);
-}
-
 export function artifactPathInRoots(path: string, roots: readonly ArtifactScopeRoot[]): boolean {
   return roots.some((root) => path.startsWith(`${root.prefix}/`));
 }

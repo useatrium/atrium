@@ -58,17 +58,6 @@ export function displaySessionArtifactPath(path: string, ctx: SessionArtifactPat
   return path;
 }
 
-export function sessionArtifactPathAliases(path: string, ctx: SessionArtifactPathContext): string[] {
-  const activePrefix = `shared/channels/${ctx.channelId}/`;
-  if (path.startsWith(activePrefix)) {
-    const displayPath = path.slice(activePrefix.length);
-    return displayPath === path ? [path] : [displayPath, path];
-  }
-
-  const displayPath = displaySessionArtifactPath(path, ctx);
-  return [displayPath];
-}
-
 export function normalizeArtifactPathInput(input: string): string {
   let path = input.trim().replace(/\\/g, '/');
   if (path.startsWith('~/')) path = path.slice(2);

@@ -1,5 +1,4 @@
 import type { FastifyReply } from 'fastify';
-import type { MediaClassification } from './media-classifier.js';
 import { canonicalizeSessionArtifactPath, InvalidArtifactPathError } from './artifact-path.js';
 
 export function firstHeader(value: string | string[] | undefined): string | undefined {
@@ -29,15 +28,6 @@ export function canonicalizeRouteArtifactPath(
 export function normalizeMime(value: string | undefined): string {
   const mime = (value ?? '').split(';', 1)[0]!.trim().toLowerCase();
   return /^[\w.+-]+\/[\w.+-]+$/.test(mime) ? mime : 'application/octet-stream';
-}
-
-export function mediaHeaders(classification: MediaClassification): Record<string, string> {
-  return {
-    'X-Detected-Mime': classification.detectedMime,
-    'X-Media-Kind': classification.mediaKind,
-    'X-Is-Text': classification.isText ? 'true' : 'false',
-    ...(classification.textEncoding != null ? { 'X-Text-Encoding': classification.textEncoding } : {}),
-  };
 }
 
 export function parseBaseSeq(value: string | undefined): number | null | false {
