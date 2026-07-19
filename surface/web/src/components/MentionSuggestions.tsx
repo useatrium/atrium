@@ -32,7 +32,7 @@ export function MentionSuggestions({
       id={listboxId}
       role="listbox"
       aria-label="Mention suggestions"
-      className="absolute inset-x-0 bottom-full z-dropdown mb-1 max-h-64 overflow-y-auto rounded-md border border-edge-strong bg-surface-raised p-1 shadow-lg"
+      className="absolute inset-x-0 bottom-full z-dropdown mb-1 max-h-64 overflow-y-auto rounded-md border border-edge-strong bg-surface-overlay p-1.5 shadow-lg"
     >
       {candidates.map((candidate, index) => {
         const special = candidate.kind === 'special';

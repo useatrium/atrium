@@ -389,7 +389,7 @@ function FilterBar({
         className={`${filtersOpen ? 'grid' : 'hidden'} mt-2 grid-cols-1 gap-2 md:mt-0 md:flex md:flex-wrap md:items-center`}
       >
         <label className={`${labelClass} min-w-[13rem] flex-1 max-md:min-w-0`}>
-          <SearchIcon size={13} />
+          <SearchIcon size={14} />
           <input
             value={search}
             onChange={(event) => setSearch(event.target.value)}

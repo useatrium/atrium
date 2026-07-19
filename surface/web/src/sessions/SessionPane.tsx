@@ -1923,7 +1923,8 @@ export function SessionPaneContent({
             data-testid="work-dock-top-resize-handle"
             onPointerDown={workDockTop.startResize}
             onDoubleClick={workDockTop.resetHeight}
-            className={`absolute inset-x-0 -bottom-1 z-raised h-2 cursor-row-resize touch-none hover:bg-accent/40 ${
+            onKeyDown={workDockTop.onResizeKeyDown}
+            className={`absolute inset-x-0 -bottom-1 z-raised h-2 cursor-row-resize touch-none transition-colors hover:bg-accent/40 focus-visible:outline-2 focus-visible:outline-accent ${
               workDockTop.resizing ? 'bg-accent/40' : ''
             }`}
           />
@@ -2288,7 +2289,8 @@ export function SessionPaneContent({
               data-testid="work-dock-side-resize-handle"
               onPointerDown={workDockSide.startResize}
               onDoubleClick={workDockSide.resetWidth}
-              className={`absolute inset-y-0 -left-1 z-raised w-2 cursor-col-resize touch-none hover:bg-accent/40 ${
+              onKeyDown={workDockSide.onResizeKeyDown}
+              className={`absolute inset-y-0 -left-1 z-raised w-2 cursor-col-resize touch-none transition-colors hover:bg-accent/40 focus-visible:outline-2 focus-visible:outline-accent ${
                 workDockSide.resizing ? 'bg-accent/40' : ''
               }`}
             />

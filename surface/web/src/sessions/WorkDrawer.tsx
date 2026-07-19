@@ -9,6 +9,7 @@ import { useEffect, useState } from 'react';
 import type { Artifact, ArtifactPresentation, FileChange, SideEffect } from '@atrium/centaur-client';
 import { fileTypeLabel, type HubFile, type HubFileListResult } from '@atrium/surface-client';
 import { Tabs, TabsContent, TabsList, TabsTrigger, Tooltip } from '../components/a11y';
+import { IconButton } from '../components/ui';
 import { ExternalLinkIcon, PanelRightCloseIcon, PanelRightIcon, XIcon } from '../components/icons';
 import { isDesktop } from '../desktop';
 import { navigate } from '../router';
@@ -306,19 +307,14 @@ export function WorkDrawer({
           </TabsList>
         </div>
         <Tooltip content={pinLabel}>
-          <button
-            type="button"
+          <IconButton
             onClick={onTogglePin}
             aria-pressed={pinned}
             aria-label={pinAriaLabel}
-            className={`rounded-md px-1.5 py-1 max-md:inline-flex max-md:size-11 max-md:shrink-0 max-md:items-center max-md:justify-center max-md:p-0 [@media(pointer:coarse)]:inline-flex [@media(pointer:coarse)]:size-11 [@media(pointer:coarse)]:shrink-0 [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center [@media(pointer:coarse)]:p-0 ${
-              pinned
-                ? 'text-accent-text-strong hover:bg-surface-overlay'
-                : 'text-fg-tertiary hover:bg-surface-overlay hover:text-fg'
-            }`}
+            className="aria-pressed:text-accent-text-strong max-md:size-11"
           >
-            {pinned ? <PanelRightCloseIcon size={15} /> : <PanelRightIcon size={15} />}
-          </button>
+            {pinned ? <PanelRightCloseIcon size={14} /> : <PanelRightIcon size={14} />}
+          </IconButton>
         </Tooltip>
         {showDetach && (
           <Tooltip content={detachLabel}>
@@ -327,20 +323,15 @@ export function WorkDrawer({
               target="_blank"
               rel="noopener noreferrer"
               aria-label={detachLabel}
-              className="rounded-md px-1.5 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg max-md:inline-flex max-md:size-11 max-md:shrink-0 max-md:items-center max-md:justify-center max-md:p-0 [@media(pointer:coarse)]:inline-flex [@media(pointer:coarse)]:size-11 [@media(pointer:coarse)]:shrink-0 [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center [@media(pointer:coarse)]:p-0"
+              className="grid size-7 shrink-0 place-items-center rounded-md text-fg-muted transition-colors hover:bg-surface-overlay hover:text-fg max-md:size-11 [@media(pointer:coarse)]:size-11"
             >
-              <ExternalLinkIcon size={15} />
+              <ExternalLinkIcon size={14} />
             </a>
           </Tooltip>
         )}
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Close work drawer"
-          className="rounded-md px-1.5 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg max-md:inline-flex max-md:size-11 max-md:shrink-0 max-md:items-center max-md:justify-center max-md:p-0 [@media(pointer:coarse)]:inline-flex [@media(pointer:coarse)]:size-11 [@media(pointer:coarse)]:shrink-0 [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center [@media(pointer:coarse)]:p-0"
-        >
-          <XIcon size={15} />
-        </button>
+        <IconButton onClick={onClose} aria-label="Close work drawer" className="max-md:size-11">
+          <XIcon size={14} />
+        </IconButton>
       </header>
       <TabsContent value="conflicts" className="min-h-0 flex-1">
         {conflicts[0] ? (

@@ -168,7 +168,7 @@ export function MarkupPane({
   };
 
   return (
-    <div className="fixed inset-0 z-overlay flex bg-black/55 p-4 text-fg max-md:p-2" role="presentation">
+    <div className="fixed inset-0 z-overlay flex bg-black/50 p-4 text-fg max-md:p-2" role="presentation">
       <section
         ref={dialogRef}
         role="dialog"

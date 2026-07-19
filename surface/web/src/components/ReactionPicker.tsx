@@ -125,7 +125,7 @@ export function ReactionPicker({
       ref={containerRef}
       role="dialog"
       aria-labelledby={resolvedLabelId}
-      className={`rounded-md border border-edge-strong bg-surface-overlay p-2 shadow-lg ${className}`}
+      className={`rounded-md border border-edge-strong bg-surface-overlay p-1.5 shadow-lg ${className}`}
     >
       <div id={resolvedLabelId} className="sr-only">
         Add reaction

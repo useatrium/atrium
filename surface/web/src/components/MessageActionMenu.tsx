@@ -214,7 +214,7 @@ export function MessageActionMenu({
         onClick={(event) => {
           if (canActivateFromClick(event)) closeMenu();
         }}
-        className="absolute inset-0 h-full w-full cursor-default bg-black/35"
+        className="absolute inset-0 h-full w-full cursor-default bg-black/50"
       />
       {menu}
     </div>

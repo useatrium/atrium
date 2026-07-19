@@ -1008,7 +1008,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             type="button"
             aria-label="Close agent mode options"
             onClick={() => setAgentOptionsOpen(false)}
-            className="absolute inset-0 bg-black/30"
+            className="absolute inset-0 bg-black/50"
           />
           <section
             role="dialog"

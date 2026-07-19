@@ -29,6 +29,7 @@ import {
 import { Composer } from './Composer';
 import type { ComposerHandle } from './Composer';
 import { XIcon } from './icons';
+import { IconButton } from './ui';
 import { MessageRow } from './MessageRow';
 import { buildSpineRows } from './threadSpine';
 import type { MentionContext } from './useMentionTypeahead';
@@ -295,15 +296,9 @@ export function ThreadPanelContent({
         crumbs={[...(channelLabel ? [{ label: channelLabel, onClick: onClose }] : []), { label: 'thread' }]}
         crumbNote={`${root.replyCount} ${root.replyCount === 1 ? 'reply' : 'replies'}`}
         actions={
-          <button
-            type="button"
-            onClick={onClose}
-            title="Close thread"
-            aria-label="Close thread"
-            className="shrink-0 rounded-md px-2 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg max-md:size-11 max-md:p-0"
-          >
-            <XIcon />
-          </button>
+          <IconButton onClick={onClose} title="Close thread" aria-label="Close thread" className="max-md:size-11">
+            <XIcon size={16} />
+          </IconButton>
         }
       />
       {attachedSession && hasWorkStrips && (

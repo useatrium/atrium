@@ -2,7 +2,7 @@
 // channel header (and is mirrored on the focused pane). "Split" and "Focus" need
 // a session to point at, so they disable when no pane has been opened.
 
-import { Tooltip } from '../components/a11y';
+import { SegmentedControl } from '../components/ui';
 
 export type SessionView = 'channel' | 'split' | 'focus';
 
@@ -23,38 +23,19 @@ export function ViewToggle({
   onSetView: (view: SessionView) => void;
 }) {
   return (
-    // biome-ignore lint/a11y/useSemanticElements: compact segmented control already exposes a named group and pressed buttons; fieldset would alter toolbar layout.
-    <div role="group" aria-label="Layout" className="flex shrink-0 rounded-md border border-edge bg-surface p-0.5">
-      {SEGMENTS.map((seg) => {
-        const active = view === seg.value;
+    <SegmentedControl
+      aria-label="Layout"
+      value={view}
+      onChange={onSetView}
+      items={SEGMENTS.map((seg) => {
         const disabled = seg.value !== 'channel' && !hasSession;
-        const tooltip = disabled ? 'Open a session to use this layout' : seg.title;
-        return (
-          <Tooltip key={seg.value} content={tooltip}>
-            <button
-              type="button"
-              aria-pressed={active}
-              aria-disabled={disabled || undefined}
-              onClick={(e) => {
-                if (disabled) {
-                  e.preventDefault();
-                  return;
-                }
-                onSetView(seg.value);
-              }}
-              className={`h-7 rounded px-2.5 text-2xs font-medium transition-colors ${
-                active
-                  ? 'bg-surface-overlay text-fg shadow-sm'
-                  : disabled
-                    ? 'cursor-not-allowed text-fg-faint'
-                    : 'text-fg-tertiary hover:bg-surface-overlay/60 hover:text-fg-body'
-              }`}
-            >
-              {seg.label}
-            </button>
-          </Tooltip>
-        );
+        return {
+          value: seg.value,
+          label: seg.label,
+          disabled,
+          tooltip: disabled ? 'Open a session to use this layout' : seg.title,
+        };
       })}
-    </div>
+    />
   );
 }

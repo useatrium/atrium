@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { useDialog } from '../useDialog';
 import { XIcon } from './icons';
+import { Button, IconButton } from './ui';
 import {
   exchangeClaudeCodeOAuth,
   PROVIDER_CREDENTIALS_REFRESH_SENTINEL,
@@ -129,14 +130,9 @@ export function ClaudeConnectDialog({
             </h2>
             <p className="text-2xs text-fg-muted">{connected ? 'Connected' : 'Not connected'}</p>
           </div>
-          <button
-            type="button"
-            onClick={onCancel}
-            aria-label="Close dialog"
-            className="rounded-md px-2 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg max-md:min-h-11 max-md:min-w-11"
-          >
-            <XIcon />
-          </button>
+          <IconButton onClick={onCancel} aria-label="Close dialog">
+            <XIcon size={16} />
+          </IconButton>
         </header>
 
         <div className="space-y-3 px-4 py-3">
@@ -207,20 +203,12 @@ export function ClaudeConnectDialog({
             Disconnect
           </button>
           <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={onCancel}
-              className="rounded-md px-3 py-1.5 text-xs font-medium text-fg-secondary hover:bg-surface-overlay hover:text-fg max-md:min-h-11"
-            >
+            <Button variant="ghost" onClick={onCancel}>
               Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={!flow?.pendingId || !code.trim() || busy || starting}
-              className="rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-on-accent hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50 max-md:min-h-11"
-            >
+            </Button>
+            <Button type="submit" variant="primary" disabled={!flow?.pendingId || !code.trim() || busy || starting}>
               {connected ? 'Reconnect' : 'Connect'}
-            </button>
+            </Button>
           </div>
         </footer>
       </form>
