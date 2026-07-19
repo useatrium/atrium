@@ -275,13 +275,13 @@ export function AgentDock({
   const [open, setOpen] = useAgentDockOpen();
   const [mineFilter, setMineFilter] = useAgentDockMineFilter();
   const [query, setQuery] = useState('');
+  // Shared by the Escape layer (clear-query) and the open/collapse focus
+  // hand-off: opening/collapsing swaps the spine button and the dock, so focus
+  // would land on nothing without the effect below.
   const filterInputRef = useRef<HTMLInputElement>(null);
   const now = useNow(Object.values(sessions).some(isLiveAgentWork));
   const dockSize = usePaneSize(agentDockWidthConfig);
-  // Opening/collapsing swaps the spine button and the dock, so focus would land
-  // on nothing. These hand it off across the transition (see the effect below).
   const openButtonRef = useRef<HTMLButtonElement>(null);
-  const filterInputRef = useRef<HTMLInputElement>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
 
   useEffect(() => {
@@ -378,7 +378,11 @@ export function AgentDock({
     if (wasDockOpen.current === dockOpen) return;
     wasDockOpen.current = dockOpen;
     if (!dockOpen) {
-      openButtonRef.current?.focus();
+      // Reclaim focus only when the close orphaned it (the focused control
+      // unmounted with the dock). A close triggered from elsewhere — Mod+.
+      // while typing in the composer — must not steal focus.
+      const active = document.activeElement;
+      if (active == null || active === document.body) openButtonRef.current?.focus();
       return;
     }
     const wide =

@@ -4,6 +4,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AGENT_DOCK_OPEN_STORAGE_KEY, AGENT_DOCK_WIDTH_STORAGE_KEY } from '../storageKeys';
 import { AgentDock, type AgentDockProps } from './AgentDock';
+import { AGENT_DOCK_FALLBACK_WIDTH } from './useSessionPaneWidth';
 import type { Session } from './types';
 
 function session(overrides: Partial<Session> = {}): Session {
@@ -65,18 +66,18 @@ describe('AgentDock resize handle keyboard operation', () => {
     window.localStorage.setItem(AGENT_DOCK_OPEN_STORAGE_KEY, 'true');
     renderDock();
     const handle = screen.getByTestId('agent-dock-resize-handle') as HTMLElement;
-    expect(handle.getAttribute('aria-valuenow')).toBe('256'); // fallback default
+    expect(handle.getAttribute('aria-valuenow')).toBe(String(AGENT_DOCK_FALLBACK_WIDTH)); // fallback default
 
     // The dock's handle grows to the left → ArrowLeft enlarges, ArrowRight shrinks.
     fireEvent.keyDown(handle, { key: 'ArrowLeft' });
-    expect(handle.getAttribute('aria-valuenow')).toBe('272');
-    expect(window.localStorage.getItem(AGENT_DOCK_WIDTH_STORAGE_KEY)).toBe('272');
+    expect(handle.getAttribute('aria-valuenow')).toBe(String(AGENT_DOCK_FALLBACK_WIDTH + 16));
+    expect(window.localStorage.getItem(AGENT_DOCK_WIDTH_STORAGE_KEY)).toBe(String(AGENT_DOCK_FALLBACK_WIDTH + 16));
 
     fireEvent.keyDown(handle, { key: 'ArrowLeft', shiftKey: true });
-    expect(handle.getAttribute('aria-valuenow')).toBe('336');
+    expect(handle.getAttribute('aria-valuenow')).toBe(String(AGENT_DOCK_FALLBACK_WIDTH + 16 + 64));
 
     fireEvent.keyDown(handle, { key: 'ArrowRight' });
-    expect(handle.getAttribute('aria-valuenow')).toBe('320');
+    expect(handle.getAttribute('aria-valuenow')).toBe(String(AGENT_DOCK_FALLBACK_WIDTH + 64));
 
     fireEvent.keyDown(handle, { key: 'Home' });
     expect(handle.getAttribute('aria-valuenow')).toBe('224'); // min
@@ -85,7 +86,7 @@ describe('AgentDock resize handle keyboard operation', () => {
     expect(handle.getAttribute('aria-valuenow')).toBe('800'); // 40vw of 2000
 
     fireEvent.keyDown(handle, { key: 'Enter' });
-    expect(handle.getAttribute('aria-valuenow')).toBe('256'); // reset to default
+    expect(handle.getAttribute('aria-valuenow')).toBe(String(AGENT_DOCK_FALLBACK_WIDTH)); // reset to default
     expect(window.localStorage.getItem(AGENT_DOCK_WIDTH_STORAGE_KEY)).toBeNull();
   });
 });
@@ -137,6 +138,22 @@ describe('AgentDock focus hand-off', () => {
     // Collapse still returns focus to the spine button regardless of width.
     fireEvent.click(screen.getByRole('button', { name: 'Collapse agent dock' }));
     expect(document.activeElement).toBe(screen.getByRole('button', { name: /Open agent dock/ }));
+  });
+
+  it('does not steal focus on close when focus lives outside the dock (Mod+. while typing)', () => {
+    stubMatchMedia(true);
+    const outside = document.createElement('input');
+    document.body.appendChild(outside);
+    try {
+      renderDock();
+      fireEvent.click(screen.getByRole('button', { name: /Open agent dock/ }));
+      // The user moved on — e.g. back to the composer — before closing via Mod+.
+      outside.focus();
+      fireEvent.click(screen.getByRole('button', { name: 'Collapse agent dock' }));
+      expect(document.activeElement).toBe(outside);
+    } finally {
+      outside.remove();
+    }
   });
 });
 
