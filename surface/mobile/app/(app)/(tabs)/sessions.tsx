@@ -26,7 +26,13 @@ interface DisplaySession extends SessionListItem {
   live?: Session;
 }
 
-type SessionSection = { key: string; title: string; data: DisplaySession[] };
+type SessionSection = {
+  key: string;
+  title: string;
+  data: DisplaySession[];
+  channelName?: string;
+  showTitle?: boolean;
+};
 
 function StatusChip({ glance }: { glance: SessionGlance }) {
   const { colors } = useTheme();
@@ -88,25 +94,40 @@ function freshness(item: DisplaySession): number {
 export function groupMobileSessions(rows: DisplaySession[]): SessionSection[] {
   const pinned: DisplaySession[] = [];
   const needsYou: DisplaySession[] = [];
-  const active: DisplaySession[] = [];
+  const activeByChannel = new Map<string, { channelName: string; data: DisplaySession[] }>();
   const recent: DisplaySession[] = [];
   for (const row of rows) {
     const fields = displayFields(row);
     if (fields.archivedAt != null) continue; // archived rows live behind the disclosure
     if (fields.pinned) pinned.push(row);
     else if (needsAttention(row)) needsYou.push(row);
-    else if (isLiveAgentWork(fields)) active.push(row);
-    else recent.push(row);
+    else if (isLiveAgentWork(fields)) {
+      const group = activeByChannel.get(row.channelId);
+      if (group) group.data.push(row);
+      else activeByChannel.set(row.channelId, { channelName: row.channelName, data: [row] });
+    } else recent.push(row);
   }
   const byNewest = (a: DisplaySession, b: DisplaySession) => freshness(b) - freshness(a);
   pinned.sort(byNewest);
   needsYou.sort(byNewest);
-  active.sort(byNewest);
   recent.sort(byNewest);
+  const activeSections = [...activeByChannel.entries()]
+    .map(([channelId, group]) => {
+      group.data.sort(byNewest);
+      return { channelId, newest: group.data[0] ? freshness(group.data[0]) : 0, ...group };
+    })
+    .sort((a, b) => b.newest - a.newest)
+    .map<SessionSection>((group, index) => ({
+      key: `active:${group.channelId}`,
+      title: 'Active',
+      channelName: group.channelName,
+      showTitle: index === 0,
+      data: group.data,
+    }));
   return [
     { key: 'pinned', title: 'Pinned', data: pinned },
     { key: 'needs', title: 'Needs you', data: needsYou },
-    { key: 'active', title: 'Active', data: active },
+    ...activeSections,
     { key: 'recent', title: 'Recent', data: recent },
   ].filter((section) => section.data.length > 0);
 }
@@ -369,22 +390,29 @@ export default function SessionsScreen() {
                 alignItems: 'center',
                 gap: 6,
                 paddingHorizontal: space.lg,
-                paddingTop: 14,
+                paddingTop: section.showTitle === false ? 8 : 14,
                 paddingBottom: 6,
                 backgroundColor: colors.bg,
               }}
             >
-              <Text
-                style={{
-                  color: colors.textMuted,
-                  fontSize: font.xs,
-                  fontWeight: '700',
-                  letterSpacing: 1,
-                  textTransform: 'uppercase',
-                }}
-              >
-                {section.title}
-              </Text>
+              {section.showTitle !== false && (
+                <Text
+                  style={{
+                    color: colors.textMuted,
+                    fontSize: font.xs,
+                    fontWeight: '700',
+                    letterSpacing: 1,
+                    textTransform: 'uppercase',
+                  }}
+                >
+                  {section.title}
+                </Text>
+              )}
+              {section.channelName && (
+                <Text style={{ color: colors.textSecondary, fontSize: font.xs, fontWeight: '700' }}>
+                  #{section.channelName}
+                </Text>
+              )}
               <Text style={{ color: colors.textFaint, fontSize: font.xs }}>{section.data.length}</Text>
               {section.key === 'needs' && (
                 <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: colors.warning }} />

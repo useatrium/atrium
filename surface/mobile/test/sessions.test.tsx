@@ -106,6 +106,46 @@ describe('mobile Agents screen', () => {
     expect(groupMobileSessions([row]).map((section) => section.title)).toEqual(['Needs you']);
   });
 
+  it('groups Active by channel with the freshest channel and session first', () => {
+    const sections = groupMobileSessions([
+      {
+        ...terminalSession,
+        id: 's-alpha-old',
+        channelId: 'ch-alpha',
+        channelName: 'alpha',
+        status: 'running' as const,
+        createdAt: '2026-01-01T00:01:00.000Z',
+        completedAt: null,
+        resultText: null,
+      },
+      {
+        ...terminalSession,
+        id: 's-beta',
+        channelId: 'ch-beta',
+        channelName: 'beta',
+        status: 'running' as const,
+        createdAt: '2026-01-01T00:03:00.000Z',
+        completedAt: null,
+        resultText: null,
+      },
+      {
+        ...terminalSession,
+        id: 's-alpha-new',
+        channelId: 'ch-alpha',
+        channelName: 'alpha',
+        status: 'running' as const,
+        createdAt: '2026-01-01T00:02:00.000Z',
+        completedAt: null,
+        resultText: null,
+      },
+    ]);
+
+    expect(sections.map((section) => section.key)).toEqual(['active:ch-beta', 'active:ch-alpha']);
+    expect(sections.map((section) => section.channelName)).toEqual(['beta', 'alpha']);
+    expect(sections.map((section) => section.showTitle)).toEqual([true, false]);
+    expect(sections[1]?.data.map((session) => session.id)).toEqual(['s-alpha-new', 's-alpha-old']);
+  });
+
   it('uses shared outcome grammar and shows the terminal result excerpt', async () => {
     renderWithTheme(<SessionsScreen />);
 

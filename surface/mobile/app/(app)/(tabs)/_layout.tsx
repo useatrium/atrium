@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { Platform, useWindowDimensions } from 'react-native';
 import { Tabs } from 'expo-router';
-import { isLiveAgentWork, sessionAttentionKind, type Session } from '@atrium/surface-client';
+import { isLiveAgentWork, type Session } from '@atrium/surface-client';
 import { useChat } from '../../../src/lib/chat';
 import { useActivityCounts } from '../../../src/lib/useActivityCounts';
 import { navigationTargetSize, TabIcon } from '../../../src/components/PlatformTabBar';
@@ -13,7 +13,6 @@ export function getSessionNavigationCounts(sessions: Record<string, Session | un
   );
   return {
     live: values.filter(isLiveAgentWork).length,
-    attention: values.filter((session) => sessionAttentionKind(session) !== null).length,
   };
 }
 
@@ -25,9 +24,6 @@ export default function TabsLayout() {
   // Server-derived: correct on cold boot AND honors the read watermark for
   // acknowledged failures, unlike the live WS map above.
   const activityCounts = useActivityCounts();
-  // Inbox follows web's actionable-first precedence. The native tab bar only
-  // supports one badge style, so carry the most urgent useful count.
-  const inboxBadge = activityCounts.needsYou || activityCounts.toReview || activityCounts.unread;
   const expandedAndroid = Platform.OS === 'android' && width >= 600;
 
   return (
@@ -82,7 +78,17 @@ export default function TabsLayout() {
         name="sessions"
         options={{
           title: 'Agents',
-          tabBarAccessibilityLabel: counts.live > 0 ? `Agents, ${counts.live} live` : 'Agents',
+          tabBarAccessibilityLabel:
+            activityCounts.attention > 0
+              ? `Agents, ${activityCounts.attention} need you${counts.live > 0 ? `, ${counts.live} live` : ''}`
+              : counts.live > 0
+                ? `Agents, ${counts.live} live`
+                : 'Agents',
+          tabBarBadge: activityCounts.attention > 0 ? activityCounts.attention : undefined,
+          tabBarBadgeStyle: {
+            backgroundColor: colors.warning,
+            color: colors.bg,
+          },
           tabBarIcon: ({ color }) => <TabIcon name="terminal" color={color} live={counts.live > 0} />,
         }}
       />
@@ -90,11 +96,11 @@ export default function TabsLayout() {
         name="activity"
         options={{
           title: 'Inbox',
-          tabBarAccessibilityLabel: inboxBadge > 0 ? `Inbox, ${inboxBadge} items` : 'Inbox',
-          tabBarBadge: inboxBadge > 0 ? inboxBadge : undefined,
+          tabBarAccessibilityLabel: activityCounts.unread > 0 ? `Inbox, ${activityCounts.unread} unread` : 'Inbox',
+          tabBarBadge: activityCounts.unread > 0 ? activityCounts.unread : undefined,
           tabBarBadgeStyle: {
-            backgroundColor: activityCounts.needsYou ? colors.warning : colors.accent,
-            color: activityCounts.needsYou ? colors.bg : colors.onAccent,
+            backgroundColor: colors.accent,
+            color: colors.onAccent,
           },
           tabBarIcon: ({ color }) => <TabIcon name="notifications" color={color} />,
         }}

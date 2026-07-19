@@ -29,17 +29,11 @@ describe('useActivityCounts', () => {
     chatMock.api.getActivityCounts.mockResolvedValue({
       attention: 2,
       unread: 3,
-      needsYou: 4,
-      running: 5,
-      toReview: 6,
-      channelCounts: {},
     });
 
     const { result } = renderHook(() => useActivityCounts());
 
-    await waitFor(() =>
-      expect(result.current).toEqual({ attention: 2, unread: 3, needsYou: 4, running: 5, toReview: 6 }),
-    );
+    await waitFor(() => expect(result.current).toEqual({ attention: 2, unread: 3 }));
     expect(chatMock.api.getActivityCounts).toHaveBeenCalled();
     expect(chatMock.api.getActivity).not.toHaveBeenCalled();
   });
