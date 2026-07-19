@@ -225,7 +225,24 @@ describe('AgentDock', () => {
 
     act(() => handle.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })));
     expect(window.localStorage.getItem(AGENT_DOCK_WIDTH_STORAGE_KEY)).toBeNull();
-    expect(dock.style.getPropertyValue('--agent-dock-w')).toBe('256px');
+    expect(dock.style.getPropertyValue('--agent-dock-w')).toBe('320px');
+  });
+
+  it('defaults to 320px when unsized but honors a stored width preference', () => {
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1000 });
+    window.localStorage.setItem(AGENT_DOCK_OPEN_STORAGE_KEY, 'true');
+
+    const { unmount } = render(<AgentDock {...props()} />);
+    // No stored size → the raised default, not the old 256px that truncated rows.
+    expect((screen.getByTestId('agent-dock') as HTMLElement).style.getPropertyValue('--agent-dock-w')).toBe('320px');
+    unmount();
+
+    // A stored preference still wins over the default.
+    window.localStorage.setItem(AGENT_DOCK_WIDTH_STORAGE_KEY, '288');
+    render(<AgentDock {...props()} />);
+    expect((screen.getByTestId('agent-dock') as HTMLElement).style.getPropertyValue('--agent-dock-w')).toBe(
+      'min(288px, 40vw)',
+    );
   });
 
   it('keeps global needs-you visible and collapses non-matching channel groups while filtered', () => {

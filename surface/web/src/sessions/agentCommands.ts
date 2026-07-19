@@ -1,3 +1,4 @@
+import { channelLabel, type Channel } from '@atrium/surface-client';
 import { createElement } from 'react';
 import type { QuickSwitcherCommand } from '../components/QuickSwitcher';
 import {
@@ -39,18 +40,33 @@ function commandRank(session: Session): number | null {
   return null;
 }
 
-function channelName(session: Session): string {
-  // Session snapshots know the display name, while live wire entities currently
-  // only guarantee channelId. Keep the command useful during both hydration paths.
-  const displayName = (session as Session & { channelName?: unknown }).channelName;
-  return typeof displayName === 'string' && displayName.trim() ? displayName : session.channelId;
+/**
+ * The decorated channel label for a command subtitle — the same resolution the
+ * dock rows use (channelId → name), so the palette never leaks a raw UUID.
+ * DMs/GDMs render their member label; #channels their name; unknown channels
+ * fall back to the session snapshot's name, then a neutral placeholder.
+ */
+function channelDisplay(session: Session, channels: ReadonlyMap<string, Channel>, meId: string): string {
+  const channel = channels.get(session.channelId);
+  if (channel) {
+    if (channel.kind === 'dm' || channel.kind === 'gdm') return channelLabel(channel, meId);
+    return `#${channel.name}`;
+  }
+  // Live wire snapshots sometimes carry the display name before the channel
+  // list hydrates; prefer it over the opaque id, and never surface the id.
+  const snapshot = (session as Session & { channelName?: unknown }).channelName;
+  if (typeof snapshot === 'string' && snapshot.trim()) return `#${snapshot.trim()}`;
+  return '#channel';
 }
 
 export function buildAgentCommands(
   sessions: Record<string, Session>,
+  channels: Channel[],
+  meId: string,
   onFocusAgent: (id: string) => void,
 ): QuickSwitcherCommand[] {
   const now = Date.now();
+  const channelMap = new Map(channels.map((channel) => [channel.id, channel]));
   return Object.values(sessions)
     .map((session) => ({ session, rank: commandRank(session) }))
     .filter((entry): entry is { session: Session; rank: number } => entry.rank != null)
@@ -68,13 +84,13 @@ export function buildAgentCommands(
     })
     .map(({ session }) => {
       const glance = deriveSessionGlance(session, now);
-      const channel = channelName(session);
+      const channel = channelDisplay(session, channelMap, meId);
       return {
         id: `agent:${session.id}`,
         label: session.title,
-        subtitle: `#${channel} · ${glance.label}`,
+        subtitle: `${channel} · ${glance.label}`,
         group: 'Agents',
-        keywords: [session.title, channel, session.harness, 'agent'],
+        keywords: [session.title, channel.replace(/^#/, ''), session.harness, 'agent'],
         icon: createElement('span', {
           'aria-hidden': true,
           className: `size-2 rounded-full ${GLANCE_DOT_STYLES[glance.kind]}`,

@@ -286,7 +286,10 @@ export function useSidebarWidth(): {
 // === agent dock resize additions ===
 export const AGENT_DOCK_MIN_WIDTH = 224;
 export const AGENT_DOCK_MAX_VW = 40;
-export const AGENT_DOCK_FALLBACK_WIDTH = 256;
+// 256px truncated its own rows (a Needs-you question showed ~35px of 171px);
+// 320px is the default for users who have never dragged the dock. A stored
+// width still wins — it's applied over this default via usePaneSize.
+export const AGENT_DOCK_FALLBACK_WIDTH = 320;
 
 export const agentDockWidthConfig: PaneSizeConfig = {
   storageKey: AGENT_DOCK_WIDTH_STORAGE_KEY,

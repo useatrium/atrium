@@ -1,4 +1,5 @@
 import type { MentionCandidate } from '@atrium/surface-client';
+import { useEffect, useRef } from 'react';
 import { Avatar } from './Avatar';
 
 export function MentionSuggestions({
@@ -16,8 +17,18 @@ export function MentionSuggestions({
   onActiveIndexChange: (index: number) => void;
   onInsert: (candidate: MentionCandidate) => void;
 }) {
+  const listboxRef = useRef<HTMLDivElement | null>(null);
+
+  // Arrow keys move the highlight via aria-activedescendant, not DOM focus, so
+  // the scroll container won't follow on its own — keep the row on screen.
+  useEffect(() => {
+    const option = listboxRef.current?.children[activeIndex] as HTMLElement | undefined;
+    option?.scrollIntoView?.({ block: 'nearest' });
+  }, [activeIndex]);
+
   return (
     <div
+      ref={listboxRef}
       id={listboxId}
       role="listbox"
       aria-label="Mention suggestions"
@@ -40,7 +51,7 @@ export function MentionSuggestions({
             }}
             className={`flex cursor-default items-center gap-2 rounded px-2 py-1.5 text-sm ${
               firstSpecial ? 'mt-1 border-t border-edge pt-2' : ''
-            } ${index === activeIndex ? 'bg-surface-overlay text-fg' : 'text-fg-secondary'}`}
+            } ${index === activeIndex ? 'bg-accent/20 text-fg' : 'text-fg-secondary'}`}
           >
             {candidate.kind === 'user' ? (
               <>

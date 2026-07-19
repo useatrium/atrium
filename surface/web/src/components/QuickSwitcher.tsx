@@ -64,6 +64,7 @@ export function QuickSwitcher({
   const [searchingSessions, setSearchingSessions] = useState(false);
   const dialogRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const listboxRef = useRef<HTMLDivElement | null>(null);
   const listboxId = 'quick-switcher-results';
 
   const channelMatches = useMemo(() => {
@@ -131,6 +132,13 @@ export function QuickSwitcher({
     initialFocusRef: inputRef,
     onClose,
   });
+
+  // aria-activedescendant moves the selection without moving DOM focus, so the
+  // list won't follow the highlight on its own — keep the active option visible.
+  useEffect(() => {
+    const option = listboxRef.current?.querySelector<HTMLElement>(`#quick-switcher-option-${selected}`);
+    option?.scrollIntoView?.({ block: 'nearest' });
+  }, [selected]);
 
   const openSessionHit = (hit: SessionRecordHit) => {
     onOpenSession(hit.sessionId);
@@ -219,7 +227,13 @@ export function QuickSwitcher({
           aria-label="Commands and search"
           className="w-full shrink-0 border-b border-edge bg-transparent px-4 py-3 text-sm text-fg placeholder-fg-muted outline-none focus:border-edge-focus md:px-3 md:py-2.5"
         />
-        <div id={listboxId} role="listbox" aria-label="Command and search results" className="overflow-y-auto py-1">
+        <div
+          ref={listboxRef}
+          id={listboxId}
+          role="listbox"
+          aria-label="Command and search results"
+          className="overflow-y-auto py-1"
+        >
           {commandMatches.length > 0 && (
             <ul role="presentation">
               {commandMatches.map((command, i) => {
