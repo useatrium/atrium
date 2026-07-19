@@ -107,7 +107,7 @@ function SidebarImpl({
   createChannelRequestSeq?: number;
   startDmRequestSeq?: number;
 }) {
-  const { width: sidebarWidth, resizing, startResize, resetWidth } = useSidebarWidth();
+  const { width: sidebarWidth, resizing, startResize, resetWidth, onResizeKeyDown } = useSidebarWidth();
   const sizing = sidebarSizing(sidebarWidth);
   const sidebarMaxWidth =
     typeof window === 'undefined'
@@ -443,7 +443,8 @@ function SidebarImpl({
           data-testid="sidebar-resize-handle"
           onPointerDown={startResize}
           onDoubleClick={resetWidth}
-          className={`absolute inset-y-0 -right-0.5 z-raised w-1.5 cursor-col-resize touch-none transition-colors hover:bg-accent/50 max-md:hidden ${
+          onKeyDown={onResizeKeyDown}
+          className={`absolute inset-y-0 -right-0.5 z-raised w-1.5 cursor-col-resize touch-none transition-colors hover:bg-accent/50 focus-visible:outline-2 focus-visible:outline-accent max-md:hidden ${
             resizing ? 'bg-accent/50' : ''
           }`}
         />

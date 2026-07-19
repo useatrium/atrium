@@ -96,7 +96,7 @@ function GroupRows({
   context: AgentRowContext;
 }) {
   return (
-    <div className="[&>section]:space-y-0 [&>section>h2]:sr-only">
+    <div className="[&>section]:space-y-0 [&>section>h3]:sr-only">
       <AgentGroup
         group={{ ...group, kind: 'channel' }}
         now={now}
@@ -191,7 +191,7 @@ function HistoryGroup({
     <details
       open={expanded}
       data-testid="agent-dock-history"
-      className={`group/history border-t border-edge pt-2 ${softened ? 'opacity-60 open:opacity-80' : ''}`}
+      className={`group/history relative border-t border-edge pt-2 ${softened ? 'opacity-60 open:opacity-80' : ''}`}
     >
       {/* biome-ignore lint/a11y/noStaticElementInteractions: summary is the native interactive disclosure control. */}
       <summary
@@ -199,22 +199,24 @@ function HistoryGroup({
           event.preventDefault();
           setExpanded((value) => !value);
         }}
-        className="flex cursor-pointer list-none items-center gap-1.5 rounded px-1 py-1 text-xs font-semibold text-fg-muted hover:bg-surface-overlay hover:text-fg-secondary focus-visible:outline-2 focus-visible:outline-accent [&::-webkit-details-marker]:hidden"
+        className="flex cursor-pointer list-none items-center gap-1.5 rounded px-1 py-1 pr-9 text-xs font-semibold text-fg-muted hover:bg-surface-overlay hover:text-fg-secondary focus-visible:outline-2 focus-visible:outline-accent [&::-webkit-details-marker]:hidden"
       >
         <ChevronRightIcon size={12} className="group-open/history:hidden" />
         <ChevronDownIcon size={12} className="hidden group-open/history:block" />
         <span>History</span>
         <span className="tabular-nums text-fg-body">{group.sessions.length}</span>
-        {onSetArchived && (
-          <button
-            type="button"
-            onClick={clearHistory}
-            className="ml-auto rounded px-1.5 py-1 text-2xs font-medium text-fg-muted hover:bg-surface-overlay hover:text-fg focus-visible:outline-2 focus-visible:outline-accent"
-          >
-            Clear
-          </button>
-        )}
       </summary>
+      {/* Sibling of (not nested in) the summary — a button inside <summary> has
+          UA-dependent Enter/Space behavior; absolute-positioned to keep the row. */}
+      {onSetArchived && (
+        <button
+          type="button"
+          onClick={clearHistory}
+          className="absolute right-1 top-2 rounded px-1.5 py-1 text-2xs font-medium text-fg-muted hover:bg-surface-overlay hover:text-fg focus-visible:outline-2 focus-visible:outline-accent"
+        >
+          Clear
+        </button>
+      )}
       {expanded && (
         <div className="mt-1 space-y-2">
           {recent.length > 0 && (
@@ -281,9 +283,14 @@ export function AgentDock({
   const [open, setOpen] = useAgentDockOpen();
   const [mineFilter, setMineFilter] = useAgentDockMineFilter();
   const [query, setQuery] = useState('');
+  // Shared by the Escape layer (clear-query) and the open/collapse focus
+  // hand-off: opening/collapsing swaps the spine button and the dock, so focus
+  // would land on nothing without the effect below.
   const filterInputRef = useRef<HTMLInputElement>(null);
   const now = useNow(Object.values(sessions).some(isLiveAgentWork));
   const dockSize = usePaneSize(agentDockWidthConfig);
+  const openButtonRef = useRef<HTMLButtonElement>(null);
+  const headingRef = useRef<HTMLHeadingElement>(null);
 
   useEffect(() => {
     if (immersed || filterChannelId) setOpen(true);
@@ -380,6 +387,34 @@ export function AgentDock({
   );
   const filterChannel = filterChannelId ? channels.find((channel) => channel.id === filterChannelId) : undefined;
   const state = immersed ? 'immersed' : open ? 'open' : 'resting';
+
+  // Hand focus across the open↔collapse transition only — never on mount or an
+  // unrelated re-render (the ref guard skips those). Opening (also via the
+  // filter-channel effect) moves focus into the dock; collapsing (the button, or
+  // the window Escape listener) returns it to the spine button. Below md the
+  // dock is a touch bottom sheet, where focusing the text filter would pop the
+  // software keyboard over the sheet — there focus the heading instead, so focus
+  // still enters the sheet without summoning the keyboard.
+  const dockOpen = state !== 'resting';
+  const wasDockOpen = useRef(dockOpen);
+  useEffect(() => {
+    if (wasDockOpen.current === dockOpen) return;
+    wasDockOpen.current = dockOpen;
+    if (!dockOpen) {
+      // Reclaim focus only when the close orphaned it (the focused control
+      // unmounted with the dock). A close triggered from elsewhere — Mod+.
+      // while typing in the composer — must not steal focus.
+      const active = document.activeElement;
+      if (active == null || active === document.body) openButtonRef.current?.focus();
+      return;
+    }
+    const wide =
+      typeof window !== 'undefined' &&
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(min-width: 768px)').matches;
+    if (wide) filterInputRef.current?.focus();
+    else headingRef.current?.focus();
+  }, [dockOpen]);
   const dockMaxWidth =
     typeof window === 'undefined'
       ? AGENT_DOCK_FALLBACK_WIDTH
@@ -469,7 +504,8 @@ export function AgentDock({
               data-testid="agent-dock-resize-handle"
               onPointerDown={dockSize.startResize}
               onDoubleClick={dockSize.resetSize}
-              className={`absolute inset-y-0 -left-0.5 z-raised w-1.5 cursor-col-resize touch-none transition-colors hover:bg-accent/50 max-md:hidden ${
+              onKeyDown={dockSize.onResizeKeyDown}
+              className={`absolute inset-y-0 -left-0.5 z-raised w-1.5 cursor-col-resize touch-none transition-colors hover:bg-accent/50 focus-visible:outline-2 focus-visible:outline-accent max-md:hidden ${
                 dockSize.resizing ? 'bg-accent/50' : ''
               }`}
             />
@@ -478,6 +514,7 @@ export function AgentDock({
         {state === 'resting' ? (
           <div className="flex h-full min-h-0 flex-col items-center md:py-2">
             <button
+              ref={openButtonRef}
               type="button"
               aria-label={`Open agent dock${badgeCounts.needsYou > 0 ? `, ${badgeCounts.needsYou} need you` : ''}`}
               onClick={() => setOpen(true)}
@@ -531,7 +568,15 @@ export function AgentDock({
           <>
             <header className="shrink-0 border-b border-edge px-2 py-2">
               <div className="flex h-11 items-center gap-1 md:h-8">
-                <h1 className="min-w-0 flex-1 truncate px-1 text-sm font-bold text-fg">Agents</h1>
+                {/* tabIndex -1 = programmatic focus target for the touch-sheet
+                    hand-off (see the focus effect); never in the tab order. */}
+                <h2
+                  ref={headingRef}
+                  tabIndex={-1}
+                  className="min-w-0 flex-1 truncate px-1 text-sm font-bold text-fg outline-none"
+                >
+                  Agents
+                </h2>
                 <span className="mr-1 text-xs tabular-nums text-fg-body">{total}</span>
                 {!immersed && (
                   <button

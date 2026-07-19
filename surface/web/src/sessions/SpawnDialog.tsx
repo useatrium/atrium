@@ -69,6 +69,14 @@ export function SpawnDialog({
 }) {
   const containerRef = useRef<HTMLFormElement>(null);
   const taskInputRef = useRef<HTMLTextAreaElement>(null);
+  // Capture the invoking element during the first render — before the task
+  // field's autoFocus (which runs at commit) steals activeElement. Otherwise
+  // useDialog would snapshot the dialog's own field as the "invoker"; that field
+  // unmounts on close, so its restore is skipped and focus drops to <body>.
+  const [invoker] = useState<HTMLElement | null>(() =>
+    typeof document !== 'undefined' ? (document.activeElement as HTMLElement | null) : null,
+  );
+  const invokerRef = useRef(invoker);
   const [task, setTask] = useState(initialTask);
   const [harness, setHarness] = useState(HARNESSES[0]!.value);
   const [repo, setRepo] = useState('');
@@ -138,6 +146,7 @@ export function SpawnDialog({
     open: true,
     containerRef,
     initialFocusRef: taskInputRef,
+    invokerRef,
     onClose: handleClose,
     closeOnOutsidePointer: true,
   });
@@ -212,7 +221,7 @@ export function SpawnDialog({
         onSubmit={submit}
         role="dialog"
         aria-modal="true"
-        aria-label="Start an agent"
+        aria-labelledby={titleId}
         className="mt-12 max-h-[calc(100dvh-6rem)] w-[min(520px,calc(100vw-2rem))] overflow-y-auto rounded-lg border border-edge-strong bg-surface-raised shadow-2xl"
       >
         <header className="flex items-center justify-between border-b border-edge px-4 py-3">

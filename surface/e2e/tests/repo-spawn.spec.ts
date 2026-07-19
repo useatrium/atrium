@@ -57,7 +57,7 @@ test('configured spawn posts working and reference repo specs', async ({ page })
   });
 
   await page.locator('#main-content').getByRole('button', { name: 'New agent' }).click();
-  const dialog = page.getByRole('dialog', { name: 'Start an agent' });
+  const dialog = page.getByRole('dialog', { name: 'New agent' });
   await expect(dialog).toBeVisible();
 
   await fillField(dialog.getByPlaceholder('What should the agent do?'), 'inspect repo wiring');

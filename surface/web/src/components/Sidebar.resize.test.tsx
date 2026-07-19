@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LEGACY_SIDEBAR_WIDTH_STORAGE_KEY, SIDEBAR_WIDTH_STORAGE_KEY } from '../storageKeys';
 import { ThemeProvider } from '../theme';
@@ -102,5 +102,33 @@ describe('Sidebar resize', () => {
     expect(window.localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY)).toBeNull();
     expect(nav.style.getPropertyValue('--sidebar-w')).toBe('224px');
     expect(handle.getAttribute('aria-valuenow')).toBe('224');
+  });
+
+  it('is keyboard operable — arrows grow toward the drag edge, Home/End/Enter jump and reset', () => {
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1000 });
+    renderSidebar();
+    const handle = screen.getByTestId('sidebar-resize-handle') as HTMLElement;
+    expect(handle.getAttribute('aria-valuenow')).toBe('224'); // fallback default
+
+    // Sidebar handle grows to the right → ArrowRight enlarges, ArrowLeft shrinks.
+    fireEvent.keyDown(handle, { key: 'ArrowRight' });
+    expect(handle.getAttribute('aria-valuenow')).toBe('240');
+    expect(window.localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY)).toBe('240');
+
+    fireEvent.keyDown(handle, { key: 'ArrowRight', shiftKey: true });
+    expect(handle.getAttribute('aria-valuenow')).toBe('304');
+
+    fireEvent.keyDown(handle, { key: 'ArrowLeft' });
+    expect(handle.getAttribute('aria-valuenow')).toBe('288');
+
+    fireEvent.keyDown(handle, { key: 'Home' });
+    expect(handle.getAttribute('aria-valuenow')).toBe('180'); // min
+
+    fireEvent.keyDown(handle, { key: 'End' });
+    expect(handle.getAttribute('aria-valuenow')).toBe('400'); // 40vw of 1000
+
+    fireEvent.keyDown(handle, { key: 'Enter' });
+    expect(handle.getAttribute('aria-valuenow')).toBe('224'); // reset to default
+    expect(window.localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY)).toBeNull();
   });
 });

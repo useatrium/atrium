@@ -181,7 +181,7 @@ export function ThreadPanelContent({
   sessionStream,
   visible = true,
 }: ThreadPanelProps & { sessionStream: SessionStream; visible?: boolean }) {
-  const { width: paneWidth, resizing, startResize, resetWidth } = useThreadPaneWidth();
+  const { width: paneWidth, resizing, startResize, resetWidth, onResizeKeyDown } = useThreadPaneWidth();
   const alsoSendToChannelId = useId();
   const [alsoSendToChannel, setAlsoSendToChannel] = useState(false);
   const [composerAgentMode, setComposerAgentMode] = useState(false);
@@ -267,7 +267,8 @@ export function ThreadPanelContent({
         data-testid="thread-resize-handle"
         onPointerDown={startResize}
         onDoubleClick={resetWidth}
-        className={`absolute inset-y-0 -left-0.5 z-raised w-1.5 cursor-col-resize touch-none transition-colors hover:bg-accent/50 max-md:hidden ${
+        onKeyDown={onResizeKeyDown}
+        className={`absolute inset-y-0 -left-0.5 z-raised w-1.5 cursor-col-resize touch-none transition-colors hover:bg-accent/50 focus-visible:outline-2 focus-visible:outline-accent max-md:hidden ${
           resizing ? 'bg-accent/50' : ''
         }`}
       />
