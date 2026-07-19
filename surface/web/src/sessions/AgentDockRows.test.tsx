@@ -2,7 +2,7 @@
 
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AgentGroup, AgentRow, type AgentRowContext } from './AgentDockRows';
+import { AgentDockRovingProvider, AgentGroup, AgentRow, type AgentRowContext } from './AgentDockRows';
 import type { Session } from './types';
 import type { AgentDockGroup } from './useAgentDock';
 
@@ -181,6 +181,120 @@ describe('AgentRow', () => {
     expect(onSetPinned).toHaveBeenCalledWith('session-1', false, true);
     expect(onSetArchived).toHaveBeenCalledWith('session-1', true, null);
     expect(onFocus).not.toHaveBeenCalled();
+  });
+});
+
+describe('AgentRow needs-you DOM order', () => {
+  it('renders the top-right actions before the bottom-right channel chip so tab order matches the visual stack', () => {
+    renderRow(
+      session({
+        channelId: 'channel-2',
+        title: 'Launch task',
+        pendingQuestion: {
+          questionId: 'question-1',
+          questions: [{ id: 'prompt-1', header: 'Choice', question: 'Choose one?' }],
+          askedAt: '2026-07-18T11:00:00.000Z',
+        },
+      }),
+      { groupKind: 'needs', context: context({ onSetPinned: vi.fn() }) },
+    );
+
+    const answer = screen.getByRole('button', { name: 'Answer' });
+    const pin = screen.getByRole('button', { name: 'Pin Launch task' });
+    const chip = screen.getByRole('button', { name: 'Filter agents to #launch' });
+    // Answer and Pin (visually above) must precede the channel chip (visually below) in the DOM.
+    expect(answer.compareDocumentPosition(chip) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(pin.compareDocumentPosition(chip) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+});
+
+describe('AgentDock roving tabindex', () => {
+  const rowButton = (title: string) => screen.getByRole('button', { name: `Focus agent ${title}` });
+
+  function renderRoving(focusedSessionId: string | null) {
+    const onFocusAgent = vi.fn();
+    const rows = ['Alpha', 'Bravo', 'Charlie'];
+    return render(
+      <AgentDockRovingProvider orderedIds={['a', 'b', 'c']} focusedSessionId={focusedSessionId}>
+        <ul>
+          {rows.map((title, i) => (
+            <AgentRow
+              key={title}
+              session={session({ id: ['a', 'b', 'c'][i], title })}
+              now={NOW}
+              selected={['a', 'b', 'c'][i] === focusedSessionId}
+              onFocus={onFocusAgent}
+              context={context()}
+              groupKind="channel"
+            />
+          ))}
+        </ul>
+      </AgentDockRovingProvider>,
+    );
+  }
+
+  it('makes only the focused session tabbable, else the first row', () => {
+    const view = renderRoving('b');
+    expect(rowButton('Alpha').tabIndex).toBe(-1);
+    expect(rowButton('Bravo').tabIndex).toBe(0);
+    expect(rowButton('Charlie').tabIndex).toBe(-1);
+
+    view.unmount();
+    renderRoving(null);
+    expect(rowButton('Alpha').tabIndex).toBe(0);
+    expect(rowButton('Bravo').tabIndex).toBe(-1);
+  });
+
+  it('moves focus and the tabbable row with Arrow/Home/End', () => {
+    renderRoving('a');
+    rowButton('Alpha').focus();
+
+    fireEvent.keyDown(rowButton('Alpha'), { key: 'ArrowDown' });
+    expect(document.activeElement).toBe(rowButton('Bravo'));
+    expect(rowButton('Bravo').tabIndex).toBe(0);
+    expect(rowButton('Alpha').tabIndex).toBe(-1);
+
+    fireEvent.keyDown(rowButton('Bravo'), { key: 'End' });
+    expect(document.activeElement).toBe(rowButton('Charlie'));
+
+    fireEvent.keyDown(rowButton('Charlie'), { key: 'ArrowDown' });
+    // clamped at the last row
+    expect(document.activeElement).toBe(rowButton('Charlie'));
+
+    fireEvent.keyDown(rowButton('Charlie'), { key: 'Home' });
+    expect(document.activeElement).toBe(rowButton('Alpha'));
+
+    fireEvent.keyDown(rowButton('Alpha'), { key: 'ArrowUp' });
+    // clamped at the first row
+    expect(document.activeElement).toBe(rowButton('Alpha'));
+  });
+
+  it('re-points the tabbable row when the focused session changes', () => {
+    const view = renderRoving('a');
+    // move the roving point away from the focused session
+    fireEvent.keyDown(rowButton('Alpha'), { key: 'ArrowDown' });
+    expect(rowButton('Bravo').tabIndex).toBe(0);
+
+    view.rerender(
+      <AgentDockRovingProvider orderedIds={['a', 'b', 'c']} focusedSessionId="c">
+        <ul>
+          {['Alpha', 'Bravo', 'Charlie'].map((title, i) => (
+            <AgentRow
+              key={title}
+              session={session({ id: ['a', 'b', 'c'][i], title })}
+              now={NOW}
+              selected={['a', 'b', 'c'][i] === 'c'}
+              onFocus={vi.fn()}
+              context={context()}
+              groupKind="channel"
+            />
+          ))}
+        </ul>
+      </AgentDockRovingProvider>,
+    );
+    expect(rowButton('Charlie').tabIndex).toBe(0);
+    expect(rowButton('Charlie').getAttribute('aria-current')).toBe('true');
+    expect(rowButton('Bravo').tabIndex).toBe(-1);
   });
 });
 

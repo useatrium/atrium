@@ -7,6 +7,7 @@ import {
   useState,
   type CSSProperties,
   type FormEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent,
 } from 'react';
 import { useIsHoverNone } from '../lib/useIsHoverNone';
@@ -133,6 +134,57 @@ function SidebarImpl({
   const dms = activeChannels.filter((c) => !c.pinned && (c.kind === 'dm' || c.kind === 'gdm'));
   const archivedChannels = channels.filter((c) => c.archivedAt != null);
   const [archivedOpen, setArchivedOpen] = useState(false);
+
+  // Roving tabindex over the flattened, visible channel rows (across the pinned,
+  // channels, DM, and archived groupings). Exactly one row button is tabbable —
+  // the active channel's, else the first — and Arrow/Home/End move focus between
+  // rows without adding a tab stop per channel.
+  const orderedRowChannelIds: string[] = [
+    ...pinnedChannels,
+    ...publicChannels,
+    ...dms,
+    ...(archivedOpen ? archivedChannels : []),
+  ].map((c) => c.id);
+  const [rovingChannelId, setRovingChannelId] = useState<string | null>(null);
+  const channelRowRefs = useRef(new Map<string, HTMLButtonElement>());
+  // The tabbable row follows the active channel; a manual arrow move overrides it
+  // until the active channel changes again.
+  useEffect(() => {
+    setRovingChannelId(null);
+  }, [activeChannelId]);
+  const tabbableChannelId =
+    rovingChannelId && orderedRowChannelIds.includes(rovingChannelId)
+      ? rovingChannelId
+      : activeChannelId && orderedRowChannelIds.includes(activeChannelId)
+        ? activeChannelId
+        : (orderedRowChannelIds[0] ?? null);
+  const onChannelRowKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>, channelId: string) => {
+    const ids = orderedRowChannelIds;
+    const index = ids.indexOf(channelId);
+    if (index < 0) return;
+    let nextIndex: number | null = null;
+    switch (event.key) {
+      case 'ArrowDown':
+        nextIndex = Math.min(index + 1, ids.length - 1);
+        break;
+      case 'ArrowUp':
+        nextIndex = Math.max(index - 1, 0);
+        break;
+      case 'Home':
+        nextIndex = 0;
+        break;
+      case 'End':
+        nextIndex = ids.length - 1;
+        break;
+      default:
+        return;
+    }
+    event.preventDefault();
+    const nextId = ids[nextIndex];
+    if (nextId == null) return;
+    setRovingChannelId(nextId);
+    channelRowRefs.current.get(nextId)?.focus();
+  };
   const [channelMenu, setChannelMenu] = useState<{ channel: Channel; state: MessageActionMenuState } | null>(null);
   const openChannelMenu = useCallback(
     (channel: Channel, event: MouseEvent<HTMLButtonElement>) => {
@@ -241,7 +293,18 @@ function SidebarImpl({
     const isArchived = c.archivedAt != null;
     return (
       <li key={c.id} className={sidebarItemClass(active, level, c.muted)}>
-        <button type="button" onClick={() => onSelect(c.id)} className={SIDEBAR_ROW_BUTTON_CLASS}>
+        <button
+          type="button"
+          ref={(el) => {
+            if (el) channelRowRefs.current.set(c.id, el);
+            else channelRowRefs.current.delete(c.id);
+          }}
+          onClick={() => onSelect(c.id)}
+          onKeyDown={(event) => onChannelRowKeyDown(event, c.id)}
+          tabIndex={tabbableChannelId === c.id ? 0 : -1}
+          aria-current={active ? 'page' : undefined}
+          className={SIDEBAR_ROW_BUTTON_CLASS}
+        >
           {isDm ? (
             <Avatar name={channelAvatarName(c, me.id)} seed={partner?.id ?? c.id} size={16} />
           ) : (

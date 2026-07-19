@@ -3,6 +3,17 @@
 // evolve independently — the frame passes everything rows need via
 // `AgentRowContext`, so row work never has to touch the frame file.
 
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
+} from 'react';
 import { initials, sessionDriverId } from '@atrium/surface-client';
 import { ArchiveIcon, ChevronDownIcon, ChevronRightIcon, PinIcon, PinOffIcon } from '../components/icons';
 import { GlanceChip } from './GlanceChip';
@@ -21,6 +32,85 @@ export type AgentRowContext = {
   onSetArchived?: (sessionId: string, archived: boolean, previousArchivedAt: string | null) => void;
   onSetPinned?: (sessionId: string, pinned: boolean, previousPinned: boolean) => void;
 };
+
+type AgentRovingContextValue = {
+  tabbableId: string | null;
+  registerRow: (id: string, el: HTMLButtonElement | null) => void;
+  onRowKeyDown: (event: ReactKeyboardEvent<HTMLButtonElement>, id: string) => void;
+};
+
+const AgentRovingContext = createContext<AgentRovingContextValue | null>(null);
+
+/**
+ * Roving-tabindex coordinator for the dock's session rows. Rows are scattered
+ * across group sections and collapsible <details>, so the flattened order is
+ * given by `orderedIds` (all visible sessions, in render order) and narrowed to
+ * the rows actually mounted — collapsed groups don't register a ref, so their
+ * rows are skipped rather than trapping focus. One row is tabbable at a time —
+ * the focused session's, else the first — and Arrow/Home/End move focus across
+ * every mounted row.
+ */
+export function AgentDockRovingProvider({
+  orderedIds,
+  focusedSessionId,
+  children,
+}: {
+  orderedIds: string[];
+  focusedSessionId: string | null;
+  children: ReactNode;
+}) {
+  const [rovingId, setRovingId] = useState<string | null>(null);
+  const rowRefs = useRef(new Map<string, HTMLButtonElement>());
+  // The tabbable row follows the focused session; a manual arrow move overrides
+  // it until the focused session changes again.
+  useEffect(() => {
+    setRovingId(null);
+  }, [focusedSessionId]);
+  const registerRow = useCallback((id: string, el: HTMLButtonElement | null) => {
+    if (el) rowRefs.current.set(id, el);
+    else rowRefs.current.delete(id);
+  }, []);
+  const tabbableId = useMemo(() => {
+    if (rovingId && orderedIds.includes(rovingId)) return rovingId;
+    if (focusedSessionId && orderedIds.includes(focusedSessionId)) return focusedSessionId;
+    return orderedIds[0] ?? null;
+  }, [focusedSessionId, orderedIds, rovingId]);
+  const onRowKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLButtonElement>, id: string) => {
+      const mounted = orderedIds.filter((sid) => rowRefs.current.has(sid));
+      const index = mounted.indexOf(id);
+      if (index < 0) return;
+      let nextIndex: number | null = null;
+      switch (event.key) {
+        case 'ArrowDown':
+          nextIndex = Math.min(index + 1, mounted.length - 1);
+          break;
+        case 'ArrowUp':
+          nextIndex = Math.max(index - 1, 0);
+          break;
+        case 'Home':
+          nextIndex = 0;
+          break;
+        case 'End':
+          nextIndex = mounted.length - 1;
+          break;
+        default:
+          return;
+      }
+      event.preventDefault();
+      const nextId = mounted[nextIndex];
+      if (nextId == null) return;
+      setRovingId(nextId);
+      rowRefs.current.get(nextId)?.focus();
+    },
+    [orderedIds],
+  );
+  const value = useMemo<AgentRovingContextValue>(
+    () => ({ tabbableId, registerRow, onRowKeyDown }),
+    [tabbableId, registerRow, onRowKeyDown],
+  );
+  return <AgentRovingContext.Provider value={value}>{children}</AgentRovingContext.Provider>;
+}
 
 export function sessionAge(session: Session, now: number): { short: string; full: string } {
   const value = session.latestActivity?.at ?? session.completedAt ?? session.createdAt;
@@ -71,6 +161,7 @@ export function AgentRow({
   context: AgentRowContext;
   groupKind: AgentDockGroup['kind'];
 }) {
+  const roving = useContext(AgentRovingContext);
   const age = sessionAge(session, now);
   const canAnswer = sessionAttentionKind(session) === 'question';
   const driverId = sessionDriverId(session);
@@ -107,6 +198,9 @@ export function AgentRow({
     >
       <button
         type="button"
+        ref={roving ? (el) => roving.registerRow(session.id, el) : undefined}
+        tabIndex={roving ? (roving.tabbableId === session.id ? 0 : -1) : undefined}
+        onKeyDown={roving ? (event) => roving.onRowKeyDown(event, session.id) : undefined}
         aria-current={selected ? 'true' : undefined}
         aria-label={`Focus agent ${session.title}`}
         onClick={onFocus}
@@ -164,20 +258,9 @@ export function AgentRow({
           </span>
         </span>
       </button>
-      {showChannelTag && (
-        <button
-          type="button"
-          title={`#${channelName}`}
-          aria-label={`Filter agents to #${channelName}`}
-          onClick={(event) => {
-            event.stopPropagation();
-            context.onFilterChannel?.(session.channelId);
-          }}
-          className="absolute bottom-1 right-1 z-10 flex min-h-6 max-w-20 items-center rounded px-1.5 text-3xs font-medium text-accent hover:bg-accent/10 focus-visible:outline-2 focus-visible:outline-accent"
-        >
-          <span className="truncate">#{channelName}</span>
-        </button>
-      )}
+      {/* DOM order matches the visual stack: the top-right actions (Answer/Pin/
+          Archive) come before the bottom-right channel chip so tab order tracks
+          what the eye reads top-to-bottom. */}
       {actionCount > 0 && (
         <span className="absolute right-1 top-1 z-10 flex items-center gap-1">
           {canAnswer && (
@@ -210,6 +293,20 @@ export function AgentRow({
             </button>
           )}
         </span>
+      )}
+      {showChannelTag && (
+        <button
+          type="button"
+          title={`#${channelName}`}
+          aria-label={`Filter agents to #${channelName}`}
+          onClick={(event) => {
+            event.stopPropagation();
+            context.onFilterChannel?.(session.channelId);
+          }}
+          className="absolute bottom-1 right-1 z-10 flex min-h-6 max-w-20 items-center rounded px-1.5 text-3xs font-medium text-accent hover:bg-accent/10 focus-visible:outline-2 focus-visible:outline-accent"
+        >
+          <span className="truncate">#{channelName}</span>
+        </button>
       )}
     </li>
   );
