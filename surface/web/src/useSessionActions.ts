@@ -1,14 +1,15 @@
 import { useCallback } from 'react';
 import {
+  pendingMessageFromThreadSteerPayload,
   randomId,
   type AppAction,
   type AttachmentMeta,
   type AttachmentRef,
   type EnqueueOpInput,
+  type QueuedThreadSteerPayload,
   type SessionQuestionAnswers,
   type UserRef,
 } from '@atrium/surface-client';
-import { pendingMessageFromThreadSteerPayload, type QueuedThreadSteerPayload } from './chatQueuedOverlays';
 
 type SessionActionType =
   | 'session.answer'
