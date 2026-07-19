@@ -12,6 +12,33 @@ import {
 const item = (id: string, type: SessionItem['type'], executionId: string | null = null): SessionItem =>
   ({ id, type, executionId }) as SessionItem;
 
+describe('notice markers stay visible (non-work)', () => {
+  it('keeps notice rows visible in the focus view and folds only the work around them', () => {
+    const items = [
+      item('answer-1', 'text'),
+      item('thinking', 'reasoning'),
+      item('tool', 'tool_call'),
+      item('notice:thread-name', 'notice'),
+      item('answer-2', 'text'),
+    ];
+    const changesAt = () => [];
+
+    expect(
+      focusTranscriptRows(items, changesAt).map((row) =>
+        row.kind === 'item' ? `item:${row.item.id}` : `${row.kind}:${row.kind === 'hidden' ? row.count : ''}`,
+      ),
+    ).toEqual(['item:answer-1', 'hidden:2', 'item:notice:thread-name', 'item:answer-2']);
+  });
+
+  it('does not sweep a notice into a work fold', () => {
+    const items = [item('u', 'user_message'), item('r', 'reasoning'), item('cc', 'notice'), item('t', 'tool_call')];
+    const folds = foldedTurnRows(items);
+    const foldedIds = folds.flatMap((fold) => fold.items.map((foldItem) => foldItem.id));
+    expect(foldedIds).not.toContain('cc');
+    expect(foldedIds).toEqual(expect.arrayContaining(['r', 't']));
+  });
+});
+
 describe('focus transcript rows', () => {
   it('groups contiguous reasoning, tools, and inline changes into one count', () => {
     const items = [

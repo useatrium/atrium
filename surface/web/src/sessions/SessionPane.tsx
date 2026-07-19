@@ -27,6 +27,7 @@ import {
   isTerminalExecutionStatus,
   sideEffectCount,
   type FoldedTurnRow,
+  type NoticeItem,
   type SessionItem,
   type TextItem,
   type UserMessageItem,
@@ -84,6 +85,7 @@ import {
 import { sessionsApi } from './api';
 import { repoBranchTitle, useNow } from './SessionCard';
 import { ConversationHeader } from './ConversationHeader';
+import { TranscriptNotice } from './TranscriptNotice';
 import {
   HARNESS_EFFORT_PICKER_OPTIONS,
   formatCost,
@@ -2224,6 +2226,10 @@ export function SessionPaneContent({
                                   item={item}
                                   events={questionEventsByQuestion.get(item.questionId) ?? []}
                                 />
+                              </div>
+                            ) : item.type === 'notice' ? (
+                              <div className="pl-3.5">
+                                <TranscriptNotice item={item as NoticeItem} />
                               </div>
                             ) : null}
                           </div>
