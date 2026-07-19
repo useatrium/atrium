@@ -3,6 +3,7 @@
 
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { ProviderCredentialProvider, ProviderCredentialStatus } from '../src/api';
 import { SpawnDialog } from '../src/sessions/SpawnDialog';
 
 afterEach(cleanup);
@@ -15,6 +16,24 @@ const connectedCodex = {
   lastError: null,
   updatedAt: new Date().toISOString(),
 };
+
+function providerStatus(provider: ProviderCredentialProvider, connected: boolean): ProviderCredentialStatus {
+  return {
+    provider,
+    connected,
+    status: connected ? 'connected' : 'needs_auth',
+    lastValidatedAt: null,
+    lastError: null,
+    updatedAt: null,
+  };
+}
+
+function providerStatuses(connectedProvider?: ProviderCredentialProvider) {
+  return {
+    codex: providerStatus('codex', connectedProvider === 'codex'),
+    'claude-code': providerStatus('claude-code', connectedProvider === 'claude-code'),
+  };
+}
 
 const connectedGitHub = {
   id: 'github:app_user',
@@ -213,64 +232,104 @@ describe('SpawnDialog', () => {
     expect(onCancel).toHaveBeenCalled();
   });
 
-  it('offers Claude subscription connection without blocking Claude Code', () => {
-    const onConnect = vi.fn();
+  it.each([
+    { harness: 'codex' as const, label: 'Codex' },
+    { harness: 'claude-code' as const, label: 'Claude Code' },
+  ])('offers default auth, connect, and demo when $label is disconnected — without blocking', ({ harness, label }) => {
+    const onConnectProvider = vi.fn();
+    const onSpawn = vi.fn();
     render(
       <SpawnDialog
         channelName="#general"
+        initialTask="Keep this draft"
         onCancel={() => {}}
-        onSpawn={() => {}}
-        providerStatuses={{
-          codex: connectedCodex,
-          'claude-code': {
-            provider: 'claude-code',
-            connected: false,
-            status: 'needs_auth',
-            lastValidatedAt: null,
-            lastError: null,
-            updatedAt: null,
-          },
-        }}
-        onConnectProvider={onConnect}
+        onSpawn={onSpawn}
+        providerStatuses={providerStatuses()}
+        onConnectProvider={onConnectProvider}
+        onRunDemo={() => {}}
       />,
     );
-    fireEvent.change(screen.getByPlaceholderText('What should the agent do?'), {
-      target: { value: 'use claude' },
-    });
-    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'claude-code' } });
+    fireEvent.change(screen.getByLabelText('Harness'), { target: { value: harness } });
 
-    expect((screen.getByRole('button', { name: 'Start session' }) as HTMLButtonElement).disabled).toBe(false);
-    fireEvent.click(screen.getByRole('button', { name: 'Connect Claude' }));
-    expect(onConnect).toHaveBeenCalledWith('claude-code');
+    // Default agent auth is assumed server-side: an unconnected provider never
+    // hard-blocks the spawn (claude-provider.spec enforces this end to end).
+    expect(screen.getByText(/default agent auth/)).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Watch a demo agent' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: `Connect ${label}` }));
+    expect(onConnectProvider).toHaveBeenCalledWith(harness);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Start session' }));
+    expect(onSpawn).toHaveBeenCalledWith(expect.objectContaining({ task: 'Keep this draft', harness }));
   });
 
-  it('offers Codex subscription connection without blocking Codex', () => {
-    const onConnect = vi.fn();
+  it.each([
+    { harness: 'codex' as const, label: 'Codex' },
+    { harness: 'claude-code' as const, label: 'Claude Code' },
+  ])('keeps normal configured spawn when $label is connected', ({ harness }) => {
+    const onSpawn = vi.fn();
+    render(
+      <SpawnDialog
+        channelName="#general"
+        initialTask="Ship the fix"
+        onCancel={() => {}}
+        onSpawn={onSpawn}
+        providerStatuses={providerStatuses(harness)}
+        onConnectProvider={() => {}}
+        onRunDemo={() => {}}
+      />,
+    );
+    fireEvent.change(screen.getByLabelText('Harness'), { target: { value: harness } });
+
+    expect(screen.queryByRole('button', { name: 'Watch a demo agent' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Start session' }));
+    expect(onSpawn).toHaveBeenCalledWith(expect.objectContaining({ task: 'Ship the fix', harness }));
+  });
+
+  it('runs the credential-free demo path without creating a configured session', () => {
+    const onRunDemo = vi.fn();
+    const onSpawn = vi.fn();
     render(
       <SpawnDialog
         channelName="#general"
         onCancel={() => {}}
-        onSpawn={() => {}}
-        providerStatuses={{
-          codex: {
-            provider: 'codex',
-            connected: false,
-            status: 'needs_auth',
-            lastValidatedAt: null,
-            lastError: null,
-            updatedAt: null,
-          },
-        }}
-        onConnectProvider={onConnect}
+        onSpawn={onSpawn}
+        providerStatuses={providerStatuses()}
+        onConnectProvider={() => {}}
+        onRunDemo={onRunDemo}
       />,
     );
-    fireEvent.change(screen.getByPlaceholderText('What should the agent do?'), {
-      target: { value: 'use codex' },
-    });
 
-    expect((screen.getByRole('button', { name: 'Start session' }) as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: 'Watch a demo agent' }));
+    expect(onRunDemo).toHaveBeenCalledOnce();
+    expect(onSpawn).not.toHaveBeenCalled();
+  });
+
+  it('preserves the task draft across the provider-connect round trip', () => {
+    const onConnectProvider = vi.fn();
+    const onSpawn = vi.fn();
+    const props = {
+      channelName: '#general',
+      onCancel: () => {},
+      onSpawn,
+      onConnectProvider,
+      onRunDemo: () => {},
+    };
+    const view = render(<SpawnDialog {...props} providerStatuses={providerStatuses()} />);
+
+    fireEvent.change(screen.getByPlaceholderText('What should the agent do?'), {
+      target: { value: 'Draft survives connection' },
+    });
     fireEvent.click(screen.getByRole('button', { name: 'Connect Codex' }));
-    expect(onConnect).toHaveBeenCalledWith('codex');
+    expect(onConnectProvider).toHaveBeenCalledWith('codex');
+
+    view.rerender(<SpawnDialog {...props} providerStatuses={providerStatuses('codex')} />);
+    expect((screen.getByPlaceholderText('What should the agent do?') as HTMLTextAreaElement).value).toBe(
+      'Draft survives connection',
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Start session' }));
+    expect(onSpawn).toHaveBeenCalledWith(
+      expect.objectContaining({ task: 'Draft survives connection', harness: 'codex' }),
+    );
   });
 
   it('offers a compact GitHub connection affordance near repo input', () => {

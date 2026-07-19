@@ -56,8 +56,9 @@ import { sessionsApi } from './sessions/api';
 import { Gallery } from './sessions/Gallery';
 import type { TranscriptDiscussPayload } from './sessions/SessionPane';
 import { ConversationPanel } from './sessions/ConversationPanel';
-import { AgentAttentionView } from './sessions/AgentAttentionView';
-import { AgentDock } from './sessions/AgentDock';
+import { AgentAttentionDialog } from './sessions/AgentAttentionView';
+import { AgentDock, sidebarImmersionClassName } from './sessions/AgentDock';
+import { useAgentDockImmersed } from './sessions/useAgentDockPrefs';
 import { ChannelAgentPresence } from './sessions/ChannelAgentPresence';
 import { buildAgentCommands } from './sessions/agentCommands';
 // === spine additions === Reuse SessionPane's canonical work-tab URL grammar.
@@ -311,6 +312,7 @@ const GALLERY_SCOPED_PARAMS = [
 ] as const;
 const FILE_VIEW_PARAMS = [URL_PARAMS.file, URL_PARAMS.panel] as const;
 const SESSION_VIEW_PARAMS = [
+  URL_PARAMS.agent,
   URL_PARAMS.work,
   URL_PARAMS.view,
   URL_PARAMS.dir,
@@ -327,7 +329,7 @@ function scopedSearchForRoute(route: InAppRoute, search: string): URLSearchParam
   const keep = new Set<string>(
     route.surface === 'files'
       ? [...GALLERY_SCOPED_PARAMS, ...FILE_VIEW_PARAMS]
-      : route.surface === 'chat' && route.sessionId
+      : route.surface === 'chat' && (route.sessionId || route.panelSessionId)
         ? SESSION_VIEW_PARAMS
         : [],
   );
@@ -338,7 +340,10 @@ function scopedSearchForRoute(route: InAppRoute, search: string): URLSearchParam
 }
 
 function routePathWithSearch(route: InAppRoute, search: string, hash = ''): string {
-  return pathWithSearch(routePath(route), scopedSearchForRoute(route, search), hash);
+  const params = scopedSearchForRoute(route, search);
+  if (route.panelSessionId) params.set(URL_PARAMS.agent, route.panelSessionId);
+  else params.delete(URL_PARAMS.agent);
+  return pathWithSearch(routePath(route), params, hash);
 }
 
 export function Chat({
@@ -354,13 +359,13 @@ export function Chat({
 }: {
   me: UserRef;
   workspace: Workspace;
-  /** From the /s/:id permalink route — open this session's pane on load. */
+  /** From a session permalink route — open this focused session on load. */
   initialSessionId?: string | null;
   /** From /e/:handle event/artifact links or /c/:id routes — select this channel on load. */
   initialChannelId?: string | null;
   /** From /files and /activity deep links — select the main surface on load. */
   initialMainSurface?: MainSurface;
-  /** Legacy explicit-focus hint; sessions now focus MAIN by default. */
+  /** Legacy explicit-focus hint for rewritten inbound links. */
   initialSessionFocus?: boolean;
   /** Entry handle from ?entry=... for one-shot scroll/highlight handling. */
   initialEntryHandle?: string | null;
@@ -764,7 +769,7 @@ export function Chat({
   const [startDmRequestSeq, setStartDmRequestSeq] = useState(0);
   // Configured-spawn dialog (the summon sigil is the quick path).
   const [spawnOpen, setSpawnOpen] = useState(false);
-  const [immersed, setImmersed] = useState(false);
+  const [immersed, setImmersed] = useAgentDockImmersed();
   const [agentDockFilterChannel, setAgentDockFilterChannel] = useState<string | null>(null);
   const [attentionOpen, setAttentionOpen] = useState(false);
   const [spawnInitialTask, setSpawnInitialTask] = useState('');
@@ -828,11 +833,21 @@ export function Chat({
 
   const active = state.channels.find((c) => c.id === state.activeChannelId) ?? null;
   const timeline = (active && state.timelines[active.id]) || emptyTimeline;
-  const currentRoute = useMemo(() => parseInAppRoute(locationState.pathname), [locationState.pathname]);
+  const panelSessionIdFromUrl = useMemo(
+    () => new URLSearchParams(locationState.search).get(URL_PARAMS.agent)?.trim() || null,
+    [locationState.search],
+  );
+  const currentRoute = useMemo(() => {
+    const route = parseInAppRoute(locationState.pathname);
+    if (route?.surface !== 'chat' || route.sessionId || route.threadRootId || route.membersOpen) {
+      return route;
+    }
+    return panelSessionIdFromUrl ? { ...route, panelSessionId: panelSessionIdFromUrl } : route;
+  }, [locationState.pathname, panelSessionIdFromUrl]);
   const threadRouteOpen = currentRoute?.surface === 'chat' && currentRoute.threadRootId != null;
   const sessionFocusFromUrl = useMemo(
-    () => new URLSearchParams(locationState.search).get(URL_PARAMS.view) === 'focus',
-    [locationState.search],
+    () => currentRoute?.sessionId != null || new URLSearchParams(locationState.search).get(URL_PARAMS.view) === 'focus',
+    [currentRoute?.sessionId, locationState.search],
   );
   const {
     focused,
@@ -856,7 +871,10 @@ export function Chat({
   const { openThreadRoot, conversationSession, conversationMode } = useConversationSelection({
     openThreadRootId: state.openThreadRootId,
     paneSession,
-    routeSessionId: currentRoute?.sessionId,
+    // A panel session (?agent=) is a session-shaped conversation: mode 'work'.
+    // Thread routes never carry panelSessionId (currentRoute strips it), so
+    // thread mode is unaffected.
+    routeSessionId: currentRoute?.sessionId ?? currentRoute?.panelSessionId,
     sessions: state.sessions,
     timeline,
   });
@@ -1534,32 +1552,34 @@ export function Chat({
         return;
       }
 
-      if (!route.sessionId) {
+      const routedSessionId = route.sessionId ?? route.panelSessionId ?? null;
+      if (!routedSessionId) {
         legacyFocusedSessionIdRef.current = null;
         dispatch({ type: 'route-conversation', threadRootId: null, sessionId: null });
         setFocused(false);
         return;
       }
 
-      if (route.focusSession) legacyFocusedSessionIdRef.current = route.sessionId;
-      const keepLegacyFocus = legacyFocusedSessionIdRef.current === route.sessionId;
-      setFocused(route.focusSession || keepLegacyFocus || sessionFocusFromUrl);
-      if (current.openSessionId !== route.sessionId) {
+      if (route.panelSessionId) legacyFocusedSessionIdRef.current = null;
+      else if (route.focusSession) legacyFocusedSessionIdRef.current = routedSessionId;
+      const keepLegacyFocus = legacyFocusedSessionIdRef.current === routedSessionId;
+      setFocused(route.sessionId != null || route.focusSession || keepLegacyFocus || sessionFocusFromUrl);
+      if (current.openSessionId !== routedSessionId) {
         dispatch({
           type: 'route-conversation',
           threadRootId: current.openThreadRootId,
-          sessionId: route.sessionId,
+          sessionId: routedSessionId,
         });
       }
 
       sessionsApi
-        .get(route.sessionId)
+        .get(routedSessionId)
         .then(({ session }) => {
           dispatch({ type: 'session-upsert', session: sessionFromWire(session) });
           const openRoot = stateRef.current.openThreadRootId;
           if (openRoot != null && session.threadRootEventId !== openRoot) dispatch({ type: 'close-thread' });
           const sessionChannelId = session.channelId || route.channelId || null;
-          if (sessionChannelId) {
+          if (route.sessionId && sessionChannelId) {
             if (stateRef.current.activeChannelId !== sessionChannelId) selectChannel(sessionChannelId);
             const canonical = routePath({
               surface: 'chat',
@@ -1577,15 +1597,14 @@ export function Chat({
           }
           if (stateRef.current.openSessionId !== session.id) dispatch({ type: 'open-session', sessionId: session.id });
         })
-        .catch(() => dispatch({ type: 'session-load-failed', sessionId: route.sessionId! }));
+        .catch(() => dispatch({ type: 'session-load-failed', sessionId: routedSessionId }));
     },
     [defaultChannelId, onApiError, openThreadInChannel, selectChannel, sessionFocusFromUrl, setFocused],
   );
 
   useEffect(() => {
-    const parsed = parseInAppRoute(locationState.pathname);
-    if (parsed) applyInAppRoute(parsed);
-  }, [applyInAppRoute, locationState.pathname]);
+    if (currentRoute) applyInAppRoute(currentRoute);
+  }, [applyInAppRoute, currentRoute]);
 
   useEffect(() => {
     if (initialPropRouteAppliedRef.current) return;
@@ -1593,12 +1612,28 @@ export function Chat({
       surface: initialMainSurface ?? 'chat',
       channelId: initialChannelId ?? null,
       sessionId: initialSessionId ?? null,
+      panelSessionId: initialSessionId ? null : panelSessionIdFromUrl,
       focusSession: initialSessionFocus ?? false,
     };
-    if (route.surface === 'chat' && !route.channelId && !route.sessionId && !route.focusSession) return;
+    if (
+      route.surface === 'chat' &&
+      !route.channelId &&
+      !route.sessionId &&
+      !route.panelSessionId &&
+      !route.focusSession
+    ) {
+      return;
+    }
     initialPropRouteAppliedRef.current = true;
     applyInAppRoute(route);
-  }, [applyInAppRoute, initialChannelId, initialMainSurface, initialSessionFocus, initialSessionId]);
+  }, [
+    applyInAppRoute,
+    initialChannelId,
+    initialMainSurface,
+    initialSessionFocus,
+    initialSessionId,
+    panelSessionIdFromUrl,
+  ]);
 
   const goToRoute = useCallback(
     (route: InAppRoute, options?: { replace?: boolean }) => {
@@ -1623,11 +1658,11 @@ export function Chat({
         .markSessionActivityRead(sessionId)
         .then(() => scheduleActivityCountsRefresh())
         .catch(() => {});
-      const sessionChannelId = stateRef.current.sessions[sessionId]?.channelId ?? stateRef.current.activeChannelId;
       const route: InAppRoute = {
         surface: 'chat',
-        channelId: sessionChannelId,
-        sessionId,
+        channelId: stateRef.current.activeChannelId,
+        sessionId: null,
+        panelSessionId: sessionId,
         focusSession: false,
       };
       // === spine additions === The pane already consumes ?work= into its tab state.
@@ -1681,6 +1716,24 @@ export function Chat({
     // search here would clobber that first write.
     if (typeof window === 'undefined') return;
     const params = new URLSearchParams(window.location.search);
+    const liveRoute = parseInAppRoute(window.location.pathname);
+    if (!nextFocused && liveRoute?.surface === 'chat' && liveRoute.sessionId) {
+      params.delete(URL_PARAMS.view);
+      navigate(
+        routePathWithSearch(
+          {
+            ...liveRoute,
+            sessionId: null,
+            panelSessionId: liveRoute.sessionId,
+            focusSession: false,
+          },
+          `?${params.toString()}`,
+          window.location.hash,
+        ),
+        { replace: true },
+      );
+      return;
+    }
     if (nextFocused) params.set(URL_PARAMS.view, 'focus');
     else params.delete(URL_PARAMS.view);
     navigate(pathWithSearch(window.location.pathname, params, window.location.hash), { replace: true });
@@ -2114,6 +2167,9 @@ export function Chat({
   const showActivitySurface = mainSurface === 'activity';
   const showSettingsSurface = mainSurface === 'settings';
   const showNonChatSurface = mainSurface !== 'chat';
+  const conversationOriginChannel = conversationSession
+    ? (state.channels.find((channel) => channel.id === conversationSession.channelId) ?? null)
+    : null;
   const hideMainOnMobile = state.openSessionId != null || openThreadRoot != null;
   const activeChannelLiveCall = !showNonChatSurface && active ? calls.liveCallForChannel(active.id) : null;
   const activeChannelLiveCaller = activeChannelLiveCall
@@ -2153,32 +2209,38 @@ export function Chat({
   }, [openSettingsSurface]);
   const shell = (
     <div className="flex h-dvh overflow-hidden">
-      <Sidebar
-        workspaceName={workspace.name}
-        channels={state.channels}
-        activeChannelId={mainSurface === 'chat' ? state.activeChannelId : null}
-        unread={state.unread}
-        me={me}
-        wsStatus={sidebarWsStatus}
-        queueSync={queueSync}
-        onSelect={selectFromSidebar}
-        onSetMute={setMute}
-        onSetArchived={setArchived}
-        onSetPinned={setPinned}
-        onCreateChannel={createChannel}
-        onStartDm={startDm}
-        activeSurface={mainSurface}
-        onOpenFiles={openFilesFromSidebar}
-        // === mentions-activity additions ===
-        onOpenActivity={openActivityFromSidebar}
-        activityCounts={activityCounts}
-        onOpenSettings={openSettingsFromSidebar}
-        onLogout={onLogout}
-        isOpen={isSidebarOpen}
-        onClose={closeSidebar}
-        createChannelRequestSeq={createChannelRequestSeq}
-        startDmRequestSeq={startDmRequestSeq}
-      />
+      <div
+        data-testid="chat-sidebar-wrapper"
+        data-immersed={immersed || undefined}
+        className={sidebarImmersionClassName(immersed)}
+      >
+        <Sidebar
+          workspaceName={workspace.name}
+          channels={state.channels}
+          activeChannelId={mainSurface === 'chat' ? state.activeChannelId : null}
+          unread={state.unread}
+          me={me}
+          wsStatus={sidebarWsStatus}
+          queueSync={queueSync}
+          onSelect={selectFromSidebar}
+          onSetMute={setMute}
+          onSetArchived={setArchived}
+          onSetPinned={setPinned}
+          onCreateChannel={createChannel}
+          onStartDm={startDm}
+          activeSurface={mainSurface}
+          onOpenFiles={openFilesFromSidebar}
+          // === mentions-activity additions ===
+          onOpenActivity={openActivityFromSidebar}
+          activityCounts={activityCounts}
+          onOpenSettings={openSettingsFromSidebar}
+          onLogout={onLogout}
+          isOpen={isSidebarOpen}
+          onClose={closeSidebar}
+          createChannelRequestSeq={createChannelRequestSeq}
+          startDmRequestSeq={startDmRequestSeq}
+        />
+      </div>
 
       {channelMainVisible(view, threadRouteOpen) && (
         <main id="main-content" className={`${hideMainOnMobile ? 'hidden md:flex' : 'flex'} min-w-0 flex-1 flex-col`}>
@@ -2617,24 +2679,41 @@ export function Chat({
                     onClose: closeSession,
                     liveEvent: activityLiveEvent,
                     optimisticThreadSteers: paneOptimisticThreadSteers,
-                    origin:
-                      active && conversationSession.channelId === active.id
-                        ? {
-                            channelLabel:
-                              active.kind === 'dm' || active.kind === 'gdm'
-                                ? channelLabel(active, me.id)
-                                : `#${active.name}`,
-                            onOpenChannel: closeSession,
-                            ...(conversationSession.threadRootEventId != null
-                              ? {
-                                  onOpenThread: () => {
-                                    const root = conversationSession.threadRootEventId;
-                                    if (root != null) openThread(root);
-                                  },
-                                }
-                              : {}),
-                          }
-                        : undefined,
+                    origin: conversationOriginChannel
+                      ? {
+                          channelLabel:
+                            conversationOriginChannel.kind === 'dm' || conversationOriginChannel.kind === 'gdm'
+                              ? channelLabel(conversationOriginChannel, me.id)
+                              : `#${conversationOriginChannel.name}`,
+                          onOpenChannel: () => {
+                            if (conversationOriginChannel.id === active?.id) closeSession();
+                            else {
+                              goToRoute({
+                                surface: 'chat',
+                                channelId: conversationOriginChannel.id,
+                                sessionId: null,
+                                focusSession: false,
+                              });
+                            }
+                          },
+                          ...(conversationSession.threadRootEventId != null
+                            ? {
+                                onOpenThread: () => {
+                                  const root = conversationSession.threadRootEventId;
+                                  if (root != null) {
+                                    goToRoute({
+                                      surface: 'chat',
+                                      channelId: conversationOriginChannel.id,
+                                      sessionId: null,
+                                      threadRootId: String(root),
+                                      focusSession: false,
+                                    });
+                                  }
+                                },
+                              }
+                            : {}),
+                        }
+                      : undefined,
                     onAnswerQuestion: answerSessionQuestion,
                     onSteer: steerSession,
                     onSendToThread: (text, attachments, attachmentRefs) => {
@@ -2717,6 +2796,7 @@ export function Chat({
         activeChannelId={activeChannelId}
         focusedSessionId={state.openSessionId}
         immersed={immersed}
+        meId={me.id}
         onFocusAgent={onFocusAgent}
         onToggleImmersed={() => setImmersed((value) => !value)}
         onNewAgent={() => {
@@ -2725,31 +2805,30 @@ export function Chat({
         }}
         filterChannelId={agentDockFilterChannel}
         onClearFilter={() => setAgentDockFilterChannel(null)}
+        onFilterChannel={(channelId) => setAgentDockFilterChannel(channelId)}
+        onSetArchived={(sessionId, archived, previousArchivedAt) =>
+          void setSessionArchived(sessionId, archived, previousArchivedAt).catch(() => {})
+        }
+        onSetPinned={(sessionId, pinned, previousPinned) =>
+          void setSessionPinned(sessionId, pinned, previousPinned).catch(() => {})
+        }
         onOpenAttention={() => setAttentionOpen(true)}
       />
 
       {attentionOpen && (
-        <div className="fixed inset-0 z-overlay flex bg-surface/80 p-4" role="dialog" aria-modal="true">
-          <div className="mx-auto flex w-full max-w-3xl flex-col overflow-hidden rounded-lg border border-edge bg-surface shadow-2xl">
-            <div className="flex justify-end border-b border-edge p-2">
-              <button
-                type="button"
-                onClick={() => setAttentionOpen(false)}
-                className="rounded px-2 py-1 text-xs text-fg-muted hover:bg-surface-overlay hover:text-fg"
-              >
-                Close
-              </button>
-            </div>
-            <AgentAttentionView
-              sessions={state.sessions}
-              channels={state.channels}
-              onFocusAgent={(sessionId) => {
-                setAttentionOpen(false);
-                onFocusAgent(sessionId);
-              }}
-            />
-          </div>
-        </div>
+        <AgentAttentionDialog
+          sessions={state.sessions}
+          channels={state.channels}
+          onClose={() => setAttentionOpen(false)}
+          onFocusAgent={(sessionId) => {
+            setAttentionOpen(false);
+            onFocusAgent(sessionId);
+          }}
+          onRetryTurn={(sessionId) => void steerSession(sessionId, 'Retry the failed turn.').catch(onApiError)}
+          onAnswerQuestion={(sessionId, questionId, answers) =>
+            void answerSessionQuestion(sessionId, questionId, answers).catch(onApiError)
+          }
+        />
       )}
 
       {switcherOpen && (
@@ -2796,6 +2875,11 @@ export function Chat({
           profiles={agentProfiles}
           onConnectGitHub={() => setConnectionDialog('github')}
           onConnectProvider={setProviderDialog}
+          onRunDemo={() => {
+            setSpawnOpen(false);
+            setSpawnInitialTask('');
+            void startDemoSession();
+          }}
         />
       )}
 

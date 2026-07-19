@@ -17,7 +17,6 @@ test('the pinned work surface docks top in a split pane and side in focus', asyn
   const room = await createTestChannel('workdock');
   const handle = unique('docker');
   await login(page, handle, 'Dock Tester');
-  await page.evaluate(() => window.localStorage.setItem('atrium.agentSplitOptIn', 'true'));
   const roomId = await channelId(page.context().request, room);
   const { rootId, sessionId } = await injectSession({ handle, channelId: roomId, title: unique('dock-session') });
   await injectSessionReply({ channelId: roomId, rootId, sessionId, text: unique('dock-reply') });
@@ -25,7 +24,8 @@ test('the pinned work surface docks top in a split pane and side in focus', asyn
 
   // ?work= pins the drawer; the split pane is narrower than the dock
   // breakpoint, so the surface must dock as a top band.
-  await page.goto(`/c/${roomId}/s/${sessionId}?work=side-effects`);
+  // Panel-first: split is the ?agent= layer; the /s/ path now always focuses.
+  await page.goto(`/c/${roomId}?agent=${sessionId}&work=side-effects`);
   await expect(page.getByTestId('work-dock-top')).toBeVisible({ timeout: 20_000 });
   await expect(page.getByTestId('work-dock-side')).toHaveCount(0);
   const topDock = page.getByTestId('work-dock-top');
@@ -80,7 +80,9 @@ test('thread↔work toggling never remounts the conversation panel', async ({ pa
 
   // Zoom in to the work pane (in-app navigation), then back out to the thread.
   await titleButton.click();
-  await expect(page).toHaveURL(new RegExp(`/s/${sessionId}`), { timeout: 20_000 });
+  // Panel-first: zooming into the work pane layers it as ?agent= (a /s/ path
+  // would mean full-screen focus).
+  await expect(page).toHaveURL(new RegExp(`agent=${sessionId}`), { timeout: 20_000 });
   // The visible work body's crumb trail renders `thread` as a button (zoom
   // out); the hidden thread body's own crumb line has no such button.
   const crumb = page.getByRole('button', { name: 'thread', exact: true });

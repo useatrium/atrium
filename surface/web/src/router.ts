@@ -16,12 +16,14 @@ export type MainSurface = 'chat' | 'files' | 'activity' | 'settings';
 //   /files /activity           surfaces
 //   /settings[/:section]       settings, optionally scrolled to a section
 //
-// Query params (URL_PARAMS): `file` (open artifact lightbox), `panel`
+// Query params (URL_PARAMS): `agent` (session panel over the current channel),
+// `file` (open artifact lightbox), `panel`
 // (lightbox side panel: info|history), `work` (in-pane work-drawer slug),
 // `dir` (FilesHub folder path), `preview` (artifact/app preview path),
 // `view` (`focus` session layout; written via replaceState). `entry` and
 // `threadRoot` remain inbound-only deep-link params consumed on load.
 export const URL_PARAMS = {
+  agent: 'agent',
   file: 'file',
   panel: 'panel',
   work: 'work',
@@ -36,13 +38,15 @@ export interface InAppRoute {
   surface: MainSurface;
   channelId: string | null;
   sessionId: string | null;
+  /** Session panel layered over channelId — /c/:id?agent=:sessionId. */
+  panelSessionId?: string | null;
   /** Open thread panel rooted at this event — /c/:id/t/:rootId. */
   threadRootId?: string | null;
   /** Channel members view — /c/:id/members. */
   membersOpen?: boolean;
   /** Settings section — /settings/:section. */
   settingsSection?: string | null;
-  /** Reserved for legacy explicit focus-on-load links. Focus is now the default. */
+  /** Reserved for legacy explicit focus-on-load links. */
   focusSession: boolean;
 }
 
@@ -134,7 +138,7 @@ export function parseInAppRoute(pathname: string): InAppRoute | null {
 
   const legacySession = /^\/s\/([^/]+)$/.exec(pathname);
   if (legacySession) {
-    // Legacy /s/:id canonicalizes to the same focus-default session place.
+    // Legacy /s/:id canonicalizes to the same focused session place.
     const sessionId = decodeSegment(legacySession[1]!);
     return sessionId ? { ...DEFAULT_ROUTE, sessionId } : null;
   }

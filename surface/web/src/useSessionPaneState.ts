@@ -6,6 +6,7 @@ import type { SessionView } from './sessions/ViewToggle';
 
 const NO_WATCHERS: UserRef[] = [];
 export const AGENT_SPLIT_OPT_IN_KEY = 'atrium.agentSplitOptIn';
+export const AGENT_FOCUS_OPT_IN_KEY = 'atrium.agentFocusOptIn';
 
 type DispatchAppAction = (action: AppAction) => void;
 
@@ -47,35 +48,42 @@ export function useSessionPaneState({
   presence: AppState['presence'];
   sessions: AppState['sessions'];
 }) {
-  // Agent focus owns MAIN by default. Split remains a durable user opt-in.
+  // The agent opens beside MAIN by default. Focus is a durable user opt-in.
   const [focused, setFocused] = useState(false);
-  const [splitOptIn, setSplitOptIn] = useState(
-    () => typeof window !== 'undefined' && window.localStorage.getItem(AGENT_SPLIT_OPT_IN_KEY) === 'true',
-  );
+  const [focusOptIn, setFocusOptIn] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    const legacySplitOptIn = window.localStorage.getItem(AGENT_SPLIT_OPT_IN_KEY);
+    if (legacySplitOptIn === 'true') return false;
+    return window.localStorage.getItem(AGENT_FOCUS_OPT_IN_KEY) === 'true';
+  });
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') window.localStorage.removeItem(AGENT_SPLIT_OPT_IN_KEY);
+  }, []);
 
   useEffect(() => {
     setFocused(Boolean(openSessionId && focusedFromUrl));
   }, [focusedFromUrl, openSessionId]);
 
-  const focusLayout = isMobileViewport || focusedFromUrl || !splitOptIn || focused;
+  const focusLayout = isMobileViewport || focusedFromUrl || focusOptIn || focused;
   const view: SessionView = openSessionId ? (focusLayout ? 'focus' : 'split') : 'channel';
   const sessionPaneLayout: SessionView = focusLayout ? 'focus' : 'split';
 
-  const persistSplitOptIn = useCallback((enabled: boolean) => {
-    setSplitOptIn(enabled);
-    if (typeof window !== 'undefined') window.localStorage.setItem(AGENT_SPLIT_OPT_IN_KEY, String(enabled));
+  const persistFocusOptIn = useCallback((enabled: boolean) => {
+    setFocusOptIn(enabled);
+    if (typeof window !== 'undefined') window.localStorage.setItem(AGENT_FOCUS_OPT_IN_KEY, String(enabled));
   }, []);
 
   const setView = useCallback(
     (next: SessionView) => {
       if (next === 'channel') dispatch({ type: 'close-session' });
       else if (openSessionId) {
-        const split = next === 'split';
-        persistSplitOptIn(split);
-        setFocused(!split);
+        const nextFocused = next === 'focus';
+        persistFocusOptIn(nextFocused);
+        setFocused(nextFocused);
       }
     },
-    [dispatch, openSessionId, persistSplitOptIn],
+    [dispatch, openSessionId, persistFocusOptIn],
   );
 
   const openSession = useCallback(
@@ -103,10 +111,10 @@ export function useSessionPaneState({
   const spectators = useMemo(() => sessionSpectatorCounts(presence), [presence]);
 
   const toggleFocus = useCallback(() => {
-    const split = focusLayout;
-    persistSplitOptIn(split);
-    setFocused(!split);
-  }, [focusLayout, persistSplitOptIn]);
+    const nextFocused = !focusLayout;
+    persistFocusOptIn(nextFocused);
+    setFocused(nextFocused);
+  }, [focusLayout, persistFocusOptIn]);
 
   return {
     focused: focusLayout,

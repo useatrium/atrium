@@ -1,13 +1,16 @@
-import { useMemo, useState } from 'react';
-import type { Channel } from '@atrium/surface-client';
+import { useCallback, useMemo, useRef, useState } from 'react';
+import type { Channel, SessionQuestionAnswers } from '@atrium/surface-client';
+import { useDialog } from '../useDialog';
 import { GlanceChip } from './GlanceChip';
-import { sessionAttentionKind, type Session } from './types';
+import { sessionAttentionKind, sessionDriverId, type Session } from './types';
 import { agentDockGroups } from './useAgentDock';
 
 export type AgentAttentionViewProps = {
   sessions: Record<string, Session>;
   channels: Channel[];
   onFocusAgent: (id: string) => void;
+  onRetryTurn: (sessionId: string) => void | Promise<void>;
+  onAnswerQuestion: (sessionId: string, questionId: string, answers: SessionQuestionAnswers) => void | Promise<void>;
 };
 
 type AttentionFilter = 'all' | 'blocked' | 'failed';
@@ -20,13 +23,6 @@ const REASON_LABELS: Record<AttentionKind, string> = {
   authentication: 'Provider authentication',
   'seat-request': 'Seat requests',
   failed: 'Failed',
-};
-
-const ACTION_LABELS: Record<AttentionKind, string> = {
-  question: 'Answer →',
-  authentication: 'Reconnect →',
-  'seat-request': 'Review →',
-  failed: 'Retry →',
 };
 
 function waitingDetail(session: Session, kind: AttentionKind): string {
@@ -48,14 +44,28 @@ function waitingDetail(session: Session, kind: AttentionKind): string {
   return session.resultText?.trim() || 'The agent stopped with an error.';
 }
 
+function driverName(session: Session): string | null {
+  const driverId = sessionDriverId(session);
+  if (driverId === session.driverId && session.driverName) return session.driverName;
+  if (driverId === session.spawnedBy && session.spawnerName) return session.spawnerName;
+  return null;
+}
+
 function matchesFilter(kind: AttentionKind, filter: AttentionFilter): boolean {
   if (filter === 'all') return true;
   if (filter === 'failed') return kind === 'failed';
   return kind !== 'failed';
 }
 
-export function AgentAttentionView({ sessions, channels, onFocusAgent }: AgentAttentionViewProps) {
+export function AgentAttentionView({
+  sessions,
+  channels,
+  onFocusAgent,
+  onRetryTurn,
+  onAnswerQuestion,
+}: AgentAttentionViewProps) {
   const [filter, setFilter] = useState<AttentionFilter>('all');
+  const [multiSelections, setMultiSelections] = useState<Record<string, string[]>>({});
   const channelNames = useMemo(() => new Map(channels.map((channel) => [channel.id, channel.name])), [channels]);
   const needsYou =
     agentDockGroups(sessions, { now: Date.now() }).find((group) => group.kind === 'needs')?.sessions ?? [];
@@ -124,31 +134,96 @@ export function AgentAttentionView({ sessions, channels, onFocusAgent }: AgentAt
                     <span className="text-xs tabular-nums text-fg-muted">{groupedRows.length}</span>
                   </div>
                   <ul className="overflow-hidden rounded-xl border border-edge bg-surface-raised shadow-sm">
-                    {groupedRows.map(({ session }) => (
-                      <li key={session.id} className="border-b border-edge last:border-b-0">
-                        <div className="flex items-start gap-4 px-4 py-3.5">
-                          <div className="min-w-0 flex-1">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <GlanceChip session={session} />
-                              <h3 className="min-w-0 truncate text-sm font-semibold text-fg">{session.title}</h3>
-                              <span className="truncate text-xs text-fg-muted">
-                                #{channelNames.get(session.channelId) ?? session.channelId}
-                              </span>
+                    {groupedRows.map(({ session, kind }) => {
+                      const question = kind === 'question' ? session.pendingQuestion?.questions[0] : undefined;
+                      const selectionKey = question
+                        ? `${session.id}:${session.pendingQuestion?.questionId}:${question.id}`
+                        : '';
+                      const selectedOptions = multiSelections[selectionKey] ?? [];
+                      const name = driverName(session);
+                      return (
+                        <li key={session.id} className="border-b border-edge last:border-b-0">
+                          <div className="flex flex-wrap items-start gap-4 px-4 py-3.5">
+                            <div className="min-w-0 flex-1">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <GlanceChip session={session} />
+                                <h3 className="min-w-0 truncate text-sm font-semibold text-fg">{session.title}</h3>
+                                <span className="truncate text-xs text-fg-muted">
+                                  #{channelNames.get(session.channelId) ?? session.channelId}
+                                </span>
+                                {name && <span className="truncate text-xs text-fg-muted">Driver: {name}</span>}
+                              </div>
+                              <p className="mt-2 line-clamp-2 text-sm leading-5 text-fg-body">
+                                {waitingDetail(session, kind)}
+                              </p>
                             </div>
-                            <p className="mt-2 line-clamp-2 text-sm leading-5 text-fg-body">
-                              {waitingDetail(session, kind)}
-                            </p>
+                            <div className="flex max-w-full shrink-0 flex-wrap items-center justify-end gap-1.5">
+                              {question?.options?.map((option) => (
+                                <button
+                                  key={option.label}
+                                  type="button"
+                                  title={option.description}
+                                  aria-pressed={
+                                    question.multiSelect ? selectedOptions.includes(option.label) : undefined
+                                  }
+                                  onClick={() => {
+                                    if (question.multiSelect) {
+                                      setMultiSelections((current) => {
+                                        const selected = current[selectionKey] ?? [];
+                                        return {
+                                          ...current,
+                                          [selectionKey]: selected.includes(option.label)
+                                            ? selected.filter((label) => label !== option.label)
+                                            : [...selected, option.label],
+                                        };
+                                      });
+                                      return;
+                                    }
+                                    onAnswerQuestion(session.id, session.pendingQuestion!.questionId, {
+                                      [question.id]: { answers: [option.label] },
+                                    });
+                                  }}
+                                  className="rounded-full border border-warning-border/50 bg-warning-tint/15 px-2.5 py-1.5 text-xs font-semibold text-warning-text hover:border-warning hover:bg-warning/15 aria-pressed:border-warning aria-pressed:bg-warning/20"
+                                >
+                                  {option.label}
+                                </button>
+                              ))}
+                              {question?.multiSelect && question.options?.length ? (
+                                <button
+                                  type="button"
+                                  aria-disabled={selectedOptions.length === 0 || undefined}
+                                  onClick={() => {
+                                    if (selectedOptions.length === 0) return;
+                                    onAnswerQuestion(session.id, session.pendingQuestion!.questionId, {
+                                      [question.id]: { answers: selectedOptions },
+                                    });
+                                  }}
+                                  className="rounded-md bg-warning px-2.5 py-1.5 text-xs font-semibold text-surface hover:bg-warning/85 aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
+                                >
+                                  Submit answer
+                                </button>
+                              ) : null}
+                              {kind === 'failed' && (
+                                <button
+                                  type="button"
+                                  onClick={() => onRetryTurn(session.id)}
+                                  className="rounded-md bg-danger px-2.5 py-1.5 text-xs font-semibold text-surface hover:bg-danger/85"
+                                >
+                                  Retry turn
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => onFocusAgent(session.id)}
+                                className="rounded-md px-2.5 py-1.5 text-xs font-semibold text-accent-text hover:bg-accent-hover/10"
+                              >
+                                Open →
+                              </button>
+                            </div>
                           </div>
-                          <button
-                            type="button"
-                            onClick={() => onFocusAgent(session.id)}
-                            className="mt-0.5 shrink-0 rounded-md px-2.5 py-1.5 text-xs font-semibold text-accent-text hover:bg-accent-hover/10"
-                          >
-                            {ACTION_LABELS[kind]}
-                          </button>
-                        </div>
-                      </li>
-                    ))}
+                        </li>
+                      );
+                    })}
                   </ul>
                 </section>
               );
@@ -157,5 +232,45 @@ export function AgentAttentionView({ sessions, channels, onFocusAgent }: AgentAt
         )}
       </div>
     </section>
+  );
+}
+
+export function AgentAttentionDialog({ onClose, ...viewProps }: AgentAttentionViewProps & { onClose: () => void }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  const handleClose = useCallback(() => onCloseRef.current(), []);
+
+  useDialog({
+    open: true,
+    containerRef,
+    initialFocusRef: closeButtonRef,
+    onClose: handleClose,
+  });
+
+  return (
+    <div className="fixed inset-0 z-overlay flex bg-surface/80 p-4">
+      <div
+        ref={containerRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Agent attention"
+        tabIndex={-1}
+        className="mx-auto flex w-full max-w-3xl flex-col overflow-hidden rounded-lg border border-edge bg-surface shadow-2xl"
+      >
+        <div className="flex justify-end border-b border-edge p-2">
+          <button
+            ref={closeButtonRef}
+            type="button"
+            onClick={onClose}
+            className="rounded px-2 py-1 text-xs text-fg-muted hover:bg-surface-overlay hover:text-fg"
+          >
+            Close
+          </button>
+        </div>
+        <AgentAttentionView {...viewProps} />
+      </div>
+    </div>
   );
 }

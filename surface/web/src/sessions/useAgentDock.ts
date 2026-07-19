@@ -1,4 +1,4 @@
-import type { Channel } from '@atrium/surface-client';
+import { sessionDriverId, type Channel } from '@atrium/surface-client';
 import {
   deriveSessionGlance,
   isArchivedSession,
@@ -111,17 +111,25 @@ export function agentDockGroups(
   return groups;
 }
 
-export function agentDockCounts(sessions: Record<string, Session>): {
+export type AgentDockCounts = {
   needsYou: number;
   live: number;
   review: number;
-} {
+};
+
+export type AgentDockCountOptions = {
+  /** Limit every count bucket to sessions driven by this viewer. */
+  mineOnly?: string;
+};
+
+export function agentDockCounts(sessions: Record<string, Session>, opts: AgentDockCountOptions = {}): AgentDockCounts {
   const needsYouIds = new Set<string>();
   const liveIds = new Set<string>();
   const reviewIds = new Set<string>();
 
   for (const session of Object.values(sessions)) {
     if (!isDockSession(session)) continue;
+    if (opts.mineOnly != null && sessionDriverId(session) !== opts.mineOnly) continue;
     if (sessionAttentionKind(session) != null) {
       needsYouIds.add(session.id);
       continue;

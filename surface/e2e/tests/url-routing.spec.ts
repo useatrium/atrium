@@ -105,7 +105,8 @@ test('opening a session updates the URL and Back closes it without a document re
     .getByRole('button', { name: /view session|open session/ })
     .first()
     .click();
-  await expect(page).toHaveURL(new RegExp(`/c/${roomId}/s/${sessionId}$`));
+  // Panel-first: opening from the channel layers the session over it (?agent=).
+  await expect(page).toHaveURL(new RegExp(`/c/${roomId}\\?agent=${sessionId}$`));
   await expect(page.getByRole('button', { name: 'Close session details' })).toBeVisible();
 
   await page.goBack();

@@ -95,4 +95,26 @@ describe('agentDockCounts', () => {
       review: 0,
     });
   });
+
+  it('scopes every count bucket to sessions driven by the requested viewer', () => {
+    const sessions = {
+      myQuestion: session({
+        id: 'my-question',
+        driverId: 'viewer-1',
+        pendingQuestion: { questionId: 'q1', questions: [], askedAt: '2026-07-18T11:00:00.000Z' },
+      }),
+      theirQuestion: session({
+        id: 'their-question',
+        spawnedBy: 'viewer-2',
+        driverId: null,
+        pendingQuestion: { questionId: 'q2', questions: [], askedAt: '2026-07-18T11:00:00.000Z' },
+      }),
+      myLive: session({ id: 'my-live', driverId: 'viewer-1' }),
+      theirReview: session({ id: 'their-review', driverId: 'viewer-2', status: 'completed' }),
+    };
+
+    expect(agentDockCounts(sessions)).toEqual({ needsYou: 2, live: 1, review: 1 });
+    expect(agentDockCounts(sessions, { mineOnly: 'viewer-1' })).toEqual({ needsYou: 1, live: 1, review: 0 });
+    expect(agentDockCounts(sessions, { mineOnly: 'viewer-2' })).toEqual({ needsYou: 1, live: 0, review: 1 });
+  });
 });
