@@ -14,13 +14,6 @@ export function collectArtifacts(state: SessionState): Artifact[] {
   return state.artifacts.map((a) => ({ ...a, path: displayPath(a.path) }));
 }
 
-/** Distinct file paths captured — drives the "Artifacts·N" strip count. */
-export function artifactPaths(artifacts: Artifact[]): string[] {
-  const seen = new Set<string>();
-  for (const a of artifacts) seen.add(a.path);
-  return [...seen];
-}
-
 export function artifactCount(artifacts: Artifact[]): number {
   return artifacts.length;
 }

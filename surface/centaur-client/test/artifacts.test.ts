@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { reduceSession, initialSessionState, type SessionState } from '../src/reducer.js';
-import { collectArtifacts, artifactPaths } from '../src/artifacts.js';
+import { collectArtifacts } from '../src/artifacts.js';
 import type { ArtifactCaptured, CentaurEventFrame } from '../src/types.js';
 
 const reduceAll = (frames: CentaurEventFrame[]): SessionState =>
@@ -58,13 +58,12 @@ describe('artifact.captured reducer', () => {
     expect(state.artifacts).toHaveLength(1);
   });
 
-  it('collectArtifacts strips the sandbox prefix; artifactPaths counts distinct files', () => {
+  it('collectArtifacts strips the sandbox prefix', () => {
     const state = reduceAll([
       artifactFrame(5, { artifact_id: 'a1', path: '/home/agent/workspace/src/out.png' }),
       artifactFrame(6, { artifact_id: 'a2', path: '/tmp/x.csv', mime: 'text/csv' }),
     ]);
     const arts = collectArtifacts(state);
     expect(arts.map((a) => a.path)).toEqual(['src/out.png', '/tmp/x.csv']);
-    expect(artifactPaths(arts)).toHaveLength(2);
   });
 });
