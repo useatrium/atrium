@@ -7,6 +7,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { Artifact, ArtifactPresentation } from '@atrium/centaur-client';
 import { XIcon } from '../components/icons';
+import { EscapeLayer, isEditableEscapeTarget, useEscapeLayer } from '../lib/escapeLayers';
 import { navigate, URL_PARAMS, useLocation } from '../router';
 import { EmptyState } from './EmptyState';
 
@@ -300,16 +301,15 @@ export function ArtifactsSurface({
     updatePreviewUrl(null);
   };
 
-  useEffect(() => {
-    if (embedded) return;
-    const onDocumentKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
-      event.stopPropagation();
+  useEscapeLayer(
+    EscapeLayer.workSurface,
+    (event) => {
+      if (isEditableEscapeTarget(event.target)) return false;
       onClose();
-    };
-    document.addEventListener('keydown', onDocumentKeyDown, true);
-    return () => document.removeEventListener('keydown', onDocumentKeyDown, true);
-  }, [embedded, onClose]);
+      return true;
+    },
+    !embedded,
+  );
 
   useEffect(() => {
     if (!previewParam) {

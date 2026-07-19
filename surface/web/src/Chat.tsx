@@ -97,7 +97,9 @@ import { useSessionQueueFailures } from './useSessionQueueFailures';
 import { useTypingIndicators } from './useTypingIndicators';
 import { useUploadQueue } from './useUploadQueue';
 import { entryParamFromSearch, stripEntryParamFromLocation, threadRootParamFromSearch } from './EntryLinkRoute';
+import { EscapeLayer, escapeHasLocalMeaning, useEscapeLayer } from './lib/escapeLayers';
 import { SHORTCUTS, matchesChord } from './lib/shortcuts';
+import { isModalDialogOpen } from './useDialog';
 import {
   URL_PARAMS,
   navigate,
@@ -1890,36 +1892,52 @@ export function Chat({
   const [shortcutsHelpOpen, setShortcutsHelpOpen] = useState(false);
   useEffect(() => {
     const onKeyDown = (e: globalThis.KeyboardEvent) => {
+      // A chord may still toggle its OWN dialog closed, but must not stack on
+      // top of a DIFFERENT open modal (it would fight that dialog's focus trap).
       if (matchesChord(e, SHORTCUTS.commandPalette.keys)) {
+        if (isModalDialogOpen() && !switcherOpen) return;
         e.preventDefault();
         setSwitcherOpen((v) => !v);
         return;
       }
       if (matchesChord(e, SHORTCUTS.shortcutsHelp.keys)) {
         if (isEditableShortcutTarget(e.target)) return;
+        if (isModalDialogOpen() && !shortcutsHelpOpen) return;
         e.preventDefault();
         setShortcutsHelpOpen((v) => !v);
-        return;
-      }
-      if (e.key !== 'Escape' || switcherOpen || shortcutsHelpOpen) return;
-      if (isSidebarOpen) {
-        setIsSidebarOpen(false);
-        return;
-      }
-      // === mentions-activity additions ===
-      if (mainSurface !== 'chat') {
-        openChatSurface();
-        return;
-      }
-      const s = stateRef.current;
-      if (s.openSessionId) closeSession();
-      else if (s.openThreadRootId != null) {
-        goToRoute({ surface: 'chat', channelId: s.activeChannelId, sessionId: null, focusSession: false });
       }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [closeSession, isSidebarOpen, mainSurface, openChatSurface, shortcutsHelpOpen, switcherOpen]);
+  }, [shortcutsHelpOpen, switcherOpen]);
+
+  // Escape closes the innermost thing first: a non-chat surface, then the open
+  // session pane, then the thread panel — one press, one layer. Yields to any
+  // editable field or menu with its own Escape meaning.
+  useEscapeLayer(EscapeLayer.surface, (event) => {
+    if (escapeHasLocalMeaning(event)) return false;
+    if (mainSurface !== 'chat') {
+      openChatSurface();
+      return true;
+    }
+    const s = stateRef.current;
+    if (s.openSessionId) {
+      closeSession();
+      return true;
+    }
+    if (s.openThreadRootId != null) {
+      goToRoute({ surface: 'chat', channelId: s.activeChannelId, sessionId: null, focusSession: false });
+      return true;
+    }
+    return false;
+  });
+
+  // The mobile nav sidebar is the last thing Escape dismisses — below the dock.
+  useEscapeLayer(EscapeLayer.sidebar, (event) => {
+    if (escapeHasLocalMeaning(event) || !isSidebarOpen) return false;
+    setIsSidebarOpen(false);
+    return true;
+  });
 
   // ---- unread badge in the tab title ----
   const channelUnreadCount = Object.values(state.unread).filter(Boolean).length;

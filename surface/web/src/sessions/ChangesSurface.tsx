@@ -2,9 +2,10 @@
 // edited, each with its synthesized diff. Opens over the transcript from the
 // "Changes·N" strip; dismissible. Grouped by path, newest edit per file on top.
 
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import type { FileChange } from '@atrium/centaur-client';
 import { XIcon } from '../components/icons';
+import { EscapeLayer, isEditableEscapeTarget, useEscapeLayer } from '../lib/escapeLayers';
 import { EmptyState } from './EmptyState';
 import { DiffView, KIND_BADGE, KIND_LABEL, diffStats } from './fileChangeView';
 
@@ -66,16 +67,15 @@ export function ChangesSurface({
   // Group by display path, preserving first-seen order.
   const groups = useMemo(() => groupFileChanges(changes), [changes]);
 
-  useEffect(() => {
-    if (embedded) return;
-    const onDocumentKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
-      event.stopPropagation();
+  useEscapeLayer(
+    EscapeLayer.workSurface,
+    (event) => {
+      if (isEditableEscapeTarget(event.target)) return false;
       onClose();
-    };
-    document.addEventListener('keydown', onDocumentKeyDown, true);
-    return () => document.removeEventListener('keydown', onDocumentKeyDown, true);
-  }, [embedded, onClose]);
+      return true;
+    },
+    !embedded,
+  );
 
   const body = (
     <div className="min-h-0 flex-1 overflow-y-auto">

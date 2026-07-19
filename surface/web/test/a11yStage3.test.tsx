@@ -254,3 +254,88 @@ describe('private channel leave confirmation', () => {
     );
   });
 });
+
+describe('command palette chord vs open modals', () => {
+  const channel = {
+    id: 'ch-1',
+    workspaceId: 'ws-1',
+    name: 'general',
+    createdAt: '',
+    kind: 'private' as const,
+    members: [me],
+    latestEventId: 1,
+    lastReadEventId: 1,
+  };
+
+  function mockChat() {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.startsWith('/api/sync?')) {
+        return new Response(
+          JSON.stringify({
+            events: [],
+            nextCursor: 1,
+            limited: false,
+            state: {
+              readCursors: { 'ch-1': 1 },
+              mutes: [],
+              prefs: DEFAULT_PREFS,
+              drafts: {},
+              draftDeletions: {},
+              channels: [channel],
+            },
+          }),
+        );
+      }
+      if (url === '/api/channels') return new Response(JSON.stringify({ channels: [channel] }));
+      if (url === '/api/channels/ch-1/messages?limit=50')
+        return new Response(JSON.stringify({ events: [], hasMore: false }));
+      if (url === '/api/channels/ch-1/read') return new Response(JSON.stringify({ lastReadEventId: 1 }));
+      if (url.startsWith('/api/sessions')) return new Response(JSON.stringify({ sessions: [] }));
+      if (url === '/api/channels/ch-1/members') return new Response(JSON.stringify({ members: [me] }));
+      return new Response(JSON.stringify({}), { status: 200 });
+    });
+    vi.stubGlobal('WebSocket', NoopWebSocket);
+    vi.stubGlobal('fetch', fetchMock);
+  }
+
+  const pressModK = () => fireEvent.keyDown(document.body, { key: 'k', metaKey: true });
+  const palette = () => screen.queryByRole('combobox', { name: 'Commands and search' });
+
+  async function renderSettledChat() {
+    // Isolate from route/storage state left behind by earlier tests in this file.
+    window.history.replaceState({}, '', '/');
+    window.localStorage.clear();
+    mockChat();
+    render(
+      <ThemeProvider>
+        <Chat me={me} workspace={workspace} onLogout={() => {}} />
+      </ThemeProvider>,
+    );
+    await screen.findByRole('button', { name: 'Members' });
+    await screen.findByTitle('connection: open');
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+  }
+
+  it('lets Mod+K toggle its own palette closed, without reaching for Escape', async () => {
+    await renderSettledChat();
+
+    pressModK();
+    expect(palette()).toBeTruthy();
+
+    pressModK();
+    expect(palette()).toBeNull();
+  });
+
+  it('blocks the Mod+K chord while a different modal is open', async () => {
+    await renderSettledChat();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Members' }));
+    expect(screen.getByRole('dialog', { name: 'Channel members' })).toBeTruthy();
+
+    pressModK();
+    expect(palette()).toBeNull();
+  });
+});

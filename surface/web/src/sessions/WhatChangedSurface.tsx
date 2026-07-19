@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { Artifact, ArtifactPresentation, FileChange } from '@atrium/centaur-client';
 import { ChevronDownIcon, ChevronRightIcon, XIcon } from '../components/icons';
+import { EscapeLayer, isEditableEscapeTarget, useEscapeLayer } from '../lib/escapeLayers';
 import { ArtifactPreviewModal, ArtifactTile, latestArtifactsByPath } from './ArtifactsSurface';
 import { ChangeFileRow, groupFileChanges } from './ChangesSurface';
 import { EmptyState } from './EmptyState';
@@ -105,16 +106,15 @@ export function WhatChangedSurface({
   const showEdited = filter === 'all' || filter === 'edited';
   const showCreated = filter === 'all' || filter === 'created';
 
-  useEffect(() => {
-    if (embedded) return;
-    const onDocumentKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
-      event.stopPropagation();
+  useEscapeLayer(
+    EscapeLayer.workSurface,
+    (event) => {
+      if (isEditableEscapeTarget(event.target)) return false;
       onClose();
-    };
-    document.addEventListener('keydown', onDocumentKeyDown, true);
-    return () => document.removeEventListener('keydown', onDocumentKeyDown, true);
-  }, [embedded, onClose]);
+      return true;
+    },
+    !embedded,
+  );
 
   const body = (
     <div className="min-h-0 flex-1 overflow-y-auto">

@@ -1,6 +1,7 @@
-import { useEffect, useMemo } from 'react';
+import { useMemo } from 'react';
 import type { SideEffect, SideEffectCategory, SideEffectRisk } from '@atrium/centaur-client';
 import { XIcon } from '../components/icons';
+import { EscapeLayer, isEditableEscapeTarget, useEscapeLayer } from '../lib/escapeLayers';
 import { EmptyState } from './EmptyState';
 
 const CATEGORY_ORDER: SideEffectCategory[] = ['network', 'package', 'git', 'filesystem', 'process', 'shell'];
@@ -37,16 +38,15 @@ export function SideEffectsSurface({
     );
   }, [effects]);
 
-  useEffect(() => {
-    if (embedded) return;
-    const onDocumentKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
-      event.stopPropagation();
+  useEscapeLayer(
+    EscapeLayer.workSurface,
+    (event) => {
+      if (isEditableEscapeTarget(event.target)) return false;
       onClose();
-    };
-    document.addEventListener('keydown', onDocumentKeyDown, true);
-    return () => document.removeEventListener('keydown', onDocumentKeyDown, true);
-  }, [embedded, onClose]);
+      return true;
+    },
+    !embedded,
+  );
 
   const body = (
     <div className="min-h-0 flex-1 overflow-y-auto">

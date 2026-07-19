@@ -2,7 +2,7 @@
 // (groups/rows) lives in AgentDockRows.tsx and receives everything it needs via
 // AgentRowContext — frame work and row work stay in separate files.
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, MouseEvent as ReactMouseEvent } from 'react';
 import { sessionDriverId } from '@atrium/surface-client';
 import type { Channel } from '@atrium/surface-client';
@@ -28,6 +28,7 @@ import {
   usePaneSize,
 } from './useSessionPaneWidth';
 import { agentDockCounts, agentDockGroups, type AgentDockGroup } from './useAgentDock';
+import { EscapeLayer, escapeHasLocalMeaning, useEscapeLayer } from '../lib/escapeLayers';
 
 export type AgentDockProps = {
   sessions: Record<string, Session>;
@@ -272,6 +273,7 @@ export function AgentDock({
   const [open, setOpen] = useAgentDockOpen();
   const [mineFilter, setMineFilter] = useAgentDockMineFilter();
   const [query, setQuery] = useState('');
+  const filterInputRef = useRef<HTMLInputElement>(null);
   const now = useNow(Object.values(sessions).some(isLiveAgentWork));
   const dockSize = usePaneSize(agentDockWidthConfig);
 
@@ -279,16 +281,27 @@ export function AgentDock({
     if (immersed || filterChannelId) setOpen(true);
   }, [filterChannelId, immersed, setOpen]);
 
-  useEffect(() => {
-    if (!open && !immersed) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
+  // Lowest of the dismiss layers: Escape only collapses the dock once nothing
+  // above it (a running turn, an open pane, the filter query) claims the press.
+  useEscapeLayer(
+    EscapeLayer.dock,
+    (event) => {
+      // A non-empty filter query clears first; an empty one falls through to
+      // collapse. Any other editable field or menu keeps its own Escape.
+      if (event.target === filterInputRef.current) {
+        if (query) {
+          setQuery('');
+          return true;
+        }
+      } else if (escapeHasLocalMeaning(event)) {
+        return false;
+      }
       if (immersed) onToggleImmersed();
       else setOpen(false);
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [immersed, onToggleImmersed, open, setOpen]);
+      return true;
+    },
+    open || immersed,
+  );
 
   // The Triage entry is GLOBAL — it always matches the Attention view it opens
   // across every workstream and driver (splitting the two is what produced
@@ -529,6 +542,7 @@ export function AgentDock({
                 <SearchIcon size={13} className="shrink-0" />
                 <span className="sr-only">Filter agents</span>
                 <input
+                  ref={filterInputRef}
                   type="search"
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
