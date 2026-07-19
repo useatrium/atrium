@@ -5,6 +5,7 @@ import {
   extractMentionTokens,
   matchMentionPrefix,
   mentionsUser,
+  updateMentionRangesForEdit,
 } from '../src/mentions';
 
 const ALICE_ID = '123E4567-E89B-12D3-A456-426614174000';
@@ -124,5 +125,35 @@ describe('mentionsUser', () => {
   it('escapes regex metacharacters in legacy handles', () => {
     expect(mentionsUser('@g.ary!', { id: null, handle: 'g.ary' })).toBe(true);
     expect(mentionsUser('@gxary!', { id: null, handle: 'g.ary' })).toBe(false);
+  });
+});
+
+describe('updateMentionRangesForEdit', () => {
+  const range = { start: 6, end: 12, userId: ALICE_ID };
+
+  it('returns the same ranges for a no-op edit', () => {
+    const ranges = [range];
+    expect(updateMentionRangesForEdit('hello @riley', 'hello @riley', ranges)).toBe(ranges);
+  });
+
+  it('shifts a range that sits after an insertion', () => {
+    expect(updateMentionRangesForEdit('hello @riley', 'well hello @riley', [range])).toEqual([
+      { start: 11, end: 17, userId: ALICE_ID },
+    ]);
+  });
+
+  it('shifts a range left after a deletion before it', () => {
+    expect(
+      updateMentionRangesForEdit('hi hello @riley', 'hello @riley', [{ start: 9, end: 15, userId: ALICE_ID }]),
+    ).toEqual([range]);
+  });
+
+  it('drops a range whose interior is edited', () => {
+    expect(updateMentionRangesForEdit('hello @riley', 'hello @rXiley', [range])).toEqual([]);
+  });
+
+  it('drops a range a replacement overlaps and keeps an untouched earlier range', () => {
+    const earlier = { start: 0, end: 5, userId: BOB_ID };
+    expect(updateMentionRangesForEdit('@abcd @riley', '@abcd @riZ', [earlier, range])).toEqual([earlier]);
   });
 });

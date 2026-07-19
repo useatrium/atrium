@@ -25,6 +25,40 @@ function hasMentionLeftBoundary(text: string, at: number): boolean {
   return previous !== undefined && (/\s/.test(previous) || `(["'{<`.includes(previous));
 }
 
+/**
+ * Reproject mention ranges across a plain-text edit from `previousText` to
+ * `nextText`. Ranges wholly after the changed span shift by the length delta;
+ * a range whose interior is touched (an insertion strictly inside it, or a
+ * replacement that overlaps it) is dropped, since its "@handle" text no longer
+ * survives intact. Shared by the web typeahead and the mobile composer.
+ */
+export function updateMentionRangesForEdit(
+  previousText: string,
+  nextText: string,
+  ranges: MentionRange[],
+): MentionRange[] {
+  if (previousText === nextText) return ranges;
+
+  let start = 0;
+  while (start < previousText.length && start < nextText.length && previousText[start] === nextText[start]) start += 1;
+
+  let previousEnd = previousText.length;
+  let nextEnd = nextText.length;
+  while (previousEnd > start && nextEnd > start && previousText[previousEnd - 1] === nextText[nextEnd - 1]) {
+    previousEnd -= 1;
+    nextEnd -= 1;
+  }
+
+  const delta = nextText.length - previousText.length;
+  return ranges.flatMap((range) => {
+    const insertionInsideRange = previousEnd === start && start > range.start && start < range.end;
+    const replacementIntersectsRange = start < range.end && previousEnd > range.start;
+    if (insertionInsideRange || replacementIntersectsRange) return [];
+    if (range.start >= previousEnd) return [{ ...range, start: range.start + delta, end: range.end + delta }];
+    return [range];
+  });
+}
+
 export function matchMentionPrefix(text: string): MentionPrefixMatch | null {
   const match = MENTION_PREFIX_RE.exec(text);
   if (!match || !hasMentionLeftBoundary(text, match.index)) return null;
