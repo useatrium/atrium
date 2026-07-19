@@ -25,6 +25,7 @@ import {
   questionAnswerSummaryText,
   questionPayloadAnswers,
   questionPayloadPrompts,
+  sanitizeQuestionPrompts,
   sessionAnsweredQuestion,
   sessionDriverId,
   sessionGlanceClockLabel,
@@ -878,7 +879,9 @@ function InlineQuestionAnswer({
   const [sent, setSent] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const pending = session.pendingQuestion;
-  const question = pending?.questions[0];
+  // Same consumer-boundary guard as web: only ever render a prompt the person
+  // can actually answer, salvaging a malformed first question where possible.
+  const question = sanitizeQuestionPrompts(pending?.questions).questions[0];
   const isDriver = sessionDriverId(session) === meId;
 
   const submit = useCallback(

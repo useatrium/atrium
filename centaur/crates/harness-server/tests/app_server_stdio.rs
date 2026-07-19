@@ -694,6 +694,34 @@ fn fake_codex_blocks_mode_relays_request_user_input_answers() {
                     Some("q-1")
                 );
                 assert_eq!(value.get("turn_id").and_then(Value::as_str), Some("turn-1"));
+                // The codex-native `{id,label,kind:"choice",choices}` question
+                // must be adapted into the Atrium prompt shape the surface
+                // validates: id preserved verbatim, label → question, choices →
+                // options. Without this the surface renders an empty banner.
+                let question = value
+                    .pointer("/questions/0")
+                    .expect("adapted question present");
+                assert_eq!(
+                    question.get("id").and_then(Value::as_str),
+                    Some("choice"),
+                    "adapter must preserve the codex question id verbatim"
+                );
+                assert_eq!(
+                    question.get("question").and_then(Value::as_str),
+                    Some("Pick one")
+                );
+                assert!(
+                    question.get("header").and_then(Value::as_str).is_some(),
+                    "adapted question must carry a header"
+                );
+                assert_eq!(
+                    question.pointer("/options/0/label").and_then(Value::as_str),
+                    Some("A")
+                );
+                assert_eq!(
+                    question.pointer("/options/1/label").and_then(Value::as_str),
+                    Some("B")
+                );
                 bridge.send(json!({
                     "type": "question_answer",
                     "question_id": "q-1",
