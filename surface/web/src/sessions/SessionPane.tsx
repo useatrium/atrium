@@ -1529,7 +1529,7 @@ export function SessionPaneContent({
   };
 
   const focused = layout === 'focus';
-  const { width: paneWidth, resizing, startResize, resetWidth } = useSessionPaneWidth();
+  const { width: paneWidth, resizing, startResize, resetWidth, onResizeKeyDown } = useSessionPaneWidth();
   const panelRef = useRef<HTMLElement>(null);
   const workDockPlacement = useWorkDockPlacement(panelRef);
   const workDockSide = useWorkDockSideWidth();
@@ -1749,7 +1749,8 @@ export function SessionPaneContent({
           data-testid="pane-resize-handle"
           onPointerDown={startResize}
           onDoubleClick={resetWidth}
-          className={`absolute inset-y-0 -left-0.5 z-raised w-1.5 cursor-col-resize touch-none transition-colors hover:bg-accent/50 ${
+          onKeyDown={onResizeKeyDown}
+          className={`absolute inset-y-0 -left-0.5 z-raised w-1.5 cursor-col-resize touch-none transition-colors hover:bg-accent/50 focus-visible:outline-2 focus-visible:outline-accent ${
             resizing ? 'bg-accent/50' : ''
           }`}
         />

@@ -264,14 +264,14 @@ export function AgentGroup({
 
   return (
     <section data-testid="agent-dock-group" data-kind={group.kind} className="space-y-1.5">
-      <h2
+      <h3
         className={`flex items-center gap-1.5 px-1 text-xs font-semibold ${
           group.kind === 'needs' ? 'text-warning-text-strong' : 'text-fg-muted'
         }`}
       >
         <span>{group.label}</span>
         <span className="tabular-nums text-fg-faint">{group.sessions.length}</span>
-      </h2>
+      </h3>
       {rows}
     </section>
   );

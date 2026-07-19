@@ -4,8 +4,13 @@
 // user drags, the stored px width applies, clamped live against the viewport
 // so a size saved on a wide monitor can't swallow a narrow window.
 
-import { useCallback, useRef, useState } from 'react';
-import type { CSSProperties, PointerEvent as ReactPointerEvent, RefObject } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
+import type {
+  CSSProperties,
+  KeyboardEvent as ReactKeyboardEvent,
+  PointerEvent as ReactPointerEvent,
+  RefObject,
+} from 'react';
 import {
   AGENT_DOCK_WIDTH_STORAGE_KEY,
   LEGACY_SESSION_PANE_WIDTH_STORAGE_KEY,
@@ -93,6 +98,65 @@ function clamp(config: PaneSizeConfig, size: number): number {
   return Math.min(Math.max(Math.round(size), config.minSize), maxSize(config));
 }
 
+/** Fine keyboard step (px); Shift multiplies to the coarse step. */
+export const PANE_RESIZE_STEP = 16;
+export const PANE_RESIZE_LARGE_STEP = 64;
+
+type ResizeKeyActions = {
+  nudge: (delta: number) => void;
+  setSizeTo: (value: number) => void;
+  resetSize: () => void;
+  min: number;
+  max: () => number;
+};
+
+/**
+ * Keyboard operation for a `role="separator"` handle, mirroring the pointer
+ * drag: the arrow toward the edge the handle grows enlarges the pane, the
+ * opposite arrow shrinks it (Shift = coarse step). Home/End jump to the
+ * min/max; Enter restores the default (same as the double-click reset).
+ */
+function makeResizeKeyDown(
+  config: PaneSizeConfig,
+  actions: ResizeKeyActions,
+): (event: ReactKeyboardEvent<HTMLElement>) => void {
+  const growToward = config.dragDirection ?? (config.axis === 'y' ? 'up' : 'left');
+  return (event) => {
+    let handled = true;
+    const step = event.shiftKey ? PANE_RESIZE_LARGE_STEP : PANE_RESIZE_STEP;
+    switch (event.key) {
+      case 'ArrowLeft':
+        if (config.axis === 'y') handled = false;
+        else actions.nudge(growToward === 'left' ? step : -step);
+        break;
+      case 'ArrowRight':
+        if (config.axis === 'y') handled = false;
+        else actions.nudge(growToward === 'right' ? step : -step);
+        break;
+      case 'ArrowUp':
+        if (config.axis !== 'y') handled = false;
+        else actions.nudge(growToward === 'up' ? step : -step);
+        break;
+      case 'ArrowDown':
+        if (config.axis !== 'y') handled = false;
+        else actions.nudge(growToward === 'down' ? step : -step);
+        break;
+      case 'Home':
+        actions.setSizeTo(actions.min);
+        break;
+      case 'End':
+        actions.setSizeTo(actions.max());
+        break;
+      case 'Enter':
+        actions.resetSize();
+        break;
+      default:
+        handled = false;
+    }
+    if (handled) event.preventDefault();
+  };
+}
+
 /** The stored width, or null when the user has never resized. */
 export function loadSessionPaneWidth(): number | null {
   return loadPaneSize(sessionPaneWidthConfig);
@@ -127,6 +191,8 @@ export function usePaneSize<T extends HTMLElement = HTMLElement>(
   resizing: boolean;
   startResize: (e: ReactPointerEvent<HTMLElement>) => void;
   resetSize: () => void;
+  /** Keyboard operation for the `role="separator"` handle (arrows/Home/End/Enter). */
+  onResizeKeyDown: (e: ReactKeyboardEvent<HTMLElement>) => void;
   className: string;
   style: CSSProperties | undefined;
 } {
@@ -194,7 +260,39 @@ export function usePaneSize<T extends HTMLElement = HTMLElement>(
     save(config, null);
   }, [config]);
 
-  return { size, resizing, startResize, resetSize, ...paneSizing(config, size) };
+  const nudge = useCallback(
+    (delta: number) => {
+      setSize((current) => {
+        const next = clamp(config, (current ?? config.fallbackSize) + delta);
+        save(config, next);
+        return next;
+      });
+    },
+    [config],
+  );
+
+  const setSizeTo = useCallback(
+    (value: number) => {
+      const next = clamp(config, value);
+      setSize(next);
+      save(config, next);
+    },
+    [config],
+  );
+
+  const onResizeKeyDown = useMemo(
+    () =>
+      makeResizeKeyDown(config, {
+        nudge,
+        setSizeTo,
+        resetSize,
+        min: config.minSize,
+        max: () => maxSize(config),
+      }),
+    [config, nudge, setSizeTo, resetSize],
+  );
+
+  return { size, resizing, startResize, resetSize, onResizeKeyDown, ...paneSizing(config, size) };
 }
 
 const sessionPaneWidthConfig: PaneSizeConfig = {
@@ -212,9 +310,10 @@ export function useSessionPaneWidth(): {
   resizing: boolean;
   startResize: (e: ReactPointerEvent<HTMLElement>) => void;
   resetWidth: () => void;
+  onResizeKeyDown: (e: ReactKeyboardEvent<HTMLElement>) => void;
 } {
-  const { size, resizing, startResize, resetSize } = usePaneSize(sessionPaneWidthConfig);
-  return { width: size, resizing, startResize, resetWidth: resetSize };
+  const { size, resizing, startResize, resetSize, onResizeKeyDown } = usePaneSize(sessionPaneWidthConfig);
+  return { width: size, resizing, startResize, resetWidth: resetSize, onResizeKeyDown };
 }
 
 // # === resize additions ===
@@ -245,9 +344,10 @@ export function useThreadPaneWidth(): {
   resizing: boolean;
   startResize: (e: ReactPointerEvent<HTMLElement>) => void;
   resetWidth: () => void;
+  onResizeKeyDown: (e: ReactKeyboardEvent<HTMLElement>) => void;
 } {
-  const { size, resizing, startResize, resetSize } = usePaneSize(threadPaneWidthConfig);
-  return { width: size, resizing, startResize, resetWidth: resetSize };
+  const { size, resizing, startResize, resetSize, onResizeKeyDown } = usePaneSize(threadPaneWidthConfig);
+  return { width: size, resizing, startResize, resetWidth: resetSize, onResizeKeyDown };
 }
 
 // === sidebar resize additions ===
@@ -278,9 +378,10 @@ export function useSidebarWidth(): {
   resizing: boolean;
   startResize: (e: ReactPointerEvent<HTMLElement>) => void;
   resetWidth: () => void;
+  onResizeKeyDown: (e: ReactKeyboardEvent<HTMLElement>) => void;
 } {
-  const { size, resizing, startResize, resetSize } = usePaneSize(sidebarWidthConfig);
-  return { width: size, resizing, startResize, resetWidth: resetSize };
+  const { size, resizing, startResize, resetSize, onResizeKeyDown } = usePaneSize(sidebarWidthConfig);
+  return { width: size, resizing, startResize, resetWidth: resetSize, onResizeKeyDown };
 }
 
 // === agent dock resize additions ===
