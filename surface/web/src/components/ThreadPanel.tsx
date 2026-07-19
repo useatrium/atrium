@@ -1,4 +1,4 @@
-import { useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useId, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import type {
   AttachmentMeta,
   AttachmentRef,
@@ -142,6 +142,10 @@ export interface ThreadPanelProps {
     attachments?: AttachmentMeta[],
     attachmentRefs?: AttachmentRef[],
   ) => void;
+  /** Open the configured-spawn dialog from the composer's agent draft. */
+  onConfigureAgent?: (fullText: string) => void;
+  /** External handle to the thread composer (capture/restore drives the Configure bridge). */
+  composerRef?: RefObject<ComposerHandle | null>;
 }
 
 export function ThreadPanelContent({
@@ -172,6 +176,8 @@ export function ThreadPanelContent({
   onDraftTouched,
   previewEntryLinks,
   onAgentSend,
+  onConfigureAgent,
+  composerRef: externalComposerRef,
   sessionStream,
   visible = true,
 }: ThreadPanelProps & { sessionStream: SessionStream; visible?: boolean }) {
@@ -222,7 +228,8 @@ export function ThreadPanelContent({
   const now = useNow(visible && sessionLive);
   const spectatorsFor = (m: ChatMessage) => (m.sessionId != null ? (spectators[m.sessionId] ?? 0) : 0);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const composerRef = useRef<ComposerHandle>(null);
+  const internalComposerRef = useRef<ComposerHandle>(null);
+  const composerRef = externalComposerRef ?? internalComposerRef;
   const reconciledReplies = useMemo(() => reconcileThreadSteerReplies(replies), [replies]);
   const count = reconciledReplies.length;
   const jumpToEvent = (eventId: number) => {
@@ -464,6 +471,7 @@ export function ThreadPanelContent({
           if (active) setAlsoSendToChannel(false);
         }}
         onJumpToEvent={jumpToEvent}
+        onConfigureAgent={onConfigureAgent}
         queueUpload={queueUpload}
         autoFocus
         routing={

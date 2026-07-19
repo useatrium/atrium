@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type RefObject } from 'react';
 import { ApiError, type Workspace, api } from './api';
 import { isDesktop, isMacDesktop, desktopWsUrl, setDesktopBadge } from './desktop';
 import {
@@ -66,6 +66,7 @@ import { TAB_SLUG } from './sessions/WorkDrawer';
 import { loadSessionPaneWidth, sessionPaneSizing } from './sessions/useSessionPaneWidth';
 import { SessionsContextProvider } from './sessions/SessionsContext';
 import { SpawnDialog } from './sessions/SpawnDialog';
+import { parseSummonSigil } from './sessions/spawn';
 import { ViewToggle } from './sessions/ViewToggle';
 import { isPendingSessionId, sessionFromWire } from './sessions/types';
 import { adoptPrefs, useTheme } from './theme';
@@ -777,6 +778,7 @@ export function Chat({
   const [spawnInitialTask, setSpawnInitialTask] = useState('');
   const [configureRestore, setConfigureRestore] = useState<{ draftKey: string; text: string } | null>(null);
   const channelComposerRef = useRef<ComposerHandle>(null);
+  const threadComposerRef = useRef<ComposerHandle>(null);
   const [demoStarting, setDemoStarting] = useState(false);
   const agentProfiles = useAgentProfiles();
   const {
@@ -1493,18 +1495,42 @@ export function Chat({
     setSpawnOpen(true);
   }, []);
 
-  const cancelSpawnDialog = useCallback(() => {
-    setSpawnOpen(false);
-    setSpawnInitialTask('');
+  // The composer's "Configure ▸" chip hands its agent draft to the configured-spawn
+  // dialog: capture (and clear) the draft, remember it for restore-on-cancel, and
+  // prefill the task (strip the sigil for the literal "!!task" form). Mirrors mobile's
+  // handleConfigureAgent contract.
+  const openConfigureFromComposer = useCallback(
+    (draftKey: string, composerRef: RefObject<ComposerHandle | null>, fullText: string) => {
+      const captured = composerRef.current?.captureForConfigure() ?? fullText;
+      setConfigureRestore({ draftKey, text: captured });
+      setSpawnInitialTask(parseSummonSigil(captured)?.task ?? captured.replace(/^\s*!!\s*/, ''));
+      setSpawnOpen(true);
+    },
+    [],
+  );
+
+  const restoreConfigureDraft = useCallback(() => {
     if (!configureRestore) return;
-    if (configureRestore.draftKey === activeDraftKey && channelComposerRef.current) {
-      channelComposerRef.current.restoreDraft(configureRestore.text);
+    const ref =
+      configureRestore.draftKey === threadDraftKey
+        ? threadComposerRef
+        : configureRestore.draftKey === activeDraftKey
+          ? channelComposerRef
+          : null;
+    if (ref?.current) {
+      ref.current.restoreDraft(configureRestore.text);
     } else {
       markDraftTouched(configureRestore.draftKey);
       void saveDraft(configureRestore.draftKey, configureRestore.text);
     }
     setConfigureRestore(null);
-  }, [activeDraftKey, configureRestore, markDraftTouched, saveDraft]);
+  }, [activeDraftKey, configureRestore, markDraftTouched, saveDraft, threadDraftKey]);
+
+  const cancelSpawnDialog = useCallback(() => {
+    setSpawnOpen(false);
+    setSpawnInitialTask('');
+    restoreConfigureDraft();
+  }, [restoreConfigureDraft]);
   const paneOptimisticThreadSteers = useMemo(() => {
     const root = paneSession?.threadRootEventId;
     if (!paneSession || root == null) return [];
@@ -2264,7 +2290,7 @@ export function Chat({
       {channelMainVisible(view, threadRouteOpen) && (
         <main id="main-content" className={`${hideMainOnMobile ? 'hidden md:flex' : 'flex'} min-w-0 flex-1 flex-col`}>
           <header
-            className={`flex h-12 shrink-0 items-center gap-2 border-b border-edge px-2 md:gap-3 md:px-4 ${
+            className={`flex h-12 min-w-0 shrink-0 items-center gap-2 border-b border-edge px-2 md:gap-3 md:px-4 ${
               isMacDesktop ? 'max-md:pl-20' : ''
             }`}
           >
@@ -2383,7 +2409,10 @@ export function Chat({
                   }}
                   aria-disabled={newAgentDisabled || undefined}
                   aria-label="New agent"
-                  className="inline-flex shrink-0 items-center gap-1 rounded-md bg-accent px-2 py-1 text-xs font-semibold text-on-accent hover:bg-accent-hover aria-disabled:cursor-default aria-disabled:bg-surface-overlay aria-disabled:text-fg-muted md:ml-auto"
+                  // The dock owns agent creation on desktop, so the header pill is a quiet
+                  // secondary control on md+ (matching the Search button) — but stays the
+                  // filled primary spawn affordance below md, where the dock spine is hidden.
+                  className="inline-flex shrink-0 items-center gap-1 rounded-md bg-accent px-2 py-1 text-xs font-semibold text-on-accent hover:bg-accent-hover aria-disabled:cursor-default aria-disabled:bg-surface-overlay aria-disabled:text-fg-muted md:ml-auto md:border md:border-edge md:bg-surface-raised md:text-fg-muted md:hover:bg-surface-overlay md:hover:text-fg-body"
                 >
                   <PlusIcon size={14} />
                   <span className="hidden sm:inline">New agent</span>
@@ -2451,9 +2480,9 @@ export function Chat({
               </button>
             </Tooltip>
             {!showNonChatSurface && active && (
-              <div className="hidden items-center gap-2 md:flex" title="Viewing this channel right now">
+              <div className="hidden min-w-0 items-center gap-2 md:flex" title="Viewing this channel right now">
                 {presentUsers.length > 0 && (
-                  <div className="flex -space-x-1.5">
+                  <div className="flex shrink-0 -space-x-1.5">
                     {presentUsers.slice(0, 8).map((u) => (
                       <div key={u.id} className="rounded-md ring-2 ring-surface">
                         <Avatar name={u.displayName} seed={u.id} size={20} />
@@ -2650,6 +2679,7 @@ export function Chat({
                     sendAgent(active.id, request, text, attachments, attachmentRefs),
                 }}
                 onJumpToEvent={(eventId) => void jumpToMessage({ channelId: active.id, id: eventId })}
+                onConfigureAgent={(text) => openConfigureFromComposer(activeDraftKey, channelComposerRef, text)}
                 previewEntryLinks
                 allowAttachments
                 mentionContext={{
@@ -2802,6 +2832,9 @@ export function Chat({
                     onDraftPersisted: enqueueDraft,
                     onDraftTouched: markDraftTouched,
                     previewEntryLinks: true,
+                    composerRef: threadComposerRef,
+                    onConfigureAgent: (text: string) =>
+                      openConfigureFromComposer(threadDraftKey, threadComposerRef, text),
                   }
                 : undefined
             }
@@ -2897,6 +2930,7 @@ export function Chat({
           onRunDemo={() => {
             setSpawnOpen(false);
             setSpawnInitialTask('');
+            setConfigureRestore(null);
             void startDemoSession();
           }}
         />

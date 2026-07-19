@@ -31,7 +31,7 @@ import {
   randomId,
 } from '@atrium/surface-client';
 import { BotIcon, FileIcon, MessageSquareIcon, PaperclipIcon, XIcon } from './icons';
-import { Tooltip } from './a11y';
+import { Menu, MenuContent, MenuItem, MenuTrigger, Tooltip } from './a11y';
 import { VoiceRecorder, type RecordedVoice } from '../VoiceRecorder';
 import { SHORTCUTS, matchesChord } from '../lib/shortcuts';
 import { extractEntryHandles } from '../lib/entryLinks';
@@ -201,7 +201,6 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   );
   const agentHint = !!agentAware && !disabled && looksLikeSummonSigil(text);
   const agentTask = agentHint ? parseSummonSigil(text) : null;
-  const configureAgentHint = !!onConfigureAgent && agentHint && agentTask != null;
   const agentNeedsTaskHint = agentNeedsTask || (!!onConfigureAgent && agentHint && agentTask == null);
   const entryLinkHandles = useMemo(
     () => (previewEntryLinks ? extractEntryHandles(text) : []),
@@ -278,6 +277,11 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const audienceAvailable =
     routing?.kind === 'controlled' || (managedPeopleDestination != null && managedAgentDestination != null);
   const agentAudience = audience === 'agent';
+  // The Configure bridge is offered from a literal "!!" sigil draft (composers with no
+  // audience switch) and from managed/controlled agent mode, where the sigil is already
+  // swallowed into a plain task draft. The chip hands the current text to onConfigureAgent.
+  const configureAgentHint =
+    !!onConfigureAgent && ((agentHint && agentTask != null) || (agentAudience && !disabled && text.trim().length > 0));
   const setAudienceState = useCallback(
     (next: ComposerAudience) => {
       if (routing?.kind === 'controlled') routing.onAudienceChange(next);
@@ -596,50 +600,34 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           {/* The pill in the input frame already names the target — this row is
               only the options that change it. */}
           {canTargetSession && (
-            <div className="relative min-w-0">
-              <button
-                type="button"
-                onClick={() => setAgentTargetOpen((value) => !value)}
-                aria-expanded={agentTargetOpen}
-                aria-haspopup="menu"
-                className="flex min-w-0 items-center gap-1 rounded-full border border-accent/35 bg-accent/10 px-2 py-1 text-xs font-medium text-accent-text-strong hover:bg-accent/15"
-              >
-                <span className="truncate">Change target</span>
-                <span aria-hidden>▾</span>
-              </button>
-              {agentTargetOpen && (
-                <div
-                  role="menu"
-                  className="absolute bottom-full left-0 z-dropdown mb-1 w-64 rounded-md border border-edge-strong bg-surface-overlay p-1 shadow-lg"
+            <Menu open={agentTargetOpen} onOpenChange={setAgentTargetOpen}>
+              <MenuTrigger asChild>
+                <button
+                  type="button"
+                  className="flex min-w-0 items-center gap-1 rounded-full border border-accent/35 bg-accent/10 px-2 py-1 text-xs font-medium text-accent-text-strong hover:bg-accent/15"
                 >
-                  <button
-                    type="button"
-                    role="menuitem"
-                    onClick={() => {
-                      setAgentTarget('session');
-                      setAgentTargetOpen(false);
-                    }}
-                    className="flex w-full rounded px-2 py-1.5 text-left text-xs text-fg-secondary hover:bg-edge-strong hover:text-fg"
-                  >
-                    {isDriver ? 'Steer this session' : 'Suggest to this session'}
-                  </button>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    onClick={() => {
-                      setAgentTarget('thread');
-                      setAgentTargetOpen(false);
-                    }}
-                    className="flex w-full rounded px-2 py-1.5 text-left text-xs text-fg-secondary hover:bg-edge-strong hover:text-fg"
-                  >
-                    New session in this thread
-                  </button>
-                  <div className="px-2 pb-1 pt-1.5 text-3xs leading-4 text-fg-muted">
-                    The agent reads this conversation before starting (⚓ anchor).
-                  </div>
+                  <span className="truncate">Change target</span>
+                  <span aria-hidden>▾</span>
+                </button>
+              </MenuTrigger>
+              <MenuContent side="top" align="start" className="w-64 border-edge-strong">
+                <MenuItem
+                  onSelect={() => setAgentTarget('session')}
+                  className="px-2 py-1.5 text-xs text-fg-secondary data-[highlighted]:bg-edge-strong data-[highlighted]:text-fg"
+                >
+                  {isDriver ? 'Steer this session' : 'Suggest to this session'}
+                </MenuItem>
+                <MenuItem
+                  onSelect={() => setAgentTarget('thread')}
+                  className="px-2 py-1.5 text-xs text-fg-secondary data-[highlighted]:bg-edge-strong data-[highlighted]:text-fg"
+                >
+                  New session in this thread
+                </MenuItem>
+                <div className="px-2 pb-1 pt-1.5 text-3xs leading-4 text-fg-muted">
+                  The agent reads this conversation before starting (⚓ anchor).
                 </div>
-              )}
-            </div>
+              </MenuContent>
+            </Menu>
           )}
           {agentAnchor && (
             <div className="flex max-w-40 shrink-0 items-center rounded-full border border-edge-strong text-xs text-fg-secondary">
