@@ -7,7 +7,8 @@ use codex_app_server_protocol::{
     ItemStartedNotification, PatchApplyStatus, PatchChangeKind, ServerNotification, SessionSource,
     Thread, ThreadItem, ThreadStartedNotification, ThreadStatus, ThreadTokenUsage,
     ThreadTokenUsageUpdatedNotification, TokenUsageBreakdown, Turn, TurnCompletedNotification,
-    TurnError, TurnItemsView, TurnStartedNotification, TurnStatus, UserInput,
+    TurnError, TurnItemsView, TurnPlanStep, TurnPlanStepStatus, TurnPlanUpdatedNotification,
+    TurnStartedNotification, TurnStatus, UserInput,
 };
 use codex_protocol::models::MessagePhase;
 use codex_utils_absolute_path::AbsolutePathBuf;
@@ -532,6 +533,11 @@ impl CodexTurnNormalizer {
     ) -> Result<()> {
         let item_id = stable_id(raw_id, "tool-call");
         let projection = tool_projection(tool, &arguments);
+        // Project Claude's `TodoWrite` onto the codex-native `turn/plan/updated`
+        // feed so the Atrium PlanPanel is driven by the same notification for both
+        // harnesses. The `dynamicToolCall` item is still emitted below, so the
+        // TodoWrite also stays a transcript step.
+        let plan_update = todo_write_plan(tool, &arguments);
         self.tool_calls_by_raw_id.insert(
             raw_id.to_string(),
             ToolCallState {
@@ -570,7 +576,19 @@ impl CodexTurnNormalizer {
         };
         self.started_items.insert(item_id, item.clone());
         out.push(self.item_started(item));
+        if let Some(plan) = plan_update {
+            out.push(self.turn_plan_updated(plan));
+        }
         Ok(())
+    }
+
+    fn turn_plan_updated(&self, plan: Vec<TurnPlanStep>) -> ServerNotification {
+        ServerNotification::TurnPlanUpdated(TurnPlanUpdatedNotification {
+            thread_id: self.thread_id.clone(),
+            turn_id: self.turn_id.clone(),
+            explanation: None,
+            plan,
+        })
     }
 
     fn emit_tool_result(
@@ -754,6 +772,41 @@ fn phase_from_stop_reason(stop_reason: Option<&str>) -> Option<MessagePhase> {
         Some("tool_use") => Some(MessagePhase::Commentary),
         Some("end_turn" | "stop_sequence") => Some(MessagePhase::FinalAnswer),
         _ => None,
+    }
+}
+
+/// Projects a Claude `TodoWrite` tool call's `todos[]` onto codex-native
+/// `turn/plan/updated` plan steps: each todo's `content` becomes the step text
+/// and its `pending`/`in_progress`/`completed` status maps onto the codex plan
+/// status. Returns `None` for every other tool so the caller only emits a plan
+/// update for `TodoWrite`.
+fn todo_write_plan(tool: &str, arguments: &Value) -> Option<Vec<TurnPlanStep>> {
+    if !tool.eq_ignore_ascii_case("TodoWrite") {
+        return None;
+    }
+    let todos = arguments.get("todos").and_then(Value::as_array)?;
+    let plan = todos
+        .iter()
+        .filter_map(|todo| {
+            let content = todo.get("content").and_then(Value::as_str)?;
+            let status = todo
+                .get("status")
+                .and_then(Value::as_str)
+                .unwrap_or("pending");
+            Some(TurnPlanStep {
+                step: content.to_string(),
+                status: todo_plan_status(status),
+            })
+        })
+        .collect();
+    Some(plan)
+}
+
+fn todo_plan_status(status: &str) -> TurnPlanStepStatus {
+    match status {
+        "in_progress" | "inProgress" => TurnPlanStepStatus::InProgress,
+        "completed" => TurnPlanStepStatus::Completed,
+        _ => TurnPlanStepStatus::Pending,
     }
 }
 
@@ -1559,6 +1612,88 @@ mod tests {
         let params = completed.params.unwrap();
         assert_eq!(params["item"]["type"], "fileChange");
         assert_eq!(params["item"]["status"], "failed");
+    }
+
+    #[test]
+    fn todo_write_projects_turn_plan_updated_and_keeps_transcript_step() {
+        let mut normalizer = normalizer();
+        let events = process_anthropic(
+            &mut normalizer,
+            json!({
+                "type": "assistant",
+                "message": {
+                    "id": "msg_1",
+                    "content": [{
+                        "type": "tool_use",
+                        "id": "toolu_1",
+                        "name": "TodoWrite",
+                        "input": {"todos": [
+                            {"content": "Read the code", "status": "completed"},
+                            {"content": "Write the fix", "status": "in_progress"},
+                            {"content": "Run tests", "status": "pending"}
+                        ]}
+                    }]
+                }
+            }),
+        );
+
+        let methods: Vec<String> = events
+            .iter()
+            .map(|notification| notification_to_jsonrpc(notification).unwrap().method)
+            .collect();
+        assert_eq!(
+            methods,
+            vec![
+                "thread/started",
+                "turn/started",
+                "item/started",
+                "turn/plan/updated",
+            ]
+        );
+
+        // The TodoWrite is still a transcript step (dynamicToolCall).
+        let started = notification_to_jsonrpc(&events[2]).unwrap().params.unwrap();
+        assert_eq!(started["item"]["type"], "dynamicToolCall");
+        assert_eq!(started["item"]["tool"], "TodoWrite");
+
+        // ... and it also drives the structured plan feed.
+        let plan = notification_to_jsonrpc(&events[3]).unwrap().params.unwrap();
+        assert_eq!(plan["threadId"], "T-local");
+        assert_eq!(plan["turnId"], "turn-1");
+        assert_eq!(plan["plan"][0]["step"], "Read the code");
+        assert_eq!(plan["plan"][0]["status"], "completed");
+        assert_eq!(plan["plan"][1]["step"], "Write the fix");
+        assert_eq!(plan["plan"][1]["status"], "inProgress");
+        assert_eq!(plan["plan"][2]["step"], "Run tests");
+        assert_eq!(plan["plan"][2]["status"], "pending");
+    }
+
+    #[test]
+    fn non_todo_tool_use_emits_no_turn_plan_updated() {
+        let mut normalizer = normalizer();
+        let events = process_anthropic(
+            &mut normalizer,
+            json!({
+                "type": "assistant",
+                "message": {
+                    "id": "msg_1",
+                    "content": [{
+                        "type": "tool_use",
+                        "id": "toolu_1",
+                        "name": "Read",
+                        "input": {"file_path": "README.md"}
+                    }]
+                }
+            }),
+        );
+        let methods: Vec<String> = events
+            .iter()
+            .map(|notification| notification_to_jsonrpc(notification).unwrap().method)
+            .collect();
+        assert!(
+            !methods.iter().any(|method| method == "turn/plan/updated"),
+            "unexpected plan update for a non-TodoWrite tool: {methods:?}"
+        );
     }
 
     #[test]

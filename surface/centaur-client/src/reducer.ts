@@ -5,8 +5,10 @@ import type {
   CodexItem as BaseCodexItem,
   CodexItemCompletedEvent,
   CodexItemStartedEvent,
+  CodexPlanDeltaEvent,
   CodexReasoningSummaryTextDeltaEvent,
   CodexReasoningTextDeltaEvent,
+  CodexTurnPlanUpdatedEvent,
   AmpToolEvent,
   AnthropicTextBlock,
   AnthropicThinkingBlock,
@@ -370,6 +372,10 @@ function reduceSessionFrame(state: SessionState, frame: CentaurEventFrame): Sess
     reduceThreadTokenUsage(next, raw);
   } else if (raw.type === 'turn.completed') {
     if (frame.ts) next.turnEndTs = frame.ts;
+  } else if (raw.type === 'turn.plan.updated') {
+    reduceTurnPlanUpdated(next, raw);
+  } else if (raw.type === 'item.plan.delta') {
+    reducePlanDelta(next, frame.event_id, raw);
   } else if (raw.type === 'assistant') {
     reduceAssistant(next, frame.event_id, raw, recordHandles);
   } else if (raw.type === 'tool') {
@@ -405,6 +411,14 @@ function normalizeRawEvent(event: CentaurEventFrame['data']): CentaurEventFrame[
       return { type: 'turn.completed', ...params } as CentaurEventFrame['data'];
     case 'thread/tokenUsage/updated':
       return { type: 'thread.tokenUsage', ...params } as CentaurEventFrame['data'];
+    case 'turn/plan/updated':
+      return { type: 'turn.plan.updated', ...params } as CentaurEventFrame['data'];
+    case 'item/plan/delta':
+      return {
+        type: 'item.plan.delta',
+        ...params,
+        itemId: stringValue(params.itemId) ?? stringValue(params.item_id),
+      } as CentaurEventFrame['data'];
     case 'item/started':
       return { type: 'item.started', ...params } as CentaurEventFrame['data'];
     case 'item/completed':
@@ -1089,6 +1103,38 @@ function upsertReasoningItem(
 
 function setPlanFromText(state: SessionState, eventId: number, text: string): void {
   state.plan = { text, sourceEventIds: [eventId] };
+}
+
+/** Fold a `turn/plan/updated` snapshot into `state.todos` — the same structured
+ * checklist the PlanPanel renders. Emitted natively by codex `update_plan`, and
+ * by the harness projecting Claude's `TodoWrite` onto the identical shape, so one
+ * pipeline feeds the panel from both harnesses. Plan updates are full-state (not
+ * deltas): the latest snapshot replaces `state.todos` wholesale. Step text maps
+ * to todo content; codex `inProgress` maps to the reducer's `in_progress`. */
+function reduceTurnPlanUpdated(state: SessionState, event: CodexTurnPlanUpdatedEvent): void {
+  if (!Array.isArray(event.plan)) return;
+  state.todos = event.plan.flatMap((step): TodoEntry[] => {
+    if (!isJsonObject(step) || typeof step.step !== 'string') return [];
+    return [{ content: step.step, status: mapTurnPlanStatus(step.status) }];
+  });
+}
+
+function mapTurnPlanStatus(value: unknown): TodoEntry['status'] {
+  if (value === 'inProgress' || value === 'in_progress') return 'in_progress';
+  if (value === 'completed') return 'completed';
+  return 'pending';
+}
+
+/** Append a streaming `item/plan/delta` chunk to the freeform plan text (codex
+ * `plan` item). The item's `item.completed` frame later replaces it with the
+ * full text via `setPlanFromText`, so deltas only drive the live preview. */
+function reducePlanDelta(state: SessionState, eventId: number, event: CodexPlanDeltaEvent): void {
+  const delta = typeof event.delta === 'string' ? event.delta : '';
+  if (!delta) return;
+  state.deltaChars += delta.length;
+  const prev = state.plan?.text ?? '';
+  const sourceEventIds = state.plan ? [...state.plan.sourceEventIds, eventId] : [eventId];
+  state.plan = { text: prev + delta, sourceEventIds };
 }
 
 const CODEX_KIND: Record<string, FileChangeKind> = {
