@@ -385,7 +385,7 @@ export function useSidebarWidth(): {
 }
 
 // === agent dock resize additions ===
-export const AGENT_DOCK_MIN_WIDTH = 224;
+export const AGENT_DOCK_MIN_WIDTH = 288;
 export const AGENT_DOCK_MAX_VW = 40;
 // 256px truncated its own rows (a Needs-you question showed ~35px of 171px);
 // 320px is the default for users who have never dragged the dock. A stored

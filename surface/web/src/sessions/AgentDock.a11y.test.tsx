@@ -40,11 +40,8 @@ function renderDock(overrides: Partial<AgentDockProps> = {}) {
     channels: [],
     activeChannelId: null,
     focusedSessionId: null,
-    immersed: false,
     meId: 'user-1',
     onFocusAgent: vi.fn(),
-    onToggleImmersed: vi.fn(),
-    onNewAgent: vi.fn(),
     ...overrides,
   };
   return render(<AgentDock {...props} />);
@@ -80,7 +77,7 @@ describe('AgentDock resize handle keyboard operation', () => {
     expect(handle.getAttribute('aria-valuenow')).toBe(String(AGENT_DOCK_FALLBACK_WIDTH + 64));
 
     fireEvent.keyDown(handle, { key: 'Home' });
-    expect(handle.getAttribute('aria-valuenow')).toBe('224'); // min
+    expect(handle.getAttribute('aria-valuenow')).toBe('288'); // min
 
     fireEvent.keyDown(handle, { key: 'End' });
     expect(handle.getAttribute('aria-valuenow')).toBe('800'); // 40vw of 2000
@@ -167,8 +164,8 @@ describe('AgentDock heading hygiene', () => {
   });
 });
 
-describe('AgentDock History clear control', () => {
-  it('keeps the Clear button out of the <summary> disclosure control', () => {
+describe('AgentDock History archive control', () => {
+  it('keeps the Archive all button out of the <summary> disclosure control', () => {
     window.localStorage.setItem(AGENT_DOCK_OPEN_STORAGE_KEY, 'true');
     renderDock({
       sessions: { 'session-1': session({ status: 'completed', completedAt: '2026-07-18T11:00:00.000Z' }) },
@@ -176,8 +173,8 @@ describe('AgentDock History clear control', () => {
     });
     const history = screen.getByTestId('agent-dock-history');
     const summary = history.querySelector('summary') as HTMLElement;
-    const clear = screen.getByRole('button', { name: 'Clear' });
-    expect(clear).toBeTruthy();
-    expect(summary.contains(clear)).toBe(false);
+    const archiveAll = screen.getByRole('button', { name: 'Archive all…' });
+    expect(archiveAll).toBeTruthy();
+    expect(summary.contains(archiveAll)).toBe(false);
   });
 });

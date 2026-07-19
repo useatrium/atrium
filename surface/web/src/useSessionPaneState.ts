@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { AppAction, AppState, Channel, Session, UserRef } from '@atrium/surface-client';
 import { isPendingSessionId, sessionFromWire } from './sessions/types';
 import { sessionsApi, type SessionApi } from './sessions/api';
-import type { SessionView } from './sessions/ViewToggle';
+export type SessionView = 'channel' | 'split' | 'focus';
 
 const NO_WATCHERS: UserRef[] = [];
 export const AGENT_SPLIT_OPT_IN_KEY = 'atrium.agentSplitOptIn';

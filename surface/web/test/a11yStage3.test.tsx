@@ -151,14 +151,13 @@ describe('Timeline unread divider', () => {
 });
 
 describe('Toast live region', () => {
-  it('keeps a persistent assertive live container with inner dismiss buttons', async () => {
+  it('announces failures assertively with an inner dismiss button', async () => {
     render(<Toasts />);
-    const live = document.querySelector('[aria-live="assertive"]');
-    expect(live).toBeTruthy();
-    expect(live?.textContent).toBe('');
+    expect(document.querySelector('[aria-live="assertive"]')).toBeNull();
 
     showErrorToast('explicit failure');
     expect(await screen.findByText('explicit failure')).toBeTruthy();
+    expect(screen.getByRole('alert')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Dismiss' })).toBeTruthy();
   });
 });

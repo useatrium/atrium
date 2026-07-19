@@ -26,9 +26,12 @@ import {
   FileIcon,
   GearIcon,
   LockIcon,
+  PanelLeftCloseIcon,
+  PanelLeftOpenIcon,
   PinIcon,
   PinOffIcon,
 } from './icons';
+import { SIDEBAR_COLLAPSED_STORAGE_KEY } from '../storageKeys';
 import {
   SIDEBAR_FALLBACK_WIDTH,
   SIDEBAR_MAX_VW,
@@ -52,6 +55,15 @@ function sidebarItemClass(active: boolean, level: UnreadLevel | false, muted = f
           ? 'text-fg-faint hover:bg-surface-overlay/70 hover:text-fg-muted'
           : 'text-fg-tertiary hover:bg-surface-overlay/70 hover:text-fg-body'
   }`;
+}
+
+function loadSidebarCollapsed(): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    return window.localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY) === 'true';
+  } catch {
+    return false;
+  }
 }
 
 function SidebarImpl({
@@ -109,6 +121,21 @@ function SidebarImpl({
 }) {
   const { width: sidebarWidth, resizing, startResize, resetWidth, onResizeKeyDown } = useSidebarWidth();
   const sizing = sidebarSizing(sidebarWidth);
+  const [collapsed, setCollapsed] = useState(loadSidebarCollapsed);
+  const collapseButtonRef = useRef<HTMLButtonElement | null>(null);
+  const expandButtonRef = useRef<HTMLButtonElement | null>(null);
+  const setDesktopCollapsed = useCallback((next: boolean, transferFocus: boolean) => {
+    setCollapsed(next);
+    try {
+      window.localStorage.setItem(SIDEBAR_COLLAPSED_STORAGE_KEY, String(next));
+    } catch {
+      // Storage may be unavailable in private mode; the in-memory preference still works.
+    }
+    if (!transferFocus) return;
+    window.requestAnimationFrame(() => {
+      (next ? expandButtonRef : collapseButtonRef).current?.focus();
+    });
+  }, []);
   const sidebarMaxWidth =
     typeof window === 'undefined'
       ? SIDEBAR_FALLBACK_WIDTH
@@ -425,9 +452,11 @@ function SidebarImpl({
         }`}
       />
       <nav
-        className={`fixed inset-y-0 left-0 z-overlay flex w-72 max-w-[85vw] shrink-0 flex-col border-r border-edge bg-surface-raised shadow-2xl motion-safe:transition-transform motion-reduce:transition-none md:relative md:z-auto md:w-(--sidebar-w) md:max-w-none md:translate-x-0 md:bg-surface-raised md:shadow-none md:transition-none ${
-          isOpen ? 'translate-x-0' : '-translate-x-full'
-        } ${sizing.className}`}
+        data-testid="sidebar"
+        data-collapsed={collapsed || undefined}
+        className={`fixed inset-y-0 left-0 z-overlay flex w-72 max-w-[85vw] shrink-0 flex-col border-r border-edge bg-surface-raised shadow-2xl motion-safe:transition-transform motion-reduce:transition-none md:relative md:z-auto md:max-w-none md:translate-x-0 md:bg-surface-raised md:shadow-none md:transition-[width] md:duration-200 motion-reduce:md:transition-none ${
+          collapsed ? 'md:w-13' : 'md:w-(--sidebar-w)'
+        } ${isOpen ? 'translate-x-0' : '-translate-x-full'} ${sizing.className}`}
         style={{ '--sidebar-w': '224px', ...sizing.style } as CSSProperties}
       >
         {/* biome-ignore lint/a11y/useSemanticElements: resizable pane separator uses a div for pointer capture and custom sizing. */}
@@ -445,10 +474,12 @@ function SidebarImpl({
           onDoubleClick={resetWidth}
           onKeyDown={onResizeKeyDown}
           className={`absolute inset-y-0 -right-0.5 z-raised w-1.5 cursor-col-resize touch-none transition-colors hover:bg-accent/50 focus-visible:outline-2 focus-visible:outline-accent max-md:hidden ${
-            resizing ? 'bg-accent/50' : ''
-          }`}
+            collapsed ? 'md:hidden' : ''
+          } ${resizing ? 'bg-accent/50' : ''}`}
         />
-        <header className="flex h-12 shrink-0 items-center gap-2 border-b border-edge px-4">
+        <header
+          className={`flex h-12 shrink-0 items-center gap-2 border-b border-edge px-4 ${collapsed ? 'md:hidden' : ''}`}
+        >
           <span className="truncate text-sm font-bold tracking-tight text-fg">{workspaceName}</span>
           <span
             role="status"
@@ -458,9 +489,98 @@ function SidebarImpl({
           >
             <span className="sr-only">connection: {wsStatus}</span>
           </span>
+          <Tooltip content="Collapse navigation">
+            <button
+              ref={collapseButtonRef}
+              type="button"
+              onClick={(event) => setDesktopCollapsed(true, event.detail === 0)}
+              aria-label="Collapse navigation"
+              className="hidden size-7 shrink-0 items-center justify-center rounded-md text-fg-muted hover:bg-surface-overlay hover:text-fg focus-visible:outline-2 focus-visible:outline-accent md:inline-flex"
+            >
+              <PanelLeftCloseIcon size={14} />
+            </button>
+          </Tooltip>
         </header>
 
-        <div className="@container flex-1 overflow-y-auto px-2 py-3">
+        {collapsed && (
+          <div data-testid="sidebar-collapsed-rail" className="hidden min-h-0 flex-1 flex-col items-center md:flex">
+            <div className="flex h-12 w-full shrink-0 items-center justify-center border-b border-edge">
+              <Tooltip content={`Expand navigation · ${workspaceName}`} side="right">
+                <button
+                  ref={expandButtonRef}
+                  type="button"
+                  onClick={(event) => setDesktopCollapsed(false, event.detail === 0)}
+                  aria-label="Expand navigation"
+                  className="relative grid size-9 place-items-center rounded-md text-fg-muted hover:bg-surface-overlay hover:text-fg focus-visible:outline-2 focus-visible:outline-accent"
+                >
+                  <span className="text-xs font-bold text-fg">
+                    {workspaceName.trim().charAt(0).toUpperCase() || 'A'}
+                  </span>
+                  <PanelLeftOpenIcon size={12} className="absolute -bottom-0.5 -right-0.5 text-fg-muted" />
+                  <span
+                    role="status"
+                    aria-label={`connection: ${wsStatus}`}
+                    className={`absolute -left-0.5 -top-0.5 size-2 rounded-full ${connectionDotClass}`}
+                  />
+                </button>
+              </Tooltip>
+            </div>
+            <div className="flex w-full flex-col items-center gap-1 py-2">
+              <Tooltip content="Inbox" side="right">
+                <button
+                  type="button"
+                  aria-current={activeSurface === 'activity' ? 'page' : undefined}
+                  onClick={onOpenActivity}
+                  aria-label={activityCounts?.unread ? `Inbox, ${activityCounts.unread} unread` : 'Inbox'}
+                  className={`relative grid size-10 place-items-center rounded-md text-sm font-bold ${
+                    activeSurface === 'activity'
+                      ? 'bg-accent/20 text-fg'
+                      : 'text-fg-muted hover:bg-surface-overlay hover:text-fg'
+                  }`}
+                >
+                  @
+                  {(activityCounts?.unread ?? 0) > 0 && (
+                    <span className="absolute right-1 top-1 size-2 rounded-full bg-danger-strong" aria-hidden="true" />
+                  )}
+                </button>
+              </Tooltip>
+              <Tooltip content="Files" side="right">
+                <button
+                  type="button"
+                  aria-current={activeSurface === 'files' ? 'page' : undefined}
+                  onClick={onOpenFiles}
+                  aria-label="Files"
+                  className={`grid size-10 place-items-center rounded-md ${
+                    activeSurface === 'files'
+                      ? 'bg-accent/20 text-fg'
+                      : 'text-fg-muted hover:bg-surface-overlay hover:text-fg'
+                  }`}
+                >
+                  <FileIcon size={16} />
+                </button>
+              </Tooltip>
+            </div>
+            <div className="mt-auto w-full border-t border-edge py-2">
+              <Tooltip content="Settings" side="right">
+                <button
+                  type="button"
+                  aria-current={activeSurface === 'settings' ? 'page' : undefined}
+                  onClick={onOpenSettings}
+                  aria-label="Settings"
+                  className={`mx-auto grid size-10 place-items-center rounded-md ${
+                    activeSurface === 'settings'
+                      ? 'bg-accent/20 text-fg'
+                      : 'text-fg-muted hover:bg-surface-overlay hover:text-fg'
+                  }`}
+                >
+                  <GearIcon size={16} />
+                </button>
+              </Tooltip>
+            </div>
+          </div>
+        )}
+
+        <div className={`@container flex-1 overflow-y-auto px-2 py-3 ${collapsed ? 'md:hidden' : ''}`}>
           <section>
             <h2 className={SIDEBAR_GROUP_TITLE_CLASS}>Workspace</h2>
             <div className={SIDEBAR_PANEL_CLASS}>
@@ -658,7 +778,11 @@ function SidebarImpl({
           </section>
         </div>
 
-        <footer className="relative flex items-center gap-1 border-t border-edge px-4 py-2.5">
+        <footer
+          className={`relative flex items-center gap-1 border-t border-edge px-4 py-2.5 ${
+            collapsed ? 'md:hidden' : ''
+          }`}
+        >
           <div className="min-w-0 flex-1">
             <div className="truncate text-xs font-medium text-fg-body">{me.displayName}</div>
             <div className="truncate text-2xs text-fg-muted">@{me.handle}</div>

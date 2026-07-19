@@ -12,8 +12,8 @@ export type SegmentedControlItem<T extends string> = {
 
 /**
  * The shared segmented control: one `role="group"` of `aria-pressed` buttons on
- * the shell/item recipe distilled from the sessions ViewToggle. Used by the
- * layout ViewToggle, the dock's Mine/All filter, and the attention filter tabs.
+ * the shell/item recipe distilled from the former layout toggle. Used by the
+ * dock's Mine/All filter and the attention filter tabs.
  */
 export function SegmentedControl<T extends string>({
   value,

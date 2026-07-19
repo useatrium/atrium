@@ -1,5 +1,5 @@
 import { expect, test, type Locator } from '@playwright/test';
-import { login, unique } from './helpers.js';
+import { login, openConfiguredAgentDialog, unique } from './helpers.js';
 
 // Fill a controlled input and confirm the value committed before the next action.
 // (The dialog's focus stability is fixed in SpawnDialog; the toPass retry is
@@ -56,9 +56,7 @@ test('configured spawn posts working and reference repo specs', async ({ page })
     });
   });
 
-  await page.locator('#main-content').getByRole('button', { name: 'New agent' }).click();
-  const dialog = page.getByRole('dialog', { name: 'New agent' });
-  await expect(dialog).toBeVisible();
+  const dialog = await openConfiguredAgentDialog(page);
 
   await fillField(dialog.getByPlaceholder('What should the agent do?'), 'inspect repo wiring');
   await fillField(dialog.getByPlaceholder('owner/name').first(), ' acme/app ');
@@ -186,7 +184,7 @@ test('configured spawn posts private repo flags and GitHub identity override', a
     });
   });
 
-  await page.locator('#main-content').getByRole('button', { name: 'New agent' }).click();
+  await openConfiguredAgentDialog(page);
   await fillField(page.getByPlaceholder('What should the agent do?'), 'inspect private repo wiring');
   await fillField(page.getByPlaceholder('owner/name').first(), ' acme/private ');
   await page.getByRole('checkbox', { name: 'Private repo' }).check();
@@ -227,7 +225,7 @@ test('configured spawn blocks private repos until GitHub is connected', async ({
   });
   await login(page, unique('repoer-blocked'), 'Repo Blocked Tester');
 
-  await page.locator('#main-content').getByRole('button', { name: 'New agent' }).click();
+  await openConfiguredAgentDialog(page);
   await fillField(page.getByPlaceholder('What should the agent do?'), 'inspect private repo');
   await fillField(page.getByPlaceholder('owner/name').first(), ' acme/private ');
   await page.getByRole('checkbox', { name: 'Private repo' }).check();

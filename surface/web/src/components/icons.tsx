@@ -334,6 +334,28 @@ export function PanelRightCloseIcon(props: IconProps) {
   );
 }
 
+/** Collapse the persistent left navigation to its compact rail. */
+export function PanelLeftCloseIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <path d="M9 3v18" />
+      <path d="m16 9-3 3 3 3" />
+    </Icon>
+  );
+}
+
+/** Restore the full left navigation from its compact rail. */
+export function PanelLeftOpenIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <path d="M9 3v18" />
+      <path d="m14 9 3 3-3 3" />
+    </Icon>
+  );
+}
+
 /** Detach — open in a new browser tab. */
 export function ExternalLinkIcon(props: IconProps) {
   return (

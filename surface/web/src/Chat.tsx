@@ -58,8 +58,7 @@ import { Gallery } from './sessions/Gallery';
 import type { TranscriptDiscussPayload } from './sessions/SessionPane';
 import { ConversationPanel } from './sessions/ConversationPanel';
 import { AgentAttentionDialog } from './sessions/AgentAttentionView';
-import { AgentDock, sidebarImmersionClassName } from './sessions/AgentDock';
-import { useAgentDockImmersed } from './sessions/useAgentDockPrefs';
+import { AgentDock } from './sessions/AgentDock';
 import { ChannelAgentPresence } from './sessions/ChannelAgentPresence';
 import { buildAgentCommands } from './sessions/agentCommands';
 // === spine additions === Reuse SessionPane's canonical work-tab URL grammar.
@@ -68,7 +67,6 @@ import { loadSessionPaneWidth, sessionPaneSizing } from './sessions/useSessionPa
 import { SessionsContextProvider } from './sessions/SessionsContext';
 import { SpawnDialog } from './sessions/SpawnDialog';
 import { parseSummonSigil } from './sessions/spawn';
-import { ViewToggle } from './sessions/ViewToggle';
 import { isPendingSessionId, sessionFromWire } from './sessions/types';
 import { adoptPrefs, useTheme } from './theme';
 import { channelAvatarName, channelLabel, dmPartner } from '@atrium/surface-client';
@@ -638,6 +636,36 @@ export function Chat({
       enqueueOp,
       me,
     });
+  const changeSessionArchived = useCallback(
+    async (sessionId: string, archived: boolean, previousArchivedAt: string | null) => {
+      try {
+        await setSessionArchived(sessionId, archived, previousArchivedAt);
+      } catch (error) {
+        showErrorToast(
+          error instanceof Error
+            ? error.message
+            : archived
+              ? "Couldn't archive the agent."
+              : "Couldn't restore the agent.",
+        );
+        throw error;
+      }
+    },
+    [setSessionArchived],
+  );
+  const changeSessionPinned = useCallback(
+    async (sessionId: string, pinned: boolean, previousPinned: boolean) => {
+      try {
+        await setSessionPinned(sessionId, pinned, previousPinned);
+      } catch (error) {
+        showErrorToast(
+          error instanceof Error ? error.message : pinned ? "Couldn't pin the agent." : "Couldn't unpin the agent.",
+        );
+        throw error;
+      }
+    },
+    [setSessionPinned],
+  );
 
   useEffect(() => {
     const onStorage = (event: StorageEvent) => {
@@ -775,7 +803,6 @@ export function Chat({
   const [dockToggleSeq, setDockToggleSeq] = useState(0);
   // Configured-spawn dialog (the summon sigil is the quick path).
   const [spawnOpen, setSpawnOpen] = useState(false);
-  const [immersed, setImmersed] = useAgentDockImmersed();
   const [agentDockFilterChannel, setAgentDockFilterChannel] = useState<string | null>(null);
   const [attentionOpen, setAttentionOpen] = useState(false);
   const [spawnInitialTask, setSpawnInitialTask] = useState('');
@@ -862,7 +889,6 @@ export function Chat({
     paneWatchers,
     sessionPaneLayout,
     setFocused,
-    setView: setPaneView,
     spectators,
     toggleFocus: togglePaneFocus,
     view,
@@ -1775,16 +1801,6 @@ export function Chat({
     togglePaneFocus();
   }, [focused, togglePaneFocus, writeFocusViewParam]);
 
-  const setView = useCallback(
-    (next: Parameters<typeof setPaneView>[0]) => {
-      if (next === 'channel') closeSession();
-      else {
-        writeFocusViewParam(next === 'focus');
-        setPaneView(next);
-      }
-    },
-    [closeSession, setPaneView, writeFocusViewParam],
-  );
   // Match SessionPane's persisted width so the pane doesn't jump when it
   // replaces the loading placeholder; read storage once per opened session,
   // not on every Chat render.
@@ -2021,7 +2037,6 @@ export function Chat({
     }
     if (active) void calls.startCall(active.id);
   }, [active, calls, callsAvailable]);
-  const newAgentDisabled = !active;
   const voiceCallDisabled = callsAvailable && (!active || calls.starting || calls.activeCall != null);
   const voiceCallAriaDisabled = !callsAvailable || voiceCallDisabled;
   const voiceCallTooltip = !callsAvailable
@@ -2275,11 +2290,7 @@ export function Chat({
   }, [openSettingsSurface]);
   const shell = (
     <div className="group/shell flex h-dvh overflow-hidden">
-      <div
-        data-testid="chat-sidebar-wrapper"
-        data-immersed={immersed || undefined}
-        className={sidebarImmersionClassName(immersed)}
-      >
+      <div data-testid="chat-sidebar-wrapper" className="contents">
         <Sidebar
           workspaceName={workspace.name}
           channels={state.channels}
@@ -2328,7 +2339,7 @@ export function Chat({
               </span>
             </button>
             <h1
-              className="flex min-w-0 flex-1 items-center gap-1.5 truncate text-sm font-bold text-fg md:flex-initial"
+              className="flex min-w-0 flex-1 items-center gap-1.5 truncate text-sm font-bold text-fg"
               aria-label={
                 showSettingsSurface
                   ? 'Settings'
@@ -2408,35 +2419,10 @@ export function Chat({
                   }}
                 />
               )}
-            {showNonChatSurface ? (
+            {showNonChatSurface && (
               <Button variant="secondary" size="sm" onClick={openChatSurface} className="md:ml-auto">
                 Chat
               </Button>
-            ) : (
-              <Tooltip content={newAgentDisabled ? 'Select a channel to start an agent' : 'New agent'}>
-                <Button
-                  variant="primary"
-                  size="sm"
-                  onClick={() => {
-                    setSpawnInitialTask('');
-                    setSpawnOpen(true);
-                  }}
-                  aria-disabled={newAgentDisabled || undefined}
-                  aria-label="New agent"
-                  // The dock owns agent creation on desktop, so the header pill is a quiet
-                  // secondary control on md+ (matching the Search button) — but stays the
-                  // filled primary spawn affordance below md, where the dock spine is hidden.
-                  className="aria-disabled:bg-surface-overlay aria-disabled:text-fg-muted md:ml-auto md:border md:border-edge md:bg-surface-raised md:font-medium md:text-fg-muted md:hover:bg-surface-overlay md:hover:text-fg-body"
-                >
-                  <PlusIcon size={14} />
-                  <span className="hidden sm:inline">New agent</span>
-                </Button>
-              </Tooltip>
-            )}
-            {!showNonChatSurface && state.openSessionId && (
-              <div className="hidden md:flex">
-                <ViewToggle view={view} hasSession onSetView={setView} />
-              </div>
             )}
             {/* Calls unconfigured: keep the phone visible but grayed with a setup
               hint (tooltip + click), so the feature is discoverable instead of
@@ -2517,7 +2503,6 @@ export function Chat({
                   presentUsers={presentUsers}
                   now={Date.now()}
                   onOpenDock={(channelId) => {
-                    setImmersed(false);
                     setAgentDockFilterChannel(channelId);
                   }}
                 />
@@ -2800,10 +2785,8 @@ export function Chat({
                     onStopTurn: stopTurn,
                     failedCancel: failedCancels[conversationSession.id] === true,
                     onClearFailedCancel: () => clearFailedCancel(conversationSession.id),
-                    onSetArchived: (sessionId, archived, previousArchivedAt) =>
-                      void setSessionArchived(sessionId, archived, previousArchivedAt).catch(() => {}),
-                    onSetPinned: (sessionId, pinned, previousPinned) =>
-                      void setSessionPinned(sessionId, pinned, previousPinned).catch(() => {}),
+                    onSetArchived: changeSessionArchived,
+                    onSetPinned: changeSessionPinned,
                     providerCredentials,
                     githubConnection,
                     onConnectProvider: setProviderDialog,
@@ -2868,23 +2851,14 @@ export function Chat({
         channels={state.channels}
         activeChannelId={activeChannelId}
         focusedSessionId={state.openSessionId}
-        immersed={immersed}
         meId={me.id}
         onFocusAgent={onFocusAgent}
-        onToggleImmersed={() => setImmersed((value) => !value)}
-        onNewAgent={() => {
-          setSpawnInitialTask('');
-          setSpawnOpen(true);
-        }}
+        mobileNavigationOpen={isSidebarOpen}
         filterChannelId={agentDockFilterChannel}
         onClearFilter={() => setAgentDockFilterChannel(null)}
         onFilterChannel={(channelId) => setAgentDockFilterChannel(channelId)}
-        onSetArchived={(sessionId, archived, previousArchivedAt) =>
-          void setSessionArchived(sessionId, archived, previousArchivedAt).catch(() => {})
-        }
-        onSetPinned={(sessionId, pinned, previousPinned) =>
-          void setSessionPinned(sessionId, pinned, previousPinned).catch(() => {})
-        }
+        onSetArchived={changeSessionArchived}
+        onSetPinned={changeSessionPinned}
         onOpenAttention={() => setAttentionOpen(true)}
         toggleOpenSeq={dockToggleSeq}
       />

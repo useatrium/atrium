@@ -1,4 +1,6 @@
-// The Agent Dock frame: resting spine ↔ open list ↔ immersed. The list layer
+// The Agent Dock frame: resting spine ↔ open list. Full-width focus belongs to
+// the selected agent session, while left-navigation collapse belongs to the
+// left rail. The list layer
 // (groups/rows) lives in AgentDockRows.tsx and receives everything it needs via
 // AgentRowContext — frame work and row work stay in separate files.
 
@@ -6,16 +8,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, MouseEvent as ReactMouseEvent } from 'react';
 import { sessionDriverId } from '@atrium/surface-client';
 import type { Channel } from '@atrium/surface-client';
-import {
-  BotIcon,
-  ChevronDownIcon,
-  ChevronRightIcon,
-  ExpandIcon,
-  PlusIcon,
-  SearchIcon,
-  ShrinkIcon,
-  XIcon,
-} from '../components/icons';
+import { BotIcon, ChevronDownIcon, ChevronRightIcon, SearchIcon, XIcon } from '../components/icons';
 import { IconButton, SegmentedControl } from '../components/ui';
 import { AgentDockRovingProvider, AgentGroup, type AgentRowContext } from './AgentDockRows';
 import { useNow } from './SessionCard';
@@ -30,24 +23,24 @@ import {
 } from './useSessionPaneWidth';
 import { agentDockCounts, agentDockGroups, type AgentDockGroup } from './useAgentDock';
 import { EscapeLayer, escapeHasLocalMeaning, useEscapeLayer } from '../lib/escapeLayers';
+import { showActionToast } from '../components/Toasts';
 
 export type AgentDockProps = {
   sessions: Record<string, Session>;
   channels: Channel[];
   activeChannelId: string | null;
   focusedSessionId: string | null;
-  immersed: boolean;
   /** The viewing user, for mine-vs-others treatment in rows and counts. */
   meId: string | null;
   onFocusAgent: (id: string) => void;
-  onToggleImmersed: () => void;
-  onNewAgent: () => void;
+  /** Mobile navigation temporarily owns the overlay layer and hides this dock. */
+  mobileNavigationOpen?: boolean;
   filterChannelId?: string | null;
   onClearFilter?: () => void;
   /** Filter the dock to a workstream (rows' channel tags reuse the presence-link behavior). */
   onFilterChannel?: (channelId: string) => void;
-  onSetArchived?: (sessionId: string, archived: boolean, previousArchivedAt: string | null) => void;
-  onSetPinned?: (sessionId: string, pinned: boolean, previousPinned: boolean) => void;
+  onSetArchived?: (sessionId: string, archived: boolean, previousArchivedAt: string | null) => Promise<void> | void;
+  onSetPinned?: (sessionId: string, pinned: boolean, previousPinned: boolean) => Promise<void> | void;
   /** Foundation seam for the full Needs-you view; the dock lane will place it. */
   onOpenAttention?: () => void;
   /**
@@ -79,10 +72,6 @@ function isOlderHistorySession(session: Session, now: number): boolean {
   return now - sessionHistoryTimestamp(session) > HISTORY_OLDER_MS;
 }
 
-export function sidebarImmersionClassName(immersed: boolean): string {
-  return immersed ? 'contents md:block md:w-0 md:shrink-0 md:overflow-hidden' : 'contents';
-}
-
 function GroupRows({
   group,
   now,
@@ -109,59 +98,9 @@ function GroupRows({
   );
 }
 
-function SoftenedGroup({
-  group,
-  now,
-  focusedSessionId,
-  onFocusAgent,
-  context,
-}: {
-  group: AgentDockGroup;
-  now: number;
-  focusedSessionId: string | null;
-  onFocusAgent: (id: string) => void;
-  context: AgentRowContext;
-}) {
-  const [expanded, setExpanded] = useState(false);
-  return (
-    <details
-      open={expanded}
-      data-testid="agent-dock-softened-group"
-      data-kind={group.kind}
-      className="group/disclosure border-t border-edge pt-2 opacity-60 open:opacity-80"
-    >
-      {/* biome-ignore lint/a11y/noStaticElementInteractions: summary is the native interactive disclosure control. */}
-      <summary
-        onClick={(event) => {
-          event.preventDefault();
-          setExpanded((value) => !value);
-        }}
-        className="flex cursor-pointer list-none items-center gap-1.5 rounded px-1 py-1 text-xs font-semibold text-fg-muted hover:bg-surface-overlay hover:text-fg-secondary focus-visible:outline-2 focus-visible:outline-accent [&::-webkit-details-marker]:hidden"
-      >
-        <ChevronRightIcon size={12} className="group-open/disclosure:hidden" />
-        <ChevronDownIcon size={12} className="hidden group-open/disclosure:block" />
-        <span>{group.label}</span>
-        <span className="tabular-nums text-fg-body">{group.sessions.length}</span>
-      </summary>
-      {expanded && (
-        <div className="mt-1">
-          <GroupRows
-            group={group}
-            now={now}
-            focusedSessionId={focusedSessionId}
-            onFocusAgent={onFocusAgent}
-            context={context}
-          />
-        </div>
-      )}
-    </details>
-  );
-}
-
 function HistoryGroup({
   group,
   now,
-  softened,
   focusedSessionId,
   onFocusAgent,
   context,
@@ -169,7 +108,6 @@ function HistoryGroup({
 }: {
   group: AgentDockGroup;
   now: number;
-  softened: boolean;
   focusedSessionId: string | null;
   onFocusAgent: (id: string) => void;
   context: AgentRowContext;
@@ -179,20 +117,30 @@ function HistoryGroup({
   const [olderExpanded, setOlderExpanded] = useState(false);
   const recent = group.sessions.filter((session) => !isOlderHistorySession(session, now));
   const older = group.sessions.filter((session) => isOlderHistorySession(session, now));
-  const clearHistory = (event: ReactMouseEvent<HTMLButtonElement>) => {
+  const clearHistory = async (event: ReactMouseEvent<HTMLButtonElement>) => {
     event.preventDefault();
     event.stopPropagation();
     if (!onSetArchived || !window.confirm(`Archive ${group.sessions.length} terminal sessions?`)) return;
-    for (const session of group.sessions) {
-      if (isTerminalSessionStatus(session.status)) onSetArchived(session.id, true, session.archivedAt);
-    }
+    const terminal = group.sessions.filter((session) => isTerminalSessionStatus(session.status));
+    const results = await Promise.allSettled(
+      terminal.map(async (session) => {
+        await onSetArchived(session.id, true, session.archivedAt);
+        return session;
+      }),
+    );
+    const archived = results.flatMap((result) => (result.status === 'fulfilled' ? [result.value] : []));
+    if (archived.length === 0) return;
+    showActionToast(`Archived ${archived.length} ${archived.length === 1 ? 'agent' : 'agents'}.`, 'Undo', async () => {
+      const archivedAt = new Date().toISOString();
+      await Promise.all(archived.map((session) => onSetArchived(session.id, false, archivedAt)));
+    });
   };
 
   return (
     <details
       open={expanded}
       data-testid="agent-dock-history"
-      className={`group/history relative border-t border-edge pt-2 ${softened ? 'opacity-60 open:opacity-80' : ''}`}
+      className="group/history relative border-t border-edge pt-2"
     >
       {/* biome-ignore lint/a11y/noStaticElementInteractions: summary is the native interactive disclosure control. */}
       <summary
@@ -212,10 +160,10 @@ function HistoryGroup({
       {onSetArchived && (
         <button
           type="button"
-          onClick={clearHistory}
+          onClick={(event) => void clearHistory(event)}
           className="absolute right-1 top-2 rounded px-1.5 py-1 text-2xs font-medium text-fg-muted hover:bg-surface-overlay hover:text-fg focus-visible:outline-2 focus-visible:outline-accent"
         >
-          Clear
+          Archive all…
         </button>
       )}
       {expanded && (
@@ -268,11 +216,9 @@ export function AgentDock({
   channels,
   activeChannelId,
   focusedSessionId,
-  immersed,
   meId,
   onFocusAgent,
-  onToggleImmersed,
-  onNewAgent,
+  mobileNavigationOpen = false,
   filterChannelId,
   onClearFilter,
   onFilterChannel,
@@ -294,8 +240,8 @@ export function AgentDock({
   const headingRef = useRef<HTMLHeadingElement>(null);
 
   useEffect(() => {
-    if (immersed || filterChannelId) setOpen(true);
-  }, [filterChannelId, immersed, setOpen]);
+    if (filterChannelId) setOpen(true);
+  }, [filterChannelId, setOpen]);
 
   // Respond to Chat's toggle requests (Mod+. and the palette command). Skip the
   // initial value so the dock doesn't flip open on mount.
@@ -321,11 +267,10 @@ export function AgentDock({
       } else if (escapeHasLocalMeaning(event)) {
         return false;
       }
-      if (immersed) onToggleImmersed();
-      else setOpen(false);
+      setOpen(false);
       return true;
     },
-    open || immersed,
+    open,
   );
 
   // The Triage entry is GLOBAL — it always matches the Attention view it opens
@@ -340,9 +285,18 @@ export function AgentDock({
     if (!mineFilter || !meId) return sessions;
     return Object.fromEntries(Object.entries(sessions).filter(([, session]) => sessionDriverId(session) === meId));
   }, [meId, mineFilter, sessions]);
+  const scopedSessions = useMemo(
+    () =>
+      filterChannelId
+        ? Object.fromEntries(
+            Object.entries(listSessions).filter(([, session]) => session.channelId === filterChannelId),
+          )
+        : listSessions,
+    [filterChannelId, listSessions],
+  );
   const groups = useMemo(
-    () => agentDockGroups(listSessions, { activeChannelId, now, channels }),
-    [activeChannelId, channels, listSessions, now],
+    () => agentDockGroups(scopedSessions, { activeChannelId, now, channels }),
+    [activeChannelId, channels, now, scopedSessions],
   );
   const visibleGroups = useMemo(() => {
     const normalized = query.trim().toLowerCase();
@@ -350,12 +304,9 @@ export function AgentDock({
     return groups
       .map((group) => ({
         ...group,
-        sessions:
-          filterChannelId && group.kind === 'needs'
-            ? group.sessions
-            : group.sessions.filter((session) =>
-                [session.title, session.harness, group.label].some((value) => value.toLowerCase().includes(normalized)),
-              ),
+        sessions: group.sessions.filter((session) =>
+          [session.title, session.harness, group.label].some((value) => value.toLowerCase().includes(normalized)),
+        ),
       }))
       .filter((group) => group.sessions.length > 0);
   }, [filterChannelId, groups, query]);
@@ -387,7 +338,7 @@ export function AgentDock({
     [channelNames, meId, onFilterChannel, onSetArchived, onSetPinned],
   );
   const filterChannel = filterChannelId ? channels.find((channel) => channel.id === filterChannelId) : undefined;
-  const state = immersed ? 'immersed' : open ? 'open' : 'resting';
+  const state = open ? 'open' : 'resting';
 
   // Hand focus across the open↔collapse transition only — never on mount or an
   // unrelated re-render (the ref guard skips those). Opening (also via the
@@ -428,28 +379,10 @@ export function AgentDock({
           key={group.key}
           group={group}
           now={now}
-          softened={Boolean(filterChannelId)}
           focusedSessionId={focusedSessionId}
           onFocusAgent={onFocusAgent}
           context={rowContext}
           onSetArchived={onSetArchived}
-        />
-      );
-    }
-
-    const softened =
-      Boolean(filterChannelId) &&
-      group.kind !== 'needs' &&
-      !(group.kind === 'channel' && group.channelId === filterChannelId);
-    if (softened) {
-      return (
-        <SoftenedGroup
-          key={group.key}
-          group={group}
-          now={now}
-          focusedSessionId={focusedSessionId}
-          onFocusAgent={onFocusAgent}
-          context={rowContext}
         />
       );
     }
@@ -472,20 +405,23 @@ export function AgentDock({
         <button
           type="button"
           aria-label="Close agent dock sheet"
-          onClick={() => (immersed ? onToggleImmersed() : setOpen(false))}
-          className="fixed inset-0 z-overlay cursor-default bg-black/50 md:hidden"
+          onClick={() => setOpen(false)}
+          className={`fixed inset-0 z-overlay cursor-default bg-black/50 md:hidden ${
+            mobileNavigationOpen ? 'max-md:hidden' : ''
+          }`}
         />
       )}
       <aside
         data-testid="agent-dock"
         data-state={state}
+        data-mobile-suppressed={mobileNavigationOpen || undefined}
         aria-label="Agents"
         className={`flex min-h-0 shrink-0 flex-col bg-surface-raised motion-safe:transition-[width,height] motion-safe:duration-200 motion-reduce:transition-none ${
+          mobileNavigationOpen ? 'max-md:hidden' : ''
+        } ${
           state === 'resting'
             ? 'fixed bottom-[calc(1rem+env(safe-area-inset-bottom))] right-[calc(1rem+env(safe-area-inset-right))] z-overlay size-12 rounded-full border border-edge-strong shadow-lg md:relative md:inset-auto md:z-auto md:h-full md:w-13 md:rounded-none md:border-y-0 md:border-r-0 md:border-l md:border-edge md:shadow-none'
-            : immersed
-              ? 'fixed inset-0 z-overlay h-dvh w-full border-edge shadow-2xl md:relative md:inset-auto md:z-auto md:h-full md:w-(--agent-dock-w) md:border-y-0 md:border-r-0 md:border-l md:shadow-none'
-              : 'fixed inset-x-0 bottom-0 z-overlay h-[60dvh] w-full rounded-t-xl border border-edge-strong shadow-2xl md:relative md:inset-auto md:z-auto md:h-full md:w-(--agent-dock-w) md:rounded-none md:border-y-0 md:border-r-0 md:border-l md:border-edge md:shadow-none'
+            : 'fixed inset-x-0 bottom-0 z-overlay h-[60dvh] w-full rounded-t-xl border border-edge-strong shadow-2xl md:relative md:inset-auto md:z-auto md:h-full md:w-(--agent-dock-w) md:rounded-none md:border-y-0 md:border-r-0 md:border-l md:border-edge md:shadow-none'
         }`}
         style={{ '--agent-dock-w': `${AGENT_DOCK_FALLBACK_WIDTH}px`, ...dockSize.style } as CSSProperties}
       >
@@ -519,7 +455,7 @@ export function AgentDock({
               type="button"
               aria-label={`Open agent dock${badgeCounts.needsYou > 0 ? `, ${badgeCounts.needsYou} need you` : ''}`}
               onClick={() => setOpen(true)}
-              className="flex size-12 flex-none items-center justify-center rounded-full text-fg-muted hover:bg-surface-overlay hover:text-fg focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-accent md:min-h-0 md:w-full md:flex-1 md:flex-col md:gap-3 md:rounded-sm md:py-1"
+              className="flex size-12 flex-none items-center justify-center rounded-full text-fg-muted hover:bg-surface-overlay hover:text-fg focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-accent md:h-auto md:min-h-0 md:w-full md:flex-none md:flex-col md:gap-3 md:rounded-sm md:py-1"
             >
               <span className="relative grid size-8 place-items-center rounded-md bg-surface-overlay/70">
                 <BotIcon size={16} />
@@ -556,14 +492,6 @@ export function AgentDock({
                 </span>
               )}
             </button>
-            <button
-              type="button"
-              onClick={onNewAgent}
-              aria-label="New agent"
-              className="mt-2 hidden size-9 shrink-0 place-items-center rounded-md text-fg-muted hover:bg-surface-overlay hover:text-fg focus-visible:outline-2 focus-visible:outline-accent md:grid"
-            >
-              <PlusIcon size={16} />
-            </button>
           </div>
         ) : (
           <>
@@ -578,26 +506,12 @@ export function AgentDock({
                 >
                   Agents
                 </h2>
-                <span className="mr-1 text-xs tabular-nums text-fg-body">{total}</span>
-                {!immersed && (
-                  <IconButton
-                    onClick={() => setOpen(false)}
-                    aria-label="Collapse agent dock"
-                    className="max-md:size-11"
-                  >
-                    <XIcon size={16} className="md:hidden" />
-                    <ChevronRightIcon size={14} className="max-md:hidden" />
-                  </IconButton>
-                )}
-                <IconButton
-                  onClick={onToggleImmersed}
-                  aria-label={immersed ? 'Exit immersed agent dock' : 'Immerse agent dock'}
-                  className="max-md:size-11"
-                >
-                  {immersed ? <ShrinkIcon size={14} /> : <ExpandIcon size={14} />}
-                </IconButton>
-                <IconButton onClick={onNewAgent} aria-label="New agent" variant="primary" className="max-md:size-11">
-                  <PlusIcon size={14} />
+                <span data-testid="agent-dock-total" className="mr-1 text-xs tabular-nums text-fg-body">
+                  {total}
+                </span>
+                <IconButton onClick={() => setOpen(false)} aria-label="Collapse agent dock" className="max-md:size-11">
+                  <XIcon size={16} className="md:hidden" />
+                  <ChevronRightIcon size={14} className="max-md:hidden" />
                 </IconButton>
               </div>
               <label className="mt-2 flex h-11 items-center gap-2 rounded-md border border-edge bg-surface px-2 text-fg-muted focus-within:border-edge-focus md:h-8">
@@ -659,10 +573,20 @@ export function AgentDock({
               ) : (
                 <div className="px-3 py-8 text-center">
                   <p className="text-xs font-medium text-fg-secondary">
-                    {query.trim() ? 'No matching agents' : 'No agents in this workstream'}
+                    {query.trim()
+                      ? 'No matching agents'
+                      : mineFilter && meId
+                        ? 'No agents assigned to you'
+                        : filterChannelId
+                          ? 'No agents in this workstream'
+                          : 'No agents yet'}
                   </p>
                   <p className="mt-1 text-2xs leading-relaxed text-fg-muted">
-                    {query.trim() ? 'Try a title, harness, or channel name.' : 'New agent work will appear here.'}
+                    {query.trim()
+                      ? 'Try a title, harness, or channel name.'
+                      : mineFilter && meId
+                        ? 'Switch to All to see team agents.'
+                        : 'Agent work started from the composer will appear here.'}
                   </p>
                 </div>
               )}
