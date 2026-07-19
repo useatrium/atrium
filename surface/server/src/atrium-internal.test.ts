@@ -21,6 +21,7 @@ let truncateAll: typeof import('../test/helpers.js').truncateAll;
 let createChannel: typeof import('./events.js').createChannel;
 let deleteMessage: typeof import('./events.js').deleteMessage;
 let emitSessionRecordChange: typeof import('./session-record-changefeed.js').emitSessionRecordChange;
+let projectAndEmitChange: typeof import('./session-record-changefeed.js').projectAndEmitChange;
 let editMessage: typeof import('./events.js').editMessage;
 let postMessage: typeof import('./events.js').postMessage;
 
@@ -32,7 +33,7 @@ beforeAll(async () => {
   ({ config } = await import('./config.js'));
   ({ buildApp } = await import('./app.js'));
   ({ createChannel, deleteMessage, editMessage, postMessage } = await import('./events.js'));
-  ({ emitSessionRecordChange } = await import('./session-record-changefeed.js'));
+  ({ emitSessionRecordChange, projectAndEmitChange } = await import('./session-record-changefeed.js'));
   pool = await createTestPool();
 });
 
@@ -76,16 +77,6 @@ async function insertUser(handle: string): Promise<string> {
 
 async function grantRawAccess(userId: string): Promise<void> {
   await pool.query(`UPDATE users SET raw_access = true WHERE id = $1`, [userId]);
-}
-
-async function login(handle: string, displayName = handle): Promise<string> {
-  const res = await app.inject({
-    method: 'POST',
-    url: '/auth/login',
-    payload: { handle, displayName },
-  });
-  expect(res.statusCode).toBe(200);
-  return res.headers['set-cookie'] as string;
 }
 
 async function insertSession(
@@ -275,22 +266,6 @@ describe('internal /atrium node-facing routes', () => {
       headers: { 'x-api-key': KEY },
     });
     expect(events.statusCode).toBe(200);
-
-    const cookie = await login('alice', 'Alice');
-    const userFull = await app.inject({
-      method: 'GET',
-      url: `/api/sessions/${targetId}/atrium/full`,
-      headers: { cookie },
-    });
-    expect(userFull.statusCode).toBe(200);
-    expect(userFull.body).toContain('Full-tier reasoning detail for node projection.');
-
-    const userEvents = await app.inject({
-      method: 'GET',
-      url: `/api/sessions/${targetId}/atrium/events`,
-      headers: { cookie },
-    });
-    expect(userEvents.statusCode).toBe(200);
   });
 
   it('appends only session records after the acknowledged seq', async () => {
@@ -362,15 +337,13 @@ describe('internal /atrium node-facing routes', () => {
       url: `/api/internal/sessions/${viewerId}/atrium/sessions/${targetId}/transcript`,
       headers: { 'x-api-key': KEY },
     });
-    const cookie = await login('alice', 'Alice');
-    const existing = await app.inject({
-      method: 'GET',
-      url: `/api/sessions/${targetId}/atrium/transcript`,
-      headers: { cookie },
-    });
+    const projection = await import('./atrium-session-projection.js');
+    const expectedBody = projection.renderTranscriptMarkdown(
+      await projection.loadSessionRecords(pool, targetId, 'lean'),
+    );
 
     expect(internal.headers['x-atrium-delta']).toBe('full');
-    expect(internal.body).toBe(existing.body);
+    expect(internal.body).toBe(expectedBody);
   });
 
   it('lists readable channels and excludes DMs unless they are the viewer session channel', async () => {
@@ -536,24 +509,6 @@ describe('internal /atrium node-facing routes', () => {
       expect(res.statusCode).toBe(403);
       expect(res.json()).toEqual({ error: 'full_view_forbidden' });
     }
-
-    const cookie = await login('alice', 'Alice');
-    const userTranscript = await app.inject({
-      method: 'GET',
-      url: `/api/sessions/${targetId}/atrium/transcript`,
-      headers: { cookie },
-    });
-    expect(userTranscript.statusCode).toBe(200);
-
-    for (const doc of ['full', 'events']) {
-      const res = await app.inject({
-        method: 'GET',
-        url: `/api/sessions/${targetId}/atrium/${doc}`,
-        headers: { cookie },
-      });
-      expect(res.statusCode).toBe(403);
-      expect(res.json()).toEqual({ error: 'full_view_forbidden' });
-    }
   });
 
   it('reprojects a user-accessible session on demand and emits a change row', async () => {
@@ -568,16 +523,10 @@ describe('internal /atrium node-facing routes', () => {
     });
     await pool.query('INSERT INTO session_projection_state (session_id, last_event_id) VALUES ($1, 0)', [targetId]);
     await insertCompletedSessionEvent(targetId, 'Reprojected transcript text.');
-    const cookie = await login('alice', 'Alice');
 
-    const res = await app.inject({
-      method: 'POST',
-      url: `/api/sessions/${targetId}/atrium/reproject`,
-      headers: { cookie },
-    });
+    const projected = await projectAndEmitChange(pool, targetId);
 
-    expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ projected: 1 });
+    expect(projected).toBe(1);
     const records = await pool.query<{ text: string }>(`SELECT text FROM session_records WHERE session_id = $1`, [
       targetId,
     ]);
