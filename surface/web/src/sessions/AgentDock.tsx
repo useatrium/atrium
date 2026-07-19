@@ -9,6 +9,7 @@ import {
   PlusIcon,
   SearchIcon,
   ShrinkIcon,
+  XIcon,
 } from '../components/icons';
 import { GlanceChip } from './GlanceChip';
 import { useNow } from './SessionCard';
@@ -32,6 +33,7 @@ export type AgentDockProps = {
   onToggleImmersed: () => void;
   onNewAgent: () => void;
   filterChannelId?: string | null;
+  onClearFilter?: () => void;
   /** Foundation seam for the full Needs-you view; the dock lane will place it. */
   onOpenAttention?: () => void;
 };
@@ -208,6 +210,7 @@ export function AgentDock({
   onToggleImmersed,
   onNewAgent,
   filterChannelId,
+  onClearFilter,
   onOpenAttention,
 }: AgentDockProps) {
   const [open, setOpen] = useState(false);
@@ -359,8 +362,18 @@ export function AgentDock({
             </label>
             <div className="mt-2 flex min-h-6 items-center gap-2 px-1">
               {filterChannelId && (
-                <span className="min-w-0 flex-1 truncate text-2xs text-fg-muted">
-                  Workstream: #{filterChannel?.name ?? filterChannelId}
+                <span className="flex min-w-0 flex-1 items-center gap-1 text-2xs text-fg-muted">
+                  <span className="min-w-0 truncate">Workstream: #{filterChannel?.name ?? filterChannelId}</span>
+                  {onClearFilter && (
+                    <button
+                      type="button"
+                      onClick={onClearFilter}
+                      aria-label="Clear workstream filter"
+                      className="grid size-5 shrink-0 place-items-center rounded text-fg-muted hover:bg-surface-overlay hover:text-fg focus-visible:outline-2 focus-visible:outline-accent"
+                    >
+                      <XIcon size={11} />
+                    </button>
+                  )}
                 </span>
               )}
               {counts.needsYou > 0 && onOpenAttention && (

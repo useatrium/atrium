@@ -9,6 +9,17 @@ export const AGENT_SPLIT_OPT_IN_KEY = 'atrium.agentSplitOptIn';
 
 type DispatchAppAction = (action: AppAction) => void;
 
+/**
+ * Whether the channel <main> should render. `/c/:id/t/:root` is a channel
+ * place: the thread keeps its attached session selected for mode-flip
+ * continuity, but that retained selection must not keep MAIN swapped to the
+ * agent (the focus-default layout would otherwise unmount the channel and
+ * leave the thread panel floating beside a blank).
+ */
+export function channelMainVisible(view: SessionView, threadRouteOpen: boolean): boolean {
+  return view !== 'focus' || threadRouteOpen;
+}
+
 export function sessionSpectatorCounts(presence: AppState['presence']): Record<string, number> {
   const out: Record<string, number> = {};
   for (const [key, users] of Object.entries(presence)) {

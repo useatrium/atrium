@@ -1,10 +1,12 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
+import type { Channel } from '@atrium/surface-client';
 import { GlanceChip } from './GlanceChip';
 import { sessionAttentionKind, type Session } from './types';
 import { agentDockGroups } from './useAgentDock';
 
 export type AgentAttentionViewProps = {
   sessions: Record<string, Session>;
+  channels: Channel[];
   onFocusAgent: (id: string) => void;
 };
 
@@ -52,8 +54,9 @@ function matchesFilter(kind: AttentionKind, filter: AttentionFilter): boolean {
   return kind !== 'failed';
 }
 
-export function AgentAttentionView({ sessions, onFocusAgent }: AgentAttentionViewProps) {
+export function AgentAttentionView({ sessions, channels, onFocusAgent }: AgentAttentionViewProps) {
   const [filter, setFilter] = useState<AttentionFilter>('all');
+  const channelNames = useMemo(() => new Map(channels.map((channel) => [channel.id, channel.name])), [channels]);
   const needsYou =
     agentDockGroups(sessions, { now: Date.now() }).find((group) => group.kind === 'needs')?.sessions ?? [];
   const rows = needsYou
@@ -128,7 +131,9 @@ export function AgentAttentionView({ sessions, onFocusAgent }: AgentAttentionVie
                             <div className="flex flex-wrap items-center gap-2">
                               <GlanceChip session={session} />
                               <h3 className="min-w-0 truncate text-sm font-semibold text-fg">{session.title}</h3>
-                              <span className="truncate text-xs text-fg-muted">#{session.channelId}</span>
+                              <span className="truncate text-xs text-fg-muted">
+                                #{channelNames.get(session.channelId) ?? session.channelId}
+                              </span>
                             </div>
                             <p className="mt-2 line-clamp-2 text-sm leading-5 text-fg-body">
                               {waitingDetail(session, kind)}
