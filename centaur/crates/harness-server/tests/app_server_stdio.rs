@@ -114,6 +114,66 @@ fn fake_claude_app_server_streams_codex_v2_notifications() {
 }
 
 #[test]
+fn fake_claude_streams_file_change_and_token_usage_to_stdout() {
+    // An Edit tool_use projects to a codex-native `fileChange` item with a real
+    // unified diff, and the assistant message's `usage` becomes a
+    // `thread/tokenUsage/updated` snapshot — both must reach stdout.
+    let fake_claude = concat!(
+        "printf '%s\\n' ",
+        "'{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"claude-session\"}' ",
+        "'{\"type\":\"assistant\",\"is_partial\":false,\"message\":{\"id\":\"msg_1\",\"usage\":{\"input_tokens\":120,\"output_tokens\":42,\"cache_read_input_tokens\":13},\"content\":[{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"Edit\",\"input\":{\"file_path\":\"/repo/main.rs\",\"old_string\":\"let x = 1;\\n\",\"new_string\":\"let x = 2;\\n\"}}]}}' ",
+        "'{\"type\":\"user\",\"message\":{\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"toolu_1\",\"content\":\"The file /repo/main.rs has been updated.\",\"is_error\":false}]}}' ",
+        "'{\"type\":\"assistant\",\"is_partial\":false,\"message\":{\"id\":\"msg_2\",\"content\":[{\"type\":\"text\",\"text\":\"done\"}]}}' ",
+        "'{\"type\":\"result\",\"subtype\":\"success\",\"result\":\"done\"}'"
+    );
+
+    let run = run_bridge_turn(BridgeTurnConfig {
+        harness: Harness::ClaudeCode,
+        command_override: Some(fake_claude.to_string()),
+        prompt: "edit the file".to_string(),
+        timeout: Duration::from_secs(10),
+    });
+
+    assert_completed_turn(&run.turn);
+
+    let file_change = run
+        .stdout_lines
+        .iter()
+        .find(|line| {
+            line.contains("\"method\":\"item/started\"") && line.contains("\"type\":\"fileChange\"")
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "expected a fileChange item on stdout, got: {:#?}",
+                run.stdout_lines
+            )
+        });
+    assert!(
+        file_change.contains("\"path\":\"/repo/main.rs\""),
+        "fileChange line was: {file_change}"
+    );
+    assert!(
+        file_change.contains("let x = 2;"),
+        "fileChange diff missing new content: {file_change}"
+    );
+
+    let token_usage = run
+        .stdout_lines
+        .iter()
+        .find(|line| line.contains("\"method\":\"thread/tokenUsage/updated\""))
+        .unwrap_or_else(|| {
+            panic!(
+                "expected a thread/tokenUsage/updated notification on stdout, got: {:#?}",
+                run.stdout_lines
+            )
+        });
+    assert!(
+        token_usage.contains("\"outputTokens\":42"),
+        "token usage line was: {token_usage}"
+    );
+}
+
+#[test]
 fn fake_claude_trailing_result_settles_the_turn_and_does_not_poison_the_next() {
     // The native `result` trails the message_delta stop reason in real CLI
     // output. The stop must not complete the turn so eagerly that the result
