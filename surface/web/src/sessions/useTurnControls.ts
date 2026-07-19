@@ -1,25 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
+import { EscapeLayer, escapeHasLocalMeaning, useEscapeLayer } from '../lib/escapeLayers';
 import type { ReportSessionActionError } from './useSessionActionError';
 
-function isTextEditingEscapeTarget(target: EventTarget | null): boolean {
-  if (!(target instanceof Element)) return false;
-  if (target.closest('input, textarea, select, .ProseMirror')) return true;
-  if (target instanceof HTMLElement && target.isContentEditable) return true;
-  const editable = target.closest('[contenteditable]');
-  return editable instanceof HTMLElement && editable.isContentEditable;
-}
-
-export function escapeHasLocalMeaning(event: KeyboardEvent): boolean {
-  const target = event.target instanceof Element ? event.target : document.activeElement;
-  if (isTextEditingEscapeTarget(target)) return true;
-  return Boolean(target?.closest('[role="dialog"], [role="menu"], [role="listbox"], [aria-modal="true"]'));
-}
-
-export function isPlainEscape(event: KeyboardEvent): boolean {
-  return (
-    event.key === 'Escape' && !event.repeat && !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey
-  );
-}
+// Re-exported for callers that still import these from here (e.g. SessionPane);
+// the definitions now live with the layered-escape dispatcher.
+export { escapeHasLocalMeaning, isPlainEscape } from '../lib/escapeLayers';
 
 export function useTurnControls({
   sessionId,
@@ -75,19 +60,18 @@ export function useTurnControls({
     });
   }, [canStopTurn, displayCancelAsk, onCancelSession, onClearFailedCancel, onStopTurn, reportError, sessionId]);
 
-  useEffect(() => {
-    // A ConversationPanel keeps this body mounted-but-hidden in thread mode;
-    // its window-level Escape must not stop a turn from offscreen.
-    if (!visible || !canStopTurn || (!isSpawner && !isDriver)) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (!isPlainEscape(event) || escapeHasLocalMeaning(event)) return;
-      event.preventDefault();
-      event.stopPropagation();
+  // A ConversationPanel keeps this body mounted-but-hidden in thread mode; the
+  // `visible` gate keeps an offscreen pane from stopping a turn. Escape yields
+  // to any editable field or menu with its own meaning (escapeHasLocalMeaning).
+  useEscapeLayer(
+    EscapeLayer.turn,
+    (event) => {
+      if (escapeHasLocalMeaning(event)) return false;
       onCancel();
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [canStopTurn, isDriver, isSpawner, onCancel, visible]);
+      return true;
+    },
+    visible && canStopTurn && (isSpawner || isDriver),
+  );
 
   return { displayCancelAsk, onCancel };
 }

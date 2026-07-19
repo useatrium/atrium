@@ -5,8 +5,9 @@
 // the caller fetches `GET .../artifacts/conflict` and wires `onResolve` to
 // `POST .../artifacts/:id/resolve`.
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { XIcon } from '../components/icons';
+import { EscapeLayer, isEditableEscapeTarget, useEscapeLayer } from '../lib/escapeLayers';
 import { DiffView } from './fileChangeView';
 
 export interface ConflictSide {
@@ -84,16 +85,15 @@ export function ConflictSurface({
   const [resolving, setResolving] = useState(false);
   const [merged, setMerged] = useState(conflict.markers);
 
-  useEffect(() => {
-    if (embedded) return;
-    const onDocumentKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
-      event.stopPropagation();
+  useEscapeLayer(
+    EscapeLayer.workSurface,
+    (event) => {
+      if (isEditableEscapeTarget(event.target)) return false;
       onClose();
-    };
-    document.addEventListener('keydown', onDocumentKeyDown, true);
-    return () => document.removeEventListener('keydown', onDocumentKeyDown, true);
-  }, [embedded, onClose]);
+      return true;
+    },
+    !embedded,
+  );
 
   async function resolve(choice: ResolveChoice) {
     if (resolving) return;

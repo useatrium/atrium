@@ -12,6 +12,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger, Tooltip } from '../components
 import { ExternalLinkIcon, PanelRightCloseIcon, PanelRightIcon, XIcon } from '../components/icons';
 import { isDesktop } from '../desktop';
 import { navigate } from '../router';
+import { EscapeLayer, isEditableEscapeTarget, useEscapeLayer } from '../lib/escapeLayers';
 import { SideEffectsSurface } from './SideEffectsSurface';
 import { ConflictSurface, type ArtifactConflict, type ResolveChoice } from './ConflictSurface';
 import { EmptyState } from './EmptyState';
@@ -274,15 +275,11 @@ export function WorkDrawer({
   const pinAriaLabel = pinned ? 'Unpin work drawer' : 'Pin work drawer';
   const detachLabel = `Open ${TAB_LABEL[active]} in a new tab`;
 
-  useEffect(() => {
-    const onDocumentKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
-      event.stopPropagation();
-      onClose();
-    };
-    document.addEventListener('keydown', onDocumentKeyDown, true);
-    return () => document.removeEventListener('keydown', onDocumentKeyDown, true);
-  }, [onClose]);
+  useEscapeLayer(EscapeLayer.workSurface, (event) => {
+    if (isEditableEscapeTarget(event.target)) return false;
+    onClose();
+    return true;
+  });
 
   return (
     <Tabs

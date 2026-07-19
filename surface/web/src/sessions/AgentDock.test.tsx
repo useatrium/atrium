@@ -339,4 +339,37 @@ describe('AgentDock', () => {
     expect(sidebarImmersionClassName(true)).toContain('md:w-0');
     expect(sidebarImmersionClassName(false)).toBe('contents');
   });
+
+  it('clears a non-empty filter query on Escape before dismissing the dock', () => {
+    render(<AgentDock {...props({ sessions: { one: session({ id: 'one', title: 'Alpha agent' }) } })} />);
+    openDock();
+
+    const search = screen.getByRole('searchbox', { name: 'Filter agents' }) as HTMLInputElement;
+    fireEvent.change(search, { target: { value: 'alpha' } });
+    expect(search.value).toBe('alpha');
+
+    fireEvent.keyDown(search, { key: 'Escape' });
+    expect(search.value).toBe('');
+    expect(screen.getByTestId('agent-dock').getAttribute('data-state')).toBe('open');
+
+    fireEvent.keyDown(search, { key: 'Escape' });
+    expect(screen.getByTestId('agent-dock').getAttribute('data-state')).toBe('resting');
+  });
+
+  it('collapses the open dock on Escape', () => {
+    render(<AgentDock {...props()} />);
+    openDock();
+    expect(screen.getByTestId('agent-dock').getAttribute('data-state')).toBe('open');
+
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    expect(screen.getByTestId('agent-dock').getAttribute('data-state')).toBe('resting');
+  });
+
+  it('exits immersion on Escape', () => {
+    const onToggleImmersed = vi.fn();
+    render(<AgentDock {...props({ immersed: true, onToggleImmersed })} />);
+
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    expect(onToggleImmersed).toHaveBeenCalledTimes(1);
+  });
 });
