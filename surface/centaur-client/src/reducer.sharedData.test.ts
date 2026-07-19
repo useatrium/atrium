@@ -301,4 +301,100 @@ describe('reduceSession shared data layer', () => {
 
     expect(state.plan).toEqual({ text: 'Codex plan', sourceEventIds: [30] });
   });
+
+  it('folds a webSearch item into a web-search tool step', () => {
+    const state = reduceAll([
+      {
+        event: 'amp_raw_event',
+        event_id: 60,
+        data: {
+          type: 'item.completed',
+          item: { id: 'ws-1', type: 'webSearch', query: 'atrium plan pipeline', action: null },
+        },
+      },
+    ]);
+    const tool = state.items.find((item) => item.type === 'tool_call');
+    expect(tool).toMatchObject({ type: 'tool_call', name: 'web-search', input: { query: 'atrium plan pipeline' } });
+    expect(tool?.type === 'tool_call' && tool.result).toEqual({ content: '', is_error: false });
+  });
+
+  it('folds an imageView item into a view-image step carrying the path', () => {
+    const state = reduceAll([
+      {
+        event: 'amp_raw_event',
+        event_id: 61,
+        data: {
+          type: 'item.completed',
+          item: { id: 'iv-1', type: 'imageView', path: '/home/agent/repo/diagram.png' },
+        },
+      },
+    ]);
+    const tool = state.items.find((item) => item.type === 'tool_call');
+    expect(tool).toMatchObject({
+      type: 'tool_call',
+      name: 'view-image',
+      input: { path: '/home/agent/repo/diagram.png' },
+    });
+  });
+
+  it('folds review-mode enter/exit into quiet notice markers, deduped across started/completed', () => {
+    const state = reduceAll([
+      {
+        event: 'amp_raw_event',
+        event_id: 70,
+        data: { type: 'item.started', item: { id: 'rev-1', type: 'enteredReviewMode', review: 'Reviewing the diff' } },
+      },
+      {
+        event: 'amp_raw_event',
+        event_id: 71,
+        data: {
+          type: 'item.completed',
+          item: { id: 'rev-1', type: 'enteredReviewMode', review: 'Reviewing the diff' },
+        },
+      },
+      {
+        event: 'amp_raw_event',
+        event_id: 72,
+        data: { type: 'item.completed', item: { id: 'rev-2', type: 'exitedReviewMode', review: 'Reviewing the diff' } },
+      },
+    ]);
+    const notices = state.items.filter((item) => item.type === 'notice');
+    expect(notices).toHaveLength(2);
+    expect(notices[0]).toMatchObject({ type: 'notice', notice: 'review_started', text: 'Reviewing the diff' });
+    expect(notices[0]?.sourceEventIds).toEqual([70, 71]);
+    expect(notices[1]).toMatchObject({ type: 'notice', notice: 'review_ended' });
+  });
+
+  it('folds a contextCompaction item into a context_compacted notice', () => {
+    const state = reduceAll([
+      {
+        event: 'amp_raw_event',
+        event_id: 80,
+        data: { type: 'item.completed', item: { id: 'cc-1', type: 'contextCompaction' } },
+      },
+    ]);
+    const notice = state.items.find((item) => item.type === 'notice');
+    expect(notice).toMatchObject({ type: 'notice', notice: 'context_compacted' });
+    expect(notice?.type === 'notice' && notice.text).toBeUndefined();
+  });
+
+  it('records thread/name/updated into state and a single deduped notice row (latest name wins)', () => {
+    const state = reduceAll([
+      {
+        event: 'amp_raw_event',
+        event_id: 90,
+        data: { method: 'thread/name/updated', params: { threadId: 'T-1', threadName: 'Draft the plan' } },
+      },
+      {
+        event: 'amp_raw_event',
+        event_id: 91,
+        data: { method: 'thread/name/updated', params: { threadId: 'T-1', threadName: 'Ship the plan pipeline' } },
+      },
+    ]);
+    expect(state.threadName).toBe('Ship the plan pipeline');
+    const notices = state.items.filter((item) => item.type === 'notice');
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toMatchObject({ type: 'notice', notice: 'thread_named', text: 'Ship the plan pipeline' });
+    expect(notices[0]?.sourceEventIds).toEqual([90, 91]);
+  });
 });

@@ -63,6 +63,22 @@ describe('toolDisplay', () => {
     });
   });
 
+  it('maps a projected web-search to a web descriptor with the query', () => {
+    expectDescriptor(toolDisplay(tool('web-search', { query: 'atrium plan pipeline' })), {
+      kind: 'web',
+      title: 'web-search',
+      subtitle: 'atrium plan pipeline',
+    });
+  });
+
+  it('maps a projected view-image to a read descriptor with the path', () => {
+    expectDescriptor(toolDisplay(tool('view-image', { path: '/repo/diagram.png' })), {
+      kind: 'read',
+      title: 'view-image',
+      subtitle: '/repo/diagram.png',
+    });
+  });
+
   it('maps unknown tools to generic descriptors', () => {
     expectDescriptor(toolDisplay(tool('CustomTool')), {
       kind: 'generic',

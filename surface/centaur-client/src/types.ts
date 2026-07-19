@@ -234,6 +234,14 @@ export interface CodexTurnPlanUpdatedEvent {
   [key: string]: unknown;
 }
 
+/** `thread/name/updated` — the agent (re)named the thread. */
+export interface CodexThreadNameUpdatedEvent {
+  type: 'thread.name.updated';
+  threadId?: string;
+  threadName?: string;
+  [key: string]: unknown;
+}
+
 /** `item/plan/delta` — streaming text for the freeform codex `plan` item. */
 export interface CodexPlanDeltaEvent {
   type: 'item.plan.delta';
@@ -269,6 +277,7 @@ export type AmpRawEvent =
   | CodexTurnCompletedEvent
   | CodexTurnPlanUpdatedEvent
   | CodexPlanDeltaEvent
+  | CodexThreadNameUpdatedEvent
   | CodexThreadTokenUsageEvent
   | JsonRpcAmpRawEvent;
 

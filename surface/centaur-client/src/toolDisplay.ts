@@ -28,8 +28,12 @@ export function toolDisplay(item: ToolCallItem): ToolDescriptor {
     return descriptor('file-edit', name || item.name, pathFromInput(item));
   }
 
-  if (normalized === 'webfetch' || normalized === 'websearch') {
+  if (normalized === 'webfetch' || normalized === 'websearch' || normalized === 'web-search') {
     return descriptor('web', name || item.name, webSubtitle(item));
+  }
+
+  if (normalized === 'view-image' || normalized === 'imageview') {
+    return descriptor('read', name || item.name, pathFromInput(item));
   }
 
   if (normalized === 'todowrite' || normalized === 'todoread') {

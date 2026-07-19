@@ -8,6 +8,7 @@ import type {
   CodexPlanDeltaEvent,
   CodexReasoningSummaryTextDeltaEvent,
   CodexReasoningTextDeltaEvent,
+  CodexThreadNameUpdatedEvent,
   CodexTurnPlanUpdatedEvent,
   AmpToolEvent,
   AnthropicTextBlock,
@@ -90,7 +91,24 @@ export interface UserMessageItem {
   sourceEventIds: number[];
 }
 
-export type SessionItem = TextItem | ReasoningItem | ToolCallItem | QuestionItem | UserMessageItem;
+/** A quiet, non-work transcript marker — a trust/status signal rather than an
+ * agent action. Codex `enteredReviewMode`/`exitedReviewMode`/`contextCompaction`
+ * items and `thread/name/updated` notifications fold here. Non-work, so it stays
+ * visible even in the focus (folded) view instead of being hidden inside a step
+ * fold. */
+export interface NoticeItem {
+  type: 'notice';
+  id: string;
+  notice: 'review_started' | 'review_ended' | 'context_compacted' | 'thread_named';
+  /** Review description, or the new thread name — kind-dependent. */
+  text?: string;
+  executionId: string | null;
+  handle?: string | null;
+  ts?: string;
+  sourceEventIds: number[];
+}
+
+export type SessionItem = TextItem | ReasoningItem | ToolCallItem | QuestionItem | UserMessageItem | NoticeItem;
 
 /** A Claude Code Task-tool subagent's own activity stream, kept out of the main
  * transcript so its steps never interleave the parent turn's fold. Keyed by the
@@ -218,6 +236,10 @@ export interface SessionState {
   models: string[];
   costUsd: number;
   lastEventId: number;
+  /** The agent's latest name for this thread (codex `thread/name/updated`).
+   * Latest wins. Rendered as a quiet transcript row; not yet the session title
+   * (see the PR that added it — retitling the session is a larger surface). */
+  threadName?: string;
   todos?: TodoEntry[];
   plan?: {
     text: string;
@@ -395,6 +417,8 @@ function reduceSessionFrame(state: SessionState, frame: CentaurEventFrame): Sess
     reduceTurnPlanUpdated(next, raw);
   } else if (raw.type === 'item.plan.delta') {
     reducePlanDelta(next, frame.event_id, raw);
+  } else if (raw.type === 'thread.name.updated') {
+    reduceThreadNameUpdated(next, frame.event_id, raw);
   } else if (raw.type === 'assistant') {
     reduceAssistant(next, frame.event_id, raw, recordHandles);
   } else if (raw.type === 'tool') {
@@ -432,6 +456,8 @@ function normalizeRawEvent(event: CentaurEventFrame['data']): CentaurEventFrame[
       return { type: 'thread.tokenUsage', ...params } as CentaurEventFrame['data'];
     case 'turn/plan/updated':
       return { type: 'turn.plan.updated', ...params } as CentaurEventFrame['data'];
+    case 'thread/name/updated':
+      return { type: 'thread.name.updated', ...params } as CentaurEventFrame['data'];
     case 'item/plan/delta':
       return {
         type: 'item.plan.delta',
@@ -974,6 +1000,19 @@ function reduceCodexItemStarted(state: SessionState, eventId: number, event: Cod
   }
   if (event.item.type === 'mcpToolCall') {
     reduceCodexMcpToolCall(state, eventId, event.item, [], false);
+    return;
+  }
+  if (event.item.type === 'webSearch') {
+    reduceCodexWebSearch(state, eventId, event.item, [], false);
+    return;
+  }
+  if (event.item.type === 'imageView') {
+    reduceCodexImageView(state, eventId, event.item, [], false);
+    return;
+  }
+  const notice = noticeKindForItem(event.item.type);
+  if (notice) {
+    upsertNoticeItem(state, eventId, event.item, notice);
   }
 }
 
@@ -1106,6 +1145,22 @@ function reduceCodexItemCompleted(
 
   if (event.item.type === 'mcpToolCall') {
     reduceCodexMcpToolCall(state, eventId, event.item, handles, true);
+    return;
+  }
+
+  if (event.item.type === 'webSearch') {
+    reduceCodexWebSearch(state, eventId, event.item, handles, true);
+    return;
+  }
+
+  if (event.item.type === 'imageView') {
+    reduceCodexImageView(state, eventId, event.item, handles, true);
+    return;
+  }
+
+  const notice = noticeKindForItem(event.item.type);
+  if (notice) {
+    upsertNoticeItem(state, eventId, event.item, notice);
   }
 }
 
@@ -1217,6 +1272,129 @@ function reducePlanDelta(state: SessionState, eventId: number, event: CodexPlanD
   const prev = state.plan?.text ?? '';
   const sourceEventIds = state.plan ? [...state.plan.sourceEventIds, eventId] : [eventId];
   state.plan = { text: prev + delta, sourceEventIds };
+}
+
+/** Fold a codex `webSearch` item into a `tool_call` step (name `web-search`,
+ * `query` shown). `toolDisplay` renders it as the `web` kind. The wire carries no
+ * textual result, so completion just marks the step done. */
+function reduceCodexWebSearch(
+  state: SessionState,
+  eventId: number,
+  item: CodexItem,
+  handles: RecordHandleHint[],
+  complete: boolean,
+): void {
+  const query = typeof item.query === 'string' ? item.query : '';
+  const input: JsonObject = query ? { query } : {};
+  const tool = upsertCodexToolCall(
+    state,
+    eventId,
+    item,
+    'web-search',
+    input,
+    Boolean(query),
+    handleForCodexItem(handles, item.id, 'tool', 'agent'),
+  );
+  if (complete && tool.result === undefined) {
+    tool.result = { content: '', is_error: false };
+  }
+}
+
+/** Fold a codex `imageView` item into a `tool_call` step (name `view-image`)
+ * showing the image `path`. No bytes are on the wire, so the path renders as a
+ * monospace labeled step (`toolDisplay` `read` kind → path subtitle). */
+function reduceCodexImageView(
+  state: SessionState,
+  eventId: number,
+  item: CodexItem,
+  handles: RecordHandleHint[],
+  complete: boolean,
+): void {
+  const path = typeof item.path === 'string' ? item.path : '';
+  const input: JsonObject = path ? { path } : {};
+  const tool = upsertCodexToolCall(
+    state,
+    eventId,
+    item,
+    'view-image',
+    input,
+    Boolean(path),
+    handleForCodexItem(handles, item.id, 'tool', 'agent'),
+  );
+  if (complete && tool.result === undefined) {
+    tool.result = { content: path, is_error: false };
+  }
+}
+
+function noticeKindForItem(type: string): NoticeItem['notice'] | null {
+  switch (type) {
+    case 'enteredReviewMode':
+      return 'review_started';
+    case 'exitedReviewMode':
+      return 'review_ended';
+    case 'contextCompaction':
+      return 'context_compacted';
+    default:
+      return null;
+  }
+}
+
+/** Upsert a quiet, non-work `notice` marker (review mode, context compaction).
+ * Deduped by the codex item id so the item's `started` and `completed` frames
+ * collapse to one row. */
+function upsertNoticeItem(
+  state: SessionState,
+  eventId: number,
+  item: CodexItem,
+  notice: NoticeItem['notice'],
+): NoticeItem {
+  const id = item.id ? `notice:${item.id}` : `notice:${eventId}`;
+  const text = typeof item.review === 'string' && item.review.trim() ? item.review : undefined;
+  const existing = state.items.find(
+    (candidate): candidate is NoticeItem => candidate.type === 'notice' && candidate.id === id,
+  );
+  if (existing) {
+    if (text !== undefined) existing.text = text;
+    pushSourceEventId(existing, eventId);
+    return existing;
+  }
+  const created: NoticeItem = {
+    type: 'notice',
+    id,
+    notice,
+    ...(text !== undefined ? { text } : {}),
+    executionId: state.executionId,
+    sourceEventIds: [eventId],
+  };
+  state.items.push(created);
+  return created;
+}
+
+/** Fold a `thread/name/updated` notification: record the latest name on state
+ * and surface it as a single quiet transcript row (deduped by a fixed id, so a
+ * rename updates the same row to the newest name). Retitling the session itself
+ * is a larger surface, so this only records the agent's name. */
+function reduceThreadNameUpdated(state: SessionState, eventId: number, event: CodexThreadNameUpdatedEvent): void {
+  const name = typeof event.threadName === 'string' ? event.threadName.trim() : '';
+  if (!name) return;
+  state.threadName = name;
+  const id = 'notice:thread-name';
+  const existing = state.items.find(
+    (candidate): candidate is NoticeItem => candidate.type === 'notice' && candidate.id === id,
+  );
+  if (existing) {
+    existing.text = name;
+    pushSourceEventId(existing, eventId);
+    return;
+  }
+  state.items.push({
+    type: 'notice',
+    id,
+    notice: 'thread_named',
+    text: name,
+    executionId: state.executionId,
+    sourceEventIds: [eventId],
+  });
 }
 
 const CODEX_KIND: Record<string, FileChangeKind> = {
