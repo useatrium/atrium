@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_PREFS, normalizePrefs } from '../src/prefs';
-import { userColor, userColorTokens } from '../src/util';
+import { userColorTokens } from '../src/util';
 
 describe('normalizePrefs', () => {
   it('returns defaults for nullish/garbage input', () => {
@@ -90,8 +90,7 @@ describe('userColorTokens', () => {
     }
   });
 
-  it('is deterministic and userColor stays the dark-scheme bg', () => {
+  it('is deterministic across calls for a seed', () => {
     expect(userColorTokens('gary')).toEqual(userColorTokens('gary', 'dark'));
-    expect(userColor('gary')).toBe(userColorTokens('gary', 'dark').bg);
   });
 });

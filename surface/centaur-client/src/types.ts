@@ -362,16 +362,6 @@ export interface ArtifactCaptured {
   ref: string | null;
 }
 
-export type ProjectionEvent =
-  | AssistantTextObserved
-  | AssistantToolUseObserved
-  | ToolResultObserved
-  | UsageObserved
-  | ExecutionSummaryObserved
-  | ExecutionStartedObserved
-  | SystemObserved
-  | ResultObserved;
-
 /** `ts` is the wall-clock stamp the Atrium proxy attaches per frame (mirror
  * write time on replay, receive time on live tail). Absent on frames from
  * servers that predate it. */

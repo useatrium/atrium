@@ -11,7 +11,6 @@ import {
   markFailed,
   mergeHistory,
   mergeThread,
-  nextCatchUpStep,
   resetToLatest,
   type ChatMessage,
   type Session,
@@ -666,14 +665,6 @@ describe('optimistic edit/delete/reaction overlays', () => {
 
     state = appReducer(state, { type: 'overlay-rejected', channelId: CH, opId: 'op-react' });
     expect(state.timelines[CH]!.main[0]!.reactions).toEqual([{ emoji: '👍', userIds: [bob.id] }]);
-  });
-});
-
-describe('catch-up fallback decision', () => {
-  it('caps after_id paging and falls back to the latest page when still behind', () => {
-    expect(nextCatchUpStep({ hasMore: false, pagesFetched: 5 })).toBe('done');
-    expect(nextCatchUpStep({ hasMore: true, pagesFetched: 4 })).toBe('continue');
-    expect(nextCatchUpStep({ hasMore: true, pagesFetched: 5 })).toBe('refetch-latest');
   });
 });
 

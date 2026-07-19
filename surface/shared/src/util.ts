@@ -74,12 +74,6 @@ export function userColorTokens(seed: string, scheme: 'dark' | 'light' = 'dark')
   return { bg: `hsl(${hue} ${s}% ${l}%)`, fg };
 }
 
-/** Dark-scheme avatar background only — prefer userColorTokens for themed
- * UIs; kept for callers that predate theming. */
-export function userColor(seed: string): string {
-  return userColorTokens(seed, 'dark').bg;
-}
-
 export function initials(name: string): string {
   const parts = name
     .trim()

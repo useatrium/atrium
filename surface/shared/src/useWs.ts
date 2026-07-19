@@ -42,11 +42,6 @@ export function isWsOpen(status: WsStatus): boolean {
   return wsStatusKind(status) === 'open';
 }
 
-export function isWsTerminal(status: WsStatus): boolean {
-  const kind = wsStatusKind(status);
-  return kind === 'auth-failed' || kind === 'unreachable';
-}
-
 export function deriveWsFailureStatus(
   firstFailedAt: number,
   lastCause: WsFailureCause,
