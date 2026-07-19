@@ -92,10 +92,14 @@ test('left navigation owns its persisted desktop rail and mobile ignores the pre
 
   const sidebar = page.getByTestId('sidebar');
   await expect(sidebar).toHaveCSS('width', '224px');
+  await expect(page.locator('#main-content').getByRole('button', { name: 'New agent' })).toHaveCount(0);
+  await expect(page.locator('#main-content').getByTestId('composer-audience-pill')).toBeVisible();
   await attachScreenshot(page, testInfo, '01-wide-navigation');
 
   await page.getByRole('button', { name: 'Collapse navigation' }).click();
   await expect(sidebar).toHaveCSS('width', '52px');
+  await page.waitForTimeout(400);
+  await expect(page.getByRole('tooltip', { name: /navigation/i })).toHaveCount(0);
   await expect(page.getByTestId('sidebar-collapsed-rail')).toBeVisible();
   await expect(page.getByTestId('sidebar-collapsed-rail').getByRole('button', { name: /^Inbox/ })).toBeVisible();
   await expect(page.getByTestId('sidebar-collapsed-rail').getByRole('button', { name: 'Files' })).toBeVisible();
@@ -119,6 +123,7 @@ test('left navigation owns its persisted desktop rail and mobile ignores the pre
   expect(await page.evaluate(() => window.scrollX)).toBe(0);
   await expect(page.getByRole('button', { name: 'Collapse navigation' })).toBeHidden();
   await expect(page.getByRole('button', { name: 'Files', exact: true })).toBeVisible();
+  await expect(page.getByTestId('agent-dock')).toBeHidden();
   await attachScreenshot(page, testInfo, '04-mobile-navigation-ignores-desktop-collapse');
 });
 
@@ -126,6 +131,7 @@ test('agent session header is the single split-focus control', async ({ page }, 
   await page.setViewportSize({ width: 1440, height: 900 });
   await openSessionProof(page);
 
+  await expect(page.locator('#main-content').getByRole('button', { name: 'New agent' })).toHaveCount(0);
   await expect(page.getByTestId('pane-resize-handle')).toBeVisible();
   await expect(page.getByRole('group', { name: 'Layout' })).toHaveCount(0);
   await attachScreenshot(page, testInfo, '05-agent-split-view');

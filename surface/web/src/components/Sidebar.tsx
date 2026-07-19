@@ -124,13 +124,14 @@ function SidebarImpl({
   const [collapsed, setCollapsed] = useState(loadSidebarCollapsed);
   const collapseButtonRef = useRef<HTMLButtonElement | null>(null);
   const expandButtonRef = useRef<HTMLButtonElement | null>(null);
-  const setDesktopCollapsed = useCallback((next: boolean) => {
+  const setDesktopCollapsed = useCallback((next: boolean, transferFocus: boolean) => {
     setCollapsed(next);
     try {
       window.localStorage.setItem(SIDEBAR_COLLAPSED_STORAGE_KEY, String(next));
     } catch {
       // Storage may be unavailable in private mode; the in-memory preference still works.
     }
+    if (!transferFocus) return;
     window.requestAnimationFrame(() => {
       (next ? expandButtonRef : collapseButtonRef).current?.focus();
     });
@@ -492,7 +493,7 @@ function SidebarImpl({
             <button
               ref={collapseButtonRef}
               type="button"
-              onClick={() => setDesktopCollapsed(true)}
+              onClick={(event) => setDesktopCollapsed(true, event.detail === 0)}
               aria-label="Collapse navigation"
               className="hidden size-7 shrink-0 items-center justify-center rounded-md text-fg-muted hover:bg-surface-overlay hover:text-fg focus-visible:outline-2 focus-visible:outline-accent md:inline-flex"
             >
@@ -508,7 +509,7 @@ function SidebarImpl({
                 <button
                   ref={expandButtonRef}
                   type="button"
-                  onClick={() => setDesktopCollapsed(false)}
+                  onClick={(event) => setDesktopCollapsed(false, event.detail === 0)}
                   aria-label="Expand navigation"
                   className="relative grid size-9 place-items-center rounded-md text-fg-muted hover:bg-surface-overlay hover:text-fg focus-visible:outline-2 focus-visible:outline-accent"
                 >

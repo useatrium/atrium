@@ -2037,7 +2037,6 @@ export function Chat({
     }
     if (active) void calls.startCall(active.id);
   }, [active, calls, callsAvailable]);
-  const newAgentDisabled = !active;
   const voiceCallDisabled = callsAvailable && (!active || calls.starting || calls.activeCall != null);
   const voiceCallAriaDisabled = !callsAvailable || voiceCallDisabled;
   const voiceCallTooltip = !callsAvailable
@@ -2340,7 +2339,7 @@ export function Chat({
               </span>
             </button>
             <h1
-              className="flex min-w-0 flex-1 items-center gap-1.5 truncate text-sm font-bold text-fg md:flex-initial"
+              className="flex min-w-0 flex-1 items-center gap-1.5 truncate text-sm font-bold text-fg"
               aria-label={
                 showSettingsSurface
                   ? 'Settings'
@@ -2420,30 +2419,10 @@ export function Chat({
                   }}
                 />
               )}
-            {showNonChatSurface ? (
+            {showNonChatSurface && (
               <Button variant="secondary" size="sm" onClick={openChatSurface} className="md:ml-auto">
                 Chat
               </Button>
-            ) : (
-              <Tooltip content={newAgentDisabled ? 'Select a channel to start an agent' : 'New agent'}>
-                <Button
-                  variant="primary"
-                  size="sm"
-                  onClick={() => {
-                    setSpawnInitialTask('');
-                    setSpawnOpen(true);
-                  }}
-                  aria-disabled={newAgentDisabled || undefined}
-                  aria-label="New agent"
-                  // The dock owns agent creation on desktop, so the header pill is a quiet
-                  // secondary control on md+ (matching the Search button) — but stays the
-                  // filled primary spawn affordance below md, where the dock spine is hidden.
-                  className="aria-disabled:bg-surface-overlay aria-disabled:text-fg-muted md:ml-auto md:border md:border-edge md:bg-surface-raised md:font-medium md:text-fg-muted md:hover:bg-surface-overlay md:hover:text-fg-body"
-                >
-                  <PlusIcon size={14} />
-                  <span className="hidden sm:inline">New agent</span>
-                </Button>
-              </Tooltip>
             )}
             {/* Calls unconfigured: keep the phone visible but grayed with a setup
               hint (tooltip + click), so the feature is discoverable instead of
@@ -2874,10 +2853,7 @@ export function Chat({
         focusedSessionId={state.openSessionId}
         meId={me.id}
         onFocusAgent={onFocusAgent}
-        onNewAgent={() => {
-          setSpawnInitialTask('');
-          setSpawnOpen(true);
-        }}
+        mobileNavigationOpen={isSidebarOpen}
         filterChannelId={agentDockFilterChannel}
         onClearFilter={() => setAgentDockFilterChannel(null)}
         onFilterChannel={(channelId) => setAgentDockFilterChannel(channelId)}

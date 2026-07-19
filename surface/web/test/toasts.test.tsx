@@ -14,6 +14,7 @@ describe('Toasts', () => {
 
     act(() => showErrorToast('explicit failure'));
     expect(await screen.findByText('explicit failure')).toBeTruthy();
+    expect(screen.getByRole('alert')).toBeTruthy();
 
     act(() => {
       window.dispatchEvent(new ErrorEvent('error', { message: 'handler exploded' }));
@@ -30,6 +31,7 @@ describe('Toasts', () => {
     render(<Toasts />);
 
     act(() => showActionToast('Archived one agent.', 'Undo', undo));
+    expect(await screen.findByRole('status')).toBeTruthy();
     fireEvent.click(await screen.findByRole('button', { name: 'Undo' }));
 
     expect(undo).toHaveBeenCalledOnce();

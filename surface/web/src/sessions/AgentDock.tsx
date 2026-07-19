@@ -8,7 +8,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, MouseEvent as ReactMouseEvent } from 'react';
 import { sessionDriverId } from '@atrium/surface-client';
 import type { Channel } from '@atrium/surface-client';
-import { BotIcon, ChevronDownIcon, ChevronRightIcon, PlusIcon, SearchIcon, XIcon } from '../components/icons';
+import { BotIcon, ChevronDownIcon, ChevronRightIcon, SearchIcon, XIcon } from '../components/icons';
 import { IconButton, SegmentedControl } from '../components/ui';
 import { AgentDockRovingProvider, AgentGroup, type AgentRowContext } from './AgentDockRows';
 import { useNow } from './SessionCard';
@@ -33,7 +33,8 @@ export type AgentDockProps = {
   /** The viewing user, for mine-vs-others treatment in rows and counts. */
   meId: string | null;
   onFocusAgent: (id: string) => void;
-  onNewAgent: () => void;
+  /** Mobile navigation temporarily owns the overlay layer and hides this dock. */
+  mobileNavigationOpen?: boolean;
   filterChannelId?: string | null;
   onClearFilter?: () => void;
   /** Filter the dock to a workstream (rows' channel tags reuse the presence-link behavior). */
@@ -217,7 +218,7 @@ export function AgentDock({
   focusedSessionId,
   meId,
   onFocusAgent,
-  onNewAgent,
+  mobileNavigationOpen = false,
   filterChannelId,
   onClearFilter,
   onFilterChannel,
@@ -405,14 +406,19 @@ export function AgentDock({
           type="button"
           aria-label="Close agent dock sheet"
           onClick={() => setOpen(false)}
-          className="fixed inset-0 z-overlay cursor-default bg-black/50 md:hidden"
+          className={`fixed inset-0 z-overlay cursor-default bg-black/50 md:hidden ${
+            mobileNavigationOpen ? 'max-md:hidden' : ''
+          }`}
         />
       )}
       <aside
         data-testid="agent-dock"
         data-state={state}
+        data-mobile-suppressed={mobileNavigationOpen || undefined}
         aria-label="Agents"
         className={`flex min-h-0 shrink-0 flex-col bg-surface-raised motion-safe:transition-[width,height] motion-safe:duration-200 motion-reduce:transition-none ${
+          mobileNavigationOpen ? 'max-md:hidden' : ''
+        } ${
           state === 'resting'
             ? 'fixed bottom-[calc(1rem+env(safe-area-inset-bottom))] right-[calc(1rem+env(safe-area-inset-right))] z-overlay size-12 rounded-full border border-edge-strong shadow-lg md:relative md:inset-auto md:z-auto md:h-full md:w-13 md:rounded-none md:border-y-0 md:border-r-0 md:border-l md:border-edge md:shadow-none'
             : 'fixed inset-x-0 bottom-0 z-overlay h-[60dvh] w-full rounded-t-xl border border-edge-strong shadow-2xl md:relative md:inset-auto md:z-auto md:h-full md:w-(--agent-dock-w) md:rounded-none md:border-y-0 md:border-r-0 md:border-l md:border-edge md:shadow-none'
@@ -486,14 +492,6 @@ export function AgentDock({
                 </span>
               )}
             </button>
-            <button
-              type="button"
-              onClick={onNewAgent}
-              aria-label="New agent"
-              className="mt-auto hidden size-9 shrink-0 place-items-center rounded-md text-fg-muted hover:bg-surface-overlay hover:text-fg focus-visible:outline-2 focus-visible:outline-accent md:grid"
-            >
-              <PlusIcon size={16} />
-            </button>
           </div>
         ) : (
           <>
@@ -514,9 +512,6 @@ export function AgentDock({
                 <IconButton onClick={() => setOpen(false)} aria-label="Collapse agent dock" className="max-md:size-11">
                   <XIcon size={16} className="md:hidden" />
                   <ChevronRightIcon size={14} className="max-md:hidden" />
-                </IconButton>
-                <IconButton onClick={onNewAgent} aria-label="New agent" variant="primary" className="max-md:size-11">
-                  <PlusIcon size={14} />
                 </IconButton>
               </div>
               <label className="mt-2 flex h-11 items-center gap-2 rounded-md border border-edge bg-surface px-2 text-fg-muted focus-within:border-edge-focus md:h-8">
@@ -578,10 +573,20 @@ export function AgentDock({
               ) : (
                 <div className="px-3 py-8 text-center">
                   <p className="text-xs font-medium text-fg-secondary">
-                    {query.trim() ? 'No matching agents' : 'No agents in this workstream'}
+                    {query.trim()
+                      ? 'No matching agents'
+                      : mineFilter && meId
+                        ? 'No agents assigned to you'
+                        : filterChannelId
+                          ? 'No agents in this workstream'
+                          : 'No agents yet'}
                   </p>
                   <p className="mt-1 text-2xs leading-relaxed text-fg-muted">
-                    {query.trim() ? 'Try a title, harness, or channel name.' : 'New agent work will appear here.'}
+                    {query.trim()
+                      ? 'Try a title, harness, or channel name.'
+                      : mineFilter && meId
+                        ? 'Switch to All to see team agents.'
+                        : 'Agent work started from the composer will appear here.'}
                   </p>
                 </div>
               )}

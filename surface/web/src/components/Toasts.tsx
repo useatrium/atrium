@@ -62,14 +62,11 @@ export function Toasts() {
   }, []);
 
   return (
-    <div
-      aria-live="assertive"
-      aria-atomic="false"
-      className="pointer-events-none fixed inset-x-0 bottom-4 z-toast flex flex-col items-center gap-2"
-    >
+    <div className="pointer-events-none fixed inset-x-0 bottom-4 z-toast flex flex-col items-center gap-2">
       {toasts.map((t) => (
         <div
           key={t.id}
+          role={t.tone === 'error' ? 'alert' : 'status'}
           className={`pointer-events-auto flex max-w-md items-start gap-3 rounded-md border px-3 py-2 text-left text-xs shadow-lg ${
             t.tone === 'error'
               ? 'border-danger-border/60 bg-danger-tint/95 text-danger-text-strong'

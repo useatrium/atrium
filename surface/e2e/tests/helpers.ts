@@ -82,6 +82,18 @@ export async function loginViaForm(page: Page, handle: string, displayName = han
   await expect(page.getByRole('status', { name: 'connection: open' })).toBeVisible();
 }
 
+/** Open the configured spawn dialog through the composer's canonical agent path. */
+export async function openConfiguredAgentDialog(page: Page, task = 'Configure an agent'): Promise<Locator> {
+  const main = page.locator('#main-content');
+  const audience = main.getByTestId('composer-audience-pill');
+  if ((await audience.getAttribute('aria-checked')) !== 'true') await audience.click();
+  await main.getByPlaceholder('Prompt agent…').fill(task);
+  await main.getByRole('button', { name: 'Configure and start an agent' }).click();
+  const dialog = page.getByRole('dialog', { name: 'New agent' });
+  await expect(dialog).toBeVisible();
+  return dialog;
+}
+
 export async function warmOfflineShell(page: Page): Promise<void> {
   await page.evaluate(async () => {
     if (!('serviceWorker' in navigator)) return;

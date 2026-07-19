@@ -53,7 +53,6 @@ function props(overrides: Partial<AgentDockProps> = {}): AgentDockProps {
     focusedSessionId: null,
     meId: null,
     onFocusAgent: vi.fn(),
-    onNewAgent: vi.fn(),
     ...overrides,
   };
 }
@@ -139,6 +138,25 @@ describe('AgentDock', () => {
 
     expect(screen.getByTestId('agent-dock-needs-badge').textContent).toBe('2');
     expect(screen.getByTestId('agent-dock').getAttribute('data-state')).toBe('resting');
+  });
+
+  it('uses the dock only to inspect agents, without a duplicate creation action', () => {
+    render(<AgentDock {...props()} />);
+
+    expect(screen.queryByRole('button', { name: 'New agent' })).toBeNull();
+    openDock();
+    expect(screen.queryByRole('button', { name: 'New agent' })).toBeNull();
+  });
+
+  it('suppresses the mobile dock layer while mobile navigation is open', () => {
+    render(<AgentDock {...props({ mobileNavigationOpen: true })} />);
+
+    const dock = screen.getByTestId('agent-dock');
+    expect(dock.getAttribute('data-mobile-suppressed')).toBe('true');
+    expect(dock.className).toContain('max-md:hidden');
+
+    openDock();
+    expect(screen.getByRole('button', { name: 'Close agent dock sheet' }).className).toContain('max-md:hidden');
   });
 
   it('filters the dock to the requested channel', () => {
@@ -256,6 +274,35 @@ describe('AgentDock', () => {
     expect(screen.getByText('Launch agent')).toBeTruthy();
     expect(screen.queryByText('Engineering agent')).toBeNull();
     expect(screen.getByTestId('agent-dock-total').textContent).toBe('1');
+  });
+
+  it('explains empty strict filters without implying the workspace has no agents', () => {
+    const { unmount } = render(
+      <AgentDock
+        {...props({
+          sessions: { launch: session({ channelId: 'channel-2', title: 'Launch agent' }) },
+          filterChannelId: 'channel-1',
+        })}
+      />,
+    );
+
+    expect(screen.getByText('No agents in this workstream')).toBeTruthy();
+
+    unmount();
+    window.localStorage.clear();
+    render(
+      <AgentDock
+        {...props({
+          sessions: {
+            launch: session({ channelId: 'channel-2', driverId: 'user-2', title: 'Launch agent' }),
+          },
+          meId: 'user-1',
+        })}
+      />,
+    );
+    openDock();
+    fireEvent.click(screen.getByRole('button', { name: 'Mine' }));
+    expect(screen.getByText('No agents assigned to you')).toBeTruthy();
   });
 
   it('archives every listed terminal History session after confirmation', async () => {

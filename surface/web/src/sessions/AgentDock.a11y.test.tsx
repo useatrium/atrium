@@ -42,7 +42,6 @@ function renderDock(overrides: Partial<AgentDockProps> = {}) {
     focusedSessionId: null,
     meId: 'user-1',
     onFocusAgent: vi.fn(),
-    onNewAgent: vi.fn(),
     ...overrides,
   };
   return render(<AgentDock {...props} />);
