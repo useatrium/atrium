@@ -2274,7 +2274,7 @@ export function Chat({
     setIsSidebarOpen(false);
   }, [openSettingsSurface]);
   const shell = (
-    <div className="flex h-dvh overflow-hidden">
+    <div className="group/shell flex h-dvh overflow-hidden">
       <div
         data-testid="chat-sidebar-wrapper"
         data-immersed={immersed || undefined}
@@ -2311,7 +2311,7 @@ export function Chat({
       {channelMainVisible(view, threadRouteOpen) && (
         <main id="main-content" className={`${hideMainOnMobile ? 'hidden md:flex' : 'flex'} min-w-0 flex-1 flex-col`}>
           <header
-            className={`flex h-12 min-w-0 shrink-0 items-center gap-2 border-b border-edge px-2 md:gap-3 md:px-4 ${
+            className={`flex h-12 min-w-0 shrink-0 items-center gap-2 overflow-x-clip border-b border-edge px-2 md:gap-3 md:px-4 ${
               isMacDesktop ? 'max-md:pl-20' : ''
             }`}
           >
@@ -2328,7 +2328,7 @@ export function Chat({
               </span>
             </button>
             <h1
-              className="flex min-w-0 flex-1 items-center gap-1.5 truncate text-sm font-bold text-fg md:flex-none"
+              className="flex min-w-0 flex-1 items-center gap-1.5 truncate text-sm font-bold text-fg md:flex-initial"
               aria-label={
                 showSettingsSurface
                   ? 'Settings'
@@ -2456,8 +2456,8 @@ export function Chat({
                   aria-label={!callsAvailable ? 'Voice calls not set up' : 'Start voice call'}
                   className={
                     callsAvailable
-                      ? 'inline-flex h-7 items-center justify-center rounded-md border border-edge bg-surface-raised px-2 text-fg-muted hover:bg-surface-overlay hover:text-fg-body aria-disabled:cursor-default aria-disabled:text-fg-faint'
-                      : 'inline-flex h-7 cursor-help items-center justify-center rounded-md border border-edge bg-surface-raised px-2 text-fg-faint hover:text-fg-muted'
+                      ? 'inline-flex h-7 items-center justify-center rounded-md border border-edge bg-surface-raised px-2 text-fg-muted hover:bg-surface-overlay hover:text-fg-body aria-disabled:cursor-default aria-disabled:text-fg-faint md:max-lg:group-has-[[data-testid=agent-dock][data-state=open]]/shell:hidden'
+                      : 'inline-flex h-7 cursor-help items-center justify-center rounded-md border border-edge bg-surface-raised px-2 text-fg-faint hover:text-fg-muted md:max-lg:group-has-[[data-testid=agent-dock][data-state=open]]/shell:hidden'
                   }
                 >
                   <PhoneIcon size={14} />
@@ -2476,7 +2476,9 @@ export function Chat({
                 className="gap-1.5 font-normal"
               >
                 <SearchIcon size={14} />
-                <span className="hidden sm:inline">Search</span>
+                <span className="hidden sm:inline md:max-lg:group-has-[[data-testid=agent-dock][data-state=open]]/shell:hidden">
+                  Search
+                </span>
                 <span className="ml-0.5 hidden lg:inline-flex">
                   <Kbd keys={SHORTCUTS.commandPalette.keys} decorative />
                 </span>
@@ -2488,7 +2490,7 @@ export function Chat({
                 size="sm"
                 onClick={() => setShortcutsHelpOpen(true)}
                 aria-label="Keyboard shortcuts"
-                className="font-semibold"
+                className="font-semibold md:max-lg:group-has-[[data-testid=agent-dock][data-state=open]]/shell:hidden"
               >
                 <span aria-hidden="true" className="leading-none">
                   ?
@@ -2496,7 +2498,10 @@ export function Chat({
               </Button>
             </Tooltip>
             {!showNonChatSurface && active && (
-              <div className="hidden min-w-0 items-center gap-2 md:flex" title="Viewing this channel right now">
+              <div
+                className="hidden min-w-0 items-center gap-2 md:flex md:max-lg:group-has-[[data-testid=agent-dock][data-state=open]]/shell:hidden"
+                title="Viewing this channel right now"
+              >
                 {presentUsers.length > 0 && (
                   <div className="flex shrink-0 -space-x-1.5">
                     {presentUsers.slice(0, 8).map((u) => (

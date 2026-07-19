@@ -367,7 +367,7 @@ export function AgentGroup({
         }`}
       >
         <span>{group.label}</span>
-        <span className="tabular-nums text-fg-faint">{group.sessions.length}</span>
+        <span className="tabular-nums text-fg-body">{group.sessions.length}</span>
       </h3>
       {rows}
     </section>
