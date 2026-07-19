@@ -155,6 +155,41 @@ describe('resizable session pane', () => {
   });
 });
 
+describe('session focus control', () => {
+  it('uses one contextual header action for split and focus', () => {
+    const onToggleFocus = vi.fn();
+    const view = render(
+      <SessionPane
+        session={running}
+        me={me}
+        layout="split"
+        watchers={[]}
+        onClose={() => {}}
+        onAnswerQuestion={async () => {}}
+        onToggleFocus={onToggleFocus}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Expand agent to focus view' }));
+    expect(onToggleFocus).toHaveBeenCalledOnce();
+
+    view.rerender(
+      <SessionPane
+        session={running}
+        me={me}
+        layout="focus"
+        watchers={[]}
+        onClose={() => {}}
+        onAnswerQuestion={async () => {}}
+        onToggleFocus={onToggleFocus}
+      />,
+    );
+    expect(screen.getByRole('button', { name: 'Return agent to split view' }).getAttribute('aria-pressed')).toBe(
+      'true',
+    );
+  });
+});
+
 describe('effort picker', () => {
   const driving: Session = { ...running, spawnedBy: me.id, driverId: me.id, driverName: 'Me' };
 

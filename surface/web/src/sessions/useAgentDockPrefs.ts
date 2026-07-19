@@ -1,15 +1,10 @@
-// Persisted Agent Dock preferences: whether the dock is open and whether it is
-// immersed survive reloads per browser, like the sidebar width and the
-// channel│agent split opt-in. The dock's *width* uses the shared PaneSizeConfig
-// machinery (useSessionPaneWidth) and its own storage key, configured where the
-// resize handle lives.
+// Persisted Agent Dock preferences: whether the dock is open and whether it
+// shows Mine or All survive reloads per browser. The dock's *width* uses the
+// shared PaneSizeConfig machinery (useSessionPaneWidth) and its own storage key,
+// configured where the resize handle lives.
 
 import { useCallback, useState } from 'react';
-import {
-  AGENT_DOCK_IMMERSED_STORAGE_KEY,
-  AGENT_DOCK_MINE_FILTER_STORAGE_KEY,
-  AGENT_DOCK_OPEN_STORAGE_KEY,
-} from '../storageKeys';
+import { AGENT_DOCK_MINE_FILTER_STORAGE_KEY, AGENT_DOCK_OPEN_STORAGE_KEY } from '../storageKeys';
 
 function readBoolean(key: string): boolean {
   return typeof window !== 'undefined' && window.localStorage.getItem(key) === 'true';
@@ -32,10 +27,6 @@ function usePersistedBoolean(key: string): [boolean, (next: boolean | ((current:
 
 export function useAgentDockOpen() {
   return usePersistedBoolean(AGENT_DOCK_OPEN_STORAGE_KEY);
-}
-
-export function useAgentDockImmersed() {
-  return usePersistedBoolean(AGENT_DOCK_IMMERSED_STORAGE_KEY);
 }
 
 export function useAgentDockMineFilter() {

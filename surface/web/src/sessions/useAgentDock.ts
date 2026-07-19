@@ -12,7 +12,7 @@ import {
 export type AgentDockGroup = {
   key: string;
   label: string;
-  kind: 'needs' | 'channel' | 'hibernating' | 'recent';
+  kind: 'needs' | 'channel' | 'stalled' | 'recent';
   channelId?: string;
   sessions: Session[];
 };
@@ -53,7 +53,7 @@ export function agentDockGroups(
     .sort((left, right) => blockedTimestamp(left, opts.now) - blockedTimestamp(right, opts.now));
   const needsYouIds = new Set(needsYou.map((session) => session.id));
   const channelSessions = new Map<string, Session[]>();
-  const hibernating: Session[] = [];
+  const stalled: Session[] = [];
   const recent: Session[] = [];
 
   for (const session of visible) {
@@ -71,7 +71,7 @@ export function agentDockGroups(
     // There is no durable paused/idle lifecycle state yet. Keep this branch
     // ready for fold-only non-live states without inventing hibernation for a
     // session the client cannot classify confidently.
-    if (deriveSessionGlance(session, opts.now).kind === 'stalled') hibernating.push(session);
+    if (deriveSessionGlance(session, opts.now).kind === 'stalled') stalled.push(session);
   }
 
   const channelNames = new Map(opts.channels?.map((channel) => [channel.id, channel.name]));
@@ -92,12 +92,12 @@ export function agentDockGroups(
       sessions: groupedSessions.sort(newestFirst),
     });
   }
-  if (hibernating.length > 0) {
+  if (stalled.length > 0) {
     groups.push({
-      key: 'hibernating',
-      label: 'Hibernating',
-      kind: 'hibernating',
-      sessions: hibernating.sort(newestFirst),
+      key: 'stalled',
+      label: 'Stalled',
+      kind: 'stalled',
+      sessions: stalled.sort(newestFirst),
     });
   }
   if (recent.length > 0) {

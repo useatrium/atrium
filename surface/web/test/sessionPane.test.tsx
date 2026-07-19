@@ -1396,15 +1396,15 @@ describe('focus + detach controls', () => {
       />,
     );
 
-    // Detach and view controls live behind the overflow menu now.
+    // Detach remains behind the overflow menu.
     fireEvent.click(screen.getByRole('button', { name: 'Agent actions' }));
     expect(screen.getByRole('button', { name: 'Open in a new tab' })).toBeTruthy();
 
-    // Split → the menu offers Expand.
-    fireEvent.click(screen.getByRole('button', { name: /expand to focus/i }));
+    // Split → the header offers Expand.
+    fireEvent.click(screen.getByRole('button', { name: 'Expand agent to focus view' }));
     expect(onToggleFocus).toHaveBeenCalledTimes(1);
 
-    // Focus → it offers Collapse and reports pressed.
+    // Focus → the same header control returns to split and reports pressed.
     rerender(
       <SessionPane
         session={bSession()}
@@ -1416,8 +1416,9 @@ describe('focus + detach controls', () => {
         onToggleFocus={onToggleFocus}
       />,
     );
-    fireEvent.click(screen.getByRole('button', { name: 'Agent actions' }));
-    expect(screen.getByRole('button', { name: /collapse to split/i })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Return agent to split view' }).getAttribute('aria-pressed')).toBe(
+      'true',
+    );
   });
 
   it('hides the expand control when no handler is given, and detach when pending', () => {

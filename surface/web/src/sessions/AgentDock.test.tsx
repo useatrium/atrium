@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type { Channel } from '@atrium/surface-client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AGENT_DOCK_OPEN_STORAGE_KEY, AGENT_DOCK_WIDTH_STORAGE_KEY } from '../storageKeys';
-import { AgentDock, type AgentDockProps, sidebarImmersionClassName } from './AgentDock';
+import { AgentDock, type AgentDockProps } from './AgentDock';
 import type { Session } from './types';
 
 afterEach(() => {
@@ -51,10 +51,8 @@ function props(overrides: Partial<AgentDockProps> = {}): AgentDockProps {
     channels,
     activeChannelId: 'channel-1',
     focusedSessionId: null,
-    immersed: false,
     meId: null,
     onFocusAgent: vi.fn(),
-    onToggleImmersed: vi.fn(),
     onNewAgent: vi.fn(),
     ...overrides,
   };
@@ -141,19 +139,6 @@ describe('AgentDock', () => {
 
     expect(screen.getByTestId('agent-dock-needs-badge').textContent).toBe('2');
     expect(screen.getByTestId('agent-dock').getAttribute('data-state')).toBe('resting');
-  });
-
-  it('renders the immersed dock instead of the resting spine', () => {
-    const view = render(<AgentDock {...props()} />);
-    expect(screen.getByTestId('agent-dock').getAttribute('data-state')).toBe('resting');
-    expect(screen.queryByRole('searchbox', { name: 'Filter agents' })).toBeNull();
-
-    view.rerender(<AgentDock {...props({ immersed: true })} />);
-
-    expect(screen.getByTestId('agent-dock').getAttribute('data-state')).toBe('immersed');
-    expect(screen.getByRole('searchbox', { name: 'Filter agents' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Exit immersed agent dock' })).toBeTruthy();
-    expect(screen.queryByRole('button', { name: /Open agent dock/ })).toBeNull();
   });
 
   it('filters the dock to the requested channel', () => {
@@ -245,7 +230,7 @@ describe('AgentDock', () => {
     );
   });
 
-  it('keeps global needs-you visible and collapses non-matching channel groups while filtered', () => {
+  it('strictly filters needs-you and channel groups to the selected workstream', () => {
     render(
       <AgentDock
         {...props({
@@ -267,17 +252,13 @@ describe('AgentDock', () => {
       />,
     );
 
-    expect(screen.getByText('Answer deployment question')).toBeTruthy();
+    expect(screen.queryByText('Answer deployment question')).toBeNull();
     expect(screen.getByText('Launch agent')).toBeTruthy();
-    const softened = screen.getByTestId('agent-dock-softened-group');
-    expect(within(softened).getByText('engineering')).toBeTruthy();
     expect(screen.queryByText('Engineering agent')).toBeNull();
-
-    fireEvent.click(within(softened).getByText('engineering'));
-    expect(screen.getByText('Engineering agent')).toBeTruthy();
+    expect(screen.getByTestId('agent-dock-total').textContent).toBe('1');
   });
 
-  it('clears every listed terminal History session after confirmation', () => {
+  it('archives every listed terminal History session after confirmation', async () => {
     const onSetArchived = vi.fn();
     vi.spyOn(window, 'confirm').mockReturnValue(true);
     render(
@@ -303,9 +284,9 @@ describe('AgentDock', () => {
     );
     openDock();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Archive all…' }));
 
-    expect(onSetArchived).toHaveBeenCalledTimes(2);
+    await waitFor(() => expect(onSetArchived).toHaveBeenCalledTimes(2));
     expect(onSetArchived).toHaveBeenCalledWith('completed', true, null);
     expect(onSetArchived).toHaveBeenCalledWith('cancelled', true, null);
   });
@@ -348,13 +329,14 @@ describe('AgentDock', () => {
     expect(within(list).getByRole('listitem', { name: /Ship mobile dock:/, hidden: true })).toBeTruthy();
   });
 
-  it('provides the responsive sheet frame and sidebar immersion seam', () => {
+  it('provides the responsive sheet frame and a top-anchored resting opener', () => {
     render(<AgentDock {...props()} />);
+    const opener = screen.getByRole('button', { name: /Open agent dock/ });
+    expect(opener.className).toContain('md:flex-none');
+    expect(opener.className).not.toContain('md:flex-1');
     openDock();
 
     expect(screen.getByTestId('agent-dock').className).toContain('h-[60dvh]');
-    expect(sidebarImmersionClassName(true)).toContain('md:w-0');
-    expect(sidebarImmersionClassName(false)).toBe('contents');
   });
 
   it('clears a non-empty filter query on Escape before dismissing the dock', () => {
@@ -380,13 +362,5 @@ describe('AgentDock', () => {
 
     fireEvent.keyDown(document.body, { key: 'Escape' });
     expect(screen.getByTestId('agent-dock').getAttribute('data-state')).toBe('resting');
-  });
-
-  it('exits immersion on Escape', () => {
-    const onToggleImmersed = vi.fn();
-    render(<AgentDock {...props({ immersed: true, onToggleImmersed })} />);
-
-    fireEvent.keyDown(document.body, { key: 'Escape' });
-    expect(onToggleImmersed).toHaveBeenCalledTimes(1);
   });
 });

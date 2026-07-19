@@ -5,12 +5,12 @@ export const TRANSCRIPT_VIEW_STORAGE_KEY = 'atrium:transcript-view';
 
 export const UNFURL_COLLAPSED_STORAGE_KEY = 'atrium:unfurl-collapsed';
 export const SIDEBAR_WIDTH_STORAGE_KEY = 'atrium:sidebar-width';
+export const SIDEBAR_COLLAPSED_STORAGE_KEY = 'atrium:sidebar-collapsed';
 export const SESSION_PANE_WIDTH_STORAGE_KEY = 'atrium:session-pane-width';
 export const THREAD_PANE_WIDTH_STORAGE_KEY = 'atrium:thread-pane-width';
 export const WORK_DOCK_SIDE_WIDTH_STORAGE_KEY = 'atrium:work-dock-side-width';
 export const WORK_DOCK_TOP_HEIGHT_STORAGE_KEY = 'atrium:work-dock-top-height';
 export const AGENT_DOCK_OPEN_STORAGE_KEY = 'atrium:agent-dock-open';
-export const AGENT_DOCK_IMMERSED_STORAGE_KEY = 'atrium:agent-dock-immersed';
 export const AGENT_DOCK_WIDTH_STORAGE_KEY = 'atrium:agent-dock-width';
 export const AGENT_DOCK_MINE_FILTER_STORAGE_KEY = 'atrium:agent-dock-mine-filter';
 

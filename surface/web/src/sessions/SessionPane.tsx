@@ -63,7 +63,7 @@ import {
 import { MarkupPane, type MarkupPaneSource } from '../components/MarkupPane';
 import { MarkupSteerCard } from '../components/MarkupSteerCard';
 import { Tooltip } from '../components/a11y';
-import { CornerUpLeftIcon, XIcon } from '../components/icons';
+import { CornerUpLeftIcon, ExpandIcon, ShrinkIcon, XIcon } from '../components/icons';
 import type {
   AttachmentMeta,
   AttachmentRef,
@@ -1594,15 +1594,6 @@ export function SessionPaneContent({
       label: expandAllWork ? 'Collapse all work' : 'Expand all work',
       onSelect: () => setExpandAllWork(!expandAllWork),
     },
-    ...(onToggleFocus
-      ? [
-          {
-            key: 'focus',
-            label: focused ? 'Collapse to split view' : 'Expand to focus view',
-            onSelect: onToggleFocus,
-          },
-        ]
-      : []),
     { key: 'details', label: 'Session details & scope', onSelect: () => setCapabilitiesOpen(true) },
     ...(canDetach
       ? [
@@ -1821,6 +1812,19 @@ export function SessionPaneContent({
                       : displayCancelAsk === 'failed'
                         ? 'Cancel failed — retry'
                         : 'Cancel'}
+                </button>
+              </Tooltip>
+            )}
+            {onToggleFocus && (
+              <Tooltip content={focused ? 'Return to split view' : 'Expand agent'}>
+                <button
+                  type="button"
+                  onClick={onToggleFocus}
+                  aria-label={focused ? 'Return agent to split view' : 'Expand agent to focus view'}
+                  aria-pressed={focused}
+                  className="hidden size-7 shrink-0 items-center justify-center rounded-md text-fg-tertiary hover:bg-surface-overlay hover:text-fg focus-visible:outline-2 focus-visible:outline-accent md:inline-flex"
+                >
+                  {focused ? <ShrinkIcon size={14} /> : <ExpandIcon size={14} />}
                 </button>
               </Tooltip>
             )}

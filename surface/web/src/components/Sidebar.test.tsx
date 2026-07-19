@@ -1,12 +1,16 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import type { Channel } from '../api';
 import type { QueueSyncState, UnreadLevel, UserRef } from '@atrium/surface-client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { SIDEBAR_COLLAPSED_STORAGE_KEY } from '../storageKeys';
 import { Sidebar } from './Sidebar';
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  window.localStorage.clear();
+});
 
 const me: UserRef = { id: 'user-1', handle: 'me', displayName: 'Me' } as UserRef;
 
@@ -46,6 +50,27 @@ function renderSidebar(overrides: Partial<Parameters<typeof Sidebar>[0]> = {}) {
 const rowButton = (label: string) => screen.getByText(label).closest('button') as HTMLButtonElement;
 
 describe('Sidebar channel roving tabindex', () => {
+  it('collapses to persisted core destinations and restores from the left rail', () => {
+    renderSidebar({
+      activityCounts: { attention: 0, unread: 3, needsYou: 0, toReview: 0 },
+      onOpenActivity: vi.fn(),
+      onOpenFiles: vi.fn(),
+      onOpenSettings: vi.fn(),
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse navigation' }));
+    const rail = screen.getByTestId('sidebar-collapsed-rail');
+    expect(screen.getByTestId('sidebar').getAttribute('data-collapsed')).toBe('true');
+    expect(window.localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY)).toBe('true');
+    expect(within(rail).getByRole('button', { name: 'Inbox, 3 unread' })).toBeTruthy();
+    expect(within(rail).getByRole('button', { name: 'Files' })).toBeTruthy();
+    expect(within(rail).getByRole('button', { name: 'Settings' })).toBeTruthy();
+
+    fireEvent.click(within(rail).getByRole('button', { name: 'Expand navigation' }));
+    expect(screen.getByTestId('sidebar').getAttribute('data-collapsed')).toBeNull();
+    expect(window.localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY)).toBe('false');
+  });
+
   it('makes only the active channel row tabbable and marks it aria-current', () => {
     renderSidebar({ activeChannelId: 'c2' });
     expect(rowButton('alpha').tabIndex).toBe(-1);

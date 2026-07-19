@@ -133,7 +133,7 @@ test('pinned work drawer Changes tab is URL-driven and reload-restored', async (
   await expect(page.getByRole('tab', { name: /What changed/ })).toHaveAttribute('aria-selected', 'true');
 });
 
-test('focus layout is the default and an explicit URL is reload-restored', async ({ page }) => {
+test('focus layout is the permalink default and an explicit URL is reload-restored', async ({ page }) => {
   const room = await createTestChannel('addr-focus');
   const handle = unique('addr-focus');
   await login(page, handle, 'Address Focus');
@@ -150,9 +150,9 @@ test('focus layout is the default and an explicit URL is reload-restored', async
 
   await page.goto(`/c/${roomId}/s/${sessionId}`);
   await expect(page.getByRole('heading', { name: title })).toBeVisible();
-  // Opening an agent owns the main pane by default, even without a view param.
-  await page.getByRole('button', { name: 'Agent actions' }).click();
-  await expect(page.getByRole('button', { name: 'Collapse to split view' })).toBeVisible();
+  // A session permalink owns the main pane even without a view param.
+  await expect(page.getByRole('button', { name: 'Return agent to split view' })).toBeVisible();
+  await expect(page.getByTestId('pane-resize-handle')).toHaveCount(0);
 
   // An explicit focus URL remains addressable and restores the same layout.
   await page.goto(`/c/${roomId}/s/${sessionId}?view=focus`);
@@ -160,6 +160,6 @@ test('focus layout is the default and an explicit URL is reload-restored', async
   await expect(page.getByRole('heading', { name: title })).toBeVisible();
   await page.reload();
   await expect(page.getByRole('heading', { name: title })).toBeVisible();
-  await page.getByRole('button', { name: 'Agent actions' }).click();
-  await expect(page.getByRole('button', { name: 'Collapse to split view' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Return agent to split view' })).toBeVisible();
+  await expect(page.getByTestId('pane-resize-handle')).toHaveCount(0);
 });

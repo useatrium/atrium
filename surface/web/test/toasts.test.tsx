@@ -2,9 +2,11 @@
 // The last-resort error surface: handler throws and unhandled rejections
 // must become visible toasts, never silent console-only failures.
 
-import { act, render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
-import { Toasts, showErrorToast } from '../src/components/Toasts';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { Toasts, showActionToast, showErrorToast } from '../src/components/Toasts';
+
+afterEach(cleanup);
 
 describe('Toasts', () => {
   it('shows imperative error toasts and window error events', async () => {
@@ -21,5 +23,16 @@ describe('Toasts', () => {
     // duplicates collapse instead of stacking
     act(() => showErrorToast('explicit failure'));
     expect(screen.getAllByText('explicit failure')).toHaveLength(1);
+  });
+
+  it('runs and dismisses a recovery action', async () => {
+    const undo = vi.fn();
+    render(<Toasts />);
+
+    act(() => showActionToast('Archived one agent.', 'Undo', undo));
+    fireEvent.click(await screen.findByRole('button', { name: 'Undo' }));
+
+    expect(undo).toHaveBeenCalledOnce();
+    expect(screen.queryByText('Archived one agent.')).toBeNull();
   });
 });

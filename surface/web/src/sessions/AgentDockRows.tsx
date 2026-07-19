@@ -20,6 +20,7 @@ import { GlanceChip } from './GlanceChip';
 import { SessionPresenceTicker } from './SessionPresenceTicker';
 import { isTerminalSessionStatus, sessionAttentionKind, type Session } from './types';
 import type { AgentDockGroup } from './useAgentDock';
+import { showActionToast } from '../components/Toasts';
 
 /** Everything a row can act on, provided by the dock frame (and ultimately Chat). */
 export type AgentRowContext = {
@@ -29,8 +30,8 @@ export type AgentRowContext = {
   channelNames: ReadonlyMap<string, string>;
   /** Filter the dock to a workstream (the presence-link behavior, from a row tag). */
   onFilterChannel?: (channelId: string) => void;
-  onSetArchived?: (sessionId: string, archived: boolean, previousArchivedAt: string | null) => void;
-  onSetPinned?: (sessionId: string, pinned: boolean, previousPinned: boolean) => void;
+  onSetArchived?: (sessionId: string, archived: boolean, previousArchivedAt: string | null) => Promise<void> | void;
+  onSetPinned?: (sessionId: string, pinned: boolean, previousPinned: boolean) => Promise<void> | void;
 };
 
 type AgentRovingContextValue = {
@@ -186,6 +187,15 @@ export function AgentRow({
             : 'pr-2';
   const actionClass =
     'grid size-6 shrink-0 place-items-center rounded text-fg-muted opacity-0 hover:bg-surface-overlay hover:text-fg group-hover/agent-row:opacity-100 group-focus-within/agent-row:opacity-100 focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-accent [@media(hover:none)]:opacity-100';
+  const archiveSession = async () => {
+    if (!context.onSetArchived) return;
+    const archive = session.archivedAt == null;
+    await context.onSetArchived(session.id, archive, session.archivedAt);
+    if (!archive) return;
+    showActionToast(`Archived ${session.title}.`, 'Undo', () =>
+      context.onSetArchived?.(session.id, false, new Date().toISOString()),
+    );
+  };
 
   return (
     <li
@@ -286,7 +296,7 @@ export function AgentRow({
             <button
               type="button"
               aria-label={`${session.archivedAt == null ? 'Archive' : 'Unarchive'} ${session.title}`}
-              onClick={() => context.onSetArchived?.(session.id, session.archivedAt == null, session.archivedAt)}
+              onClick={() => void archiveSession().catch(() => {})}
               className={actionClass}
             >
               <ArchiveIcon size={14} />
@@ -341,7 +351,7 @@ export function AgentGroup({
     </ul>
   );
 
-  if (group.kind === 'hibernating' || group.kind === 'recent') {
+  if (group.kind === 'stalled' || group.kind === 'recent') {
     return (
       <details
         data-testid="agent-dock-group"
