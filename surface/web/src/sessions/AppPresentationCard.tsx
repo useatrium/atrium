@@ -1,7 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import type { ArtifactPresentation } from '@atrium/centaur-client';
-import { sessionsApi } from './api';
-import { isPendingSessionId, isTerminalSessionStatus, type Session } from './types';
 
 type AppPresentationSurface = 'timeline' | 'transcript';
 
@@ -122,39 +120,4 @@ export function AppPresentationCards({
       ))}
     </div>
   );
-}
-
-export function SessionAppPresentationCards({
-  session,
-  surface = 'timeline',
-}: {
-  session: Session;
-  surface?: AppPresentationSurface;
-}) {
-  const [presentations, setPresentations] = useState<ArtifactPresentation[]>([]);
-  const terminal = isTerminalSessionStatus(session.status);
-
-  useEffect(() => {
-    if (isPendingSessionId(session.id)) return;
-    let disposed = false;
-    let timer: number | null = null;
-    const load = () => {
-      sessionsApi
-        .listPresentations(session.id)
-        .then(({ presentations }) => {
-          if (!disposed) setPresentations(Array.isArray(presentations) ? presentations : []);
-        })
-        .catch(() => {
-          if (!disposed) setPresentations([]);
-        });
-    };
-    load();
-    if (!terminal) timer = window.setInterval(load, 5000);
-    return () => {
-      disposed = true;
-      if (timer != null) window.clearInterval(timer);
-    };
-  }, [session.id, terminal, session.completedAt]);
-
-  return <AppPresentationCards sessionId={session.id} presentations={presentations} surface={surface} />;
 }

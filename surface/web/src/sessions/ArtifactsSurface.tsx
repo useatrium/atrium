@@ -4,12 +4,8 @@
 // route); others a monochrome type label. Manifest-only entries (bytes too large
 // / filtered) render disabled with a note. Newest capture first.
 
-import { useEffect, useMemo, useState } from 'react';
 import type { Artifact, ArtifactPresentation } from '@atrium/centaur-client';
 import { XIcon } from '../components/icons';
-import { EscapeLayer, isEditableEscapeTarget, useEscapeLayer } from '../lib/escapeLayers';
-import { navigate, URL_PARAMS, useLocation } from '../router';
-import { EmptyState } from './EmptyState';
 
 const KIND_BADGE: Record<Artifact['kind'], string> = {
   created: 'bg-success/15 text-success-text',
@@ -25,11 +21,6 @@ const KIND_LABEL: Record<Artifact['kind'], string> = {
 function basename(path: string): string {
   const parts = path.split('/');
   return parts[parts.length - 1] || path;
-}
-
-function pathWithSearch(path: string, params: URLSearchParams): string {
-  const query = params.toString();
-  return query ? `${path}?${query}` : path;
 }
 
 /** A short monochrome type label (PNG / PDF / CSV) from mime, falling back to the
@@ -252,127 +243,6 @@ export function ArtifactPreviewModal({
         sandbox="allow-scripts allow-forms allow-popups allow-modals"
         className="min-h-0 flex-1 bg-white"
       />
-    </div>
-  );
-}
-
-export function ArtifactsSurface({
-  artifacts,
-  presentations = [],
-  sessionId,
-  onClose,
-  embedded = false,
-}: {
-  artifacts: Artifact[];
-  presentations?: ArtifactPresentation[];
-  sessionId: string;
-  onClose: () => void;
-  /** Render body-only (no own header/overlay) — the WorkDrawer supplies the chrome. */
-  embedded?: boolean;
-}) {
-  const location = useLocation();
-  const previewParam = useMemo(
-    () => new URLSearchParams(location.search).get(URL_PARAMS.preview)?.trim() ?? '',
-    [location.search],
-  );
-  const [preview, setPreview] = useState<Artifact | null>(null);
-  const presentationByPath = useMemo(
-    () => new Map(presentations.map((presentation) => [presentation.path, presentation])),
-    [presentations],
-  );
-  // One tile per path, newest-wins (mirrors the ledger's (session,path) chain),
-  // newest activity first.
-  const tiles = useMemo(() => latestArtifactsByPath(artifacts), [artifacts]);
-
-  const updatePreviewUrl = (value: string | null, options: { replace?: boolean } = {}) => {
-    const params = new URLSearchParams(location.search);
-    if (value) params.set(URL_PARAMS.preview, value);
-    else params.delete(URL_PARAMS.preview);
-    navigate(pathWithSearch(location.pathname, params), options);
-  };
-
-  const openPreview = (artifact: Artifact) => {
-    setPreview(artifact);
-    updatePreviewUrl(artifact.path);
-  };
-
-  const closePreview = () => {
-    setPreview(null);
-    updatePreviewUrl(null);
-  };
-
-  useEscapeLayer(
-    EscapeLayer.workSurface,
-    (event) => {
-      if (isEditableEscapeTarget(event.target)) return false;
-      onClose();
-      return true;
-    },
-    !embedded,
-  );
-
-  useEffect(() => {
-    if (!previewParam) {
-      setPreview(null);
-      return;
-    }
-    const match =
-      tiles.find(({ artifact }) => artifact.path === previewParam || artifact.id === previewParam)?.artifact ?? null;
-    setPreview(match);
-  }, [previewParam, tiles]);
-
-  const body = (
-    <div className="min-h-0 flex-1 overflow-y-auto p-3">
-      {tiles.length === 0 ? (
-        <EmptyState title="No artifacts yet" hint="Files the agent creates will show up here." />
-      ) : (
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-          {tiles.map(({ artifact, versions }) => (
-            <ArtifactTile
-              key={artifact.path}
-              sessionId={sessionId}
-              artifact={artifact}
-              versions={versions}
-              onPreview={openPreview}
-              presentation={presentationByPath.get(artifact.path)}
-            />
-          ))}
-        </div>
-      )}
-      {preview && (
-        <ArtifactPreviewModal
-          sessionId={sessionId}
-          artifact={preview}
-          presentation={presentationByPath.get(preview.path)}
-          onClose={closePreview}
-        />
-      )}
-    </div>
-  );
-
-  if (embedded) return body;
-
-  return (
-    <div
-      data-testid="artifacts-surface"
-      role="dialog"
-      aria-label="Artifacts"
-      className="absolute inset-0 z-raised flex flex-col bg-surface/95 backdrop-blur-sm"
-    >
-      <header className="flex h-10 shrink-0 items-center justify-between border-b border-edge px-3">
-        <h3 className="text-xs font-semibold text-fg">
-          Artifacts <span className="tabular-nums text-fg-muted">· {tiles.length}</span>
-        </h3>
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Close artifacts"
-          className="rounded-md px-1.5 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg"
-        >
-          <XIcon size={15} />
-        </button>
-      </header>
-      {body}
     </div>
   );
 }

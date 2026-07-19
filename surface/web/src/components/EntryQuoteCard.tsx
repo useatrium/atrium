@@ -18,7 +18,6 @@ import { TimelineImage } from './TimelineImage';
 
 const MAX_EXCERPT_LENGTH = 200;
 const MAX_MARKUP_CARD_BYTES = 64 * 1024;
-const MAX_VISIBLE_CARDS = 3;
 const MAX_THUMBNAILS = 4;
 const MAX_COLLAPSED_KEYS = 500;
 
@@ -586,64 +585,5 @@ export function EntryQuoteCard({
       </a>
       <EntryMedia entry={entry} />
     </article>
-  );
-}
-
-export function EntryQuoteCards({
-  handles,
-  applyContext,
-  messageEventId,
-  canManage = false,
-  onSuppress,
-}: {
-  handles: string[];
-  applyContext?: EntryQuoteApplyContext | null;
-  messageEventId?: number | null;
-  canManage?: boolean;
-  onSuppress?: (handle: string) => void;
-}) {
-  const [showAll, setShowAll] = useState(false);
-  const visibleHandles = showAll ? handles : handles.slice(0, MAX_VISIBLE_CARDS);
-  const key = visibleHandles.join('\n');
-  const [entries, setEntries] = useState<ResolvedEntryQuote[]>([]);
-
-  useEffect(() => {
-    let active = true;
-    setEntries([]);
-    if (visibleHandles.length === 0) return undefined;
-
-    void Promise.all(visibleHandles.map((handle) => resolveEntryQuote(handle))).then((resolved) => {
-      if (!active) return;
-      setEntries(resolved.filter((entry): entry is ResolvedEntryQuote => entry != null));
-    });
-
-    return () => {
-      active = false;
-    };
-  }, [key]);
-
-  if (handles.length === 0) return null;
-
-  return (
-    <div className="mt-2 flex flex-col gap-1.5 whitespace-normal">
-      {entries.map((entry) => (
-        <EntryQuoteCard
-          key={entry.handle}
-          entry={entry}
-          applyContext={applyContext}
-          messageEventId={messageEventId}
-          onSuppress={canManage && onSuppress ? () => onSuppress(entry.handle) : undefined}
-        />
-      ))}
-      {handles.length > MAX_VISIBLE_CARDS ? (
-        <button
-          type="button"
-          onClick={() => setShowAll((value) => !value)}
-          className="self-start text-xs font-medium text-accent-text hover:underline"
-        >
-          {showAll ? 'Show fewer' : `Show ${handles.length - MAX_VISIBLE_CARDS} more`}
-        </button>
-      ) : null}
-    </div>
   );
 }

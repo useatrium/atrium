@@ -2,11 +2,8 @@
 // edited, each with its synthesized diff. Opens over the transcript from the
 // "Changes·N" strip; dismissible. Grouped by path, newest edit per file on top.
 
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import type { FileChange } from '@atrium/centaur-client';
-import { XIcon } from '../components/icons';
-import { EscapeLayer, isEditableEscapeTarget, useEscapeLayer } from '../lib/escapeLayers';
-import { EmptyState } from './EmptyState';
 import { DiffView, KIND_BADGE, KIND_LABEL, diffStats } from './fileChangeView';
 
 export function groupFileChanges(changes: FileChange[]): [string, FileChange[]][] {
@@ -49,67 +46,6 @@ export function ChangeFileRow({ path, changes }: { path: string; changes: FileCh
         {dels > 0 && <span className="shrink-0 text-2xs tabular-nums text-danger-text">−{dels}</span>}
       </button>
       {open && diff && <DiffView diff={diff} />}
-    </div>
-  );
-}
-
-export function ChangesSurface({
-  changes,
-  onClose,
-  embedded = false,
-}: {
-  changes: FileChange[];
-  onClose: () => void;
-  /** Render body-only (no own header/overlay) — the WorkDrawer supplies the
-   * chrome and counts. Standalone (false) keeps its dialog header + close. */
-  embedded?: boolean;
-}) {
-  // Group by display path, preserving first-seen order.
-  const groups = useMemo(() => groupFileChanges(changes), [changes]);
-
-  useEscapeLayer(
-    EscapeLayer.workSurface,
-    (event) => {
-      if (isEditableEscapeTarget(event.target)) return false;
-      onClose();
-      return true;
-    },
-    !embedded,
-  );
-
-  const body = (
-    <div className="min-h-0 flex-1 overflow-y-auto">
-      {groups.length === 0 ? (
-        <EmptyState title="No files changed" hint="This agent didn't edit any files in the repo." />
-      ) : (
-        groups.map(([path, fileChanges]) => <ChangeFileRow key={path} path={path} changes={fileChanges} />)
-      )}
-    </div>
-  );
-
-  if (embedded) return body;
-
-  return (
-    <div
-      data-testid="changes-surface"
-      role="dialog"
-      aria-label="Changes"
-      className="absolute inset-0 z-raised flex flex-col bg-surface/95 backdrop-blur-sm"
-    >
-      <header className="flex h-10 shrink-0 items-center justify-between border-b border-edge px-3">
-        <h3 className="text-xs font-semibold text-fg">
-          Changes <span className="tabular-nums text-fg-muted">· {groups.length}</span>
-        </h3>
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Close changes"
-          className="rounded-md px-1.5 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg"
-        >
-          <XIcon size={15} />
-        </button>
-      </header>
-      {body}
     </div>
   );
 }
