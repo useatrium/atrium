@@ -14,6 +14,15 @@ function focusFirstIn(container: HTMLElement): void {
   first.focus();
 }
 
+// How many useDialog instances are currently open. The layered-escape
+// dispatcher reads this to stand down while a modal owns Escape, and global
+// chords (⌘K) read it to avoid stacking on top of an open dialog.
+let openDialogCount = 0;
+
+export function isModalDialogOpen(): boolean {
+  return openDialogCount > 0;
+}
+
 export function useDialog({
   open,
   containerRef,
@@ -33,6 +42,7 @@ export function useDialog({
 }) {
   useEffect(() => {
     if (!open) return;
+    openDialogCount += 1;
     const invoker = invokerRef?.current ?? (document.activeElement as HTMLElement | null);
     const focusTimer = window.setTimeout(() => {
       const target = initialFocusRef?.current;
@@ -82,6 +92,7 @@ export function useDialog({
     document.addEventListener('keydown', onKeyDown, true);
     document.addEventListener('pointerdown', onPointerDown, true);
     return () => {
+      openDialogCount -= 1;
       window.clearTimeout(focusTimer);
       document.removeEventListener('keydown', onKeyDown, true);
       document.removeEventListener('pointerdown', onPointerDown, true);
