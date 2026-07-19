@@ -4,19 +4,16 @@ import type { ActivityCounts } from '@atrium/surface-client';
 import { useChat } from './chat';
 
 /**
- * Server-computed Inbox badge counts. Unlike the live WS session map
- * (empty on a cold boot), this is correct from first render: fetched on
- * mount, on app foreground, and re-fetched (debounced) whenever the live
- * session map changes so in-app state transitions reflect quickly.
+ * Server-computed Agents attention and Inbox unread counts. Unlike the live
+ * WS session map (empty on a cold boot), these are correct from first render:
+ * fetched on mount, on app foreground, and re-fetched (debounced) whenever
+ * the live session map changes so in-app state transitions reflect quickly.
  */
 export function useActivityCounts(): ActivityCounts {
   const { api, state } = useChat();
   const [counts, setCounts] = useState<ActivityCounts>({
     attention: 0,
     unread: 0,
-    needsYou: 0,
-    running: 0,
-    toReview: 0,
   });
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -29,9 +26,6 @@ export function useActivityCounts(): ActivityCounts {
         setCounts({
           attention: Number(next?.attention) || 0,
           unread: Number(next?.unread) || 0,
-          needsYou: Number(next?.needsYou) || 0,
-          running: Number(next?.running) || 0,
-          toReview: Number(next?.toReview) || 0,
         }),
       )
       .catch(() => {});

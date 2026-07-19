@@ -40,28 +40,8 @@ function session(overrides: Partial<Session> = {}): Session {
 }
 
 describe('mobile tab attention semantics', () => {
-  it('shows normal running sessions as live without badging Attention', () => {
-    expect(getSessionNavigationCounts({ running: session() })).toEqual({ live: 1, attention: 0 });
-  });
-
-  it('badges actionable live states', () => {
-    const asking = session({
-      id: 'asking',
-      pendingQuestion: { questionId: 'question-1', questions: [] },
-    });
-    const authenticating = session({
-      id: 'authenticating',
-      providerAuthRequired: {
-        provider: 'codex',
-        userId: 'user-1',
-        reason: 'missing_token',
-        message: 'Connect Codex',
-        at: '2026-07-11T00:01:00.000Z',
-      },
-    });
-    const failed = session({ id: 'failed', status: 'failed' });
-
-    expect(getSessionNavigationCounts({ asking, authenticating, failed })).toEqual({ live: 2, attention: 3 });
+  it('keeps the live-session dot separate from the server attention badge', () => {
+    expect(getSessionNavigationCounts({ running: session() })).toEqual({ live: 1 });
   });
 
   it('does not announce or badge archived sessions', () => {
@@ -75,7 +55,6 @@ describe('mobile tab attention semantics', () => {
 
     expect(getSessionNavigationCounts({ archivedRunning, archivedFailed, visibleRunning })).toEqual({
       live: 1,
-      attention: 0,
     });
   });
 });
