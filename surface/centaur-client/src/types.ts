@@ -217,6 +217,35 @@ export interface CodexTurnCompletedEvent {
   [key: string]: unknown;
 }
 
+export interface CodexTurnPlanStep {
+  step: string;
+  /** codex-native statuses; Claude TodoWrite is projected onto the same shape. */
+  status: 'pending' | 'inProgress' | 'completed' | (string & {});
+}
+
+/** `turn/plan/updated` — a full-state structured plan snapshot. Emitted natively
+ * by codex `update_plan` and by the harness projecting Claude's `TodoWrite`. */
+export interface CodexTurnPlanUpdatedEvent {
+  type: 'turn.plan.updated';
+  threadId?: string;
+  turnId?: string;
+  explanation?: string | null;
+  plan?: CodexTurnPlanStep[];
+  [key: string]: unknown;
+}
+
+/** `item/plan/delta` — streaming text for the freeform codex `plan` item. */
+export interface CodexPlanDeltaEvent {
+  type: 'item.plan.delta';
+  delta?: string;
+  item_id?: string;
+  itemId?: string;
+  id?: string;
+  threadId?: string;
+  turnId?: string;
+  [key: string]: unknown;
+}
+
 export interface JsonRpcAmpRawEvent {
   type?: undefined;
   method: string;
@@ -238,6 +267,8 @@ export type AmpRawEvent =
   | CodexReasoningSummaryTextDeltaEvent
   | CodexTurnStartedEvent
   | CodexTurnCompletedEvent
+  | CodexTurnPlanUpdatedEvent
+  | CodexPlanDeltaEvent
   | CodexThreadTokenUsageEvent
   | JsonRpcAmpRawEvent;
 

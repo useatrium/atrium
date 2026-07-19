@@ -197,6 +197,92 @@ describe('reduceSession shared data layer', () => {
     expect(state.items.filter((item) => item.type === 'tool_call')).toHaveLength(3);
   });
 
+  it('feeds todos from a turn/plan/updated snapshot (codex + projected Claude)', () => {
+    const state = reduceAll([
+      {
+        event: 'amp_raw_event',
+        event_id: 40,
+        data: {
+          method: 'turn/plan/updated',
+          params: {
+            threadId: 'T-1',
+            turnId: 'turn-1',
+            explanation: 'Working the plan',
+            plan: [
+              { step: 'Read the code', status: 'completed' },
+              { step: 'Write the fix', status: 'inProgress' },
+              { step: 'Run tests', status: 'pending' },
+            ],
+          },
+        },
+      },
+    ]);
+
+    expect(state.todos).toEqual([
+      { content: 'Read the code', status: 'completed' },
+      { content: 'Write the fix', status: 'in_progress' },
+      { content: 'Run tests', status: 'pending' },
+    ]);
+  });
+
+  it('replaces todos wholesale on each turn/plan/updated snapshot (latest wins)', () => {
+    const state = reduceAll([
+      {
+        event: 'amp_raw_event',
+        event_id: 41,
+        data: {
+          method: 'turn/plan/updated',
+          params: {
+            turnId: 'turn-1',
+            plan: [
+              { step: 'Step A', status: 'inProgress' },
+              { step: 'Step B', status: 'pending' },
+            ],
+          },
+        },
+      },
+      {
+        event: 'amp_raw_event',
+        event_id: 42,
+        data: {
+          method: 'turn/plan/updated',
+          params: {
+            turnId: 'turn-1',
+            plan: [{ step: 'Step A', status: 'completed' }],
+          },
+        },
+      },
+    ]);
+
+    expect(state.todos).toEqual([{ content: 'Step A', status: 'completed' }]);
+  });
+
+  it('streams item/plan/delta into the freeform plan text then a completed plan replaces it', () => {
+    const streamed = reduceAll([
+      {
+        event: 'amp_raw_event',
+        event_id: 50,
+        data: { method: 'item/plan/delta', params: { itemId: 'plan-9', delta: '1. Do this\n' } },
+      },
+      {
+        event: 'amp_raw_event',
+        event_id: 51,
+        data: { method: 'item/plan/delta', params: { itemId: 'plan-9', delta: '2. Then that' } },
+      },
+    ]);
+    expect(streamed.plan).toEqual({ text: '1. Do this\n2. Then that', sourceEventIds: [50, 51] });
+
+    const completed = reduceSession(streamed, {
+      event: 'amp_raw_event',
+      event_id: 52,
+      data: {
+        type: 'item.completed',
+        item: { id: 'plan-9', type: 'plan', text: '1. Do this\n2. Then that\n3. Finally' },
+      },
+    } as CentaurEventFrame);
+    expect(completed.plan).toEqual({ text: '1. Do this\n2. Then that\n3. Finally', sourceEventIds: [52] });
+  });
+
   it('sets plan from completed Codex plan items', () => {
     const state = reduceAll([
       {
