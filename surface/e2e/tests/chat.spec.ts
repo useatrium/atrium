@@ -340,7 +340,7 @@ test('command center: opens New agent dialog from query', async ({ page }) => {
   await expect(dialog.getByText('New agent in #general', { exact: true })).toBeVisible();
   await page.keyboard.press('Enter');
   await expect(commandDialog(page)).toBeHidden();
-  await expect(page.getByRole('dialog', { name: 'Start an agent' })).toBeVisible();
+  await expect(page.getByRole('dialog', { name: 'New agent' })).toBeVisible();
 });
 
 test('command center: mobile opens Files from query', async ({ page }) => {
