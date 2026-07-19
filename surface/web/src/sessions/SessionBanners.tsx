@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState, useSyncExternalStore } from 'react';
 import type { AgentProfileProposal } from '../api';
-import { formatRelativeTimestamp, formatWaiting, randomId } from '@atrium/surface-client';
+import { formatRelativeTimestamp, formatWaiting, randomId, sanitizeQuestionPrompts } from '@atrium/surface-client';
 import { sessionsApi } from './api';
 import {
   getScheduledAnswer,
@@ -269,6 +269,9 @@ export function QuestionCard({
   const titleId = `${bannerId}-title`;
   const questionId = pending?.questionId ?? '';
   const [values, setValues] = useState<Record<string, QuestionDraftValue>>({});
+  // multiSelect "Other" free text lives apart from the checkbox array so it can
+  // be appended without polluting the selected-label set.
+  const [otherText, setOtherText] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
   const [proposed, setProposed] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -276,6 +279,7 @@ export function QuestionCard({
   const undoSecondsLeft = useUndoSecondsLeft(scheduled);
   useEffect(() => {
     setValues({});
+    setOtherText({});
     setSubmitting(false);
     setProposed(false);
     setError(null);
@@ -296,9 +300,22 @@ export function QuestionCard({
     return answered ? <AnsweredQuestionTrace trace={answered} variant={variant} /> : null;
   }
 
+  // Never trust the incoming question set to be renderable. Malformed/empty
+  // question arrays used to produce an enabled "Answer" button over an empty
+  // banner that submitted nothing; the sanitizer guarantees we only ever render
+  // (and enable answering for) prompts a human can actually respond to.
+  const { questions, unrenderable } = sanitizeQuestionPrompts(pending.questions);
+  if (questions.length === 0) {
+    return <UnrenderableQuestionStrip variant={variant} titleId={titleId} explained={unrenderable} />;
+  }
+
   const setAnswer = (id: string, value: string) => {
     setError(null);
     setValues((prev) => ({ ...prev, [id]: value }));
+  };
+  const setOther = (id: string, value: string) => {
+    setError(null);
+    setOtherText((prev) => ({ ...prev, [id]: value }));
   };
   const toggleAnswer = (id: string, value: string) => {
     setError(null);
@@ -310,12 +327,13 @@ export function QuestionCard({
       };
     });
   };
-  const complete = pending.questions.every((q) => answerValuesForPrompt(q, values[q.id]).length > 0);
+  const complete =
+    questions.length > 0 && questions.every((q) => answerValuesForPrompt(q, values[q.id], otherText[q.id]).length > 0);
   // The driver answers directly; a spectator proposes an answer the driver decides.
   const submit = () => {
     if (!complete || submitting) return;
     const answers: Record<string, { answers: string[] }> = {};
-    for (const q of pending.questions) answers[q.id] = { answers: answerValuesForPrompt(q, values[q.id]) };
+    for (const q of questions) answers[q.id] = { answers: answerValuesForPrompt(q, values[q.id], otherText[q.id]) };
     setError(null);
     if (isDriver) {
       // Scheduled, not posted: the driver gets ANSWER_UNDO_MS to take it back.
@@ -324,7 +342,7 @@ export function QuestionCard({
         sessionId,
         questionId: pending.questionId,
         answers,
-        label: answerLabel(pending.questions, answers),
+        label: answerLabel(questions, answers),
         ...(onAnswerQuestion ? { submit: onAnswerQuestion } : {}),
       });
       return;
@@ -380,10 +398,21 @@ export function QuestionCard({
         {!isDriver && <span className="text-fg-tertiary">waiting for {driverName} to answer</span>}
       </div>
       <div className="space-y-2">
-        {pending.questions.map((q, questionIndex) => {
+        {questions.map((q, questionIndex) => {
           const promptId = `${bannerId}-prompt-${questionIndex}`;
           const inputId = `${bannerId}-answer-${questionIndex}`;
           const groupName = `${bannerId}-options-${questionIndex}`;
+          // The "something else" free-text row is offered for BOTH single- and
+          // multiSelect questions (Claude Code's native tool always allows a
+          // custom answer). For multiSelect it appends to the picked labels, so
+          // it draws from a dedicated `otherText` slot; single-select stores the
+          // custom string directly in `values`.
+          const otherRowValue = q.multiSelect
+            ? (otherText[q.id] ?? '')
+            : typeof values[q.id] === 'string' && !(q.options ?? []).some((o) => o.label === values[q.id])
+              ? (values[q.id] as string)
+              : '';
+          const otherRowActive = otherRowValue.trim() !== '';
           return (
             <fieldset key={q.id} className="space-y-1" disabled={submitting}>
               <legend className="flex items-center gap-2">
@@ -439,31 +468,25 @@ export function QuestionCard({
                       </label>
                     );
                   })}
-                  {!q.multiSelect && (
-                    <label
-                      className={`flex min-w-0 items-center gap-1.5 rounded-md border px-2 py-1 text-2xs sm:col-span-2 ${
-                        typeof values[q.id] === 'string' &&
-                        values[q.id] !== '' &&
-                        !q.options.some((o) => o.label === values[q.id])
-                          ? 'border-warning bg-warning/15 text-warning-text-strong'
-                          : 'border-dashed border-edge-strong text-fg-muted'
-                      }`}
-                    >
-                      <span className="shrink-0">something else:</span>
-                      <input
-                        type="text"
-                        disabled={submitting}
-                        value={
-                          typeof values[q.id] === 'string' && !q.options.some((o) => o.label === values[q.id])
-                            ? (values[q.id] as string)
-                            : ''
-                        }
-                        onChange={(e) => setAnswer(q.id, e.target.value)}
-                        placeholder="type it…"
-                        className="min-w-0 flex-1 bg-transparent text-2xs text-fg outline-none placeholder:text-fg-faint"
-                      />
-                    </label>
-                  )}
+                  <label
+                    className={`flex min-w-0 items-center gap-1.5 rounded-md border px-2 py-1 text-2xs sm:col-span-2 ${
+                      otherRowActive
+                        ? 'border-warning bg-warning/15 text-warning-text-strong'
+                        : 'border-dashed border-edge-strong text-fg-muted'
+                    }`}
+                  >
+                    <span className="shrink-0">{q.multiSelect ? 'also add:' : 'something else:'}</span>
+                    <input
+                      type="text"
+                      disabled={submitting}
+                      value={otherRowValue}
+                      onChange={(e) =>
+                        q.multiSelect ? setOther(q.id, e.target.value) : setAnswer(q.id, e.target.value)
+                      }
+                      placeholder="type it…"
+                      className="min-w-0 flex-1 bg-transparent text-2xs text-fg outline-none placeholder:text-fg-faint"
+                    />
+                  </label>
                 </div>
               ) : (
                 <>
@@ -502,12 +525,7 @@ export function QuestionCard({
             Proposed answers · {proposals.length}
           </div>
           {proposals.map((proposal) => (
-            <AnswerProposalRow
-              key={proposal.id}
-              sessionId={sessionId}
-              proposal={proposal}
-              questions={pending.questions}
-            />
+            <AnswerProposalRow key={proposal.id} sessionId={sessionId} proposal={proposal} questions={questions} />
           ))}
         </div>
       )}
@@ -534,6 +552,49 @@ export function QuestionCard({
             {submitting ? 'Proposing…' : 'Propose answer'}
           </button>
         )}
+      </div>
+    </section>
+  );
+}
+
+/**
+ * The agent asked for input, but nothing in the payload is renderable as an
+ * answerable prompt (a malformed or empty question set the harness couldn't
+ * adapt). Rather than an enabled "Answer" button over a blank form that submits
+ * nothing, we explain the situation and leave answering disabled — the agent
+ * remains blocked until it re-asks in a shape we can render or is cancelled.
+ */
+function UnrenderableQuestionStrip({
+  variant,
+  titleId,
+  explained,
+}: {
+  variant: 'banner' | 'card';
+  titleId: string;
+  explained: boolean;
+}) {
+  return (
+    <section
+      data-testid="question-unrenderable"
+      aria-labelledby={titleId}
+      className={
+        variant === 'card'
+          ? 'mt-1.5 rounded-md border border-warning-border/50 bg-warning-tint/15 px-2.5 py-2 text-xs'
+          : 'shrink-0 border-b border-warning-border/50 bg-warning-tint/20 px-3 py-2 text-xs'
+      }
+    >
+      <div className="mb-1 flex items-center gap-2">
+        <span
+          id={titleId}
+          className="rounded-full bg-warning/15 px-2 py-0.5 text-3xs font-semibold uppercase tracking-wide text-warning-text"
+        >
+          needs input
+        </span>
+      </div>
+      <div className="text-fg-body">
+        {explained
+          ? "The agent asked for input in a format this client can't render. Cancel the turn or ask it to try again."
+          : 'The agent is waiting for input.'}
       </div>
     </section>
   );
@@ -623,9 +684,12 @@ export function AnsweredQuestionTrace({
 
 type QuestionDraftValue = string | string[];
 
-function answerValuesForPrompt(q: QuestionPrompt, value: QuestionDraftValue | undefined): string[] {
+function answerValuesForPrompt(q: QuestionPrompt, value: QuestionDraftValue | undefined, otherText?: string): string[] {
   if (q.options?.length && q.multiSelect) {
-    return Array.isArray(value) ? value.filter((answer) => answer.trim().length > 0) : [];
+    const selected = Array.isArray(value) ? value.filter((answer) => answer.trim().length > 0) : [];
+    const extra = otherText?.trim();
+    // The multiSelect "also add:" free text joins the picked labels.
+    return extra ? [...selected, extra] : selected;
   }
   if (typeof value !== 'string') return [];
   const trimmed = value.trim();
@@ -652,11 +716,24 @@ function QuestionOptionPreview({
     );
   }
 
+  // Markdown (and plain) previews render in a monospace box. A wrapping code
+  // fence (```lang … ```) is stripped so the code shows without literal
+  // backticks; other markdown text is shown as-is rather than as raw source.
   return (
     <pre className="mt-1.5 max-h-32 overflow-auto rounded border border-edge bg-surface px-2 py-1.5 text-2xs leading-snug text-fg-secondary">
-      {preview}
+      {stripWrappingCodeFence(preview)}
     </pre>
   );
+}
+
+/**
+ * Remove a single wrapping fenced-code block (```lang\n … \n```) so the code
+ * renders cleanly in the monospace preview box. Non-fenced text passes through
+ * untouched (trailing whitespace trimmed).
+ */
+function stripWrappingCodeFence(preview: string): string {
+  const match = /^\s*```[^\n`]*\n([\s\S]*?)\n?```\s*$/.exec(preview);
+  return (match?.[1] ?? preview).replace(/\s+$/, '');
 }
 
 function optionPreviewHtmlDocument(fragment: string): string {

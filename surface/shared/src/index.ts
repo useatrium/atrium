@@ -4,6 +4,7 @@
 export * from './timeline';
 export * from './appState';
 export * from './sessions';
+export * from './sanitizeQuestions';
 export * from './spawnTrigger';
 export * from './mentions';
 export * from './mentionSuggest';

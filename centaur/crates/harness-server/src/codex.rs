@@ -862,7 +862,13 @@ fn handle_server_request<W: Write>(
     let questions = params
         .get("questions")
         .and_then(Value::as_array)
-        .cloned()
+        .map(|items| {
+            items
+                .iter()
+                .enumerate()
+                .map(|(index, question)| adapt_codex_question(question, index))
+                .collect::<Vec<Value>>()
+        })
         .unwrap_or_default();
 
     blocks_state.insert_pending_question(question_id.to_owned(), request_id, turn_id.to_owned());
@@ -875,6 +881,168 @@ fn handle_server_request<W: Write>(
             "questions": questions,
         }),
     )
+}
+
+/// Translate a codex `requestUserInput` question into the Atrium question
+/// prompt shape the surface consumers validate (`{id, header, question,
+/// options?, multiSelect?, isOther?, isSecret?}`).
+///
+/// The `id` is preserved EXACTLY so the JSON-RPC answer response round-trips
+/// keyed by it (`{"answers": {<id>: {"answers": [...]}}}`). Questions already in
+/// Atrium shape (string `header` AND `question`) pass through with only option
+/// normalization. Legacy/codex-native questions carry a `label` (+ optional
+/// `kind`/`choices`); those map: `question` from the label/prompt/text, a short
+/// derived `header`, and `kind` decides options vs. free-text vs. multi-select.
+/// Unknown kinds and text kinds become a free-text prompt (no options), which
+/// the surface renders as a plain input.
+fn adapt_codex_question(question: &Value, index: usize) -> Value {
+    let Some(obj) = question.as_object() else {
+        // Non-object entries can't be answered structurally; synthesize a
+        // free-text prompt so the human still sees something meaningful.
+        return json!({
+            "id": format!("question-{}", index + 1),
+            "header": format!("Question {}", index + 1),
+            "question": question.as_str().map(str::trim).unwrap_or_default(),
+        });
+    };
+
+    let header_field = string_field(question, &["header"]);
+    let question_field = string_field(question, &["question"]);
+
+    // Already Atrium-shaped: both header and question present as strings. The
+    // real codex v2 `ToolRequestUserInputQuestion` lands here (it already
+    // carries id/header/question/options/isOther/isSecret).
+    if let (Some(header), Some(prompt)) = (header_field, question_field) {
+        let mut out = serde_json::Map::new();
+        out.insert("id".into(), adapted_id(obj, index));
+        out.insert("header".into(), json!(header));
+        out.insert("question".into(), json!(prompt));
+        if let Some(options) = normalize_options(obj.get("options")) {
+            out.insert("options".into(), Value::Array(options));
+        }
+        if let Some(multi) = bool_field(obj, &["multiSelect", "multi_select"]) {
+            out.insert("multiSelect".into(), json!(multi));
+        }
+        if let Some(other) = bool_field(obj, &["isOther", "is_other"]) {
+            out.insert("isOther".into(), json!(other));
+        }
+        if let Some(secret) = bool_field(obj, &["isSecret", "is_secret"]) {
+            out.insert("isSecret".into(), json!(secret));
+        }
+        return Value::Object(out);
+    }
+
+    // Legacy/codex-native question: derive from label/prompt/text.
+    let prompt = string_field(question, &["question", "label", "prompt", "text", "title"])
+        .unwrap_or("")
+        .to_owned();
+    let header = header_field
+        .map(str::to_owned)
+        .unwrap_or_else(|| derive_header(&prompt, index));
+    let kind = string_field(question, &["kind", "type"]).unwrap_or("");
+    let multi = is_multi_select_kind(kind)
+        || bool_field(obj, &["multiSelect", "multi_select"]).unwrap_or(false);
+
+    let mut out = serde_json::Map::new();
+    out.insert("id".into(), adapted_id(obj, index));
+    out.insert("header".into(), json!(header));
+    out.insert("question".into(), json!(prompt));
+
+    // Options come from an Atrium-style `options` array or a codex `choices`
+    // string list. Absent/empty options (a text or unknown kind) → the surface
+    // renders a plain text input.
+    let options =
+        normalize_options(obj.get("options")).or_else(|| choices_to_options(obj.get("choices")));
+    if let Some(options) = options {
+        out.insert("options".into(), Value::Array(options));
+        if multi {
+            out.insert("multiSelect".into(), json!(true));
+        }
+    }
+    if let Some(other) = bool_field(obj, &["isOther", "is_other"]) {
+        out.insert("isOther".into(), json!(other));
+    }
+    if let Some(secret) = bool_field(obj, &["isSecret", "is_secret"]) {
+        out.insert("isSecret".into(), json!(secret));
+    }
+    Value::Object(out)
+}
+
+/// Preserve the original question `id` verbatim (answers round-trip keyed by
+/// it); fall back to a positional id only when absent/empty.
+fn adapted_id(obj: &serde_json::Map<String, Value>, index: usize) -> Value {
+    match obj.get("id").and_then(Value::as_str) {
+        Some(id) if !id.is_empty() => json!(id),
+        _ => json!(format!("question-{}", index + 1)),
+    }
+}
+
+/// A short header derived from the question prompt (truncated ~24 chars), or a
+/// positional fallback when the prompt is empty.
+fn derive_header(prompt: &str, index: usize) -> String {
+    const MAX: usize = 24;
+    let trimmed = prompt.trim();
+    if trimmed.is_empty() {
+        return format!("Question {}", index + 1);
+    }
+    let mut header: String = trimmed.chars().take(MAX).collect();
+    if trimmed.chars().count() > MAX {
+        header.push('…');
+    }
+    header
+}
+
+/// A codex kind names a multi-select question when it carries a `multi` marker
+/// (`multi_select`, `multiChoice`, `multiple_choice`, …). Plain `choice` is
+/// single-select; text/unknown kinds have no options at all.
+fn is_multi_select_kind(kind: &str) -> bool {
+    kind.to_ascii_lowercase().contains("multi")
+}
+
+fn bool_field(obj: &serde_json::Map<String, Value>, fields: &[&str]) -> Option<bool> {
+    fields
+        .iter()
+        .find_map(|field| obj.get(*field).and_then(Value::as_bool))
+}
+
+/// Normalize an Atrium/codex `options` array to `[{label, description,
+/// preview?, previewFormat?}]`, dropping entries without a usable label.
+/// Returns `None` when the input is absent, not an array, or yields no options.
+fn normalize_options(value: Option<&Value>) -> Option<Vec<Value>> {
+    let arr = value?.as_array()?;
+    let options: Vec<Value> = arr.iter().filter_map(normalize_option).collect();
+    (!options.is_empty()).then_some(options)
+}
+
+fn normalize_option(option: &Value) -> Option<Value> {
+    let label = string_field(option, &["label", "value", "text"])?;
+    let mut out = serde_json::Map::new();
+    out.insert("label".into(), json!(label));
+    out.insert(
+        "description".into(),
+        json!(string_field(option, &["description", "detail"]).unwrap_or("")),
+    );
+    if let Some(preview) = string_field(option, &["preview"]) {
+        out.insert("preview".into(), json!(preview));
+    }
+    if let Some(format) = string_field(option, &["previewFormat", "preview_format"]) {
+        out.insert("previewFormat".into(), json!(format));
+    }
+    Some(Value::Object(out))
+}
+
+/// Map a codex `choices` list of strings to Atrium options. Returns `None` when
+/// absent, not an array, or empty after dropping blank entries.
+fn choices_to_options(value: Option<&Value>) -> Option<Vec<Value>> {
+    let arr = value?.as_array()?;
+    let options: Vec<Value> = arr
+        .iter()
+        .filter_map(|choice| {
+            let label = choice.as_str().map(str::trim).filter(|s| !s.is_empty())?;
+            Some(json!({"label": label, "description": ""}))
+        })
+        .collect();
+    (!options.is_empty()).then_some(options)
 }
 
 fn maybe_handle_server_request_resolved<W: Write>(
@@ -1158,6 +1326,119 @@ mod tests {
             codex.model_provider_for(Some("   "), Some("vendor/model")),
             "openrouter"
         );
+    }
+
+    #[test]
+    fn adapts_codex_choice_question_to_atrium_options() {
+        let adapted = adapt_codex_question(
+            &json!({"id": "choice", "label": "Pick one", "kind": "choice", "choices": ["A", "B"]}),
+            0,
+        );
+        // id preserved EXACTLY so the answer response round-trips keyed by it.
+        assert_eq!(adapted["id"], "choice");
+        assert_eq!(adapted["question"], "Pick one");
+        assert_eq!(adapted["header"], "Pick one");
+        assert_eq!(
+            adapted["options"],
+            json!([
+                {"label": "A", "description": ""},
+                {"label": "B", "description": ""},
+            ])
+        );
+        // Single-select choice must NOT be flagged multiSelect.
+        assert!(adapted.get("multiSelect").is_none());
+    }
+
+    #[test]
+    fn adapts_codex_text_kind_to_free_text_prompt() {
+        let adapted = adapt_codex_question(
+            &json!({"id": "name", "label": "What is your name?", "kind": "text"}),
+            0,
+        );
+        assert_eq!(adapted["id"], "name");
+        assert_eq!(adapted["question"], "What is your name?");
+        // No options → the surface renders a plain text input.
+        assert!(adapted.get("options").is_none());
+        assert!(adapted.get("multiSelect").is_none());
+    }
+
+    #[test]
+    fn adapts_unknown_kind_as_free_text() {
+        let adapted = adapt_codex_question(
+            &json!({"id": "freeform", "label": "Anything", "kind": "wildcard-kind"}),
+            2,
+        );
+        assert_eq!(adapted["id"], "freeform");
+        assert_eq!(adapted["question"], "Anything");
+        assert!(adapted.get("options").is_none());
+    }
+
+    #[test]
+    fn adapts_multi_select_kind_with_choices() {
+        let adapted = adapt_codex_question(
+            &json!({
+                "id": "sections",
+                "label": "Which sections?",
+                "kind": "multi_choice",
+                "choices": ["Summary", "Timeline"],
+            }),
+            0,
+        );
+        assert_eq!(adapted["multiSelect"], true);
+        assert_eq!(
+            adapted["options"],
+            json!([
+                {"label": "Summary", "description": ""},
+                {"label": "Timeline", "description": ""},
+            ])
+        );
+    }
+
+    #[test]
+    fn already_atrium_shaped_question_passes_through() {
+        let original = json!({
+            "id": "question-1",
+            "header": "Sections",
+            "question": "Which sections should be visible?",
+            "multiSelect": true,
+            "isOther": true,
+            "options": [
+                {"label": "Summary", "description": "Show a brief overview.",
+                 "preview": "SUMMARY", "previewFormat": "markdown"},
+            ],
+        });
+        let adapted = adapt_codex_question(&original, 0);
+        assert_eq!(adapted["id"], "question-1");
+        assert_eq!(adapted["header"], "Sections");
+        assert_eq!(adapted["question"], "Which sections should be visible?");
+        assert_eq!(adapted["multiSelect"], true);
+        assert_eq!(adapted["isOther"], true);
+        assert_eq!(adapted["options"][0]["label"], "Summary");
+        assert_eq!(adapted["options"][0]["preview"], "SUMMARY");
+        assert_eq!(adapted["options"][0]["previewFormat"], "markdown");
+    }
+
+    #[test]
+    fn missing_id_falls_back_to_positional_but_preserves_present_id() {
+        let no_id = adapt_codex_question(&json!({"label": "Pick", "kind": "text"}), 3);
+        assert_eq!(no_id["id"], "question-4");
+
+        let with_id = adapt_codex_question(&json!({"id": "keep-me", "label": "Pick"}), 0);
+        assert_eq!(with_id["id"], "keep-me");
+    }
+
+    #[test]
+    fn derives_short_header_from_long_prompt() {
+        let adapted = adapt_codex_question(
+            &json!({
+                "id": "q",
+                "label": "This is a very long question prompt that should be truncated",
+            }),
+            0,
+        );
+        let header = adapted["header"].as_str().unwrap();
+        assert!(header.chars().count() <= 25, "header too long: {header:?}");
+        assert!(header.ends_with('…'), "expected ellipsis: {header:?}");
     }
 
     #[test]
