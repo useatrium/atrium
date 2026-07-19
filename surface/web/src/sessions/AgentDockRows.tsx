@@ -150,7 +150,10 @@ export function AgentRow({
           </span>
           <span className="col-start-2 col-end-4 min-w-0">
             {question ? (
-              <span title={question} className="block truncate text-2xs text-warning-text-strong">
+              // The Needs-you prompt is the row's payload — let it wrap to two
+              // lines so it stays readable at the default width; titles above
+              // stay single-line.
+              <span title={question} className="line-clamp-2 text-2xs text-warning-text-strong">
                 “{question}”
               </span>
             ) : session.latestActivity && !isTerminalSessionStatus(session.status) ? (
@@ -252,7 +255,7 @@ export function AgentGroup({
           <ChevronRightIcon size={12} className="group-open/disclosure:hidden" />
           <ChevronDownIcon size={12} className="hidden group-open/disclosure:block" />
           <span>{group.label}</span>
-          <span className="tabular-nums text-fg-faint">{group.sessions.length}</span>
+          <span className="tabular-nums text-fg-body">{group.sessions.length}</span>
         </summary>
         <div className="mt-1">{rows}</div>
       </details>

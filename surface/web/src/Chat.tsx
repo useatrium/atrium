@@ -2015,7 +2015,7 @@ export function Chat({
     }
 
     list.push(
-      ...buildAgentCommands(state.sessions, onFocusAgent),
+      ...buildAgentCommands(state.sessions, state.channels, me.id, onFocusAgent),
       {
         id: 'open-files',
         label: 'Open Files',
@@ -2142,6 +2142,7 @@ export function Chat({
     providerCredentials,
     startDemoSession,
     startVoiceCallForActiveChannel,
+    state.channels,
     state.sessions,
   ]);
 

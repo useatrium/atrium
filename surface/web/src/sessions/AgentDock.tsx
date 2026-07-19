@@ -132,7 +132,7 @@ function SoftenedGroup({
         <ChevronRightIcon size={12} className="group-open/disclosure:hidden" />
         <ChevronDownIcon size={12} className="hidden group-open/disclosure:block" />
         <span>{group.label}</span>
-        <span className="tabular-nums text-fg-faint">{group.sessions.length}</span>
+        <span className="tabular-nums text-fg-body">{group.sessions.length}</span>
       </summary>
       {expanded && (
         <div className="mt-1">
@@ -196,7 +196,7 @@ function HistoryGroup({
         <ChevronRightIcon size={12} className="group-open/history:hidden" />
         <ChevronDownIcon size={12} className="hidden group-open/history:block" />
         <span>History</span>
-        <span className="tabular-nums text-fg-faint">{group.sessions.length}</span>
+        <span className="tabular-nums text-fg-body">{group.sessions.length}</span>
         {onSetArchived && (
           <button
             type="button"
@@ -231,7 +231,7 @@ function HistoryGroup({
                 <ChevronRightIcon size={11} className="group-open/older:hidden" />
                 <ChevronDownIcon size={11} className="hidden group-open/older:block" />
                 <span>Show older</span>
-                <span className="tabular-nums text-fg-faint">{older.length}</span>
+                <span className="tabular-nums text-fg-body">{older.length}</span>
               </summary>
               {olderExpanded && (
                 <div className="mt-1">
@@ -415,7 +415,7 @@ export function AgentDock({
               ? 'fixed inset-0 z-overlay h-dvh w-full border-edge shadow-2xl md:relative md:inset-auto md:z-auto md:h-full md:w-(--agent-dock-w) md:border-y-0 md:border-r-0 md:border-l md:shadow-none'
               : 'fixed inset-x-0 bottom-0 z-overlay h-[60dvh] w-full rounded-t-xl border border-edge-strong shadow-2xl md:relative md:inset-auto md:z-auto md:h-full md:w-(--agent-dock-w) md:rounded-none md:border-y-0 md:border-r-0 md:border-l md:border-edge md:shadow-none'
         }`}
-        style={{ '--agent-dock-w': '256px', ...dockSize.style } as CSSProperties}
+        style={{ '--agent-dock-w': `${AGENT_DOCK_FALLBACK_WIDTH}px`, ...dockSize.style } as CSSProperties}
       >
         {state !== 'resting' && (
           <>
@@ -496,7 +496,7 @@ export function AgentDock({
             <header className="shrink-0 border-b border-edge px-2 py-2">
               <div className="flex h-11 items-center gap-1 md:h-8">
                 <h1 className="min-w-0 flex-1 truncate px-1 text-sm font-bold text-fg">Agents</h1>
-                <span className="mr-1 text-xs tabular-nums text-fg-muted">{total}</span>
+                <span className="mr-1 text-xs tabular-nums text-fg-body">{total}</span>
                 {!immersed && (
                   <button
                     type="button"
