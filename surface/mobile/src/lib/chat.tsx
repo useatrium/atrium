@@ -21,6 +21,8 @@ import {
   isNetworkFailure,
   looksLikeSummonSigil,
   parseSummonSigil,
+  pendingMessageFromSendPayload,
+  pendingSpawnFromPayload,
   PENDING_SESSION_PREFIX,
   randomId,
   reconcileDraftSnapshot,
@@ -732,91 +734,6 @@ export function ChatProvider({ session, children }: { session: Session; children
     dispatch({ type: 'init-me', handle: me.handle, id: me.id });
   }, [me.handle, me.id]);
 
-  const pendingMessageFromSendPayload = useCallback(
-    (msg: MobileMsgSendPayload): ChatMessage => {
-      const voiceFileId = msg.voice ? msg.attachments?.[0]?.id : null;
-      return {
-        id: null,
-        clientMsgId: msg.clientMsgId,
-        channelId: msg.channelId,
-        threadRootEventId: msg.threadRootEventId ?? null,
-        ...(msg.broadcast === true ? { broadcast: true } : {}),
-        text: msg.text,
-        edited: false,
-        author: me,
-        createdAt: msg.createdAt ?? new Date().toISOString(),
-        replyCount: 0,
-        lastReplyId: 0,
-        status: 'pending',
-        ...(msg.attachments && msg.attachments.length > 0 ? { attachments: msg.attachments } : {}),
-        ...(msg.voice && voiceFileId
-          ? {
-              voice: {
-                fileId: voiceFileId,
-                durationMs: msg.voice.durationMs,
-                waveform: msg.voice.waveform,
-                transcript: { status: 'pending' },
-              },
-            }
-          : {}),
-      };
-    },
-    [me],
-  );
-
-  const pendingSpawnFromPayload = useCallback(
-    (payload: SessionSpawnPayload): { message: ChatMessage; session: AgentSession } => {
-      const createdAt = payload.createdAt ?? new Date().toISOString();
-      return {
-        session: {
-          id: payload.clientSpawnId,
-          workspaceId: '',
-          channelId: payload.channelId,
-          threadRootEventId: payload.threadRootEventId ?? null,
-          title: payload.task.slice(0, 80),
-          status: 'spawning',
-          harness: payload.harness ?? 'codex',
-          repo: payload.repo ?? payload.repos?.[0]?.repo ?? null,
-          branch: payload.branch ?? payload.repos?.[0]?.ref ?? null,
-          repos: payload.repos ?? null,
-          githubIdentityMode: payload.githubIdentityMode ?? null,
-          agentProfileVersionId: payload.agentProfileVersionId ?? null,
-          spawnedBy: me.id,
-          spawnerName: me.displayName,
-          driverId: null,
-          archivedAt: null,
-          pinned: false,
-          pendingSeatRequests: [],
-          suggestions: [],
-          answerProposals: [],
-          seatEvents: [],
-          costUsd: 0,
-          resultText: null,
-          createdAt,
-          completedAt: null,
-          lastEventId: 0,
-          permalink: '',
-        },
-        message: {
-          id: null,
-          clientMsgId: payload.clientSpawnId,
-          channelId: payload.channelId,
-          threadRootEventId: payload.threadRootEventId ?? null,
-          ...(payload.broadcastCard === true ? { broadcast: true } : {}),
-          text: payload.task,
-          edited: false,
-          author: me,
-          createdAt,
-          replyCount: 0,
-          lastReplyId: 0,
-          status: 'pending',
-          sessionId: payload.clientSpawnId,
-        },
-      };
-    },
-    [me],
-  );
-
   const applyQueuedOp = useCallback(
     (op: QueuedOp) => {
       if (op.opType === 'msg.send') {
@@ -824,13 +741,13 @@ export function ChatProvider({ session, children }: { session: Session; children
         dispatch({
           type: 'send-pending',
           channelId: payload.channelId,
-          message: pendingMessageFromSendPayload(payload),
+          message: pendingMessageFromSendPayload(payload, me),
         });
         return;
       }
       if (op.opType === 'session.spawn') {
         const payload = op.payload as SessionSpawnPayload;
-        const pending = pendingSpawnFromPayload(payload);
+        const pending = pendingSpawnFromPayload(payload, me);
         dispatch({
           type: 'session-spawn-pending',
           channelId: payload.channelId,
@@ -892,7 +809,7 @@ export function ChatProvider({ session, children }: { session: Session; children
         cacheReadCursorAdvance(payload.channelId, payload.lastReadEventId, 'queued read.mark');
       }
     },
-    [cacheReadCursorAdvance, pendingMessageFromSendPayload, pendingSpawnFromPayload],
+    [cacheReadCursorAdvance, me],
   );
 
   useEffect(() => {
@@ -1338,7 +1255,7 @@ export function ChatProvider({ session, children }: { session: Session; children
         ...(opts?.attachmentRefs?.length ? { attachmentRefs: opts.attachmentRefs } : {}),
         createdAt: now,
       };
-      const pending = pendingSpawnFromPayload(payload);
+      const pending = pendingSpawnFromPayload(payload, me);
       void enqueueOp(
         {
           opId: randomId(),
@@ -1359,7 +1276,7 @@ export function ChatProvider({ session, children }: { session: Session; children
         dispatch({ type: 'session-spawn-failed', channelId, tempId });
       });
     },
-    [enqueueOp, onApiError, pendingSpawnFromPayload],
+    [enqueueOp, me, onApiError],
   );
 
   // Zero-setup demo: spawns the scripted `demo` harness (streams a short

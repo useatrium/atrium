@@ -9,20 +9,20 @@ import type {
   EnqueueOpInput,
   MsgSendPayload,
   OpType,
+  QueuedThreadSteerPayload,
   ReactionSetPayload,
   SessionSpawnPayload,
   UserRef,
+  VoiceMsgSendPayload,
 } from '@atrium/surface-client';
-import { randomId } from '@atrium/surface-client';
-import { PENDING_SESSION_PREFIX } from './sessions/types';
-import type { SpawnConfig } from './sessions/SpawnDialog';
 import {
   pendingMessageFromSendPayload,
   pendingMessageFromThreadSteerPayload,
   pendingSpawnFromPayload,
-  type QueuedThreadSteerPayload,
-  type VoiceMsgSendPayload,
-} from './chatQueuedOverlays';
+  randomId,
+} from '@atrium/surface-client';
+import { PENDING_SESSION_PREFIX } from './sessions/types';
+import type { SpawnConfig } from './sessions/SpawnDialog';
 import { showErrorToast } from './components/Toasts';
 import type { AttachmentMeta } from '@atrium/surface-client';
 

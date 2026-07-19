@@ -83,7 +83,7 @@ import {
   createQueueLockProvider,
   queuedFailureMessage,
 } from './chatQueue';
-import { queuedOverlayAction } from './chatQueuedOverlays';
+import { queuedOverlayAction } from '@atrium/surface-client';
 import { useChannelActions } from './useChannelActions';
 import { useChatMessageActions } from './useChatMessageActions';
 import { useDraftState } from './useDraftState';

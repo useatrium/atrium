@@ -1,15 +1,7 @@
-import type {
-  AppAction,
-  AttachmentMeta,
-  ChatMessage,
-  MsgSendPayload,
-  OpType,
-  ReactionSetPayload,
-  SessionSpawnPayload,
-  UserRef,
-  VoiceMeta,
-} from '@atrium/surface-client';
-import type { Session } from './sessions/types';
+import type { AppAction } from './appState';
+import type { MsgSendPayload, OpType, ReactionSetPayload, SessionSpawnPayload } from './opQueue';
+import type { Session } from './sessions';
+import type { AttachmentMeta, ChatMessage, UserRef, VoiceMeta } from './timeline';
 
 export type VoiceMsgSendPayload = MsgSendPayload & {
   voice?: Pick<VoiceMeta, 'fileId' | 'durationMs' | 'waveform'>;
@@ -81,8 +73,11 @@ export function pendingSpawnFromPayload(
       title: payload.task.slice(0, 80),
       status: 'spawning',
       harness: payload.harness ?? 'codex',
-      repo: payload.repo ?? null,
-      branch: payload.branch ?? null,
+      repo: payload.repo ?? payload.repos?.[0]?.repo ?? null,
+      branch: payload.branch ?? payload.repos?.[0]?.ref ?? null,
+      repos: payload.repos ?? null,
+      githubIdentityMode: payload.githubIdentityMode ?? null,
+      agentProfileVersionId: payload.agentProfileVersionId ?? null,
       spawnedBy: me.id,
       spawnerName: me.displayName,
       driverId: null,

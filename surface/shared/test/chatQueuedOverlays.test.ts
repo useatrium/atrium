@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import type { MsgSendPayload, OpType, ReactionSetPayload, SessionSpawnPayload, UserRef } from '@atrium/surface-client';
-import { pendingMessageFromSendPayload, pendingSpawnFromPayload, queuedOverlayAction } from '../src/chatQueuedOverlays';
+import {
+  pendingMessageFromSendPayload,
+  pendingSpawnFromPayload,
+  queuedOverlayAction,
+  type MsgSendPayload,
+  type OpType,
+  type ReactionSetPayload,
+  type SessionSpawnPayload,
+  type UserRef,
+} from '../src/index';
 
 const me: UserRef = { id: 'user-1', handle: 'me', displayName: 'Me User' };
 
@@ -97,6 +105,10 @@ describe('chatQueuedOverlays', () => {
       harness: 'codex',
       repo: 'useatrium/atrium',
       branch: 'feature/reporting',
+      repos: null,
+      githubIdentityMode: null,
+      agentProfileVersionId: null,
+      providerAuthRequired: null,
       spawnedBy: 'user-1',
       spawnerName: 'Me User',
       costUsd: 0,
@@ -112,7 +124,30 @@ describe('chatQueuedOverlays', () => {
       author: me,
       status: 'pending',
       sessionId: 'pending-session-1',
+      sessionTask: 'Run the quarterly report and summarize anomalies',
       createdAt: '2026-06-28T14:00:00.000Z',
+    });
+  });
+
+  it('carries multi-repo spawn metadata and falls back to the first repo/ref', () => {
+    const payload: SessionSpawnPayload = {
+      channelId: 'ch-1',
+      task: 'Ship the migration',
+      clientSpawnId: 'pending-session-2',
+      repos: [{ repo: 'useatrium/atrium', ref: 'feature/multi' }, { repo: 'useatrium/centaur' }],
+      githubIdentityMode: 'app_installation',
+      agentProfileVersionId: 'apv-42',
+      createdAt: '2026-06-28T14:05:00.000Z',
+    };
+
+    const pending = pendingSpawnFromPayload(payload, me);
+
+    expect(pending.session).toMatchObject({
+      repo: 'useatrium/atrium',
+      branch: 'feature/multi',
+      repos: [{ repo: 'useatrium/atrium', ref: 'feature/multi' }, { repo: 'useatrium/centaur' }],
+      githubIdentityMode: 'app_installation',
+      agentProfileVersionId: 'apv-42',
     });
   });
 
