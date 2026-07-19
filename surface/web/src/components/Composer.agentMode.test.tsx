@@ -2,8 +2,17 @@
 
 import { createRef } from 'react';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { Composer, type ComposerHandle } from './Composer';
+
+// Radix dropdown menus rely on pointer-capture and scroll APIs jsdom lacks; stub them
+// so the change-target menu can open and roving focus can settle.
+beforeAll(() => {
+  Element.prototype.hasPointerCapture = vi.fn(() => false);
+  Element.prototype.setPointerCapture = vi.fn();
+  Element.prototype.releasePointerCapture = vi.fn();
+  Element.prototype.scrollIntoView = vi.fn();
+});
 
 const channelContext = { scope: 'channel' as const, channelLabel: '#engineering' };
 
@@ -171,6 +180,78 @@ describe('Composer audience control', () => {
       undefined,
     );
     expect(toggle().getAttribute('aria-checked')).toBe('false');
+  });
+
+  it('offers the Configure bridge in agent mode and hands the task to the caller', () => {
+    const onConfigureAgent = vi.fn();
+    renderComposer({ onConfigureAgent });
+
+    // No agent draft yet — the chip stays hidden.
+    expect(screen.queryByRole('button', { name: 'Configure and start an agent' })).toBeNull();
+
+    fireEvent.click(toggle());
+    fireEvent.change(screen.getByLabelText('Message input'), { target: { value: 'Investigate the flake' } });
+
+    const chip = screen.getByRole('button', { name: 'Configure and start an agent' });
+    fireEvent.click(chip);
+    // In managed agent mode the sigil is already swallowed, so the task is the raw draft.
+    expect(onConfigureAgent).toHaveBeenCalledWith('Investigate the flake');
+  });
+
+  it('does not offer the Configure bridge without an onConfigureAgent handler', () => {
+    renderComposer();
+    fireEvent.click(toggle());
+    fireEvent.change(screen.getByLabelText('Message input'), { target: { value: 'anything' } });
+    expect(screen.queryByRole('button', { name: 'Configure and start an agent' })).toBeNull();
+  });
+
+  it('offers the Configure bridge from a literal !! draft on an agentAware composer', () => {
+    const onConfigureAgent = vi.fn();
+    // No routing → the sigil is not swallowed, so the literal "!!task" form drives the chip.
+    render(<Composer placeholder="Message" onSend={vi.fn()} agentAware onConfigureAgent={onConfigureAgent} />);
+    fireEvent.change(screen.getByLabelText('Message input'), { target: { value: '!!fix the build' } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Configure and start an agent' }));
+    expect(onConfigureAgent).toHaveBeenCalledWith('!!fix the build');
+  });
+
+  it('changes the agent target through the Radix menu primitive', async () => {
+    const onAgentSend = vi.fn();
+    renderComposer({
+      routing: {
+        kind: 'managed',
+        context: {
+          scope: 'thread',
+          channelLabel: 'this thread',
+          threadRootEventId: 17,
+          meId: 'me',
+          attachedSession: { id: 's-1', title: 'Fix tests', driverId: 'me' },
+        },
+        onAgentSend,
+      },
+    });
+
+    // Attached-thread agent mode is the default; the menu trigger replaces the old
+    // hand-rolled role="menu" popover.
+    const trigger = screen.getByRole('button', { name: /Change target/ });
+    expect(trigger.getAttribute('aria-haspopup')).toBe('menu');
+
+    // Keyboard opening is the reliable path in jsdom (no PointerEvent); Radix gives the
+    // arrow-roving/escape/focus-return behaviour the old hand-rolled popover lacked.
+    trigger.focus();
+    fireEvent.keyDown(trigger, { key: 'Enter' });
+
+    const item = await screen.findByRole('menuitem', { name: 'New session in this thread' });
+    fireEvent.click(item);
+
+    fireEvent.change(screen.getByLabelText('Message input'), { target: { value: 'Start a fresh run' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Start' }));
+    expect(onAgentSend).toHaveBeenCalledWith(
+      expect.objectContaining({ target: 'spawn-thread', threadRootEventId: 17 }),
+      'Start a fresh run',
+      undefined,
+      undefined,
+    );
   });
 
   it('reserves a disabled voice control while Agent is selected', () => {
