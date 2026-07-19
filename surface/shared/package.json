@@ -36,6 +36,7 @@
     "vitest": "^4.1.8"
   },
   "dependencies": {
+    "@atrium/centaur-client": "workspace:*",
     "effect": "^3.21.4"
   }
 }

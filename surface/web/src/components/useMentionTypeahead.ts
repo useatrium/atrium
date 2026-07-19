@@ -3,6 +3,7 @@ import {
   encodeMentionsToWire,
   matchMentionPrefix,
   suggestMentions,
+  updateMentionRangesForEdit,
   type MentionCandidate,
   type MentionRange,
   type UserRef,
@@ -68,30 +69,6 @@ function loadUsers(): Promise<UserRef[]> {
       userRequest = null;
     });
   return userRequest;
-}
-
-function maintainRanges(ranges: MentionRange[], previous: string, next: string): MentionRange[] {
-  if (previous === next) return ranges;
-  let start = 0;
-  while (start < previous.length && start < next.length && previous[start] === next[start]) start += 1;
-  let suffix = 0;
-  while (
-    suffix < previous.length - start &&
-    suffix < next.length - start &&
-    previous[previous.length - 1 - suffix] === next[next.length - 1 - suffix]
-  ) {
-    suffix += 1;
-  }
-  const oldEnd = previous.length - suffix;
-  const newEnd = next.length - suffix;
-  const delta = newEnd - oldEnd;
-  return ranges.flatMap((range) => {
-    const insertionInside = start === oldEnd && range.start < start && start < range.end;
-    const replacementIntersects = start < oldEnd && range.start < oldEnd && range.end > start;
-    if (insertionInside || replacementIntersects) return [];
-    if (range.start >= oldEnd) return [{ ...range, start: range.start + delta, end: range.end + delta }];
-    return [range];
-  });
 }
 
 export type MentionContext = { channelId: string; includeSpecials: boolean; publicChannel: boolean };
@@ -170,7 +147,7 @@ export function useMentionTypeahead({
 
   const onValueChange = useCallback(
     (next: string, caret: number) => {
-      rangesRef.current = maintainRanges(rangesRef.current, value, next);
+      rangesRef.current = updateMentionRangesForEdit(value, next, rangesRef.current);
       const alive = new Set(rangesRef.current.map((range) => range.userId));
       setNonMembers((current) =>
         current.every((user) => alive.has(user.id)) ? current : current.filter((user) => alive.has(user.id)),
@@ -186,7 +163,7 @@ export function useMentionTypeahead({
       if (!match) return;
       const display = candidate.kind === 'user' ? `@${candidate.user.handle} ` : `@${candidate.name} `;
       const next = value.slice(0, match.start) + display + value.slice(selectionStart);
-      rangesRef.current = maintainRanges(rangesRef.current, value, next);
+      rangesRef.current = updateMentionRangesForEdit(value, next, rangesRef.current);
       if (candidate.kind === 'user') {
         rangesRef.current.push({
           start: match.start,

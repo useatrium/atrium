@@ -1,38 +1,18 @@
 import {
   decodeWireToDisplay,
   encodeMentionsToWire,
+  updateMentionRangesForEdit,
   type MentionCandidate,
   type MentionRange,
   type UserRef,
 } from '@atrium/surface-client';
 
+// Range math now lives in shared/src/mentions.ts; re-exported so the composer
+// and its tests keep importing it from here unchanged.
+export { updateMentionRangesForEdit };
+
 export function encodeMessageForSend(displayText: string, ranges: MentionRange[]): string {
   return encodeMentionsToWire(displayText, ranges);
-}
-
-export function updateMentionRangesForEdit(
-  previousText: string,
-  nextText: string,
-  ranges: MentionRange[],
-): MentionRange[] {
-  let start = 0;
-  while (start < previousText.length && start < nextText.length && previousText[start] === nextText[start]) start += 1;
-
-  let previousEnd = previousText.length;
-  let nextEnd = nextText.length;
-  while (previousEnd > start && nextEnd > start && previousText[previousEnd - 1] === nextText[nextEnd - 1]) {
-    previousEnd -= 1;
-    nextEnd -= 1;
-  }
-
-  const delta = nextText.length - previousText.length;
-  return ranges.flatMap((range) => {
-    const insertionInsideRange = previousEnd === start && start > range.start && start < range.end;
-    const replacementIntersectsRange = start < range.end && previousEnd > range.start;
-    if (insertionInsideRange || replacementIntersectsRange) return [];
-    if (range.start >= previousEnd) return [{ ...range, start: range.start + delta, end: range.end + delta }];
-    return [range];
-  });
 }
 
 export function insertMentionCandidate(

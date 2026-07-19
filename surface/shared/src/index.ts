@@ -25,6 +25,7 @@ export * from './reactions';
 export * from './entry-contracts';
 export * from './unfurl-contracts';
 export * from './useWs';
+export * from './useSessionStream';
 export * from './util';
 export * from './agentProfiles';
 export * from './files-hub';
