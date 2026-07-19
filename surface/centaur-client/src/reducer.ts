@@ -868,10 +868,17 @@ function reduceCodexAgentMessageDelta(state: SessionState, eventId: number, even
 }
 
 function reduceCodexItemStarted(state: SessionState, eventId: number, event: CodexItemStartedEvent): void {
-  if (event.item.type !== 'commandExecution') {
+  if (event.item.type === 'commandExecution') {
+    upsertCodexCommandExecution(state, eventId, event.item);
     return;
   }
-  upsertCodexCommandExecution(state, eventId, event.item);
+  if (event.item.type === 'dynamicToolCall') {
+    reduceCodexDynamicToolCall(state, eventId, event.item, [], false);
+    return;
+  }
+  if (event.item.type === 'mcpToolCall') {
+    reduceCodexMcpToolCall(state, eventId, event.item, [], false);
+  }
 }
 
 function reduceCodexCommandOutputDelta(
@@ -993,6 +1000,16 @@ function reduceCodexItemCompleted(
 
   if (event.item.type === 'fileChange') {
     captureCodexFileChange(state, eventId, event.item);
+    return;
+  }
+
+  if (event.item.type === 'dynamicToolCall') {
+    reduceCodexDynamicToolCall(state, eventId, event.item, handles, true);
+    return;
+  }
+
+  if (event.item.type === 'mcpToolCall') {
+    reduceCodexMcpToolCall(state, eventId, event.item, handles, true);
   }
 }
 
@@ -1254,6 +1271,157 @@ function completeCodexCommandExecution(state: SessionState, eventId: number, ite
     is_error: exitCodeIsError(exitCode) || status === 'failed' || status === 'error',
   };
   tool.sourceEventIds.push(eventId);
+}
+
+/** Claude Code emits every non-Bash tool call (Read/Edit/Write/WebSearch/Task/
+ * TodoWrite/…) as a `dynamicToolCall` app-server item. Fold it into the same
+ * `tool_call` shape the legacy Anthropic path produces so WorkFold/StepDetail and
+ * `toolDisplay` classify it unchanged. `arguments` is the tool input; the tool's
+ * textual output arrives as `contentItems` inputText parts; `success === false`
+ * marks an error. Started creates the in-progress step; completed attaches the result. */
+function reduceCodexDynamicToolCall(
+  state: SessionState,
+  eventId: number,
+  item: CodexItem,
+  handles: RecordHandleHint[],
+  complete: boolean,
+): void {
+  const name = typeof item.tool === 'string' && item.tool ? item.tool : 'tool';
+  const input = codexToolArguments(item);
+  const hasInput = codexHasToolArguments(item);
+  const tool = upsertCodexToolCall(
+    state,
+    eventId,
+    item,
+    name,
+    input,
+    hasInput,
+    handleForCodexItem(handles, item.id, 'tool', 'agent'),
+  );
+  if (hasInput) {
+    applyToolDerivedState(state, eventId, tool);
+  }
+  if (complete) {
+    // `upsertCodexToolCall` already recorded this eventId; the result rides the
+    // same completed frame, so don't double-count it in sourceEventIds.
+    tool.result = { content: codexDynamicToolOutput(item), is_error: codexToolIsError(item) };
+  }
+}
+
+/** Codex emits MCP tool invocations as `mcpToolCall` items. Name is prefixed
+ * `mcp:<server>.<tool>` so `toolDisplay` renders it as a generic step, and the
+ * result text is joined from `result.content` text parts. */
+function reduceCodexMcpToolCall(
+  state: SessionState,
+  eventId: number,
+  item: CodexItem,
+  handles: RecordHandleHint[],
+  complete: boolean,
+): void {
+  const name = codexMcpToolName(item);
+  const input = codexToolArguments(item);
+  const hasInput = codexHasToolArguments(item);
+  const tool = upsertCodexToolCall(
+    state,
+    eventId,
+    item,
+    name,
+    input,
+    hasInput,
+    handleForCodexItem(handles, item.id, 'tool', 'agent'),
+  );
+  if (complete) {
+    tool.result = { content: codexMcpToolOutput(item), is_error: codexToolIsError(item) };
+  }
+}
+
+function upsertCodexToolCall(
+  state: SessionState,
+  eventId: number,
+  item: CodexItem,
+  name: string,
+  input: JsonObject,
+  hasInput: boolean,
+  handle?: string,
+): ToolCallItem {
+  const id = item.id ? `tool:codex:${item.id}` : `tool:codex:${eventId}`;
+  const existing = state.items.find((candidate) => candidate.type === 'tool_call' && candidate.id === id) as
+    | ToolCallItem
+    | undefined;
+
+  if (existing) {
+    existing.name = name;
+    if (hasInput) {
+      existing.input = input;
+    }
+    assignHandle(existing, handle);
+    existing.sourceEventIds.push(eventId);
+    return existing;
+  }
+
+  const created: ToolCallItem = {
+    type: 'tool_call',
+    id,
+    name,
+    input,
+    executionId: state.executionId,
+    ...(handle ? { handle } : {}),
+    sourceEventIds: [eventId],
+  };
+  state.items.push(created);
+  return created;
+}
+
+function codexMcpToolName(item: CodexItem): string {
+  const tool = typeof item.tool === 'string' && item.tool ? item.tool : 'tool';
+  const server = typeof item.server === 'string' && item.server ? item.server : '';
+  return server ? `mcp:${server}.${tool}` : `mcp:${tool}`;
+}
+
+function codexToolArguments(item: CodexItem): JsonObject {
+  return isJsonObject(item.arguments) ? item.arguments : {};
+}
+
+function codexHasToolArguments(item: CodexItem): boolean {
+  return isJsonObject(item.arguments);
+}
+
+/** dynamicToolCall output: `contentItems` inputText parts joined. Robust to
+ * null/malformed entries. */
+function codexDynamicToolOutput(item: CodexItem): string {
+  const items = item.contentItems;
+  if (!Array.isArray(items)) {
+    return '';
+  }
+  return items
+    .flatMap((entry): string[] => {
+      if (!isJsonObject(entry)) return [];
+      if (entry.type === 'inputText' && typeof entry.text === 'string') return [entry.text];
+      return [];
+    })
+    .join('');
+}
+
+/** mcpToolCall output: text parts of `result.content`, plus any error message. */
+function codexMcpToolOutput(item: CodexItem): string {
+  const error = isJsonObject(item.error) && typeof item.error.message === 'string' ? item.error.message : '';
+  const result = isJsonObject(item.result) ? item.result : null;
+  const content = result && Array.isArray(result.content) ? result.content : [];
+  const text = content
+    .flatMap((entry): string[] => {
+      if (!isJsonObject(entry)) return [];
+      if (typeof entry.text === 'string') return [entry.text];
+      return [];
+    })
+    .join('');
+  return [text, error].filter((part) => part.length > 0).join(text && error ? '\n' : '');
+}
+
+function codexToolIsError(item: CodexItem): boolean {
+  if (item.success === false) return true;
+  if (item.error != null) return true;
+  const status = typeof item.status === 'string' ? item.status : '';
+  return status === 'failed' || status === 'error';
 }
 
 function upsertUserMessage(
