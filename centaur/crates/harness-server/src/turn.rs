@@ -3,16 +3,19 @@ use std::path::PathBuf;
 
 use codex_app_server_protocol::{
     AgentMessageDeltaNotification, CommandAction, CommandExecutionSource, CommandExecutionStatus,
-    DynamicToolCallStatus, ErrorNotification, ItemCompletedNotification, ItemStartedNotification,
-    ServerNotification, SessionSource, Thread, ThreadItem, ThreadStartedNotification, ThreadStatus,
-    Turn, TurnCompletedNotification, TurnError, TurnItemsView, TurnStartedNotification, TurnStatus,
-    UserInput,
+    DynamicToolCallStatus, ErrorNotification, FileUpdateChange, ItemCompletedNotification,
+    ItemStartedNotification, PatchApplyStatus, PatchChangeKind, ServerNotification, SessionSource,
+    Thread, ThreadItem, ThreadStartedNotification, ThreadStatus, ThreadTokenUsage,
+    ThreadTokenUsageUpdatedNotification, TokenUsageBreakdown, Turn, TurnCompletedNotification,
+    TurnError, TurnItemsView, TurnStartedNotification, TurnStatus, UserInput,
 };
 use codex_protocol::models::MessagePhase;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use serde_json::Value;
 
-use crate::traits::{NormalizedContent, NormalizedEvent, NormalizedToolResult};
+use crate::traits::{
+    NormalizedContent, NormalizedEvent, NormalizedTokenUsage, NormalizedToolResult,
+};
 use crate::util::{now_millis, now_secs, stable_id, suffix_delta};
 use crate::{HarnessServerError, Result};
 
@@ -68,6 +71,7 @@ struct ToolCallState {
 #[derive(Debug, Clone)]
 enum ToolProjection {
     CommandExecution { command: String },
+    FileChange { changes: Vec<FileUpdateChange> },
     DynamicToolCall,
 }
 
@@ -195,7 +199,9 @@ impl CodexTurnNormalizer {
                     self.emit_tool_result(result, &mut out)?;
                 }
             }
-            NormalizedEvent::TokenUsage { .. } => {}
+            NormalizedEvent::TokenUsage { usage } => {
+                out.push(self.token_usage_notification(usage));
+            }
             NormalizedEvent::Result { error } => {
                 if let Some(error) = error {
                     self.last_error = Some(error.clone());
@@ -546,6 +552,11 @@ impl CodexTurnNormalizer {
                 None,
                 None,
             )?,
+            ToolProjection::FileChange { changes } => ThreadItem::FileChange {
+                id: item_id.clone(),
+                changes,
+                status: PatchApplyStatus::InProgress,
+            },
             ToolProjection::DynamicToolCall => ThreadItem::DynamicToolCall {
                 id: item_id.clone(),
                 namespace: None,
@@ -586,6 +597,11 @@ impl CodexTurnNormalizer {
                     None,
                     None,
                 )?,
+                ToolProjection::FileChange { changes } => ThreadItem::FileChange {
+                    id: state.item_id.clone(),
+                    changes: changes.clone(),
+                    status: PatchApplyStatus::InProgress,
+                },
                 ToolProjection::DynamicToolCall => ThreadItem::DynamicToolCall {
                     id: state.item_id.clone(),
                     namespace: None,
@@ -618,6 +634,15 @@ impl CodexTurnNormalizer {
                     exit_code,
                 )?
             }
+            ToolProjection::FileChange { changes } => ThreadItem::FileChange {
+                id: state.item_id,
+                changes,
+                status: if result.is_error {
+                    PatchApplyStatus::Failed
+                } else {
+                    PatchApplyStatus::Completed
+                },
+            },
             ToolProjection::DynamicToolCall => ThreadItem::DynamicToolCall {
                 id: state.item_id,
                 namespace: None,
@@ -687,6 +712,25 @@ impl CodexTurnNormalizer {
         })
     }
 
+    /// Projects a normalized token-usage sample onto the codex-native
+    /// `thread/tokenUsage/updated` snapshot. The Atrium reducer max-merges
+    /// snapshots and reads `tokenUsage.total.outputTokens` /
+    /// `reasoningOutputTokens`, so cumulative counts stay correct even though
+    /// Claude reports per-message usage. `total` and `last` carry the same
+    /// breakdown; the reducer only consults `total`.
+    fn token_usage_notification(&self, usage: &NormalizedTokenUsage) -> ServerNotification {
+        let breakdown = token_usage_breakdown(usage);
+        ServerNotification::ThreadTokenUsageUpdated(ThreadTokenUsageUpdatedNotification {
+            thread_id: self.thread_id.clone(),
+            turn_id: self.turn_id.clone(),
+            token_usage: ThreadTokenUsage {
+                total: breakdown.clone(),
+                last: breakdown,
+                model_context_window: None,
+            },
+        })
+    }
+
     fn error_notification(&self, message: String) -> ServerNotification {
         ServerNotification::Error(ErrorNotification {
             error: TurnError {
@@ -721,7 +765,99 @@ fn tool_projection(tool: &str, arguments: &Value) -> ToolProjection {
             command: command.to_string(),
         };
     }
+    if let Some(changes) = file_change_projection(tool, arguments) {
+        return ToolProjection::FileChange { changes };
+    }
     ToolProjection::DynamicToolCall
+}
+
+/// Projects Claude's file-mutating tools (`Edit`/`MultiEdit`/`Write`) onto the
+/// codex-native `fileChange` shape with a real unified diff derived from the
+/// tool input. `Read`/`WebSearch`/`Task`/`TodoWrite`/`NotebookEdit`/... stay
+/// `dynamicToolCall` (handled elsewhere). `NotebookEdit` is intentionally left
+/// generic: its cell-scoped `new_source` doesn't map cleanly onto a whole-file
+/// diff.
+fn file_change_projection(tool: &str, arguments: &Value) -> Option<Vec<FileUpdateChange>> {
+    let change = match tool {
+        "Edit" => single_edit_change(arguments)?,
+        "MultiEdit" => multi_edit_change(arguments)?,
+        "Write" => write_change(arguments)?,
+        _ => return None,
+    };
+    Some(vec![change])
+}
+
+fn single_edit_change(arguments: &Value) -> Option<FileUpdateChange> {
+    let path = arguments.get("file_path").and_then(Value::as_str)?;
+    let old = arguments
+        .get("old_string")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let new = arguments
+        .get("new_string")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    Some(FileUpdateChange {
+        path: path.to_string(),
+        kind: PatchChangeKind::Update { move_path: None },
+        diff: unified_diff(old, new),
+    })
+}
+
+fn multi_edit_change(arguments: &Value) -> Option<FileUpdateChange> {
+    let path = arguments.get("file_path").and_then(Value::as_str)?;
+    let edits = arguments.get("edits").and_then(Value::as_array)?;
+    let mut diff = String::new();
+    for edit in edits {
+        let old = edit
+            .get("old_string")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let new = edit
+            .get("new_string")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        diff.push_str(&unified_diff(old, new));
+    }
+    Some(FileUpdateChange {
+        path: path.to_string(),
+        kind: PatchChangeKind::Update { move_path: None },
+        diff,
+    })
+}
+
+fn write_change(arguments: &Value) -> Option<FileUpdateChange> {
+    let path = arguments.get("file_path").and_then(Value::as_str)?;
+    let content = arguments.get("content").and_then(Value::as_str)?;
+    // Codex-native `Add` carries the full new content in `diff` (see
+    // `format_file_change_diff`), and the write's prior contents aren't in the
+    // tool input — so surface the new file body as an add.
+    Some(FileUpdateChange {
+        path: path.to_string(),
+        kind: PatchChangeKind::Add,
+        diff: content.to_string(),
+    })
+}
+
+/// Line-based unified diff (3 lines of context) matching the codex-native
+/// `FileChange::Update` shape.
+fn unified_diff(old: &str, new: &str) -> String {
+    similar::TextDiff::from_lines(old, new)
+        .unified_diff()
+        .to_string()
+}
+
+/// Maps Claude's normalized token counts onto the codex-native breakdown.
+/// `cached_input_tokens` comes from Claude's cache-read count; the
+/// cache-creation count has no codex slot and is dropped.
+fn token_usage_breakdown(usage: &NormalizedTokenUsage) -> TokenUsageBreakdown {
+    TokenUsageBreakdown {
+        total_tokens: usage.total_tokens.unwrap_or(0),
+        input_tokens: usage.input_tokens.unwrap_or(0),
+        cached_input_tokens: usage.cache_read_input_tokens.unwrap_or(0),
+        output_tokens: usage.output_tokens.unwrap_or(0),
+        reasoning_output_tokens: usage.reasoning_output_tokens.unwrap_or(0),
+    }
 }
 
 fn command_result_output_and_exit_code(result: &NormalizedToolResult) -> (String, Option<i32>) {
@@ -1249,5 +1385,212 @@ mod tests {
         assert_eq!(params["item"]["status"], "failed");
         assert_eq!(params["item"]["aggregatedOutput"], "FAIL_STDOUTFAIL_STDERR");
         assert_eq!(params["item"]["exitCode"], 7);
+    }
+
+    #[test]
+    fn edit_tool_use_projects_to_file_change_diff() {
+        let mut normalizer = normalizer();
+        let events = process_anthropic(
+            &mut normalizer,
+            json!({
+                "type": "assistant",
+                "message": {
+                    "id": "msg_1",
+                    "content": [{
+                        "type": "tool_use",
+                        "id": "toolu_1",
+                        "name": "Edit",
+                        "input": {
+                            "file_path": "/repo/src/main.rs",
+                            "old_string": "let x = 1;\n",
+                            "new_string": "let x = 2;\n"
+                        }
+                    }]
+                }
+            }),
+        );
+
+        let started = notification_to_jsonrpc(&events[2]).unwrap().params.unwrap();
+        assert_eq!(started["item"]["type"], "fileChange");
+        assert_eq!(started["item"]["id"], "toolu_1");
+        assert_eq!(started["item"]["status"], "inProgress");
+        assert_eq!(started["item"]["changes"][0]["path"], "/repo/src/main.rs");
+        assert_eq!(started["item"]["changes"][0]["kind"]["type"], "update");
+        let diff = started["item"]["changes"][0]["diff"].as_str().unwrap();
+        assert!(diff.contains("-let x = 1;"), "diff was: {diff}");
+        assert!(diff.contains("+let x = 2;"), "diff was: {diff}");
+
+        let events = process_anthropic(
+            &mut normalizer,
+            json!({
+                "type": "user",
+                "message": {
+                    "content": [{
+                        "type": "tool_result",
+                        "tool_use_id": "toolu_1",
+                        "content": "The file /repo/src/main.rs has been updated.",
+                        "is_error": false
+                    }]
+                }
+            }),
+        );
+
+        assert_eq!(events.len(), 1);
+        let completed = notification_to_jsonrpc(&events[0]).unwrap();
+        assert_eq!(completed.method, "item/completed");
+        let params = completed.params.unwrap();
+        assert_eq!(params["item"]["type"], "fileChange");
+        assert_eq!(params["item"]["id"], "toolu_1");
+        assert_eq!(params["item"]["status"], "completed");
+        assert_eq!(params["item"]["changes"][0]["path"], "/repo/src/main.rs");
+        let diff = params["item"]["changes"][0]["diff"].as_str().unwrap();
+        assert!(diff.contains("+let x = 2;"), "diff was: {diff}");
+    }
+
+    #[test]
+    fn multi_edit_tool_projects_multiple_hunks() {
+        let mut normalizer = normalizer();
+        let events = process_anthropic(
+            &mut normalizer,
+            json!({
+                "type": "assistant",
+                "message": {
+                    "id": "msg_1",
+                    "content": [{
+                        "type": "tool_use",
+                        "id": "toolu_1",
+                        "name": "MultiEdit",
+                        "input": {
+                            "file_path": "/repo/a.txt",
+                            "edits": [
+                                {"old_string": "alpha\n", "new_string": "ALPHA\n"},
+                                {"old_string": "beta\n", "new_string": "BETA\n"}
+                            ]
+                        }
+                    }]
+                }
+            }),
+        );
+
+        let started = notification_to_jsonrpc(&events[2]).unwrap().params.unwrap();
+        assert_eq!(started["item"]["type"], "fileChange");
+        assert_eq!(started["item"]["changes"][0]["path"], "/repo/a.txt");
+        assert_eq!(started["item"]["changes"][0]["kind"]["type"], "update");
+        let diff = started["item"]["changes"][0]["diff"].as_str().unwrap();
+        assert!(diff.contains("-alpha"), "diff was: {diff}");
+        assert!(diff.contains("+ALPHA"), "diff was: {diff}");
+        assert!(diff.contains("-beta"), "diff was: {diff}");
+        assert!(diff.contains("+BETA"), "diff was: {diff}");
+        // Two independent edits produce two hunk headers.
+        assert!(
+            diff.matches("@@ ").count() >= 2,
+            "expected >=2 hunks, diff was: {diff}"
+        );
+    }
+
+    #[test]
+    fn write_tool_projects_add_file_change() {
+        let mut normalizer = normalizer();
+        let events = process_anthropic(
+            &mut normalizer,
+            json!({
+                "type": "assistant",
+                "message": {
+                    "id": "msg_1",
+                    "content": [{
+                        "type": "tool_use",
+                        "id": "toolu_1",
+                        "name": "Write",
+                        "input": {
+                            "file_path": "/repo/new.txt",
+                            "content": "line one\nline two\n"
+                        }
+                    }]
+                }
+            }),
+        );
+
+        let started = notification_to_jsonrpc(&events[2]).unwrap().params.unwrap();
+        assert_eq!(started["item"]["type"], "fileChange");
+        assert_eq!(started["item"]["changes"][0]["path"], "/repo/new.txt");
+        assert_eq!(started["item"]["changes"][0]["kind"]["type"], "add");
+        // Codex-native Add carries the full new content in `diff`.
+        assert_eq!(
+            started["item"]["changes"][0]["diff"],
+            "line one\nline two\n"
+        );
+    }
+
+    #[test]
+    fn failed_edit_tool_marks_file_change_failed() {
+        let mut normalizer = normalizer();
+        process_anthropic(
+            &mut normalizer,
+            json!({
+                "type": "assistant",
+                "message": {
+                    "id": "msg_1",
+                    "content": [{
+                        "type": "tool_use",
+                        "id": "toolu_1",
+                        "name": "Edit",
+                        "input": {"file_path": "/repo/x.rs", "old_string": "a\n", "new_string": "b\n"}
+                    }]
+                }
+            }),
+        );
+
+        let events = process_anthropic(
+            &mut normalizer,
+            json!({
+                "type": "user",
+                "message": {
+                    "content": [{
+                        "type": "tool_result",
+                        "tool_use_id": "toolu_1",
+                        "content": "String to replace not found in file.",
+                        "is_error": true
+                    }]
+                }
+            }),
+        );
+
+        let completed = notification_to_jsonrpc(&events[0]).unwrap();
+        let params = completed.params.unwrap();
+        assert_eq!(params["item"]["type"], "fileChange");
+        assert_eq!(params["item"]["status"], "failed");
+    }
+
+    #[test]
+    fn token_usage_event_emits_thread_token_usage_notification() {
+        let mut normalizer = normalizer();
+        normalizer.start_notifications(false).unwrap();
+
+        let events = normalizer
+            .process_event(&NormalizedEvent::TokenUsage {
+                usage: NormalizedTokenUsage {
+                    model: Some("claude-fable-5".to_string()),
+                    input_tokens: Some(120),
+                    output_tokens: Some(42),
+                    cache_creation_input_tokens: Some(7),
+                    cache_read_input_tokens: Some(13),
+                    reasoning_output_tokens: Some(8),
+                    total_tokens: Some(170),
+                },
+            })
+            .unwrap();
+
+        assert_eq!(events.len(), 1);
+        let rpc = notification_to_jsonrpc(&events[0]).unwrap();
+        assert_eq!(rpc.method, "thread/tokenUsage/updated");
+        let params = rpc.params.unwrap();
+        assert_eq!(params["turnId"], "turn-1");
+        // The reducer reads `tokenUsage.total.outputTokens` + `reasoningOutputTokens`.
+        assert_eq!(params["tokenUsage"]["total"]["outputTokens"], 42);
+        assert_eq!(params["tokenUsage"]["total"]["reasoningOutputTokens"], 8);
+        assert_eq!(params["tokenUsage"]["total"]["inputTokens"], 120);
+        assert_eq!(params["tokenUsage"]["total"]["cachedInputTokens"], 13);
+        assert_eq!(params["tokenUsage"]["total"]["totalTokens"], 170);
+        assert_eq!(params["tokenUsage"]["last"]["outputTokens"], 42);
     }
 }
