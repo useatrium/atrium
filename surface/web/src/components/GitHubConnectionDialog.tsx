@@ -2,6 +2,7 @@ import { Fragment, useRef, useState } from 'react';
 import type { ConnectionIdentity, ConnectionStatus } from '../api';
 import { useDialog } from '../useDialog';
 import { XIcon } from './icons';
+import { Button, IconButton } from './ui';
 
 export function GitHubConnectionDialog({
   available,
@@ -72,14 +73,9 @@ export function GitHubConnectionDialog({
               {connected || needsAuth ? activeSummary : 'Use your GitHub account for repository access.'}
             </p>
           </div>
-          <button
-            type="button"
-            onClick={onCancel}
-            aria-label="Close dialog"
-            className="rounded-md px-2 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg max-md:min-h-11 max-md:min-w-11"
-          >
-            <XIcon />
-          </button>
+          <IconButton onClick={onCancel} aria-label="Close dialog">
+            <XIcon size={16} />
+          </IconButton>
         </header>
 
         <div className="space-y-3 px-4 py-3 text-sm text-fg-secondary">
@@ -238,21 +234,16 @@ export function GitHubConnectionDialog({
               Disconnect
             </button>
           )}
-          <button
-            type="button"
-            onClick={onCancel}
-            className="rounded-md px-3 py-1.5 text-xs font-medium text-fg-secondary hover:bg-surface-overlay hover:text-fg max-md:min-h-11"
-          >
+          <Button variant="ghost" onClick={onCancel}>
             Cancel
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
+            variant="secondary"
             disabled={busy || !available}
             onClick={() => void run(() => onConnect({ tokenKind: 'app_user' }))}
-            className="rounded-md border border-edge px-3 py-1.5 text-xs font-medium text-fg-secondary hover:bg-surface-overlay hover:text-fg disabled:cursor-not-allowed disabled:opacity-50 max-md:min-h-11"
           >
             {connected || needsAuth ? 'Reconnect GitHub user' : 'Connect GitHub user'}
-          </button>
+          </Button>
         </footer>
       </div>
     </div>

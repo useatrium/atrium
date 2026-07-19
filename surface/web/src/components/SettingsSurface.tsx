@@ -163,6 +163,12 @@ function SettingsControls({
         ? 'justify-end border-accent bg-accent text-on-accent'
         : 'justify-start border-edge-strong bg-surface text-fg-muted'
     }`;
+  // Shared recipe for the connection status pills (Device / GitHub / Claude /
+  // Codex): one bordered, transparent-fill button with a status dot. Kept a raw
+  // recipe rather than the Button primitive because its transparent fill and
+  // mobile full-width/larger-text treatment don't map to a Button variant.
+  const connectionButtonClass =
+    'flex h-8 items-center gap-2 rounded-md border border-edge px-2 text-xs text-fg-tertiary hover:bg-surface-overlay hover:text-fg-body max-md:min-h-11 max-md:w-full max-md:px-3 max-md:text-sm';
   const setNotificationMessages = (messages: NotificationMessagePref) =>
     setPrefs({ notifications: { ...prefs.notifications, messages } });
   const setNotificationSessions = (sessions: boolean) =>
@@ -324,7 +330,7 @@ function SettingsControls({
                       aria-disabled={notificationsDisabled || undefined}
                       aria-label={BELL_TITLES[notify]}
                       aria-pressed={notify === 'on'}
-                      className="flex h-8 items-center gap-2 rounded-md border border-edge px-2 text-xs text-fg-tertiary hover:bg-surface-overlay hover:text-fg-body aria-disabled:opacity-40 max-md:min-h-11 max-md:w-full max-md:px-3 max-md:text-sm"
+                      className={`${connectionButtonClass} aria-disabled:opacity-40`}
                     >
                       {notify === 'on' ? <BellIcon /> : <BellOffIcon />}
                       <span>{notify === 'on' ? 'On' : notify === 'off' ? 'Off' : 'Blocked'}</span>
@@ -383,11 +389,7 @@ function SettingsControls({
                   <Tooltip
                     content={connectionsAvailable ? 'Manage GitHub connection' : 'GitHub connections unavailable'}
                   >
-                    <button
-                      type="button"
-                      onClick={onConnectGitHub}
-                      className="flex h-8 items-center gap-2 rounded-md border border-edge px-2 text-xs text-fg-tertiary hover:bg-surface-overlay hover:text-fg-body max-md:min-h-11 max-md:w-full max-md:px-3 max-md:text-sm"
-                    >
+                    <button type="button" onClick={onConnectGitHub} className={connectionButtonClass}>
                       <span
                         className={`size-2 rounded-full ${
                           githubConnection?.connected
@@ -419,22 +421,14 @@ function SettingsControls({
                 className="scroll-mt-16 space-y-3 md:scroll-mt-4"
               >
                 <SettingRow label="Claude Code">
-                  <button
-                    type="button"
-                    onClick={onConnectClaude}
-                    className="flex h-8 items-center gap-2 rounded-md border border-edge px-2 text-xs text-fg-tertiary hover:bg-surface-overlay hover:text-fg-body max-md:min-h-11 max-md:w-full max-md:px-3 max-md:text-sm"
-                  >
+                  <button type="button" onClick={onConnectClaude} className={connectionButtonClass}>
                     <span className={`size-2 rounded-full ${claudeStatus?.connected ? 'bg-success' : 'bg-warning'}`} />
                     <span>{claudeStatus?.connected ? 'Connected' : 'Connect'}</span>
                   </button>
                 </SettingRow>
 
                 <SettingRow label="Codex">
-                  <button
-                    type="button"
-                    onClick={onConnectCodex}
-                    className="flex h-8 items-center gap-2 rounded-md border border-edge px-2 text-xs text-fg-tertiary hover:bg-surface-overlay hover:text-fg-body max-md:min-h-11 max-md:w-full max-md:px-3 max-md:text-sm"
-                  >
+                  <button type="button" onClick={onConnectCodex} className={connectionButtonClass}>
                     <span className={`size-2 rounded-full ${codexStatus?.connected ? 'bg-success' : 'bg-warning'}`} />
                     <span>{codexStatus?.connected ? 'Connected' : 'Connect'}</span>
                   </button>

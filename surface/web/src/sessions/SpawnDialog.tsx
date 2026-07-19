@@ -11,6 +11,7 @@ import type {
   ProviderCredentialStatus,
 } from '../api';
 import { Tooltip } from '../components/a11y';
+import { Button, IconButton } from '../components/ui';
 import { PlusIcon, XIcon } from '../components/icons';
 import { SHORTCUTS } from '../lib/shortcuts';
 import { useDialog } from '../useDialog';
@@ -231,14 +232,9 @@ export function SpawnDialog({
             </h2>
             <p className="text-2xs text-fg-muted">in {channelName}</p>
           </div>
-          <button
-            type="button"
-            onClick={onCancel}
-            aria-label="Close dialog"
-            className="rounded-md px-2 py-1 text-fg-tertiary hover:bg-surface-overlay hover:text-fg"
-          >
-            <XIcon />
-          </button>
+          <IconButton onClick={onCancel} aria-label="Close dialog">
+            <XIcon size={16} />
+          </IconButton>
         </header>
 
         <div className="space-y-3 px-4 py-3">
@@ -505,30 +501,23 @@ export function SpawnDialog({
         </div>
 
         <footer className="flex items-center justify-end gap-2 border-t border-edge px-4 py-3">
-          <button
-            type="button"
-            onClick={onCancel}
-            className="rounded-md px-3 py-1.5 text-xs font-medium text-fg-secondary hover:bg-surface-overlay hover:text-fg"
-          >
+          <Button variant="ghost" onClick={onCancel}>
             Cancel
-          </button>
+          </Button>
           {!providerConnected && onRunDemo && (
-            <button
-              type="button"
-              onClick={onRunDemo}
-              className="rounded-md border border-edge-strong bg-surface px-3 py-1.5 text-xs font-semibold text-fg-secondary hover:bg-surface-overlay hover:text-fg"
-            >
+            <Button variant="secondary" onClick={onRunDemo}>
               Watch a demo agent
-            </button>
+            </Button>
           )}
           <Tooltip content={spawnTooltip} shortcut={SHORTCUTS.spawnSession.keys}>
-            <button
+            <Button
               type="submit"
+              variant="primary"
               aria-disabled={spawnDisabled || undefined}
-              className="rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-on-accent hover:bg-accent-hover aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
+              className="aria-disabled:opacity-50"
             >
               Start session
-            </button>
+            </Button>
           </Tooltip>
         </footer>
       </form>

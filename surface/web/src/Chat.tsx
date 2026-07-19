@@ -41,8 +41,9 @@ import { CodexConnectDialog } from './components/CodexConnectDialog';
 import { Composer, type ComposerHandle } from './components/Composer';
 import { GitHubConnectionDialog } from './components/GitHubConnectionDialog';
 import { EntryQuoteApplyContextProvider } from './components/EntryQuoteCard';
-import { ShortcutsHelp, Tooltip } from './components/a11y';
+import { Kbd, ShortcutsHelp, Tooltip } from './components/a11y';
 import { BotIcon, FileIcon, GearIcon, LockIcon, PhoneIcon, PlayIcon, PlusIcon, SearchIcon } from './components/icons';
+import { Button } from './components/ui';
 import { splitMarkdownFrontmatter } from '@atrium/surface-client';
 import { MarkupPane, type MarkupPaneMode, type MarkupPaneSource } from './components/MarkupPane';
 import { showErrorToast } from './components/Toasts';
@@ -2408,22 +2409,15 @@ export function Chat({
                 />
               )}
             {showNonChatSurface ? (
-              <button
-                type="button"
-                onClick={openChatSurface}
-                className="inline-flex shrink-0 items-center gap-1 rounded-md border border-edge bg-surface-raised px-2 py-1 text-xs font-semibold text-fg-muted hover:bg-surface-overlay hover:text-fg-body md:ml-auto"
-              >
+              <Button variant="secondary" size="sm" onClick={openChatSurface} className="md:ml-auto">
                 Chat
-              </button>
+              </Button>
             ) : (
               <Tooltip content={newAgentDisabled ? 'Select a channel to start an agent' : 'New agent'}>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    if (newAgentDisabled) {
-                      e.preventDefault();
-                      return;
-                    }
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={() => {
                     setSpawnInitialTask('');
                     setSpawnOpen(true);
                   }}
@@ -2432,11 +2426,11 @@ export function Chat({
                   // The dock owns agent creation on desktop, so the header pill is a quiet
                   // secondary control on md+ (matching the Search button) — but stays the
                   // filled primary spawn affordance below md, where the dock spine is hidden.
-                  className="inline-flex shrink-0 items-center gap-1 rounded-md bg-accent px-2 py-1 text-xs font-semibold text-on-accent hover:bg-accent-hover aria-disabled:cursor-default aria-disabled:bg-surface-overlay aria-disabled:text-fg-muted md:ml-auto md:border md:border-edge md:bg-surface-raised md:text-fg-muted md:hover:bg-surface-overlay md:hover:text-fg-body"
+                  className="aria-disabled:bg-surface-overlay aria-disabled:text-fg-muted md:ml-auto md:border md:border-edge md:bg-surface-raised md:font-medium md:text-fg-muted md:hover:bg-surface-overlay md:hover:text-fg-body"
                 >
                   <PlusIcon size={14} />
                   <span className="hidden sm:inline">New agent</span>
-                </button>
+                </Button>
               </Tooltip>
             )}
             {!showNonChatSurface && state.openSessionId && (
@@ -2462,11 +2456,11 @@ export function Chat({
                   aria-label={!callsAvailable ? 'Voice calls not set up' : 'Start voice call'}
                   className={
                     callsAvailable
-                      ? 'rounded-md border border-edge bg-surface-raised px-2 py-1 text-fg-muted hover:bg-surface-overlay hover:text-fg-body aria-disabled:cursor-default aria-disabled:text-fg-faint'
-                      : 'rounded-md border border-edge bg-surface-raised px-2 py-1 text-fg-faint cursor-help hover:text-fg-muted'
+                      ? 'inline-flex h-7 items-center justify-center rounded-md border border-edge bg-surface-raised px-2 text-fg-muted hover:bg-surface-overlay hover:text-fg-body aria-disabled:cursor-default aria-disabled:text-fg-faint'
+                      : 'inline-flex h-7 cursor-help items-center justify-center rounded-md border border-edge bg-surface-raised px-2 text-fg-faint hover:text-fg-muted'
                   }
                 >
-                  <PhoneIcon size={15} />
+                  <PhoneIcon size={14} />
                 </button>
               </Tooltip>
             )}
@@ -2474,30 +2468,32 @@ export function Chat({
               content="Search messages, channels, sessions, and commands"
               shortcut={SHORTCUTS.commandPalette.keys}
             >
-              <button
-                type="button"
+              <Button
+                variant="secondary"
+                size="sm"
                 onClick={() => setSwitcherOpen(true)}
                 aria-label="Search and commands"
-                className="inline-flex items-center gap-1.5 rounded-md border border-edge bg-surface-raised px-2 py-1 text-xs text-fg-muted hover:bg-surface-overlay hover:text-fg-body"
+                className="gap-1.5 font-normal"
               >
                 <SearchIcon size={14} />
                 <span className="hidden sm:inline">Search</span>
-                <kbd className="hidden rounded border border-edge px-1 py-px text-3xs font-medium text-fg-muted lg:inline">
-                  ⌘K
-                </kbd>
-              </button>
+                <span className="ml-0.5 hidden lg:inline-flex">
+                  <Kbd keys={SHORTCUTS.commandPalette.keys} decorative />
+                </span>
+              </Button>
             </Tooltip>
             <Tooltip content="Keyboard shortcuts">
-              <button
-                type="button"
+              <Button
+                variant="secondary"
+                size="sm"
                 onClick={() => setShortcutsHelpOpen(true)}
                 aria-label="Keyboard shortcuts"
-                className="inline-flex items-center justify-center rounded-md border border-edge bg-surface-raised px-2 py-1 text-xs font-semibold text-fg-muted hover:bg-surface-overlay hover:text-fg-body"
+                className="font-semibold"
               >
                 <span aria-hidden="true" className="leading-none">
                   ?
                 </span>
-              </button>
+              </Button>
             </Tooltip>
             {!showNonChatSurface && active && (
               <div className="hidden min-w-0 items-center gap-2 md:flex" title="Viewing this channel right now">

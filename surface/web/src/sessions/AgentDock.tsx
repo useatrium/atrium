@@ -16,6 +16,7 @@ import {
   ShrinkIcon,
   XIcon,
 } from '../components/icons';
+import { IconButton, SegmentedControl } from '../components/ui';
 import { AgentDockRovingProvider, AgentGroup, type AgentRowContext } from './AgentDockRows';
 import { useNow } from './SessionCard';
 import { deriveSessionGlance, isLiveAgentWork, isTerminalSessionStatus, type Session } from './types';
@@ -521,7 +522,7 @@ export function AgentDock({
               className="flex size-12 flex-none items-center justify-center rounded-full text-fg-muted hover:bg-surface-overlay hover:text-fg focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-accent md:min-h-0 md:w-full md:flex-1 md:flex-col md:gap-3 md:rounded-sm md:py-1"
             >
               <span className="relative grid size-8 place-items-center rounded-md bg-surface-overlay/70">
-                <BotIcon size={17} />
+                <BotIcon size={16} />
                 {badgeCounts.needsYou > 0 && (
                   // Deliberately not live: agent event bursts can change this badge rapidly,
                   // while the opening button's accessible name always exposes the current count.
@@ -561,7 +562,7 @@ export function AgentDock({
               aria-label="New agent"
               className="mt-2 hidden size-9 shrink-0 place-items-center rounded-md text-fg-muted hover:bg-surface-overlay hover:text-fg focus-visible:outline-2 focus-visible:outline-accent md:grid"
             >
-              <PlusIcon size={17} />
+              <PlusIcon size={16} />
             </button>
           </div>
         ) : (
@@ -579,35 +580,28 @@ export function AgentDock({
                 </h2>
                 <span className="mr-1 text-xs tabular-nums text-fg-body">{total}</span>
                 {!immersed && (
-                  <button
-                    type="button"
+                  <IconButton
                     onClick={() => setOpen(false)}
                     aria-label="Collapse agent dock"
-                    className="grid size-11 place-items-center rounded text-fg-muted hover:bg-surface-overlay hover:text-fg focus-visible:outline-2 focus-visible:outline-accent md:size-7"
+                    className="max-md:size-11"
                   >
                     <XIcon size={16} className="md:hidden" />
                     <ChevronRightIcon size={14} className="max-md:hidden" />
-                  </button>
+                  </IconButton>
                 )}
-                <button
-                  type="button"
+                <IconButton
                   onClick={onToggleImmersed}
                   aria-label={immersed ? 'Exit immersed agent dock' : 'Immerse agent dock'}
-                  className="grid size-11 place-items-center rounded text-fg-muted hover:bg-surface-overlay hover:text-fg focus-visible:outline-2 focus-visible:outline-accent md:size-7"
+                  className="max-md:size-11"
                 >
                   {immersed ? <ShrinkIcon size={14} /> : <ExpandIcon size={14} />}
-                </button>
-                <button
-                  type="button"
-                  onClick={onNewAgent}
-                  aria-label="New agent"
-                  className="grid size-11 place-items-center rounded bg-accent text-on-accent hover:bg-accent-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent md:size-7"
-                >
+                </IconButton>
+                <IconButton onClick={onNewAgent} aria-label="New agent" variant="primary" className="max-md:size-11">
                   <PlusIcon size={14} />
-                </button>
+                </IconButton>
               </div>
               <label className="mt-2 flex h-11 items-center gap-2 rounded-md border border-edge bg-surface px-2 text-fg-muted focus-within:border-edge-focus md:h-8">
-                <SearchIcon size={13} className="shrink-0" />
+                <SearchIcon size={14} className="shrink-0" />
                 <span className="sr-only">Filter agents</span>
                 <input
                   ref={filterInputRef}
@@ -620,31 +614,15 @@ export function AgentDock({
               </label>
               <div className="mt-2 flex min-h-6 items-center gap-2 px-1">
                 {meId && (
-                  // biome-ignore lint/a11y/useSemanticElements: compact segmented control exposes a named group with pressed buttons; fieldset would alter header layout (same idiom as ViewToggle).
-                  <div
-                    role="group"
+                  <SegmentedControl
                     aria-label="Show agents"
-                    className="flex shrink-0 rounded-md border border-edge bg-surface p-0.5"
-                  >
-                    {(
-                      [
-                        { mine: true, label: 'Mine' },
-                        { mine: false, label: 'All' },
-                      ] as const
-                    ).map(({ mine, label }) => (
-                      <button
-                        key={label}
-                        type="button"
-                        aria-pressed={mineFilter === mine}
-                        onClick={() => setMineFilter(mine)}
-                        className={`min-h-6 rounded px-1.5 text-2xs font-semibold focus-visible:outline-2 focus-visible:outline-accent ${
-                          mineFilter === mine ? 'bg-surface-overlay text-fg' : 'text-fg-muted hover:text-fg'
-                        }`}
-                      >
-                        {label}
-                      </button>
-                    ))}
-                  </div>
+                    value={mineFilter ? 'mine' : 'all'}
+                    onChange={(value) => setMineFilter(value === 'mine')}
+                    items={[
+                      { value: 'mine', label: 'Mine' },
+                      { value: 'all', label: 'All' },
+                    ]}
+                  />
                 )}
                 {filterChannelId && (
                   <span className="flex min-w-0 flex-1 items-center gap-1 text-2xs text-fg-muted">

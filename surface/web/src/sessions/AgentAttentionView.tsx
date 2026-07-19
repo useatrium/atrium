@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
 import type { Channel, SessionQuestionAnswers } from '@atrium/surface-client';
+import { SegmentedControl } from '../components/ui';
 import { useDialog } from '../useDialog';
 import { GlanceChip } from './GlanceChip';
 import { sessionAttentionKind, sessionDriverId, type Session } from './types';
@@ -76,7 +77,7 @@ export function AgentAttentionView({
 
   return (
     <section data-testid="agent-attention" className="min-h-0 flex-1 overflow-y-auto bg-surface">
-      <header className="sticky top-0 z-10 border-b border-edge bg-surface/95 px-5 py-4 backdrop-blur-sm">
+      <header className="sticky top-0 z-10 border-b border-edge bg-surface/95 px-4 py-4 backdrop-blur-sm">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <p className="text-2xs font-semibold uppercase tracking-wide text-warning-text">Needs you</p>
@@ -85,33 +86,22 @@ export function AgentAttentionView({
               {rows.length === 1 ? '1 agent is waiting for you.' : `${rows.length} agents are waiting for you.`}
             </p>
           </div>
-          <fieldset
+          <SegmentedControl
             aria-label="Filter agent attention"
-            className="flex items-center gap-1 rounded-lg bg-surface-overlay p-1"
-          >
-            {(['all', 'blocked', 'failed'] as const).map((value) => (
-              <button
-                key={value}
-                type="button"
-                aria-pressed={filter === value}
-                onClick={() => setFilter(value)}
-                className={`rounded-md px-3 py-1.5 text-xs font-semibold transition-colors ${
-                  filter === value
-                    ? 'bg-surface-raised text-fg shadow-sm'
-                    : 'text-fg-muted hover:bg-surface-raised/60 hover:text-fg'
-                }`}
-              >
-                {value[0]?.toUpperCase()}
-                {value.slice(1)}
-              </button>
-            ))}
-          </fieldset>
+            value={filter}
+            onChange={setFilter}
+            items={[
+              { value: 'all', label: 'All' },
+              { value: 'blocked', label: 'Blocked' },
+              { value: 'failed', label: 'Failed' },
+            ]}
+          />
         </div>
       </header>
 
-      <div className="mx-auto w-full max-w-4xl px-5 py-5">
+      <div className="mx-auto w-full max-w-4xl px-4 py-5">
         {rows.length === 0 ? (
-          <div className="rounded-xl border border-dashed border-edge px-5 py-12 text-center">
+          <div className="rounded-lg border border-dashed border-edge px-4 py-12 text-center">
             <p className="text-sm font-semibold text-fg">No agents need you.</p>
             <p className="mt-1 text-xs text-fg-muted">Agents that need a decision or recovery step will appear here.</p>
           </div>
@@ -133,7 +123,7 @@ export function AgentAttentionView({
                     </h2>
                     <span className="text-xs tabular-nums text-fg-muted">{groupedRows.length}</span>
                   </div>
-                  <ul className="overflow-hidden rounded-xl border border-edge bg-surface-raised shadow-sm">
+                  <ul className="overflow-hidden rounded-lg border border-edge bg-surface-raised shadow-sm">
                     {groupedRows.map(({ session, kind }) => {
                       const question = kind === 'question' ? session.pendingQuestion?.questions[0] : undefined;
                       const selectionKey = question
