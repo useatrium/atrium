@@ -189,10 +189,7 @@ export async function registerAppRoutes(deps: AppRouteDeps): Promise<void> {
 
   registerAtriumRoutes(app, {
     pool,
-    requireUser,
     requireSessionAccess,
-    canViewFull,
-    fullViewForbidden,
   });
 
   await registerInternalArtifactRoutes(app, {

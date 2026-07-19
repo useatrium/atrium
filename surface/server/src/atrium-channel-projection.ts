@@ -161,10 +161,6 @@ async function loadChannelMembers(
   return res.rows.map((row) => ({ id: row.id, handle: row.handle, displayName: row.display_name }));
 }
 
-export async function loadChannelChatMessages(pool: Db, channelId: string): Promise<ChannelChatMessage[]> {
-  return (await loadChannelChatProjection(pool, channelId)).messages;
-}
-
 export async function loadChannelChatProjection(
   pool: Db,
   channelId: string,
