@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { classifyScope, userCanReadScope, userCanReadSessionArtifactPath } from '../src/artifact-scope.js';
+import { classifyScope, userCanReadScope } from '../src/artifact-scope.js';
 import { canonicalizeSessionArtifactPath, InvalidArtifactPathError } from '../src/artifact-path.js';
 
 describe('artifact path scope classification', () => {
@@ -13,16 +13,6 @@ describe('artifact path scope classification', () => {
     expect(classifyScope('shared/channels/channel-1/report.md')).toBe('workspace');
     expect(classifyScope('shared/report.md')).toBe('private');
     expect(userCanReadScope('workspace')).toBe(true);
-  });
-
-  it('allows session routes to read shared paths and their own scratch', () => {
-    const sessionId = '11111111-1111-4111-8111-111111111111';
-    expect(userCanReadSessionArtifactPath('shared/global/report.md', sessionId)).toBe(true);
-    expect(userCanReadSessionArtifactPath(`scratch/${sessionId}/draft.md`, sessionId)).toBe(true);
-    expect(userCanReadSessionArtifactPath('scratch/22222222-2222-4222-8222-222222222222/draft.md', sessionId)).toBe(
-      false,
-    );
-    expect(userCanReadSessionArtifactPath('out/chart.png', sessionId)).toBe(false);
   });
 
   it('keeps topic scope readable if supplied by older callers', () => {

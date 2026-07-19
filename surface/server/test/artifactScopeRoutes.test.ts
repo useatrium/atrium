@@ -3,6 +3,8 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import type pg from 'pg';
 import { buildApp } from '../src/app.js';
 import { ArtifactLedger, casBlobKey } from '../src/artifact-ledger.js';
+import { displaySessionArtifactPath } from '../src/artifact-path.js';
+import { artifactPathInRoots, classifyScope, readableArtifactRootsForSession } from '../src/artifact-scope.js';
 import { ensureBucket } from '../src/s3.js';
 import { addWorkspaceMember } from '../src/membership.js';
 import { createTestPool, seedFixture, truncateAll, type Fixture } from './helpers.js';
@@ -185,66 +187,50 @@ describe('artifact scope route enforcement', () => {
     expect(res.headers.location).toBe('https://storage.local/get');
   });
 
-  it('shows session scratch and shared artifacts in the user-facing files listing', async () => {
-    const cookie = await loginCookie();
+  // The session-scoped files-listing route (GET /api/sessions/:id/files) was
+  // retired with the Files Hub; its scope decisions live in
+  // readableArtifactRootsForSession + classifyScope/displaySessionArtifactPath,
+  // which these unit tests exercise directly (same scenarios, no HTTP route).
+  it('classifies session scratch and shared artifacts by scope for the files listing', async () => {
     const sid = await session();
-    await commit(sid, `scratch/${sid}/secret.md`, 'private notes');
-    await commit(sid, 'shared/global/report.md', 'shared report body');
-    await commit(sid, 'report.md', 'active channel body');
-    const otherChannel = await pool.query<{ id: string }>(
-      `INSERT INTO channels (workspace_id, name, kind, created_by)
-       VALUES ($1, 'other-channel', 'public', $2) RETURNING id`,
-      [fx.workspaceId, fx.userId],
-    );
-    const otherSid = await session(otherChannel.rows[0]!.id);
-    await commit(otherSid, 'other-channel.md', 'other channel body');
 
-    const res = await app.inject({
-      method: 'GET',
-      url: `/api/sessions/${sid}/files?dir=`,
-      headers: { cookie },
-    });
+    const access = await readableArtifactRootsForSession(pool, sid);
+    expect(access.activePrefix).toBe(`shared/channels/${fx.channelId}`);
 
-    expect(res.statusCode).toBe(200);
-    const body = res.json() as {
-      activePrefix: string;
-      rows: Array<{ path: string; canonicalPath?: string; displayPath?: string; scope?: string }>;
-    };
-    expect(body.activePrefix).toBe(`shared/channels/${fx.channelId}`);
-    expect(body.rows.map((row) => row.path)).toEqual(['report.md', 'scratch', 'shared']);
-    expect(body.rows.find((row) => row.path === 'report.md')).toMatchObject({
-      canonicalPath: `shared/channels/${fx.channelId}/report.md`,
-      displayPath: 'report.md',
-      scope: 'workspace',
-    });
-    expect(body.rows.find((row) => row.path === 'scratch')?.scope).toBe('private');
+    const activeCanonical = `shared/channels/${fx.channelId}/report.md`;
+    const globalCanonical = 'shared/global/report.md';
+    const scratchCanonical = `scratch/${sid}/secret.md`;
+
+    // Active-channel + global artifacts read as workspace scope; scratch stays private.
+    expect(classifyScope(activeCanonical)).toBe('workspace');
+    expect(classifyScope(globalCanonical)).toBe('workspace');
+    expect(classifyScope(scratchCanonical)).toBe('private');
+
+    // Display path collapses the active-channel prefix down to the bare name.
+    expect(displaySessionArtifactPath(activeCanonical, { sessionId: sid, channelId: fx.channelId })).toBe('report.md');
   });
 
-  it('lists and serves artifacts from readable non-active public channels', async () => {
+  it('exposes readable + writable roots for non-active public channels (writes follow reads)', async () => {
+    const sid = await session();
+
+    const access = await readableArtifactRootsForSession(pool, sid);
+    expect(access.activePrefix).toBe(`shared/channels/${fx.channelId}`);
+
+    const otherPrefix = `shared/channels/${fx.otherChannelId}`;
+    const otherRoot = access.readableRoots.find((root) => root.prefix === otherPrefix);
+    expect(otherRoot).toBeDefined();
+    expect(otherRoot?.kind).toBe('workspace');
+    expect(otherRoot?.writable).toBe(true);
+    // Writes follow reads: the readable non-active channel is also a writable root.
+    expect(access.writableRoots.map((root) => root.prefix)).toContain(otherPrefix);
+  });
+
+  it('serves an artifact from a readable non-active public channel by path', async () => {
     const cookie = await loginCookie();
     const sid = await session();
     const otherSid = await session(fx.otherChannelId);
     const otherPath = `shared/channels/${fx.otherChannelId}/other.md`;
     await commit(otherSid, otherPath, 'other channel body');
-
-    const listing = await app.inject({
-      method: 'GET',
-      url: `/api/sessions/${sid}/files?dir=${encodeURIComponent('shared/channels')}`,
-      headers: { cookie },
-    });
-
-    expect(listing.statusCode).toBe(200);
-    const listBody = listing.json() as {
-      activePrefix: string;
-      readableRoots: Array<{ prefix: string; writable: boolean }>;
-      rows: Array<{ path: string; canonicalPath?: string; displayPath?: string; scope?: string }>;
-    };
-    expect(listBody.activePrefix).toBe(`shared/channels/${fx.channelId}`);
-    expect(listBody.readableRoots.map((root) => root.prefix)).toContain(`shared/channels/${fx.otherChannelId}`);
-    expect(
-      listBody.readableRoots.find((root) => root.prefix === `shared/channels/${fx.otherChannelId}`)?.writable,
-    ).toBe(true);
-    expect(listBody.rows.map((row) => row.path)).toContain(`shared/channels/${fx.otherChannelId}`);
 
     const res = await app.inject({
       method: 'GET',
@@ -257,18 +243,17 @@ describe('artifact scope route enforcement', () => {
     expect(res.headers['x-artifact-display-path']).toBe(otherPath);
   });
 
-  it('allows writes into readable non-active public channels (writes follow reads)', async () => {
+  it('permits writes into readable non-active public channels (writes follow reads)', async () => {
     await ensureBucket();
-    const cookie = await loginCookie();
     const sid = await session();
-    const userWrite = await app.inject({
-      method: 'PUT',
-      url: `/api/sessions/${sid}/files?path=${encodeURIComponent(`shared/channels/${fx.otherChannelId}/user-write.md`)}`,
-      headers: { cookie, 'content-type': 'text/markdown' },
-      payload: 'lands in the other channel',
-    });
-    expect(userWrite.statusCode).toBe(200);
+    const otherWritePath = `shared/channels/${fx.otherChannelId}/user-write.md`;
 
+    // Scope decision that gated the retired PUT route: the target path lands
+    // inside a writable root for this session's actor.
+    const access = await readableArtifactRootsForSession(pool, sid);
+    expect(artifactPathInRoots(otherWritePath, access.writableRoots)).toBe(true);
+
+    // The live agent-capture route accepts a write into that same channel.
     const agentCapture = await app.inject({
       method: 'POST',
       url: `/api/internal/sessions/${sid}/artifacts/capture?path=${encodeURIComponent(`shared/channels/${fx.otherChannelId}/agent-capture.md`)}`,
