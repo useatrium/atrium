@@ -435,10 +435,6 @@ const storage = hasIndexedDb() ? idbStorage : createMemoryStorage();
 
 export const eventCache = createEventCache(storage);
 
-export const loadSnapshot = eventCache.loadSnapshot;
-export const saveChannels = eventCache.saveChannels;
-export const saveTimeline = eventCache.saveTimeline;
-export const saveSyncCursor = eventCache.saveSyncCursor;
 export const clearCache = async (): Promise<void> => {
   memoryBootSnapshot = null;
   await eventCache.clearCache();

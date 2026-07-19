@@ -78,10 +78,6 @@ function ensure(neededIds: string[]): Promise<void> | undefined {
   return undefined;
 }
 
-export function loadUserDirectory(): Promise<void> {
-  return ensure([]) ?? Promise.resolve();
-}
-
 export function useUserDirectory(text = '') {
   const directory = useSyncExternalStore(subscribe, snapshot, snapshot);
   const ids = extractMentionTokens(text).userIds;
