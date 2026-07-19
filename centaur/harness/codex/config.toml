@@ -13,6 +13,7 @@ sandbox_mode = "danger-full-access"
 suppress_unstable_features_warning = true
 
 [features]
+default_mode_request_user_input = true
 goals = true
 fast_mode = true
 memories = true
