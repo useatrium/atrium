@@ -8,7 +8,13 @@ import {
   type NotificationMessagePref,
   type ThemeMode,
 } from '@atrium/surface-client';
-import type { ConnectionStatus, ProviderCredentialStatus } from '../api';
+import {
+  api,
+  type ConnectionStatus,
+  type CredentialStoreItem,
+  type CredentialStoreStatus,
+  type ProviderCredentialStatus,
+} from '../api';
 import { notificationState, toggleNotifications, type NotifyState } from '../notify';
 import { navigate, parseInAppRoute, useLocation } from '../router';
 import { useTheme } from '../theme';
@@ -69,6 +75,7 @@ const SETTINGS_SECTIONS = [
   { slug: 'notifications', label: 'Notifications' },
   { slug: 'connections', label: 'Connections' },
   { slug: 'agents', label: 'Agents' },
+  { slug: 'credential-store', label: 'Credential Store' },
   { slug: 'about', label: 'About' },
 ] as const;
 
@@ -147,6 +154,8 @@ function SettingsControls({
   onConnectCodex?: () => void;
 }) {
   const location = useLocation();
+  const [credentialStore, setCredentialStore] = useState<CredentialStoreStatus | null>(null);
+  const [credentialStoreError, setCredentialStoreError] = useState<string | null>(null);
   const route = parseInAppRoute(location.pathname);
   const { prefs, setPrefs } = useTheme();
   const requestedSection = route?.surface === 'settings' ? route.settingsSection : null;
@@ -187,6 +196,24 @@ function SettingsControls({
     if (!shouldScrollToSection) return;
     sectionRefs.current[activeSection]?.scrollIntoView?.({ block: 'start' });
   }, [activeSection, shouldScrollToSection]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setCredentialStoreError(null);
+    void api
+      .credentialStore()
+      .then(({ credentialStore }) => {
+        if (!cancelled) setCredentialStore(credentialStore);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setCredentialStore(null);
+        setCredentialStoreError(err instanceof Error ? err.message : 'Could not load credential store');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
@@ -437,6 +464,16 @@ function SettingsControls({
 
               <SettingsSectionDivider />
 
+              <section
+                ref={setSectionRef('credential-store')}
+                aria-label="Credential Store"
+                className="scroll-mt-16 space-y-3 md:scroll-mt-4"
+              >
+                <CredentialStorePanel store={credentialStore} error={credentialStoreError} />
+              </section>
+
+              <SettingsSectionDivider />
+
               <section ref={setSectionRef('about')} aria-label="About" className="scroll-mt-16 md:scroll-mt-4">
                 <div className="text-2xs leading-5 text-fg-muted">
                   Atrium is AGPL-3.0-or-later.{' '}
@@ -469,6 +506,118 @@ function SettingsControls({
 
 function SettingsSectionDivider() {
   return <div className="border-t border-edge" />;
+}
+
+function CredentialStorePanel({ store, error }: { store: CredentialStoreStatus | null; error: string | null }) {
+  if (error) {
+    return <div className="rounded-md border border-danger-border/40 px-3 py-2 text-xs text-danger-text">{error}</div>;
+  }
+  if (!store) {
+    return (
+      <div className="rounded-md border border-edge px-3 py-2 text-xs text-fg-muted">Loading credential store...</div>
+    );
+  }
+  return (
+    <div className="space-y-3">
+      <div className="grid gap-2 text-xs text-fg-muted sm:grid-cols-3">
+        <CredentialStoreStat label="iron-control" value={store.configured ? 'Configured' : 'Unavailable'} />
+        <CredentialStoreStat label="Namespace" value={store.namespace ?? 'none'} />
+        <CredentialStoreStat label="Workspace" value={store.workspaceId ?? 'none'} />
+      </div>
+      <div className="space-y-2">
+        {store.items.length === 0 ? (
+          <div className="rounded-md border border-edge px-3 py-2 text-xs text-fg-muted">No credentials found.</div>
+        ) : (
+          store.items.map((item) => <CredentialStoreRow key={item.id} item={item} />)
+        )}
+      </div>
+    </div>
+  );
+}
+
+function CredentialStoreStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0 rounded-md border border-edge bg-surface px-3 py-2">
+      <div className="text-2xs font-semibold uppercase tracking-wider text-fg-muted">{label}</div>
+      <div className="mt-1 truncate font-mono text-xs text-fg-secondary" title={value}>
+        {value}
+      </div>
+    </div>
+  );
+}
+
+function CredentialStoreRow({ item }: { item: CredentialStoreItem }) {
+  const refs = credentialStoreRefs(item);
+  return (
+    <div className="rounded-md border border-edge bg-surface px-3 py-2">
+      <div className="flex min-w-0 flex-wrap items-center gap-2">
+        <span className={`size-2 rounded-full ${item.connected ? 'bg-success' : 'bg-warning'}`} />
+        <span className="min-w-0 flex-1 truncate text-sm font-medium text-fg-secondary" title={item.label}>
+          {item.label}
+        </span>
+        {item.active ? (
+          <span className="rounded bg-surface-overlay px-1.5 py-0.5 text-2xs text-fg-muted">active</span>
+        ) : null}
+        <span className="rounded bg-surface-overlay px-1.5 py-0.5 text-2xs text-fg-muted">
+          {credentialBackingLabel(item.backingStore)}
+        </span>
+      </div>
+      <div className="mt-2 grid gap-1 text-2xs text-fg-muted sm:grid-cols-2">
+        <CredentialStoreMeta label="Status" value={item.status} />
+        <CredentialStoreMeta label="Token" value={item.tokenKind ?? 'none'} />
+        <CredentialStoreMeta label="Account" value={item.accountLabel ?? 'none'} />
+        <CredentialStoreMeta label="Updated" value={formatCredentialTime(item.updatedAt)} />
+      </div>
+      {refs.length > 0 ? (
+        <div className="mt-2 space-y-1 border-t border-edge pt-2">
+          {refs.map(([label, value]) => (
+            <CredentialStoreMeta key={label} label={label} value={value} mono />
+          ))}
+        </div>
+      ) : null}
+      {item.lastError ? <div className="mt-2 text-xs text-danger-text">{item.lastError}</div> : null}
+    </div>
+  );
+}
+
+function CredentialStoreMeta({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
+  return (
+    <div className="grid min-w-0 grid-cols-[5.5rem_minmax(0,1fr)] gap-2">
+      <span className="font-semibold uppercase tracking-wider text-fg-muted">{label}</span>
+      <span className={`min-w-0 truncate text-fg-secondary ${mono ? 'font-mono' : ''}`} title={value}>
+        {value}
+      </span>
+    </div>
+  );
+}
+
+function credentialStoreRefs(item: CredentialStoreItem): Array<[string, string]> {
+  return [
+    ['Principal', item.ironControl.principalForeignId],
+    ['Broker', item.ironControl.brokerCredentialId],
+    ['Secret', item.ironControl.staticSecretId],
+    ['Foreign ID', item.ironControl.staticSecretForeignId],
+  ].filter((entry): entry is [string, string] => Boolean(entry[1]));
+}
+
+function credentialBackingLabel(backingStore: CredentialStoreItem['backingStore']): string {
+  switch (backingStore) {
+    case 'atrium_local':
+      return 'Atrium local';
+    case 'iron_control':
+      return 'iron-control';
+    case 'public_read':
+      return 'Public read';
+    default:
+      return 'Unavailable';
+  }
+}
+
+function formatCredentialTime(value: string | null): string {
+  if (!value) return 'never';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString();
 }
 
 function SettingRow({ label, children }: { label: string; children: ReactNode }) {

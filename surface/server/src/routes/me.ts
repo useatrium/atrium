@@ -24,6 +24,10 @@ import type { WsHub } from '../hub.js';
 import {
   type IronControlAdminClient,
   atriumPrincipalForeignId,
+  claudeStaticSecretForeignId,
+  codexAccountIdSecretForeignId,
+  codexBearerSecretForeignId,
+  codexBrokerCredentialForeignId,
   githubAppUserBrokerCredentialForeignId,
 } from '../iron-control.js';
 import {
@@ -35,7 +39,7 @@ import {
   upsertGitHubInstallationBrokerCredential,
 } from '../github-iron-control.js';
 import { type AgentProfiles, providerFromProfileValue } from '../agent-profiles.js';
-import { CODEX_PROVIDER, type ProviderCredentials } from '../provider-credentials.js';
+import { CODEX_PROVIDER, PROXY_CREDENTIAL_SENTINEL, type ProviderCredentials } from '../provider-credentials.js';
 import { PendingOAuthStore } from '../provider-oauth.js';
 import type { SessionRuns } from '../session-runs.js';
 import { decodeRouteBody, decodeRouteParams, decodeRouteQuery } from '../route-schema.js';
@@ -148,6 +152,132 @@ export function registerMeRoutes(app: FastifyInstance, deps: MeRouteDeps): void 
     const user = requireUser(req, reply);
     if (!user) return;
     return { providers: await providerCredentials.list(user.id) };
+  });
+
+  app.get('/api/me/credential-store', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    const query = decodeRouteQuery(WorkspaceQuerySchema, req.query);
+    const requestedWorkspaceId = typeof query.workspaceId === 'string' ? query.workspaceId : undefined;
+    const workspaceId = await connections.resolveWorkspaceId(user.id, requestedWorkspaceId);
+    if (!workspaceId) {
+      const error = requestedWorkspaceId ? 'workspace_not_found' : 'no_workspace';
+      return reply.code(requestedWorkspaceId ? 404 : 403).send({ error, message: 'workspace not found' });
+    }
+    const [providers, connectionList, backingRows] = await Promise.all([
+      providerCredentials.list(user.id),
+      connections.list(user.id, workspaceId),
+      pool.query<{ provider: string; token_ciphertext: string }>(
+        `SELECT provider, token_ciphertext
+           FROM user_provider_credentials
+          WHERE user_id = $1
+            AND provider = ANY($2::text[])`,
+        [user.id, ['claude-code', 'codex']],
+      ),
+    ]);
+    const backingByProvider = new Map(backingRows.rows.map((row) => [row.provider, row.token_ciphertext]));
+    const principalForeignId = atriumPrincipalForeignId(workspaceId, user.id);
+    const providerItems = providers.map((provider) => {
+      const proxyBacked = backingByProvider.get(provider.provider) === PROXY_CREDENTIAL_SENTINEL;
+      const codex = provider.provider === 'codex';
+      return {
+        id: `agent:${provider.provider}`,
+        kind: 'agent_provider',
+        provider: provider.provider,
+        label: codex ? 'Codex' : 'Claude Code',
+        connected: provider.connected,
+        status: provider.status,
+        workspaceId,
+        accountLabel: null,
+        tokenKind: proxyBacked ? 'oauth_proxy' : provider.connected ? 'local_secret' : null,
+        backingStore: proxyBacked ? 'iron_control' : provider.connected ? 'atrium_local' : 'unavailable',
+        active: provider.connected,
+        ironControl: {
+          namespace: ironControl.namespace,
+          principalForeignId,
+          brokerCredentialId: proxyBacked && codex ? codexBrokerCredentialForeignId(workspaceId, user.id) : null,
+          staticSecretId: null,
+          staticSecretForeignId: proxyBacked
+            ? codex
+              ? [
+                  codexBearerSecretForeignId(workspaceId, user.id),
+                  codexAccountIdSecretForeignId(workspaceId, user.id),
+                ].join(', ')
+              : claudeStaticSecretForeignId(workspaceId, user.id)
+            : null,
+        },
+        lastValidatedAt: provider.lastValidatedAt,
+        lastError: provider.lastError,
+        updatedAt: provider.updatedAt,
+      };
+    });
+    const connectionItems = connectionList.flatMap((connection) => {
+      const base = connection.identities.length > 0 ? connection.identities : [];
+      if (base.length === 0) {
+        return [
+          {
+            id: `connection:${connection.provider}:public-read`,
+            kind: 'connection_identity',
+            provider: connection.provider,
+            label: 'GitHub public read',
+            connected: connection.connected,
+            status: connection.status,
+            workspaceId: connection.workspaceId,
+            accountLabel: connection.accountLabel,
+            tokenKind: connection.tokenKind,
+            backingStore: connection.status === 'public_read' ? 'public_read' : 'unavailable',
+            active: true,
+            ironControl: {
+              namespace: ironControl.namespace,
+              principalForeignId,
+              brokerCredentialId: null,
+              staticSecretId: null,
+              staticSecretForeignId: null,
+            },
+            lastValidatedAt: connection.lastValidatedAt,
+            lastError: connection.lastError,
+            updatedAt: connection.updatedAt,
+          },
+        ];
+      }
+      return base.map((identity) => {
+        const metadata = identity.metadata ?? {};
+        const brokerCredentialId = metadataString(metadata, 'brokerCredentialId');
+        const staticSecretId = metadataString(metadata, 'staticSecretId');
+        const staticSecretForeignId = metadataString(metadata, 'staticSecretForeignId');
+        return {
+          id: `connection:${connection.provider}:${identity.id}`,
+          kind: 'connection_identity',
+          provider: connection.provider,
+          label: githubCredentialStoreLabel(identity.tokenKind, identity.accountLabel),
+          connected: identity.connected,
+          status: identity.status,
+          workspaceId: identity.workspaceId,
+          accountLabel: identity.accountLabel,
+          tokenKind: identity.tokenKind,
+          backingStore: brokerCredentialId || staticSecretId || staticSecretForeignId ? 'iron_control' : 'unavailable',
+          active: identity.active,
+          ironControl: {
+            namespace: ironControl.namespace,
+            principalForeignId,
+            brokerCredentialId,
+            staticSecretId,
+            staticSecretForeignId,
+          },
+          lastValidatedAt: identity.lastValidatedAt,
+          lastError: identity.lastError,
+          updatedAt: identity.updatedAt,
+        };
+      });
+    });
+    return {
+      credentialStore: {
+        configured: ironControl.configured,
+        namespace: ironControl.configured ? ironControl.namespace : null,
+        workspaceId,
+        items: [...providerItems, ...connectionItems],
+      },
+    };
   });
 
   app.get('/api/me/connections', async (req, reply) => {
@@ -946,6 +1076,20 @@ function plainObject(value: unknown): Record<string, unknown> {
 function metadataString(metadata: Record<string, unknown>, key: string): string | null {
   const value = metadata[key];
   return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function githubCredentialStoreLabel(tokenKind: string, accountLabel: string | null): string {
+  const account = accountLabel ? ` ${accountLabel}` : '';
+  switch (tokenKind) {
+    case 'app_installation':
+      return `GitHub app installation${account}`;
+    case 'app_user':
+      return `GitHub user${account}`;
+    case 'pat':
+      return `GitHub PAT${account}`;
+    default:
+      return `GitHub${account}`;
+  }
 }
 
 class RouteResponse extends Error {
