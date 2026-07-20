@@ -5890,6 +5890,43 @@ fn first_token_latency(
     (output_event.created_at - started_at).try_into().ok()
 }
 
+/// How many retired turn/item ids to remember. Late frames from a finished
+/// execution arrive within seconds, so a small recent window is enough; the cap
+/// keeps a long-lived sandbox's pump state bounded.
+const RETIRED_ID_CAPACITY: usize = 1024;
+
+/// Turn and item ids belonging to executions that already reached a terminal
+/// state.
+///
+/// The codex app-server can emit a turn's `turn/completed` seconds after the
+/// `error` frame that already ended that turn — long enough for a retry to have
+/// become the active execution. Without a tombstone the late frame is
+/// unattributable, falls through to the active execution, and kills a turn that
+/// never ran.
+#[derive(Default)]
+struct RetiredIds {
+    ids: HashSet<String>,
+    order: VecDeque<String>,
+}
+
+impl RetiredIds {
+    fn insert(&mut self, id: String) {
+        if !self.ids.insert(id.clone()) {
+            return;
+        }
+        self.order.push_back(id);
+        while self.order.len() > RETIRED_ID_CAPACITY {
+            if let Some(evicted) = self.order.pop_front() {
+                self.ids.remove(&evicted);
+            }
+        }
+    }
+
+    fn contains(&self, id: &str) -> bool {
+        self.ids.contains(id)
+    }
+}
+
 #[derive(Default)]
 struct StdoutPumpState {
     final_answer_text_by_execution: HashMap<String, String>,
@@ -5899,6 +5936,7 @@ struct StdoutPumpState {
     item_execution_by_id: HashMap<String, String>,
     tool_call_by_id: HashMap<String, ToolCallLabels>,
     stdout_span_by_execution: HashMap<String, Span>,
+    retired_ids: RetiredIds,
 }
 
 impl StdoutPumpState {
@@ -5927,6 +5965,14 @@ impl StdoutPumpState {
             {
                 self.forget(&known_execution_id);
             }
+            return None;
+        }
+
+        // The line carries no *live* turn/item mapping. If any of its ids were
+        // retired with a finished execution, it is a late frame from that
+        // execution, not new output from the active one — drop it rather than
+        // misattributing (and possibly terminating) the current turn.
+        if self.value_is_retired(&value) {
             return None;
         }
 
@@ -6007,10 +6053,23 @@ impl StdoutPumpState {
             .filter(|&(_item_id, mapped_execution_id)| mapped_execution_id == execution_id)
             .map(|(item_id, _mapped_execution_id)| item_id.clone())
             .collect::<Vec<_>>();
+        // Retire rather than simply drop: a frame arriving after this point that
+        // still carries one of these ids belongs to the execution we are
+        // forgetting, and must not be charged to whatever runs next.
+        let ids_to_retire = self
+            .turn_execution_by_id
+            .iter()
+            .chain(self.item_execution_by_id.iter())
+            .filter(|&(_id, mapped_execution_id)| mapped_execution_id == execution_id)
+            .map(|(id, _mapped_execution_id)| id.clone())
+            .collect::<Vec<_>>();
         self.turn_execution_by_id
             .retain(|_, mapped_execution_id| mapped_execution_id != execution_id);
         self.item_execution_by_id
             .retain(|_, mapped_execution_id| mapped_execution_id != execution_id);
+        for id in ids_to_retire {
+            self.retired_ids.insert(id);
+        }
         self.stdout_span_by_execution.remove(execution_id);
         for item_id in tool_ids_to_forget {
             self.tool_call_by_id.remove(&item_id);
@@ -6059,6 +6118,15 @@ impl StdoutPumpState {
             }
         }
         None
+    }
+
+    fn value_is_retired(&self, value: &Value) -> bool {
+        let turn_ids = turn_ids(value);
+        let item_ids = item_ids(value);
+        turn_ids
+            .iter()
+            .chain(item_ids.iter())
+            .any(|id| self.retired_ids.contains(id))
     }
 
     fn remember_value_execution(&mut self, value: &Value, execution_id: &str) {
@@ -9607,6 +9675,36 @@ mod tests {
         );
         assert_eq!(state.execution_for_line(None, delta), None);
         assert_eq!(state.execution_for_line(Some("exe-new"), delta), None);
+    }
+
+    #[test]
+    fn stdout_state_drops_late_terminal_frame_from_a_retired_turn() {
+        // Regression: codex emitted `turn/completed` for an already-errored turn
+        // ~7s after the `error` frame that ended it — by which time a retry was
+        // the active execution. The late frame was charged to the retry and
+        // failed it 40ms after birth, before its prompt ever reached the model.
+        let mut state = StdoutPumpState::default();
+        let started = r#"{"method":"turn/started","params":{"turn":{"id":"turn-old"}}}"#;
+        let errored = r#"{"method":"error","params":{"turnId":"turn-old","error":{"message":"You've hit your usage limit."}}}"#;
+        let late_completed =
+            r#"{"method":"turn/completed","params":{"turn":{"id":"turn-old","status":"failed"}}}"#;
+
+        assert_eq!(
+            state.execution_for_line(Some("exe-old"), started),
+            Some("exe-old".to_owned())
+        );
+        assert!(matches!(
+            state.observe("exe-old", errored),
+            Some(TerminalOutput::Failed { .. })
+        ));
+        // The pump forgets an execution once it records a terminal outcome.
+        state.forget("exe-old");
+
+        // The retry is now active. The late frame must not be attributed to it.
+        assert_eq!(
+            state.execution_for_line(Some("exe-retry"), late_completed),
+            None
+        );
     }
 
     #[test]
