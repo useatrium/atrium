@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import {
   ACCENTS,
   FONT_SCALES,
@@ -74,6 +74,8 @@ const SETTINGS_SECTIONS = [
 
 type SettingsSectionSlug = (typeof SETTINGS_SECTIONS)[number]['slug'];
 
+const SECTION_HEADING_ID = 'settings-section-heading';
+
 const DEFAULT_SETTINGS_SECTION: SettingsSectionSlug = SETTINGS_SECTIONS[0].slug;
 
 function isSettingsSectionSlug(value: string | null | undefined): value is SettingsSectionSlug {
@@ -108,19 +110,17 @@ export function SettingsSurface({
       <div className="border-b border-edge px-4 py-3">
         <h2 className="text-sm font-bold text-fg">Settings</h2>
       </div>
-      <div className="min-h-0 flex-1">
-        <SettingsControls
-          notify={notify}
-          setNotify={setNotify}
-          githubConnection={githubConnection}
-          connectionsAvailable={connectionsAvailable}
-          claudeStatus={claudeStatus}
-          codexStatus={codexStatus}
-          onConnectGitHub={onConnectGitHub}
-          onConnectClaude={onConnectClaude}
-          onConnectCodex={onConnectCodex}
-        />
-      </div>
+      <SettingsControls
+        notify={notify}
+        setNotify={setNotify}
+        githubConnection={githubConnection}
+        connectionsAvailable={connectionsAvailable}
+        claudeStatus={claudeStatus}
+        codexStatus={codexStatus}
+        onConnectGitHub={onConnectGitHub}
+        onConnectClaude={onConnectClaude}
+        onConnectCodex={onConnectCodex}
+      />
     </div>
   );
 }
@@ -151,8 +151,7 @@ function SettingsControls({
   const { prefs, setPrefs } = useTheme();
   const requestedSection = route?.surface === 'settings' ? route.settingsSection : null;
   const activeSection = resolveSettingsSection(requestedSection);
-  const shouldScrollToSection = route?.surface === 'settings';
-  const sectionRefs = useRef<Partial<Record<SettingsSectionSlug, HTMLElement>>>({});
+  const activeLabel = SETTINGS_SECTIONS.find((section) => section.slug === activeSection)!.label;
   const segmentButton = (active: boolean) =>
     `h-8 flex-1 rounded px-2 text-xs font-medium max-md:h-11 max-md:px-3 max-md:text-sm ${
       active ? 'bg-accent text-on-accent' : 'text-fg-tertiary hover:bg-surface-overlay hover:text-fg-body'
@@ -175,56 +174,46 @@ function SettingsControls({
     setPrefs({ notifications: { ...prefs.notifications, sessions } });
   const setNotificationCalls = (calls: boolean) => setPrefs({ notifications: { ...prefs.notifications, calls } });
   const notificationsDisabled = notify === 'denied' || notify === 'unsupported';
-  const setSectionRef = (section: SettingsSectionSlug) => (element: HTMLElement | null) => {
-    if (element) sectionRefs.current[section] = element;
-    else delete sectionRefs.current[section];
-  };
   const openSection = (section: SettingsSectionSlug) => {
     navigate(`/settings/${section}`);
   };
 
-  useEffect(() => {
-    if (!shouldScrollToSection) return;
-    sectionRefs.current[activeSection]?.scrollIntoView?.({ block: 'start' });
-  }, [activeSection, shouldScrollToSection]);
-
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto">
-      <div className="flex min-h-full flex-col md:flex-row">
-        <nav
-          aria-label="Settings sections"
-          className="sticky top-0 z-sticky shrink-0 border-b border-edge bg-surface px-3 py-2 md:w-44 md:self-start md:border-b-0 md:border-r md:px-2 md:py-4"
-        >
-          <div className="flex gap-1 overflow-x-auto [scrollbar-width:none] md:flex-col md:overflow-visible [&::-webkit-scrollbar]:hidden">
-            {SETTINGS_SECTIONS.map((section) => {
-              const active = activeSection === section.slug;
-              return (
-                <button
-                  key={section.slug}
-                  type="button"
-                  aria-current={active ? 'page' : undefined}
-                  onClick={() => openSection(section.slug)}
-                  className={`shrink-0 rounded px-2.5 py-1.5 text-sm font-medium transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-edge-focus md:w-full md:text-left ${
-                    active
-                      ? 'bg-surface-raised text-fg shadow-sm'
-                      : 'text-fg-muted hover:bg-surface-overlay hover:text-fg-secondary'
-                  }`}
-                >
-                  {section.label}
-                </button>
-              );
-            })}
-          </div>
-        </nav>
-
-        <div className="min-w-0 flex-1">
-          <div className="max-w-2xl px-4 py-4">
-            <div className="space-y-4">
-              <section
-                ref={setSectionRef('appearance')}
-                aria-label="Appearance"
-                className="scroll-mt-16 space-y-3 md:scroll-mt-4"
+    <div className="flex min-h-0 flex-1 flex-col md:flex-row">
+      <nav
+        aria-label="Settings sections"
+        className="shrink-0 border-b border-edge bg-surface px-3 py-2 md:w-44 md:border-b-0 md:border-r md:px-2 md:py-4"
+      >
+        <div className="flex gap-1 overflow-x-auto [scrollbar-width:none] md:flex-col md:overflow-visible [&::-webkit-scrollbar]:hidden">
+          {SETTINGS_SECTIONS.map((section) => {
+            const active = activeSection === section.slug;
+            return (
+              <button
+                key={section.slug}
+                type="button"
+                aria-current={active ? 'page' : undefined}
+                onClick={() => openSection(section.slug)}
+                className={`shrink-0 rounded px-2.5 py-1.5 text-sm font-medium transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-edge-focus md:w-full md:text-left ${
+                  active
+                    ? 'bg-surface-raised text-fg shadow-sm'
+                    : 'text-fg-muted hover:bg-surface-overlay hover:text-fg-secondary'
+                }`}
               >
+                {section.label}
+              </button>
+            );
+          })}
+        </div>
+      </nav>
+
+      <div className="min-h-0 min-w-0 flex-1 overflow-y-auto">
+        <div className="max-w-2xl px-4 py-4">
+          <h3 id={SECTION_HEADING_ID} className="mb-3 text-sm font-semibold text-fg">
+            {activeLabel}
+          </h3>
+          <section aria-labelledby={SECTION_HEADING_ID} className="space-y-3">
+            {activeSection === 'appearance' ? (
+              <>
                 <SettingRow label="Theme">
                   <div className="flex rounded-md border border-edge bg-surface p-0.5">
                     {THEME_OPTIONS.map((option) => (
@@ -307,15 +296,11 @@ function SettingsControls({
                     ))}
                   </div>
                 </SettingRow>
-              </section>
+              </>
+            ) : null}
 
-              <SettingsSectionDivider />
-
-              <section
-                ref={setSectionRef('notifications')}
-                aria-label="Notifications"
-                className="scroll-mt-16 space-y-3 md:scroll-mt-4"
-              >
+            {activeSection === 'notifications' ? (
+              <>
                 <SettingRow label="Device">
                   <Tooltip content={BELL_TITLES[notify]}>
                     <button
@@ -376,15 +361,11 @@ function SettingsControls({
                     <span className="size-5 rounded-full bg-current" />
                   </button>
                 </SettingRow>
-              </section>
+              </>
+            ) : null}
 
-              <SettingsSectionDivider />
-
-              <section
-                ref={setSectionRef('connections')}
-                aria-label="Connections"
-                className="scroll-mt-16 space-y-3 md:scroll-mt-4"
-              >
+            {activeSection === 'connections' ? (
+              <>
                 <SettingRow label="GitHub">
                   <Tooltip
                     content={connectionsAvailable ? 'Manage GitHub connection' : 'GitHub connections unavailable'}
@@ -411,15 +392,11 @@ function SettingsControls({
                     </button>
                   </Tooltip>
                 </SettingRow>
-              </section>
+              </>
+            ) : null}
 
-              <SettingsSectionDivider />
-
-              <section
-                ref={setSectionRef('agents')}
-                aria-label="Agents"
-                className="scroll-mt-16 space-y-3 md:scroll-mt-4"
-              >
+            {activeSection === 'agents' ? (
+              <>
                 <SettingRow label="Claude Code">
                   <button type="button" onClick={onConnectClaude} className={connectionButtonClass}>
                     <span className={`size-2 rounded-full ${claudeStatus?.connected ? 'bg-success' : 'bg-warning'}`} />
@@ -433,42 +410,36 @@ function SettingsControls({
                     <span>{codexStatus?.connected ? 'Connected' : 'Connect'}</span>
                   </button>
                 </SettingRow>
-              </section>
+              </>
+            ) : null}
 
-              <SettingsSectionDivider />
-
-              <section ref={setSectionRef('about')} aria-label="About" className="scroll-mt-16 md:scroll-mt-4">
-                <div className="text-2xs leading-5 text-fg-muted">
-                  Atrium is AGPL-3.0-or-later.{' '}
-                  <a
-                    href={SOURCE_URL}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="font-medium text-accent-text hover:underline"
-                  >
-                    Source
-                  </a>
-                  {' · '}
-                  <a
-                    href={LICENSE_URL}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="font-medium text-accent-text hover:underline"
-                  >
-                    License
-                  </a>
-                </div>
-              </section>
-            </div>
-          </div>
+            {activeSection === 'about' ? (
+              <div className="text-2xs leading-5 text-fg-muted">
+                Atrium is AGPL-3.0-or-later.{' '}
+                <a
+                  href={SOURCE_URL}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="font-medium text-accent-text hover:underline"
+                >
+                  Source
+                </a>
+                {' · '}
+                <a
+                  href={LICENSE_URL}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="font-medium text-accent-text hover:underline"
+                >
+                  License
+                </a>
+              </div>
+            ) : null}
+          </section>
         </div>
       </div>
     </div>
   );
-}
-
-function SettingsSectionDivider() {
-  return <div className="border-t border-edge" />;
 }
 
 function SettingRow({ label, children }: { label: string; children: ReactNode }) {

@@ -65,6 +65,21 @@ describe('SettingsSurface sections', () => {
     expect(activeSectionLabel()).toBe('Connections');
   });
 
+  it('renders only the active section', async () => {
+    renderSettings();
+
+    // Appearance is the default section; its controls are present and the other
+    // sections' controls are not rendered at all.
+    expect(screen.getByRole('heading', { name: 'Appearance' })).toBeTruthy();
+    expect(screen.queryByRole('combobox', { name: 'Message notifications' })).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Notifications' }));
+
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Notifications' })).toBeTruthy());
+    expect(screen.queryByRole('button', { name: 'High contrast' })).toBeNull();
+    expect(screen.getByRole('combobox', { name: 'Message notifications' })).toBeTruthy();
+  });
+
   it('updates the active section on back navigation', async () => {
     renderSettings();
 
