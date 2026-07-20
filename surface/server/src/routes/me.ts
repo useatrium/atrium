@@ -55,6 +55,30 @@ export interface MeRouteDeps extends AppMutationContext {
   sessionRuns: Pick<SessionRuns, 'clearClaudeAuthRequired' | 'clearProviderAuthRequired'>;
 }
 
+type CredentialStoreItemJson = {
+  id: string;
+  kind: 'agent_provider' | 'connection_identity';
+  provider: string;
+  label: string;
+  connected: boolean;
+  status: 'connected' | 'needs_auth' | 'public_read' | 'unavailable';
+  workspaceId: string | null;
+  accountLabel: string | null;
+  tokenKind: string | null;
+  backingStore: 'atrium_local' | 'iron_control' | 'public_read' | 'unavailable';
+  active: boolean;
+  ironControl: {
+    namespace: string | null;
+    principalForeignId: string | null;
+    brokerCredentialId: string | null;
+    staticSecretId: string | null;
+    staticSecretForeignId: string | null;
+  };
+  lastValidatedAt: string | null;
+  lastError: string | null;
+  updatedAt: string | null;
+};
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value));
 }
@@ -177,7 +201,7 @@ export function registerMeRoutes(app: FastifyInstance, deps: MeRouteDeps): void 
     ]);
     const backingByProvider = new Map(backingRows.rows.map((row) => [row.provider, row.token_ciphertext]));
     const principalForeignId = atriumPrincipalForeignId(workspaceId, user.id);
-    const providerItems = providers.map((provider) => {
+    const providerItems: CredentialStoreItemJson[] = providers.map((provider) => {
       const proxyBacked = backingByProvider.get(provider.provider) === PROXY_CREDENTIAL_SENTINEL;
       const codex = provider.provider === 'codex';
       return {
@@ -211,41 +235,41 @@ export function registerMeRoutes(app: FastifyInstance, deps: MeRouteDeps): void 
         updatedAt: provider.updatedAt,
       };
     });
-    const connectionItems = connectionList.flatMap((connection) => {
+    const connectionItems: CredentialStoreItemJson[] = [];
+    for (const connection of connectionList) {
       const base = connection.identities.length > 0 ? connection.identities : [];
       if (base.length === 0) {
-        return [
-          {
-            id: `connection:${connection.provider}:public-read`,
-            kind: 'connection_identity',
-            provider: connection.provider,
-            label: 'GitHub public read',
-            connected: connection.connected,
-            status: connection.status,
-            workspaceId: connection.workspaceId,
-            accountLabel: connection.accountLabel,
-            tokenKind: connection.tokenKind,
-            backingStore: connection.status === 'public_read' ? 'public_read' : 'unavailable',
-            active: true,
-            ironControl: {
-              namespace: ironControl.namespace,
-              principalForeignId,
-              brokerCredentialId: null,
-              staticSecretId: null,
-              staticSecretForeignId: null,
-            },
-            lastValidatedAt: connection.lastValidatedAt,
-            lastError: connection.lastError,
-            updatedAt: connection.updatedAt,
+        connectionItems.push({
+          id: `connection:${connection.provider}:public-read`,
+          kind: 'connection_identity',
+          provider: connection.provider,
+          label: 'GitHub public read',
+          connected: connection.connected,
+          status: connection.status,
+          workspaceId: connection.workspaceId,
+          accountLabel: connection.accountLabel,
+          tokenKind: connection.tokenKind,
+          backingStore: connection.status === 'public_read' ? 'public_read' : 'unavailable',
+          active: true,
+          ironControl: {
+            namespace: ironControl.namespace,
+            principalForeignId,
+            brokerCredentialId: null,
+            staticSecretId: null,
+            staticSecretForeignId: null,
           },
-        ];
+          lastValidatedAt: connection.lastValidatedAt,
+          lastError: connection.lastError,
+          updatedAt: connection.updatedAt,
+        });
+        continue;
       }
-      return base.map((identity) => {
+      for (const identity of base) {
         const metadata = identity.metadata ?? {};
         const brokerCredentialId = metadataString(metadata, 'brokerCredentialId');
         const staticSecretId = metadataString(metadata, 'staticSecretId');
         const staticSecretForeignId = metadataString(metadata, 'staticSecretForeignId');
-        return {
+        connectionItems.push({
           id: `connection:${connection.provider}:${identity.id}`,
           kind: 'connection_identity',
           provider: connection.provider,
@@ -267,9 +291,9 @@ export function registerMeRoutes(app: FastifyInstance, deps: MeRouteDeps): void 
           lastValidatedAt: identity.lastValidatedAt,
           lastError: identity.lastError,
           updatedAt: identity.updatedAt,
-        };
-      });
-    });
+        });
+      }
+    }
     return {
       credentialStore: {
         configured: ironControl.configured,
