@@ -216,6 +216,10 @@ function mergeSessionEntity(existing: Session | undefined, incoming: Session): S
     // The durable answered trace: a fetch that predates the answer must not
     // erase what WS already folded.
     answeredQuestion: incoming.answeredQuestion ?? existing?.answeredQuestion ?? null,
+    // A snapshot fetched from an older server, or one taken before the terminal
+    // frame landed, must not erase a failure the event fold already explained.
+    failureClass: incoming.failureClass ?? existing?.failureClass ?? null,
+    failureReason: incoming.failureReason ?? existing?.failureReason ?? null,
     providerAuthRequired: incoming.providerAuthRequired ?? existing?.providerAuthRequired ?? null,
     pendingSeatRequests,
     ...(existing?.latestActivity ? { latestActivity: existing.latestActivity } : {}),
@@ -273,6 +277,8 @@ function sessionFromListSnapshot(state: AppState, item: SessionSnapshotItem): Se
     pendingSeatRequests: item.pendingSeatRequests,
     costUsd: item.costUsd,
     resultText: item.resultText ?? existing?.resultText ?? null,
+    failureClass: item.failureClass ?? existing?.failureClass ?? null,
+    failureReason: item.failureReason ?? existing?.failureReason ?? null,
     createdAt: item.createdAt,
     completedAt: item.completedAt ?? existing?.completedAt ?? null,
     archivedAt: item.archivedAt,

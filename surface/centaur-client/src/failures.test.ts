@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { classifyFailure } from './failures.js';
+import { classifyFailure, failureLine } from './failures.js';
 import { initialSessionState, reduceSession, type SessionState } from './reducer.js';
 import type { CentaurEventFrame } from './types.js';
 
@@ -92,6 +92,34 @@ describe('classifyFailure — legacy fallback (class-less historical frames)', (
     const info = classifyFailure({ status: 'failed', failureReason: 'some novel error' });
     expect(info?.class).toBe('unknown');
     expect(info?.detail).toBe('some novel error');
+  });
+});
+
+describe('failureLine', () => {
+  it('prefers the engine reason over the class summary', () => {
+    // The real prod case: "The agent hit an error and stopped" is useless next
+    // to the reason, which names the cause and when it clears.
+    const line = failureLine({
+      status: 'failed',
+      failureClass: 'harness',
+      failureReason: "You've hit your usage limit. Try again at Jul 25th, 2026 3:25 AM.",
+    });
+    expect(line).toBe("You've hit your usage limit. Try again at Jul 25th, 2026 3:25 AM.");
+  });
+
+  it('falls back to the class summary when no reason was reported', () => {
+    expect(failureLine({ status: 'failed', failureClass: 'timeout' })).toBe('The run timed out before it finished.');
+  });
+
+  it('truncates to the caller budget', () => {
+    const line = failureLine({ status: 'failed', failureReason: 'x'.repeat(300) }, 20);
+    expect(line).toHaveLength(20);
+    expect(line?.endsWith('…')).toBe(true);
+  });
+
+  it('is null when there is nothing to say, so callers keep their bare "Failed"', () => {
+    expect(failureLine({ status: 'failed' })).toBeNull();
+    expect(failureLine({ status: 'completed', failureReason: 'stale' })).toBeNull();
   });
 });
 

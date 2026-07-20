@@ -242,6 +242,43 @@ describe('applySessionEvent archive fold', () => {
   });
 });
 
+describe('applySessionEvent failure fold', () => {
+  function event(type: string, payload: Record<string, unknown>): WireEvent {
+    return { ...spawned({}), id: 2, type, payload: { sessionId: 'sess-1', ...payload } };
+  }
+
+  it('folds the failure cause off session.completed', () => {
+    const s = applySessionEvent(
+      optimistic({ status: 'running' }),
+      event('session.completed', {
+        status: 'failed',
+        failureClass: 'harness',
+        failureReason: "You've hit your usage limit.",
+      }),
+    );
+    expect(s['sess-1']!.failureClass).toBe('harness');
+    expect(s['sess-1']!.failureReason).toBe("You've hit your usage limit.");
+  });
+
+  it('leaves the cause null when the server sent none (old payload)', () => {
+    const s = applySessionEvent(optimistic({ status: 'running' }), event('session.completed', { status: 'failed' }));
+    expect(s['sess-1']!.failureReason).toBeNull();
+  });
+
+  it('clears a stale cause when a steer starts a new turn', () => {
+    // Otherwise a revived session keeps explaining itself with the previous
+    // turn's failure while it is running again.
+    const failed = applySessionEvent(
+      optimistic({ status: 'running' }),
+      event('session.completed', { status: 'failed', failureClass: 'harness', failureReason: 'out of credits' }),
+    );
+    const revived = applySessionEvent(failed, event('session.status_changed', { status: 'running' }));
+    expect(revived['sess-1']!.status).toBe('running');
+    expect(revived['sess-1']!.failureClass).toBeNull();
+    expect(revived['sess-1']!.failureReason).toBeNull();
+  });
+});
+
 describe('applySessionActivity', () => {
   it('stores the latest ephemeral activity without creating an unknown session', () => {
     const active = applySessionActivity(optimistic({}), 'sess-1', {

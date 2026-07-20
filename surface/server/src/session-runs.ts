@@ -95,6 +95,10 @@ export interface SessionJson {
   viewerCount: number;
   costUsd: number;
   resultText: string | null;
+  /** Why a terminal failure happened — api-rs's stable `failure_class` bucket and
+   * the human `terminal_reason`. Both null unless the session failed. */
+  failureClass: string | null;
+  failureReason: string | null;
   createdAt: string;
   completedAt: string | null;
   archivedAt: string | null;
@@ -260,6 +264,8 @@ export interface SessionSnapshotItem extends SessionListItem {
   providerAuthRequired: ProviderAuthRequiredJson | null;
   pendingSeatRequests: SessionUserJson[];
   threadRootEventId: number | null;
+  failureClass: string | null;
+  failureReason: string | null;
 }
 
 /** The S3 surface the artifact serve path needs. Injectable in tests
@@ -328,10 +334,19 @@ interface SessionRow {
   model_effort: string | null;
   last_event_id: number;
   result_text: string | null;
+  failure_class: string | null;
+  failure_reason: string | null;
   cost_usd: string | number;
   created_at: Date;
   completed_at: Date | null;
   archived_at: Date | null;
+}
+
+/** Why a terminal session failed, as reported by the terminal `execution_state`
+ * frame. Both null for a non-failed completion. */
+interface SessionFailure {
+  failureClass: string | null;
+  failureReason: string | null;
 }
 
 interface SessionRepoSpec {
@@ -409,6 +424,8 @@ interface SessionListRow {
   provider_auth_required: unknown | null;
   seat_requests: unknown | null;
   result_text: string | null;
+  failure_class: string | null;
+  failure_reason: string | null;
 }
 
 interface SteerContextRow {
@@ -927,6 +944,8 @@ export class SessionRuns {
               s.pending_question,
               s.provider_auth_required,
               s.result_text,
+              s.failure_class,
+              s.failure_reason,
               seats.seat_requests,
               (sp.user_id IS NOT NULL) AS pinned
        FROM sessions s
@@ -1376,6 +1395,10 @@ export class SessionRuns {
            -- turn — failed and cancelled included, not just completed.
            status = CASE WHEN status IN ('completed', 'failed', 'cancelled') THEN 'queued' ELSE status END,
            completed_at = CASE WHEN status IN ('completed', 'failed', 'cancelled') THEN NULL ELSE completed_at END,
+           -- The new turn owns the outcome; the previous turn's failure must not
+           -- keep explaining a session that is running again.
+           failure_class = CASE WHEN status IN ('completed', 'failed', 'cancelled') THEN NULL ELSE failure_class END,
+           failure_reason = CASE WHEN status IN ('completed', 'failed', 'cancelled') THEN NULL ELSE failure_reason END,
            provider_auth_required = NULL,
            centaur_execute_id = NULL,
            centaur_message_id = NULL
@@ -2290,7 +2313,17 @@ export class SessionRuns {
       if (status === 'completed' && terminalAuthFailureEventId == null) {
         await this.markProviderConnectedIfProxy(id);
       }
-      await this.completeSession(id, status, resultText, frame.event_id, frame.data.execution_id);
+      // A failure's cause only ever reached the session pane (via
+      // session_records). Carry it onto the session row + completion event too,
+      // so the card in the channel can say why instead of a bare "✕ Failed".
+      const failure =
+        status === 'failed'
+          ? {
+              failureClass: typeof frame.data.failure_class === 'string' ? frame.data.failure_class : null,
+              failureReason: typeof frame.data.terminal_reason === 'string' ? frame.data.terminal_reason : null,
+            }
+          : { failureClass: null, failureReason: null };
+      await this.completeSession(id, status, resultText, frame.event_id, frame.data.execution_id, failure);
     } else {
       await this.updateStatus(id, status);
     }
@@ -2670,6 +2703,7 @@ export class SessionRuns {
     resultText: string | null,
     lastEventId: number,
     executionId?: string,
+    failure: SessionFailure = { failureClass: null, failureReason: null },
   ): Promise<void> {
     const events = await withTx(this.pool, async (client) => {
       const before = await client.query<SessionRow>('SELECT * FROM sessions WHERE id = $1 FOR UPDATE', [id]);
@@ -2682,10 +2716,12 @@ export class SessionRuns {
              last_event_id = GREATEST(last_event_id, $3),
              current_execution_id = NULL,
              centaur_execute_id = NULL,
-             centaur_message_id = NULL
+             centaur_message_id = NULL,
+             failure_class = $5,
+             failure_reason = $6
          WHERE id = $4
          RETURNING *`,
-        [status, resultText, lastEventId, id],
+        [status, resultText, lastEventId, id, failure.failureClass, failure.failureReason],
       );
       const next = completed.rows[0]!;
       const replyText = boundedSessionReplyText(resultText);
@@ -2721,6 +2757,8 @@ export class SessionRuns {
           status,
           resultExcerpt: (resultText ?? '').slice(0, 200),
           permalink: `/s/${id}`,
+          ...(failure.failureClass ? { failureClass: failure.failureClass } : {}),
+          ...(failure.failureReason ? { failureReason: failure.failureReason.slice(0, 400) } : {}),
         },
       });
       if (!pending) return replyEvent ? [replyEvent, completedEvent] : [completedEvent];
@@ -3642,6 +3680,8 @@ function toJson(
     viewerCount: seatInfo.viewerCount ?? 0,
     costUsd: Number(row.cost_usd),
     resultText: row.result_text,
+    failureClass: row.failure_class,
+    failureReason: row.failure_reason,
     createdAt: new Date(row.created_at).toISOString(),
     completedAt: row.completed_at ? new Date(row.completed_at).toISOString() : null,
     archivedAt: row.archived_at ? new Date(row.archived_at).toISOString() : null,
@@ -3707,6 +3747,10 @@ function toSnapshotItem(row: SessionListRow): SessionSnapshotItem {
     providerAuthRequired: terminal ? null : parseProviderAuthRequired(row.provider_auth_required),
     pendingSeatRequests: terminal ? [] : parseSeatRequests(row.seat_requests),
     threadRootEventId: row.thread_root_event_id,
+    // Snapshot-only: /sync seeds the session entities a channel's cards render
+    // from. GET /api/sessions deliberately stays lean.
+    failureClass: row.failure_class,
+    failureReason: row.failure_reason,
   };
 }
 

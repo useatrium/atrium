@@ -38,6 +38,7 @@ import {
   type UserRef,
 } from '@atrium/surface-client';
 import { encodeEventHandle } from '@atrium/surface-client/handle';
+import { failureLine } from '@atrium/centaur-client';
 import { font, radius, space, useTheme } from '../lib/theme';
 import { useAccessibilityAnnouncement } from '../lib/accessibility';
 import { lightImpactHaptic, selectionHaptic } from '../lib/haptics';
@@ -582,6 +583,15 @@ function AnnotationSlot({
   const failed = session.status === 'failed';
   const terminal = session.status === 'completed' || session.status === 'cancelled' || failed;
   const canRecover = failed && sessionDriverId(session) === meId;
+  // Why it failed, not just that it did. Falls back to resultText for failures
+  // logged before the reason was carried on the session row.
+  const failureClause = failed
+    ? (failureLine(
+        { status: session.status, failureClass: session.failureClass, failureReason: session.failureReason },
+        90,
+      ) ??
+      (session.resultText?.trim() || null))
+    : null;
   const questionMessage: ChatMessage | null = session.pendingQuestion
     ? {
         ...message,
@@ -613,6 +623,9 @@ function AnnotationSlot({
         style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: space.xs }}
       >
         <Text style={{ color: colors.danger, fontSize: font.xs, fontWeight: '800' }}>✕ Failed after {duration}</Text>
+        {failureClause ? (
+          <Text style={{ color: colors.danger, fontSize: font.xs, flexShrink: 1 }}>— {failureClause}</Text>
+        ) : null}
         {canRecover ? (
           <>
             <SessionSteerAction
