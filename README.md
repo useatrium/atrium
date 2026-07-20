@@ -65,8 +65,8 @@ Four things the product is built around:
 
 | | |
 |---|---|
-| ![An agent thread spine: the ask, a folded first turn, its answer, a teammate's suggestion, the driver's steer, and the second turn working live](docs/images/thread-turns.png) | ![The Attention inbox: an agent waiting on a human decision, a failed run, mentions, DMs, and a missed call in one feed](docs/images/attention-inbox.png) |
-| **Sessions are conversations.** Each turn's result lands as a reply in the card's thread. A teammate suggests a follow-up, the driver steers, and the agent reopens for another turn — live in the channel. | **One inbox for people *and* agents.** Mentions and DMs sit alongside an agent that needs a decision and a run that failed — everything that needs you, in one place. |
+| ![An agent thread spine: the ask, a folded first turn, its answer, a teammate's suggestion, the driver's steer, and the second turn working live](docs/images/thread-turns.png) | ![The agent triage view: an agent blocked on a scheduling decision with Run now and Tonight buttons, and a failed migration offering a retry](docs/images/agent-triage.png) |
+| **Sessions are conversations.** Each turn's result lands as a reply in the card's thread. A teammate suggests a follow-up, the driver steers, and the agent reopens for another turn — live in the channel. | **Agents that need you, in one queue.** The dock triages every agent blocked on a decision or stopped by a failure, and you answer or retry without leaving the channel. (People pings — mentions, DMs, calls — stay in their own Inbox.) |
 
 ## Who it's for
 
