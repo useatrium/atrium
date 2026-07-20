@@ -17,6 +17,7 @@ export type {
   ConnectionIdentity,
   ConnectionProvider,
   ConnectionStatus,
+  CreateStaticHeaderCredentialBody,
   CredentialStoreItem,
   CredentialStoreStatus,
   NormalizedEntry,

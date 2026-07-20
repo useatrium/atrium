@@ -17,6 +17,17 @@ export interface IronControlSecret {
   id: string;
   namespace: string;
   foreign_id: string;
+  name?: string;
+  labels?: Record<string, unknown>;
+  inject_config?: { header?: string; formatter?: string; query_param?: string };
+  replace_config?: Record<string, unknown>;
+  rules?: Array<{
+    host?: string;
+    cidr?: string;
+    http_methods?: string[];
+    paths?: string[];
+  }>;
+  updated_at?: string;
 }
 
 export interface IronControlBrokerCredential {
@@ -210,6 +221,16 @@ export class IronControlAdminClient {
       source,
       rules: [{ host: args.host }],
     });
+  }
+
+  async listStaticSecrets(
+    args: { labels?: Record<string, string | boolean | number> } = {},
+  ): Promise<IronControlSecret[]> {
+    const params = new URLSearchParams({ namespace: this.namespace });
+    for (const [key, value] of Object.entries(args.labels ?? {})) {
+      params.set(`labels[${key}]`, String(value));
+    }
+    return this.getList<IronControlSecret>(`/api/v1/static_secrets?${params.toString()}`);
   }
 
   /**

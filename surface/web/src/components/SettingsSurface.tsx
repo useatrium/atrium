@@ -11,6 +11,7 @@ import {
 import {
   api,
   type ConnectionStatus,
+  type CreateStaticHeaderCredentialBody,
   type CredentialStoreItem,
   type CredentialStoreStatus,
   type ProviderCredentialStatus,
@@ -509,29 +510,151 @@ function SettingsSectionDivider() {
 }
 
 function CredentialStorePanel({ store, error }: { store: CredentialStoreStatus | null; error: string | null }) {
+  const [draft, setDraft] = useState<CreateStaticHeaderCredentialBody>({
+    name: '',
+    host: '',
+    header: 'Authorization',
+    secret: '',
+    formatter: 'bearer',
+  });
+  const [saving, setSaving] = useState(false);
+  const [panelStore, setPanelStore] = useState(store);
+  const [formError, setFormError] = useState<string | null>(null);
+  useEffect(() => setPanelStore(store), [store]);
+  const visibleStore = panelStore ?? store;
+  const canSave = Boolean(draft.name.trim() && draft.host.trim() && draft.header.trim() && draft.secret.trim());
+  const updateDraft = <K extends keyof CreateStaticHeaderCredentialBody>(
+    key: K,
+    value: CreateStaticHeaderCredentialBody[K],
+  ) => setDraft((prev) => ({ ...prev, [key]: value }));
+  const createCredential = async () => {
+    if (!canSave || saving) return;
+    setSaving(true);
+    setFormError(null);
+    try {
+      const { credentialStore } = await api.createStaticHeaderCredential(draft);
+      setPanelStore(credentialStore);
+      setDraft({ name: '', host: '', header: 'Authorization', secret: '', formatter: 'bearer' });
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : 'Could not create credential');
+    } finally {
+      setSaving(false);
+    }
+  };
   if (error) {
     return <div className="rounded-md border border-danger-border/40 px-3 py-2 text-xs text-danger-text">{error}</div>;
   }
-  if (!store) {
+  if (!visibleStore) {
     return (
       <div className="rounded-md border border-edge px-3 py-2 text-xs text-fg-muted">Loading credential store...</div>
     );
   }
   return (
     <div className="space-y-3">
+      <div className="rounded-md border border-edge bg-surface px-3 py-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-semibold text-fg-secondary">Add static header credential</div>
+            <div className="mt-0.5 text-xs text-fg-muted">
+              Store a secret in iron-control, inject it into one HTTP header, and grant it to you.
+            </div>
+          </div>
+          <span className="rounded bg-surface-overlay px-1.5 py-0.5 text-2xs text-fg-muted">Advanced</span>
+        </div>
+        <div className="mt-3 grid gap-2 sm:grid-cols-2">
+          <CredentialInput
+            label="Name"
+            value={draft.name}
+            placeholder="Linear API token"
+            onChange={(value) => updateDraft('name', value)}
+          />
+          <CredentialInput
+            label="Host"
+            value={draft.host}
+            placeholder="api.linear.app"
+            onChange={(value) => updateDraft('host', value)}
+          />
+          <CredentialInput
+            label="Header"
+            value={draft.header}
+            placeholder="Authorization"
+            onChange={(value) => updateDraft('header', value)}
+          />
+          <label className="min-w-0 text-2xs font-semibold uppercase tracking-wider text-fg-muted">
+            Format
+            <select
+              value={draft.formatter ?? ''}
+              onChange={(event) => updateDraft('formatter', event.target.value === 'bearer' ? 'bearer' : undefined)}
+              className="mt-1 h-9 w-full rounded-md border border-edge bg-surface px-2 text-xs font-normal normal-case tracking-normal text-fg-secondary"
+            >
+              <option value="bearer">Bearer token</option>
+              <option value="">Raw value</option>
+            </select>
+          </label>
+          <label className="min-w-0 text-2xs font-semibold uppercase tracking-wider text-fg-muted sm:col-span-2">
+            Secret value
+            <input
+              type="password"
+              value={draft.secret}
+              placeholder="Stored in iron-control; never displayed again"
+              onChange={(event) => updateDraft('secret', event.target.value)}
+              className="mt-1 h-9 w-full rounded-md border border-edge bg-surface px-2 text-xs font-normal normal-case tracking-normal text-fg-secondary"
+            />
+          </label>
+        </div>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            disabled={!canSave || saving || !visibleStore.configured}
+            onClick={createCredential}
+            className="rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-on-accent disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {saving ? 'Adding...' : 'Add credential'}
+          </button>
+          {!visibleStore.configured ? (
+            <span className="text-xs text-fg-muted">iron-control is unavailable</span>
+          ) : null}
+          {formError ? <span className="text-xs text-danger-text">{formError}</span> : null}
+        </div>
+      </div>
       <div className="grid gap-2 text-xs text-fg-muted sm:grid-cols-3">
-        <CredentialStoreStat label="iron-control" value={store.configured ? 'Configured' : 'Unavailable'} />
-        <CredentialStoreStat label="Namespace" value={store.namespace ?? 'none'} />
-        <CredentialStoreStat label="Workspace" value={store.workspaceId ?? 'none'} />
+        <CredentialStoreStat label="iron-control" value={visibleStore.configured ? 'Configured' : 'Unavailable'} />
+        <CredentialStoreStat label="Namespace" value={visibleStore.namespace ?? 'none'} />
+        <CredentialStoreStat label="Workspace" value={visibleStore.workspaceId ?? 'none'} />
       </div>
       <div className="space-y-2">
-        {store.items.length === 0 ? (
+        {visibleStore.items.length === 0 ? (
           <div className="rounded-md border border-edge px-3 py-2 text-xs text-fg-muted">No credentials found.</div>
         ) : (
-          store.items.map((item) => <CredentialStoreRow key={item.id} item={item} />)
+          visibleStore.items.map((item) => <CredentialStoreRow key={item.id} item={item} />)
         )}
       </div>
     </div>
+  );
+}
+
+function CredentialInput({
+  label,
+  value,
+  placeholder,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  placeholder: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label className="min-w-0 text-2xs font-semibold uppercase tracking-wider text-fg-muted">
+      {label}
+      <input
+        type="text"
+        value={value}
+        placeholder={placeholder}
+        onChange={(event) => onChange(event.target.value)}
+        className="mt-1 h-9 w-full rounded-md border border-edge bg-surface px-2 text-xs font-normal normal-case tracking-normal text-fg-secondary"
+      />
+    </label>
   );
 }
 
@@ -564,16 +687,21 @@ function CredentialStoreRow({ item }: { item: CredentialStoreItem }) {
       </div>
       <div className="mt-2 grid gap-1 text-2xs text-fg-muted sm:grid-cols-2">
         <CredentialStoreMeta label="Status" value={item.status} />
-        <CredentialStoreMeta label="Token" value={item.tokenKind ?? 'none'} />
-        <CredentialStoreMeta label="Account" value={item.accountLabel ?? 'none'} />
+        <CredentialStoreMeta label="Kind" value={credentialKindLabel(item)} />
+        <CredentialStoreMeta label="Scope" value={item.scope ?? 'none'} />
         <CredentialStoreMeta label="Updated" value={formatCredentialTime(item.updatedAt)} />
       </div>
       {refs.length > 0 ? (
-        <div className="mt-2 space-y-1 border-t border-edge pt-2">
-          {refs.map(([label, value]) => (
-            <CredentialStoreMeta key={label} label={label} value={value} mono />
-          ))}
-        </div>
+        <details className="mt-2 border-t border-edge pt-2">
+          <summary className="cursor-pointer text-2xs font-semibold uppercase tracking-wider text-fg-muted">
+            Technical details
+          </summary>
+          <div className="mt-2 space-y-1">
+            {refs.map(([label, value]) => (
+              <CredentialStoreMeta key={label} label={label} value={value} mono />
+            ))}
+          </div>
+        </details>
       ) : null}
       {item.lastError ? <div className="mt-2 text-xs text-danger-text">{item.lastError}</div> : null}
     </div>
@@ -591,11 +719,20 @@ function CredentialStoreMeta({ label, value, mono = false }: { label: string; va
   );
 }
 
+function credentialKindLabel(item: CredentialStoreItem): string {
+  if (item.kind === 'static_header') return item.tokenKind ?? 'Static header';
+  if (item.kind === 'agent_provider') return item.backingStore === 'iron_control' ? 'Agent OAuth proxy' : 'Agent token';
+  if (item.tokenKind === 'app_installation') return 'GitHub App installation';
+  if (item.tokenKind === 'app_user') return 'GitHub user OAuth';
+  if (item.tokenKind === 'pat') return 'GitHub PAT';
+  return item.tokenKind ?? 'Connection';
+}
+
 function credentialStoreRefs(item: CredentialStoreItem): Array<[string, string]> {
   return [
-    ['Principal', item.ironControl.principalForeignId],
-    ['Broker', item.ironControl.brokerCredentialId],
-    ['Secret', item.ironControl.staticSecretId],
+    ['Actor ID', item.ironControl.principalForeignId],
+    ['Rotating credential ID', item.ironControl.brokerCredentialId],
+    ['Injected secret ID', item.ironControl.staticSecretId],
     ['Foreign ID', item.ironControl.staticSecretForeignId],
   ].filter((entry): entry is [string, string] => Boolean(entry[1]));
 }

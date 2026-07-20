@@ -215,7 +215,7 @@ export interface ConnectionIdentity {
   updatedAt: string | null;
 }
 
-export type CredentialStoreItemKind = 'agent_provider' | 'connection_identity';
+export type CredentialStoreItemKind = 'agent_provider' | 'connection_identity' | 'static_header';
 
 export interface CredentialStoreItem {
   id: string;
@@ -227,6 +227,7 @@ export interface CredentialStoreItem {
   workspaceId: string | null;
   accountLabel: string | null;
   tokenKind: string | null;
+  scope: string | null;
   backingStore: 'atrium_local' | 'iron_control' | 'public_read' | 'unavailable';
   active: boolean;
   ironControl: {
@@ -239,6 +240,14 @@ export interface CredentialStoreItem {
   lastValidatedAt: string | null;
   lastError: string | null;
   updatedAt: string | null;
+}
+
+export interface CreateStaticHeaderCredentialBody {
+  name: string;
+  host: string;
+  header: string;
+  secret: string;
+  formatter?: 'bearer' | undefined;
 }
 
 export interface CredentialStoreStatus {
@@ -494,6 +503,11 @@ export function createApi(opts: ApiOptions = {}) {
       const query = workspaceId ? `?workspaceId=${encodeURIComponent(workspaceId)}` : '';
       return req<{ credentialStore: CredentialStoreStatus }>(`/api/me/credential-store${query}`);
     },
+    createStaticHeaderCredential: (body: CreateStaticHeaderCredentialBody & { workspaceId?: string }) =>
+      req<{ credentialStore: CredentialStoreStatus }>('/api/me/credential-store/static-header', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
     connections: () => req<{ connections: ConnectionStatus[] }>('/api/me/connections'),
     connectConnection: (provider: ConnectionProvider, body: Record<string, unknown> = {}) =>
       req<{ connection: ConnectionStatus; authorizeUrl?: string }>(

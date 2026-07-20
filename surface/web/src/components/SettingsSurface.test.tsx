@@ -25,6 +25,14 @@ vi.mock('../notify', () => ({
 
 vi.mock('../api', () => ({
   api: {
+    createStaticHeaderCredential: vi.fn(async () => ({
+      credentialStore: {
+        configured: false,
+        namespace: null,
+        workspaceId: null,
+        items: [],
+      },
+    })),
     credentialStore: vi.fn(async () => ({
       credentialStore: {
         configured: false,

@@ -4,7 +4,7 @@ import {
   ImportLocalAgentProfileBodySchema,
 } from '@atrium/surface-client/agentProfiles';
 import { normalizePrefs, normalizePrefsPatch } from '@atrium/surface-client/prefs';
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { Schema } from 'effect';
 import { githubConnectionAuditMetadata } from '../connection-audit.js';
@@ -57,7 +57,7 @@ export interface MeRouteDeps extends AppMutationContext {
 
 type CredentialStoreItemJson = {
   id: string;
-  kind: 'agent_provider' | 'connection_identity';
+  kind: 'agent_provider' | 'connection_identity' | 'static_header';
   provider: string;
   label: string;
   connected: boolean;
@@ -65,6 +65,7 @@ type CredentialStoreItemJson = {
   workspaceId: string | null;
   accountLabel: string | null;
   tokenKind: string | null;
+  scope: string | null;
   backingStore: 'atrium_local' | 'iron_control' | 'public_read' | 'unavailable';
   active: boolean;
   ironControl: {
@@ -139,6 +140,15 @@ const CodexAuthJsonBodySchema = Schema.Struct({
   authJson: Schema.optional(Schema.Unknown),
 });
 
+const StaticHeaderCredentialBodySchema = Schema.Struct({
+  workspaceId: Schema.optional(Schema.Unknown),
+  name: Schema.optional(Schema.Unknown),
+  host: Schema.optional(Schema.Unknown),
+  header: Schema.optional(Schema.Unknown),
+  secret: Schema.optional(Schema.Unknown),
+  formatter: Schema.optional(Schema.Unknown),
+});
+
 const AgentProfileParamsSchema = Schema.Struct({
   id: Schema.String,
 });
@@ -178,29 +188,34 @@ export function registerMeRoutes(app: FastifyInstance, deps: MeRouteDeps): void 
     return { providers: await providerCredentials.list(user.id) };
   });
 
-  app.get('/api/me/credential-store', async (req, reply) => {
-    const user = requireUser(req, reply);
-    if (!user) return;
-    const query = decodeRouteQuery(WorkspaceQuerySchema, req.query);
-    const requestedWorkspaceId = typeof query.workspaceId === 'string' ? query.workspaceId : undefined;
-    const workspaceId = await connections.resolveWorkspaceId(user.id, requestedWorkspaceId);
+  const resolveCredentialStoreWorkspace = async (
+    userId: string,
+    requestedWorkspaceId: string | undefined,
+    reply: FastifyReply,
+  ): Promise<string | null> => {
+    const workspaceId = await connections.resolveWorkspaceId(userId, requestedWorkspaceId);
     if (!workspaceId) {
       const error = requestedWorkspaceId ? 'workspace_not_found' : 'no_workspace';
-      return reply.code(requestedWorkspaceId ? 404 : 403).send({ error, message: 'workspace not found' });
+      reply.code(requestedWorkspaceId ? 404 : 403).send({ error, message: 'workspace not found' });
+      return null;
     }
+    return workspaceId;
+  };
+
+  const loadCredentialStore = async (userId: string, workspaceId: string) => {
     const [providers, connectionList, backingRows] = await Promise.all([
-      providerCredentials.list(user.id),
-      connections.list(user.id, workspaceId),
+      providerCredentials.list(userId),
+      connections.list(userId, workspaceId),
       pool.query<{ provider: string; token_ciphertext: string }>(
         `SELECT provider, token_ciphertext
            FROM user_provider_credentials
           WHERE user_id = $1
             AND provider = ANY($2::text[])`,
-        [user.id, ['claude-code', 'codex']],
+        [userId, ['claude-code', 'codex']],
       ),
     ]);
     const backingByProvider = new Map(backingRows.rows.map((row) => [row.provider, row.token_ciphertext]));
-    const principalForeignId = atriumPrincipalForeignId(workspaceId, user.id);
+    const principalForeignId = atriumPrincipalForeignId(workspaceId, userId);
     const providerItems: CredentialStoreItemJson[] = providers.map((provider) => {
       const proxyBacked = backingByProvider.get(provider.provider) === PROXY_CREDENTIAL_SENTINEL;
       const codex = provider.provider === 'codex';
@@ -214,20 +229,21 @@ export function registerMeRoutes(app: FastifyInstance, deps: MeRouteDeps): void 
         workspaceId,
         accountLabel: null,
         tokenKind: proxyBacked ? 'oauth_proxy' : provider.connected ? 'local_secret' : null,
+        scope: provider.provider === 'codex' ? 'chatgpt.com' : 'api.anthropic.com',
         backingStore: proxyBacked ? 'iron_control' : provider.connected ? 'atrium_local' : 'unavailable',
         active: provider.connected,
         ironControl: {
           namespace: ironControl.namespace,
           principalForeignId,
-          brokerCredentialId: proxyBacked && codex ? codexBrokerCredentialForeignId(workspaceId, user.id) : null,
+          brokerCredentialId: proxyBacked && codex ? codexBrokerCredentialForeignId(workspaceId, userId) : null,
           staticSecretId: null,
           staticSecretForeignId: proxyBacked
             ? codex
               ? [
-                  codexBearerSecretForeignId(workspaceId, user.id),
-                  codexAccountIdSecretForeignId(workspaceId, user.id),
+                  codexBearerSecretForeignId(workspaceId, userId),
+                  codexAccountIdSecretForeignId(workspaceId, userId),
                 ].join(', ')
-              : claudeStaticSecretForeignId(workspaceId, user.id)
+              : claudeStaticSecretForeignId(workspaceId, userId)
             : null,
         },
         lastValidatedAt: provider.lastValidatedAt,
@@ -249,6 +265,7 @@ export function registerMeRoutes(app: FastifyInstance, deps: MeRouteDeps): void 
           workspaceId: connection.workspaceId,
           accountLabel: connection.accountLabel,
           tokenKind: connection.tokenKind,
+          scope: 'github.com',
           backingStore: connection.status === 'public_read' ? 'public_read' : 'unavailable',
           active: true,
           ironControl: {
@@ -279,6 +296,7 @@ export function registerMeRoutes(app: FastifyInstance, deps: MeRouteDeps): void 
           workspaceId: identity.workspaceId,
           accountLabel: identity.accountLabel,
           tokenKind: identity.tokenKind,
+          scope: 'github.com',
           backingStore: brokerCredentialId || staticSecretId || staticSecretForeignId ? 'iron_control' : 'unavailable',
           active: identity.active,
           ironControl: {
@@ -294,14 +312,110 @@ export function registerMeRoutes(app: FastifyInstance, deps: MeRouteDeps): void 
         });
       }
     }
+    const customItems: CredentialStoreItemJson[] = ironControl.configured
+      ? (
+          await ironControl.listStaticSecrets({
+            labels: {
+              source: 'atrium',
+              kind: 'custom-header',
+              atrium_workspace_id: workspaceId,
+              atrium_user_id: userId,
+            },
+          })
+        ).map((secret): CredentialStoreItemJson => {
+          const host = secret.rules?.find((rule) => rule.host)?.host ?? null;
+          const header = secret.inject_config?.header ?? 'header';
+          return {
+            id: `custom:${secret.id}`,
+            kind: 'static_header',
+            provider: 'custom',
+            label: secret.name ?? secret.foreign_id,
+            connected: true,
+            status: 'connected',
+            workspaceId,
+            accountLabel: null,
+            tokenKind: `static ${header}`,
+            scope: host,
+            backingStore: 'iron_control',
+            active: true,
+            ironControl: {
+              namespace: secret.namespace,
+              principalForeignId,
+              brokerCredentialId: null,
+              staticSecretId: secret.id,
+              staticSecretForeignId: secret.foreign_id,
+            },
+            lastValidatedAt: null,
+            lastError: null,
+            updatedAt: secret.updated_at ?? null,
+          };
+        })
+      : [];
     return {
       credentialStore: {
         configured: ironControl.configured,
         namespace: ironControl.configured ? ironControl.namespace : null,
         workspaceId,
-        items: [...providerItems, ...connectionItems],
+        items: [...providerItems, ...connectionItems, ...customItems],
       },
     };
+  };
+
+  app.get('/api/me/credential-store', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    const query = decodeRouteQuery(WorkspaceQuerySchema, req.query);
+    const requestedWorkspaceId = typeof query.workspaceId === 'string' ? query.workspaceId : undefined;
+    const workspaceId = await resolveCredentialStoreWorkspace(user.id, requestedWorkspaceId, reply);
+    if (!workspaceId) return;
+    return loadCredentialStore(user.id, workspaceId);
+  });
+
+  app.post('/api/me/credential-store/static-header', async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    if (!ironControl.configured) {
+      return reply.code(503).send({ error: 'iron_control_unconfigured', message: 'iron-control is not configured' });
+    }
+    const body = decodeRouteBody(StaticHeaderCredentialBodySchema, req.body);
+    const requestedWorkspaceId = typeof body.workspaceId === 'string' ? body.workspaceId : undefined;
+    const workspaceId = await resolveCredentialStoreWorkspace(user.id, requestedWorkspaceId, reply);
+    if (!workspaceId) return;
+    const name = stringOrNull(body.name);
+    const host = normalizeCredentialHost(body.host);
+    const header = normalizeCredentialHeader(body.header);
+    const secret = typeof body.secret === 'string' ? body.secret.trim() : '';
+    const formatter = body.formatter === 'bearer' ? 'Bearer {{.Value}}' : undefined;
+    if (!name) return reply.code(400).send({ error: 'bad_request', message: 'Name is required' });
+    if (!host) return reply.code(400).send({ error: 'bad_request', message: 'Host must be a bare hostname' });
+    if (!header) return reply.code(400).send({ error: 'bad_request', message: 'Header name is invalid' });
+    if (!secret) return reply.code(400).send({ error: 'bad_request', message: 'Secret value is required' });
+
+    const principalForeignId = atriumPrincipalForeignId(workspaceId, user.id);
+    const principal = await ironControl.upsertPrincipal({
+      foreignId: principalForeignId,
+      name: `Atrium Workspace ${workspaceId} User ${user.id}`,
+      labels: { source: 'atrium', atrium_workspace_id: workspaceId, atrium_user_id: user.id },
+    });
+    const staticSecret = await ironControl.upsertInjectSecret({
+      foreignId: `custom-header-${workspaceId}-${user.id}-${randomUUID()}`,
+      name,
+      header,
+      ...(formatter ? { formatter } : {}),
+      host,
+      source: { kind: 'control_plane', secret },
+      labels: {
+        source: 'atrium',
+        kind: 'custom-header',
+        provider: 'custom',
+        atrium_workspace_id: workspaceId,
+        atrium_user_id: user.id,
+        host,
+        header,
+      },
+    });
+    await ironControl.createPrincipalStaticGrant(principal.id, staticSecret.id);
+    return reply.code(201).send(await loadCredentialStore(user.id, workspaceId));
   });
 
   app.get('/api/me/connections', async (req, reply) => {
@@ -1100,6 +1214,22 @@ function plainObject(value: unknown): Record<string, unknown> {
 function metadataString(metadata: Record<string, unknown>, key: string): string | null {
   const value = metadata[key];
   return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function normalizeCredentialHost(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const host = value.trim().toLowerCase();
+  if (!host || host.includes('/') || host.includes(':') || host.includes('@')) return null;
+  if (!/^[a-z0-9.-]+$/.test(host)) return null;
+  if (!host.includes('.') || host.startsWith('.') || host.endsWith('.') || host.includes('..')) return null;
+  return host;
+}
+
+function normalizeCredentialHeader(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const header = value.trim();
+  if (!/^[A-Za-z0-9!#$%&'*+.^_`|~-]+$/.test(header)) return null;
+  return header;
 }
 
 function githubCredentialStoreLabel(tokenKind: string, accountLabel: string | null): string {
