@@ -409,6 +409,9 @@ export interface SessionWire {
   viewerCount?: number;
   costUsd: number | string | null;
   resultText: string | null;
+  /** Terminal-failure cause (absent on older payloads). */
+  failureClass?: string | null;
+  failureReason?: string | null;
   createdAt: string;
   completedAt: string | null;
   archivedAt: string | null;
@@ -443,6 +446,10 @@ export interface SessionSnapshotItem extends SessionListItem {
   providerAuthRequired: SessionProviderAuthRequired | null;
   pendingSeatRequests: SessionSeatUser[];
   threadRootEventId: number | null;
+  /** Terminal-failure cause — what the channel's session card renders instead of
+   * a bare "Failed" (absent on older payloads). */
+  failureClass?: string | null;
+  failureReason?: string | null;
 }
 
 /** Client-side session entity (wire shape + display-only extras). */
@@ -488,6 +495,11 @@ export interface Session {
   seatEvents: SeatAuditEntry[];
   costUsd: number;
   resultText: string | null;
+  /** Why a terminal failure happened, from the terminal `execution_state` frame:
+   * api-rs's stable `failure_class` bucket and the human `terminal_reason`. Feed
+   * them to `classifyFailure` rather than reading them raw. */
+  failureClass?: string | null;
+  failureReason?: string | null;
   /** Latest ephemeral tool/activity ticker received over the workspace socket. */
   latestActivity?: SessionActivity;
   createdAt: string;
@@ -849,6 +861,9 @@ export const SessionWireSchema = Schema.mutable(
     viewerCount: Schema.optionalWith(Schema.Number, { exact: true }),
     costUsd: Schema.Union(Schema.Number, Schema.String, Schema.Null),
     resultText: NullableStringSchema,
+    // Decode-with-default: an old server (deploy skew) omits these entirely.
+    failureClass: Schema.optionalWith(NullableStringSchema, { default: () => null }),
+    failureReason: Schema.optionalWith(NullableStringSchema, { default: () => null }),
     createdAt: Schema.String,
     completedAt: NullableStringSchema,
     // Decode-with-default so an old server (deploy skew) can't fail the decode.
@@ -899,6 +914,8 @@ export const SessionSnapshotItemSchema = Schema.mutable(
       default: () => [],
     }),
     threadRootEventId: Schema.optionalWith(NullableNumberSchema, { default: () => null }),
+    failureClass: Schema.optionalWith(NullableStringSchema, { default: () => null }),
+    failureReason: Schema.optionalWith(NullableStringSchema, { default: () => null }),
   }),
 );
 
@@ -1159,6 +1176,8 @@ export function sessionFromWire(w: SessionWire): Session {
     seatEvents: [],
     costUsd: Number(w.costUsd ?? 0) || 0,
     resultText: w.resultText ?? null,
+    failureClass: w.failureClass ?? null,
+    failureReason: w.failureReason ?? null,
     createdAt: w.createdAt,
     completedAt: w.completedAt ?? null,
     archivedAt: w.archivedAt ?? null,
@@ -1322,7 +1341,7 @@ export function applySessionEvent(sessions: Record<string, Session>, ev: Session
       [sessionId]: {
         ...prev,
         status: nextStatus,
-        ...(newTurn ? { completedAt: null, pendingQuestion: null } : {}),
+        ...(newTurn ? { completedAt: null, pendingQuestion: null, failureClass: null, failureReason: null } : {}),
       },
     };
   }
@@ -1332,12 +1351,16 @@ export function applySessionEvent(sessions: Record<string, Session>, ev: Session
     const nextStatus = maxSessionStatus(prev.status, status);
     const excerpt = typeof p.resultExcerpt === 'string' && p.resultExcerpt ? p.resultExcerpt : null;
     const permalink = typeof p.permalink === 'string' && p.permalink ? p.permalink : prev.permalink;
+    const failureClass = typeof p.failureClass === 'string' && p.failureClass ? p.failureClass : null;
+    const failureReason = typeof p.failureReason === 'string' && p.failureReason ? p.failureReason : null;
     return {
       ...sessions,
       [sessionId]: {
         ...prev,
         status: nextStatus,
         resultText: excerpt ?? prev.resultText,
+        failureClass: failureClass ?? prev.failureClass ?? null,
+        failureReason: failureReason ?? prev.failureReason ?? null,
         permalink,
         completedAt: prev.completedAt ?? ev.createdAt,
         pendingQuestion: null,

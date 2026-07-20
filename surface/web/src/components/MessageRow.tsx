@@ -31,6 +31,7 @@ import {
   sessionGlanceClockLabel,
 } from '@atrium/surface-client';
 import { encodeEventHandle } from '@atrium/surface-client/handle';
+import { failureLine } from '@atrium/centaur-client';
 import { useIsHoverNone } from '../lib/useIsHoverNone';
 import { AskWhyAction, RetryTurnAction, sessionElapsedMs, useNow } from '../sessions/SessionCard';
 import { QuestionCard } from '../sessions/SessionBanners';
@@ -1305,13 +1306,22 @@ function AgentSessionSlot({
   }
 
   if (session.status === 'failed') {
+    // Why it failed, not just that it did. Falls back to resultText for
+    // failures logged before the reason was carried on the session row.
+    const failureClause =
+      failureLine({
+        status: session.status,
+        failureClass: session.failureClass,
+        failureReason: session.failureReason,
+      }) ??
+      (session.resultText?.trim() || null);
     return (
       <div data-testid="session-slot-failed" className="flex min-w-0 items-start gap-2 text-xs text-danger-text">
         <AgentMark size={20} tone="danger" />
         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-0.5">
           <span className="min-w-0 flex-[1_1_16rem] break-words">
             ✕ {formatOutcome(session.status, Math.max(0, sessionElapsedMs(session, now)))}
-            {session.resultText?.trim() ? ` — ${session.resultText.trim()}` : ''}
+            {failureClause ? ` — ${failureClause}` : ''}
           </span>
           <span className="flex flex-wrap items-center gap-x-2 gap-y-0">
             {isDriver && (

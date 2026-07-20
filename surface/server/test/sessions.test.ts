@@ -2457,6 +2457,54 @@ describe('Phase 2 sessions', () => {
     await app.close();
   });
 
+  it('carries a failure cause onto the session row and the completion event', async () => {
+    // Regression: a codex usage-limit failure showed as a bare "✕ Failed" in the
+    // channel. The reason reached the session pane (session_records) but the
+    // completion event carried only an empty resultExcerpt, and the session row
+    // carried nothing at all — so a cold load had nothing to render.
+    const reason = "You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more.";
+    fake.setFrames([
+      {
+        event: 'execution_state',
+        event_id: 12,
+        data: {
+          type: 'execution.state',
+          status: 'failed',
+          thread_key: 'thread',
+          execution_id: 'exe_fake',
+          failure_class: 'harness',
+          terminal_reason: reason,
+        },
+      },
+    ]);
+    const id = await insertSessionRow({ title: 'usage limit', status: 'running' });
+    const app = await buildApp({
+      pool,
+      sessionRuns: { baseUrl: fake.url, apiKey: 'test', autoResume: true },
+    });
+    await app.ready();
+
+    await waitFor(async () => {
+      const session = await pool.query('SELECT status, failure_class, failure_reason FROM sessions WHERE id = $1', [
+        id,
+      ]);
+      expect(session.rows[0]).toMatchObject({
+        status: 'failed',
+        failure_class: 'harness',
+        failure_reason: reason,
+      });
+
+      const completed = await pool.query('SELECT payload FROM events WHERE type = $1', ['session.completed']);
+      expect(completed.rows[0].payload).toMatchObject({
+        sessionId: id,
+        status: 'failed',
+        failureClass: 'harness',
+        failureReason: reason,
+      });
+    });
+    await app.close();
+  });
+
   it('mirrors streamed frames verbatim, including ignored and duplicate frames', async () => {
     const frames = [
       {

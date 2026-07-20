@@ -111,6 +111,23 @@ function legacyVerdict(reason: string): Verdict | null {
 }
 
 /**
+ * One line explaining a failure, for a space-constrained surface (the session
+ * card in a channel timeline) that has room for a clause, not a card.
+ *
+ * Prefers the engine's own words over our class summary: "You've hit your usage
+ * limit…" tells a driver what to do next, "The agent hit an error and stopped"
+ * does not. Falls back to the summary when nothing raw was reported, and to
+ * `null` when there is nothing to say at all — callers keep their bare "Failed".
+ * The full text always remains in the session pane's FailureNotice.
+ */
+export function failureLine(input: FailureInput, maxLength = 160): string | null {
+  const info = classifyFailure(input);
+  if (!info) return null;
+  const text = info.detail ?? info.summary;
+  return text.length > maxLength ? `${text.slice(0, maxLength - 1).trimEnd()}…` : text;
+}
+
+/**
  * Classify a terminal failure. Returns `null` for any non-failed status (idle,
  * running, completed, cancelled — cancellation/stop is handled via
  * `SessionState.stoppedByUser`) AND for a failure that carried nothing to surface

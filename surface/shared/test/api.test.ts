@@ -29,6 +29,8 @@ function sessionWire(overrides: Partial<SessionWire> = {}): SessionWire {
     driverId: 'u-1',
     costUsd: 0,
     resultText: null,
+    failureClass: null,
+    failureReason: null,
     createdAt: '2026-07-04T12:00:00.000Z',
     completedAt: null,
     archivedAt: null,
