@@ -20,7 +20,7 @@ import { fileURLToPath } from 'node:url';
 const here = dirname(fileURLToPath(import.meta.url));
 const WEB = process.env.ATRIUM_WEB ?? 'http://localhost:5273';
 const OUT = argValue('--out') ?? join(here, 'demo-shots');
-const ONLY = (argValue('--only') ?? 'hero,thread,gallery,app,attention').split(',');
+const ONLY = (argValue('--only') ?? 'hero,thread,gallery,app,attention,triage').split(',');
 const VIEWPORT = { width: 1800, height: 1000 };
 
 function argValue(flag) {
@@ -77,6 +77,10 @@ async function settle(page, ms = 1200) {
 
 async function shoot(page, name) {
   const path = join(OUT, `${name}.png`);
+  // Park the cursor on dead sidebar space: a pointer left over a message row
+  // paints its hover toolbar (Reply / …) into the shot.
+  await page.mouse.move(8, VIEWPORT.height - 220);
+  await page.waitForTimeout(150);
   await page.screenshot({ path });
   console.log(`shot: ${path}`);
 }
@@ -154,7 +158,10 @@ if (hero) {
   );
 
   if (ONLY.includes('hero')) {
-    await maya.goto(`${WEB}/c/${hero.channelId}/s/${hero.sessionId}`);
+    // `?agent=` is the split grammar: the agent pane opens BESIDE the channel.
+    // (`/c/:id/s/:id` is the focus route — it swaps MAIN and unmounts the
+    // channel timeline, so the trigger message's live slot would be gone.)
+    await maya.goto(`${WEB}/c/${hero.channelId}?agent=${hero.sessionId}`);
     await settle(maya);
 
     // The intro (thinking → greps → edits → pytest) finishes ~25s in; the final
@@ -294,20 +301,36 @@ if (ONLY.includes('app')) {
 }
 
 // ---------------------------------------------------------------------------
-// 4. ATTENTION — the unified inbox
+// 4. ATTENTION — what used to be ONE feed is now two surfaces. The Inbox is
+//    people-only (mentions, DMs, reactions, replies, calls); agents that need a
+//    decision or a recovery step live in the dock's Triage view.
 // ---------------------------------------------------------------------------
 if (ONLY.includes('attention')) {
   await maya.goto(`${WEB}/activity`);
   await settle(maya, 1800);
   await maya
-    .getByRole('heading', { name: 'Attention', exact: true })
+    .getByRole('heading', { name: 'Inbox', exact: true })
     .first()
     .waitFor({ state: 'visible', timeout: 15_000 });
-  await maya.getByRole('heading', { name: /Needs attention/ }).waitFor({ state: 'visible', timeout: 15_000 });
-  await maya.getByTestId('question-pointer').waitFor({ state: 'visible', timeout: 15_000 });
-  await maya.getByText('Migrate thumbnails to atlas-derivatives failed', { exact: true }).waitFor({ state: 'visible' });
   await maya.getByText('Jonas Weber called you', { exact: true }).waitFor({ state: 'visible' });
   await shoot(maya, 'attention-inbox');
+}
+
+// ---------------------------------------------------------------------------
+// 4b. TRIAGE — the agent half: open the dock, then its "Triage N →" view.
+// ---------------------------------------------------------------------------
+if (ONLY.includes('triage')) {
+  await maya.goto(`${WEB}/c/${chan.engPlatform ?? chan['eng-platform']}`);
+  await settle(maya, 1500);
+  const openDock = maya.getByRole('button', { name: /^Open agent dock/ });
+  if (await openDock.isVisible().catch(() => false)) await openDock.click();
+  await maya.getByTestId('agent-dock').waitFor({ state: 'visible', timeout: 15_000 });
+  await maya.getByRole('button', { name: /^Triage \d+/ }).click();
+  const attention = maya.getByTestId('agent-attention');
+  await attention.waitFor({ state: 'visible', timeout: 15_000 });
+  await attention.getByRole('heading', { name: 'Agent attention' }).waitFor({ state: 'visible' });
+  await maya.waitForTimeout(800);
+  await shoot(maya, 'agent-triage');
 }
 
 await browser.close();
