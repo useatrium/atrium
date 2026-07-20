@@ -23,6 +23,19 @@ vi.mock('../notify', () => ({
   toggleNotifications: vi.fn(async () => 'on'),
 }));
 
+vi.mock('../api', () => ({
+  api: {
+    credentialStore: vi.fn(async () => ({
+      credentialStore: {
+        configured: false,
+        namespace: null,
+        workspaceId: null,
+        items: [],
+      },
+    })),
+  },
+}));
+
 function renderSettings() {
   render(<SettingsSurface connectionsAvailable claudeStatus={undefined} codexStatus={undefined} />);
 }
@@ -59,10 +72,10 @@ describe('SettingsSurface sections', () => {
   it('pushes section URLs from the settings navigation', async () => {
     renderSettings();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Connections' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Credential Store' }));
 
-    await waitFor(() => expect(window.location.pathname).toBe('/settings/connections'));
-    expect(activeSectionLabel()).toBe('Connections');
+    await waitFor(() => expect(window.location.pathname).toBe('/settings/credential-store'));
+    expect(activeSectionLabel()).toBe('Credential Store');
   });
 
   it('updates the active section on back navigation', async () => {

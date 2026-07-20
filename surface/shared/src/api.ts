@@ -215,6 +215,39 @@ export interface ConnectionIdentity {
   updatedAt: string | null;
 }
 
+export type CredentialStoreItemKind = 'agent_provider' | 'connection_identity';
+
+export interface CredentialStoreItem {
+  id: string;
+  kind: CredentialStoreItemKind;
+  provider: ProviderCredentialProvider | ConnectionProvider;
+  label: string;
+  connected: boolean;
+  status: 'connected' | 'needs_auth' | 'public_read' | 'unavailable';
+  workspaceId: string | null;
+  accountLabel: string | null;
+  tokenKind: string | null;
+  backingStore: 'atrium_local' | 'iron_control' | 'public_read' | 'unavailable';
+  active: boolean;
+  ironControl: {
+    namespace: string | null;
+    principalForeignId: string | null;
+    brokerCredentialId: string | null;
+    staticSecretId: string | null;
+    staticSecretForeignId: string | null;
+  };
+  lastValidatedAt: string | null;
+  lastError: string | null;
+  updatedAt: string | null;
+}
+
+export interface CredentialStoreStatus {
+  configured: boolean;
+  namespace: string | null;
+  workspaceId: string | null;
+  items: CredentialStoreItem[];
+}
+
 export type Api = ReturnType<typeof createApi>;
 
 export type SessionListStatus = 'running' | 'recent' | 'all' | 'archived';
@@ -457,6 +490,10 @@ export function createApi(opts: ApiOptions = {}) {
     /** `prefs` is absent on servers that predate the user-prefs migration. */
     me: () => req<{ user: UserRef; prefs?: UserPrefs }>('/auth/me'),
     providerCredentials: () => req<{ providers: ProviderCredentialStatus[] }>('/api/me/provider-credentials'),
+    credentialStore: (workspaceId?: string) => {
+      const query = workspaceId ? `?workspaceId=${encodeURIComponent(workspaceId)}` : '';
+      return req<{ credentialStore: CredentialStoreStatus }>(`/api/me/credential-store${query}`);
+    },
     connections: () => req<{ connections: ConnectionStatus[] }>('/api/me/connections'),
     connectConnection: (provider: ConnectionProvider, body: Record<string, unknown> = {}) =>
       req<{ connection: ConnectionStatus; authorizeUrl?: string }>(
