@@ -2375,11 +2375,11 @@ export function Chat({
                   ? 'Settings'
                   : showCredentialsSurface
                     ? 'Credential Store'
-                  : showActivitySurface
-                    ? 'Inbox'
-                    : showFilesSurface
-                      ? `Files for ${active ? channelLabel(active, me.id) : workspace.name}`
-                      : undefined
+                    : showActivitySurface
+                      ? 'Inbox'
+                      : showFilesSurface
+                        ? `Files for ${active ? channelLabel(active, me.id) : workspace.name}`
+                        : undefined
               }
             >
               {showSettingsSurface ? (
