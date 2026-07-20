@@ -24,7 +24,13 @@ vi.mock('../src/notify', () => ({
   toggleNotifications: vi.fn(async () => 'on'),
 }));
 
-function renderSettings(props: Partial<Parameters<typeof SettingsSurface>[0]> = {}) {
+// Settings renders one section at a time, keyed off /settings/:section, so each
+// test has to open the section holding the controls it asserts on.
+function renderSettings(
+  section: 'appearance' | 'notifications' | 'connections' | 'agents' | 'about',
+  props: Partial<Parameters<typeof SettingsSurface>[0]> = {},
+) {
+  window.history.replaceState(null, '', `/settings/${section}`);
   render(
     <SettingsSurface
       connectionsAvailable
@@ -36,6 +42,7 @@ function renderSettings(props: Partial<Parameters<typeof SettingsSurface>[0]> = 
 }
 
 beforeEach(() => {
+  window.history.replaceState(null, '', '/settings');
   mockTheme.prefs = { ...DEFAULT_PREFS, notifications: { ...DEFAULT_PREFS.notifications } };
   mockTheme.setPrefs.mockClear();
 });
@@ -44,9 +51,9 @@ afterEach(cleanup);
 
 describe('notification settings', () => {
   it('renders device and per-type notification controls', () => {
-    renderSettings();
+    renderSettings('notifications');
 
-    expect(screen.getByText('Notifications')).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Notifications' })).toBeTruthy();
     expect(screen.getByRole('button', { name: /Device notifications off/ })).toBeTruthy();
     expect(screen.getByRole('combobox', { name: 'Message notifications' })).toHaveProperty('value', 'dm_mention');
     expect(screen.getByRole('button', { name: 'Agent notifications' })).toBeTruthy();
@@ -54,7 +61,7 @@ describe('notification settings', () => {
   });
 
   it('writes complete notification preference objects', () => {
-    renderSettings();
+    renderSettings('notifications');
 
     fireEvent.change(screen.getByRole('combobox', { name: 'Message notifications' }), {
       target: { value: 'all' },
@@ -75,19 +82,21 @@ describe('notification settings', () => {
   });
 
   it('shows unavailable GitHub connection state without breaking provider settings', () => {
-    renderSettings({ connectionsAvailable: false });
-
+    renderSettings('connections', { connectionsAvailable: false });
     expect(screen.getByRole('button', { name: /Unavailable/ })).toBeTruthy();
+    cleanup();
+
+    renderSettings('agents', { connectionsAvailable: false });
     expect(screen.getByText('Claude Code')).toBeTruthy();
     expect(screen.getByText('Codex')).toBeTruthy();
   });
 
   it('shows explicit GitHub fallback and needs-auth states', () => {
-    renderSettings({ connectionsAvailable: true });
+    renderSettings('connections', { connectionsAvailable: true });
     expect(screen.getByRole('button', { name: /Public read/ })).toBeTruthy();
     cleanup();
 
-    renderSettings({
+    renderSettings('connections', {
       connectionsAvailable: true,
       githubConnection: {
         id: 'github:app_installation',
@@ -130,7 +139,7 @@ describe('notification settings', () => {
       updatedAt: null,
     };
 
-    renderSettings({ githubConnection });
+    renderSettings('connections', { githubConnection });
 
     expect(screen.getByRole('button', { name: /acme · App/ })).toBeTruthy();
   });
