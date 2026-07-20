@@ -611,9 +611,7 @@ function CredentialStorePanel({ store, error }: { store: CredentialStoreStatus |
           >
             {saving ? 'Adding...' : 'Add credential'}
           </button>
-          {!visibleStore.configured ? (
-            <span className="text-xs text-fg-muted">iron-control is unavailable</span>
-          ) : null}
+          {!visibleStore.configured ? <span className="text-xs text-fg-muted">iron-control is unavailable</span> : null}
           {formError ? <span className="text-xs text-danger-text">{formError}</span> : null}
         </div>
       </div>
