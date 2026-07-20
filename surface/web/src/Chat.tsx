@@ -42,13 +42,23 @@ import { Composer, type ComposerHandle } from './components/Composer';
 import { GitHubConnectionDialog } from './components/GitHubConnectionDialog';
 import { EntryQuoteApplyContextProvider } from './components/EntryQuoteCard';
 import { Kbd, ShortcutsHelp, Tooltip } from './components/a11y';
-import { BotIcon, FileIcon, GearIcon, LockIcon, PhoneIcon, PlayIcon, PlusIcon, SearchIcon } from './components/icons';
+import {
+  BotIcon,
+  EyeIcon,
+  FileIcon,
+  GearIcon,
+  LockIcon,
+  PhoneIcon,
+  PlayIcon,
+  PlusIcon,
+  SearchIcon,
+} from './components/icons';
 import { Button } from './components/ui';
 import { splitMarkdownFrontmatter } from '@atrium/surface-client';
 import { MarkupPane, type MarkupPaneMode, type MarkupPaneSource } from './components/MarkupPane';
 import { showErrorToast } from './components/Toasts';
 import { QuickSwitcher, type QuickSwitcherCommand } from './components/QuickSwitcher';
-import { SettingsSurface } from './components/SettingsSurface';
+import { CredentialStoreSurface, SettingsSurface } from './components/SettingsSurface';
 import { Sidebar } from './components/Sidebar';
 // === spine additions === Thread strips can open the pane directly on a work tab.
 import type { SpineOpenSessionOptions } from './components/ThreadPanel';
@@ -1755,6 +1765,10 @@ export function Chat({
     goToRoute({ surface: 'settings', channelId: null, sessionId: null, focusSession: false });
   }, [goToRoute]);
 
+  const openCredentialsSurface = useCallback(() => {
+    goToRoute({ surface: 'credentials', channelId: null, sessionId: null, focusSession: false });
+  }, [goToRoute]);
+
   const openChatSurface = useCallback(() => {
     const channelId = stateRef.current.activeChannelId;
     goToRoute({
@@ -2151,6 +2165,15 @@ export function Chat({
         run: openSettingsSurface,
       },
       {
+        id: 'open-credentials',
+        label: 'Open credentials',
+        subtitle: 'Manage injected secrets and credential routing',
+        group: 'Workspace',
+        keywords: ['credentials', 'credential store', 'secrets', 'iron-control', 'centaur'],
+        icon: <EyeIcon size={14} />,
+        run: openCredentialsSurface,
+      },
+      {
         id: 'create-channel',
         label: 'Create channel',
         subtitle: 'Open the channel creation form',
@@ -2217,6 +2240,7 @@ export function Chat({
     openActivitySurface,
     openChatSurface,
     openFilesSurface,
+    openCredentialsSurface,
     openSettingsSurface,
     onFocusAgent,
     providerCredentials,
@@ -2247,6 +2271,7 @@ export function Chat({
   // === mentions-activity additions ===
   const showActivitySurface = mainSurface === 'activity';
   const showSettingsSurface = mainSurface === 'settings';
+  const showCredentialsSurface = mainSurface === 'credentials';
   const showNonChatSurface = mainSurface !== 'chat';
   const conversationOriginChannel = conversationSession
     ? (state.channels.find((channel) => channel.id === conversationSession.channelId) ?? null)
@@ -2288,6 +2313,10 @@ export function Chat({
     openSettingsSurface();
     setIsSidebarOpen(false);
   }, [openSettingsSurface]);
+  const openCredentialsFromSidebar = useCallback(() => {
+    openCredentialsSurface();
+    setIsSidebarOpen(false);
+  }, [openCredentialsSurface]);
   const shell = (
     <div className="group/shell flex h-dvh overflow-hidden">
       <div data-testid="chat-sidebar-wrapper" className="contents">
@@ -2309,6 +2338,7 @@ export function Chat({
           onOpenFiles={openFilesFromSidebar}
           // === mentions-activity additions ===
           onOpenActivity={openActivityFromSidebar}
+          onOpenCredentials={openCredentialsFromSidebar}
           activityCounts={activityCounts}
           onOpenSettings={openSettingsFromSidebar}
           onLogout={onLogout}
@@ -2343,6 +2373,8 @@ export function Chat({
               aria-label={
                 showSettingsSurface
                   ? 'Settings'
+                  : showCredentialsSurface
+                    ? 'Credential Store'
                   : showActivitySurface
                     ? 'Inbox'
                     : showFilesSurface
@@ -2354,6 +2386,11 @@ export function Chat({
                 <>
                   <GearIcon size={16} className="shrink-0 text-fg-muted" />
                   <span className="truncate">Settings</span>
+                </>
+              ) : showCredentialsSurface ? (
+                <>
+                  <EyeIcon size={16} className="shrink-0 text-fg-muted" />
+                  <span className="truncate">Credential Store</span>
                 </>
               ) : showActivitySurface ? (
                 // === mentions-activity additions ===
@@ -2572,6 +2609,8 @@ export function Chat({
               onConnectClaude={() => setProviderDialog('claude-code')}
               onConnectCodex={() => setProviderDialog('codex')}
             />
+          ) : showCredentialsSurface ? (
+            <CredentialStoreSurface />
           ) : showActivitySurface ? (
             // === inbox additions ===
             <ActivityView

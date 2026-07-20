@@ -44,6 +44,7 @@ describe('router', () => {
     });
     expect(parseInAppRoute('/files')).toMatchObject({ surface: 'files' });
     expect(parseInAppRoute('/activity')).toMatchObject({ surface: 'activity' });
+    expect(parseInAppRoute('/credentials')).toMatchObject({ surface: 'credentials' });
     expect(parseInAppRoute('/agents')).toBeNull();
     expect(parseInAppRoute('/settings')).toMatchObject({ surface: 'settings', settingsSection: null });
     expect(parseInAppRoute('/settings/connections')).toMatchObject({
@@ -83,6 +84,9 @@ describe('router', () => {
     ).toBe('/c/ch_1');
     expect(routePath({ surface: 'files', channelId: null, sessionId: null, focusSession: false })).toBe('/files');
     expect(routePath({ surface: 'activity', channelId: null, sessionId: null, focusSession: false })).toBe('/activity');
+    expect(routePath({ surface: 'credentials', channelId: null, sessionId: null, focusSession: false })).toBe(
+      '/credentials',
+    );
     expect(routePath({ surface: 'settings', channelId: null, sessionId: null, focusSession: false })).toBe('/settings');
     expect(
       routePath({

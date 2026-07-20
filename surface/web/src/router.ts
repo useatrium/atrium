@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from 'react';
 import { agentPathFromLocationPath, type AgentPathRef } from '@atrium/surface-client/agent-paths';
 
-export type MainSurface = 'chat' | 'files' | 'activity' | 'settings';
+export type MainSurface = 'chat' | 'files' | 'activity' | 'settings' | 'credentials';
 
 // URL grammar. Paths are places; query params are view modifiers layered on a
 // place. Every navigational view state must be expressible here so it survives
@@ -14,6 +14,7 @@ export type MainSurface = 'chat' | 'files' | 'activity' | 'settings';
 //   /c/:channelId/members      channel + members view
 //   /s/:sessionId              legacy session permalink (canonicalizes)
 //   /files /activity           surfaces
+//   /credentials               advanced credential store
 //   /settings[/:section]       settings, optionally scrolled to a section
 //
 // Query params (URL_PARAMS): `agent` (session panel over the current channel),
@@ -128,6 +129,7 @@ export function parseInAppRoute(pathname: string): InAppRoute | null {
   if (pathname === '/') return DEFAULT_ROUTE;
   if (pathname === '/files') return { ...DEFAULT_ROUTE, surface: 'files' };
   if (pathname === '/activity') return { ...DEFAULT_ROUTE, surface: 'activity' };
+  if (pathname === '/credentials') return { ...DEFAULT_ROUTE, surface: 'credentials' };
   if (pathname === '/settings') return { ...DEFAULT_ROUTE, surface: 'settings' };
 
   const settingsSection = /^\/settings\/([^/]+)$/.exec(pathname);
@@ -185,6 +187,7 @@ export function filePathRefFromPath(pathname: string): Exclude<AgentPathRef, { k
 export function routePath(route: InAppRoute): string {
   if (route.surface === 'files') return '/files';
   if (route.surface === 'activity') return '/activity';
+  if (route.surface === 'credentials') return '/credentials';
   if (route.surface === 'settings') {
     return route.settingsSection ? `/settings/${encodeURIComponent(route.settingsSection)}` : '/settings';
   }

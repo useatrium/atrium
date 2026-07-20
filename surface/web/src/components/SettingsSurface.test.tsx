@@ -80,10 +80,18 @@ describe('SettingsSurface sections', () => {
   it('pushes section URLs from the settings navigation', async () => {
     renderSettings();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Credential Store' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Connections' }));
 
-    await waitFor(() => expect(window.location.pathname).toBe('/settings/credential-store'));
-    expect(activeSectionLabel()).toBe('Credential Store');
+    await waitFor(() => expect(window.location.pathname).toBe('/settings/connections'));
+    expect(activeSectionLabel()).toBe('Connections');
+  });
+
+  it('opens the advanced credential store as a separate page', async () => {
+    renderSettings();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open advanced panel' }));
+
+    await waitFor(() => expect(window.location.pathname).toBe('/credentials'));
   });
 
   it('updates the active section on back navigation', async () => {

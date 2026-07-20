@@ -23,6 +23,7 @@ import {
   ArchiveRestoreIcon,
   BellIcon,
   BellOffIcon,
+  EyeIcon,
   FileIcon,
   GearIcon,
   LockIcon,
@@ -84,6 +85,7 @@ function SidebarImpl({
   onOpenFiles,
   // === mentions-activity additions ===
   onOpenActivity,
+  onOpenCredentials,
   activityCounts,
   onOpenSettings,
   onLogout,
@@ -107,10 +109,11 @@ function SidebarImpl({
   onSetPinned?: (channelId: string, pinned: boolean) => void;
   onCreateChannel: (name: string, isPrivate?: boolean) => Promise<void>;
   onStartDm: (userIds: string[]) => void;
-  activeSurface?: 'chat' | 'files' | 'activity' | 'settings';
+  activeSurface?: 'chat' | 'files' | 'activity' | 'settings' | 'credentials';
   onOpenFiles?: () => void;
   // === mentions-activity additions ===
   onOpenActivity?: () => void;
+  onOpenCredentials?: () => void;
   activityCounts?: ActivityCounts;
   onOpenSettings?: () => void;
   onLogout: () => void;
@@ -559,6 +562,21 @@ function SidebarImpl({
                   <FileIcon size={16} />
                 </button>
               </Tooltip>
+              <Tooltip content="Credentials" side="right">
+                <button
+                  type="button"
+                  aria-current={activeSurface === 'credentials' ? 'page' : undefined}
+                  onClick={onOpenCredentials}
+                  aria-label="Credentials"
+                  className={`grid size-10 place-items-center rounded-md ${
+                    activeSurface === 'credentials'
+                      ? 'bg-accent/20 text-fg'
+                      : 'text-fg-muted hover:bg-surface-overlay hover:text-fg'
+                  }`}
+                >
+                  <EyeIcon size={16} />
+                </button>
+              </Tooltip>
             </div>
             <div className="mt-auto w-full border-t border-edge py-2">
               <Tooltip content="Settings" side="right">
@@ -616,6 +634,19 @@ function SidebarImpl({
                 </span>
                 <span className="truncate">Inbox</span>
                 {inboxBadge()}
+              </button>
+              <button
+                type="button"
+                aria-current={activeSurface === 'credentials' ? 'page' : undefined}
+                onClick={onOpenCredentials}
+                className={`${SIDEBAR_ROW_BUTTON_CLASS} mx-1 w-[calc(100%-0.5rem)] ${
+                  activeSurface === 'credentials'
+                    ? 'bg-accent/20 font-medium text-fg'
+                    : 'text-fg-tertiary hover:bg-surface-overlay/70 hover:text-fg-body'
+                }`}
+              >
+                <EyeIcon size={15} className="shrink-0 text-fg-muted" />
+                <span className="truncate">Credentials</span>
               </button>
             </div>
           </section>

@@ -20,7 +20,7 @@ import { notificationState, toggleNotifications, type NotifyState } from '../not
 import { navigate, parseInAppRoute, useLocation } from '../router';
 import { useTheme } from '../theme';
 import { Tooltip } from './a11y';
-import { BellIcon, BellOffIcon } from './icons';
+import { BellIcon, BellOffIcon, EyeIcon, EyeOffIcon } from './icons';
 
 const SOURCE_URL = 'https://github.com/useatrium/atrium';
 const LICENSE_URL = `${SOURCE_URL}/blob/master/LICENSE`;
@@ -76,7 +76,6 @@ const SETTINGS_SECTIONS = [
   { slug: 'notifications', label: 'Notifications' },
   { slug: 'connections', label: 'Connections' },
   { slug: 'agents', label: 'Agents' },
-  { slug: 'credential-store', label: 'Credential Store' },
   { slug: 'about', label: 'About' },
 ] as const;
 
@@ -155,8 +154,6 @@ function SettingsControls({
   onConnectCodex?: () => void;
 }) {
   const location = useLocation();
-  const [credentialStore, setCredentialStore] = useState<CredentialStoreStatus | null>(null);
-  const [credentialStoreError, setCredentialStoreError] = useState<string | null>(null);
   const route = parseInAppRoute(location.pathname);
   const { prefs, setPrefs } = useTheme();
   const requestedSection = route?.surface === 'settings' ? route.settingsSection : null;
@@ -197,24 +194,6 @@ function SettingsControls({
     if (!shouldScrollToSection) return;
     sectionRefs.current[activeSection]?.scrollIntoView?.({ block: 'start' });
   }, [activeSection, shouldScrollToSection]);
-
-  useEffect(() => {
-    let cancelled = false;
-    setCredentialStoreError(null);
-    void api
-      .credentialStore()
-      .then(({ credentialStore }) => {
-        if (!cancelled) setCredentialStore(credentialStore);
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        setCredentialStore(null);
-        setCredentialStoreError(err instanceof Error ? err.message : 'Could not load credential store');
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
@@ -461,16 +440,13 @@ function SettingsControls({
                     <span>{codexStatus?.connected ? 'Connected' : 'Connect'}</span>
                   </button>
                 </SettingRow>
-              </section>
 
-              <SettingsSectionDivider />
-
-              <section
-                ref={setSectionRef('credential-store')}
-                aria-label="Credential Store"
-                className="scroll-mt-16 space-y-3 md:scroll-mt-4"
-              >
-                <CredentialStorePanel store={credentialStore} error={credentialStoreError} />
+                <SettingRow label="Credential Store">
+                  <button type="button" onClick={() => navigate('/credentials')} className={connectionButtonClass}>
+                    <EyeIcon size={14} />
+                    <span>Open advanced panel</span>
+                  </button>
+                </SettingRow>
               </section>
 
               <SettingsSectionDivider />
@@ -505,6 +481,42 @@ function SettingsControls({
   );
 }
 
+export function CredentialStoreSurface() {
+  const [credentialStore, setCredentialStore] = useState<CredentialStoreStatus | null>(null);
+  const [credentialStoreError, setCredentialStoreError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setCredentialStoreError(null);
+    void api
+      .credentialStore()
+      .then(({ credentialStore }) => {
+        if (!cancelled) setCredentialStore(credentialStore);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setCredentialStore(null);
+        setCredentialStoreError(err instanceof Error ? err.message : 'Could not load credential store');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col bg-surface">
+      <div className="border-b border-edge px-4 py-3">
+        <h2 className="text-sm font-bold text-fg">Credential Store</h2>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="max-w-5xl px-4 py-4">
+          <CredentialStorePanel store={credentialStore} error={credentialStoreError} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function SettingsSectionDivider() {
   return <div className="border-t border-edge" />;
 }
@@ -518,6 +530,7 @@ function CredentialStorePanel({ store, error }: { store: CredentialStoreStatus |
     formatter: 'bearer',
   });
   const [saving, setSaving] = useState(false);
+  const [showSecret, setShowSecret] = useState(false);
   const [panelStore, setPanelStore] = useState(store);
   const [formError, setFormError] = useState<string | null>(null);
   useEffect(() => setPanelStore(store), [store]);
@@ -593,13 +606,26 @@ function CredentialStorePanel({ store, error }: { store: CredentialStoreStatus |
           </label>
           <label className="min-w-0 text-2xs font-semibold uppercase tracking-wider text-fg-muted sm:col-span-2">
             Secret value
-            <input
-              type="password"
-              value={draft.secret}
-              placeholder="Stored in iron-control; never displayed again"
-              onChange={(event) => updateDraft('secret', event.target.value)}
-              className="mt-1 h-9 w-full rounded-md border border-edge bg-surface px-2 text-xs font-normal normal-case tracking-normal text-fg-secondary"
-            />
+            <div className="mt-1 flex h-9 min-w-0 rounded-md border border-edge bg-surface">
+              <input
+                type={showSecret ? 'text' : 'password'}
+                value={draft.secret}
+                placeholder="Stored in iron-control; never displayed again"
+                onChange={(event) => updateDraft('secret', event.target.value)}
+                className="min-w-0 flex-1 bg-transparent px-2 text-xs font-normal normal-case tracking-normal text-fg-secondary outline-none"
+              />
+              <Tooltip content={showSecret ? 'Hide secret' : 'Show secret'}>
+                <button
+                  type="button"
+                  aria-label={showSecret ? 'Hide secret' : 'Show secret'}
+                  aria-pressed={showSecret}
+                  onClick={() => setShowSecret((value) => !value)}
+                  className="grid w-9 shrink-0 place-items-center border-l border-edge text-fg-muted hover:bg-surface-overlay hover:text-fg-body"
+                >
+                  {showSecret ? <EyeOffIcon size={14} /> : <EyeIcon size={14} />}
+                </button>
+              </Tooltip>
+            </div>
           </label>
         </div>
         <div className="mt-3 flex flex-wrap items-center gap-2">
