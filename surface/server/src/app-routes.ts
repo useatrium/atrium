@@ -8,6 +8,7 @@ import { config } from './config.js';
 import type { Db } from './db.js';
 import { registerAuthRoutes } from './routes/auth.js';
 import { registerActivityRoutes } from './routes/activity.js';
+import { registerAvatarRoutes } from './routes/avatars.js';
 import { registerArtifactRoutes } from './routes/artifacts.js';
 import { registerAtriumRoutes } from './routes/atrium.js';
 import { registerCallRoutes } from './routes/calls.js';
@@ -142,6 +143,7 @@ export async function registerAppRoutes(deps: AppRouteDeps): Promise<void> {
     runMutation,
   });
   registerUploadRoutes(app, { pool, fileStorage, secret, requireUser, activeWorkspaceIdFor, noWorkspace });
+  registerAvatarRoutes(app, { pool, fileStorage, requireUser });
   await registerFilesHubRoutes(app, { pool, requireUser });
 
   await registerChannelArtifactWritebackRoutes(app, { pool, maxUploadBytes: config.maxUploadBytes, requireUser });

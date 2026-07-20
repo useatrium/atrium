@@ -10,7 +10,7 @@ import { IronControlAdminClient } from './iron-control.js';
 import type { CallTokenService } from './livekit.js';
 import { createLiveKitTokenService } from './livekit.js';
 import { ProviderCredentials } from './provider-credentials.js';
-import { deleteObject, ensureBucket, getObjectBytes, presignGet, presignPut } from './s3.js';
+import { deleteObject, ensureBucket, getObjectBytes, presignGet, presignPut, uploadObject } from './s3.js';
 import { SessionRuns, type SessionRunsOptions } from './session-runs.js';
 import { currentTraceHeaders } from './telemetry.js';
 import { getVoipSender, type VoipPushSender } from './voip.js';
@@ -20,6 +20,7 @@ export type FileStorageDeps = {
   deleteObject: typeof deleteObject;
   presignGet: typeof presignGet;
   presignPut: typeof presignPut;
+  uploadObject: typeof uploadObject;
 };
 
 export interface AppServiceDeps {
@@ -59,7 +60,7 @@ export function createAppServices(deps: AppServiceDeps): AppServices {
   const { pool } = deps;
   const hub = deps.hub ?? new WsHub();
   const secret = deps.sessionSecret ?? config.sessionSecret;
-  const fileStorage = deps.fileStorage ?? { deleteObject, ensureBucket, presignGet, presignPut };
+  const fileStorage = deps.fileStorage ?? { deleteObject, ensureBucket, presignGet, presignPut, uploadObject };
   const connections = new Connections(pool);
   const ironControl =
     deps.ironControl ??

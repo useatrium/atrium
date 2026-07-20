@@ -1,11 +1,14 @@
 import { encodeEventHandle } from '@atrium/surface-client/handle';
 
 import type { DbClient } from '../db.js';
+import { userRefFromRow } from '../user-ref.js';
 
 export interface UserRef {
   id: string;
   handle: string;
   displayName: string;
+  avatarUrl?: string | null;
+  avatarVersion?: number;
 }
 
 /** Wire shape of an event, as fanned out over WS and returned from reads. */
@@ -64,6 +67,8 @@ export interface EventDbRow {
   created_at: Date;
   author_handle?: string | null;
   author_display_name?: string | null;
+  author_avatar_s3_key?: string | null;
+  author_avatar_version?: number | null;
   reply_count?: number;
   last_reply_id?: number;
   last_reply_preview_id?: number | null;
@@ -93,11 +98,13 @@ export function toWireEvent(row: EventDbRow): WireEvent {
     createdAt: new Date(row.created_at).toISOString(),
     author:
       row.actor_id && row.author_handle
-        ? {
+        ? userRefFromRow({
             id: row.actor_id,
             handle: row.author_handle,
-            displayName: row.author_display_name ?? row.author_handle,
-          }
+            display_name: row.author_display_name ?? row.author_handle,
+            avatar_s3_key: row.author_avatar_s3_key,
+            avatar_version: row.author_avatar_version,
+          })
         : null,
   };
   if (row.last_modifier_id != null) ev.lastModifierId = Number(row.last_modifier_id);
@@ -121,13 +128,20 @@ export function toWireEvent(row: EventDbRow): WireEvent {
 
 export async function attachAuthor(client: DbClient, row: EventDbRow): Promise<EventDbRow> {
   if (!row.actor_id) return row;
-  const u = await client.query<{ handle: string; display_name: string }>(
-    'SELECT handle, display_name FROM users WHERE id = $1',
+  const u = await client.query<{
+    handle: string;
+    display_name: string;
+    avatar_s3_key: string | null;
+    avatar_version: number;
+  }>(
+    'SELECT handle, display_name, avatar_s3_key, avatar_version FROM users WHERE id = $1',
     [row.actor_id],
   );
   if (u.rows[0]) {
     row.author_handle = u.rows[0].handle;
     row.author_display_name = u.rows[0].display_name;
+    row.author_avatar_s3_key = u.rows[0].avatar_s3_key;
+    row.author_avatar_version = u.rows[0].avatar_version;
   }
   return row;
 }

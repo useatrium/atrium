@@ -350,6 +350,7 @@ function routePathWithSearch(route: InAppRoute, search: string, hash = ''): stri
 
 export function Chat({
   me,
+  onMeChange,
   workspace,
   initialSessionId,
   initialChannelId,
@@ -360,6 +361,7 @@ export function Chat({
   onLogout,
 }: {
   me: UserRef;
+  onMeChange?: (me: UserRef) => void;
   workspace: Workspace;
   /** From a session permalink route — open this focused session on load. */
   initialSessionId?: string | null;
@@ -2385,6 +2387,7 @@ export function Chat({
                   <Avatar
                     name={channelAvatarName(active, me.id)}
                     seed={dmPartner(active, me.id)?.id ?? active.id}
+                    src={dmPartner(active, me.id)?.avatarUrl}
                     size={18}
                   />
                   {channelLabel(active, me.id)}
@@ -2492,7 +2495,7 @@ export function Chat({
                   <div className="flex shrink-0 -space-x-1.5">
                     {presentUsers.slice(0, 8).map((u) => (
                       <div key={u.id} className="rounded-md ring-2 ring-surface">
-                        <Avatar name={u.displayName} seed={u.id} size={20} />
+                        <Avatar name={u.displayName} seed={u.id} src={u.avatarUrl} size={20} />
                       </div>
                     ))}
                   </div>
@@ -2564,10 +2567,12 @@ export function Chat({
 
           {showSettingsSurface ? (
             <SettingsSurface
+              me={me}
               githubConnection={githubConnection}
               connectionsAvailable={connectionsAvailable}
               claudeStatus={providerCredentials['claude-code']}
               codexStatus={providerCredentials.codex}
+              onMeChange={onMeChange}
               onConnectGitHub={() => setConnectionDialog('github')}
               onConnectClaude={() => setProviderDialog('claude-code')}
               onConnectCodex={() => setProviderDialog('codex')}

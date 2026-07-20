@@ -214,6 +214,7 @@ export function App() {
         {(destination) => (
           <Chat
             me={me}
+            onMeChange={setMe}
             workspace={workspace}
             initialSessionId={destination.initialSessionId}
             initialChannelId={destination.initialChannelId}
@@ -240,6 +241,7 @@ export function App() {
         {() => (
           <Chat
             me={me}
+            onMeChange={setMe}
             workspace={workspace}
             initialSessionId={null}
             initialChannelId={null}
@@ -262,6 +264,7 @@ export function App() {
     body = (
       <Chat
         me={me}
+        onMeChange={setMe}
         workspace={workspace}
         initialSessionId={initialRoute.sessionId}
         initialChannelId={initialRoute.channelId}

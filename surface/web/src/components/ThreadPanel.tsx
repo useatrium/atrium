@@ -400,7 +400,11 @@ export function ThreadPanelContent({
             <div key={row.key} data-testid="aside-row" className="opacity-75">
               <div className="mt-2 flex items-center gap-3 px-4 py-0.5">
                 <div className="w-8 shrink-0">
-                  <Avatar name={row.message.author.displayName} seed={row.message.author.id} />
+                  <Avatar
+                    name={row.message.author.displayName}
+                    seed={row.message.author.id}
+                    src={row.message.author.avatarUrl}
+                  />
                 </div>
                 <div className="flex min-w-0 items-baseline gap-2">
                   <span className="truncate text-sm font-semibold text-fg">{row.message.author.displayName}</span>

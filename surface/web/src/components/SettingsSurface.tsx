@@ -2,16 +2,18 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   ACCENTS,
   FONT_SCALES,
+  type UserRef,
   type Accent,
   type FontScale,
   type MotionPref,
   type NotificationMessagePref,
   type ThemeMode,
 } from '@atrium/surface-client';
-import type { ConnectionStatus, ProviderCredentialStatus } from '../api';
+import { api, type ConnectionStatus, type ProviderCredentialStatus } from '../api';
 import { notificationState, toggleNotifications, type NotifyState } from '../notify';
 import { navigate, parseInAppRoute, useLocation } from '../router';
 import { useTheme } from '../theme';
+import { Avatar } from './Avatar';
 import { Tooltip } from './a11y';
 import { BellIcon, BellOffIcon } from './icons';
 
@@ -65,6 +67,7 @@ const SWATCH_CLASSES: Record<Accent, string> = {
 };
 
 const SETTINGS_SECTIONS = [
+  { slug: 'profile', label: 'Profile' },
   { slug: 'appearance', label: 'Appearance' },
   { slug: 'notifications', label: 'Notifications' },
   { slug: 'connections', label: 'Connections' },
@@ -85,18 +88,22 @@ function resolveSettingsSection(value: string | null | undefined): SettingsSecti
 }
 
 export function SettingsSurface({
+  me,
   githubConnection,
   connectionsAvailable,
   claudeStatus,
   codexStatus,
+  onMeChange,
   onConnectGitHub,
   onConnectClaude,
   onConnectCodex,
 }: {
+  me?: UserRef;
   githubConnection?: ConnectionStatus;
   connectionsAvailable: boolean;
   claudeStatus?: ProviderCredentialStatus;
   codexStatus?: ProviderCredentialStatus;
+  onMeChange?: (me: UserRef) => void;
   onConnectGitHub?: () => void;
   onConnectClaude?: () => void;
   onConnectCodex?: () => void;
@@ -112,10 +119,12 @@ export function SettingsSurface({
         <SettingsControls
           notify={notify}
           setNotify={setNotify}
+          me={me}
           githubConnection={githubConnection}
           connectionsAvailable={connectionsAvailable}
           claudeStatus={claudeStatus}
           codexStatus={codexStatus}
+          onMeChange={onMeChange}
           onConnectGitHub={onConnectGitHub}
           onConnectClaude={onConnectClaude}
           onConnectCodex={onConnectCodex}
@@ -128,20 +137,24 @@ export function SettingsSurface({
 function SettingsControls({
   notify,
   setNotify,
+  me,
   githubConnection,
   connectionsAvailable,
   claudeStatus,
   codexStatus,
+  onMeChange,
   onConnectGitHub,
   onConnectClaude,
   onConnectCodex,
 }: {
   notify: NotifyState;
   setNotify: (state: NotifyState) => void;
+  me?: UserRef;
   githubConnection?: ConnectionStatus;
   connectionsAvailable: boolean;
   claudeStatus?: ProviderCredentialStatus;
   codexStatus?: ProviderCredentialStatus;
+  onMeChange?: (me: UserRef) => void;
   onConnectGitHub?: () => void;
   onConnectClaude?: () => void;
   onConnectCodex?: () => void;
@@ -149,6 +162,9 @@ function SettingsControls({
   const location = useLocation();
   const route = parseInAppRoute(location.pathname);
   const { prefs, setPrefs } = useTheme();
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [avatarBusy, setAvatarBusy] = useState(false);
+  const [avatarError, setAvatarError] = useState<string | null>(null);
   const requestedSection = route?.surface === 'settings' ? route.settingsSection : null;
   const activeSection = resolveSettingsSection(requestedSection);
   const shouldScrollToSection = route?.surface === 'settings';
@@ -174,6 +190,33 @@ function SettingsControls({
   const setNotificationSessions = (sessions: boolean) =>
     setPrefs({ notifications: { ...prefs.notifications, sessions } });
   const setNotificationCalls = (calls: boolean) => setPrefs({ notifications: { ...prefs.notifications, calls } });
+  const changeAvatar = async (file: File | undefined) => {
+    if (!file || !me) return;
+    setAvatarBusy(true);
+    setAvatarError(null);
+    try {
+      const result = await api.uploadAvatar(file);
+      onMeChange?.({ ...me, avatarUrl: result.avatarUrl, avatarVersion: result.avatarVersion });
+    } catch (err) {
+      setAvatarError((err as Error).message || 'Could not update profile picture');
+    } finally {
+      setAvatarBusy(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+  const removeCurrentAvatar = async () => {
+    if (!me) return;
+    setAvatarBusy(true);
+    setAvatarError(null);
+    try {
+      const result = await api.removeAvatar();
+      onMeChange?.({ ...me, avatarUrl: result.avatarUrl, avatarVersion: result.avatarVersion });
+    } catch (err) {
+      setAvatarError((err as Error).message || 'Could not remove profile picture');
+    } finally {
+      setAvatarBusy(false);
+    }
+  };
   const notificationsDisabled = notify === 'denied' || notify === 'unsupported';
   const setSectionRef = (section: SettingsSectionSlug) => (element: HTMLElement | null) => {
     if (element) sectionRefs.current[section] = element;
@@ -220,6 +263,50 @@ function SettingsControls({
         <div className="min-w-0 flex-1">
           <div className="max-w-2xl px-4 py-4">
             <div className="space-y-4">
+              {me && (
+                <section
+                  ref={setSectionRef('profile')}
+                  aria-label="Profile"
+                  className="scroll-mt-16 space-y-3 md:scroll-mt-4"
+                >
+                  <SettingRow label="Picture">
+                    <div className="flex min-w-0 items-center gap-3">
+                      <Avatar name={me.displayName} seed={me.id} src={me.avatarUrl} size={48} />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            onClick={() => fileInputRef.current?.click()}
+                            disabled={avatarBusy}
+                            className="h-8 rounded-md border border-edge px-3 text-xs font-medium text-fg-body hover:bg-surface-overlay disabled:cursor-not-allowed disabled:opacity-60 max-md:h-11 max-md:text-sm"
+                          >
+                            {me.avatarUrl ? 'Change' : 'Upload'}
+                          </button>
+                          {me.avatarUrl && (
+                            <button
+                              type="button"
+                              onClick={removeCurrentAvatar}
+                              disabled={avatarBusy}
+                              className="h-8 rounded-md border border-edge px-3 text-xs font-medium text-fg-muted hover:bg-surface-overlay hover:text-fg-body disabled:cursor-not-allowed disabled:opacity-60 max-md:h-11 max-md:text-sm"
+                            >
+                              Remove
+                            </button>
+                          )}
+                        </div>
+                        {avatarError && <div className="mt-1 text-xs text-danger">{avatarError}</div>}
+                      </div>
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        accept="image/jpeg,image/png,image/webp,image/gif"
+                        className="hidden"
+                        onChange={(event) => void changeAvatar(event.currentTarget.files?.[0])}
+                      />
+                    </div>
+                  </SettingRow>
+                </section>
+              )}
+
               <section
                 ref={setSectionRef('appearance')}
                 aria-label="Appearance"

@@ -5,6 +5,7 @@ import { createWorkspace, type UserRef, type Workspace } from '../events.js';
 import { addWorkspaceMember, isWorkspaceMember } from '../membership.js';
 import { isUuid } from '../idempotency.js';
 import { decodeRouteBody } from '../route-schema.js';
+import { userRefFromRow } from '../user-ref.js';
 
 const CreateWorkspaceBodySchema = Schema.Struct({
   name: Schema.optional(Schema.Unknown),
@@ -79,8 +80,14 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: WorkspaceRou
     const handle = String(body.handle ?? '')
       .trim()
       .toLowerCase();
-    const target = await pool.query<{ id: string; handle: string; display_name: string }>(
-      'SELECT id, handle, display_name FROM users WHERE handle = $1',
+    const target = await pool.query<{
+      id: string;
+      handle: string;
+      display_name: string;
+      avatar_s3_key: string | null;
+      avatar_version: number;
+    }>(
+      'SELECT id, handle, display_name, avatar_s3_key, avatar_version FROM users WHERE handle = $1',
       [handle],
     );
     const member = target.rows[0];
@@ -89,7 +96,7 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: WorkspaceRou
     }
     await addWorkspaceMember(pool, id, member.id);
     return {
-      member: { id: member.id, handle: member.handle, displayName: member.display_name },
+      member: userRefFromRow(member),
     };
   });
 }

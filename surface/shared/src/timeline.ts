@@ -11,6 +11,8 @@ export const UserRefSchema = Schema.mutable(
     id: Schema.String,
     handle: Schema.String,
     displayName: Schema.String,
+    avatarUrl: Schema.optionalWith(Schema.Union(Schema.String, Schema.Null), { exact: true }),
+    avatarVersion: Schema.optionalWith(Schema.Number, { exact: true }),
   }),
 );
 
@@ -18,6 +20,8 @@ export interface UserRef {
   id: string;
   handle: string;
   displayName: string;
+  avatarUrl?: string | null;
+  avatarVersion?: number;
 }
 
 export const FILES_CHANGED_EVENT_TYPE = 'files.changed';

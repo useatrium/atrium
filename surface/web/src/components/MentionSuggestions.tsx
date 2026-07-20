@@ -55,7 +55,12 @@ export function MentionSuggestions({
           >
             {candidate.kind === 'user' ? (
               <>
-                <Avatar name={candidate.user.displayName} seed={candidate.user.id} size={24} />
+                <Avatar
+                  name={candidate.user.displayName}
+                  seed={candidate.user.id}
+                  src={candidate.user.avatarUrl}
+                  size={24}
+                />
                 <span className="min-w-0 truncate font-medium text-fg">{candidate.user.displayName}</span>
                 <span className="truncate text-xs text-fg-muted">@{candidate.user.handle}</span>
                 {!candidate.inChannel && <span className="ml-auto shrink-0 text-xs text-fg-muted">Not in channel</span>}

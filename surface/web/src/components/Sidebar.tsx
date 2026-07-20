@@ -333,7 +333,7 @@ function SidebarImpl({
           className={SIDEBAR_ROW_BUTTON_CLASS}
         >
           {isDm ? (
-            <Avatar name={channelAvatarName(c, me.id)} seed={partner?.id ?? c.id} size={16} />
+            <Avatar name={channelAvatarName(c, me.id)} seed={partner?.id ?? c.id} src={partner?.avatarUrl} size={16} />
           ) : (
             <span className="grid w-4 shrink-0 place-items-center text-fg-muted">
               {c.kind === 'private' ? <LockIcon size={14} /> : '#'}
@@ -731,7 +731,7 @@ function SidebarImpl({
                           }}
                           className="flex w-full items-center gap-2 rounded px-2 py-1 text-left text-xs text-fg-secondary hover:bg-surface-overlay"
                         >
-                          <Avatar name={u.displayName} seed={u.id} size={16} />
+                          <Avatar name={u.displayName} seed={u.id} src={u.avatarUrl} size={16} />
                           <span className="truncate">{u.displayName}</span>
                           <span className="truncate text-fg-muted">@{u.handle}</span>
                           {u.id === me.id && <span className="text-fg-muted">(you)</span>}
@@ -783,6 +783,7 @@ function SidebarImpl({
             collapsed ? 'md:hidden' : ''
           }`}
         >
+          <Avatar name={me.displayName} seed={me.id} src={me.avatarUrl} size={24} />
           <div className="min-w-0 flex-1">
             <div className="truncate text-xs font-medium text-fg-body">{me.displayName}</div>
             <div className="truncate text-2xs text-fg-muted">@{me.handle}</div>

@@ -7,6 +7,7 @@ import type { Db } from '../db.js';
 import { ensureDefaultWorkspace, type UserRef } from '../events.js';
 import { addWorkspaceMember } from '../membership.js';
 import { emailDeliveryConfigured, sendLoginCode } from '../email.js';
+import { userRefFromRow } from '../user-ref.js';
 
 const HANDLE_RE = /^[a-z0-9][a-z0-9_-]{1,31}$/i;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -18,6 +19,8 @@ interface AuthUserRow {
   id: string;
   handle: string;
   display_name: string;
+  avatar_s3_key?: string | null;
+  avatar_version?: number | null;
 }
 
 export interface AuthRouteDeps {
@@ -83,7 +86,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDeps): v
       maxAge: 60 * 60 * 24 * 30,
     });
     return {
-      user: { id: user.id, handle: user.handle, displayName: user.display_name },
+      user: userRefFromRow(user),
       token,
     };
   }
@@ -98,7 +101,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDeps): v
         `INSERT INTO users (handle, display_name, email)
          VALUES ($1, $2, $3)
          ON CONFLICT DO NOTHING
-         RETURNING id, handle, display_name`,
+         RETURNING id, handle, display_name, avatar_s3_key, avatar_version`,
         [handle, displayName, email],
       );
       if (inserted.rows[0]) {
@@ -106,7 +109,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDeps): v
         return inserted.rows[0];
       }
       const existingEmail = await pool.query<AuthUserRow>(
-        `SELECT id, handle, display_name FROM users WHERE email = $1`,
+        `SELECT id, handle, display_name, avatar_s3_key, avatar_version FROM users WHERE email = $1`,
         [email],
       );
       if (existingEmail.rows[0]) return existingEmail.rows[0];
@@ -115,9 +118,10 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDeps): v
   }
 
   async function userForEmail(email: string): Promise<AuthUserRow> {
-    const existing = await pool.query<AuthUserRow>(`SELECT id, handle, display_name FROM users WHERE email = $1`, [
-      email,
-    ]);
+    const existing = await pool.query<AuthUserRow>(
+      `SELECT id, handle, display_name, avatar_s3_key, avatar_version FROM users WHERE email = $1`,
+      [email],
+    );
     return existing.rows[0] ?? (await createUserForEmail(email));
   }
 
@@ -140,7 +144,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDeps): v
     name?: string;
   }): Promise<AuthUserRow> {
     const linked = await pool.query<AuthUserRow>(
-      `SELECT u.id, u.handle, u.display_name
+      `SELECT u.id, u.handle, u.display_name, u.avatar_s3_key, u.avatar_version
        FROM oauth_identities oi JOIN users u ON u.id = oi.user_id
        WHERE oi.provider = 'google' AND oi.subject = $1`,
       [claims.sub],
@@ -149,9 +153,10 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDeps): v
 
     let user: AuthUserRow;
     if (claims.email && claims.emailVerified) {
-      const existing = await pool.query<AuthUserRow>(`SELECT id, handle, display_name FROM users WHERE email = $1`, [
-        claims.email,
-      ]);
+      const existing = await pool.query<AuthUserRow>(
+        `SELECT id, handle, display_name, avatar_s3_key, avatar_version FROM users WHERE email = $1`,
+        [claims.email],
+      );
       user = existing.rows[0] ?? (await createUserForEmail(claims.email));
     } else {
       user = await createUserForEmail(`${claims.sub}@google.oauth.local`);
@@ -361,7 +366,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDeps): v
       let user = await pool.query<AuthUserRow>(
         `INSERT INTO users (handle, display_name) VALUES ($1, COALESCE(NULLIF($2, ''), $1))
          ON CONFLICT DO NOTHING
-         RETURNING id, handle, display_name`,
+         RETURNING id, handle, display_name, avatar_s3_key, avatar_version`,
         [handle, displayName],
       );
       if (user.rows[0]) {
@@ -371,7 +376,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDeps): v
           `UPDATE users
            SET display_name = COALESCE(NULLIF($2, ''), display_name)
            WHERE handle = $1
-           RETURNING id, handle, display_name`,
+           RETURNING id, handle, display_name, avatar_s3_key, avatar_version`,
           [handle, displayName],
         );
       }

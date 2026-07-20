@@ -109,8 +109,29 @@ export function exchangeClaudeCodeOAuth(pendingId: string, code: string) {
   });
 }
 
+export async function uploadAvatar(file: File) {
+  const token = apiOptions?.getToken ? await apiOptions.getToken() : null;
+  const res = await fetch(base + '/api/me/avatar', {
+    method: 'PUT',
+    credentials: 'same-origin',
+    headers: {
+      'content-type': file.type || 'application/octet-stream',
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
+    },
+    body: file,
+  });
+  if (!res.ok) throw new Error((await res.json().catch(() => null))?.message ?? res.statusText);
+  return res.json() as Promise<{ avatarUrl: string; avatarVersion: number }>;
+}
+
+export async function removeAvatar() {
+  return req<{ avatarUrl: null; avatarVersion: number }>('/api/me/avatar', { method: 'DELETE' });
+}
+
 export const api = {
   ...baseApi,
+  uploadAvatar,
+  removeAvatar,
   connectClaudeCode: (token: string) =>
     token === PROVIDER_CREDENTIALS_REFRESH_SENTINEL
       ? refreshProviderCredential('claude-code')

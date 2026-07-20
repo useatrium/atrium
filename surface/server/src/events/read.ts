@@ -9,6 +9,7 @@ import {
   TIMELINE_ROOT_EVENT_TYPES as TIMELINE_ROOT_EVENT_TYPE_VALUES,
 } from '../event-types.js';
 import { workspaceMemberExists } from '../membership.js';
+import { userRefFromRow } from '../user-ref.js';
 import {
   foldEdit,
   toWireEvent,
@@ -45,6 +46,8 @@ const MESSAGE_SELECT = `
   SELECT e.*,
          u.handle AS author_handle,
          u.display_name AS author_display_name,
+         u.avatar_s3_key AS author_avatar_s3_key,
+         u.avatar_version AS author_avatar_version,
          coalesce(ms.reply_count, 0)::int AS reply_count,
          coalesce(ms.last_reply_id, 0)::bigint AS last_reply_id,
          lr.id AS last_reply_preview_id,
@@ -501,8 +504,10 @@ export async function listChannelsFor(pool: Db | DbClient, userId: string): Prom
       id: string;
       handle: string;
       display_name: string;
+      avatar_s3_key: string | null;
+      avatar_version: number;
     }>(
-      `SELECT m.channel_id, u.id, u.handle, u.display_name
+      `SELECT m.channel_id, u.id, u.handle, u.display_name, u.avatar_s3_key, u.avatar_version
        FROM channel_members m JOIN users u ON u.id = m.user_id
        WHERE m.channel_id = ANY($1::uuid[])
        ORDER BY u.handle ASC`,
@@ -510,7 +515,7 @@ export async function listChannelsFor(pool: Db | DbClient, userId: string): Prom
     );
     for (const row of members.rows) {
       const list = membersByChannel.get(row.channel_id) ?? [];
-      list.push({ id: row.id, handle: row.handle, displayName: row.display_name });
+      list.push(userRefFromRow(row));
       membersByChannel.set(row.channel_id, list);
     }
   }
@@ -587,8 +592,14 @@ export async function canAccessFile(pool: Db, userId: string, fileId: string): P
 }
 
 export async function listUsers(pool: Db, userId: string): Promise<UserRef[]> {
-  const res = await pool.query<{ id: string; handle: string; display_name: string }>(
-    `SELECT DISTINCT u.id, u.handle, u.display_name
+  const res = await pool.query<{
+    id: string;
+    handle: string;
+    display_name: string;
+    avatar_s3_key: string | null;
+    avatar_version: number;
+  }>(
+    `SELECT DISTINCT u.id, u.handle, u.display_name, u.avatar_s3_key, u.avatar_version
      FROM users u
      JOIN workspace_members theirs ON theirs.user_id = u.id
      JOIN workspace_members mine
@@ -596,18 +607,24 @@ export async function listUsers(pool: Db, userId: string): Promise<UserRef[]> {
      ORDER BY u.handle ASC`,
     [userId],
   );
-  return res.rows.map((r) => ({ id: r.id, handle: r.handle, displayName: r.display_name }));
+  return res.rows.map(userRefFromRow);
 }
 
 export async function membersForChannel(client: Db | DbClient, channelId: string): Promise<UserRef[]> {
-  const members = await client.query<{ id: string; handle: string; display_name: string }>(
-    `SELECT u.id, u.handle, u.display_name
+  const members = await client.query<{
+    id: string;
+    handle: string;
+    display_name: string;
+    avatar_s3_key: string | null;
+    avatar_version: number;
+  }>(
+    `SELECT u.id, u.handle, u.display_name, u.avatar_s3_key, u.avatar_version
      FROM channel_members m JOIN users u ON u.id = m.user_id
      WHERE m.channel_id = $1
      ORDER BY u.handle ASC`,
     [channelId],
   );
-  return members.rows.map((r) => ({ id: r.id, handle: r.handle, displayName: r.display_name }));
+  return members.rows.map(userRefFromRow);
 }
 
 export async function listChannelMembers(

@@ -2,6 +2,7 @@ import type { Db, DbClient } from '../db.js';
 import { withTx } from '../db.js';
 import { encodeEventHandle, encodeHandle, tryDecodeHandle } from '../entries.js';
 import { MESSAGE_STATE_EVENT_TYPES, projectMessageEvent } from '../message-state.js';
+import { userRefFromRow } from '../user-ref.js';
 import { listChannelsFor, listWorkspaces, membersForChannel } from './read.js';
 import {
   attachAuthor,
@@ -702,8 +703,14 @@ export async function addChannelMemberTx(
   );
   const row = ch.rows[0];
   if (!row || row.kind === 'public' || row.kind === 'dm' || !row.member) return null;
-  const user = await client.query<{ id: string; handle: string; display_name: string }>(
-    'SELECT id, handle, display_name FROM users WHERE id = $1',
+  const user = await client.query<{
+    id: string;
+    handle: string;
+    display_name: string;
+    avatar_s3_key: string | null;
+    avatar_version: number;
+  }>(
+    'SELECT id, handle, display_name, avatar_s3_key, avatar_version FROM users WHERE id = $1',
     [args.userId],
   );
   const u = user.rows[0];
@@ -714,7 +721,7 @@ export async function addChannelMemberTx(
      ON CONFLICT DO NOTHING`,
     [args.channelId, args.userId],
   );
-  const member = { id: u.id, handle: u.handle, displayName: u.display_name };
+  const member = userRefFromRow(u);
   const members = row.kind === 'gdm' ? await membersForChannel(client, args.channelId) : undefined;
   const count = await client.query<{ count: string }>('SELECT COUNT(*) FROM channel_members WHERE channel_id = $1', [
     args.channelId,

@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { initials, userColorTokens } from '@atrium/surface-client';
 import { useTheme } from '../theme';
 import { AgentMark } from './AgentMark';
@@ -5,16 +6,23 @@ import { AgentMark } from './AgentMark';
 export function Avatar({
   name,
   seed,
+  src,
   size = 32,
   variant = 'human',
 }: {
   name: string;
   seed: string;
+  src?: string | null;
   size?: number;
   variant?: 'human' | 'agent';
 }) {
   const { resolvedScheme } = useTheme();
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
   const colors = userColorTokens(seed, resolvedScheme);
+  const effectiveSrc = variant === 'human' && src && failedSrc !== src ? src : null;
+  useEffect(() => {
+    setFailedSrc(null);
+  }, [src]);
   if (variant === 'agent') {
     // Humans get the full square; the agent's circle renders slightly smaller
     // inside the same footprint so gutters stay aligned while the mark still
@@ -41,7 +49,17 @@ export function Avatar({
       }}
       title={name}
     >
-      {initials(name)}
+      {effectiveSrc ? (
+        <img
+          src={effectiveSrc}
+          alt=""
+          className="size-full rounded-md object-cover"
+          draggable={false}
+          onError={() => setFailedSrc(effectiveSrc)}
+        />
+      ) : (
+        initials(name)
+      )}
     </div>
   );
 }

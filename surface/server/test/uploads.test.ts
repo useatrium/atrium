@@ -11,6 +11,7 @@ let putCounter = 0;
 const fileStorage = {
   ensureBucket: async () => {},
   deleteObject: async () => {},
+  uploadObject: async () => {},
   presignPut: async (key: string, contentType: string) =>
     `https://storage.local/put/${encodeURIComponent(key)}?contentType=${encodeURIComponent(
       contentType,

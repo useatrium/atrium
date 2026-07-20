@@ -217,7 +217,7 @@ export function ChannelMembersMenu({
                     onClick={() => inviteMember(u.id)}
                     className="flex w-full items-center gap-2 rounded px-2 py-1 text-left text-xs text-fg-secondary hover:bg-surface-overlay max-md:min-h-11"
                   >
-                    <Avatar name={u.displayName} seed={u.id} size={16} />
+                    <Avatar name={u.displayName} seed={u.id} src={u.avatarUrl} size={16} />
                     <span className="truncate">{u.displayName}</span>
                   </button>
                 ))}
@@ -226,7 +226,7 @@ export function ChannelMembersMenu({
           <ul className="max-h-48 overflow-y-auto">
             {(members ?? channel.members ?? []).map((u) => (
               <li key={u.id} className="flex items-center gap-2 px-2 py-1 text-xs text-fg-secondary">
-                <Avatar name={u.displayName} seed={u.id} size={16} />
+                <Avatar name={u.displayName} seed={u.id} src={u.avatarUrl} size={16} />
                 <span className="truncate">{u.displayName}</span>
               </li>
             ))}

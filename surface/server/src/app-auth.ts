@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { Db } from './db.js';
 import type { UserRef } from './events.js';
 import { verifySession } from './cookie.js';
+import { userRefFromRow } from './user-ref.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -33,9 +34,11 @@ export function installAppAuth(app: FastifyInstance, deps: AppAuthDeps): AppAuth
       id: string;
       handle: string;
       display_name: string;
+      avatar_s3_key: string | null;
+      avatar_version: number;
       expires_at: Date;
     }>(
-      `SELECT u.id, u.handle, u.display_name, s.expires_at
+      `SELECT u.id, u.handle, u.display_name, u.avatar_s3_key, u.avatar_version, s.expires_at
        FROM auth_sessions s JOIN users u ON u.id = s.user_id
        WHERE s.id = $1 AND s.expires_at > now()`,
       [sessionId],
@@ -48,7 +51,7 @@ export function installAppAuth(app: FastifyInstance, deps: AppAuthDeps): AppAuth
         .query(`UPDATE auth_sessions SET expires_at = now() + interval '30 days' WHERE id = $1`, [sessionId])
         .catch(() => {});
     }
-    return { id: row.id, handle: row.handle, displayName: row.display_name };
+    return userRefFromRow(row);
   }
 
   /** Signed session value from the request: bearer header (native) or cookie (web). */

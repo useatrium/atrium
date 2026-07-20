@@ -615,7 +615,12 @@ export const MessageRow = memo(function MessageRow({
           <AgentMark size={20} />
         ) : (
           (!grouped || isAgentVoice) && (
-            <Avatar name={authorName} seed={m.author.id} variant={isAgentVoice ? 'agent' : 'human'} />
+            <Avatar
+              name={authorName}
+              seed={m.author.id}
+              src={m.author.avatarUrl}
+              variant={isAgentVoice ? 'agent' : 'human'}
+            />
           )
         )}
         {!slotAnswer && grouped && (
@@ -1429,6 +1434,7 @@ function CompactReply({ message }: { message: ChatMessage }) {
       <Avatar
         name={agent ? 'Agent' : message.author.displayName}
         seed={message.author.id}
+        src={message.author.avatarUrl}
         size={22}
         variant={agent ? 'agent' : 'human'}
       />
