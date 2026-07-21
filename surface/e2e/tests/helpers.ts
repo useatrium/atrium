@@ -140,7 +140,12 @@ export function mainComposer(page: Page, _channelName = 'general') {
 export async function sendMessage(page: Page, text: string, channelName = 'general'): Promise<void> {
   await mainComposer(page, channelName).fill(text);
   await mainComposer(page, channelName).press('Enter');
-  await expect(page.getByText(text, { exact: true })).toBeVisible();
+  // Wait for the server-confirmed row ([data-eid]), not just the optimistic
+  // echo. Hover-revealed row actions are pointer-events-none until :hover, and
+  // a row that settles under a stationary cursor between hover() and click()
+  // never re-enters :hover — the click then dead-ends on the header line until
+  // the test times out.
+  await expect(confirmedRowsWithText(page, text).first()).toBeVisible();
 }
 
 export function messageRow(page: Page, text: string) {
