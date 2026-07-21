@@ -17,7 +17,7 @@ import { EscapeLayer, isEditableEscapeTarget, useEscapeLayer } from '../lib/esca
 import { SideEffectsSurface } from './SideEffectsSurface';
 import { ConflictSurface, type ArtifactConflict, type ResolveChoice } from './ConflictSurface';
 import { EmptyState } from './EmptyState';
-import type { FilesHubDefaultScope, FilesHubSessionScope } from './FilesHub';
+import type { FilesHubDefaultScope, FilesHubSessionScope } from './fileHubCore';
 import { formatGalleryBytes, galleryPathForScope, relativeFileTime } from './Gallery';
 import { WhatChangedSurface } from './WhatChangedSurface';
 import { AppsSurface } from './AppsSurface';
