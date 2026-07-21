@@ -96,35 +96,39 @@ export function PdfRenderer({ file, variant }: { file: PreviewFile; variant: Med
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-surface">
-      <div className="flex h-10 shrink-0 items-center justify-center gap-2 border-b border-edge bg-surface-raised/45">
-        <button
-          type="button"
-          className="grid size-7 place-items-center rounded-md text-fg-secondary hover:bg-surface-overlay hover:text-fg disabled:text-fg-faint"
-          onClick={() => setPage((p) => Math.max(1, p - 1))}
-          disabled={page <= 1}
-          aria-label="Previous PDF page"
-        >
-          <ChevronLeftIcon size={15} />
-        </button>
-        <span className="min-w-24 text-center text-2xs tabular-nums text-fg-muted">
-          Page {page} of {pages || '?'}
-        </span>
-        <button
-          type="button"
-          className="grid size-7 place-items-center rounded-md text-fg-secondary hover:bg-surface-overlay hover:text-fg disabled:text-fg-faint"
-          onClick={() => setPage((p) => Math.min(pages, p + 1))}
-          disabled={pages === 0 || page >= pages}
-          aria-label="Next PDF page"
-        >
-          <ChevronRightIcon size={15} />
-        </button>
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="flex shrink-0 items-center justify-center px-3 py-2" data-lightbox-backdrop>
+        <div className="flex items-center gap-1 rounded-md border border-white/15 bg-black/60 px-1.5 py-1 shadow-lg backdrop-blur-sm">
+          <button
+            type="button"
+            className="grid size-7 place-items-center rounded-md text-white/80 hover:bg-white/15 hover:text-white disabled:text-white/30"
+            onClick={() => setPage((p) => Math.max(1, p - 1))}
+            disabled={page <= 1}
+            aria-label="Previous PDF page"
+          >
+            <ChevronLeftIcon size={15} />
+          </button>
+          <span className="min-w-24 text-center text-2xs tabular-nums text-white/70">
+            Page {page} of {pages || '?'}
+          </span>
+          <button
+            type="button"
+            className="grid size-7 place-items-center rounded-md text-white/80 hover:bg-white/15 hover:text-white disabled:text-white/30"
+            onClick={() => setPage((p) => Math.min(pages, p + 1))}
+            disabled={pages === 0 || page >= pages}
+            aria-label="Next PDF page"
+          >
+            <ChevronRightIcon size={15} />
+          </button>
+        </div>
       </div>
-      <div className="min-h-0 flex-1 overflow-auto p-4 text-center">
+      <div className="min-h-0 flex-1 overflow-auto p-4 text-center" data-lightbox-backdrop>
         {error ? (
-          <div className="mt-8 text-sm text-danger-text">{error}</div>
+          <div className="mt-8 inline-block rounded-md border border-danger-border bg-danger-tint px-4 py-3 text-sm text-danger-text">
+            {error}
+          </div>
         ) : (
-          <canvas ref={canvasRef} className="mx-auto max-w-full rounded-sm shadow-lg shadow-black/20" />
+          <canvas ref={canvasRef} className="mx-auto max-w-full rounded-sm shadow-2xl" />
         )}
       </div>
     </div>

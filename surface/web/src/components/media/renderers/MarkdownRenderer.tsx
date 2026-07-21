@@ -19,13 +19,17 @@ export function MarkdownRenderer({ file, variant }: { file: PreviewFile; variant
   }
 
   return (
-    <div className="h-full overflow-auto bg-surface px-6 py-5">
+    <div className="h-full overflow-y-auto px-4 py-6 md:px-8" data-lightbox-backdrop>
       {state.status === 'loading' ? (
-        <div className="text-sm text-fg-muted">Loading markdown...</div>
+        <div className="flex h-full items-center justify-center text-sm text-white/70">Loading markdown...</div>
       ) : state.status === 'error' ? (
-        <div className="text-sm text-danger-text">{state.text}</div>
+        <div className="flex h-full items-center justify-center">
+          <div className="rounded-md border border-danger-border bg-danger-tint px-4 py-3 text-sm text-danger-text">
+            {state.text}
+          </div>
+        </div>
       ) : (
-        <div className="mx-auto max-w-3xl">
+        <div className="mx-auto max-w-3xl rounded-xl border border-edge bg-surface p-6 shadow-2xl md:p-10">
           {containsCriticMarkup(state.text) ? (
             <CriticMarkupView text={state.text} />
           ) : (
