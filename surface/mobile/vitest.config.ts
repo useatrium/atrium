@@ -15,6 +15,10 @@ export default defineConfig({
   test: {
     retry: process.env.CI ? 1 : 0,
     reporters: process.env.CI ? ['default', new FlakyReporter('@atrium/mobile')] : ['default'],
+    // Cap jsdom concurrency so full-workspace test load cannot cause
+    // CPU-starvation flakes. Mirrors the web package's cap — mobile was the one
+    // heavy jsdom suite left uncapped, so it oversubscribed a shared runner.
+    maxWorkers: Number(process.env.ATRIUM_TEST_WORKERS ?? 3),
     // React must run its development build for act()/Testing Library, even when
     // the invoking shell exports NODE_ENV=production (it does here). Mirrors the
     // web package's vitest config.
