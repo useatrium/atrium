@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type TouchEvent } from 'react';
-import type { SVGProps } from 'react';
+import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, SVGProps } from 'react';
 import { MediaPreview } from './MediaPreview';
 import {
   ChevronLeftIcon,
@@ -36,10 +36,18 @@ interface LightboxProps extends LightboxCallbacks {
 
 export type LightboxPanel = 'info' | 'history';
 
+// Header controls sit directly on the dark scrim in both themes, so they use
+// fixed glass styling instead of surface tokens.
 const iconButtonClass =
-  'grid size-8 max-md:size-11 place-items-center rounded-md border border-edge-strong bg-surface-overlay text-fg-secondary shadow-sm hover:bg-edge-strong hover:text-fg disabled:cursor-default disabled:text-fg-faint';
+  'grid size-8 max-md:size-11 place-items-center rounded-md border border-white/15 bg-white/10 text-white/85 shadow-sm backdrop-blur-sm hover:bg-white/20 hover:text-white disabled:cursor-default disabled:text-white/30 disabled:hover:bg-white/10';
 // A fixed window makes preview request cost independent of viewport width.
 const FILMSTRIP_PRELOAD_RADIUS = 2;
+
+/** Renderers mark their empty margins with this attribute so a click there
+ * (but not on content, controls, or a drag/scrollbar) dismisses the lightbox. */
+function isBackdropElement(target: EventTarget | null): target is HTMLElement {
+  return target instanceof HTMLElement && target.hasAttribute('data-lightbox-backdrop');
+}
 
 /** Viewport default for the side panel: info on desktop, closed on narrow
  * screens. URL-controlled hosts write this into the URL on open so the
@@ -161,6 +169,7 @@ export function Lightbox({
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
   const activeFilmstripButtonRef = useRef<HTMLButtonElement | null>(null);
   const touchStartRef = useRef<number | null>(null);
+  const backdropPressRef = useRef<{ x: number; y: number } | null>(null);
   const canPrev = index > 0;
   const canNext = index < files.length - 1;
   const renameInputId = 'lightbox-rename-input';
@@ -362,6 +371,24 @@ export function Lightbox({
     }
   };
 
+  const onBackdropPointerDown = (event: ReactPointerEvent<HTMLElement>) => {
+    backdropPressRef.current = isBackdropElement(event.target) ? { x: event.clientX, y: event.clientY } : null;
+  };
+
+  const onBackdropClick = (event: ReactMouseEvent<HTMLElement>) => {
+    const press = backdropPressRef.current;
+    backdropPressRef.current = null;
+    if (!press || !isBackdropElement(event.target)) return;
+    // A pan, swipe, or text-selection drag ends with a click too; only a
+    // stationary press-and-release on the backdrop should dismiss.
+    if (Math.hypot(event.clientX - press.x, event.clientY - press.y) > 5) return;
+    // Scrollbar clicks land inside the element box but outside its client area.
+    const rect = event.target.getBoundingClientRect();
+    if (event.clientX >= rect.left + event.target.clientWidth) return;
+    if (event.clientY >= rect.top + event.target.clientHeight) return;
+    onClose();
+  };
+
   const onTouchStart = (event: TouchEvent<HTMLElement>) => {
     if (editing) return;
     touchStartRef.current = event.touches[0]?.clientX ?? null;
@@ -382,12 +409,12 @@ export function Lightbox({
   return (
     <div
       ref={dialogRef}
-      className="fixed inset-0 z-overlay flex flex-col bg-surface text-fg shadow-2xl"
+      className="fixed inset-0 z-overlay flex flex-col bg-black/80 text-fg backdrop-blur-sm"
       role="dialog"
       aria-modal="true"
       aria-labelledby="lightbox-title"
     >
-      <header className="flex shrink-0 flex-wrap items-center gap-2 border-b border-edge bg-surface-raised px-3 py-2 md:h-12 md:flex-nowrap md:py-0">
+      <header className="flex shrink-0 flex-wrap items-center gap-2 px-3 py-2 md:h-12 md:flex-nowrap md:py-0">
         <Tooltip content="Close">
           <button
             ref={closeButtonRef}
@@ -433,7 +460,7 @@ export function Lightbox({
                 </button>
                 <button
                   type="button"
-                  className="rounded-md px-2.5 py-1 text-xs text-fg-tertiary hover:bg-surface-overlay hover:text-fg"
+                  className="rounded-md px-2.5 py-1 text-xs text-white/70 hover:bg-white/10 hover:text-white"
                   onClick={() => {
                     setRenaming(false);
                     setDraftName(file.name);
@@ -445,10 +472,10 @@ export function Lightbox({
             </>
           ) : (
             <>
-              <h2 id="lightbox-title" className="truncate text-sm font-semibold text-fg">
+              <h2 id="lightbox-title" className="truncate text-sm font-semibold text-white">
                 {file.name}
               </h2>
-              <div className="truncate text-2xs text-fg-muted">
+              <div className="truncate text-2xs text-white/60">
                 {index + 1} of {files.length} · {kindLabel(effectiveMediaKind(file))}
               </div>
             </>
@@ -554,10 +581,17 @@ export function Lightbox({
       </header>
 
       <main className="min-h-0 flex-1" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
-        <div className="grid h-full min-h-0 grid-cols-1 grid-rows-[minmax(0,1fr)_auto] md:grid-cols-[minmax(0,1fr)_auto] md:grid-rows-none">
-          <section className="relative flex min-h-0 bg-surface">
+        <div className="grid h-full min-h-0 grid-cols-1 grid-rows-[minmax(0,1fr)_auto] md:grid-cols-[minmax(0,1fr)_auto] md:grid-rows-[minmax(0,1fr)]">
+          {/* biome-ignore lint/a11y/useKeyWithClickEvents: backdrop click dismisses the lightbox; Escape is handled by useDialog. */}
+          {/* biome-ignore lint/a11y/noStaticElementInteractions: backdrop click is a pointer-only affordance; the Close button and Escape cover keyboard dismissal. */}
+          <section
+            className="relative flex min-h-0"
+            data-lightbox-backdrop
+            onPointerDown={onBackdropPointerDown}
+            onClick={onBackdropClick}
+          >
             {editing && conflict ? (
-              <div className="flex min-h-0 flex-1 flex-col">
+              <div className="flex min-h-0 flex-1 flex-col bg-surface">
                 {editError && (
                   <div
                     role="alert"
@@ -578,25 +612,27 @@ export function Lightbox({
               </div>
             ) : editing ? (
               editLoading ? (
-                <div className="flex flex-1 items-center justify-center text-2xs text-fg-muted">
+                <div className="flex flex-1 items-center justify-center bg-surface text-2xs text-fg-muted">
                   Loading editable content...
                 </div>
               ) : editBaseSeq != null && editText != null ? (
-                <TextEditorPane
-                  file={file}
-                  baseSeq={editBaseSeq}
-                  initialText={editText}
-                  onSave={saveEdit}
-                  onCancel={() => {
-                    setEditing(false);
-                    setEditError(null);
-                    setConflict(null);
-                  }}
-                  saving={editSaving}
-                  error={editError}
-                />
+                <div className="flex min-h-0 flex-1 flex-col bg-surface">
+                  <TextEditorPane
+                    file={file}
+                    baseSeq={editBaseSeq}
+                    initialText={editText}
+                    onSave={saveEdit}
+                    onCancel={() => {
+                      setEditing(false);
+                      setEditError(null);
+                      setConflict(null);
+                    }}
+                    saving={editSaving}
+                    error={editError}
+                  />
+                </div>
               ) : (
-                <div className="flex flex-1 flex-col items-center justify-center gap-2 px-4 text-center">
+                <div className="flex flex-1 flex-col items-center justify-center gap-2 bg-surface px-4 text-center">
                   <div role="alert" className="text-2xs text-danger-text">
                     {editError ?? 'Could not load editable content'}
                   </div>
@@ -611,10 +647,14 @@ export function Lightbox({
               )
             ) : (
               <>
-                <MediaPreview file={displayFile} variant="full" />
+                {/* Stretch the preview to the full section width so renderers can
+                    center content and own scrolling edge to edge. */}
+                <div className="h-full min-w-0 flex-1">
+                  <MediaPreview file={displayFile} variant="full" />
+                </div>
                 <button
                   type="button"
-                  className="absolute left-3 top-1/2 grid size-10 -translate-y-1/2 place-items-center rounded-full border border-edge-strong bg-surface-overlay/95 text-fg-secondary shadow-lg hover:bg-edge-strong hover:text-fg disabled:opacity-30"
+                  className="absolute left-3 top-1/2 grid size-10 -translate-y-1/2 place-items-center rounded-full border border-white/15 bg-black/50 text-white/80 shadow-lg backdrop-blur-sm hover:bg-black/70 hover:text-white disabled:opacity-30"
                   onClick={() => onIndexChange(index - 1)}
                   disabled={!canPrev}
                   aria-label="Previous file"
@@ -623,7 +663,7 @@ export function Lightbox({
                 </button>
                 <button
                   type="button"
-                  className="absolute right-3 top-1/2 grid size-10 -translate-y-1/2 place-items-center rounded-full border border-edge-strong bg-surface-overlay/95 text-fg-secondary shadow-lg hover:bg-edge-strong hover:text-fg disabled:opacity-30"
+                  className="absolute right-3 top-1/2 grid size-10 -translate-y-1/2 place-items-center rounded-full border border-white/15 bg-black/50 text-white/80 shadow-lg backdrop-blur-sm hover:bg-black/70 hover:text-white disabled:opacity-30"
                   onClick={() => onIndexChange(index + 1)}
                   disabled={!canNext}
                   aria-label="Next file"

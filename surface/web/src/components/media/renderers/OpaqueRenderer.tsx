@@ -16,8 +16,8 @@ export function OpaqueRenderer({ file, variant }: { file: PreviewFile; variant: 
   }
 
   return (
-    <div className="flex h-full min-h-72 items-center justify-center p-6">
-      <div className="w-[min(420px,100%)] rounded-lg border border-edge bg-surface-raised/55 p-5 text-center">
+    <div className="flex h-full min-h-72 items-center justify-center p-6" data-lightbox-backdrop>
+      <div className="w-[min(420px,100%)] rounded-lg border border-edge bg-surface p-5 text-center shadow-2xl">
         <div className="mx-auto grid size-12 place-items-center rounded-md border border-edge bg-surface-overlay/70 text-fg-muted">
           <FileIcon size={24} />
         </div>

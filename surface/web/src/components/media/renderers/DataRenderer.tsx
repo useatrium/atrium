@@ -80,7 +80,7 @@ function NotebookView({ text, compact }: { text: string; compact: boolean }) {
   const visibleCells = compact ? cells.slice(0, 3) : cells;
 
   return (
-    <div className={compact ? 'space-y-2 p-3' : 'mx-auto max-w-4xl space-y-3 p-5'}>
+    <div className={compact ? 'space-y-2 p-3' : 'space-y-3'}>
       {visibleCells.map((cell, idx) => {
         const textValue = sourceText(cell.source);
         return (
@@ -120,17 +120,40 @@ export function DataRenderer({ file, variant }: { file: PreviewFile; variant: Me
   const state = usePreviewText(file);
 
   if (state.status !== 'ready') {
+    if (variant === 'tile') {
+      return (
+        <div className="flex h-full min-h-0 items-center justify-center bg-surface-raised/35 p-3 text-sm text-fg-muted">
+          {state.status === 'loading' ? 'Loading data...' : state.text}
+        </div>
+      );
+    }
     return (
-      <div
-        className={`flex h-full ${variant === 'tile' ? 'min-h-0' : 'min-h-32'} items-center justify-center bg-surface-raised/35 p-3 text-sm text-fg-muted`}
-      >
+      <div className="flex h-full min-h-32 items-center justify-center p-3 text-sm text-white/70">
         {state.status === 'loading' ? 'Loading data...' : state.text}
       </div>
     );
   }
 
-  if (isNotebookFile(file)) return <NotebookView text={state.text} compact={variant === 'tile'} />;
-  if (isCsvFile(file)) return <CsvTable text={state.text} compact={variant === 'tile'} />;
+  if (isNotebookFile(file)) {
+    if (variant === 'tile') return <NotebookView text={state.text} compact />;
+    return (
+      <div className="h-full overflow-y-auto px-4 py-6 md:px-8" data-lightbox-backdrop>
+        <div className="mx-auto max-w-4xl rounded-xl border border-edge bg-surface p-5 shadow-2xl">
+          <NotebookView text={state.text} compact={false} />
+        </div>
+      </div>
+    );
+  }
+  if (isCsvFile(file)) {
+    if (variant === 'tile') return <CsvTable text={state.text} compact />;
+    return (
+      <div className="h-full p-4 md:p-6" data-lightbox-backdrop>
+        <div className="h-full overflow-hidden rounded-xl border border-edge bg-surface shadow-2xl">
+          <CsvTable text={state.text} compact={false} />
+        </div>
+      </div>
+    );
+  }
 
   let pretty = state.text;
   try {
@@ -139,9 +162,19 @@ export function DataRenderer({ file, variant }: { file: PreviewFile; variant: Me
     pretty = state.text;
   }
 
+  if (variant === 'tile') {
+    return (
+      <pre className="h-full overflow-auto whitespace-pre-wrap bg-surface p-4 font-mono text-xs leading-relaxed text-fg-body">
+        {pretty}
+      </pre>
+    );
+  }
+
   return (
-    <pre className="h-full overflow-auto whitespace-pre-wrap bg-surface p-4 font-mono text-xs leading-relaxed text-fg-body">
-      {pretty}
-    </pre>
+    <div className="h-full overflow-y-auto px-4 py-6 md:px-8" data-lightbox-backdrop>
+      <pre className="mx-auto max-w-4xl whitespace-pre-wrap rounded-xl border border-edge bg-surface p-5 font-mono text-xs leading-relaxed text-fg-body shadow-2xl">
+        {pretty}
+      </pre>
+    </div>
   );
 }

@@ -91,8 +91,8 @@ function OfficeFallback({
   }
 
   return (
-    <div className="flex h-full min-h-72 items-center justify-center p-6">
-      <div className="w-[min(440px,100%)] rounded-lg border border-edge bg-surface-raised/55 p-5 text-center">
+    <div className="flex h-full min-h-72 items-center justify-center p-6" data-lightbox-backdrop>
+      <div className="w-[min(440px,100%)] rounded-lg border border-edge bg-surface p-5 text-center shadow-2xl">
         <div className="mx-auto grid size-12 place-items-center rounded-md border border-edge bg-surface-overlay/70 text-fg-muted">
           <FileIcon size={24} />
         </div>
@@ -124,13 +124,14 @@ function OfficeFallback({
 }
 
 function LoadingState({ label, variant }: { label: string; variant?: MediaPreviewVariant }) {
-  return (
-    <div
-      className={`flex h-full ${variant === 'tile' ? 'min-h-0' : 'min-h-32'} items-center justify-center bg-surface-raised/35 p-3 text-sm text-fg-muted`}
-    >
-      {label}
-    </div>
-  );
+  if (variant === 'tile') {
+    return (
+      <div className="flex h-full min-h-0 items-center justify-center bg-surface-raised/35 p-3 text-sm text-fg-muted">
+        {label}
+      </div>
+    );
+  }
+  return <div className="flex h-full min-h-32 items-center justify-center p-3 text-sm text-white/70">{label}</div>;
 }
 
 export function OfficeRenderer({ file, variant }: { file: PreviewFile; variant: MediaPreviewVariant }) {
@@ -298,16 +299,18 @@ export function OfficeRenderer({ file, variant }: { file: PreviewFile; variant: 
   if (officeKind === 'spreadsheet') {
     if (state.status !== 'sheet-ready') return <LoadingState label="Loading spreadsheet..." variant={variant} />;
     return (
-      <div className="flex h-full min-h-0 flex-col bg-surface">
-        <div className="flex h-10 shrink-0 items-center justify-between gap-3 border-b border-edge bg-surface-raised/45 px-3">
-          <div className="truncate text-xs font-semibold text-fg">{state.sheetName}</div>
-          <div className="shrink-0 text-2xs text-fg-muted">
-            {firstSheetSummary(state.rows)}
-            {state.sheetCount > 1 ? ` - ${state.sheetCount} sheets` : ''}
+      <div className="h-full p-4 md:p-6" data-lightbox-backdrop>
+        <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-edge bg-surface shadow-2xl">
+          <div className="flex h-10 shrink-0 items-center justify-between gap-3 border-b border-edge bg-surface-raised/45 px-3">
+            <div className="truncate text-xs font-semibold text-fg">{state.sheetName}</div>
+            <div className="shrink-0 text-2xs text-fg-muted">
+              {firstSheetSummary(state.rows)}
+              {state.sheetCount > 1 ? ` - ${state.sheetCount} sheets` : ''}
+            </div>
           </div>
-        </div>
-        <div className="min-h-0 flex-1 overflow-hidden">
-          <PreviewTable rows={state.rows} compact={false} />
+          <div className="min-h-0 flex-1 overflow-hidden">
+            <PreviewTable rows={state.rows} compact={false} />
+          </div>
         </div>
       </div>
     );
@@ -316,34 +319,27 @@ export function OfficeRenderer({ file, variant }: { file: PreviewFile; variant: 
   if (officeKind === 'presentation') {
     if (state.status !== 'slides-ready') return <LoadingState label="Loading presentation..." variant={variant} />;
     return (
-      <div className="flex h-full min-h-0 flex-col bg-surface">
-        <div className="flex shrink-0 flex-col gap-1 border-b border-edge bg-surface-raised/45 px-3 py-2">
-          <div className="truncate text-xs font-semibold text-fg" title={file.name}>
-            {file.name}
-          </div>
-          <div className="text-2xs text-fg-muted">Simplified preview - download for full fidelity</div>
-        </div>
-        <div className="min-h-0 flex-1 overflow-auto p-4">
-          <div className="mx-auto flex max-w-4xl flex-col gap-4">
-            {state.slides.map((slide) => (
-              <section key={slide.index} className="rounded-lg border border-edge bg-surface-raised/45 p-4">
-                <div className="mb-3 inline-flex rounded-md border border-edge bg-surface-overlay/70 px-2 py-1 text-2xs font-semibold uppercase tracking-wide text-fg-muted">
-                  Slide {slide.index}
+      <div className="h-full overflow-y-auto px-4 py-6 md:px-8" data-lightbox-backdrop>
+        <div className="mx-auto flex max-w-4xl flex-col gap-4">
+          <div className="text-center text-2xs text-white/60">Simplified preview - download for full fidelity</div>
+          {state.slides.map((slide) => (
+            <section key={slide.index} className="rounded-lg border border-edge bg-surface p-4 shadow-2xl">
+              <div className="mb-3 inline-flex rounded-md border border-edge bg-surface-overlay/70 px-2 py-1 text-2xs font-semibold uppercase tracking-wide text-fg-muted">
+                Slide {slide.index}
+              </div>
+              {slide.lines.length ? (
+                <div className="space-y-2 text-sm leading-relaxed text-fg">
+                  {slide.lines.map((line, index) => (
+                    <p key={`${slide.index}-${index}`} className="whitespace-pre-wrap break-words">
+                      {line}
+                    </p>
+                  ))}
                 </div>
-                {slide.lines.length ? (
-                  <div className="space-y-2 text-sm leading-relaxed text-fg">
-                    {slide.lines.map((line, index) => (
-                      <p key={`${slide.index}-${index}`} className="whitespace-pre-wrap break-words">
-                        {line}
-                      </p>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-sm text-fg-muted">No extractable text on this slide.</p>
-                )}
-              </section>
-            ))}
-          </div>
+              ) : (
+                <p className="text-sm text-fg-muted">No extractable text on this slide.</p>
+              )}
+            </section>
+          ))}
         </div>
       </div>
     );
@@ -351,7 +347,7 @@ export function OfficeRenderer({ file, variant }: { file: PreviewFile; variant: 
 
   if (officeKind === 'word') {
     return (
-      <div className="h-full min-h-0 overflow-auto bg-surface p-4">
+      <div className="h-full min-h-0 overflow-auto p-4" data-lightbox-backdrop>
         {state.status === 'loading' && <LoadingState label="Loading document..." variant={variant} />}
         <div
           ref={containerRef}
