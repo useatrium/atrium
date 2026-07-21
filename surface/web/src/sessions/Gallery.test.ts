@@ -472,14 +472,17 @@ describe('Gallery ported affordances', () => {
     expect(await screen.findByRole('button', { name: 'Unstar file' })).toBeTruthy();
   });
 
-  it('adds a label from the tile via the prompt', async () => {
-    vi.spyOn(window, 'prompt').mockReturnValue('draft');
+  it('adds a label from the tile via the inline popover', async () => {
     const fetchMock = affordanceFetch({ files: [galleryFile({ labels: [] })], labels: { labels: ['draft'] } });
     vi.stubGlobal('fetch', fetchMock);
 
     render(createElement(Gallery, { workspaceId: WORKSPACE_ID }));
 
     fireEvent.click(await screen.findByRole('button', { name: 'Add label' }));
+
+    const input = await screen.findByPlaceholderText('Add label');
+    fireEvent.change(input, { target: { value: 'draft' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
 
     await waitFor(() =>
       expect(
@@ -488,7 +491,29 @@ describe('Gallery ported affordances', () => {
         ),
       ).toBe(true),
     );
+    // The popover closes on submit and the optimistic chip appears.
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Add label' })).toBeNull());
     expect(await screen.findByText('draft')).toBeTruthy();
+  });
+
+  it('closes the label popover on Escape without adding a label', async () => {
+    const fetchMock = affordanceFetch({ files: [galleryFile({ labels: [] })], labels: { labels: ['draft'] } });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(createElement(Gallery, { workspaceId: WORKSPACE_ID }));
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Add label' }));
+
+    const input = await screen.findByPlaceholderText('Add label');
+    fireEvent.change(input, { target: { value: 'draft' } });
+    fireEvent.keyDown(input, { key: 'Escape' });
+
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Add label' })).toBeNull());
+    expect(
+      fetchMock.mock.calls.some(
+        ([input, init]) => requestPath(input) === '/api/files/art_memo/labels' && (init?.method ?? 'GET') === 'POST',
+      ),
+    ).toBe(false);
   });
 
   it('removes an existing label from the tile', async () => {
