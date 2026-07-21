@@ -44,7 +44,7 @@ import {
   type ProviderCredentialStatus,
 } from '../api';
 import { SLUG_TAB, TAB_SLUG, WorkDrawer, type ActiveWorkTab, type WorkTab } from './WorkDrawer';
-import type { FilesHubDefaultScope, FilesHubSessionScope } from './FilesHub';
+import type { FilesHubDefaultScope, FilesHubSessionScope } from './fileHubCore';
 import { useConflicts } from './useConflicts';
 import { InlineFileChange } from './fileChangeView';
 import { PlanPanel } from './PlanPanel';

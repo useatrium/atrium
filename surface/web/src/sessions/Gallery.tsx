@@ -1,14 +1,23 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { JSX } from 'react';
+import type { JSX, KeyboardEvent } from 'react';
 import {
+  containsCriticMarkup,
   FILE_CATEGORIES,
   fileTypeLabel,
+  splitMarkdownFrontmatter,
   type FileCategory,
   type HubFile,
   type HubFileListResult,
+  type HubFileVersionsResponse,
 } from '@atrium/surface-client';
 import { Menu, MenuContent, MenuLabel, MenuSeparator, MenuTrigger, Tooltip } from '../components/a11y';
+import {
+  EntryReferencesChip,
+  queryEntryReferencesForHandles,
+  type EntryReferenceSummary,
+} from '../components/EntryReferencesChip';
 import { SearchIcon } from '../components/icons';
+import { MarkupPane, type MarkupPaneSource } from '../components/MarkupPane';
 import { Lightbox, MediaPreview, defaultLightboxPanel } from '../components/media';
 import type { LightboxCallbacks, PreviewFile } from '../components/media';
 import { effectiveMediaKind, isAppFile } from '../components/media/utils';
@@ -16,14 +25,17 @@ import { showErrorToast } from '../components/Toasts';
 import { navigate, URL_PARAMS, useLocation } from '../router';
 import { EmptyState } from './EmptyState';
 import {
+  artifactEntryHandle,
   artifactEntryUrl as absoluteArtifactEntryUrl,
   cleanId,
   createFileLightboxCallbacks,
+  hubFileToPreview,
   lightboxPanelFromSearch,
   pathWithSearch,
   responseError,
+  updateFile,
 } from './fileHubCore';
-import { hubFileToPreview } from './FilesHub';
+import type { Session } from './types';
 
 type GallerySort = 'recent' | 'name' | 'size';
 type GalleryScope = 'everything' | 'channel' | 'session';
@@ -32,6 +44,13 @@ type GalleryCategorySelection = 'all' | FileCategory;
 export interface GalleryScopeContext {
   channelId?: string | null;
   sessionId?: string | null;
+  /**
+   * Scope to fall back to when the URL carries no explicit scope param — lets
+   * the detached session view open in session scope without seeding the URL.
+   */
+  defaultScope?: GalleryScope;
+  /** Whether scratch files are included when the URL omits the toggle. */
+  defaultIncludeScratch?: boolean;
 }
 
 export interface GalleryQueryState {
@@ -49,6 +68,7 @@ export interface GalleryQueryState {
 
 const PAGE_SIZE = 60;
 const TEXT_TILE_PREVIEW_SIZE_LIMIT_BYTES = 512 * 1024;
+const ENTRY_REFERENCES_REFETCH_MS = 60_000;
 const SORT_VALUES = new Set<GallerySort>(['recent', 'name', 'size']);
 const GALLERY_URL_PARAM_KEYS = [
   'q',
@@ -66,8 +86,11 @@ const GALLERY_URL_PARAM_KEYS = [
  * Keep server-query state separate from presentation-only URL state. Opening a
  * file or toggling its lightbox panel must not invalidate the gallery listing.
  */
-export function galleryQuerySearch(search: string): string {
-  return galleryUrlSearchParams(galleryStateFromSearch(search)).toString();
+export function galleryQuerySearch(search: string, defaultIncludeScratch = false): string {
+  return galleryUrlSearchParams(
+    galleryStateFromSearch(search, { defaultIncludeScratch }),
+    defaultIncludeScratch,
+  ).toString();
 }
 
 function isFileCategory(value: string | null): value is FileCategory {
@@ -84,17 +107,29 @@ export function galleryStateFromSearch(search: string, context: GalleryScopeCont
   const queryChannelId = cleanId(params.get('channelId'));
   const querySessionId = cleanId(params.get('sessionId'));
   const sort = params.get('sort');
-  const scope: GalleryScope = querySessionId ? 'session' : queryChannelId ? 'channel' : 'everything';
+  const contextChannelId = cleanId(context.channelId);
+  const contextSessionId = cleanId(context.sessionId);
+  const scope: GalleryScope = querySessionId
+    ? 'session'
+    : queryChannelId
+      ? 'channel'
+      : context.defaultScope === 'session' && contextSessionId
+        ? 'session'
+        : context.defaultScope === 'channel' && contextChannelId
+          ? 'channel'
+          : 'everything';
 
   return {
     q: params.get('q') ?? '',
     category: isFileCategory(category) ? category : 'all',
     scope,
-    channelId: queryChannelId || cleanId(context.channelId),
-    sessionId: querySessionId || cleanId(context.sessionId),
+    channelId: queryChannelId || contextChannelId,
+    sessionId: querySessionId || contextSessionId,
     sort: sort && SORT_VALUES.has(sort as GallerySort) ? (sort as GallerySort) : 'recent',
     includeDeleted: boolFromParam(params, 'includeDeleted'),
-    includeScratch: boolFromParam(params, 'includeScratch'),
+    includeScratch: params.has('includeScratch')
+      ? boolFromParam(params, 'includeScratch')
+      : (context.defaultIncludeScratch ?? false),
     starred: boolFromParam(params, 'starred'),
     label: params.get('label') ?? '',
   };
@@ -122,7 +157,7 @@ export function galleryApiSearchParams(
   return params;
 }
 
-function galleryUrlSearchParams(state: GalleryQueryState): URLSearchParams {
+function galleryUrlSearchParams(state: GalleryQueryState, defaultIncludeScratch = false): URLSearchParams {
   const params = new URLSearchParams();
   const q = state.q.trim();
   const label = state.label.trim();
@@ -132,7 +167,9 @@ function galleryUrlSearchParams(state: GalleryQueryState): URLSearchParams {
   if (state.scope === 'session' && state.sessionId.trim()) params.set('sessionId', state.sessionId.trim());
   if (state.sort !== 'recent') params.set('sort', state.sort);
   if (state.includeDeleted) params.set('includeDeleted', 'true');
-  if (state.includeScratch) params.set('includeScratch', 'true');
+  // Encode scratch only when it diverges from the view's default so a
+  // default-scratch detached view can still persist an explicit opt-out.
+  if (state.includeScratch !== defaultIncludeScratch) params.set('includeScratch', String(state.includeScratch));
   if (state.starred) params.set('starred', 'true');
   if (label) params.set('label', label);
   return params;
@@ -228,13 +265,48 @@ function GalleryCardPreview({ file, preview, hydrated }: { file: HubFile; previe
   );
 }
 
+function StarGlyph({ filled }: { filled: boolean }) {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      width={13}
+      height={13}
+      fill={filled ? 'currentColor' : 'none'}
+      stroke="currentColor"
+      strokeWidth={1.75}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M12 2.5l2.9 5.88 6.49.94-4.7 4.58 1.11 6.46L12 17.9 6.2 20.86l1.11-6.46-4.7-4.58 6.49-.94Z" />
+    </svg>
+  );
+}
+
+function nestedControlKeyDown(event: KeyboardEvent<HTMLElement>, run: () => void) {
+  if (event.key !== 'Enter' && event.key !== ' ') return;
+  event.preventDefault();
+  event.stopPropagation();
+  run();
+}
+
 function GalleryCard({
   file,
+  references,
   onOpen,
+  onToggleStar,
+  onAddLabel,
+  onRemoveLabel,
+  onRestore,
   previewHydrated,
 }: {
   file: HubFile;
+  references?: EntryReferenceSummary | null;
   onOpen: () => void;
+  onToggleStar: () => void;
+  onAddLabel: () => void;
+  onRemoveLabel: (label: string) => void;
+  onRestore: () => void;
   previewHydrated: boolean;
 }) {
   // Route-only lightbox changes rerender Gallery, but a stable file must keep a
@@ -242,10 +314,13 @@ function GalleryCard({
   const preview = useMemo(() => hubFileToPreview(file), [file]);
   const showPath = effectiveMediaKind(preview) !== 'image';
   return (
-    <button
-      type="button"
+    // biome-ignore lint/a11y/useSemanticElements: keyboard-activatable file card; a <button> can't host the nested star/label controls.
+    <div
+      role="button"
+      tabIndex={0}
       onClick={onOpen}
-      className={`group flex min-h-52 min-w-0 flex-col overflow-hidden rounded-md border text-left transition-colors ${
+      onKeyDown={(event) => nestedControlKeyDown(event, onOpen)}
+      className={`group relative flex min-h-52 min-w-0 flex-col overflow-hidden rounded-md border text-left transition-colors ${
         file.tombstoned
           ? 'border-danger-border/60 bg-danger-tint/20 opacity-80'
           : 'border-edge bg-surface-raised/45 hover:border-edge-strong hover:bg-surface-raised'
@@ -259,10 +334,41 @@ function GalleryCard({
           <GalleryCardPreview file={file} preview={preview} hydrated={previewHydrated} />
         </div>
       </div>
+      <Tooltip content={file.starred ? 'Unstar file' : 'Star file'}>
+        {/* biome-ignore lint/a11y/useSemanticElements: keyboard-activatable overlay control nested inside the card. */}
+        <span
+          role="button"
+          tabIndex={0}
+          aria-label={file.starred ? 'Unstar file' : 'Star file'}
+          aria-pressed={file.starred}
+          onClick={(event) => {
+            event.stopPropagation();
+            onToggleStar();
+          }}
+          onKeyDown={(event) => nestedControlKeyDown(event, onToggleStar)}
+          className={`absolute right-2 top-2 grid size-7 place-items-center rounded-md border shadow-sm transition-opacity ${
+            file.starred
+              ? 'border-warning-border bg-warning-tint text-warning-text opacity-100'
+              : 'border-edge bg-surface/85 text-fg-muted opacity-0 hover:bg-surface-overlay hover:text-fg group-hover:opacity-100 focus-visible:opacity-100'
+          }`}
+        >
+          <StarGlyph filled={file.starred} />
+        </span>
+      </Tooltip>
       <div className="flex min-h-20 min-w-0 flex-1 flex-col justify-between gap-2 px-2.5 py-2">
         <div className="min-w-0">
-          <div className="truncate text-xs font-semibold text-fg-body" title={file.path}>
-            {file.name}
+          <div className="flex min-w-0 items-center gap-1.5">
+            <div className="min-w-0 flex-1 truncate text-xs font-semibold text-fg-body" title={file.path}>
+              {file.name}
+            </div>
+            {/* biome-ignore lint/a11y/noStaticElementInteractions: entry-ref chip only stops propagation inside the keyboard-activatable card. */}
+            <span
+              className="shrink-0"
+              onClick={(event) => event.stopPropagation()}
+              onKeyDown={(event) => event.stopPropagation()}
+            >
+              <EntryReferencesChip summary={references} />
+            </span>
           </div>
           <div className="mt-1 truncate text-3xs text-fg-muted" title={fileMeta(file)}>
             {fileMeta(file)}
@@ -273,8 +379,63 @@ function GalleryCard({
             {file.path}
           </div>
         )}
+        <div className="flex min-h-5 flex-wrap items-center gap-1">
+          {file.labels.slice(0, 3).map((label) => (
+            <span
+              key={label}
+              className="inline-flex max-w-full items-center gap-1 rounded bg-surface-overlay px-1.5 py-px text-3xs text-fg-secondary"
+            >
+              <span className="truncate">{label}</span>
+              {/* biome-ignore lint/a11y/useSemanticElements: keyboard-activatable inline label control; a button would alter compact chip layout. */}
+              <span
+                role="button"
+                tabIndex={0}
+                aria-label={`Remove ${label} label`}
+                className="text-fg-faint hover:text-danger-text"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onRemoveLabel(label);
+                }}
+                onKeyDown={(event) => nestedControlKeyDown(event, () => onRemoveLabel(label))}
+              >
+                ×
+              </span>
+            </span>
+          ))}
+          {file.labels.length > 3 && <span className="text-3xs text-fg-muted">+{file.labels.length - 3}</span>}
+          {/* biome-ignore lint/a11y/useSemanticElements: keyboard-activatable inline label control; a button would alter compact chip layout. */}
+          <span
+            role="button"
+            tabIndex={0}
+            aria-label="Add label"
+            className="rounded px-1.5 py-px text-3xs text-fg-muted opacity-0 hover:bg-surface-overlay hover:text-fg-body focus-visible:opacity-100 group-hover:opacity-100"
+            onClick={(event) => {
+              event.stopPropagation();
+              onAddLabel();
+            }}
+            onKeyDown={(event) => nestedControlKeyDown(event, onAddLabel)}
+          >
+            + label
+          </span>
+          {file.tombstoned && (
+            // biome-ignore lint/a11y/useSemanticElements: keyboard-activatable inline restore control; a button would alter compact card layout.
+            <span
+              role="button"
+              tabIndex={0}
+              aria-label="Restore file"
+              className="ml-auto rounded px-1.5 py-px text-3xs font-semibold text-accent-text hover:bg-accent-soft"
+              onClick={(event) => {
+                event.stopPropagation();
+                onRestore();
+              }}
+              onKeyDown={(event) => nestedControlKeyDown(event, onRestore)}
+            >
+              restore
+            </span>
+          )}
+        </div>
       </div>
-    </button>
+    </div>
   );
 }
 
@@ -440,6 +601,10 @@ export function Gallery({
   initialOpenArtifactId,
   onInitialOpenArtifactHandled,
   onSeedChannelComposer,
+  onStartAgentWithTask,
+  sessions,
+  defaultScope = 'everything',
+  defaultIncludeScratch = false,
 }: {
   workspaceId: string;
   channelId?: string | null;
@@ -448,10 +613,20 @@ export function Gallery({
   initialOpenArtifactId?: string | null;
   onInitialOpenArtifactHandled?: (artifactId: string) => void;
   onSeedChannelComposer?: (draft: string) => void;
+  /** Seed a new agent from an applied markup review (Lightbox → apply markup). */
+  onStartAgentWithTask?: (task: string) => void;
+  sessions?: Record<string, Session>;
+  /** Scope to open in when the URL carries no explicit scope param. */
+  defaultScope?: GalleryScope;
+  /** Whether the initial listing includes scratch files (detached session view). */
+  defaultIncludeScratch?: boolean;
 }): JSX.Element {
   const location = useLocation();
   const endpoint = `/api/workspaces/${encodeURIComponent(workspaceId)}/files`;
-  const querySearch = useMemo(() => galleryQuerySearch(location.search), [location.search]);
+  const querySearch = useMemo(
+    () => galleryQuerySearch(location.search, defaultIncludeScratch),
+    [defaultIncludeScratch, location.search],
+  );
   const urlFileArtifactId = useMemo(
     () => cleanId(new URLSearchParams(location.search).get(URL_PARAMS.file)),
     [location.search],
@@ -467,8 +642,18 @@ export function Gallery({
       galleryStateFromSearch(querySearch, {
         channelId: rememberedScopeIds.channelId || channelId,
         sessionId: rememberedScopeIds.sessionId || sessionId,
+        defaultScope,
+        defaultIncludeScratch,
       }),
-    [channelId, querySearch, rememberedScopeIds.channelId, rememberedScopeIds.sessionId, sessionId],
+    [
+      channelId,
+      defaultIncludeScratch,
+      defaultScope,
+      querySearch,
+      rememberedScopeIds.channelId,
+      rememberedScopeIds.sessionId,
+      sessionId,
+    ],
   );
   const [searchDraft, setSearchDraft] = useState(queryState.q);
   const [files, setFiles] = useState<HubFile[]>([]);
@@ -480,11 +665,21 @@ export function Gallery({
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const [hydratedPreviewIds, setHydratedPreviewIds] = useState<Set<string>>(() => new Set());
   const [notice, setNotice] = useState<string | null>(null);
+  const [markupSource, setMarkupSource] = useState<MarkupPaneSource | null>(null);
+  const [applyMarkupCandidate, setApplyMarkupCandidate] = useState<{
+    artifactId: string;
+    path: string;
+    seq: number;
+  } | null>(null);
+  const [artifactEntryReferences, setArtifactEntryReferences] = useState<Record<string, EntryReferenceSummary | null>>(
+    {},
+  );
   const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
   const handledLegacyInitialOpenRef = useRef<string | null>(null);
   const revealRef = useRef<{ id: string; state: 'injecting' | 'failed' } | null>(null);
+  const artifactEntryReferencesFetchedAtRef = useRef(0);
 
   const previews = useMemo(() => files.map(hubFileToPreview), [files]);
   const activeScope =
@@ -501,6 +696,74 @@ export function Gallery({
     setNotice(message);
     if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
     noticeTimerRef.current = setTimeout(() => setNotice(null), 2600);
+  }, []);
+
+  const toggleStar = useCallback(async (file: HubFile) => {
+    const previous = file.starred;
+    setFiles((current) => updateFile(current, file.artifactId, { starred: !previous }));
+    try {
+      const response = await fetch(`/api/files/${file.artifactId}/star`, {
+        method: previous ? 'DELETE' : 'POST',
+        credentials: 'same-origin',
+      });
+      if (!response.ok) throw new Error(await responseError(response, 'Could not update star'));
+      const body = (await response.json()) as { artifactId: string; starred: boolean };
+      setFiles((current) => updateFile(current, body.artifactId, { starred: body.starred }));
+    } catch (err) {
+      setFiles((current) => updateFile(current, file.artifactId, { starred: previous }));
+      showErrorToast(err instanceof Error ? err.message : 'Could not update star');
+    }
+  }, []);
+
+  const addLabel = useCallback(async (file: HubFile) => {
+    const label = window.prompt('Label this file')?.trim();
+    if (!label || file.labels.includes(label)) return;
+    const previous = file.labels;
+    setFiles((current) => updateFile(current, file.artifactId, { labels: [...previous, label] }));
+    try {
+      const response = await fetch(`/api/files/${file.artifactId}/labels`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ label }),
+      });
+      if (!response.ok) throw new Error(await responseError(response, 'Could not add label'));
+      const body = (await response.json()) as { artifactId: string; labels: string[] };
+      setFiles((current) => updateFile(current, body.artifactId, { labels: body.labels }));
+    } catch (err) {
+      setFiles((current) => updateFile(current, file.artifactId, { labels: previous }));
+      showErrorToast(err instanceof Error ? err.message : 'Could not add label');
+    }
+  }, []);
+
+  const removeLabel = useCallback(async (file: HubFile, label: string) => {
+    const previous = file.labels;
+    setFiles((current) =>
+      updateFile(current, file.artifactId, { labels: previous.filter((value) => value !== label) }),
+    );
+    try {
+      const response = await fetch(`/api/files/${file.artifactId}/labels/${encodeURIComponent(label)}`, {
+        method: 'DELETE',
+        credentials: 'same-origin',
+      });
+      if (!response.ok) throw new Error(await responseError(response, 'Could not remove label'));
+    } catch (err) {
+      setFiles((current) => updateFile(current, file.artifactId, { labels: previous }));
+      showErrorToast(err instanceof Error ? err.message : 'Could not remove label');
+    }
+  }, []);
+
+  const restoreFile = useCallback(async (file: HubFile) => {
+    try {
+      const response = await fetch(`/api/files/${file.artifactId}/restore`, {
+        method: 'POST',
+        credentials: 'same-origin',
+      });
+      if (!response.ok) throw new Error(await responseError(response, 'Could not restore file'));
+      setFiles((current) => updateFile(current, file.artifactId, { tombstoned: false }));
+    } catch (err) {
+      showErrorToast(err instanceof Error ? err.message : 'Could not restore file');
+    }
   }, []);
 
   useEffect(() => {
@@ -576,10 +839,10 @@ export function Gallery({
       }
       const params = new URLSearchParams(location.search);
       for (const key of GALLERY_URL_PARAM_KEYS) params.delete(key);
-      for (const [key, value] of galleryUrlSearchParams(next)) params.set(key, value);
-      navigate(pathWithSearch('/files', params), options);
+      for (const [key, value] of galleryUrlSearchParams(next, defaultIncludeScratch)) params.set(key, value);
+      navigate(pathWithSearch(location.pathname, params), options);
     },
-    [location.search, queryState],
+    [defaultIncludeScratch, location.pathname, location.search, queryState],
   );
 
   const updateLightboxSearch = useCallback(
@@ -596,9 +859,9 @@ export function Gallery({
         if (patch.panel) params.set(URL_PARAMS.panel, patch.panel);
         else params.delete(URL_PARAMS.panel);
       }
-      navigate(pathWithSearch('/files', params), options);
+      navigate(pathWithSearch(location.pathname, params), options);
     },
-    [location.search],
+    [location.pathname, location.search],
   );
 
   const openLightboxAtIndex = useCallback(
@@ -800,9 +1063,125 @@ export function Gallery({
           showErrorToast('Could not copy file link.');
         }
       },
+      onMarkup: async (file) => {
+        if (!sessionId) return;
+        try {
+          const [versionsResponse, contentResponse] = await Promise.all([
+            fetch(`/api/files/${file.id}/versions`, { credentials: 'same-origin' }),
+            fetch(`/api/files/artifact/${file.id}/content`, { credentials: 'same-origin' }),
+          ]);
+          if (!versionsResponse.ok) {
+            throw new Error(await responseError(versionsResponse, 'Could not load version history'));
+          }
+          if (!contentResponse.ok) {
+            throw new Error(await responseError(contentResponse, 'Could not load version content'));
+          }
+          const versionsBody = (await versionsResponse.json()) as HubFileVersionsResponse;
+          const latest = versionsBody.versions[0];
+          if (!latest) throw new Error('Could not find the latest file version');
+          const { frontmatter, body } = splitMarkdownFrontmatter(await contentResponse.text());
+          setMarkupSource({
+            artifactId: file.id,
+            path: file.name,
+            seq: latest.seq,
+            workspaceId,
+            sessionId,
+            frontmatter,
+            body,
+          });
+        } catch (err) {
+          showErrorToast(err instanceof Error ? err.message : 'Could not open markup pane');
+          throw err;
+        }
+      },
     }),
-    [channelId, closeLightbox, onSeedChannelComposer, sharedCallbacks, showNotice],
+    [channelId, closeLightbox, onSeedChannelComposer, sessionId, sharedCallbacks, showNotice, workspaceId],
   );
+
+  const currentLightboxFile =
+    lightboxIndex != null && previews.length > 0 ? previews[Math.min(lightboxIndex, previews.length - 1)]! : null;
+
+  // Apply-markup: when the open file carries CriticMarkup, offer to apply it via
+  // an agent. Requires a channel to route the spawned/steered agent into.
+  useEffect(() => {
+    setApplyMarkupCandidate(null);
+    if (!currentLightboxFile || !channelId) return;
+    if (currentLightboxFile.mediaKind !== 'text' && currentLightboxFile.mediaKind !== 'code') return;
+    const controller = new AbortController();
+    void Promise.all([
+      fetch(`/api/files/${currentLightboxFile.id}/versions`, {
+        credentials: 'same-origin',
+        signal: controller.signal,
+      }),
+      fetch(`/api/files/artifact/${currentLightboxFile.id}/content`, {
+        credentials: 'same-origin',
+        signal: controller.signal,
+      }),
+    ])
+      .then(async ([versionsResponse, contentResponse]) => {
+        if (!versionsResponse.ok || !contentResponse.ok) return null;
+        const versionsBody = (await versionsResponse.json()) as HubFileVersionsResponse;
+        const latest = versionsBody.versions[0];
+        if (!latest) return null;
+        const text = await contentResponse.text();
+        if (!containsCriticMarkup(text)) return null;
+        return {
+          artifactId: currentLightboxFile.id,
+          path: currentLightboxFile.path ?? currentLightboxFile.name,
+          seq: latest.seq,
+        };
+      })
+      .then((target) => {
+        if (!controller.signal.aborted) setApplyMarkupCandidate(target);
+      })
+      .catch((err: unknown) => {
+        if (!(err instanceof DOMException && err.name === 'AbortError')) {
+          console.warn('failed to inspect file markup', err);
+        }
+      });
+    return () => controller.abort();
+  }, [channelId, currentLightboxFile]);
+
+  const visibleArtifactHandles = useMemo(() => {
+    const seen = new Set<string>();
+    for (const file of files) seen.add(artifactEntryHandle(file.artifactId));
+    return [...seen];
+  }, [files]);
+  const visibleArtifactHandleKey = visibleArtifactHandles.join('\n');
+  const lightboxEntryReferencesByFileId = useMemo(
+    () =>
+      Object.fromEntries(
+        files.map((file) => [file.artifactId, artifactEntryReferences[artifactEntryHandle(file.artifactId)] ?? null]),
+      ),
+    [artifactEntryReferences, files],
+  );
+
+  useEffect(() => {
+    if (visibleArtifactHandles.length === 0) return;
+    const now = Date.now();
+    const stale = now - artifactEntryReferencesFetchedAtRef.current >= ENTRY_REFERENCES_REFETCH_MS;
+    const handles = stale
+      ? visibleArtifactHandles
+      : visibleArtifactHandles.filter((handle) => !(handle in artifactEntryReferences));
+    if (handles.length === 0) return;
+    artifactEntryReferencesFetchedAtRef.current = now;
+    let disposed = false;
+    void queryEntryReferencesForHandles(handles)
+      .then((references) => {
+        if (disposed) return;
+        setArtifactEntryReferences((prev) => {
+          const next = { ...prev };
+          for (const handle of handles) next[handle] = references[handle] ?? null;
+          return next;
+        });
+      })
+      .catch((err: unknown) => {
+        console.warn('failed to query artifact entry references', err);
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [artifactEntryReferences, visibleArtifactHandleKey, visibleArtifactHandles]);
 
   const empty = loadedOnce && !loading && !error && files.length === 0;
   const countLabel = `${files.length}${nextCursor ? '+' : ''}`;
@@ -862,7 +1241,12 @@ export function Gallery({
               <GalleryCard
                 key={file.artifactId}
                 file={file}
+                references={artifactEntryReferences[artifactEntryHandle(file.artifactId)]}
                 onOpen={() => openLightboxAtIndex(index)}
+                onToggleStar={() => void toggleStar(file)}
+                onAddLabel={() => void addLabel(file)}
+                onRemoveLabel={(label) => void removeLabel(file, label)}
+                onRestore={() => void restoreFile(file)}
                 previewHydrated={hydratedPreviewIds.has(file.artifactId)}
               />
             ))}
@@ -887,6 +1271,18 @@ export function Gallery({
           files={previews}
           index={Math.min(lightboxIndex, previews.length - 1)}
           onIndexChange={changeLightboxIndex}
+          sessionId={sessionId ?? undefined}
+          entryReferencesByFileId={lightboxEntryReferencesByFileId}
+          applyMarkupTarget={
+            applyMarkupCandidate && channelId
+              ? {
+                  ...applyMarkupCandidate,
+                  channelId,
+                  ...(sessions ? { sessions } : {}),
+                  ...(onStartAgentWithTask ? { onSpawnNewAgent: onStartAgentWithTask } : {}),
+                }
+              : null
+          }
           onClose={closeLightbox}
           panel={urlPanel}
           onPanelChange={changeLightboxPanel}
@@ -897,6 +1293,13 @@ export function Gallery({
         <div className="pointer-events-none absolute bottom-4 left-1/2 z-toast -translate-x-1/2 rounded-md border border-accent-border/60 bg-surface-overlay px-3 py-2 text-xs font-medium text-accent-text-strong shadow-lg">
           {notice}
         </div>
+      )}
+      {markupSource && (
+        <MarkupPane
+          source={markupSource}
+          onClose={() => setMarkupSource(null)}
+          onSent={() => showNotice('Markup sent to agent')}
+        />
       )}
     </div>
   );

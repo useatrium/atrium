@@ -16,7 +16,7 @@ import {
 import { useSessionStream } from './useSessionStream';
 import { ConflictSurface } from './ConflictSurface';
 import { EmptyState } from './EmptyState';
-import { FilesHub } from './FilesHub';
+import { Gallery } from './Gallery';
 import { SideEffectsSurface } from './SideEffectsSurface';
 import { AppsSurface } from './AppsSurface';
 import { TAB_LABEL, normalizeWorkTab, type WorkTab } from './WorkDrawer';
@@ -103,7 +103,13 @@ export function SessionWorkPage({ sessionId, tab }: { sessionId: string; tab: Wo
         return <SideEffectsSurface effects={effects} onClose={noop} embedded />;
       case 'hubFiles':
         return sessionMeta ? (
-          <FilesHub workspaceId={sessionMeta.workspaceId} channelId={sessionMeta.channelId} sessionId={sessionId} />
+          <Gallery
+            workspaceId={sessionMeta.workspaceId}
+            channelId={sessionMeta.channelId}
+            sessionId={sessionId}
+            defaultScope="session"
+            defaultIncludeScratch
+          />
         ) : (
           <div className="px-3 py-2 text-2xs text-fg-muted">loading files...</div>
         );

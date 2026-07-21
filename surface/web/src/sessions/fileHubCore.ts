@@ -2,10 +2,104 @@ import type { HubFile, HubFileVersionsResponse } from '@atrium/surface-client';
 import { entryShareUrl } from '../lib/publicUrl';
 import { URL_PARAMS } from '../router';
 import type { ArtifactConflict, ResolveChoice } from './ConflictSurface';
-import type { LightboxCallbacks } from '../components/media';
+import type { LightboxCallbacks, MediaKind, PreviewFile } from '../components/media';
+
+/**
+ * Session-scoped file surface types. The type stays even though FilesHub's
+ * folder navigation and scope switcher were retired — `SessionPane`/`WorkDrawer`
+ * still describe a session's touched-path set with `FilesHubSessionScope`, and
+ * `Gallery` uses it to filter the detached session view.
+ */
+export type FileHubScope = 'channel' | 'workspace' | 'session';
+export type FilesHubDefaultScope = FileHubScope;
+export interface FilesHubSessionScope {
+  label: string;
+  paths: string[];
+}
+
+const mediaKindSet = new Set<MediaKind>(['image', 'video', 'audio', 'document', 'code', 'text', 'data', 'opaque']);
+
+export function asMediaKind(value: string | null): MediaKind {
+  return value && mediaKindSet.has(value as MediaKind) ? (value as MediaKind) : 'opaque';
+}
 
 export function artifactContentUrl(artifactId: string): string {
   return `/api/files/artifact/${artifactId}/content`;
+}
+
+/** Map a hub file row onto the shared media {@link PreviewFile} shape. */
+export function hubFileToPreview(f: HubFile): PreviewFile {
+  return {
+    id: f.artifactId,
+    name: f.name,
+    path: f.path,
+    mime: f.mime ?? 'application/octet-stream',
+    mediaKind: asMediaKind(f.mediaKind),
+    versionSeq: f.versionSeq,
+    sizeBytes: f.sizeBytes ?? undefined,
+    tombstoned: f.tombstoned,
+    width: f.width,
+    height: f.height,
+    contentUrl: artifactContentUrl(f.artifactId),
+    ...(f.thumbnailUrl ? { thumbnailUrl: f.thumbnailUrl } : {}),
+    uploader: f.uploader,
+    createdAt: f.createdAt,
+    source: f.channelId
+      ? { kind: 'channel', id: f.channelId }
+      : f.sessionId
+        ? { kind: 'session', id: f.sessionId }
+        : undefined,
+  };
+}
+
+function normalizeScopePath(path: string): string | null {
+  const trimmed = path.trim();
+  if (!trimmed) return null;
+  return trimmed
+    .replace(/^file:\/\//, '')
+    .replace(/\\/g, '/')
+    .replace(/\/+/g, '/')
+    .replace(/^\.\//, '')
+    .replace(/^\/+/, '')
+    .replace(/\/+$/, '');
+}
+
+function pathCandidates(path: string): string[] {
+  const normalized = normalizeScopePath(path);
+  if (!normalized) return [];
+  const candidates = new Set<string>([normalized]);
+  const workspaceMarker = '/workspace/';
+  const workspaceIndex = `/${normalized}`.lastIndexOf(workspaceMarker);
+  if (workspaceIndex >= 0) candidates.add(`/${normalized}`.slice(workspaceIndex + workspaceMarker.length));
+  const channelMatch = normalized.match(/(?:^|\/)shared\/channels\/[^/]+\/(.+)$/);
+  if (channelMatch?.[1]) candidates.add(channelMatch[1]);
+  const scratchMatch = normalized.match(/(?:^|\/)scratch\/[^/]+\/(.+)$/);
+  if (scratchMatch?.[1]) candidates.add(scratchMatch[1]);
+  const globalMatch = normalized.match(/(?:^|\/)shared\/global\/(.+)$/);
+  if (globalMatch?.[1]) candidates.add(globalMatch[1]);
+  return [...candidates].filter(Boolean);
+}
+
+function candidateMatchesScope(filePath: string, scopePath: string): boolean {
+  if (filePath === scopePath || filePath.startsWith(`${scopePath}/`)) return true;
+  if (filePath.endsWith(`/${scopePath}`)) return true;
+  if (scopePath.endsWith(`/${filePath}`)) return true;
+  return false;
+}
+
+/** True when `filePath` falls inside one of a session's touched `scopePaths`. */
+export function fileMatchesSessionScope(filePath: string, scopePaths: readonly string[]): boolean {
+  const fileCandidates = pathCandidates(filePath);
+  if (fileCandidates.length === 0) return false;
+  for (const scopePath of scopePaths) {
+    const scopeCandidates = pathCandidates(scopePath);
+    for (const fileCandidate of fileCandidates) {
+      for (const scopeCandidate of scopeCandidates) {
+        if (candidateMatchesScope(fileCandidate, scopeCandidate)) return true;
+      }
+    }
+  }
+  return false;
 }
 
 export function cleanId(value: string | null | undefined): string {

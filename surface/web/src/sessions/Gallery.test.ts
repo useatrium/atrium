@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 
 import { createElement } from 'react';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FILE_CATEGORIES, type HubFile } from '@atrium/surface-client';
+import { queryEntryReferencesForHandles } from '../components/EntryReferencesChip';
 import { clearPreviewTextCache } from '../components/media/previewTextCache';
 import {
   Gallery,
@@ -12,6 +13,18 @@ import {
   galleryQuerySearch,
   galleryStateFromSearch,
 } from './Gallery';
+
+vi.mock('../components/EntryReferencesChip', async () => {
+  const actual = await vi.importActual<typeof import('../components/EntryReferencesChip')>(
+    '../components/EntryReferencesChip',
+  );
+  return {
+    ...actual,
+    queryEntryReferencesForHandles: vi.fn(async () => ({})),
+  };
+});
+
+const queryEntryReferencesMock = vi.mocked(queryEntryReferencesForHandles);
 
 const WORKSPACE_ID = 'ws_gallery';
 const TEXT_TILE_PREVIEW_SIZE_LIMIT_BYTES = 512 * 1024;
@@ -86,6 +99,7 @@ function mockGalleryFetch(
 describe('Gallery tiles', () => {
   beforeEach(() => {
     window.history.replaceState(null, '', '/files');
+    queryEntryReferencesMock.mockResolvedValue({});
   });
 
   afterEach(() => {
@@ -233,7 +247,7 @@ describe('Gallery tiles', () => {
     render(createElement(Gallery, { workspaceId: WORKSPACE_ID }));
 
     const firstImage = await screen.findByRole('img', { name: 'one.png' });
-    fireEvent.click(firstImage.closest('button')!);
+    fireEvent.click(firstImage.closest('[role="button"]')!);
     expect(await screen.findByRole('dialog')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Next file' }));
 
@@ -389,5 +403,182 @@ describe('Gallery query helpers', () => {
     expect(params.get('sessionId')).toBe('sess_1');
     expect(params.has('channelId')).toBe(false);
     expect(galleryPathForScope({ sessionId: 'sess_1' })).toBe('/files?sessionId=sess_1');
+  });
+});
+
+describe('Gallery ported affordances', () => {
+  beforeEach(() => {
+    window.history.replaceState(null, '', '/files');
+    queryEntryReferencesMock.mockResolvedValue({});
+  });
+
+  afterEach(() => {
+    cleanup();
+    clearPreviewTextCache();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  function affordanceFetch({
+    files,
+    star,
+    labels,
+    versionSeq = 1,
+    content = '',
+  }: {
+    files: HubFile[];
+    star?: { starred: boolean };
+    labels?: { labels: string[] };
+    versionSeq?: number;
+    content?: string;
+  }) {
+    return vi.fn(async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const path = requestPath(input);
+      const method = init?.method ?? 'GET';
+      if (path === `/api/workspaces/${WORKSPACE_ID}/files`) return jsonResponse({ files, nextCursor: null });
+      if (/^\/api\/files\/[^/]+\/star$/.test(path) && (method === 'POST' || method === 'DELETE')) {
+        return jsonResponse({ artifactId: files[0]!.artifactId, starred: star?.starred ?? method === 'POST' });
+      }
+      if (/^\/api\/files\/[^/]+\/labels$/.test(path) && method === 'POST') {
+        return jsonResponse({ artifactId: files[0]!.artifactId, labels: labels?.labels ?? [] });
+      }
+      if (/^\/api\/files\/[^/]+\/labels\/[^/]+$/.test(path) && method === 'DELETE') {
+        return new Response(null, { status: 204 });
+      }
+      if (/^\/api\/files\/[^/]+\/versions$/.test(path)) {
+        return jsonResponse({ versions: [{ seq: versionSeq }] });
+      }
+      if (/^\/api\/files\/artifact\/[^/]+\/content$/.test(path)) return new Response(content);
+      return new Response('not found', { status: 404 });
+    });
+  }
+
+  it('stars a file from the tile and confirms with the server', async () => {
+    const fetchMock = affordanceFetch({ files: [galleryFile({ starred: false })], star: { starred: true } });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(createElement(Gallery, { workspaceId: WORKSPACE_ID }));
+
+    const starButton = await screen.findByRole('button', { name: 'Star file' });
+    fireEvent.click(starButton);
+
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.some(
+          ([input, init]) => requestPath(input) === '/api/files/art_memo/star' && (init?.method ?? 'GET') === 'POST',
+        ),
+      ).toBe(true),
+    );
+    expect(await screen.findByRole('button', { name: 'Unstar file' })).toBeTruthy();
+  });
+
+  it('adds a label from the tile via the prompt', async () => {
+    vi.spyOn(window, 'prompt').mockReturnValue('draft');
+    const fetchMock = affordanceFetch({ files: [galleryFile({ labels: [] })], labels: { labels: ['draft'] } });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(createElement(Gallery, { workspaceId: WORKSPACE_ID }));
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Add label' }));
+
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.some(
+          ([input, init]) => requestPath(input) === '/api/files/art_memo/labels' && (init?.method ?? 'GET') === 'POST',
+        ),
+      ).toBe(true),
+    );
+    expect(await screen.findByText('draft')).toBeTruthy();
+  });
+
+  it('removes an existing label from the tile', async () => {
+    const fetchMock = affordanceFetch({ files: [galleryFile({ labels: ['draft'] })] });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(createElement(Gallery, { workspaceId: WORKSPACE_ID }));
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Remove draft label' }));
+
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.some(
+          ([input, init]) =>
+            requestPath(input) === '/api/files/art_memo/labels/draft' && (init?.method ?? 'GET') === 'DELETE',
+        ),
+      ).toBe(true),
+    );
+    await waitFor(() => expect(screen.queryByText('draft')).toBeNull());
+  });
+
+  it('renders an entry-reference chip for files with discussions', async () => {
+    queryEntryReferencesMock.mockResolvedValue({
+      art_art_memo: {
+        count: 2,
+        latest: [
+          {
+            eventId: 1,
+            handle: 'msg_1',
+            channelId: 'ch-1',
+            threadRootEventId: null,
+            actorLabel: 'Ada',
+            excerpt: 'Referenced artifact',
+            ts: new Date().toISOString(),
+          },
+        ],
+      },
+    });
+    const fetchMock = affordanceFetch({ files: [galleryFile()] });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(createElement(Gallery, { workspaceId: WORKSPACE_ID }));
+
+    await waitFor(() => expect(queryEntryReferencesMock).toHaveBeenCalledWith(['art_art_memo']));
+    expect(await screen.findByRole('button', { name: '2 discussions' })).toBeTruthy();
+  });
+
+  it('offers the inline markup pane only when the gallery is session-scoped', async () => {
+    const fetchMock = affordanceFetch({ files: [galleryFile()], content: 'plain body' });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const view = render(createElement(Gallery, { workspaceId: WORKSPACE_ID }));
+    fireEvent.click(await screen.findByRole('button', { name: /memo\.md/ }));
+    await screen.findByRole('dialog');
+    expect(screen.queryByRole('button', { name: 'Mark up' })).toBeNull();
+    view.unmount();
+
+    // Opening the lightbox above wrote ?file= into the URL; clear it so the
+    // second mount lists cleanly instead of auto-reopening the lightbox.
+    window.history.replaceState(null, '', '/files');
+    render(createElement(Gallery, { workspaceId: WORKSPACE_ID, sessionId: 'sess_1' }));
+    fireEvent.click(await screen.findByRole('button', { name: /memo\.md/ }));
+    const markupButton = await screen.findByRole('button', { name: 'Mark up' });
+    fireEvent.click(markupButton);
+    expect(await screen.findByText('Mark up and send to agent')).toBeTruthy();
+  });
+
+  it('derives an apply-markup target when an open file carries CriticMarkup', async () => {
+    const fetchMock = affordanceFetch({
+      files: [galleryFile()],
+      content: 'Hello {++world++}, please review {>>this line<<}.',
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(createElement(Gallery, { workspaceId: WORKSPACE_ID, channelId: 'ch-1' }));
+    fireEvent.click(await screen.findByRole('button', { name: /memo\.md/ }));
+    const dialog = await screen.findByRole('dialog');
+    expect(await within(dialog).findByRole('button', { name: 'Apply with agent' })).toBeTruthy();
+  });
+
+  it('does not offer apply-markup for files without CriticMarkup', async () => {
+    const fetchMock = affordanceFetch({ files: [galleryFile()], content: 'Just plain prose, nothing to apply.' });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(createElement(Gallery, { workspaceId: WORKSPACE_ID, channelId: 'ch-1' }));
+    fireEvent.click(await screen.findByRole('button', { name: /memo\.md/ }));
+    const dialog = await screen.findByRole('dialog');
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.some(([input]) => requestPath(input) === '/api/files/art_memo/versions')).toBe(true),
+    );
+    expect(within(dialog).queryByRole('button', { name: 'Apply with agent' })).toBeNull();
   });
 });
