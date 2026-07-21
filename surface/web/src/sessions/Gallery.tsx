@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { JSX, KeyboardEvent } from 'react';
+import type { CSSProperties, JSX, KeyboardEvent, RefObject } from 'react';
 import {
   containsCriticMarkup,
   FILE_CATEGORIES,
@@ -23,6 +23,7 @@ import type { LightboxCallbacks, PreviewFile } from '../components/media';
 import { effectiveMediaKind, isAppFile } from '../components/media/utils';
 import { showErrorToast } from '../components/Toasts';
 import { navigate, URL_PARAMS, useLocation } from '../router';
+import { useDialog } from '../useDialog';
 import { EmptyState } from './EmptyState';
 import {
   artifactEntryHandle,
@@ -290,9 +291,97 @@ function nestedControlKeyDown(event: KeyboardEvent<HTMLElement>, run: () => void
   run();
 }
 
+const LABEL_POPOVER_WIDTH = 192;
+
+/**
+ * Inline "Add label" popover anchored under the card's "+ label" chip. Built on
+ * the same `useDialog` primitive as the other anchored menus (ChannelMembersMenu,
+ * MessageActionMenu): it focuses the input on open, returns focus to the chip on
+ * close, and owns Escape (isModalDialogOpen makes the layered-escape dispatcher
+ * stand down, so Escape here never reaches the lightbox/route behind the grid).
+ * Positioned `fixed` off the chip's rect so it escapes the card's overflow clip.
+ */
+function LabelPopover({
+  anchorRef,
+  suggestions,
+  suggestionsId,
+  onSubmit,
+  onClose,
+}: {
+  anchorRef: RefObject<HTMLElement | null>;
+  suggestions: string[];
+  suggestionsId: string;
+  onSubmit: (label: string) => void;
+  onClose: () => void;
+}) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const [draft, setDraft] = useState('');
+
+  useDialog({
+    open: true,
+    containerRef,
+    initialFocusRef: inputRef,
+    invokerRef: anchorRef,
+    closeOnOutsidePointer: true,
+    onClose,
+  });
+
+  const submit = () => {
+    const trimmed = draft.trim();
+    // Empty and duplicate handling lives in the card's addLabel; submit always closes.
+    if (trimmed) onSubmit(trimmed);
+    onClose();
+  };
+
+  const rect = anchorRef.current?.getBoundingClientRect();
+  const viewportWidth = typeof window === 'undefined' ? 0 : window.innerWidth;
+  const style: CSSProperties = rect
+    ? { top: rect.bottom + 4, left: Math.max(8, Math.min(rect.left, viewportWidth - LABEL_POPOVER_WIDTH - 8)) }
+    : { top: 0, left: 0 };
+
+  return (
+    // Clicks/keys inside the popover are stopped so they never reach the
+    // keyboard-activatable card behind it (which would open the lightbox).
+    <div
+      ref={containerRef}
+      role="dialog"
+      aria-label="Add label"
+      style={style}
+      onClick={(event) => event.stopPropagation()}
+      onKeyDown={(event) => event.stopPropagation()}
+      className="fixed z-dropdown w-48 rounded-md border border-edge-strong bg-surface-overlay p-1.5 shadow-lg"
+    >
+      <input
+        ref={inputRef}
+        value={draft}
+        onChange={(event) => setDraft(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter') {
+            event.preventDefault();
+            submit();
+          }
+        }}
+        list={suggestions.length > 0 ? suggestionsId : undefined}
+        placeholder="Add label"
+        aria-label="Add label"
+        className="w-full rounded border border-edge bg-surface px-2 py-1 text-2xs text-fg-body outline-none focus:border-edge-focus placeholder:text-fg-faint"
+      />
+      {suggestions.length > 0 && (
+        <datalist id={suggestionsId}>
+          {suggestions.map((label) => (
+            <option key={label} value={label} />
+          ))}
+        </datalist>
+      )}
+    </div>
+  );
+}
+
 function GalleryCard({
   file,
   references,
+  knownLabels,
   onOpen,
   onToggleStar,
   onAddLabel,
@@ -302,9 +391,10 @@ function GalleryCard({
 }: {
   file: HubFile;
   references?: EntryReferenceSummary | null;
+  knownLabels: string[];
   onOpen: () => void;
   onToggleStar: () => void;
-  onAddLabel: () => void;
+  onAddLabel: (label: string) => void;
   onRemoveLabel: (label: string) => void;
   onRestore: () => void;
   previewHydrated: boolean;
@@ -313,6 +403,12 @@ function GalleryCard({
   // stable preview object so text renderers do not refetch behind the overlay.
   const preview = useMemo(() => hubFileToPreview(file), [file]);
   const showPath = effectiveMediaKind(preview) !== 'image';
+  const [labelPopoverOpen, setLabelPopoverOpen] = useState(false);
+  const addLabelRef = useRef<HTMLSpanElement | null>(null);
+  const labelSuggestions = useMemo(
+    () => knownLabels.filter((label) => !file.labels.includes(label)),
+    [file.labels, knownLabels],
+  );
   return (
     // biome-ignore lint/a11y/useSemanticElements: keyboard-activatable file card; a <button> can't host the nested star/label controls.
     <div
@@ -405,18 +501,30 @@ function GalleryCard({
           {file.labels.length > 3 && <span className="text-3xs text-fg-muted">+{file.labels.length - 3}</span>}
           {/* biome-ignore lint/a11y/useSemanticElements: keyboard-activatable inline label control; a button would alter compact chip layout. */}
           <span
+            ref={addLabelRef}
             role="button"
             tabIndex={0}
             aria-label="Add label"
-            className="rounded px-1.5 py-px text-3xs text-fg-muted opacity-0 hover:bg-surface-overlay hover:text-fg-body focus-visible:opacity-100 group-hover:opacity-100"
+            aria-haspopup="dialog"
+            aria-expanded={labelPopoverOpen}
+            className="rounded px-1.5 py-px text-3xs text-fg-muted opacity-0 hover:bg-surface-overlay hover:text-fg-body focus-visible:opacity-100 group-hover:opacity-100 aria-expanded:opacity-100"
             onClick={(event) => {
               event.stopPropagation();
-              onAddLabel();
+              setLabelPopoverOpen(true);
             }}
-            onKeyDown={(event) => nestedControlKeyDown(event, onAddLabel)}
+            onKeyDown={(event) => nestedControlKeyDown(event, () => setLabelPopoverOpen(true))}
           >
             + label
           </span>
+          {labelPopoverOpen && (
+            <LabelPopover
+              anchorRef={addLabelRef}
+              suggestions={labelSuggestions}
+              suggestionsId={`gallery-label-suggestions-${file.artifactId}`}
+              onSubmit={onAddLabel}
+              onClose={() => setLabelPopoverOpen(false)}
+            />
+          )}
           {file.tombstoned && (
             // biome-ignore lint/a11y/useSemanticElements: keyboard-activatable inline restore control; a button would alter compact card layout.
             <span
@@ -682,6 +790,11 @@ export function Gallery({
   const artifactEntryReferencesFetchedAtRef = useRef(0);
 
   const previews = useMemo(() => files.map(hubFileToPreview), [files]);
+  const knownLabels = useMemo(() => {
+    const seen = new Set<string>();
+    for (const file of files) for (const label of file.labels) seen.add(label);
+    return [...seen].sort((a, b) => a.localeCompare(b));
+  }, [files]);
   const activeScope =
     queryState.scope === 'session' ? 'session' : queryState.scope === 'channel' ? 'channel' : 'everything';
   const scopeEmpty = activeScope !== 'everything' && !loading && !error && files.length === 0;
@@ -715,8 +828,8 @@ export function Gallery({
     }
   }, []);
 
-  const addLabel = useCallback(async (file: HubFile) => {
-    const label = window.prompt('Label this file')?.trim();
+  const addLabel = useCallback(async (file: HubFile, rawLabel: string) => {
+    const label = rawLabel.trim();
     if (!label || file.labels.includes(label)) return;
     const previous = file.labels;
     setFiles((current) => updateFile(current, file.artifactId, { labels: [...previous, label] }));
@@ -1242,9 +1355,10 @@ export function Gallery({
                 key={file.artifactId}
                 file={file}
                 references={artifactEntryReferences[artifactEntryHandle(file.artifactId)]}
+                knownLabels={knownLabels}
                 onOpen={() => openLightboxAtIndex(index)}
                 onToggleStar={() => void toggleStar(file)}
-                onAddLabel={() => void addLabel(file)}
+                onAddLabel={(label) => void addLabel(file, label)}
                 onRemoveLabel={(label) => void removeLabel(file, label)}
                 onRestore={() => void restoreFile(file)}
                 previewHydrated={hydratedPreviewIds.has(file.artifactId)}
