@@ -429,6 +429,8 @@ export default function ThreadScreen() {
               if (request.target === 'steer') {
                 void chat.steerSession(request.sessionId, submission.text, request.effort, {
                   postToThread: true,
+                  channelId,
+                  threadRootEventId: rootId,
                   ...media,
                 });
               } else if (request.target === 'suggest') {

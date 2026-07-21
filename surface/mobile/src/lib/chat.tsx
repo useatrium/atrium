@@ -22,8 +22,10 @@ import {
   looksLikeSummonSigil,
   parseSummonSigil,
   pendingMessageFromSendPayload,
+  pendingMessageFromThreadSteerPayload,
   pendingSpawnFromPayload,
   PENDING_SESSION_PREFIX,
+  queuedOverlayAction,
   randomId,
   reconcileDraftSnapshot,
   useWs,
@@ -42,7 +44,7 @@ import {
   type MentionRange,
   type OpType,
   type QueuedOp,
-  type ReactionSetPayload,
+  type QueuedThreadSteerPayload,
   type SessionSpawnPayload,
   type Session as AgentSession,
   type UploadPayload,
@@ -148,7 +150,13 @@ interface ChatContextValue {
     sessionId: string,
     text: string,
     effort?: string,
-    opts?: { postToThread?: boolean; attachments?: AttachmentMeta[]; attachmentRefs?: AttachmentRef[] },
+    opts?: {
+      postToThread?: boolean;
+      attachments?: AttachmentMeta[];
+      attachmentRefs?: AttachmentRef[];
+      channelId?: string;
+      threadRootEventId?: number;
+    },
   ) => Promise<void>;
   /** Queue a suggestion for a session's driver. */
   suggestToSession: (
@@ -550,23 +558,59 @@ export function ChatProvider({ session, children }: { session: Session; children
       sessionId: string,
       text: string,
       effort?: string,
-      opts?: { postToThread?: boolean; attachments?: AttachmentMeta[]; attachmentRefs?: AttachmentRef[] },
+      opts?: {
+        postToThread?: boolean;
+        attachments?: AttachmentMeta[];
+        attachmentRefs?: AttachmentRef[];
+        channelId?: string;
+        threadRootEventId?: number;
+      },
     ): Promise<void> => {
       clearFailedSessionSteer(sessionId);
-      await enqueueOp({
-        opId: randomId(),
-        opType: 'session.steer',
-        payload: {
-          sessionId,
-          text,
-          ...(effort ? { effort } : {}),
-          ...(opts?.postToThread ? { postToThread: true } : {}),
-          ...(opts?.attachments?.length ? { attachments: opts.attachments } : {}),
-          ...(opts?.attachmentRefs?.length ? { attachmentRefs: opts.attachmentRefs } : {}),
+      // When a steer posts into a thread and we know its provenance, carry the
+      // full QueuedThreadSteerPayload shape so the message renders optimistically
+      // (mirrors web's useChatMessageActions/useSessionActions steer path). The
+      // op executor ignores the extra fields beyond clientMsgId.
+      const threadContext =
+        opts?.postToThread && opts.channelId != null && opts.threadRootEventId != null
+          ? { channelId: opts.channelId, threadRootEventId: opts.threadRootEventId }
+          : null;
+      const clientMsgId = randomId();
+      const payload = {
+        sessionId,
+        text,
+        ...(effort ? { effort } : {}),
+        ...(opts?.postToThread ? { postToThread: true } : {}),
+        ...(opts?.attachments?.length ? { attachments: opts.attachments } : {}),
+        ...(opts?.attachmentRefs?.length ? { attachmentRefs: opts.attachmentRefs } : {}),
+        ...(threadContext
+          ? {
+              channelId: threadContext.channelId,
+              threadRootEventId: threadContext.threadRootEventId,
+              clientMsgId,
+              createdAt: new Date().toISOString(),
+            }
+          : {}),
+      };
+      await enqueueOp(
+        {
+          opId: threadContext ? clientMsgId : randomId(),
+          opType: 'session.steer',
+          payload,
         },
-      });
+        threadContext
+          ? {
+              onStored: () =>
+                dispatch({
+                  type: 'send-pending',
+                  channelId: threadContext.channelId,
+                  message: pendingMessageFromThreadSteerPayload(payload as QueuedThreadSteerPayload, me),
+                }),
+            }
+          : undefined,
+      );
     },
-    [clearFailedSessionSteer, enqueueOp],
+    [clearFailedSessionSteer, enqueueOp, me],
   );
 
   const suggestToSession = useCallback(
@@ -736,78 +780,16 @@ export function ChatProvider({ session, children }: { session: Session; children
 
   const applyQueuedOp = useCallback(
     (op: QueuedOp) => {
-      if (op.opType === 'msg.send') {
-        const payload = op.payload as MobileMsgSendPayload;
-        dispatch({
-          type: 'send-pending',
-          channelId: payload.channelId,
-          message: pendingMessageFromSendPayload(payload, me),
-        });
-        return;
+      // Single source of truth for offline overlays (shared with web) — covers
+      // msg.send, session.spawn/steer, edit/delete/reaction, mute, and read.mark.
+      const overlay = queuedOverlayAction(op, me);
+      if (!overlay) return;
+      if (overlay.readCursor) {
+        const { channelId, lastReadEventId } = overlay.readCursor;
+        lastReadSentRef.current[channelId] = Math.max(lastReadSentRef.current[channelId] ?? 0, lastReadEventId);
+        cacheReadCursorAdvance(channelId, lastReadEventId, 'queued read.mark');
       }
-      if (op.opType === 'session.spawn') {
-        const payload = op.payload as SessionSpawnPayload;
-        const pending = pendingSpawnFromPayload(payload, me);
-        dispatch({
-          type: 'session-spawn-pending',
-          channelId: payload.channelId,
-          message: pending.message,
-          session: pending.session,
-        });
-        return;
-      }
-      if (op.opType === 'msg.edit') {
-        const payload = op.payload as { channelId: string; eventId: number; text: string };
-        dispatch({
-          type: 'edit-overlay-pending',
-          channelId: payload.channelId,
-          opId: op.opId,
-          targetEventId: payload.eventId,
-          text: payload.text,
-        });
-        return;
-      }
-      if (op.opType === 'msg.delete') {
-        const payload = op.payload as { channelId: string; eventId: number };
-        dispatch({
-          type: 'delete-overlay-pending',
-          channelId: payload.channelId,
-          opId: op.opId,
-          targetEventId: payload.eventId,
-        });
-        return;
-      }
-      if (op.opType === 'reaction.set') {
-        const payload = op.payload as ReactionSetPayload;
-        dispatch({
-          type: 'reaction-overlay-pending',
-          channelId: payload.channelId,
-          opId: op.opId,
-          targetEventId: payload.eventId,
-          emoji: payload.emoji,
-          userId: payload.userId,
-          action: payload.action,
-        });
-        return;
-      }
-      if (op.opType === 'mute.set') {
-        const payload = op.payload as { channelId: string; muted: boolean };
-        dispatch({ type: 'mute-changed', channelId: payload.channelId, muted: payload.muted });
-        return;
-      }
-      if (op.opType === 'read.mark') {
-        const payload = op.payload as { channelId: string; lastReadEventId: number };
-        lastReadSentRef.current[payload.channelId] = Math.max(
-          lastReadSentRef.current[payload.channelId] ?? 0,
-          payload.lastReadEventId,
-        );
-        dispatch({
-          type: 'read-cursor',
-          channelId: payload.channelId,
-          lastReadEventId: payload.lastReadEventId,
-        });
-        cacheReadCursorAdvance(payload.channelId, payload.lastReadEventId, 'queued read.mark');
-      }
+      dispatch(overlay.action);
     },
     [cacheReadCursorAdvance, me],
   );
@@ -1317,31 +1299,6 @@ export function ChatProvider({ session, children }: { session: Session; children
       const wireText = encodeMessageForSend(text, mentionRanges);
       const clientMsgId = randomId();
       const createdAt = new Date().toISOString();
-      const message: ChatMessage = {
-        id: null,
-        clientMsgId,
-        channelId,
-        threadRootEventId: threadRootEventId ?? null,
-        ...(broadcast === true ? { broadcast: true } : {}),
-        text: wireText,
-        edited: false,
-        author: me,
-        createdAt,
-        replyCount: 0,
-        lastReplyId: 0,
-        status: 'pending',
-        ...(attachments && attachments.length > 0 ? { attachments } : {}),
-        ...(voice && attachments?.[0]
-          ? {
-              voice: {
-                fileId: attachments[0].id,
-                durationMs: voice.durationMs,
-                waveform: voice.waveform,
-                transcript: { status: 'pending' },
-              },
-            }
-          : {}),
-      };
       const payload: MobileMsgSendPayload = {
         clientMsgId,
         channelId,
@@ -1353,6 +1310,9 @@ export function ChatProvider({ session, children }: { session: Session; children
         createdAt,
         voice,
       };
+      // Build the optimistic row from the same shared constructor the queue-recovery
+      // and web paths use, so all three stay rendering-identical.
+      const message = pendingMessageFromSendPayload(payload, me);
       void enqueueOp(
         {
           opId: randomId(),
