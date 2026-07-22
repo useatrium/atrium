@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { CallWire, UserRef } from '@atrium/surface-client';
+import { labelForCallChannel, userForCall } from '@atrium/surface-client';
 import type { Channel } from '../src/api';
-import { labelForCallChannel, userForCall } from '../src/callPresentation';
 
 const me: UserRef = { id: 'u-me', handle: 'me', displayName: 'Me User' };
 const ada: UserRef = { id: 'u-ada', handle: 'ada', displayName: 'Ada Lovelace' };
