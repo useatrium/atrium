@@ -24,8 +24,25 @@ import {
 } from 'expo-callkit-telecom';
 import {
   ApiError,
+  AUDIO_CAPTURE_OPTIONS,
+  type BaseActiveCallState,
+  CALL_ORDER_DESC,
   CALL_RING_TTL_MS,
-  channelLabel,
+  type CallContext,
+  callEventReducer,
+  type CallListContext,
+  isExpiredRing,
+  isLiveCall,
+  labelForCallChannel,
+  MOBILE_CALL_POLICY,
+  removeLiveCall,
+  removeUser,
+  sortLiveCalls,
+  updateLiveCall,
+  upsertLiveCall,
+  upsertUser,
+  userForCall,
+  withSelf,
   type Api,
   type AppState,
   type CallEvent,
@@ -36,91 +53,25 @@ import {
 } from '@atrium/surface-client';
 import { NATIVE_CALL_UI } from './nativeCallUi';
 
-export interface ActiveCallState {
-  call: CallWire;
-  phase: 'connecting' | 'connected' | 'ended';
-  participants: UserRef[];
-  activeSpeakerIds: Set<string>;
-  muted: boolean;
-  error: string | null;
+// Re-exported for the mobile call banners (GlobalCallUI); the implementations
+// now live in the shared, platform-independent call-core.
+export { labelForCallChannel, userForCall } from '@atrium/surface-client';
+
+// Mobile adds the CallKit session handle (`nativeCallId`) to the shared
+// six-field base; the shared reducer preserves it untouched.
+export interface ActiveCallState extends BaseActiveCallState {
   nativeCallId?: string;
 }
 
-const AUDIO_CAPTURE_OPTIONS = {
-  echoCancellation: true,
-  noiseSuppression: true,
-  autoGainControl: true,
-};
+// Mobile keeps its newest-first order and stores calls raw (no channel-member
+// enrichment) — see design D1. This context feeds the shared list helpers and
+// reducer.
+const MOBILE_LIST: CallListContext = { order: CALL_ORDER_DESC, normalizeCall: (call) => call };
+
 const CALL_REFRESH_INTERVAL_MS = 45_000;
-
-function fallbackUser(id: string): UserRef {
-  return { id, handle: id, displayName: id };
-}
-
-function upsertUser(users: UserRef[], user: UserRef): UserRef[] {
-  return users.some((u) => u.id === user.id) ? users : [...users, user];
-}
-
-function removeUser(users: UserRef[], userId: string): UserRef[] {
-  return users.filter((u) => u.id !== userId);
-}
-
-function participantsFor(call: CallWire, me: UserRef): UserRef[] {
-  return call.participants.some((u) => u.id === me.id) ? call.participants : [me, ...call.participants];
-}
-
-function sortLiveCalls(calls: CallWire[]): CallWire[] {
-  return [...calls]
-    .filter((call) => call.status !== 'ended')
-    .sort((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt));
-}
-
-function upsertLiveCall(calls: CallWire[], call: CallWire): CallWire[] {
-  if (call.status === 'ended') return calls.filter((existing) => existing.id !== call.id);
-  const index = calls.findIndex((existing) => existing.id === call.id);
-  if (index === -1) return sortLiveCalls([call, ...calls]);
-  const next = calls.map((existing, i) => (i === index ? call : existing));
-  return sortLiveCalls(next);
-}
-
-function updateLiveCall(calls: CallWire[], callId: string, update: (call: CallWire) => CallWire): CallWire[] {
-  let changed = false;
-  const next = calls.map((call) => {
-    if (call.id !== callId) return call;
-    changed = true;
-    return update(call);
-  });
-  return changed ? sortLiveCalls(next) : calls;
-}
-
-function removeLiveCall(calls: CallWire[], callId: string): CallWire[] {
-  return calls.filter((call) => call.id !== callId);
-}
-
-function ringAgeMs(call: CallWire): number {
-  return Date.now() - Date.parse(call.startedAt);
-}
-
-function isExpiredRing(call: CallWire): boolean {
-  return call.status === 'ringing' && ringAgeMs(call) >= CALL_RING_TTL_MS;
-}
 
 function callUnavailable(err: unknown): boolean {
   return err instanceof ApiError && err.status === 503 && err.code === 'calls_unconfigured';
-}
-
-function userForCall(call: CallWire, channels: Channel[], userId: string): UserRef {
-  return (
-    call.participants.find((u) => u.id === userId) ??
-    channels.find((c) => c.id === call.channelId)?.members?.find((u) => u.id === userId) ??
-    fallbackUser(userId)
-  );
-}
-
-export function labelForCallChannel(call: CallWire, channels: Channel[], meId: string): string {
-  const channel = channels.find((c) => c.id === call.channelId);
-  if (!channel) return 'Unknown channel';
-  return channel.kind === 'private' ? `#${channel.name}` : channelLabel(channel, meId);
 }
 
 function incomingCallEventFor(call: CallWire, caller: UserRef, channelName: string): IncomingCallEvent {
@@ -359,11 +310,11 @@ export function useCall({
       setRoomHandlers(room);
       setIncomingCall((call) => (call?.id === join.call.id ? null : call));
       setNotice(null);
-      setRecoverableCalls((calls) => upsertLiveCall(calls, join.call));
+      setRecoverableCalls((calls) => upsertLiveCall(calls, join.call, MOBILE_LIST));
       setActiveCall({
         call: join.call,
         phase: 'connecting',
-        participants: participantsFor(join.call, me),
+        participants: withSelf(join.call, me),
         activeSpeakerIds: new Set(),
         muted: false,
         error: null,
@@ -494,11 +445,17 @@ export function useCall({
           }
         }
         const liveCalls = sortLiveCalls(
-          snapshot.calls.filter((call) => !isExpiredRing(call) && !dismissedCallIdsRef.current.has(call.id)),
+          snapshot.calls.filter(
+            (call) => isLiveCall(call) && !isExpiredRing(call) && !dismissedCallIdsRef.current.has(call.id),
+          ),
+          CALL_ORDER_DESC,
         );
         setRecoverableCalls((current) =>
           opts.channelId
-            ? sortLiveCalls([...current.filter((call) => call.channelId !== opts.channelId), ...liveCalls])
+            ? sortLiveCalls(
+                [...current.filter((call) => call.channelId !== opts.channelId), ...liveCalls],
+                CALL_ORDER_DESC,
+              )
             : liveCalls,
         );
         applyIncomingSnapshot(liveCalls, opts.channelId);
@@ -539,105 +496,54 @@ export function useCall({
     [api, connectToCall, setAnswering],
   );
 
+  const buildContext = useCallback(
+    (): CallContext => ({
+      me,
+      list: MOBILE_LIST,
+      participantsFor: (call) => withSelf(call, me),
+      policy: MOBILE_CALL_POLICY,
+    }),
+    [me],
+  );
+
   const handleCallEvent = useCallback(
     (event: CallEvent) => {
-      if (event.type === 'call.ringing') {
-        if (dismissedCallIdsRef.current.has(event.call.id) || isExpiredRing(event.call)) {
-          setIncomingCall((call) => (call?.id === event.call.id ? null : call));
-          setRecoverableCalls((calls) => removeLiveCall(calls, event.call.id));
-          reportNativeEnded(event.call.id, 'unanswered');
-          return;
+      const prev = {
+        active: activeCallRef.current,
+        incoming: incomingCallRef.current,
+        live: recoverableCallsRef.current,
+        dismissed: dismissedCallIdsRef.current,
+      };
+      const { state: next, effects } = callEventReducer<ActiveCallState>(prev, event, buildContext());
+
+      // Advance the refs before React renders: a second CallEvent arriving
+      // before the re-render would otherwise read a stale snapshot and drop
+      // this transition.
+      activeCallRef.current = next.active;
+      incomingCallRef.current = next.incoming;
+      recoverableCallsRef.current = next.live;
+
+      if (next.active !== prev.active) setActiveCall(next.active);
+      if (next.incoming !== prev.incoming) setIncomingCall(next.incoming);
+      if (next.live !== prev.live) setRecoverableCalls(next.live);
+      if (next.dismissed !== prev.dismissed) {
+        // Mobile keeps `dismissed` in a ref (plus a per-channel companion map).
+        // Prune the companion map to the surviving ids — byte-equivalent to the
+        // explicit deletions the inline `call.ended` branch performed.
+        dismissedCallIdsRef.current = next.dismissed;
+        for (const key of [...dismissedCallChannelsRef.current.keys()]) {
+          if (!next.dismissed.has(key)) dismissedCallChannelsRef.current.delete(key);
         }
-        setRecoverableCalls((calls) => upsertLiveCall(calls, event.call));
-        if (event.call.initiatorId !== me.id && !activeCallRef.current) {
-          setIncomingCall(event.call);
-          reportIncomingToNative(event.call);
-        }
-        setActiveCall((current) =>
-          current?.call.id === event.call.id
-            ? {
-                ...current,
-                call: event.call,
-                participants: participantsFor(event.call, me),
-              }
-            : current,
-        );
-        return;
       }
 
-      if (event.type === 'call.accepted' || event.type === 'call.participant_joined') {
-        setIncomingCall((call) =>
-          call?.id === event.callId
-            ? event.user.id === me.id
-              ? null
-              : { ...call, status: 'active', participants: upsertUser(call.participants, event.user) }
-            : call,
-        );
-        setRecoverableCalls((calls) =>
-          updateLiveCall(calls, event.callId, (call) => ({
-            ...call,
-            status: 'active',
-            participants: upsertUser(call.participants, event.user),
-          })),
-        );
-        setActiveCall((current) =>
-          current?.call.id === event.callId
-            ? {
-                ...current,
-                call: { ...current.call, status: 'active' },
-                participants: upsertUser(current.participants, event.user),
-              }
-            : current,
-        );
-        return;
-      }
-
-      if (event.type === 'call.declined') {
-        setIncomingCall((call) => (call?.id === event.callId && event.userId === me.id ? null : call));
-        if (event.userId === me.id) {
-          setRecoverableCalls((calls) => removeLiveCall(calls, event.callId));
-        }
-        if (event.userId === me.id) reportNativeEnded(event.callId, 'declinedElsewhere');
-        return;
-      }
-
-      if (event.type === 'call.participant_left') {
-        setRecoverableCalls((calls) =>
-          updateLiveCall(calls, event.callId, (call) => ({
-            ...call,
-            participants: removeUser(call.participants, event.userId),
-          })),
-        );
-        let endedByLastLeave = false;
-        setActiveCall((current) => {
-          if (current?.call.id !== event.callId) return current;
-          const participants = removeUser(current.participants, event.userId);
-          const remoteCount = participants.filter((p) => p.id !== me.id).length;
-          if (current.call.status === 'active' && remoteCount === 0) endedByLastLeave = true;
-          return {
-            ...current,
-            participants,
-            activeSpeakerIds: new Set([...current.activeSpeakerIds].filter((id) => id !== event.userId)),
-          };
-        });
-        // Side effect outside the (possibly double-invoked) updater.
-        if (endedByLastLeave) reportNativeEnded(event.callId, 'remoteEnded');
-        return;
-      }
-
-      if (event.type === 'call.ended') {
-        dismissedCallIdsRef.current.delete(event.callId);
-        dismissedCallChannelsRef.current.delete(event.callId);
-        setIncomingCall((call) => (call?.id === event.callId ? null : call));
-        setRecoverableCalls((calls) => removeLiveCall(calls, event.callId));
-        reportNativeEnded(event.callId, 'remoteEnded');
-        if (activeCallRef.current?.call.id === event.callId) {
-          clearRoom();
-          setActiveCall(null);
-        }
+      for (const effect of effects) {
+        if (effect.kind === 'reportIncoming') reportIncomingToNative(effect.call);
+        else if (effect.kind === 'reportEnded') reportNativeEnded(effect.callId, effect.reason);
+        else if (effect.kind === 'clearActiveRoom') clearRoom();
+        // activeParticipantLeft is a web-only audio-track concern, ignored here.
       }
     },
-    [clearRoom, me, reportIncomingToNative, reportNativeEnded],
+    [buildContext, clearRoom, reportIncomingToNative, reportNativeEnded],
   );
 
   const startCall = useCallback(
@@ -747,10 +653,15 @@ export function useCall({
     clearRoom();
     setActiveCall(null);
     setRecoverableCalls((calls) =>
-      updateLiveCall(calls, callId, (call) => ({
-        ...call,
-        participants: removeUser(call.participants, me.id),
-      })),
+      updateLiveCall(
+        calls,
+        callId,
+        (call) => ({
+          ...call,
+          participants: removeUser(call.participants, me.id),
+        }),
+        MOBILE_LIST,
+      ),
     );
     try {
       await api.leaveCall(callId);

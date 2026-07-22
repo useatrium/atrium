@@ -13,6 +13,7 @@
     "./reactions": "./src/reactions.ts",
     "./prefs": "./src/prefs.ts",
     "./calls": "./src/calls.ts",
+    "./call-core": "./src/call-core.ts",
     "./sessions": "./src/sessions.ts",
     "./agentProfiles": "./src/agentProfiles.ts",
     "./effort": "./src/effort.ts",

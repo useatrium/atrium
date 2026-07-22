@@ -12,6 +12,7 @@ export * from './criticmarkup';
 export * from './api';
 export * from './activity';
 export * from './calls';
+export * from './call-core';
 export * from './sync';
 export * from './opQueue';
 export * from './chatQueuedOverlays';

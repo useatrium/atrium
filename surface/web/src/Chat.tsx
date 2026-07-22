@@ -32,7 +32,7 @@ import {
 import { useWs } from '@atrium/surface-client';
 import { Avatar } from './components/Avatar';
 import { ActivityView } from './components/ActivityView';
-import { labelForCallChannel, userForCall } from './callPresentation';
+import { labelForCallChannel, userForCall } from '@atrium/surface-client';
 import { notificationForWireEvent } from './chatNotifications';
 import { ChannelMembersMenu } from './components/ChannelMembersMenu';
 import { CallNotice, ChannelCallStrip, InCallPanel, IncomingCallBanner } from './components/CallUI';

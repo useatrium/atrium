@@ -2,9 +2,8 @@ import type { ReactNode } from 'react';
 import { View } from 'react-native';
 import { SafeAreaInsetsContext, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useSegments } from 'expo-router';
-import type { CallWire, Channel, UserRef } from '@atrium/surface-client';
 import { useChat } from '../lib/chat';
-import { labelForCallChannel } from '../lib/useCall';
+import { labelForCallChannel, userForCall } from '../lib/useCall';
 import { CallNotice, InCallPanel, IncomingCallBanner, JoinCallStrip } from './CallUI';
 
 type CallState = ReturnType<typeof useChat>['calls'];
@@ -45,18 +44,6 @@ export function CallBannerLayout({ children }: { children: ReactNode }) {
       <GlobalCallUI />
       <CallBannerSafeArea consumeTopInset={tabHeaderInsetConsumedByBanner}>{children}</CallBannerSafeArea>
     </View>
-  );
-}
-
-function fallbackUser(id: string): UserRef {
-  return { id, handle: id, displayName: id };
-}
-
-function userForCall(call: CallWire, channels: Channel[], userId: string): UserRef {
-  return (
-    call.participants.find((u) => u.id === userId) ??
-    channels.find((c) => c.id === call.channelId)?.members?.find((u) => u.id === userId) ??
-    fallbackUser(userId)
   );
 }
 
