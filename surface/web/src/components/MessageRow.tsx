@@ -32,6 +32,7 @@ import {
 } from '@atrium/surface-client';
 import { encodeEventHandle } from '@atrium/surface-client/handle';
 import { failureLine } from '@atrium/centaur-client';
+import type { ArtifactPresentation } from '@atrium/centaur-client';
 import { useIsHoverNone } from '../lib/useIsHoverNone';
 import { AskWhyAction, RetryTurnAction, sessionElapsedMs, useNow } from '../sessions/SessionCard';
 import { QuestionCard } from '../sessions/SessionBanners';
@@ -59,6 +60,7 @@ import { VoiceMessage } from '../VoiceMessage';
 import { entryShareUrl, fileShareUrl } from '../lib/publicUrl';
 import { attachmentMetaToPreviewFile } from '../lib/previewFiles';
 import { sessionsApi } from '../sessions/api';
+import { AppPresentationCards } from '../sessions/AppPresentationCard';
 import { useUserDirectory } from '../userDirectory';
 import { MentionSuggestions } from './MentionSuggestions';
 import { type MentionContext, useMentionTypeahead } from './useMentionTypeahead';
@@ -784,7 +786,6 @@ export const MessageRow = memo(function MessageRow({
                 </button>
               </span>
             )}
-            <SessionWorkProductsLink sessionId={session.id} onOpenSession={onOpenSession} />
             <span className="inline-flex items-center gap-x-1 whitespace-nowrap">
               <span>·</span>
               <TimestampDisclosure iso={m.createdAt} label={formatTime(m.createdAt)}>
@@ -1092,35 +1093,22 @@ export const MessageRow = memo(function MessageRow({
   );
 });
 
-function SessionWorkProductsLink({
-  sessionId,
-  onOpenSession,
-}: {
-  sessionId: string;
-  onOpenSession?: (sessionId: string) => void;
-}) {
-  const [presentationCount, setPresentationCount] = useState(0);
+function SessionTimelineApps({ sessionId }: { sessionId: string }) {
+  const [presentations, setPresentations] = useState<ArtifactPresentation[]>([]);
   useEffect(() => {
     let disposed = false;
     sessionsApi
       .listPresentations(sessionId)
-      .then(({ presentations }) => {
-        if (!disposed) setPresentationCount(Array.isArray(presentations) ? presentations.length : 0);
+      .then(({ presentations: list }) => {
+        if (!disposed) setPresentations(Array.isArray(list) ? list : []);
       })
       .catch(() => {});
     return () => {
       disposed = true;
     };
   }, [sessionId]);
-  if (presentationCount === 0) return null;
-  return (
-    <span className="inline-flex items-center gap-x-1 whitespace-nowrap">
-      <span>·</span>
-      <button type="button" onClick={() => onOpenSession?.(sessionId)} className="hover:underline">
-        {presentationCount} {presentationCount === 1 ? 'app' : 'apps'}
-      </button>
-    </span>
-  );
+  if (presentations.length === 0) return null;
+  return <AppPresentationCards sessionId={sessionId} presentations={presentations} surface="timeline" />;
 }
 
 function ChannelAnnotationCluster({
@@ -1224,6 +1212,13 @@ function ChannelAnnotationCluster({
         />
       ))}
       {!expanded && latest && !latestIsQuestionSlot && <CompactReply message={latest} />}
+      {/* Published apps render collapsed (chip → live iframe) so the channel
+          never pays layout for an app until someone asks for it. */}
+      {sessions
+        .filter((slotSession) => isDurableTerminalStatus(slotSession.status))
+        .map((slotSession) => (
+          <SessionTimelineApps key={`apps-${slotSession.id}`} sessionId={slotSession.id} />
+        ))}
       <button
         type="button"
         onClick={() => root.id != null && onOpenThread?.(root.id)}
