@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ThemeProvider } from '../theme';
 import type { Session } from '../sessions/types';
 import { api } from '../api';
+import { sessionsApi } from '../sessions/api';
 import { MessageRow } from './MessageRow';
 
 const ada: UserRef = {
@@ -718,6 +719,36 @@ describe('MessageRow web presence', () => {
     expect(screen.getByTestId('session-slot-done').textContent).toContain(
       'Done in 1m — Updated the retry backoff and added coverage.',
     );
+  });
+
+  it('renders a terminal session’s published apps as collapsed preview chips that expand to the live iframe', async () => {
+    const listPresentations = vi.spyOn(sessionsApi, 'listPresentations').mockResolvedValue({
+      presentations: [
+        {
+          id: 'p-1',
+          path: 'shared/apps/eval-dashboard/index.html',
+          title: 'Eval dashboard — v0.12 → v0.13',
+          renderer: 'html-app',
+          description: null,
+          executionId: null,
+        },
+      ],
+    } as never);
+    const completed = session({ status: 'completed', completedAt: '2026-07-05T12:01:00.000Z' });
+    renderRow({
+      row: message({ sessionId: 's-1', sessionTask: 'Publish a drill-down', reactions: [] }),
+      session: completed,
+      slotSessions: [completed],
+    });
+
+    const chip = await screen.findByRole('button', { name: /Eval dashboard — v0.12 → v0.13/ });
+    expect(chip.textContent).toContain('app · preview');
+    expect(screen.queryByTitle('Eval dashboard — v0.12 → v0.13 preview')).toBeNull();
+
+    fireEvent.click(chip);
+    expect(screen.getByTestId('app-presentation-card')).toBeTruthy();
+    expect(screen.getByTitle('Eval dashboard — v0.12 → v0.13 preview')).toBeTruthy();
+    listPresentations.mockRestore();
   });
 
   it('renders an agent reply with the fixed Agent identity and normal markdown body', () => {
