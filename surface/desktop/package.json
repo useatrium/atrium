@@ -19,7 +19,7 @@
   "devDependencies": {
     "@playwright/test": "1.60.0",
     "@types/node": "^25.9.3",
-    "electron": "^42.4.0",
+    "electron": "^42.5.1",
     "electron-builder": "^26.15.3",
     "electron-vite": "^5.0.0",
     "typescript": "^6.0.3",
